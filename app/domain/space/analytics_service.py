@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from app.domain.task.repositories import TaskRepository, TaskMembershipRepository
+
+
+@dataclass
+class AnalyticsFilters:
+    category_id: int | None = None
+    publisher_id: int | None = None
+    task_status: str | None = None
+
+
+class SpaceAnalyticsService:
+    def __init__(
+        self,
+        task_repo: TaskRepository,
+        membership_repo: TaskMembershipRepository,
+    ) -> None:
+        self._task_repo = task_repo
+        self._membership_repo = membership_repo
+
+    async def get_task_analytics(
+        self,
+        *,
+        space_id: int,
+        category_id: int | None,
+        task_status: str | None,
+        publisher_id: int | None,
+    ) -> dict:
+        tasks = await self._task_repo.list_tasks(
+            space_id=space_id,
+            category_id=category_id,
+            approved=self._map_task_status(task_status),
+            owner_id=publisher_id,
+            keywords=None,
+            topics=None,
+            joined=None,
+            current_user_id=None,
+            limit=1000,
+            offset=0,
+            sort_by="updatedAt",
+            sort_order="desc",
+        )
+        status_counter = Counter(self._status_label(task.approved) for task in tasks)
+        category_counter = Counter(getattr(task, "category_id", None) or "Uncategorized" for task in tasks)
+
+        memberships = await self._membership_repo.list_memberships_for_space(space_id)
+        participant_counter = Counter(self._participant_label(m.approved) for m in memberships)
+
+        return {
+            "taskCategoryDistribution": self._build_distribution("taskCategory", category_counter),
+            "taskStatusDistribution": self._build_distribution("taskStatus", status_counter),
+            "participantStatusDistribution": self._build_distribution(
+                "participantStatus", participant_counter
+            ),
+            "rankDistribution": self._empty_distribution("rank"),
+            "successStudentStatistics": self._empty_student_stats(),
+            "unsuccessStudentStatistics": self._empty_student_stats(),
+        }
+
+    async def get_publishers_participation(self, *, space_id: int) -> list[dict]:
+        tasks = await self._task_repo.list_tasks(
+            space_id=space_id,
+            category_id=None,
+            approved=None,
+            owner_id=None,
+            keywords=None,
+            topics=None,
+            joined=None,
+            current_user_id=None,
+            limit=1000,
+            offset=0,
+            sort_by="updatedAt",
+            sort_order="desc",
+        )
+        publisher_counter = Counter(getattr(task, "creator_id", 0) for task in tasks)
+        memberships = await self._membership_repo.list_memberships_for_space(space_id)
+        participants_by_task: dict[int, list[int]] = {}
+        completed_users: dict[int, int] = {}
+        for membership in memberships:
+            participants_by_task.setdefault(membership.task_id, []).append(membership.member_id)
+            if getattr(membership, "completion_status", "NOT_SUBMITTED") == "COMPLETED":
+                completed_users[membership.task_id] = completed_users.get(membership.task_id, 0) + 1
+
+        data: list[dict] = []
+        for publisher_id, count in publisher_counter.items():
+            task_ids = [task.id for task in tasks if task.creator_id == publisher_id]
+            participant_ids = {
+                member
+                for task_id in task_ids
+                for member in participants_by_task.get(task_id, [])
+            }
+            completed_total = sum(completed_users.get(task_id, 0) for task_id in task_ids)
+
+            data.append(
+                {
+                    "publisherId": publisher_id,
+                    "publisherName": f"User {publisher_id}",
+                    "participants": len(participant_ids),
+                    "completedUsers": completed_total,
+                    "taskCount": count,
+                }
+            )
+        return data
+
+    async def export_participants(self, *, space_id: int) -> str:
+        tasks = await self._task_repo.list_tasks(
+            space_id=space_id,
+            category_id=None,
+            approved=None,
+            owner_id=None,
+            keywords=None,
+            topics=None,
+            joined=None,
+            current_user_id=None,
+            limit=1000,
+            offset=0,
+            sort_by="updatedAt",
+            sort_order="desc",
+        )
+        memberships = await self._membership_repo.list_memberships_for_space(space_id)
+        membership_map: dict[int, list] = {}
+        for membership in memberships:
+            membership_map.setdefault(membership.task_id, []).append(membership)
+
+        rows = ["taskId,taskName,participantId,status"]
+        for task in tasks:
+            members = membership_map.get(task.id, [])
+            if not members:
+                rows.append(f"{task.id},{task.name},,0")
+            for member in members:
+                rows.append(
+                    f"{task.id},{task.name},{member.member_id},{self._participant_label(member.approved)}"
+                )
+        return "\n".join(rows)
+
+    def _map_task_status(self, value: str | None) -> int | None:
+        mapping = {
+            "APPROVED": 0,
+            "REJECTED": 1,
+            "NONE": 2,
+        }
+        if value is None:
+            return None
+        return mapping.get(value.upper())
+
+    def _status_label(self, approved_value: int | None) -> str:
+        mapping = {
+            0: "APPROVED",
+            1: "REJECTED",
+            2: "NONE",
+        }
+        return mapping.get(approved_value, "UNKNOWN")
+
+    def _participant_label(self, approved_value: int) -> str:
+        mapping = {0: "APPROVED", 1: "REJECTED", 2: "PENDING"}
+        return mapping.get(approved_value, "UNKNOWN")
+
+    def _build_distribution(self, name: str, counter: Counter) -> dict:
+        total = sum(counter.values()) or 1
+        items = [
+            {
+                "label": str(label),
+                "count": count,
+                "percentage": round(count / total, 2),
+            }
+            for label, count in counter.items()
+        ]
+        return {"name": name, "type": "DISCRETE", "items": items}
+
+    def _empty_distribution(self, name: str) -> dict:
+        return {"name": name, "type": "DISCRETE", "items": []}
+
+    def _empty_student_stats(self) -> dict:
+        return {
+            "totalStudents": 0,
+            "totalStudentsWithRealName": 0,
+            "gradeDistribution": self._empty_distribution("grade"),
+            "majorDistribution": self._empty_distribution("major"),
+            "classNameDistribution": self._empty_distribution("class"),
+        }
