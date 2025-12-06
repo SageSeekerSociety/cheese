@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
@@ -29,19 +30,27 @@ def _project_to_api_model(project: Project) -> dict:
     updated_at_ms = (
         int(project.updated_at.timestamp() * 1000) if project.updated_at is not None else 0
     )
+    start_date_ms = (
+        int(project.start_date.timestamp() * 1000) if project.start_date is not None else 0
+    )
+    end_date_ms = (
+        int(project.end_date.timestamp() * 1000) if project.end_date is not None else 0
+    )
     return {
         "id": project.id,
         "name": project.name,
         "description": project.description,
         "colorCode": project.color_code,
-        "startDate": created_at_ms,
-        "endDate": updated_at_ms,
-        "parentId": None,
+        "content": project.content or "",
+        "startDate": start_date_ms,
+        "endDate": end_date_ms,
+        "teamId": project.team_id,
+        "leaderId": project.leader_id,
+        "parentId": project.parent_id,
+        "externalTaskId": project.external_task_id,
+        "githubRepo": project.github_repo,
         "team": None,
         "leader": None,
-        "externalTaskId": None,
-        "githubRepo": None,
-        "content": "",
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -56,7 +65,7 @@ def _validate_color_code(value: str | None) -> str:
 @router.post(
     "",
     summary="Create Project",
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_200_OK,
 )
 async def create_project(
     payload: dict,
@@ -67,17 +76,42 @@ async def create_project(
     name = payload.get("name")
     description = payload.get("description") or ""
     color_code = _validate_color_code(payload.get("colorCode"))
+    team_id = payload.get("teamId")
+    leader_id = payload.get("leaderId")
+    start_date = payload.get("startDate")
+    end_date = payload.get("endDate")
+    content = payload.get("content")
+    parent_id = payload.get("parentId")
+    external_task_id = payload.get("externalTaskId")
+    github_repo = payload.get("githubRepo")
+
     if not isinstance(name, str) or not name.strip():
         raise BadRequestError("name is required")
+    if not isinstance(team_id, int) or team_id <= 0:
+        raise BadRequestError("teamId is required")
+    if not isinstance(leader_id, int) or leader_id <= 0:
+        raise BadRequestError("leaderId is required")
+    if not isinstance(start_date, int):
+        raise BadRequestError("startDate is required")
+    if not isinstance(end_date, int):
+        raise BadRequestError("endDate is required")
 
     project = await service.create_project(
         name=name.strip(),
         description=str(description),
         color_code=color_code,
+        team_id=team_id,
+        leader_id=leader_id,
+        start_date=start_date,
+        end_date=end_date,
+        content=content if isinstance(content, str) else None,
+        parent_id=parent_id if isinstance(parent_id, int) else None,
+        external_task_id=external_task_id if isinstance(external_task_id, int) else None,
+        github_repo=github_repo if isinstance(github_repo, str) else None,
     )
     return {
-        "code": 201,
-        "message": "Created",
+        "code": 200,
+        "message": "OK",
         "data": {"project": _project_to_api_model(project)},
     }
 
@@ -198,7 +232,7 @@ async def get_project_members(
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = (project_id, current_user_id)
+    _ = (project_id, auth_user)
     members: list[dict] = []
     page = {
         "pageStart": page_start or "",
@@ -235,7 +269,7 @@ async def add_project_member(
     payload: dict,
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = (project_id, current_user_id)
+    _ = (project_id, auth_user)
     user_id = payload.get("userId")
     role = payload.get("role") or "MEMBER"
     notes = payload.get("notes")
@@ -266,5 +300,5 @@ async def delete_project_member(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> None:
-    _ = (project_id, user_id, current_user_id)
+    _ = (project_id, user_id, auth_user)
     return None

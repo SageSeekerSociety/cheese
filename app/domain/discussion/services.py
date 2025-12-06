@@ -91,12 +91,13 @@ class DiscussionService:
         include_subs: bool,
         with_reactions: bool,
     ) -> tuple[list[dict], dict]:
-        rows, page = await self._repo.list(
+        offset = page_start or 0
+        rows, total = await self._repo.list(
             model_type=model_type,
             model_id=model_id,
             parent_id=parent_id,
             limit=page_size,
-            offset=page_start or 0,
+            offset=offset,
             sort_by=sort_by,
             sort_order=sort_order,
         )
@@ -106,6 +107,16 @@ class DiscussionService:
             include_subs=include_subs,
             with_reactions=with_reactions,
         )
+        returned = len(dtos)
+        has_more = offset + returned < total
+        next_start = offset + returned if has_more and returned > 0 else None
+        page = {
+            "pageStart": offset,
+            "pageSize": returned,
+            "hasMore": has_more,
+            "nextStart": next_start,
+            "total": total,
+        }
         return dtos, page
 
     async def delete_discussion(self, discussion_id: int) -> None:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Select, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.discussion.models import Discussion, DiscussionReaction, ReactionType
+from app.domain.discussion.models import Discussion, DiscussionMentionedUser, DiscussionReaction, ReactionType
 
 
 class DiscussionRepository:
@@ -22,20 +22,28 @@ class DiscussionRepository:
         parent_id: int | None,
         mentioned_user_ids: list[int],
     ) -> Discussion:
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
+        content_json = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": content}]}]}
         entity = Discussion(
             model_type=model_type,
             model_id=model_id,
             sender_id=sender_id,
-            content=content,
+            content=content_json,
             parent_id=parent_id,
-            mentioned_user_ids=mentioned_user_ids,
             created_at=now,
             updated_at=now,
             deleted_at=None,
         )
         self._session.add(entity)
         await self._session.flush()
+
+        for uid in mentioned_user_ids:
+            mention = DiscussionMentionedUser(discussion_id=entity.id, user_id=uid)
+            self._session.add(mention)
+        if mentioned_user_ids:
+            await self._session.flush()
+
+        entity.mentioned_user_ids = mentioned_user_ids
         return entity
 
     async def get_by_id(self, discussion_id: int) -> Discussion | None:
@@ -44,7 +52,17 @@ class DiscussionRepository:
             Discussion.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        entity = result.scalar_one_or_none()
+        if entity is not None:
+            entity.mentioned_user_ids = await self._load_mentioned_user_ids(entity.id)
+        return entity
+
+    async def _load_mentioned_user_ids(self, discussion_id: int) -> list[int]:
+        stmt = select(DiscussionMentionedUser.user_id).where(
+            DiscussionMentionedUser.discussion_id == discussion_id
+        )
+        result = await self._session.execute(stmt)
+        return [row[0] for row in result.all()]
 
     async def list(
         self,
@@ -77,6 +95,9 @@ class DiscussionRepository:
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
 
+        for row in rows:
+            row.mentioned_user_ids = await self._load_mentioned_user_ids(row.id)
+
         count_stmt = select(func.count(Discussion.id)).where(Discussion.deleted_at.is_(None))
         if model_type is not None:
             count_stmt = count_stmt.where(Discussion.model_type == model_type)
@@ -95,7 +116,7 @@ class DiscussionRepository:
         entity = await self.get_by_id(discussion_id)
         if entity is None:
             return False
-        entity.deleted_at = datetime.now(timezone.utc)
+        entity.deleted_at = datetime.utcnow()
         await self._session.flush()
         return True
 
@@ -134,7 +155,7 @@ class ReactionTypeRepository:
         result = await self._session.execute(stmt)
         if int(result.scalar_one() or 0) > 0:
             return
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         defaults = [
             ReactionType(code="LIKE", name="Like", description="thumbs up", display_order=0, is_active=True, created_at=now, updated_at=now, deleted_at=None),
             ReactionType(code="CHEERS", name="Cheers", description="celebration", display_order=1, is_active=True, created_at=now, updated_at=now, deleted_at=None),
@@ -176,7 +197,7 @@ class DiscussionReactionRepository:
             user_id=user_id,
             reaction_type_id=reaction_type_id,
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         if existing is not None:
             existing.deleted_at = now
             existing.updated_at = now

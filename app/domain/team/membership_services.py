@@ -41,9 +41,9 @@ class TeamMembershipService:
         new_status: ApplicationStatus,
         processor_id: int,
     ) -> TeamMembershipApplication:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         app.status = new_status.value
-        app.processed_by = processor_id
+        app.processed_by_id = processor_id
         app.processed_at = now
         app.updated_at = now
         await self._app_repo.save(app)
@@ -62,7 +62,7 @@ class TeamMembershipService:
 
         await self._validate_user_can_apply_or_be_invited(user_id, team_id)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         app = TeamMembershipApplication(
             user_id=user_id,
             team_id=team_id,
@@ -71,7 +71,7 @@ class TeamMembershipService:
             status=ApplicationStatus.PENDING.value,
             role="MEMBER",
             message=message or "",
-            processed_by=None,
+            processed_by_id=None,
             processed_at=None,
             created_at=now,
             updated_at=now,
@@ -129,7 +129,7 @@ class TeamMembershipService:
 
         await self._validate_user_can_apply_or_be_invited(user_id_to_invite, team_id)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         app = TeamMembershipApplication(
             user_id=user_id_to_invite,
             team_id=team_id,
@@ -138,7 +138,7 @@ class TeamMembershipService:
             status=ApplicationStatus.PENDING.value,
             role=("OWNER" if role == TeamMemberRole.OWNER else "ADMIN" if role == TeamMemberRole.ADMIN else "MEMBER"),
             message=message or "",
-            processed_by=None,
+            processed_by_id=None,
             processed_at=None,
             created_at=now,
             updated_at=now,
@@ -184,8 +184,15 @@ class TeamMembershipService:
 
         initiator_id = app.initiator_id
 
+        role_mapping = {
+            "OWNER": TeamMemberRole.OWNER,
+            "ADMIN": TeamMemberRole.ADMIN,
+            "MEMBER": TeamMemberRole.MEMBER,
+        }
+        member_role = role_mapping.get(app.role, TeamMemberRole.MEMBER)
+
         await self._update_status(app, ApplicationStatus.ACCEPTED, processor_id=user_id)
-        await self._team_repo.add_member(team_id, user_id, TeamMemberRole.MEMBER)
+        await self._team_repo.add_member(team_id, user_id, member_role)
 
         payload: dict[str, Any] = {
             "accepter": {"type": "user", "id": str(user_id)},

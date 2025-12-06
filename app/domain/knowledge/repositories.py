@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Select, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,10 +27,10 @@ class KnowledgeRepository:
         created_by: int,
         labels: list[str] | None,
     ) -> Knowledge:
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         knowledge = Knowledge(
             name=name,
-            description=description,
+            description=description or "",
             type=type_,
             content=content,
             team_id=team_id,
@@ -71,7 +71,7 @@ class KnowledgeRepository:
         entity = await self.get_by_id(knowledge_id)
         if entity is None:
             return False
-        entity.deleted_at = datetime.now(timezone.utc)
+        entity.deleted_at = datetime.utcnow()
         await self._session.flush()
         return True
 
@@ -92,7 +92,7 @@ class KnowledgeRepository:
             entity.content = content
         if project_id is not None:
             entity.project_id = project_id
-        entity.updated_at = datetime.now(timezone.utc)
+        entity.updated_at = datetime.utcnow()
         self._session.add(entity)
         await self._session.flush()
         return entity
@@ -248,7 +248,7 @@ class KnowledgeRepository:
         result = await self._session.execute(stmt)
         if result.scalar_one_or_none() is not None:
             raise ValueError("Already upvoted")
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         upvote = KnowledgeUpvote(
             knowledge_id=knowledge_id,
             user_id=user_id,

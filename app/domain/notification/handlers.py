@@ -44,7 +44,7 @@ class InAppNotificationHandler:
         if not deliveries:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         to_persist: list[Notification] = []
         for delivery in deliveries:
             if delivery.is_aggregated_finalization:

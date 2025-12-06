@@ -16,11 +16,31 @@ class ProjectService:
         name: str,
         description: str,
         color_code: str,
+        team_id: int,
+        leader_id: int,
+        start_date: int,
+        end_date: int,
+        content: str | None = None,
+        parent_id: int | None = None,
+        external_task_id: int | None = None,
+        github_repo: str | None = None,
     ) -> Project:
+        from datetime import datetime, timezone
+
+        start_dt = datetime.fromtimestamp(start_date / 1000, tz=timezone.utc)
+        end_dt = datetime.fromtimestamp(end_date / 1000, tz=timezone.utc)
         return await self._repo.create_project(
             name=name,
             description=description,
             color_code=color_code,
+            team_id=team_id,
+            leader_id=leader_id,
+            start_date=start_dt,
+            end_date=end_dt,
+            content=content,
+            parent_id=parent_id,
+            external_task_id=external_task_id,
+            github_repo=github_repo,
         )
 
     async def get_projects_by_ids(self, ids: Sequence[int]) -> dict[int, Project]:

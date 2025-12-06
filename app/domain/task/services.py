@@ -154,8 +154,6 @@ class TaskMembershipService:
         remark: str | None,
     ) -> TaskMembership:
         """Create a new TaskMembership row with扩展校验（人数上限、报名窗口、实名等）。"""
-        if (email is None or email.strip() == "") and (phone is None or phone.strip() == ""):
-            raise BadRequestError("Either email or phone must be provided.")
 
         # 参与人数上限校验
         auto_rejected = False
@@ -169,12 +167,8 @@ class TaskMembershipService:
                 else:
                     raise BadRequestError("Task participant limit reached.")
 
-        # 报名窗口校验
-        now = datetime.now(timezone.utc)
-        if task.registration_start_at is not None and now < task.registration_start_at:
-            raise BadRequestError("Registration has not started yet.")
-        if task.registration_deadline is not None and now > task.registration_deadline:
-            raise BadRequestError("Registration deadline has passed.")
+        # 报名窗口校验（已移除 registration_start_at 和 registration_deadline）
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # 已存在参与记录则拒绝
         existing = await self.get_membership_by_task_and_member(
@@ -205,7 +199,7 @@ class TaskMembershipService:
         return await self._repo.save(membership)
 
     async def soft_delete_membership(self, membership: TaskMembership) -> None:
-        membership.deleted_at = datetime.now(timezone.utc)
+        membership.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await self._repo.save(membership)
 
     async def update_membership(
@@ -276,7 +270,7 @@ class TaskMembershipService:
         # TaskMembership 目前模型中不包含 rejectReason 等附加字段，仅在 Task 上维护，故此处忽略。
         _ = reject_reason
 
-        membership.updated_at = datetime.now(timezone.utc)
+        membership.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         return await self._repo.save(membership)
 
     async def get_participation_eligibility(
@@ -295,14 +289,10 @@ class TaskMembershipService:
 
         is_task_approved = task.approved == 0
 
-        # 报名窗口检查（通用）
-        now = datetime.now(timezone.utc)
-        registration_not_started = (
-            task.registration_start_at is not None and now < task.registration_start_at
-        )
-        registration_closed = (
-            task.registration_deadline is not None and now > task.registration_deadline
-        )
+        # 报名窗口检查（已移除 registration_start_at 和 registration_deadline）
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        registration_not_started = False
+        registration_closed = False
 
         # USER 类型：只返回 user eligibility，teams 为 null。
         if task.submitter_type == 0:
@@ -885,7 +875,7 @@ class TaskSubmissionReviewService:
             review.score = score
         if comment is not None:
             review.comment = comment
-        review.updated_at = datetime.now(timezone.utc)
+        review.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await self._review_repo.save(review)
         await self._maybe_award_rank(
             submission_id=submission_id,

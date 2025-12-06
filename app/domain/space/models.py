@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Integer, Sequence, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from enum import Enum
+
+
+space_seq = Sequence("space_seq")
+space_categories_seq = Sequence("space_categories_seq")
+space_user_rank_seq = Sequence("space_user_rank_seq")
+space_admin_relation_seq = Sequence("space_admin_relation_seq")
 
 
 class Base(DeclarativeBase):
@@ -15,7 +21,7 @@ class Base(DeclarativeBase):
 class Space(Base):
     __tablename__ = "space"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, space_seq, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     intro: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
@@ -46,8 +52,8 @@ class Space(Base):
 class SpaceCategory(Base):
     __tablename__ = "space_categories"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    space_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    id: Mapped[int] = mapped_column(BigInteger, space_categories_seq, primary_key=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     display_order: Mapped[int] = mapped_column(
@@ -64,9 +70,9 @@ class SpaceCategory(Base):
 class SpaceUserRank(Base):
     __tablename__ = "space_user_rank"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    space_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    id: Mapped[int] = mapped_column(BigInteger, space_user_rank_seq, primary_key=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     created_at: Mapped[datetime] = mapped_column(nullable=False)
@@ -74,18 +80,18 @@ class SpaceUserRank(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
-class SpaceAdminRole(str, Enum):
-    OWNER = "OWNER"
-    ADMIN = "ADMIN"
+class SpaceAdminRole(int, Enum):
+    OWNER = 0
+    ADMIN = 1
 
 
 class SpaceAdminRelation(Base):
     __tablename__ = "space_admin_relation"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    space_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    id: Mapped[int] = mapped_column(BigInteger, space_admin_relation_seq, primary_key=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    role: Mapped[str] = mapped_column(String(32), nullable=False, default=SpaceAdminRole.ADMIN.value)
+    role: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)

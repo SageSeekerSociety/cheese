@@ -85,7 +85,7 @@ def _application_to_api_model(app) -> dict:
         "status": app.status,
         "role": app.role,
         "message": app.message,
-        "processedBy": app.processed_by,
+        "processedBy": app.processed_by_id,
         "processedAt": int(app.processed_at.timestamp() * 1000) if app.processed_at else None,
         "createdAt": int(app.created_at.timestamp() * 1000) if app.created_at else None,
     }
@@ -108,21 +108,6 @@ def _parse_role(role_value: str | None, *, allow_owner: bool = False) -> int:
     if mapped is None:
         raise BadRequestError("Invalid role value")
     return mapped
-
-
-@router.get(
-    "/{teamId}",
-    summary="Query Team",
-)
-async def get_team(
-    team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    service: TeamService = Depends(get_team_service),
-) -> dict:
-    team = await service.get_team(team_id=team_id)
-    if team is None:
-        raise NotFoundError("Resource team not found", data={"type": "team", "id": team_id})
-
-    return {"code": 200, "message": "OK", "data": {"team": _team_to_api_model(team)}}
 
 
 @router.get(
@@ -168,6 +153,21 @@ async def get_my_teams(
         "message": "OK",
         "data": {"teams": items},
     }
+
+
+@router.get(
+    "/{teamId}",
+    summary="Query Team",
+)
+async def get_team(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    service: TeamService = Depends(get_team_service),
+) -> dict:
+    team = await service.get_team(team_id=team_id)
+    if team is None:
+        raise NotFoundError("Resource team not found", data={"type": "team", "id": team_id})
+
+    return {"code": 200, "message": "OK", "data": {"team": _team_to_api_model(team)}}
 
 
 @router.get(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, BigInteger, Sequence
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -13,6 +13,9 @@ class Base(DeclarativeBase):
 
     NOTE: This may later be unified into a shared Base for all domains.
     """
+
+
+notification_seq = Sequence("notification_seq")
 
 
 class NotificationType(str, Enum):
@@ -52,14 +55,15 @@ class Notification(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    receiver_id: Mapped[int] = mapped_column("receiver_id", Integer, nullable=False)
+    id: Mapped[int] = mapped_column(BigInteger, notification_seq, primary_key=True)
+    receiver_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     type: Mapped[NotificationType] = mapped_column(
-        "type", String(length=64), nullable=False
+        "type", String(length=255), nullable=False
     )
 
     metadata_payload: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    content: Mapped[dict | None] = mapped_column("content", JSONB, nullable=True)
 
     read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -74,17 +78,11 @@ class Notification(Base):
     )
     finalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     def is_aggregation_active(self, now: datetime | None = None) -> bool:
         from datetime import datetime as _dt

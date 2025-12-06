@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, Sequence, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -10,13 +10,26 @@ class Base(DeclarativeBase):
     """Base declarative for project domain."""
 
 
+project_seq = Sequence("project_seq")
+
+
 class Project(Base):
     __tablename__ = "project"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, project_seq, primary_key=True, server_default=project_seq.next_value())
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     color_code: Mapped[str] = mapped_column("color_code", String(7), nullable=False)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
+
+    team_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    leader_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    external_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 

@@ -81,9 +81,10 @@ def _category_to_api_model(cat: SpaceCategory) -> dict:
 
 def _admin_to_api_model(rel: SpaceAdminRelation) -> dict:
     created_at_ms = int(rel.created_at.timestamp() * 1000) if rel.created_at else 0
+    role_name_map = {SpaceAdminRole.OWNER.value: "OWNER", SpaceAdminRole.ADMIN.value: "ADMIN"}
     return {
         "userId": rel.user_id,
-        "role": rel.role,
+        "role": role_name_map.get(rel.role, "ADMIN"),
         "createdAt": created_at_ms,
     }
 
@@ -184,7 +185,7 @@ async def create_space(
         description=description,
         avatar_id=avatar_id,
         enable_rank=enable_rank,
-        owner_id=current_user_id,
+        owner_id=auth_user.user_id,
         announcements=announcements,
         task_templates=task_templates,
     )
@@ -518,10 +519,10 @@ async def add_space_admin(
     if not isinstance(user_id, int) or user_id <= 0:
         raise BadRequestError("userId must be positive integer")
     role_value = (payload.get("role") or "ADMIN").upper()
-    try:
-        role = SpaceAdminRole(role_value)
-    except ValueError as exc:  # noqa: PERF203
-        raise BadRequestError(f"Invalid role: {role_value}") from exc
+    role_mapping = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
+    role = role_mapping.get(role_value)
+    if role is None:
+        raise BadRequestError(f"Invalid role: {role_value}")
     await service.add_admin(
         space_id=space_id,
         target_user_id=user_id,
@@ -560,5 +561,5 @@ async def patch_space_manager(
     payload: dict,
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = (space_id, user_id, payload, current_user_id)
+    _ = (space_id, user_id, payload, auth_user.user_id)
     return {"code": 200, "message": "OK"}

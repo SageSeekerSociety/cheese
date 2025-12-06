@@ -149,6 +149,7 @@ def _task_to_api_model(task: Task) -> dict:
     updated_at_ms = (
         int(task.updated_at.timestamp() * 1000) if task.updated_at is not None else 0
     )
+    approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
     return {
         "id": task.id,
         "name": task.name,
@@ -157,6 +158,7 @@ def _task_to_api_model(task: Task) -> dict:
         "defaultDeadline": task.default_deadline,
         "resubmittable": task.resubmittable,
         "editable": task.editable,
+        "approved": approved_map.get(task.approved, "NONE"),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         # Space / category / submitterType / participants 等复杂字段后续再补齐
@@ -326,19 +328,11 @@ async def create_task(
     deadline_dt: datetime | None = None
     if deadline_ms is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=timezone.utc)
+            deadline_dt = datetime.fromtimestamp(
+                int(deadline_ms) / 1000.0, tz=timezone.utc
+            ).replace(tzinfo=None)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
-
-    registration_start_ms = payload.get("registrationStartAt")
-    registration_start_dt: datetime | None = None
-    if registration_start_ms is not None:
-        try:
-            registration_start_dt = datetime.fromtimestamp(
-                int(registration_start_ms) / 1000.0, tz=timezone.utc
-            )
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
 
     require_real_name = bool(payload.get("requireRealName", False))
 
@@ -412,7 +406,6 @@ async def create_task(
         space_id=space_id,
         category_id=effective_category_id,
         submitter_type=submitter_type,
-        registration_start_at=registration_start_dt,
         deadline=deadline_dt,
         participant_limit=participant_limit,
         default_deadline=default_deadline,
@@ -427,7 +420,7 @@ async def create_task(
 
     # 简单设置话题关联：先不做复杂校验，仅插入关系行。
     if topics:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         for topic_id in topics:
             rel = TaskTopicsRelation(
                 task_id=task.id,
@@ -454,8 +447,8 @@ async def create_task(
 )
 async def create_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
-    member: Annotated[int, Query(description="Member ID (user or team)")],
-    payload: dict,
+    member: Annotated[int | None, Query(description="Member ID (user or team)")] = None,
+    payload: dict | None = None,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
@@ -466,7 +459,10 @@ async def create_task_participant(
     - member 由上游鉴权层保证是合法用户或团队；
     - 仅在 Python 侧做人数上限、重复参与与实名的基础校验。
     """
-    _ = auth_user  # 目前未接入细粒度权限
+    if payload is None:
+        payload = {}
+    if member is None:
+        member = auth_user.user_id
 
     task_repo = TaskRepository(session=db)
     task = await task_repo.get_by_id(task_id)
@@ -477,7 +473,9 @@ async def create_task_participant(
     deadline_dt: datetime | None = None
     if deadline_ms is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=timezone.utc)
+            deadline_dt = datetime.fromtimestamp(
+                int(deadline_ms) / 1000.0, tz=timezone.utc
+            ).replace(tzinfo=None)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
@@ -548,7 +546,9 @@ async def patch_task_participant(
     deadline_dt: datetime | None = None
     if deadline_ms is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=timezone.utc)
+            deadline_dt = datetime.fromtimestamp(
+                int(deadline_ms) / 1000.0, tz=timezone.utc
+            ).replace(tzinfo=None)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
@@ -759,23 +759,13 @@ async def patch_task(
     has_deadline = payload.get("hasDeadline")
     if deadline_ms is not None:
         try:
-            task.deadline = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=timezone.utc)
+            task.deadline = datetime.fromtimestamp(
+                int(deadline_ms) / 1000.0, tz=timezone.utc
+            ).replace(tzinfo=None)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
     if has_deadline is False:
         task.deadline = None
-
-    registration_start_ms = payload.get("registrationStartAt")
-    has_registration_start = payload.get("hasRegistrationStart")
-    if registration_start_ms is not None:
-        try:
-            task.registration_start_at = datetime.fromtimestamp(
-                int(registration_start_ms) / 1000.0, tz=timezone.utc
-            )
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
-    if has_registration_start is False:
-        task.registration_start_at = None
 
     participant_limit_raw = payload.get("participantLimit")
     has_participant_limit = payload.get("hasParticipantLimit")
@@ -867,7 +857,7 @@ async def patch_task(
                 continue
 
         # 软删除旧关系
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         rel_stmt = (
             select(TaskTopicsRelation)
             .where(
@@ -891,7 +881,7 @@ async def patch_task(
             )
             db.add(rel)
 
-    task.updated_at = datetime.now(timezone.utc)
+    task.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     task = await task_repo.save(task)
 
     return {
@@ -908,7 +898,7 @@ async def patch_task(
     summary="Enumerate Tasks",
 )
 async def get_tasks(
-    space: int = Query(..., description="Space ID"),
+    space: int = Query(..., alias="spaceId", description="Space ID"),
     categoryId: int | None = Query(default=None),
     approved: str | None = Query(default=None),
     owner: int | None = Query(default=None),
@@ -1030,7 +1020,7 @@ async def delete_task(
     if task is None:
         raise NotFoundError("Task not found")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     task.deleted_at = now
 
     memberships = await membership_repo.list_memberships_for_task(task_id=task_id, approved=None)
@@ -1124,7 +1114,9 @@ async def patch_task_membership_by_member(
     deadline_dt: datetime | None = None
     if deadline_ms is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=timezone.utc)
+            deadline_dt = datetime.fromtimestamp(
+                int(deadline_ms) / 1000.0, tz=timezone.utc
+            ).replace(tzinfo=None)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
@@ -1179,7 +1171,7 @@ async def resubmit_task(
 
     task.approved = 2  # ApproveType.NONE
     task.reject_reason = ""
-    task.updated_at = datetime.now(timezone.utc)
+    task.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     task = await task_repo.save(task)
 
     return {

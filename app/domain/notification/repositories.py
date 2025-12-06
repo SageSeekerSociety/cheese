@@ -15,7 +15,11 @@ class NotificationRepository:
 
     async def get_by_id_for_user(self, user_id: int, notification_id: int) -> Notification | None:
         stmt: Select[tuple[Notification]] = select(Notification).where(
-            and_(Notification.id == notification_id, Notification.receiver_id == user_id)
+            and_(
+                Notification.id == notification_id,
+                Notification.receiver_id == user_id,
+                Notification.deleted_at.is_(None),
+            )
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
@@ -147,7 +151,7 @@ class NotificationRepository:
         notification = await self.get_by_id_for_user(user_id=user_id, notification_id=notification_id)
         if notification is None:
             return False
-        notification.deleted_at = datetime.now(timezone.utc)
+        notification.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await self._session.flush()
         return True
 

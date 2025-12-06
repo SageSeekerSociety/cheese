@@ -88,7 +88,7 @@ async def list_knowledge(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
-    _ = current_user_id
+    _ = auth_user
     type_str: str | None = type.upper() if isinstance(type, str) else None
     if type_str is not None and type_str not in {"MATERIAL", "LINK", "TEXT", "CODE"}:
         raise BadRequestError(f"Invalid type: {type}")
@@ -103,7 +103,7 @@ async def list_knowledge(
 
     rows, total = await service.list(
         team_id=teamId,
-        user_id=current_user_id,
+        user_id=auth_user.user_id,
         project_id=projectId,
         type_=type_str,
         labels=labels,
@@ -137,7 +137,7 @@ async def get_knowledge_by_id(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
-    knowledge = await service.get(knowledge_id=knowledge_id, user_id=current_user_id)
+    knowledge = await service.get(knowledge_id=knowledge_id, user_id=auth_user.user_id)
     return {
         "code": 200,
         "message": "success",
@@ -157,7 +157,7 @@ async def patch_knowledge(
 ) -> dict:
     knowledge = await service.update(
         knowledge_id=knowledge_id,
-        user_id=current_user_id,
+        user_id=auth_user.user_id,
         name=payload.get("name"),
         description=payload.get("description"),
         content=payload.get("content"),
@@ -178,7 +178,7 @@ async def delete_knowledge(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
-    await service.delete(knowledge_id=knowledge_id, user_id=current_user_id)
+    await service.delete(knowledge_id=knowledge_id, user_id=auth_user.user_id)
     return {
         "code": 200,
         "message": "OK",
@@ -195,7 +195,7 @@ async def upvote_knowledge(
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     try:
-        knowledge = await service.upvote(knowledge_id=knowledge_id, user_id=current_user_id)
+        knowledge = await service.upvote(knowledge_id=knowledge_id, user_id=auth_user.user_id)
     except ValueError as exc:
         raise BadRequestError(str(exc)) from exc
     return {
@@ -214,7 +214,7 @@ async def remove_upvote_knowledge(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
-    knowledge = await service.remove_upvote(knowledge_id=knowledge_id, user_id=current_user_id)
+    knowledge = await service.remove_upvote(knowledge_id=knowledge_id, user_id=auth_user.user_id)
     return {
         "code": 200,
         "message": "success",

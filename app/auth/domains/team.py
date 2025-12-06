@@ -11,7 +11,7 @@ from app.auth.core import (
     Resource,
     Role,
 )
-from app.domain.team.models import TeamUserRelation
+from app.domain.team.models import TeamUserRelation, TeamMemberRole
 
 
 async def get_team_roles(
@@ -26,16 +26,16 @@ async def get_team_roles(
         TeamUserRelation.deleted_at.is_(None),
     )
     result = await db.execute(stmt)
-    role_str = result.scalar_one_or_none()
-    if role_str is None:
+    role_int = result.scalar_one_or_none()
+    if role_int is None:
         return set()
 
     role_mapping = {
-        "OWNER": Role.OWNER,
-        "ADMIN": Role.ADMIN,
-        "MEMBER": Role.MEMBER,
+        TeamMemberRole.OWNER: Role.OWNER,
+        TeamMemberRole.ADMIN: Role.ADMIN,
+        TeamMemberRole.MEMBER: Role.MEMBER,
     }
-    role = role_mapping.get(role_str.upper())
+    role = role_mapping.get(role_int)
     return {role} if role else set()
 
 

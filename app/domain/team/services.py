@@ -128,7 +128,7 @@ class TeamService:
             raise ForbiddenError("Only the team owner can disband a team")
 
         members = await self._repo.list_members_of_team(team_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         for rel in members:
             rel.deleted_at = now
             rel.updated_at = now
@@ -183,7 +183,7 @@ class TeamService:
             raise ForbiddenError("Only team owner can change member roles")
 
         relation.role = new_role
-        relation.updated_at = datetime.now(timezone.utc)
+        relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await self._repo._session.flush()
 
     async def transfer_team_owner(
@@ -202,10 +202,10 @@ class TeamService:
             raise NotFoundError("New owner must be an existing team member", data={"userId": new_owner_user_id})
 
         current_owner_relation.role = TeamMemberRole.ADMIN
-        current_owner_relation.updated_at = datetime.now(timezone.utc)
+        current_owner_relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         target_relation.role = TeamMemberRole.OWNER
-        target_relation.updated_at = datetime.now(timezone.utc)
+        target_relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await self._repo._session.flush()
 
     async def _get_team_or_error(self, team_id: int) -> Team:

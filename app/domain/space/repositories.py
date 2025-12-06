@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Select, and_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -227,7 +227,7 @@ class SpaceAdminRelationRepository:
         return list(result.scalars().all())
 
     async def remove_admin(self, relation: SpaceAdminRelation) -> None:
-        relation.deleted_at = relation.updated_at = datetime.now(timezone.utc)
+        relation.deleted_at = relation.updated_at = datetime.utcnow()
         await self._session.flush()
 
     async def get_owner(self, space_id: int) -> SpaceAdminRelation | None:

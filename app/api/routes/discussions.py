@@ -38,7 +38,7 @@ async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
     return build_discussion_service(db)
 
 
-@router.post("", summary="Create Discussion")
+@router.post("", summary="Create Discussion", status_code=201)
 async def create_discussion(
     payload: dict = Body(...),
     auth_user: AuthUserInfo = Depends(get_auth_user),
@@ -65,7 +65,7 @@ async def create_discussion(
         parent_id=parent_id,
         mentioned_user_ids=mentioned_ids,
     )
-    return {"code": 200, "message": "OK", "data": {"discussion": discussion}}
+    return {"code": 201, "message": "Created", "data": {"discussion": discussion}}
 
 
 @router.get("", summary="List Discussions")
@@ -112,7 +112,7 @@ async def get_discussion(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
-    discussion = await service.get_discussion(discussion_id, current_user_id)
+    discussion = await service.get_discussion(discussion_id, auth_user.user_id)
     return {"code": 200, "message": "OK", "data": {"discussion": discussion}}
 
 
@@ -124,7 +124,7 @@ async def patch_discussion(
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     _ = payload
-    discussion = await service.get_discussion(discussion_id, current_user_id)
+    discussion = await service.get_discussion(discussion_id, auth_user.user_id)
     return {"code": 200, "message": "OK", "data": {"discussion": discussion}}
 
 
@@ -157,15 +157,15 @@ async def list_sub_discussions(
     return {"code": 200, "message": "OK", "data": {"discussions": rows, "page": page}}
 
 
-@router.delete("/{discussionId}", summary="Delete Discussion")
+@router.delete("/{discussionId}", summary="Delete Discussion", status_code=204)
 async def delete_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
-) -> dict:
+) -> None:
     _ = auth_user
     await service.delete_discussion(discussion_id)
-    return {"code": 200, "message": "OK"}
+    return None
 
 
 @router.post(

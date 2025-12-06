@@ -69,18 +69,18 @@ class TeamMembershipApplication(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, team_membership_application_seq, primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    team_id: Mapped[int] = mapped_column(Integer, ForeignKey("team.id"), nullable=False)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("team.id"), nullable=False)
     initiator_id: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    type: Mapped[str] = mapped_column("type", String(length=32), nullable=False)
-    status: Mapped[str] = mapped_column("status", String(length=32), nullable=False, default="PENDING")
-    role: Mapped[str] = mapped_column("role", String(length=32), nullable=False, default="MEMBER")
+    type: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    status: Mapped[str] = mapped_column(String(length=255), nullable=False, default="PENDING")
+    role: Mapped[str] = mapped_column(String(length=255), nullable=False, default="MEMBER")
 
     message: Mapped[str | None] = mapped_column(String, nullable=True)
-    processed_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    processed_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
 

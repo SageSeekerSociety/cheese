@@ -318,7 +318,7 @@ class UserStatisticsRepository:
 
     async def count_knowledge_entries(self, user_id: int) -> int:
         stmt = select(func.count(Knowledge.id)).where(
-            Knowledge.created_by_id == user_id,
+            Knowledge.created_by == user_id,
             Knowledge.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)

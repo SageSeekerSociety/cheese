@@ -19,12 +19,28 @@ class ProjectRepository:
         name: str,
         description: str,
         color_code: str,
+        team_id: int,
+        leader_id: int,
+        start_date: datetime,
+        end_date: datetime,
+        content: str | None = None,
+        parent_id: int | None = None,
+        external_task_id: int | None = None,
+        github_repo: str | None = None,
     ) -> Project:
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         project = Project(
             name=name,
             description=description,
             color_code=color_code,
+            content=content or "",
+            team_id=team_id,
+            leader_id=leader_id,
+            parent_id=parent_id,
+            external_task_id=external_task_id,
+            github_repo=github_repo,
+            start_date=start_date,
+            end_date=end_date,
             archived=False,
             created_at=now,
             updated_at=now,
@@ -52,12 +68,12 @@ class ProjectRepository:
         return result.scalar_one_or_none()
 
     async def save(self, project: Project) -> Project:
-        project.updated_at = datetime.now(timezone.utc)
+        project.updated_at = datetime.utcnow()
         await self._session.flush()
         return project
 
     async def soft_delete(self, project: Project) -> None:
-        project.deleted_at = datetime.now(timezone.utc)
+        project.deleted_at = datetime.utcnow()
         await self._session.flush()
 
     async def list_projects(
