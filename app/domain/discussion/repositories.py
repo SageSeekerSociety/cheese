@@ -215,6 +215,26 @@ class DiscussionReactionRepository:
         await self._session.flush()
         return entity
 
+    async def remove(
+        self,
+        *,
+        discussion_id: int,
+        user_id: int,
+        reaction_type_id: int,
+    ) -> bool:
+        existing = await self.get_reaction(
+            discussion_id=discussion_id,
+            user_id=user_id,
+            reaction_type_id=reaction_type_id,
+        )
+        if existing is None:
+            return False
+        now = datetime.utcnow()
+        existing.deleted_at = now
+        existing.updated_at = now
+        await self._session.flush()
+        return True
+
     async def count_by_discussion(self, discussion_id: int) -> dict[int, int]:
         stmt = select(
             DiscussionReaction.reaction_type_id,

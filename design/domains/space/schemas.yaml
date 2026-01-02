@@ -1,0 +1,91 @@
+# Space Domain Schemas
+
+Space:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    name:
+      type: string
+    description:
+      type: string
+    avatarId:
+      type: integer
+      format: int64
+    created_at:
+      type: integer
+      format: int64
+    updated_at:
+      type: integer
+      format: int64
+    task_count:
+      type: integer
+      format: int64
+    member_count:
+      type: integer
+      format: int64
+    is_manager:
+      type: boolean
+
+SpaceCategory:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    name:
+      type: string
+    description:
+      type: string
+    space_id:
+      type: integer
+      format: int64
+    is_archived:
+      type: boolean
+    created_at:
+      type: integer
+      format: int64
+
+SpaceManager:
+  type: object
+  properties:
+    user:
+      $ref: '../user/schemas.yaml#/User'
+    added_at:
+      type: integer
+      format: int64
+
+CreateSpaceRequest:
+  type: object
+  properties:
+    name:
+      type: string
+    description:
+      type: string
+    avatarId:
+      type: integer
+      format: int64
+  required:
+    - name
+
+UpdateSpaceRequest:
+  type: object
+  properties:
+    name:
+      type: string
+    description:
+      type: string
+    avatarId:
+      type: integer
+      format: int64
+
+CreateCategoryRequest:
+  type: object
+  properties:
+    name:
+      type: string
+    description:
+      type: string
+  required:
+    - name

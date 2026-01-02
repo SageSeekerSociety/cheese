@@ -28,6 +28,10 @@ from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.services import UserAuthService, UserProfileService
 from app.domain.questions.repositories import QuestionRepository, QuestionTopicRepository
 from app.domain.answers.repositories import AnswerRepository
+from app.domain.passkey.repositories import PasskeyRepository
+from app.domain.passkey.services import PasskeyService
+from app.domain.oauth.repositories import OAuthConnectionRepository
+from app.domain.oauth.services import OAuthService
 
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -75,6 +79,20 @@ async def get_user_realname_service(
         profile_repo=profile_repo,
         realname_repo=realname_repo,
     )
+
+
+async def get_passkey_service(
+    db=Depends(get_db),
+) -> PasskeyService:
+    repo = PasskeyRepository(session=db)
+    return PasskeyService(repo=repo)
+
+
+async def get_oauth_service(
+    db=Depends(get_db),
+) -> OAuthService:
+    repo = OAuthConnectionRepository(session=db)
+    return OAuthService(repo=repo)
 
 
 @router.post(
@@ -1656,7 +1674,7 @@ async def forgot_password(
         token = await reset_service.create_reset_token(user.id, email)
 
         sender = get_email_sender()
-        reset_url = f"{settings.legacy_url}/reset-password?token={token}"
+        reset_url = f"{settings.frontend_url}/reset-password?token={token}"
         subject = "[Cheese] Password Reset Request"
         body_html = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -1756,7 +1774,7 @@ async def recover_password_request(
         token = await reset_service.create_reset_token(user.id, email)
 
         sender = get_email_sender()
-        reset_url = f"{settings.legacy_url}/reset-password?token={token}"
+        reset_url = f"{settings.frontend_url}/reset-password?token={token}"
         subject = "[Cheese] Password Reset Request"
         body_html = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -2171,3 +2189,447 @@ async def get_user_2fa_status(
         }
     finally:
         await redis.aclose()
+
+
+@router.post(
+    "/auth/passkey/register/challenge",
+    summary="Generate passkey registration challenge",
+)
+async def passkey_register_challenge(
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    passkey_service: PasskeyService = Depends(get_passkey_service),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    import json
+
+    user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
+
+    options = await passkey_service.generate_registration_options(
+        user_id=auth_user.user_id,
+        username=user.username,
+        display_name=profile.nickname if profile else user.username,
+    )
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        challenge_key = f"passkey:challenge:{auth_user.user_id}:{options['challenge']}"
+        await redis.set(challenge_key, json.dumps({"userId": auth_user.user_id}), ex=300)
+    finally:
+        await redis.aclose()
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"options": options},
+    }
+
+
+@router.post(
+    "/auth/passkey/register/verify",
+    summary="Verify passkey registration",
+)
+async def passkey_register_verify(
+    payload: dict,
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    passkey_service: PasskeyService = Depends(get_passkey_service),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    import json
+
+    challenge = payload.get("challenge")
+    credential = payload.get("credential")
+
+    if not challenge or not credential:
+        raise BadRequestError("challenge and credential are required")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        challenge_key = f"passkey:challenge:{auth_user.user_id}:{challenge}"
+        stored = await redis.get(challenge_key)
+        if not stored:
+            raise BadRequestError("Invalid or expired challenge")
+        await redis.delete(challenge_key)
+    finally:
+        await redis.aclose()
+
+    result = await passkey_service.verify_registration(
+        user_id=auth_user.user_id,
+        challenge=challenge,
+        credential=credential,
+    )
+
+    return {
+        "code": 201,
+        "message": "Passkey registered successfully.",
+        "data": {"passkey": result},
+    }
+
+
+@router.post(
+    "/auth/passkey/authenticate/challenge",
+    summary="Generate passkey authentication challenge",
+)
+async def passkey_authenticate_challenge(
+    payload: dict = Body(default={}),
+    passkey_service: PasskeyService = Depends(get_passkey_service),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    import json
+
+    user_id = payload.get("userId")
+
+    options = await passkey_service.generate_authentication_options(
+        user_id=user_id,
+    )
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        challenge_key = f"passkey:auth_challenge:{options['challenge']}"
+        data = {"userId": user_id} if user_id else {}
+        await redis.set(challenge_key, json.dumps(data), ex=300)
+    finally:
+        await redis.aclose()
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"options": options},
+    }
+
+
+@router.post(
+    "/auth/passkey/authenticate/verify",
+    summary="Verify passkey authentication",
+)
+async def passkey_authenticate_verify(
+    payload: dict,
+    response: Response,
+    passkey_service: PasskeyService = Depends(get_passkey_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    from app.domain.user.login_security import SessionManager
+
+    challenge = payload.get("challenge")
+    credential = payload.get("credential")
+
+    if not challenge or not credential:
+        raise BadRequestError("challenge and credential are required")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        challenge_key = f"passkey:auth_challenge:{challenge}"
+        stored = await redis.get(challenge_key)
+        if not stored:
+            raise BadRequestError("Invalid or expired challenge")
+        await redis.delete(challenge_key)
+    finally:
+        await redis.aclose()
+
+    user_id = await passkey_service.verify_authentication(
+        challenge=challenge,
+        credential=credential,
+    )
+
+    user, profile = await auth_service.get_user_with_profile(user_id)
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        session_manager = SessionManager(redis)
+        session_id = await session_manager.create_session(
+            user_id=user_id,
+            ip_address="",
+            user_agent="passkey",
+        )
+    finally:
+        await redis.aclose()
+
+    access_token = create_access_token(user_id)
+    refresh_token = create_refresh_token(user_id)
+
+    response.set_cookie(
+        "REFRESH_TOKEN",
+        refresh_token,
+        httponly=True,
+        samesite="lax",
+        path="/users/auth",
+    )
+    response.set_cookie(
+        "SESSION_ID",
+        session_id,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+
+    user_dto = await auth_service.build_user_dto(
+        user=user,
+        profile=profile,
+        viewer_id=user_id,
+    )
+    return {
+        "code": 201,
+        "message": "Login successfully.",
+        "data": {
+            "user": user_dto,
+            "accessToken": access_token,
+            "sessionId": session_id,
+        },
+    }
+
+
+@router.get(
+    "/{userId}/passkeys",
+    summary="List user passkeys",
+)
+async def list_passkeys(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    passkey_service: PasskeyService = Depends(get_passkey_service),
+) -> dict:
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can view their passkeys.")
+
+    passkeys = await passkey_service.list_passkeys(user_id)
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"passkeys": passkeys},
+    }
+
+
+@router.delete(
+    "/{userId}/passkeys/{credentialId}",
+    summary="Delete a passkey",
+)
+async def delete_passkey(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    credential_id: Annotated[str, Path(alias="credentialId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    passkey_service: PasskeyService = Depends(get_passkey_service),
+) -> dict:
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can delete their passkeys.")
+
+    deleted = await passkey_service.delete_passkey(user_id, credential_id)
+
+    if not deleted:
+        raise NotFoundError("Passkey not found")
+
+    return {
+        "code": 200,
+        "message": "Passkey deleted successfully.",
+    }
+
+
+@router.get(
+    "/auth/oauth/providers",
+    summary="List available OAuth providers",
+)
+async def get_oauth_providers(
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> dict:
+    providers = oauth_service.get_providers_config()
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"providers": providers},
+    }
+
+
+@router.get(
+    "/auth/oauth/login/{providerId}",
+    summary="Get OAuth authorization URL",
+)
+async def get_oauth_login_url(
+    provider_id: Annotated[str, Path(alias="providerId")],
+    redirect: str | None = Query(default=None),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> dict:
+    import secrets
+
+    state = secrets.token_urlsafe(32)
+
+    if redirect:
+        oauth_service.store_oauth_state(state, {"redirect": redirect})
+
+    try:
+        auth_url = oauth_service.generate_authorization_url(provider_id, state)
+    except NotFoundError:
+        raise NotFoundError(f"OAuth provider '{provider_id}' not found or not enabled")
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "authorizationUrl": auth_url,
+            "state": state,
+        },
+    }
+
+
+@router.get(
+    "/auth/oauth/callback/{providerId}",
+    summary="Handle OAuth callback",
+)
+async def handle_oauth_callback(
+    provider_id: Annotated[str, Path(alias="providerId")],
+    code: str = Query(...),
+    state: str | None = Query(default=None),
+    response: Response = None,
+    oauth_service: OAuthService = Depends(get_oauth_service),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    from app.core.config import settings
+
+    state_data = oauth_service.get_oauth_state(state) if state else None
+    redirect_url = state_data.get("redirect") if state_data else None
+
+    try:
+        access_token, user_info = await oauth_service.handle_callback(
+            provider_id=provider_id,
+            code=code,
+            state=state,
+        )
+    except Exception as e:
+        raise BadRequestError(f"OAuth authentication failed: {str(e)}")
+
+    existing = await oauth_service.get_connection_by_provider(
+        provider_id=provider_id,
+        provider_user_id=user_info.id,
+    )
+
+    if existing:
+        user_id = existing["userId"]
+        user, profile = await auth_service.get_user_with_profile(user_id)
+
+        access_token_jwt = create_access_token(user_id)
+        refresh_token = create_refresh_token(user_id)
+
+        response.set_cookie(
+            "REFRESH_TOKEN",
+            refresh_token,
+            httponly=True,
+            samesite="lax",
+            path="/users/auth",
+        )
+
+        user_dto = await auth_service.build_user_dto(
+            user=user,
+            profile=profile,
+            viewer_id=user_id,
+        )
+        return {
+            "code": 200,
+            "message": "Login successfully.",
+            "data": {
+                "user": user_dto,
+                "accessToken": access_token_jwt,
+                "isNewUser": False,
+                "redirectUrl": redirect_url,
+            },
+        }
+    else:
+        return {
+            "code": 200,
+            "message": "OAuth user info retrieved. Link to existing account or register.",
+            "data": {
+                "userInfo": {
+                    "providerId": provider_id,
+                    "providerUserId": user_info.id,
+                    "email": user_info.email,
+                    "name": user_info.name,
+                    "username": user_info.username,
+                },
+                "isNewUser": True,
+                "redirectUrl": redirect_url,
+            },
+        }
+
+
+@router.post(
+    "/auth/oauth/link",
+    summary="Link OAuth account to existing user",
+)
+async def link_oauth_account(
+    payload: dict,
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> dict:
+    provider_id = payload.get("providerId")
+    provider_user_id = payload.get("providerUserId")
+    raw_profile = payload.get("profile")
+
+    if not provider_id or not provider_user_id:
+        raise BadRequestError("providerId and providerUserId are required")
+
+    existing = await oauth_service.get_connection_by_provider(
+        provider_id=provider_id,
+        provider_user_id=provider_user_id,
+    )
+    if existing:
+        raise BadRequestError("This OAuth account is already linked to another user")
+
+    connection = await oauth_service.create_connection(
+        user_id=auth_user.user_id,
+        provider_id=provider_id,
+        provider_user_id=provider_user_id,
+        raw_profile=raw_profile,
+    )
+
+    return {
+        "code": 201,
+        "message": "OAuth account linked successfully.",
+        "data": {"connection": connection},
+    }
+
+
+@router.get(
+    "/{userId}/oauth-connections",
+    summary="List user OAuth connections",
+)
+async def list_oauth_connections(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> dict:
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can view their OAuth connections.")
+
+    connections = await oauth_service.list_user_connections(user_id)
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"connections": connections},
+    }
+
+
+@router.delete(
+    "/{userId}/oauth-connections/{connectionId}",
+    summary="Unbind OAuth connection",
+)
+async def delete_oauth_connection(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    connection_id: Annotated[int, Path(alias="connectionId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> dict:
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can unbind their OAuth connections.")
+
+    deleted = await oauth_service.delete_connection(connection_id, user_id)
+
+    if not deleted:
+        raise NotFoundError("OAuth connection not found")
+
+    return {
+        "code": 200,
+        "message": "OAuth connection removed successfully.",
+    }

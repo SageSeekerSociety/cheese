@@ -24,9 +24,9 @@ class EntityInfoResolver(Protocol):
 class TeamEntityResolver:
     """Resolve 'team' entities for notifications."""
 
-    def __init__(self, team_service: TeamService, legacy_url: str) -> None:
+    def __init__(self, team_service: TeamService, avatar_base_url: str) -> None:
         self._team_service = team_service
-        self._legacy_url = legacy_url.rstrip("/")
+        self._avatar_base_url = avatar_base_url.rstrip("/")
 
     def supported_entity_type(self) -> str:
         return "team"
@@ -56,7 +56,7 @@ class TeamEntityResolver:
 
             avatar_url = None
             if getattr(team, "avatar_id", None) is not None:
-                avatar_url = f"{self._legacy_url}/avatars/{team.avatar_id}"
+                avatar_url = f"{self._avatar_base_url}/avatars/{team.avatar_id}"
 
             result[raw_id] = ResolvedEntityInfoDTO(
                 id=str(team.id),
@@ -73,9 +73,9 @@ class TeamEntityResolver:
 class UserEntityResolver:
     """Resolve 'user' entities for notifications."""
 
-    def __init__(self, user_service: UserService, legacy_url: str) -> None:
+    def __init__(self, user_service: UserService, avatar_base_url: str) -> None:
         self._user_service = user_service
-        self._legacy_url = legacy_url.rstrip("/")
+        self._avatar_base_url = avatar_base_url.rstrip("/")
 
     def supported_entity_type(self) -> str:
         return "user"
@@ -103,7 +103,7 @@ class UserEntityResolver:
                 result[raw_id] = None
                 continue
 
-            avatar_url = f"{self._legacy_url}/avatars/{profile.avatar_id}"
+            avatar_url = f"{self._avatar_base_url}/avatars/{profile.avatar_id}"
 
             result[raw_id] = ResolvedEntityInfoDTO(
                 id=str(uid),

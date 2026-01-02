@@ -45,6 +45,28 @@ class DiscussionReactionService:
         )
         return {"active": active, "summary": summary}
 
+    async def remove(
+        self,
+        *,
+        discussion_id: int,
+        user_id: int,
+        reaction_type_id: int,
+    ) -> dict:
+        await self.ensure_default_reaction_types()
+        reaction_type = await self._reaction_type_repo.get_by_id(reaction_type_id)
+        if reaction_type is None:
+            raise NotFoundError("reaction type not found", data={"id": reaction_type_id})
+        removed = await self._reaction_repo.remove(
+            discussion_id=discussion_id,
+            user_id=user_id,
+            reaction_type_id=reaction_type_id,
+        )
+        summary = await self.get_reaction_summary(
+            discussion_id=discussion_id,
+            current_user_id=user_id,
+        )
+        return {"removed": removed, "summary": summary}
+
     async def get_reaction_summary(
         self,
         *,

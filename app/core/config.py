@@ -10,8 +10,11 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Cheese Backend (Python)", alias="APP_NAME")
     environment: str = Field(default="development", alias="ENVIRONMENT")
 
-    # URL of legacy system (used for building asset links such as avatars)
-    legacy_url: str = Field(default="http://localhost:7777", alias="LEGACY_URL")
+    # Frontend URL (used for building links like password reset)
+    frontend_url: str = Field(default="http://localhost:5173", alias="FRONTEND_URL")
+
+    # Base URL for avatars (can be this backend or CDN)
+    avatar_base_url: str = Field(default="http://localhost:8081", alias="AVATAR_BASE_URL")
 
     # Database
     database_url: str = Field(
@@ -83,6 +86,20 @@ class Settings(BaseSettings):
     openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
     openai_max_tokens: int = Field(default=4096, alias="OPENAI_MAX_TOKENS")
     ai_daily_quota: float = Field(default=10.0, alias="AI_DAILY_QUOTA")
+
+    # WebAuthn / Passkey configuration
+    webauthn_rp_id: str = Field(default="localhost", alias="WEBAUTHN_RP_ID")
+    webauthn_rp_name: str = Field(default="Cheese Community", alias="WEBAUTHN_RP_NAME")
+    webauthn_origin: str = Field(default="http://localhost:5173", alias="WEBAUTHN_ORIGIN")
+
+    # OAuth configuration
+    oauth_enabled_providers: str = Field(default="", alias="OAUTH_ENABLED_PROVIDERS")
+    oauth_github_client_id: str = Field(default="", alias="OAUTH_GITHUB_CLIENT_ID")
+    oauth_github_client_secret: str = Field(default="", alias="OAUTH_GITHUB_CLIENT_SECRET")
+    oauth_github_redirect_url: str = Field(default="", alias="OAUTH_GITHUB_REDIRECT_URL")
+    oauth_google_client_id: str = Field(default="", alias="OAUTH_GOOGLE_CLIENT_ID")
+    oauth_google_client_secret: str = Field(default="", alias="OAUTH_GOOGLE_CLIENT_SECRET")
+    oauth_google_redirect_url: str = Field(default="", alias="OAUTH_GOOGLE_REDIRECT_URL")
 
 
 @lru_cache(maxsize=1)

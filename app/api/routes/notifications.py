@@ -38,11 +38,11 @@ async def get_notification_service(
     # Register entity resolvers (team, user, project)
     team_repo = TeamRepository(session=db)
     team_service = TeamService(team_repo)
-    team_resolver = TeamEntityResolver(team_service=team_service, legacy_url=settings.legacy_url)
+    team_resolver = TeamEntityResolver(team_service=team_service, avatar_base_url=settings.avatar_base_url)
 
     user_profile_repo = UserProfileRepository(session=db)
     user_service = UserService(user_profile_repo)
-    user_resolver = UserEntityResolver(user_service=user_service, legacy_url=settings.legacy_url)
+    user_resolver = UserEntityResolver(user_service=user_service, avatar_base_url=settings.avatar_base_url)
 
     project_repo = ProjectRepository(session=db)
     project_service = ProjectService(project_repo)

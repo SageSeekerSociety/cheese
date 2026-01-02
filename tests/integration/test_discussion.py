@@ -178,3 +178,56 @@ class TestDiscussionIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}"
+
+    def test_toggle_reaction(
+        self, setup_discussion: dict, api_client: httpx.Client
+    ):
+        creator = setup_discussion["creator"]
+        task_id = setup_discussion["task_id"]
+        create_resp = api_client.post(
+            "/discussions",
+            json={
+                "modelType": "task",
+                "modelId": task_id,
+                "content": "Reaction test",
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert create_resp.status_code == 201
+        discussion_id = create_resp.json()["data"]["discussion"]["id"]
+        resp = api_client.post(
+            f"/discussions/{discussion_id}/reactions/1",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 200, f"Toggle reaction failed: {resp.text}"
+        data = resp.json()["data"]
+        assert "active" in data and "summary" in data
+
+    def test_remove_reaction(
+        self, setup_discussion: dict, api_client: httpx.Client
+    ):
+        creator = setup_discussion["creator"]
+        task_id = setup_discussion["task_id"]
+        create_resp = api_client.post(
+            "/discussions",
+            json={
+                "modelType": "task",
+                "modelId": task_id,
+                "content": "Remove reaction test",
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert create_resp.status_code == 201
+        discussion_id = create_resp.json()["data"]["discussion"]["id"]
+        api_client.post(
+            f"/discussions/{discussion_id}/reactions/1",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        resp = api_client.delete(
+            f"/discussions/{discussion_id}/reactions/1",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 200, f"Remove reaction failed: {resp.text}"
+        data = resp.json()["data"]
+        assert "removed" in data and "summary" in data
+        assert data["removed"] is True

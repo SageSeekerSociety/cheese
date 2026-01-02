@@ -149,6 +149,19 @@ class DiscussionService:
             reaction_type_id=reaction_type_id,
         )
 
+    async def remove_reaction(
+        self,
+        *,
+        discussion_id: int,
+        reaction_type_id: int,
+        user_id: int,
+    ) -> dict:
+        return await self._reaction_service.remove(
+            discussion_id=discussion_id,
+            user_id=user_id,
+            reaction_type_id=reaction_type_id,
+        )
+
     async def _build_discussion_dtos(
         self,
         rows: Sequence,

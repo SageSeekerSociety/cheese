@@ -1,0 +1,132 @@
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: paradedb/paradedb:v0.18.8-pg16
+    command: ["-c", "shared_preload_libraries=pg_cron,pg_search"]
+    container_name: cheese_py_postgres
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=cheese
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "5432:5432"
+    networks:
+      - cheese_py_network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  postgres_test:
+    image: paradedb/paradedb:v0.18.8-pg16
+    command: ["-c", "shared_preload_libraries=pg_cron,pg_search"]
+    container_name: cheese_py_postgres_test
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=cheese_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "5433:5432"
+    networks:
+      - cheese_py_network
+    volumes:
+      - postgres_data_test:/var/lib/postgresql/data
+
+  # Redis (Valkey) for caching and sessions
+  valkey:
+    image: valkey/valkey:8.0.2
+    container_name: cheese_py_valkey
+    ports:
+      - "6379:6379"
+    networks:
+      - cheese_py_network
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  valkey_test:
+    image: valkey/valkey:8.0.2
+    container_name: cheese_py_valkey_test
+    ports:
+      - "6380:6379"
+    networks:
+      - cheese_py_network
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ElasticSearch (if needed for search features)
+  elasticsearch:
+    image: elasticsearch:8.18.1
+    container_name: cheese_py_elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ELASTIC_USERNAME=elastic
+      - ELASTIC_PASSWORD=elastic
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    ports:
+      - "9200:9200"
+    networks:
+      - cheese_py_network
+
+  # Python backend (this project)
+  cheese_py:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: cheese_py_backend
+    ports:
+      - "8081:8081"
+    environment:
+      - TZ=Asia/Shanghai
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/cheese
+      - REDIS_URL=redis://valkey:6379/0
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks:
+      - cheese_py_network
+
+networks:
+  cheese_py_network:
+    name: cheese_py_network
+
+volumes:
+  postgres_data:
+  postgres_data_test:
+  uploads:

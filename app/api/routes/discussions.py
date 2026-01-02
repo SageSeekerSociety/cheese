@@ -186,6 +186,24 @@ async def toggle_reaction(
     return {"code": 200, "message": "OK", "data": result}
 
 
+@router.delete(
+    "/{discussionId}/reactions/{reactionTypeId}",
+    summary="Remove Discussion Reaction",
+)
+async def remove_reaction(
+    discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
+    reaction_type_id: Annotated[int, Path(ge=1, alias="reactionTypeId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    service: DiscussionService = Depends(get_discussion_service),
+) -> dict:
+    result = await service.remove_reaction(
+        discussion_id=discussion_id,
+        reaction_type_id=reaction_type_id,
+        user_id=auth_user.user_id,
+    )
+    return {"code": 200, "message": "OK", "data": result}
+
+
 @router.get(
     "/reactions",
     summary="Get all reaction types",
