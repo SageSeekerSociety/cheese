@@ -94,8 +94,22 @@ class TestTaskIntegration:
         )
         assert response.status_code == 200, f"Failed: {response.text}"
         data = response.json()
-        assert data["data"]["task"]["name"] == task_setup["task_name"]
-        assert data["data"]["task"]["id"] > 0
+        task = data["data"]["task"]
+
+        assert task["id"] > 0
+        assert task["name"] == task_setup["task_name"]
+        assert task["intro"] == task_setup["task_intro"]
+        assert task["description"] == task_setup["task_description"]
+        assert task["submitterType"] == "USER"
+        assert task["resubmittable"] is True
+        assert task["editable"] is True
+        assert task["defaultDeadline"] == 30
+        assert task["deadline"] == task_setup["deadline_ms"]
+        assert task["approved"] == "NONE"
+        assert task["space"]["id"] == task_setup["space_id"]
+        assert task["category"]["id"] == task_setup["category_id"]
+        assert task["category"]["name"] is not None
+        assert task["creator"]["id"] is not None
 
     def test_get_task(self, api_client: httpx.Client, task_setup: dict) -> None:
         creator = task_setup["creator"]
@@ -122,8 +136,33 @@ class TestTaskIntegration:
         get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
         assert get_resp.status_code == 200
         data = get_resp.json()
-        assert data["data"]["task"]["id"] == task_id
-        assert data["data"]["task"]["name"] == task_setup["task_name"]
+        task = data["data"]["task"]
+
+        assert task["id"] == task_id
+        assert task["name"] == task_setup["task_name"]
+        assert task["intro"] == task_setup["task_intro"]
+        assert task["description"] == task_setup["task_description"]
+        assert task["submitterType"] == "USER"
+        assert task["resubmittable"] is True
+        assert task["editable"] is True
+        assert task["defaultDeadline"] == 30
+        assert task["approved"] == "NONE"
+        assert task["space"]["id"] == task_setup["space_id"]
+        assert task["category"]["id"] == task_setup["category_id"]
+        assert task["creator"]["id"] is not None
+
+        get_with_joinability = api_client.get(
+            f"/tasks/{task_id}",
+            params={"queryJoinability": "true"},
+            headers=headers,
+        )
+        assert get_with_joinability.status_code == 200
+        joinability_data = get_with_joinability.json()
+        task_with_joinability = joinability_data["data"]["task"]
+        assert "participationEligibility" in task_with_joinability
+        eligibility = task_with_joinability["participationEligibility"]
+        assert eligibility is not None
+        assert "user" in eligibility
 
     def test_update_task(self, api_client: httpx.Client, task_setup: dict) -> None:
         creator = task_setup["creator"]
@@ -144,7 +183,10 @@ class TestTaskIntegration:
             },
             headers=headers,
         )
-        task_id = create_resp.json()["data"]["task"]["id"]
+        created_task = create_resp.json()["data"]["task"]
+        task_id = created_task["id"]
+        original_intro = created_task["intro"]
+        original_description = created_task["description"]
 
         updated_name = f"{task_setup['task_name']} (Updated)"
         patch_resp = api_client.patch(
@@ -153,7 +195,16 @@ class TestTaskIntegration:
             headers=headers,
         )
         assert patch_resp.status_code == 200
-        assert patch_resp.json()["data"]["task"]["name"] == updated_name
+        updated_task = patch_resp.json()["data"]["task"]
+        assert updated_task["name"] == updated_name
+        assert updated_task["id"] == task_id
+        assert updated_task["intro"] == original_intro
+        assert updated_task["description"] == original_description
+
+        get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
+        assert get_resp.status_code == 200
+        get_task = get_resp.json()["data"]["task"]
+        assert get_task["name"] == updated_name
 
     def test_enumerate_tasks(self, api_client: httpx.Client, task_setup: dict) -> None:
         creator = task_setup["creator"]
@@ -182,8 +233,20 @@ class TestTaskIntegration:
             headers=headers,
         )
         assert list_resp.status_code == 200
-        task_ids = [t["id"] for t in list_resp.json()["data"]["tasks"]]
+        data = list_resp.json()
+        tasks = data["data"]["tasks"]
+        task_ids = [t["id"] for t in tasks]
+
         assert task_id in task_ids
+
+        matching_task = next((t for t in tasks if t["id"] == task_id), None)
+        assert matching_task is not None
+        assert matching_task["name"] == task_setup["task_name"]
+        assert matching_task["intro"] == task_setup["task_intro"]
+        assert matching_task["submitterType"] == "USER"
+        assert matching_task["approved"] == "NONE"
+        assert "creator" in matching_task
+        assert matching_task["creator"]["id"] is not None
 
     def test_approve_task(self, api_client: httpx.Client, task_setup: dict) -> None:
         creator = task_setup["creator"]
@@ -204,7 +267,9 @@ class TestTaskIntegration:
             },
             headers=headers,
         )
-        task_id = create_resp.json()["data"]["task"]["id"]
+        create_data = create_resp.json()
+        task_id = create_data["data"]["task"]["id"]
+        assert create_data["data"]["task"]["approved"] == "NONE"
 
         approve_resp = api_client.patch(
             f"/tasks/{task_id}",
@@ -212,7 +277,135 @@ class TestTaskIntegration:
             headers=headers,
         )
         assert approve_resp.status_code == 200
-        assert approve_resp.json()["data"]["task"].get("approved") == "APPROVED"
+        approve_data = approve_resp.json()
+        task = approve_data["data"]["task"]
+
+        assert task["approved"] == "APPROVED"
+        assert task["id"] == task_id
+        assert task["name"] == task_setup["task_name"]
+
+        get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
+        assert get_resp.status_code == 200
+        get_task = get_resp.json()["data"]["task"]
+        assert get_task["approved"] == "APPROVED"
+
+    def test_check_participation_eligibility_user_task(
+        self, api_client: httpx.Client, task_setup: dict
+    ) -> None:
+        creator = task_setup["creator"]
+        participant = task_setup["participant"]
+
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": task_setup["task_name"],
+                "intro": task_setup["task_intro"],
+                "description": task_setup["task_description"],
+                "space": task_setup["space_id"],
+                "categoryId": task_setup["category_id"],
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        api_client.patch(
+            f"/tasks/{task_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+
+        eligibility_resp = api_client.get(
+            f"/tasks/{task_id}",
+            params={"queryJoinability": "true"},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert eligibility_resp.status_code == 200
+        data = eligibility_resp.json()
+        task = data["data"]["task"]
+
+        assert "participationEligibility" in task
+        eligibility = task["participationEligibility"]
+        assert eligibility is not None
+
+        user_eligibility = eligibility.get("user")
+        assert user_eligibility is not None
+        assert "eligible" in user_eligibility
+        assert isinstance(user_eligibility["eligible"], bool)
+
+        if not user_eligibility["eligible"]:
+            assert "reasons" in user_eligibility
+            assert isinstance(user_eligibility["reasons"], list)
+
+    def test_check_participation_eligibility_team_task(
+        self, api_client: httpx.Client, task_setup: dict
+    ) -> None:
+        creator = task_setup["creator"]
+        participant = task_setup["participant"]
+
+        team_resp = api_client.post(
+            "/teams",
+            json={
+                "name": f"Test Team {task_setup['task_name']}",
+                "intro": "Test team intro",
+                "description": "Test team description",
+                "avatarId": 1,
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert team_resp.status_code in [200, 201], f"Team creation failed: {team_resp.text}"
+        team_id = team_resp.json()["data"]["team"]["id"]
+
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"{task_setup['task_name']} (TEAM)",
+                "intro": task_setup["task_intro"],
+                "description": task_setup["task_description"],
+                "space": task_setup["space_id"],
+                "categoryId": task_setup["category_id"],
+                "submitterType": "TEAM",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        api_client.patch(
+            f"/tasks/{task_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+
+        eligibility_resp = api_client.get(
+            f"/tasks/{task_id}",
+            params={"queryJoinability": "true"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert eligibility_resp.status_code == 200
+        data = eligibility_resp.json()
+        task = data["data"]["task"]
+
+        assert "participationEligibility" in task
+        eligibility = task["participationEligibility"]
+        assert eligibility is not None
+
+        teams_eligibility = eligibility.get("teams")
+        assert teams_eligibility is not None
+        assert isinstance(teams_eligibility, list)
+
+        if len(teams_eligibility) > 0:
+            for team_status in teams_eligibility:
+                assert "team" in team_status
+                assert "id" in team_status["team"]
+                assert "eligibility" in team_status
+                assert "eligible" in team_status["eligibility"]
+                assert isinstance(team_status["eligibility"]["eligible"], bool)
 
     def test_join_task(self, api_client: httpx.Client, task_setup: dict) -> None:
         creator = task_setup["creator"]
@@ -241,12 +434,32 @@ class TestTaskIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
 
+        pre_join_resp = api_client.get(
+            f"/tasks/{task_id}",
+            params={"queryJoinability": "true", "queryParticipation": "true"},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert pre_join_resp.status_code == 200
+        pre_join_task = pre_join_resp.json()["data"]["task"]
+        if "participation" in pre_join_task:
+            assert pre_join_task["participation"].get("hasParticipation") is False
+
         join_resp = api_client.post(
             f"/tasks/{task_id}/participants",
             json={},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
         assert join_resp.status_code == 200, f"Join failed: {join_resp.text}"
+
+        post_join_resp = api_client.get(
+            f"/tasks/{task_id}",
+            params={"queryParticipation": "true"},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert post_join_resp.status_code == 200
+        post_join_task = post_join_resp.json()["data"]["task"]
+        if "participation" in post_join_task:
+            assert post_join_task["participation"].get("hasParticipation") is True
 
         participants_resp = api_client.get(
             f"/tasks/{task_id}/participants",
@@ -306,12 +519,43 @@ class TestTaskIntegration:
         )
         task_id = create_resp.json()["data"]["task"]["id"]
 
+        api_client.patch(
+            f"/tasks/{task_id}",
+            json={"approved": "APPROVED"},
+            headers=headers,
+        )
+
+        participant = task_setup["participant"]
+        participant_headers = {"Authorization": f"Bearer {participant.token}"}
+        join_resp = api_client.post(
+            f"/tasks/{task_id}/participations/user",
+            json={},
+            headers=participant_headers,
+        )
+        assert join_resp.status_code == 200
+
         participants_resp = api_client.get(
             f"/tasks/{task_id}/participants", headers=headers
         )
         assert participants_resp.status_code == 200
         data = participants_resp.json()
         assert "participants" in data["data"]
+
+        participants = data["data"]["participants"]
+        assert isinstance(participants, list)
+        assert len(participants) > 0
+
+        participant_found = False
+        for p in participants:
+            assert "id" in p
+            assert "participant" in p
+            assert p["participant"]["id"] is not None
+            if "username" in p["participant"]:
+                assert isinstance(p["participant"]["username"], str)
+            if p["participant"].get("username") == participant.username:
+                participant_found = True
+
+        assert participant_found, "Joined participant should appear in participants list"
 
 
 class TestTaskEnumeration:
@@ -586,7 +830,14 @@ class TestTaskApprovalWorkflow:
             headers=headers,
         )
         assert disapprove_resp.status_code == 200
-        assert disapprove_resp.json()["data"]["task"]["approved"] == "DISAPPROVED"
+        disapproved_task = disapprove_resp.json()["data"]["task"]
+        assert disapproved_task["approved"] == "DISAPPROVED"
+        assert disapproved_task["id"] == task_id
+
+        get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
+        assert get_resp.status_code == 200
+        get_task = get_resp.json()["data"]["task"]
+        assert get_task["approved"] == "DISAPPROVED"
 
     def test_resubmit_task(
         self, api_client: httpx.Client, approval_setup: dict
@@ -789,6 +1040,11 @@ class TestParticipantManagement:
         participants = participants_resp.json()["data"]["participants"]
         assert len(participants) == 3
 
+        participant_ids = {p["participant"]["id"] for p in participants}
+        assert participant_setup["participant1"].user_id in participant_ids
+        assert participant_setup["participant2"].user_id in participant_ids
+        assert participant_setup["participant3"].user_id in participant_ids
+
     def test_approve_participant(
         self, api_client: httpx.Client, participant_setup: dict
     ) -> None:
@@ -889,7 +1145,6 @@ class TestParticipantManagement:
         assert none_resp.status_code == 200
         assert len(none_resp.json()["data"]["participants"]) == 1
 
-    @pytest.mark.xfail(reason="Bug: PATCH /tasks/{id}/participants/{id} may return 403")
     def test_update_participant_deadline(
         self, api_client: httpx.Client, participant_setup: dict
     ) -> None:
@@ -1496,7 +1751,6 @@ class TestTaskPermissions:
             "suffix": suffix,
         }
 
-    @pytest.mark.xfail(reason="Bug: Non-owner should get 403 when deleting task")
     def test_delete_task_forbidden_for_non_owner(
         self, api_client: httpx.Client, permission_setup: dict
     ) -> None:
@@ -1554,7 +1808,6 @@ class TestTaskPermissions:
         )
         assert delete_resp.status_code == 204
 
-    @pytest.mark.xfail(reason="Bug: Non-owner should get 403 when updating task")
     def test_update_task_forbidden_for_non_owner(
         self, api_client: httpx.Client, permission_setup: dict
     ) -> None:
@@ -1585,7 +1838,6 @@ class TestTaskPermissions:
         )
         assert update_resp.status_code == 403, f"Expected 403 Forbidden, got {update_resp.status_code}"
 
-    @pytest.mark.xfail(reason="Bug: Joining unapproved task should return 400")
     def test_join_unapproved_task_fails(
         self, api_client: httpx.Client, permission_setup: dict
     ) -> None:
@@ -1615,6 +1867,135 @@ class TestTaskPermissions:
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
         assert join_resp.status_code == 400, f"Expected 400, got {join_resp.status_code}"
+
+    def test_enumerate_unapproved_tasks_as_space_admin(
+        self, api_client: httpx.Client, permission_setup: dict
+    ) -> None:
+        """Space admin can enumerate unapproved tasks with approved=NONE."""
+        owner = permission_setup["owner"]
+
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Unapproved Enum Test ({permission_setup['suffix']})",
+                "intro": "Test intro",
+                "description": '{"type":"doc","content":[]}',
+                "space": permission_setup["space_id"],
+                "categoryId": permission_setup["category_id"],
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+            },
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert create_resp.status_code == 200
+
+        enum_resp = api_client.get(
+            "/tasks",
+            params={
+                "spaceId": permission_setup["space_id"],
+                "approved": "NONE",
+            },
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert enum_resp.status_code == 200, f"Expected 200, got {enum_resp.status_code}: {enum_resp.text}"
+        tasks = enum_resp.json()["data"]["tasks"]
+        assert len(tasks) >= 1
+
+    def test_enumerate_unapproved_tasks_fails_for_non_admin(
+        self, api_client: httpx.Client, permission_setup: dict
+    ) -> None:
+        """Non-admin cannot enumerate unapproved tasks with approved=NONE."""
+        owner = permission_setup["owner"]
+        other_user = permission_setup["other_user"]
+
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Unapproved Enum Fail Test ({permission_setup['suffix']})",
+                "intro": "Test intro",
+                "description": '{"type":"doc","content":[]}',
+                "space": permission_setup["space_id"],
+                "categoryId": permission_setup["category_id"],
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+            },
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert create_resp.status_code == 200
+
+        enum_resp = api_client.get(
+            "/tasks",
+            params={
+                "spaceId": permission_setup["space_id"],
+                "approved": "NONE",
+            },
+            headers={"Authorization": f"Bearer {other_user.token}"},
+        )
+        assert enum_resp.status_code == 403, f"Expected 403, got {enum_resp.status_code}: {enum_resp.text}"
+
+    def test_get_unapproved_task_as_space_admin(
+        self, api_client: httpx.Client, permission_setup: dict
+    ) -> None:
+        """Space admin can get an unapproved task."""
+        owner = permission_setup["owner"]
+
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Unapproved Get Admin Test ({permission_setup['suffix']})",
+                "intro": "Test intro",
+                "description": '{"type":"doc","content":[]}',
+                "space": permission_setup["space_id"],
+                "categoryId": permission_setup["category_id"],
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+            },
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        get_resp = api_client.get(
+            f"/tasks/{task_id}",
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert get_resp.status_code == 200, f"Expected 200, got {get_resp.status_code}: {get_resp.text}"
+        assert get_resp.json()["data"]["task"]["approved"] == "NONE"
+
+    def test_get_unapproved_task_fails_for_non_admin(
+        self, api_client: httpx.Client, permission_setup: dict
+    ) -> None:
+        """Non-admin cannot get an unapproved task."""
+        owner = permission_setup["owner"]
+        other_user = permission_setup["other_user"]
+
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Unapproved Get Fail Test ({permission_setup['suffix']})",
+                "intro": "Test intro",
+                "description": '{"type":"doc","content":[]}',
+                "space": permission_setup["space_id"],
+                "categoryId": permission_setup["category_id"],
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+            },
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        get_resp = api_client.get(
+            f"/tasks/{task_id}",
+            headers={"Authorization": f"Bearer {other_user.token}"},
+        )
+        assert get_resp.status_code == 403, f"Expected 403, got {get_resp.status_code}: {get_resp.text}"
 
 
 class TestTaskJoinedFilter:
@@ -1977,7 +2358,6 @@ class TestParticipantPermissions:
             "task_id": task_id,
         }
 
-    @pytest.mark.xfail(reason="Bug: Non-owner adding participant should return 403")
     def test_non_owner_add_participant_with_deadline(
         self, api_client: httpx.Client, perm_setup: dict
     ) -> None:
@@ -2376,23 +2756,59 @@ class TestCategoryDeletion:
             "empty_category_id": empty_category_id,
         }
 
-    @pytest.mark.skip(reason="Category deletion endpoint not implemented in Python")
     def test_delete_default_category_fails(
         self, api_client: httpx.Client, category_delete_setup: dict
     ) -> None:
-        pass
+        data = category_delete_setup
+        creator = data["creator"]
+        space_id = data["space_id"]
+        default_category_id = data["default_category_id"]
 
-    @pytest.mark.skip(reason="Category deletion endpoint not implemented in Python")
+        resp = api_client.delete(
+            f"/spaces/{space_id}/categories/{default_category_id}",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+
     def test_delete_category_with_tasks_fails(
         self, api_client: httpx.Client, category_delete_setup: dict
     ) -> None:
-        pass
+        data = category_delete_setup
+        creator = data["creator"]
+        space_id = data["space_id"]
+        custom_category_id = data["custom_category_id"]
 
-    @pytest.mark.skip(reason="Category deletion endpoint not implemented in Python")
+        if custom_category_id is None:
+            pytest.skip("Custom category was not created")
+
+        resp = api_client.delete(
+            f"/spaces/{space_id}/categories/{custom_category_id}",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+
     def test_delete_empty_category_succeeds(
         self, api_client: httpx.Client, category_delete_setup: dict
     ) -> None:
-        pass
+        data = category_delete_setup
+        creator = data["creator"]
+        space_id = data["space_id"]
+        empty_category_id = data["empty_category_id"]
+
+        if empty_category_id is None:
+            pytest.skip("Empty category was not created")
+
+        resp = api_client.delete(
+            f"/spaces/{space_id}/categories/{empty_category_id}",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+
+        get_resp = api_client.get(
+            f"/spaces/{space_id}/categories/{empty_category_id}",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert get_resp.status_code == 404, "Deleted category should return 404"
 
 
 class TestArchivedCategoryAndRejectReason:
@@ -2469,7 +2885,6 @@ class TestArchivedCategoryAndRejectReason:
             "suffix": suffix,
         }
 
-    @pytest.mark.xfail(reason="Archived category validation not implemented in Python")
     def test_create_task_in_archived_category_fails(
         self, api_client: httpx.Client, archived_category_setup: dict
     ) -> None:
@@ -2497,7 +2912,6 @@ class TestArchivedCategoryAndRejectReason:
         )
         assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
 
-    @pytest.mark.xfail(reason="List archived categories not implemented in Python")
     def test_list_categories_including_archived(
         self, api_client: httpx.Client, archived_category_setup: dict
     ) -> None:
@@ -2514,7 +2928,6 @@ class TestArchivedCategoryAndRejectReason:
         archived_ids = [c["id"] for c in categories if c.get("archivedAt") is not None]
         assert data["archived_category_id"] in archived_ids
 
-    @pytest.mark.xfail(reason="Reject reason not implemented in Python")
     def test_patch_reject_reason_fails_for_non_admin(
         self, api_client: httpx.Client, archived_category_setup: dict
     ) -> None:
@@ -2529,7 +2942,6 @@ class TestArchivedCategoryAndRejectReason:
         )
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
-    @pytest.mark.xfail(reason="Reject reason not implemented in Python")
     def test_patch_reject_reason_success_for_admin(
         self, api_client: httpx.Client, archived_category_setup: dict
     ) -> None:
@@ -2545,3 +2957,158 @@ class TestArchivedCategoryAndRejectReason:
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         task = resp.json()["data"]["task"]
         assert task.get("rejectReason") == "Needs more details"
+
+    def test_update_task_category_to_archived_fails(
+        self, api_client: httpx.Client, archived_category_setup: dict
+    ) -> None:
+        data = archived_category_setup
+        creator = data["creator"]
+        task_id = data["task_id"]
+        archived_category_id = data["archived_category_id"]
+
+        if archived_category_id is None:
+            pytest.skip("Could not create archived category")
+
+        resp = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"categoryId": archived_category_id},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+
+
+class TestRegistrationStartTime:
+    @pytest.fixture
+    def registration_start_setup(
+        self, user_client: UserCreator, api_client: httpx.Client
+    ) -> dict:
+        creator = user_client.create_user()
+        creator.token = user_client.login(api_client, creator.username, creator.password)
+
+        participant = user_client.create_user()
+        participant.token = user_client.login(
+            api_client, participant.username, participant.password
+        )
+
+        suffix = random.randint(10000000, 99999999)
+
+        space_resp = api_client.post(
+            "/spaces",
+            json={
+                "name": f"Registration Start Space ({suffix})",
+                "intro": "Space for registration start time tests",
+                "description": "Test description",
+                "avatarId": 1,
+                "announcements": [],
+                "taskTemplates": [],
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert space_resp.status_code == 201
+        space_data = space_resp.json()["data"]["space"]
+        space_id = space_data["id"]
+        default_category_id = space_data.get("defaultCategoryId")
+
+        registration_start_at = int(
+            (datetime.now(timezone.utc) + timedelta(days=2)).timestamp() * 1000
+        )
+        deadline_ms = int(
+            (datetime.now(timezone.utc) + timedelta(days=10)).timestamp() * 1000
+        )
+
+        return {
+            "creator": creator,
+            "participant": participant,
+            "space_id": space_id,
+            "category_id": default_category_id,
+            "registration_start_at": registration_start_at,
+            "deadline_ms": deadline_ms,
+            "suffix": suffix,
+        }
+
+    def test_registration_start_time_gates_participation(
+        self, api_client: httpx.Client, registration_start_setup: dict
+    ) -> None:
+        data = registration_start_setup
+        creator = data["creator"]
+        participant = data["participant"]
+
+        task_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Task with Registration Start ({data['suffix']})",
+                "intro": "Task with future registration start",
+                "description": '{"type":"doc","content":[]}',
+                "space": data["space_id"],
+                "categoryId": data["category_id"],
+                "submitterType": "USER",
+                "registrationStartAt": data["registration_start_at"],
+                "deadline": data["deadline_ms"],
+                "defaultDeadline": 30,
+                "resubmittable": True,
+                "editable": True,
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert task_resp.status_code == 200, f"Task creation failed: {task_resp.text}"
+        task_id = task_resp.json()["data"]["task"]["id"]
+
+        approve_resp = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert approve_resp.status_code == 200
+
+        eligibility_resp = api_client.get(
+            f"/tasks/{task_id}",
+            params={"queryJoinability": "true"},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert eligibility_resp.status_code == 200
+        task_data = eligibility_resp.json()["data"]["task"]
+        eligibility = task_data.get("participationEligibility")
+
+        assert eligibility is not None, "Participation eligibility should be present"
+        user_eligibility = eligibility.get("user")
+        assert user_eligibility is not None, "User eligibility should be available"
+        assert (
+            user_eligibility.get("eligible") is False
+        ), "User should be ineligible before registration start time"
+
+        reasons = user_eligibility.get("reasons", [])
+        has_registration_not_started = any(
+            r.get("code") == "REGISTRATION_NOT_STARTED" for r in reasons
+        )
+        assert has_registration_not_started, (
+            "Expected REGISTRATION_NOT_STARTED reason when start time is in the future"
+        )
+
+        clear_start_resp = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"hasRegistrationStart": False},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert clear_start_resp.status_code == 200
+        patched_task = clear_start_resp.json()["data"]["task"]
+        assert (
+            patched_task.get("registrationStartAt") is None
+        ), "Registration start should be cleared after patch"
+
+        post_eligibility_resp = api_client.get(
+            f"/tasks/{task_id}",
+            params={"queryJoinability": "true"},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
+        assert post_eligibility_resp.status_code == 200
+        post_task_data = post_eligibility_resp.json()["data"]["task"]
+        post_eligibility = post_task_data.get("participationEligibility")
+
+        assert post_eligibility is not None, "Eligibility should still be returned"
+        post_user_eligibility = post_eligibility.get("user")
+        assert (
+            post_user_eligibility is not None
+        ), "User eligibility should be available after clearing start"
+        assert (
+            post_user_eligibility.get("eligible") is True
+        ), "User should become eligible once registration start is cleared"

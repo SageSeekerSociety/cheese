@@ -84,7 +84,6 @@ class TestSpaceIntegration:
         assert data["id"] == space_id
         assert data["name"] == space_name
 
-    @pytest.mark.xfail(reason="Bug: Duplicate space name should return 409 Conflict")
     def test_create_space_with_existing_name_fails(
         self, setup_space: dict, api_client: httpx.Client
     ):
@@ -356,7 +355,6 @@ class TestSpaceCategories:
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         assert resp.json()["data"]["category"]["archivedAt"] is None
 
-    @pytest.mark.xfail(reason="Feature not implemented: listing categories doesn't exclude archived by default")
     def test_list_categories_excludes_archived(
         self, setup_space_with_category: dict, api_client: httpx.Client
     ):

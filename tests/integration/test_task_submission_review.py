@@ -174,7 +174,6 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["score"] == 5
         assert review["detail"]["comment"] == "Good job!"
 
-    @pytest.mark.xfail(reason="Permission check not implemented in Python backend yet")
     def test_create_review_forbidden_for_participant(
         self, setup_submission: dict, api_client: httpx.Client
     ):
@@ -190,7 +189,6 @@ class TestTaskSubmissionReviewIntegration:
         )
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
-    @pytest.mark.xfail(reason="Python backend returns 500 instead of 409 for duplicate review")
     def test_create_review_conflict_when_already_reviewed(
         self, setup_submission: dict, api_client: httpx.Client
     ):
@@ -266,7 +264,6 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["score"] == 4
         assert review["detail"]["comment"] == "Could be better."
 
-    @pytest.mark.xfail(reason="Permission check not implemented in Python backend yet")
     def test_update_review_forbidden_for_participant(
         self, setup_submission: dict, api_client: httpx.Client
     ):
@@ -373,7 +370,6 @@ class TestTaskSubmissionReviewIntegration:
         data = resp.json()["data"]
         assert data["submissions"] == []
 
-    @pytest.mark.xfail(reason="Permission check not implemented in Python backend yet")
     def test_delete_review_forbidden_for_participant(
         self, setup_submission: dict, api_client: httpx.Client
     ):
@@ -445,7 +441,6 @@ class TestTaskSubmissionReviewIntegration:
         assert len(submissions) == 1
         assert submissions[0]["review"]["reviewed"] is False
 
-    @pytest.mark.xfail(reason="Python backend returns 200 instead of 404 for second delete")
     def test_delete_review_not_found_when_already_deleted(
         self, setup_submission: dict, api_client: httpx.Client
     ):
@@ -661,7 +656,6 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["score"] == 10
         assert review["detail"]["comment"] == "Excellent work!"
 
-    @pytest.mark.xfail(reason="Get review after delete may not return 404")
     def test_get_review_not_found_after_deletion(
         self, setup_submission: dict, api_client: httpx.Client
     ):

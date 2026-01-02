@@ -238,7 +238,6 @@ class TestTeamApplicationIntegration:
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
 
-    @pytest.mark.xfail(reason="Team members response structure differs from Kotlin backend")
     def test_verify_membership_after_request_approval(
         self, setup_team_application: dict, api_client: httpx.Client
     ):
@@ -268,7 +267,6 @@ class TestTeamApplicationIntegration:
         assert member is not None, "Requester should be a member after approval"
         assert member["role"] == "MEMBER"
 
-    @pytest.mark.xfail(reason="Team members response structure differs from Kotlin backend")
     def test_verify_membership_after_invitation_acceptance(
         self, setup_team_application: dict, api_client: httpx.Client
     ):
@@ -496,7 +494,6 @@ class TestTeamApplicationIntegration:
         assert invitation is not None
         assert invitation["status"] == "ACCEPTED"
 
-    @pytest.mark.xfail(reason="Error handling for already member may differ")
     def test_request_fails_when_already_member(
         self, setup_team_application: dict, api_client: httpx.Client
     ):
@@ -522,7 +519,6 @@ class TestTeamApplicationIntegration:
         )
         assert resp.status_code == 409, f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
 
-    @pytest.mark.xfail(reason="Error handling for pending request may differ")
     def test_request_fails_when_pending_exists(
         self, setup_team_application: dict, api_client: httpx.Client
     ):
@@ -542,7 +538,6 @@ class TestTeamApplicationIntegration:
         )
         assert resp.status_code == 409, f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
 
-    @pytest.mark.xfail(reason="Error handling for already member may differ")
     def test_invitation_fails_when_already_member(
         self, setup_team_application: dict, api_client: httpx.Client
     ):
@@ -568,7 +563,6 @@ class TestTeamApplicationIntegration:
         )
         assert resp.status_code == 409, f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
 
-    @pytest.mark.xfail(reason="Error handling for pending invitation may differ")
     def test_invitation_fails_when_pending_exists(
         self, setup_team_application: dict, api_client: httpx.Client
     ):
@@ -747,7 +741,6 @@ class TestTeamApplicationIntegration:
         )
         assert team_resp.status_code == 200
 
-    @pytest.mark.xfail(reason="Role in invitation may not be fully implemented")
     def test_verify_admin_role_in_invitation_list(
         self, setup_team_application: dict, api_client: httpx.Client
     ):

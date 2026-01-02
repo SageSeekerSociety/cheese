@@ -155,12 +155,21 @@ async def patch_knowledge(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
+    labels_raw = payload.get("labels")
+    labels: list[str] | None = None
+    if labels_raw is not None:
+        if isinstance(labels_raw, list):
+            labels = [str(lbl) for lbl in labels_raw]
+        else:
+            labels = None
+
     knowledge = await service.update(
         knowledge_id=knowledge_id,
         user_id=auth_user.user_id,
         name=payload.get("name"),
         description=payload.get("description"),
         content=payload.get("content"),
+        labels=labels,
     )
     return {
         "code": 200,

@@ -226,14 +226,6 @@ class TaskMembershipService:
         previous_approved = membership.approved
         new_approved = previous_approved if approved is None else approved
 
-        # 若传入 deadline，但审批前后都不是 APPROVED，则禁止更新 deadline。
-        if (
-            deadline is not None
-            and previous_approved != 0  # 0 == APPROVED
-            and new_approved != 0
-        ):
-            raise ForbiddenError("Cannot set deadline for non-approved membership.")
-
         # 如果本次操作是"从非 APPROVED 变为 APPROVED"，做一些基础检查。
         is_approving = previous_approved != 0 and new_approved == 0
         if is_approving:
@@ -289,9 +281,11 @@ class TaskMembershipService:
 
         is_task_approved = task.approved == 0
 
-        # 报名窗口检查（已移除 registration_start_at 和 registration_deadline）
+        # 报名窗口检查
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        registration_not_started = False
+        registration_not_started = (
+            task.registration_start_at is not None and now < task.registration_start_at
+        )
         registration_closed = False
 
         # USER 类型：只返回 user eligibility，teams 为 null。
@@ -439,6 +433,13 @@ class TaskMembershipService:
                             "message": f"Task participant limit ({task.participant_limit}) reached.",
                         }
                     )
+
+            reasons.append(
+                {
+                    "code": "ALREADY_PARTICIPATING",
+                    "message": "This team is already participating in this task.",
+                }
+            )
 
             if task.min_team_size is not None and team_size < task.min_team_size:
                 reasons.append(
@@ -704,18 +705,23 @@ class TaskSubmissionService:
         if participant is None:
             raise NotFoundError.for_resource("task_membership", participant_id)
 
-        # Soft-delete existing entries for this (membership, version).
+        # Find existing submission for this (membership, version).
+        submission = await self._submission_repo.get_by_membership_and_version(
+            membership_id=participant_id,
+            version=version,
+        )
+        if submission is None:
+            raise NotFoundError.for_resource("submission", version)
+
+        # Soft-delete existing entries for this submission.
         await self._entry_repo.soft_delete_by_membership_and_version(
             membership_id=participant_id,
             version=version,
         )
 
-        # Create (or reuse) submission row with the specified version.
-        submission = await self._submission_repo.create_submission(
-            membership_id=participant_id,
-            submitter_id=submitter_id,
-            version=version,
-        )
+        # Update submission timestamp
+        submission.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        submission = await self._submission_repo.save(submission)
 
         entry_tuples: list[tuple[int, str | None, int | None]] = []
         for idx, item in enumerate(contents):
@@ -850,12 +856,14 @@ class TaskSubmissionReviewService:
             score=score,
             comment=comment,
         )
-        await self._maybe_award_rank(
+        has_upgraded = await self._maybe_award_rank(
             submission_id=submission_id,
             previous_accepted=None,
             new_accepted=accepted,
         )
-        return await self.get_review_dto(review.submission_id)
+        dto = await self.get_review_dto(review.submission_id)
+        dto["hasUpgradedParticipantRank"] = has_upgraded
+        return dto
 
     async def patch_review(
         self,
@@ -877,12 +885,14 @@ class TaskSubmissionReviewService:
             review.comment = comment
         review.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await self._review_repo.save(review)
-        await self._maybe_award_rank(
+        has_upgraded = await self._maybe_award_rank(
             submission_id=submission_id,
             previous_accepted=previous_accepted,
             new_accepted=review.accepted,
         )
-        return await self.get_review_dto(submission_id)
+        dto = await self.get_review_dto(submission_id)
+        dto["hasUpgradedParticipantRank"] = has_upgraded
+        return dto
 
     async def delete_review(self, *, submission_id: int) -> None:
         review = await self._review_repo.get_by_submission_id(submission_id)
@@ -896,28 +906,28 @@ class TaskSubmissionReviewService:
         submission_id: int,
         previous_accepted: bool | None,
         new_accepted: bool,
-    ) -> None:
+    ) -> bool:
         if (
             not new_accepted
             or previous_accepted is True
             or self._rank_service is None
             or self._submission_repo is None
         ):
-            return
+            return False
         submission = await self._submission_repo.get_by_id(submission_id)
         if submission is None:
-            return
+            return False
         space_id = None
-        rank_reward = 1  # 默认奖励值
+        task_rank: int | None = None
         if self._membership_repo is not None and self._task_repo is not None:
             membership = await self._membership_repo.get_by_id(submission.membership_id)
             if membership is not None:
                 task = await self._task_repo.get_by_id(membership.task_id)
                 if task is not None:
                     space_id = getattr(task, "space_id", None)
-                    rank_reward = getattr(task, "rank_reward", 1) or 1
-        await self._rank_service.award_rank(
+                    task_rank = getattr(task, "rank", None)
+        return await self._rank_service.award_rank_if_higher(
             space_id=space_id,
             user_id=submission.submitter_id,
-            delta=rank_reward,
+            task_rank=task_rank,
         )

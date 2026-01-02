@@ -105,6 +105,7 @@ class KnowledgeService:
         name: str | None = None,
         description: str | None = None,
         content: dict | None = None,
+        labels: list[str] | None = None,
     ) -> dict:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
@@ -116,6 +117,8 @@ class KnowledgeService:
             description=description,
             content=content,
         )
+        if labels is not None:
+            await self._repo.update_labels(knowledge_id, labels)
         return await self._build_dto(updated, current_user_id=user_id)
 
     async def upvote(self, *, knowledge_id: int, user_id: int) -> dict:

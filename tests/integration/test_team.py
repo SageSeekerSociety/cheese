@@ -138,6 +138,9 @@ class TestTeamIntegration:
         data = resp.json()
         team_ids = [t["id"] for t in data["data"]["teams"]]
         assert team_id in team_ids
+        my_team = next((t for t in data["data"]["teams"] if t["id"] == team_id), None)
+        assert my_team is not None
+        assert my_team["owner"]["id"] == creator.user_id
 
     def test_update_team(self, api_client: httpx.Client, team_setup: dict) -> None:
         creator = team_setup["creator"]
@@ -258,6 +261,13 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in data["data"]["members"]]
         assert member.user_id in user_ids
 
+        team_resp = api_client.get(f"/teams/{team_id}", headers={"Authorization": f"Bearer {creator.token}"})
+        assert team_resp.status_code == 200
+        team_data = team_resp.json()["data"]["team"]
+        assert team_data["owner"]["id"] == creator.user_id
+        assert team_data["admins"]["total"] == 0
+        assert team_data["members"]["total"] == 1
+
     def test_invite_admin(self, api_client: httpx.Client, team_setup: dict) -> None:
         creator = team_setup["creator"]
         admin = team_setup["admin"]
@@ -300,6 +310,13 @@ class TestTeamIntegration:
         )
         assert admin_member is not None
         assert admin_member["role"] == "ADMIN"
+
+        team_resp = api_client.get(f"/teams/{team_id}", headers={"Authorization": f"Bearer {creator.token}"})
+        assert team_resp.status_code == 200
+        team_data = team_resp.json()["data"]["team"]
+        assert team_data["owner"]["id"] == creator.user_id
+        assert team_data["admins"]["total"] == 1
+        assert team_data["members"]["total"] == 0
 
     def test_member_cannot_invite(
         self, api_client: httpx.Client, team_setup: dict
@@ -499,7 +516,6 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert member.user_id in user_ids
 
-    @pytest.mark.xfail(reason="Search by ID may not work in Python backend")
     def test_enumerate_teams_by_id(
         self, api_client: httpx.Client, team_setup: dict
     ) -> None:
@@ -640,7 +656,6 @@ class TestTeamIntegration:
         assert patch_resp.status_code == 200
         assert patch_resp.json()["data"]["team"]["name"] == updated_name
 
-    @pytest.mark.xfail(reason="Python backend doesn't return 'joined' field in team response")
     def test_get_team_as_member(
         self, api_client: httpx.Client, team_setup: dict
     ) -> None:
@@ -679,7 +694,6 @@ class TestTeamIntegration:
         assert data["joined"] is True
         assert data["role"] == "MEMBER"
 
-    @pytest.mark.xfail(reason="Python backend doesn't return 'joined' field in team response")
     def test_get_team_as_non_member(
         self, api_client: httpx.Client, team_setup: dict
     ) -> None:
@@ -707,7 +721,6 @@ class TestTeamIntegration:
         assert data["joined"] is False
         assert data.get("role") is None
 
-    @pytest.mark.xfail(reason="Self-removal may return different status code in Python backend")
     def test_remove_self_as_member(
         self, api_client: httpx.Client, team_setup: dict
     ) -> None:
@@ -940,7 +953,6 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert member.user_id in user_ids
 
-    @pytest.mark.xfail(reason="Python backend doesn't return 'joined' field in team response")
     def test_get_team_details_as_owner(
         self, api_client: httpx.Client, team_setup: dict
     ) -> None:
@@ -1078,3 +1090,121 @@ class TestTeamIntegration:
         )
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert admin.user_id not in user_ids
+
+    def test_add_already_member_fails(
+        self, api_client: httpx.Client, team_setup: dict
+    ) -> None:
+        creator = team_setup["creator"]
+        member = team_setup["member"]
+
+        create_resp = api_client.post(
+            "/teams",
+            json={
+                "name": team_setup["team_name"],
+                "intro": team_setup["team_intro"],
+                "description": team_setup["team_description"],
+                "avatarId": team_setup["team_avatar_id"],
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        team_id = create_resp.json()["data"]["team"]["id"]
+
+        invite_resp = api_client.post(
+            f"/teams/{team_id}/invitations",
+            json={"userId": member.user_id, "role": "MEMBER"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        invitation_id = invite_resp.json()["data"]["invitation"]["id"]
+        api_client.post(
+            f"/users/me/team-invitations/{invitation_id}/accept",
+            headers={"Authorization": f"Bearer {member.token}"},
+        )
+
+        members_resp = api_client.get(
+            f"/teams/{team_id}/members",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        member_data = next(
+            (m for m in members_resp.json()["data"]["members"] if m["userId"] == member.user_id),
+            None,
+        )
+        assert member_data is not None
+        assert member_data["role"] == "MEMBER"
+
+        invite_again_resp = api_client.post(
+            f"/teams/{team_id}/invitations",
+            json={"userId": member.user_id, "role": "MEMBER"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert invite_again_resp.status_code in (400, 409), (
+            f"Expected 400 or 409 when inviting already-member, got {invite_again_resp.status_code}"
+        )
+
+    def test_change_role_multiple_times(
+        self, api_client: httpx.Client, team_setup: dict
+    ) -> None:
+        creator = team_setup["creator"]
+        member = team_setup["member"]
+
+        create_resp = api_client.post(
+            "/teams",
+            json={
+                "name": team_setup["team_name"],
+                "intro": team_setup["team_intro"],
+                "description": team_setup["team_description"],
+                "avatarId": team_setup["team_avatar_id"],
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        team_id = create_resp.json()["data"]["team"]["id"]
+
+        invite_resp = api_client.post(
+            f"/teams/{team_id}/invitations",
+            json={"userId": member.user_id, "role": "MEMBER"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        invitation_id = invite_resp.json()["data"]["invitation"]["id"]
+        api_client.post(
+            f"/users/me/team-invitations/{invitation_id}/accept",
+            headers={"Authorization": f"Bearer {member.token}"},
+        )
+
+        patch_resp = api_client.patch(
+            f"/teams/{team_id}/members/{member.user_id}",
+            json={"role": "ADMIN"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert patch_resp.status_code == 200
+
+        members_resp = api_client.get(
+            f"/teams/{team_id}/members",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        member_data = next(
+            (m for m in members_resp.json()["data"]["members"] if m["userId"] == member.user_id),
+            None,
+        )
+        assert member_data["role"] == "ADMIN"
+
+        patch_resp2 = api_client.patch(
+            f"/teams/{team_id}/members/{member.user_id}",
+            json={"role": "MEMBER"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert patch_resp2.status_code == 200
+
+        members_resp2 = api_client.get(
+            f"/teams/{team_id}/members",
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        member_data2 = next(
+            (m for m in members_resp2.json()["data"]["members"] if m["userId"] == member.user_id),
+            None,
+        )
+        assert member_data2["role"] == "MEMBER"
+
+        owner_data = next(
+            (m for m in members_resp2.json()["data"]["members"] if m["userId"] == creator.user_id),
+            None,
+        )
+        assert owner_data["role"] == "OWNER"

@@ -98,8 +98,7 @@ class TestTaskSubmissionIntegration:
         creator_token: str,
     ) -> int:
         join_resp = api_client.post(
-            f"/tasks/{task_id}/participants",
-            params={"member": participant_id},
+            f"/tasks/{task_id}/participations/user",
             json={},
             headers={"Authorization": f"Bearer {participant_token}"},
         )
@@ -175,7 +174,6 @@ class TestTaskSubmissionIntegration:
         submission = resp.json()["data"]["submission"]
         assert submission["version"] == 2
 
-    @pytest.mark.xfail(reason="Python backend doesn't enforce resubmittable=False")
     def test_resubmit_task_fails_when_not_resubmittable(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -247,7 +245,6 @@ class TestTaskSubmissionIntegration:
         assert text_content is not None
         assert text_content["contentText"] == "Edited text"
 
-    @pytest.mark.xfail(reason="Python backend doesn't enforce editable=False")
     def test_edit_submission_fails_when_not_editable(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -384,7 +381,6 @@ class TestTaskSubmissionIntegration:
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 1
 
-    @pytest.mark.xfail(reason="Permission check may not be fully implemented")
     def test_get_submissions_fails_for_other_participant(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -419,7 +415,6 @@ class TestTaskSubmissionIntegration:
         )
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
-    @pytest.mark.xfail(reason="Permission check may not be fully implemented")
     def test_submit_fails_before_participant_approval(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -436,8 +431,7 @@ class TestTaskSubmissionIntegration:
         )
 
         join_resp = api_client.post(
-            f"/tasks/{task_id}/participants",
-            params={"member": participant.user_id},
+            f"/tasks/{task_id}/participations/user",
             json={},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
@@ -477,7 +471,6 @@ class TestTaskSubmissionIntegration:
         )
         assert get_resp.status_code == 404
 
-    @pytest.mark.xfail(reason="Permission check may not be fully implemented")
     def test_delete_task_fails_for_non_owner(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -525,7 +518,6 @@ class TestTaskSubmissionIntegration:
         assert task["resubmittable"] is True
         assert task["editable"] is True
 
-    @pytest.mark.xfail(reason="Eligibility query not fully implemented in Python backend")
     def test_get_task_eligibility_before_joining(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -555,7 +547,6 @@ class TestTaskSubmissionIntegration:
             if user_status:
                 assert user_status["eligible"] is True
 
-    @pytest.mark.xfail(reason="Eligibility query not fully implemented in Python backend")
     def test_get_task_eligibility_after_joining(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -669,7 +660,6 @@ class TestTaskSubmissionIntegration:
         assert len(subs2) == 1
         assert subs2[0]["member"]["id"] == participant2.user_id
 
-    @pytest.mark.xfail(reason="Permission check may not be fully implemented")
     def test_update_task_fails_for_non_owner(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -731,7 +721,6 @@ class TestTaskSubmissionIntegration:
         assert len(submissions) == 1
         assert submissions[0]["version"] == 2
 
-    @pytest.mark.xfail(reason="Permission check may not be fully implemented")
     def test_get_submissions_fails_for_irrelevant_user(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -791,7 +780,6 @@ class TestTaskSubmissionIntegration:
         assert task["name"] == new_name
         assert task["intro"] == new_intro
 
-    @pytest.mark.xfail(reason="Python backend GET /tasks/{id} doesn't include deadline field")
     def test_update_task_deadline(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -823,7 +811,6 @@ class TestTaskSubmissionIntegration:
         task = get_resp.json()["data"]["task"]
         assert task.get("deadline") == new_deadline
 
-    @pytest.mark.xfail(reason="Python backend GET /tasks/{id} doesn't return updated submissionSchema")
     def test_update_submission_schema(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -899,7 +886,6 @@ class TestTaskSubmissionIntegration:
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 3
 
-    @pytest.mark.xfail(reason="Python backend creates new version on edit instead of updating in place")
     def test_edit_preserves_version(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -948,7 +934,6 @@ class TestTaskSubmissionIntegration:
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 2
 
-    @pytest.mark.xfail(reason="Bulk participant approval response format differs from Kotlin")
     def test_approve_participant_via_bulk_endpoint(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -983,16 +968,15 @@ class TestTaskSubmissionIntegration:
         )
 
         join_resp = api_client.post(
-            f"/tasks/{task_id}/participants",
-            params={"member": participant.user_id},
+            f"/tasks/{task_id}/participations/user",
             json={},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
         assert join_resp.status_code == 200
+        membership_id = join_resp.json()["data"]["participant"]["id"]
 
         resp = api_client.patch(
-            f"/tasks/{task_id}/participants",
-            params={"member": participant.user_id},
+            f"/tasks/{task_id}/participants/{membership_id}",
             json={"approved": "APPROVED"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
@@ -1051,7 +1035,7 @@ class TestTaskSubmissionIntegration:
             },
             headers={"Authorization": f"Bearer {team_creator.token}"},
         )
-        assert team_resp.status_code == 200
+        assert team_resp.status_code == 201
         team_id = team_resp.json()["data"]["team"]["id"]
 
         req_resp = api_client.post(
@@ -1124,9 +1108,8 @@ class TestTaskSubmissionIntegration:
         space_creator_token: str,
     ) -> int:
         join_resp = api_client.post(
-            f"/tasks/{task_id}/participants",
-            params={"member": team_id},
-            json={},
+            f"/tasks/{task_id}/participations/team",
+            json={"teamId": team_id},
             headers={"Authorization": f"Bearer {team_creator_token}"},
         )
         assert join_resp.status_code == 200, f"Team join failed: {join_resp.text}"
@@ -1139,7 +1122,6 @@ class TestTaskSubmissionIntegration:
         )
         return membership_id
 
-    @pytest.mark.xfail(reason="Team task submission may not be fully implemented")
     def test_submit_task_team_first_time(
         self, setup_team_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -1170,7 +1152,6 @@ class TestTaskSubmissionIntegration:
         assert submission["member"]["id"] == team_id
         assert submission["submitter"]["id"] == team_creator.user_id
 
-    @pytest.mark.xfail(reason="Team eligibility query not fully implemented")
     def test_get_task_eligibility_for_team_before_approval(
         self, setup_team_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -1188,9 +1169,8 @@ class TestTaskSubmissionIntegration:
         )
 
         join_resp = api_client.post(
-            f"/tasks/{task_id}/participants",
-            params={"member": team_id},
-            json={},
+            f"/tasks/{task_id}/participations/team",
+            json={"teamId": team_id},
             headers={"Authorization": f"Bearer {team_creator.token}"},
         )
         assert join_resp.status_code == 200
@@ -1212,7 +1192,6 @@ class TestTaskSubmissionIntegration:
                 reasons = team_status["eligibility"].get("reasons", [])
                 assert any(r.get("code") == "ALREADY_PARTICIPATING" for r in reasons)
 
-    @pytest.mark.xfail(reason="Team eligibility query not fully implemented")
     def test_get_task_eligibility_for_team_after_approval(
         self, setup_team_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -1243,7 +1222,6 @@ class TestTaskSubmissionIntegration:
         submittable_as_team = task.get("submittableAsTeam", [])
         assert any(t.get("id") == team_id for t in submittable_as_team)
 
-    @pytest.mark.xfail(reason="Member query param access control not fully implemented")
     def test_get_submissions_fails_via_member_query_param(
         self, setup_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -1313,7 +1291,6 @@ class TestTaskSubmissionIntegration:
         assert len(submissions) == 1
         assert submissions[0]["member"]["id"] == participant.user_id
 
-    @pytest.mark.xfail(reason="Team member submission not fully implemented")
     def test_team_member_can_submit_for_team(
         self, setup_team_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -1344,7 +1321,6 @@ class TestTaskSubmissionIntegration:
         assert submission["member"]["id"] == team_id
         assert submission["submitter"]["id"] == team_member.user_id
 
-    @pytest.mark.xfail(reason="Team bulk approval not fully implemented")
     def test_approve_team_participant_via_bulk_endpoint(
         self, setup_team_task_for_submission: dict, api_client: httpx.Client
     ):
@@ -1362,16 +1338,15 @@ class TestTaskSubmissionIntegration:
         )
 
         join_resp = api_client.post(
-            f"/tasks/{task_id}/participants",
-            params={"member": team_id},
-            json={},
+            f"/tasks/{task_id}/participations/team",
+            json={"teamId": team_id},
             headers={"Authorization": f"Bearer {team_creator.token}"},
         )
         assert join_resp.status_code == 200
+        membership_id = join_resp.json()["data"]["participant"]["id"]
 
         resp = api_client.patch(
-            f"/tasks/{task_id}/participants",
-            params={"member": team_id},
+            f"/tasks/{task_id}/participants/{membership_id}",
             json={"approved": "APPROVED"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )

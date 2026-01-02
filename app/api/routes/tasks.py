@@ -15,6 +15,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceCategoryRepository,
     SpaceUserRankRepository,
+    SpaceAdminRelationRepository,
 )
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.task.models import Task, TaskMembership, TaskTopicsRelation
@@ -28,6 +29,8 @@ from app.domain.task.repositories import (
     TaskAIAdviceContextRepository,
     AIConversationRepository,
     AIMessageRepository,
+    TaskSubmissionSchemaRepository,
+    TopicRepository,
 )
 from app.domain.task.services import (
     TaskService,
@@ -149,23 +152,51 @@ def _task_to_api_model(task: Task) -> dict:
     updated_at_ms = (
         int(task.updated_at.timestamp() * 1000) if task.updated_at is not None else 0
     )
+    deadline_ms = (
+        int(task.deadline.timestamp() * 1000) if task.deadline is not None else None
+    )
+    registration_start_ms = (
+        int(task.registration_start_at.timestamp() * 1000)
+        if task.registration_start_at is not None
+        else None
+    )
     approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
+    submitter_type_map = {0: "USER", 1: "TEAM"}
     return {
         "id": task.id,
         "name": task.name,
         "intro": task.intro,
         "description": task.description,
+        "deadline": deadline_ms,
+        "registrationStartAt": registration_start_ms,
         "defaultDeadline": task.default_deadline,
         "resubmittable": task.resubmittable,
         "editable": task.editable,
         "approved": approved_map.get(task.approved, "NONE"),
+        "rank": task.rank,
+        "submitterType": submitter_type_map.get(task.submitter_type, "USER"),
+        "submissionSchema": [],
+        "space": {"id": task.space_id},
+        "category": {"id": task.category_id, "name": ""},
+        "categoryId": task.category_id,
+        "createdBy": task.creator_id,
+        "creator": {"id": task.creator_id},
+        "requireRealName": task.require_real_name,
+        "participantLimit": task.participant_limit,
+        "minTeamSize": task.min_team_size,
+        "maxTeamSize": task.max_team_size,
+        "teamLockingPolicy": task.team_locking_policy,
+        "rejectReason": task.reject_reason,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
-        # Space / category / submitterType / participants 等复杂字段后续再补齐
     }
 
 
-def _membership_to_api_model(membership: TaskMembership) -> dict:
+def _membership_to_api_model(
+    membership: TaskMembership,
+    *,
+    participant_info: dict | None = None,
+) -> dict:
     """Minimal TaskMembership representation for participants list.
 
     NOTE: This is a simplified view that focuses on structure. More fields
@@ -181,14 +212,24 @@ def _membership_to_api_model(membership: TaskMembership) -> dict:
         if membership.updated_at is not None
         else 0
     )
+
+    participant = participant_info or {"id": membership.member_id}
+    member = {"id": membership.member_id}
+
+    approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
+    approved_str = approved_map.get(membership.approved, "NONE")
+
     return {
         "id": membership.id,
         "taskId": membership.task_id,
         "memberId": membership.member_id,
+        "member": member,
+        "participant": participant,
         "isTeam": membership.is_team,
         "email": membership.email,
         "phone": membership.phone,
         "completionStatus": membership.completion_status,
+        "approved": approved_str,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -334,6 +375,16 @@ async def create_task(
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
+    registration_start_ms = payload.get("registrationStartAt")
+    registration_start_dt: datetime | None = None
+    if registration_start_ms is not None:
+        try:
+            registration_start_dt = datetime.fromtimestamp(
+                int(registration_start_ms) / 1000.0, tz=timezone.utc
+            ).replace(tzinfo=None)
+        except (TypeError, ValueError) as exc:
+            raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
+
     require_real_name = bool(payload.get("requireRealName", False))
 
     min_team_size_raw = payload.get("minTeamSize")
@@ -407,6 +458,7 @@ async def create_task(
         category_id=effective_category_id,
         submitter_type=submitter_type,
         deadline=deadline_dt,
+        registration_start_at=registration_start_dt,
         participant_limit=participant_limit,
         default_deadline=default_deadline,
         resubmittable=resubmittable,
@@ -432,6 +484,7 @@ async def create_task(
             db.add(rel)
         await db.flush()
 
+    await db.commit()
     return {
         "code": 200,
         "message": "Task created successfully.",
@@ -469,6 +522,23 @@ async def create_task_participant(
     if task is None:
         raise NotFoundError("Task not found")
 
+    if member != auth_user.user_id and task.creator_id != auth_user.user_id:
+        raise ForbiddenError("Only task owner can add other participants")
+
+    if task.approved != 0 and task.creator_id != auth_user.user_id:
+        raise BadRequestError("Cannot join a task that is not approved")
+
+    space_repo = SpaceRepository(session=db)
+    space = await space_repo.get_by_id(task.space_id)
+    if space is not None and space.enable_rank and task.rank is not None:
+        rank_repo = SpaceUserRankRepository(session=db)
+        user_rank = await rank_repo.get_rank(task.space_id, member)
+        rank_jump = 1
+        if user_rank + rank_jump < task.rank:
+            raise BadRequestError(
+                f"User rank ({user_rank}) is too low for this task (requires rank {task.rank - rank_jump}+)"
+            )
+
     deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None
     if deadline_ms is not None:
@@ -500,6 +570,123 @@ async def create_task_participant(
         apply_reason=apply_reason,
         personal_advantage=personal_advantage,
         remark=remark,
+    )
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "participant": _membership_to_api_model(membership),
+        },
+    }
+
+
+@router.post(
+    "/{taskId}/participations/user",
+    summary="Join Task as User (self-join)",
+)
+async def join_task_as_user(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    payload: dict | None = None,
+    db=Depends(get_db),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Allow authenticated user to join a task themselves."""
+    if payload is None:
+        payload = {}
+
+    task_repo = TaskRepository(session=db)
+    task = await task_repo.get_by_id(task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+
+    if task.approved != 0:
+        raise BadRequestError("Task is not approved for participation")
+
+    if task.submitter_type != 0:
+        raise BadRequestError("This endpoint is for USER tasks only. Use /participations/team for team tasks.")
+
+    deadline_ms = payload.get("deadline")
+    deadline_dt: datetime | None = None
+    if deadline_ms is not None:
+        try:
+            deadline_dt = datetime.fromtimestamp(
+                int(deadline_ms) / 1000.0, tz=timezone.utc
+            ).replace(tzinfo=None)
+        except (TypeError, ValueError) as exc:
+            raise BadRequestError(f"Invalid deadline: {exc}") from exc
+
+    membership = await membership_service.create_membership(
+        task=task,
+        member_id=auth_user.user_id,
+        is_team=False,
+        approved=2,
+        deadline=deadline_dt,
+        email=payload.get("email"),
+        phone=payload.get("phone"),
+        apply_reason=payload.get("applyReason"),
+        personal_advantage=payload.get("personalAdvantage"),
+        remark=payload.get("remark"),
+    )
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "participant": _membership_to_api_model(membership),
+        },
+    }
+
+
+@router.post(
+    "/{taskId}/participations/team",
+    summary="Join Task as Team",
+)
+async def join_task_as_team(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    payload: dict,
+    db=Depends(get_db),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Allow team to join a task."""
+    team_id = payload.get("teamId")
+    if not isinstance(team_id, int) or team_id <= 0:
+        raise BadRequestError("teamId is required")
+
+    task_repo = TaskRepository(session=db)
+    task = await task_repo.get_by_id(task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+
+    if task.approved != 0:
+        raise BadRequestError("Task is not approved for participation")
+
+    if task.submitter_type != 1:
+        raise BadRequestError("This endpoint is for TEAM tasks only. Use /participations/user for user tasks.")
+
+    deadline_ms = payload.get("deadline")
+    deadline_dt: datetime | None = None
+    if deadline_ms is not None:
+        try:
+            deadline_dt = datetime.fromtimestamp(
+                int(deadline_ms) / 1000.0, tz=timezone.utc
+            ).replace(tzinfo=None)
+        except (TypeError, ValueError) as exc:
+            raise BadRequestError(f"Invalid deadline: {exc}") from exc
+
+    membership = await membership_service.create_membership(
+        task=task,
+        member_id=team_id,
+        is_team=True,
+        approved=2,
+        deadline=deadline_dt,
+        email=payload.get("email"),
+        phone=payload.get("phone"),
+        apply_reason=payload.get("applyReason"),
+        personal_advantage=payload.get("personalAdvantage"),
+        remark=payload.get("remark"),
     )
 
     return {
@@ -588,6 +775,7 @@ async def get_task(
     queryJoined: bool = Query(default=False),
     queryUserDeadline: bool = Query(default=False),
     queryTopics: bool = Query(default=False),
+    db=Depends(get_db),
     service: TaskService = Depends(get_task_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
@@ -595,6 +783,17 @@ async def get_task(
     task = await service.get_task(task_id=task_id)
     if task is None:
         raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
+
+    # 权限检查：未审批任务只有空间管理员或任务创建者可以查看
+    if task.approved == 2:  # NONE = 未审批
+        is_creator = task.creator_id == auth_user.user_id
+        is_space_admin = False
+        if not is_creator:
+            admin_repo = SpaceAdminRelationRepository(session=db)
+            relation = await admin_repo.get_relation(task.space_id, auth_user.user_id)
+            is_space_admin = relation is not None
+        if not is_creator and not is_space_admin:
+            raise ForbiddenError("Only space admins or task creator can view unapproved tasks")
 
     # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。
     participation: dict
@@ -658,12 +857,11 @@ async def get_task(
     joined = False
     joined_teams: list[int] = []
     submittable: bool | None = None
-    submittable_as_team: bool | None = None
+    submittable_as_team: list[dict] = []
     user_deadline_ms: int | None = None
     participation_eligibility: dict | None = None
 
     if auth_user.user_id > 0:
-        # 复用上面 already-fetched memberships，避免重复查询。
         user_membership = await membership_service.get_user_membership(
             task_id=task_id,
             user_id=auth_user.user_id,
@@ -676,27 +874,47 @@ async def get_task(
         joined = bool(user_membership or team_memberships)
         joined_teams = [m.member_id for m in team_memberships]
 
-        # 简化版 submittable/submittableAsTeam：仅基于 approved 是否 APPROVED。
         is_user_approved = bool(user_membership and user_membership.approved == 0)
-        any_team_approved = any(m.approved == 0 for m in team_memberships)
 
         if task.submitter_type == 0:  # USER
             submittable = is_user_approved
-            submittable_as_team = False
             if user_membership and user_membership.deadline:
                 user_deadline_ms = int(user_membership.deadline.timestamp() * 1000)
         elif task.submitter_type == 1:  # TEAM
-            submittable = any_team_approved
-            submittable_as_team = any_team_approved
+            approved_team_memberships = [m for m in team_memberships if m.approved == 0]
+            submittable = bool(approved_team_memberships)
+            submittable_as_team = [{"id": m.member_id} for m in approved_team_memberships]
             if team_memberships and team_memberships[0].deadline:
                 user_deadline_ms = int(team_memberships[0].deadline.timestamp() * 1000)
 
-        # participationEligibility：只有在 queryJoinability=True 时才计算。
         if queryJoinability:
             participation_eligibility = await membership_service.get_participation_eligibility(
                 task=task,
                 user_id=auth_user.user_id,
             )
+
+    # Fetch submissionSchema
+    schema_repo = TaskSubmissionSchemaRepository(session=db)
+    schema_entries = await schema_repo.list_by_task_id(task_id)
+    type_map = {0: "TEXT", 1: "FILE"}
+    submission_schema = [
+        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")}
+        for e in schema_entries
+    ]
+    task_dict["submissionSchema"] = submission_schema
+
+    # Fetch topics if queryTopics is true
+    if queryTopics:
+        topic_repo = TopicRepository(session=db)
+        topic_entities = await topic_repo.list_by_task_id(task_id)
+        topics_list = [
+            {
+                "id": t.id,
+                "name": t.name,
+            }
+            for t in topic_entities
+        ]
+        task_dict["topics"] = topics_list
 
     task_dict.update(
         {
@@ -738,6 +956,9 @@ async def patch_task(
     if task is None:
         raise NotFoundError("Task not found")
 
+    if task.creator_id != auth_user.user_id:
+        raise ForbiddenError("Only task owner can update this task")
+
     # 基本字符串字段
     if "name" in payload and payload["name"] is not None:
         task.name = str(payload["name"])
@@ -766,6 +987,18 @@ async def patch_task(
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
     if has_deadline is False:
         task.deadline = None
+
+    registration_start_ms = payload.get("registrationStartAt")
+    has_registration_start = payload.get("hasRegistrationStart")
+    if registration_start_ms is not None:
+        try:
+            task.registration_start_at = datetime.fromtimestamp(
+                int(registration_start_ms) / 1000.0, tz=timezone.utc
+            ).replace(tzinfo=None)
+        except (TypeError, ValueError) as exc:
+            raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
+    if has_registration_start is False:
+        task.registration_start_at = None
 
     participant_limit_raw = payload.get("participantLimit")
     has_participant_limit = payload.get("hasParticipantLimit")
@@ -846,6 +1079,11 @@ async def patch_task(
         )
         task.category_id = effective_category_id
 
+    # submissionSchema: 覆盖更新（先删后插）。
+    if "submissionSchema" in payload and isinstance(payload["submissionSchema"], list):
+        schema_repo = TaskSubmissionSchemaRepository(session=db)
+        await schema_repo.replace_schema(task.id, payload["submissionSchema"])
+
     # 话题列表：简单覆盖语义，先全部软删除，再插入新集合。
     if "topics" in payload and isinstance(payload["topics"], list):
         topics_raw = payload["topics"] or []
@@ -884,11 +1122,22 @@ async def patch_task(
     task.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     task = await task_repo.save(task)
 
+    # Fetch submissionSchema for response
+    schema_repo = TaskSubmissionSchemaRepository(session=db)
+    schema_entries = await schema_repo.list_by_task_id(task.id)
+    type_map = {0: "TEXT", 1: "FILE"}
+    submission_schema = [
+        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")}
+        for e in schema_entries
+    ]
+    task_response = _task_to_api_model(task)
+    task_response["submissionSchema"] = submission_schema
+
     return {
         "code": 200,
         "message": "Task updated successfully.",
         "data": {
-            "task": _task_to_api_model(task),
+            "task": task_response,
         },
     }
 
@@ -916,6 +1165,7 @@ async def get_tasks(
     queryUserDeadline: bool = Query(default=False),
     queryTopics: bool = Query(default=False),
     keywords: str | None = Query(default=None),
+    db=Depends(get_db),
     service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
@@ -937,6 +1187,13 @@ async def get_tasks(
         if upper not in approved_map:
             raise BadRequestError(f"Invalid approved value: {approved}")
         approved_value = approved_map[upper]
+
+    # 权限检查：查询未审批任务需要是空间管理员
+    if approved_value == 2:  # NONE = 未审批
+        admin_repo = SpaceAdminRelationRepository(session=db)
+        relation = await admin_repo.get_relation(space, auth_user.user_id)
+        if relation is None:
+            raise ForbiddenError("Only space admins can view unapproved tasks")
 
     # owner 直接映射到 Task.creator_id。
     owner_id: int | None = owner
@@ -1011,14 +1268,15 @@ async def delete_task(
 
     NOTE: 与 Kotlin 版本类似，这里只做软删除；提交记录的删除将在后续引入 submission ORM 时一并处理。
     """
-    _ = auth_user  # 占位：当前实现尚未接入细粒度权限
-
     task_repo = TaskRepository(session=db)
     membership_repo = TaskMembershipRepository(session=db)
 
     task = await task_repo.get_by_id(task_id)
     if task is None:
         raise NotFoundError("Task not found")
+
+    if task.creator_id != auth_user.user_id:
+        raise ForbiddenError("Only task owner can delete this task")
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     task.deleted_at = now
@@ -1192,6 +1450,7 @@ async def get_task_participants(
     approved: str | None = Query(default=None),
     queryRealNameInfo: bool = Query(default=False),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    db=Depends(get_db),
 ) -> dict:
     """Return participants for a given task.
 
@@ -1216,7 +1475,21 @@ async def get_task_participants(
         task_id=task_id,
         approved=approved_value,
     )
-    participants = [_membership_to_api_model(m) for m in memberships]
+
+    user_ids = [m.member_id for m in memberships if not m.is_team]
+    user_map: dict = {}
+    if user_ids:
+        from app.domain.user.repositories import UserRepository
+        user_repo = UserRepository(session=db)
+        user_map = await user_repo.get_by_ids(user_ids)
+
+    participants = []
+    for m in memberships:
+        participant_info = {"id": m.member_id}
+        if not m.is_team and m.member_id in user_map:
+            user = user_map[m.member_id]
+            participant_info["username"] = user.username
+        participants.append(_membership_to_api_model(m, participant_info=participant_info))
 
     return {
         "code": 200,
@@ -1313,10 +1586,27 @@ async def get_task_submissions(
     sortBy: str = Query(default="updatedAt"),
     sortOrder: str = Query(default="desc"),
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    task_service: TaskService = Depends(get_task_service),
+    team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     """Enumerate submissions for a given task participant."""
-    _ = auth_user  # 细粒度权限控制留待后续
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+
+    membership = await membership_service.get_membership_by_id(participant_id)
+    if membership is None or membership.task_id != task_id:
+        raise NotFoundError.for_resource("participant", participant_id)
+
+    is_task_owner = task.creator_id == auth_user.user_id
+    is_own_participant = membership.member_id == auth_user.user_id and not membership.is_team
+    is_team_member = False
+    if membership.is_team:
+        is_team_member = await team_service.is_team_member(membership.member_id, auth_user.user_id)
+    if not is_task_owner and not is_own_participant and not is_team_member:
+        raise ForbiddenError("You are not authorized to view these submissions")
 
     if sortBy not in {"createdAt", "updatedAt"}:
         raise BadRequestError(f"Invalid sortBy: {sortBy}")
@@ -1366,8 +1656,38 @@ async def post_task_submission(
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     contents: list[dict],
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    task_service: TaskService = Depends(get_task_service),
+    team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+
+    membership = await membership_service.get_membership_by_id(participant_id)
+    if membership is None or membership.task_id != task_id:
+        raise NotFoundError.for_resource("participant", participant_id)
+
+    if membership.approved != 0:
+        raise ForbiddenError("Participant must be approved before submitting")
+
+    if membership.is_team:
+        is_member = await team_service.is_team_member(membership.member_id, auth_user.user_id)
+        if not is_member:
+            raise ForbiddenError("Only team members can submit for this team task")
+
+    if not task.resubmittable:
+        existing, _ = await submission_service.list_submissions(
+            task_id=task_id,
+            participant_id=participant_id,
+            all_versions=False,
+            query_review=False,
+            limit=1,
+        )
+        if existing:
+            raise BadRequestError("Task does not allow resubmission")
+
     submission_dto = await submission_service.submit_task(
         task_id=task_id,
         participant_id=participant_id,
@@ -1388,11 +1708,19 @@ async def post_task_submission(
 async def patch_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
-    version: Annotated[int, Path(ge=1)],
+    version: Annotated[int, Path(ge=0)],
     contents: list[dict],
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
+    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+
+    if not task.editable:
+        raise BadRequestError("Task does not allow editing submissions")
+
     submission_dto = await submission_service.modify_submission(
         task_id=task_id,
         participant_id=participant_id,
@@ -1419,9 +1747,20 @@ async def post_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
+    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = (task_id, participant_id, auth_user)  # TODO: 权限控制
+    _ = participant_id
+
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    if task.creator_id != auth_user.user_id:
+        raise ForbiddenError("Only task owner can create review")
+
+    existing = await review_service.get_review_dto(submission_id)
+    if existing.get("reviewed"):
+        raise ConflictError("Review already exists for this submission")
 
     try:
         accepted = bool(payload["accepted"])
@@ -1443,6 +1782,33 @@ async def post_task_submission_review(
     }
 
 
+@router.get(
+    "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
+    summary="Get Submission Review",
+)
+async def get_task_submission_review(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    participant_id: Annotated[int, Path(ge=1, alias="participantId")],
+    submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
+    review_service: TaskSubmissionReviewService = Depends(
+        get_task_submission_review_service
+    ),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    _ = (task_id, participant_id, auth_user)
+
+    review_dto = await review_service.get_review_dto(submission_id)
+
+    if not review_dto.get("reviewed"):
+        raise NotFoundError.for_resource("review", submission_id)
+
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"review": review_dto},
+    }
+
+
 @router.patch(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Re-Review Submission",
@@ -1455,9 +1821,16 @@ async def patch_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
+    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = (task_id, participant_id, auth_user)
+    _ = participant_id
+
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    if task.creator_id != auth_user.user_id:
+        raise ForbiddenError("Only task owner can update review")
 
     accepted = payload.get("accepted")
     score = payload.get("score")
@@ -1489,6 +1862,49 @@ async def patch_task_submission_review(
     }
 
 
+@router.put(
+    "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
+    summary="Update Submission Review (Full Replace)",
+)
+async def put_task_submission_review(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    participant_id: Annotated[int, Path(ge=1, alias="participantId")],
+    submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
+    payload: dict,
+    review_service: TaskSubmissionReviewService = Depends(
+        get_task_submission_review_service
+    ),
+    task_service: TaskService = Depends(get_task_service),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    _ = participant_id
+
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    if task.creator_id != auth_user.user_id:
+        raise ForbiddenError("Only task owner can update review")
+
+    try:
+        accepted = bool(payload["accepted"])
+        score = int(payload["score"])
+        comment = str(payload["comment"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BadRequestError(f"Invalid review payload: {exc}") from exc
+
+    review_dto = await review_service.patch_review(
+        submission_id=submission_id,
+        accepted=accepted,
+        score=score,
+        comment=comment,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"review": review_dto},
+    }
+
+
 @router.delete(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Delete Submission Review",
@@ -1500,9 +1916,21 @@ async def delete_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
+    task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = (task_id, participant_id, auth_user)
+    _ = participant_id
+
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    if task.creator_id != auth_user.user_id:
+        raise ForbiddenError("Only task owner can delete review")
+
+    existing = await review_service.get_review_dto(submission_id)
+    if not existing.get("reviewed"):
+        raise NotFoundError.for_resource("review", submission_id)
+
     await review_service.delete_review(submission_id=submission_id)
     return {"code": 200, "message": "OK"}
 

@@ -72,6 +72,14 @@ class UserRepository:
             user.hashed_password = hashed_password
             await self._session.flush()
 
+    async def get_by_ids(self, user_ids: Sequence[int]) -> dict[int, User]:
+        if not user_ids:
+            return {}
+        stmt: Select[tuple[User]] = select(User).where(User.id.in_(list(user_ids)))
+        result = await self._session.execute(stmt)
+        users = list(result.scalars().all())
+        return {u.id: u for u in users}
+
 
 class UserProfileRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -117,6 +125,36 @@ class UserProfileRepository:
         await self._session.flush()
         return profile
 
+    async def list_profiles(
+        self, *, limit: int, offset: int
+    ) -> list[UserProfile]:
+        stmt: Select[tuple[UserProfile]] = (
+            select(UserProfile)
+            .where(UserProfile.deleted_at.is_(None))
+            .order_by(UserProfile.user_id.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def update_profile(
+        self,
+        profile: UserProfile,
+        *,
+        nickname: str | None = None,
+        intro: str | None = None,
+        avatar_id: int | None = None,
+    ) -> UserProfile:
+        if nickname is not None:
+            profile.nickname = nickname
+        if intro is not None:
+            profile.intro = intro
+        if avatar_id is not None:
+            profile.avatar_id = avatar_id
+        await self._session.flush()
+        return profile
+
 
 class UserFollowingRepository:
     """Persistence operations for user follow relationships."""
@@ -153,6 +191,7 @@ class UserFollowingRepository:
         rel = UserFollowingRelationship(
             follower_id=follower_id,
             followee_id=followee_id,
+            created_at=datetime.now(timezone.utc),
         )
         self._session.add(rel)
         await self._session.flush()

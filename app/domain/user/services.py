@@ -23,6 +23,29 @@ class UserService:
         return await self._repo.get_profiles_by_user_ids(ids)
 
 
+class UserProfileService:
+    """Profile update operations."""
+
+    def __init__(self, profile_repo: UserProfileRepository) -> None:
+        self._profile_repo = profile_repo
+
+    async def update_profile(
+        self,
+        *,
+        user_id: int,
+        nickname: str | None = None,
+        intro: str | None = None,
+        avatar_id: int | None = None,
+    ) -> None:
+        profile = await self._profile_repo.get_profile_by_user_id(user_id)
+        if profile is None:
+            from app.core.errors import NotFoundError
+            raise NotFoundError("User profile not found")
+        await self._profile_repo.update_profile(
+            profile, nickname=nickname, intro=intro, avatar_id=avatar_id
+        )
+
+
 class UserAuthService:
     """Authentication-related user operations (login/refresh helpers)."""
 
@@ -111,6 +134,40 @@ class UserAuthService:
             username=username,
             email=email,
             hashed_password=hashed,
+        )
+        profile = await self._profile_repo.create_profile(
+            user_id=user.id,
+            nickname=nickname,
+            intro="",
+            avatar_id=default_avatar_id,
+        )
+        return user, profile
+
+    async def register_with_srp(
+        self,
+        *,
+        username: str,
+        nickname: str,
+        email: str,
+        srp_salt: str,
+        srp_verifier: str,
+        default_avatar_id: int = 1,
+    ) -> tuple[User, UserProfile]:
+        """Create a new user using SRP-based auth.
+
+        SRP salt and verifier are stored as the hashed_password field for now.
+        In a full SRP implementation, separate columns would be used.
+        """
+        if await self._user_repo.is_username_taken(username):
+            raise ValueError("USERNAME_TAKEN")
+        if await self._user_repo.is_email_taken(email):
+            raise ValueError("EMAIL_TAKEN")
+
+        srp_data = f"SRP:{srp_salt}:{srp_verifier}"
+        user = await self._user_repo.create_user(
+            username=username,
+            email=email,
+            hashed_password=srp_data,
         )
         profile = await self._profile_repo.create_profile(
             user_id=user.id,

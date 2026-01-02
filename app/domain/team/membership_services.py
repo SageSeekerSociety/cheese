@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError, ConflictError
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import publish_notification_event
 from app.domain.team.models import (
@@ -31,9 +31,9 @@ class TeamMembershipService:
 
     async def _validate_user_can_apply_or_be_invited(self, user_id: int, team_id: int) -> None:
         if await self._team_repo.is_team_member(team_id, user_id):
-            raise BadRequestError("User is already a member of this team.")
+            raise ConflictError("User is already a member of this team.")
         if await self._app_repo.exists_pending_for_user_and_team(user_id, team_id):
-            raise BadRequestError("There is already a pending application for this team.")
+            raise ConflictError("There is already a pending application for this team.")
 
     async def _update_status(
         self,

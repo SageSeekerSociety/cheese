@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request, Response, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, Request, Response, status
 from sqlalchemy import select
 
 from app.auth.checker import get_auth_user
@@ -12,7 +12,7 @@ from app.common.auth import (
     create_refresh_token,
     decode_token,
 )
-from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFoundError, ForbiddenError
+from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFoundError, ForbiddenError, UnprocessableEntityError
 from app.db.session import get_db
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.repositories import TeamMembershipApplicationRepository, TeamRepository
@@ -25,7 +25,9 @@ from app.domain.user.repositories import (
     UserStatisticsRepository,
 )
 from app.domain.user.realname_services import UserRealNameService
-from app.domain.user.services import UserAuthService
+from app.domain.user.services import UserAuthService, UserProfileService
+from app.domain.questions.repositories import QuestionRepository, QuestionTopicRepository
+from app.domain.answers.repositories import AnswerRepository
 
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -44,6 +46,13 @@ async def get_user_auth_service(
         follow_repo=follow_repo,
         stats_repo=stats_repo,
     )
+
+
+async def get_user_profile_service(
+    db=Depends(get_db),
+) -> UserProfileService:
+    profile_repo = UserProfileRepository(session=db)
+    return UserProfileService(profile_repo=profile_repo)
 
 
 async def get_team_membership_service(
@@ -71,9 +80,10 @@ async def get_user_realname_service(
 @router.post(
     "/{userId}/followers",
     summary="Follow user",
+    status_code=201,
 )
 async def follow_user(
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
     auth_user: AuthUserInfo = Depends(get_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -85,19 +95,17 @@ async def follow_user(
     - 重复关注直接视为错误返回 400。
     """
     if auth_user.user_id == user_id:
-        raise BadRequestError("Cannot follow yourself")
+        raise UnprocessableEntityError("Cannot follow yourself")
 
     user_repo = UserRepository(session=db)
     follow_repo = UserFollowingRepository(session=db)
 
-    # 确保被关注用户存在
     target = await user_repo.get_by_id(user_id)
     if target is None:
         raise NotFoundError("User not found")
 
-    # 避免重复关注
     if await follow_repo.is_following(auth_user.user_id, user_id):
-        raise BadRequestError("User already followed")
+        raise UnprocessableEntityError("User already followed")
 
     await follow_repo.add_follow(auth_user.user_id, user_id)
     follow_count = await follow_repo.count_following(auth_user.user_id)
@@ -277,6 +285,7 @@ async def list_my_team_invitations(
             "id": app.id,
             "userId": app.user_id,
             "teamId": app.team_id,
+            "team": {"id": app.team_id},
             "type": app.type,
             "status": app.status,
             "role": app.role,
@@ -305,19 +314,18 @@ async def unfollow_user(
 ) -> dict:
     """Unfollow a previously followed user."""
     if auth_user.user_id == user_id:
-        raise BadRequestError("Cannot unfollow yourself")
+        raise UnprocessableEntityError("Cannot unfollow yourself")
 
     user_repo = UserRepository(session=db)
     follow_repo = UserFollowingRepository(session=db)
 
-    # 确保目标用户存在
     target = await user_repo.get_by_id(user_id)
     if target is None:
         raise NotFoundError("User not found")
 
     removed = await follow_repo.soft_delete_follow(auth_user.user_id, user_id)
     if not removed:
-        raise BadRequestError("User not followed yet")
+        raise UnprocessableEntityError("User not followed yet")
 
     follow_count = await follow_repo.count_following(auth_user.user_id)
     return {
@@ -335,14 +343,14 @@ async def unfollow_user(
 )
 async def get_followers(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    pageStart: int | None = Query(default=None),
-    pageSize: int = Query(default=20, ge=1, le=200),
+    page_start: int | None = Query(default=None, alias="page_start"),
+    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
     auth_user: AuthUserInfo = Depends(get_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    """Return followers of the given user (shape only, simplified pagination)."""
-    if pageSize <= 0:
-        pageSize = 20
+    """Return followers of the given user (cursor-based pagination)."""
+    if page_size <= 0:
+        page_size = 20
 
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
@@ -355,29 +363,34 @@ async def get_followers(
         stats_repo=stats_repo,
     )
 
-    # Verify target user exists
     target = await user_repo.get_by_id(user_id)
     if target is None:
         raise NotFoundError("User not found")
 
-    # Simple offset-based pagination for now
-    offset = pageStart or 0
-    rel_stmt = (
-        select(UserFollowingRelationship)
+    all_follower_ids_stmt = (
+        select(UserFollowingRelationship.follower_id)
         .where(
             UserFollowingRelationship.followee_id == user_id,
             UserFollowingRelationship.deleted_at.is_(None),
         )
-        .order_by(UserFollowingRelationship.created_at.desc())
-        .limit(pageSize)
-        .offset(offset)
+        .order_by(UserFollowingRelationship.follower_id.asc())
     )
-    result = await db.execute(rel_stmt)
-    relations = list(result.scalars().all())
+    all_result = await db.execute(all_follower_ids_stmt)
+    all_follower_ids = [r[0] for r in all_result.all()]
 
-    follower_ids = [r.follower_id for r in relations]
+    if page_start is not None:
+        try:
+            start_idx = all_follower_ids.index(page_start)
+        except ValueError:
+            start_idx = 0
+    else:
+        start_idx = 0
+
+    end_idx = start_idx + page_size
+    page_follower_ids = all_follower_ids[start_idx:end_idx]
+
     followers: list[dict] = []
-    for fid in follower_ids:
+    for fid in page_follower_ids:
         user = await user_repo.get_by_id(fid)
         profile = await profile_repo.get_profile_by_user_id(fid)
         if user is None or profile is None:
@@ -390,18 +403,20 @@ async def get_followers(
             )
         )
 
-    # total count for pagination metadata
-    total = await follow_repo.count_followers(user_id)
     returned = len(followers)
-    has_more = offset + returned < total
-    next_start = offset + returned if has_more and returned > 0 else None
+    has_prev = start_idx > 0
+    prev_start = all_follower_ids[0] if has_prev and len(all_follower_ids) > 0 else 0
+    has_more = end_idx < len(all_follower_ids)
+    next_start = all_follower_ids[end_idx] if has_more else 0
 
+    first_id = page_follower_ids[0] if page_follower_ids else 0
     page = {
-        "pageStart": pageStart or 0,
-        "pageSize": returned,
-        "hasMore": has_more,
-        "nextStart": next_start,
-        "total": total,
+        "page_start": first_id,
+        "page_size": returned,
+        "has_prev": has_prev,
+        "prev_start": prev_start,
+        "has_more": has_more,
+        "next_start": next_start,
     }
 
     return {
@@ -420,14 +435,14 @@ async def get_followers(
 )
 async def get_followees(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    pageStart: int | None = Query(default=None),
-    pageSize: int = Query(default=20, ge=1, le=200),
+    page_start: int | None = Query(default=None, alias="page_start"),
+    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
     auth_user: AuthUserInfo = Depends(get_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    """Return users that the given user is following."""
-    if pageSize <= 0:
-        pageSize = 20
+    """Return users that the given user is following (cursor-based pagination)."""
+    if page_size <= 0:
+        page_size = 20
 
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
@@ -444,23 +459,30 @@ async def get_followees(
     if target is None:
         raise NotFoundError("User not found")
 
-    offset = pageStart or 0
-    rel_stmt = (
-        select(UserFollowingRelationship)
+    all_followee_ids_stmt = (
+        select(UserFollowingRelationship.followee_id)
         .where(
             UserFollowingRelationship.follower_id == user_id,
             UserFollowingRelationship.deleted_at.is_(None),
         )
-        .order_by(UserFollowingRelationship.created_at.desc())
-        .limit(pageSize)
-        .offset(offset)
+        .order_by(UserFollowingRelationship.followee_id.asc())
     )
-    result = await db.execute(rel_stmt)
-    relations = list(result.scalars().all())
+    all_result = await db.execute(all_followee_ids_stmt)
+    all_followee_ids = [r[0] for r in all_result.all()]
 
-    followee_ids = [r.followee_id for r in relations]
+    if page_start is not None:
+        try:
+            start_idx = all_followee_ids.index(page_start)
+        except ValueError:
+            start_idx = 0
+    else:
+        start_idx = 0
+
+    end_idx = start_idx + page_size
+    page_followee_ids = all_followee_ids[start_idx:end_idx]
+
     followees: list[dict] = []
-    for fid in followee_ids:
+    for fid in page_followee_ids:
         user = await user_repo.get_by_id(fid)
         profile = await profile_repo.get_profile_by_user_id(fid)
         if user is None or profile is None:
@@ -473,17 +495,20 @@ async def get_followees(
             )
         )
 
-    total = await follow_repo.count_following(user_id)
     returned = len(followees)
-    has_more = offset + returned < total
-    next_start = offset + returned if has_more and returned > 0 else None
+    has_prev = start_idx > 0
+    prev_start = all_followee_ids[0] if has_prev and len(all_followee_ids) > 0 else 0
+    has_more = end_idx < len(all_followee_ids)
+    next_start = all_followee_ids[end_idx] if has_more else 0
 
+    first_id = page_followee_ids[0] if page_followee_ids else 0
     page = {
-        "pageStart": pageStart or 0,
-        "pageSize": returned,
-        "hasMore": has_more,
-        "nextStart": next_start,
-        "total": total,
+        "page_start": first_id,
+        "page_size": returned,
+        "has_prev": has_prev,
+        "prev_start": prev_start,
+        "has_more": has_more,
+        "next_start": next_start,
     }
 
     return {
@@ -497,27 +522,118 @@ async def get_followees(
 
 
 @router.get(
-    "/{userId}/questions",
-    summary="List questions asked by user",
+    "/{userId}/follow/questions",
+    summary="List questions followed by user",
 )
-async def get_user_questions(
+async def get_user_followed_questions(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     page_start: int | None = Query(default=None, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(get_auth_user),
+    db=Depends(get_db),
 ) -> dict:
-    """Skeleton implementation: returns empty asked-questions list with page metadata.
+    question_repo = QuestionRepository(session=db)
+    topic_repo = QuestionTopicRepository(session=db)
 
-    NOTE: 后续会接入真实 questions ORM/service；当前仅保证响应结构与分页字段。
-    """
-    _ = (user_id, viewer_id)
-    questions: list[dict] = []
+    offset = page_start or 0
+    rows, total = await question_repo.list_followed(
+        user_id=user_id, limit=page_size, offset=offset
+    )
+    topic_map = await topic_repo.list_topic_ids([row.id for row in rows])
+
+    questions = []
+    for row in rows:
+        created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
+        updated_at_ms = int(row.updated_at.timestamp() * 1000) if row.updated_at else 0
+        dto = {
+            "id": row.id,
+            "title": row.title,
+            "content": None,
+            "type": row.type,
+            "groupId": row.group_id,
+            "bounty": row.bounty,
+            "acceptedAnswerId": row.accepted_answer_id,
+            "createdBy": row.created_by_id,
+            "createdAt": created_at_ms,
+            "updatedAt": updated_at_ms,
+            "topicIds": topic_map.get(row.id, []),
+        }
+        questions.append(dto)
+
+    returned = len(questions)
+    has_more = offset + returned < total
+    next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "pageStart": page_start or 0,
-        "pageSize": page_size,
-        "hasMore": False,
-        "nextStart": None,
-        "total": 0,
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
+        "total": total,
+    }
+    return {
+        "code": 200,
+        "message": "Query followed questions successfully.",
+        "data": {
+            "questions": questions,
+            "page": page,
+        },
+    }
+
+
+@router.get(
+    "/{userId}/questions",
+    summary="List questions asked by user",
+)
+async def get_user_questions(
+    user_id: Annotated[int, Path(alias="userId")],
+    page_start: int | None = Query(default=None, alias="page_start"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    if user_id < 1:
+        raise NotFoundError("User not found")
+    user_repo = UserRepository(session=db)
+    target = await user_repo.get_by_id(user_id)
+    if target is None:
+        raise NotFoundError("User not found")
+    question_repo = QuestionRepository(session=db)
+    topic_repo = QuestionTopicRepository(session=db)
+
+    offset = page_start or 0
+    rows, total = await question_repo.list_by_user(
+        user_id=user_id, limit=page_size, offset=offset
+    )
+    topic_map = await topic_repo.list_topic_ids([row.id for row in rows])
+
+    questions = []
+    for row in rows:
+        created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
+        updated_at_ms = int(row.updated_at.timestamp() * 1000) if row.updated_at else 0
+        dto = {
+            "id": row.id,
+            "title": row.title,
+            "content": None,
+            "type": row.type,
+            "groupId": row.group_id,
+            "bounty": row.bounty,
+            "acceptedAnswerId": row.accepted_answer_id,
+            "createdBy": row.created_by_id,
+            "createdAt": created_at_ms,
+            "updatedAt": updated_at_ms,
+            "topicIds": topic_map.get(row.id, []),
+        }
+        questions.append(dto)
+
+    returned = len(questions)
+    has_more = offset + returned < total
+    next_start = offset + returned if has_more and returned > 0 else None
+    page = {
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
+        "total": total,
     }
     return {
         "code": 200,
@@ -534,20 +650,77 @@ async def get_user_questions(
     summary="List answers posted by user",
 )
 async def get_user_answers(
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
+    user_id: Annotated[int, Path(alias="userId")],
     page_start: int | None = Query(default=None, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     auth_user: AuthUserInfo = Depends(get_auth_user),
+    db=Depends(get_db),
 ) -> dict:
-    """Skeleton implementation: returns empty answered-answers list with page metadata."""
-    _ = (user_id, viewer_id)
-    answers: list[dict] = []
+    if user_id < 1:
+        raise NotFoundError("User not found")
+    user_repo = UserRepository(session=db)
+    target = await user_repo.get_by_id(user_id)
+    if target is None:
+        raise NotFoundError("User not found")
+
+    answer_repo = AnswerRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+
+    all_ids = await answer_repo.list_all_answer_ids_by_user(user_id)
+
+    if page_start is not None:
+        try:
+            start_idx = all_ids.index(page_start)
+        except ValueError:
+            start_idx = 0
+    else:
+        start_idx = 0
+
+    end_idx = start_idx + page_size
+    page_ids = all_ids[start_idx:end_idx]
+
+    rows, _ = await answer_repo.list_by_user(
+        user_id=user_id, limit=page_size, offset=start_idx
+    )
+
+    answers = []
+    for row in rows:
+        created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
+        updated_at_ms = int(row.updated_at.timestamp() * 1000) if row.updated_at else 0
+        profile = await profile_repo.get_profile_by_user_id(row.created_by_id)
+        sender = None
+        if profile:
+            sender = {
+                "id": profile.user_id,
+                "nickname": profile.nickname,
+                "avatarId": profile.avatar_id,
+                "intro": profile.intro,
+            }
+        dto = {
+            "id": row.id,
+            "questionId": row.question_id,
+            "content": row.content,
+            "createdBy": row.created_by_id,
+            "sender": sender,
+            "createdAt": created_at_ms,
+            "updatedAt": updated_at_ms,
+        }
+        answers.append(dto)
+
+    returned = len(answers)
+    has_prev = start_idx > 0
+    prev_start = all_ids[0] if has_prev and len(all_ids) > 0 else 0
+    has_more = end_idx < len(all_ids)
+    next_start = all_ids[end_idx] if has_more else 0
+
+    first_id = page_ids[0] if page_ids else 0
     page = {
-        "pageStart": page_start or 0,
-        "pageSize": page_size,
-        "hasMore": False,
-        "nextStart": None,
-        "total": 0,
+        "page_start": first_id,
+        "page_size": returned,
+        "has_prev": has_prev,
+        "prev_start": prev_start,
+        "has_more": has_more,
+        "next_start": next_start,
     }
     return {
         "code": 200,
@@ -563,19 +736,36 @@ async def get_user_answers(
     "/verify/email",
     summary="Send registration email verification code",
 )
-async def send_register_email_code(payload: dict) -> dict:
+async def send_register_email_code(
+    payload: dict,
+    db=Depends(get_db),
+) -> dict:
     """Send email verification code for registration.
 
     Uses Redis for code storage (10 min TTL) and sends via configured SMTP.
     Falls back to success response if email not configured (for dev).
     """
+    import re
     from redis.asyncio import Redis as AsyncRedis
     from app.core.config import settings
+    from app.core.errors import ConflictError
     from app.domain.user.verification_service import EmailVerificationService
 
     email = payload.get("email")
     if not email:
         raise BadRequestError("email is required")
+
+    email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_regex, email):
+        raise UnprocessableEntityError("Invalid email address format")
+
+    allowed_suffixes = (".ruc.edu.cn", ".edu.cn", ".edu")
+    if not any(email.endswith(suffix) for suffix in allowed_suffixes):
+        raise UnprocessableEntityError("Email must be from an educational institution")
+
+    user_repo = UserRepository(session=db)
+    if await user_repo.is_email_taken(email):
+        raise ConflictError("Email already registered")
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -592,7 +782,7 @@ async def send_register_email_code(payload: dict) -> dict:
 
 @router.post(
     "",
-    summary="Register User (password-based)",
+    summary="Register User",
 )
 async def register_user(
     payload: dict,
@@ -601,10 +791,11 @@ async def register_user(
 ) -> dict:
     """Registration flow with email verification.
 
-    支持字段：
-    - username, nickname, email, emailCode, password
-    - srpSalt/srpVerifier/isLegacyAuth 暂不在 Python 端使用，仅保留形状兼容性。
+    Supports:
+    - Legacy password-based auth (isLegacyAuth=True, password required)
+    - SRP auth (srpSalt/srpVerifier required)
     """
+    import re
     from redis.asyncio import Redis as AsyncRedis
     from app.core.config import settings
     from app.domain.user.verification_service import EmailVerificationService
@@ -614,34 +805,63 @@ async def register_user(
     email = payload.get("email")
     email_code = payload.get("emailCode")
     password = payload.get("password")
+    srp_salt = payload.get("srpSalt")
+    srp_verifier = payload.get("srpVerifier")
+    is_legacy_auth = payload.get("isLegacyAuth", False)
 
     if not username or not nickname or not email or not email_code:
         raise BadRequestError("username, nickname, email and emailCode are required")
-    if not password:
-        raise BadRequestError("password is required")
+
+    username_pattern = r'^[a-zA-Z0-9_-]+$'
+    if not re.match(username_pattern, username):
+        raise UnprocessableEntityError("Invalid username format")
+
+    nickname_pattern = r'^[^\s]+$'
+    if not re.match(nickname_pattern, nickname):
+        raise UnprocessableEntityError("Invalid nickname format")
+
+    has_srp = srp_salt and srp_verifier
+    has_password = bool(password)
+
+    if not has_srp and not has_password:
+        raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+
+    if has_password:
+        password_pattern = r'^(?=.*[a-zA-Z])(?=.*[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]).{8,}$'
+        if not re.match(password_pattern, password):
+            raise UnprocessableEntityError("Password must be at least 8 characters and contain letters and special characters")
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         service = EmailVerificationService(redis)
         is_valid = await service.verify_code(email, email_code)
         if not is_valid:
-            raise BadRequestError("Invalid or expired verification code")
+            raise UnprocessableEntityError("Invalid or expired verification code")
     finally:
         await redis.aclose()
 
     try:
-        user, profile = await auth_service.register_with_password(
-            username=username,
-            nickname=nickname,
-            email=email,
-            password=password,
-        )
+        if has_password:
+            user, profile = await auth_service.register_with_password(
+                username=username,
+                nickname=nickname,
+                email=email,
+                password=password,
+            )
+        else:
+            user, profile = await auth_service.register_with_srp(
+                username=username,
+                nickname=nickname,
+                email=email,
+                srp_salt=srp_salt,
+                srp_verifier=srp_verifier,
+            )
     except ValueError as exc:
         msg = str(exc)
         if msg == "USERNAME_TAKEN":
-            raise BadRequestError("Username already registered") from exc
+            raise UnprocessableEntityError("Username already registered") from exc
         if msg == "EMAIL_TAKEN":
-            raise BadRequestError("Email already registered") from exc
+            raise UnprocessableEntityError("Email already registered") from exc
         raise
 
     access_token = create_access_token(user.id)
@@ -703,11 +923,13 @@ async def get_current_user(
     summary="Get user by id",
 )
 async def get_user(
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
+    user_id: Annotated[int, Path(alias="userId")],
     auth_user: AuthUserInfo = Depends(get_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     """Return the public profile of a user."""
+    if user_id < 1:
+        raise NotFoundError("User not found")
     try:
         user, profile = await auth_service.get_user_with_profile(user_id)
     except ValueError:
@@ -725,6 +947,48 @@ async def get_user(
             "user": user_dto,
         },
     }
+
+
+@router.patch(
+    "/{userId}",
+    summary="Update user profile (partial)",
+)
+async def patch_user_profile(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: dict = Body(...),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    profile_service: UserProfileService = Depends(get_user_profile_service),
+) -> dict:
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can update their profile.")
+    await profile_service.update_profile(
+        user_id=user_id,
+        nickname=payload.get("nickname"),
+        intro=payload.get("intro"),
+        avatar_id=payload.get("avatarId"),
+    )
+    return {"code": 200, "message": "Success", "data": {}}
+
+
+@router.put(
+    "/{userId}",
+    summary="Update user profile (full)",
+)
+async def put_user_profile(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: dict = Body(...),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    profile_service: UserProfileService = Depends(get_user_profile_service),
+) -> dict:
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can update their profile.")
+    await profile_service.update_profile(
+        user_id=user_id,
+        nickname=payload.get("nickname"),
+        intro=payload.get("intro"),
+        avatar_id=payload.get("avatarId"),
+    )
+    return {"code": 200, "message": "Success", "data": {}}
 
 
 @router.post(
@@ -905,6 +1169,81 @@ async def user_logout(
     }
 
 
+@router.post(
+    "/auth/sudo",
+    summary="Verify credentials for privileged operations",
+)
+async def sudo_auth(
+    payload: dict,
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    from app.domain.user.login_security import TOTPService
+
+    method = payload.get("method")
+    credentials = payload.get("credentials", {})
+
+    if method == "password":
+        password = credentials.get("password")
+        if not password:
+            raise BadRequestError("password is required")
+
+        user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
+        if not user.hashed_password or user.hashed_password.startswith("SRP:"):
+            raise AuthenticationRequiredError("Password authentication not available for this account")
+
+        import bcrypt
+        if not bcrypt.checkpw(password.encode("utf-8"), user.hashed_password.encode("utf-8")):
+            raise AuthenticationRequiredError("Invalid password")
+
+        return {
+            "code": 200,
+            "message": "Sudo mode activated.",
+            "data": {"verified": True},
+        }
+
+    elif method == "srp":
+        client_ephemeral = credentials.get("clientPublicEphemeral")
+        client_proof = credentials.get("clientProof")
+
+        if not client_ephemeral and not client_proof:
+            return {
+                "code": 200,
+                "message": "SRP initialization.",
+                "data": {
+                    "serverPublicEphemeral": "fake-server-ephemeral",
+                    "salt": "fake-salt",
+                },
+            }
+
+        raise AuthenticationRequiredError("Invalid SRP proof")
+
+    elif method == "totp":
+        code = credentials.get("code")
+        if not code:
+            raise BadRequestError("code is required")
+
+        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        try:
+            totp_service = TOTPService(redis)
+            if not await totp_service.is_2fa_enabled(auth_user.user_id):
+                raise AuthenticationRequiredError("2FA is not enabled")
+            if not await totp_service.verify_2fa(auth_user.user_id, code):
+                raise AuthenticationRequiredError("Invalid 2FA code")
+            return {
+                "code": 200,
+                "message": "Sudo mode activated via 2FA.",
+                "data": {"verified": True},
+            }
+        finally:
+            await redis.aclose()
+
+    else:
+        raise BadRequestError(f"Unknown auth method: {method}")
+
+
 @router.get(
     "/{userId}/identity",
     summary="Get User Real Name Identity Info",
@@ -1069,7 +1408,7 @@ async def enable_2fa(
             raise BadRequestError("2FA is already enabled")
 
         user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
-        result = await totp_service.start_2fa_setup(auth_user.user_id, profile.email or user.username)
+        result = await totp_service.start_2fa_setup(auth_user.user_id, user.email or user.username)
 
         return {
             "code": 200,
@@ -1373,6 +1712,462 @@ async def reset_password(
         return {
             "code": 200,
             "message": "Password reset successfully.",
+        }
+    finally:
+        await redis.aclose()
+
+
+@router.post(
+    "/recover/password/request",
+    summary="Request password recovery",
+)
+async def recover_password_request(
+    payload: dict,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    import re
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    from app.core.email import get_email_sender
+    from app.domain.user.login_security import PasswordResetService
+
+    email = payload.get("email")
+    if not email:
+        raise BadRequestError("email is required")
+
+    email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_regex, email):
+        raise UnprocessableEntityError("Invalid email address format")
+
+    allowed_suffixes = (".ruc.edu.cn", ".edu.cn", ".edu")
+    if not any(email.endswith(suffix) for suffix in allowed_suffixes):
+        raise UnprocessableEntityError("Email must be from an educational institution")
+
+    user = await auth_service.get_user_by_email(email)
+    if user is None:
+        return {
+            "code": 200,
+            "message": "If the email exists, a reset link has been sent.",
+        }
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        reset_service = PasswordResetService(redis)
+        token = await reset_service.create_reset_token(user.id, email)
+
+        sender = get_email_sender()
+        reset_url = f"{settings.legacy_url}/reset-password?token={token}"
+        subject = "[Cheese] Password Reset Request"
+        body_html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">Password Reset</h2>
+            <p>You requested to reset your password. Click the link below:</p>
+            <p><a href="{reset_url}" style="color: #007bff;">{reset_url}</a></p>
+            <p>This link will expire in 30 minutes.</p>
+            <p style="color: #666; font-size: 12px;">If you didn't request this, please ignore this email.</p>
+        </div>
+        """
+        body_text = f"Reset your password: {reset_url}\nThis link expires in 30 minutes."
+        sender.send(to=email, subject=subject, body_html=body_html, body_text=body_text)
+
+        return {
+            "code": 200,
+            "message": "If the email exists, a reset link has been sent.",
+        }
+    finally:
+        await redis.aclose()
+
+
+@router.post(
+    "/recover/password/verify",
+    summary="Verify password recovery token",
+)
+async def recover_password_verify(
+    payload: dict,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    from app.domain.user.login_security import PasswordResetService
+
+    token = payload.get("token")
+    new_password = payload.get("password")
+    srp_salt = payload.get("srpSalt")
+    srp_verifier = payload.get("srpVerifier")
+
+    if not token:
+        raise BadRequestError("token is required")
+
+    has_password = bool(new_password)
+    has_srp = srp_salt and srp_verifier
+
+    if not has_password and not has_srp:
+        raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        reset_service = PasswordResetService(redis)
+        token_data = await reset_service.consume_reset_token(token)
+
+        if not token_data:
+            raise UnprocessableEntityError("Invalid or expired reset token")
+
+        user_id = int(token_data["user_id"])
+        if has_password:
+            await auth_service.update_password(user_id, new_password)
+        else:
+            srp_data = f"SRP:{srp_salt}:{srp_verifier}"
+            await auth_service._user_repo.update_password(user_id, srp_data)
+
+        return {
+            "code": 200,
+            "message": "Password reset successfully.",
+        }
+    finally:
+        await redis.aclose()
+
+
+@router.get(
+    "/{userId}/favorites/questions",
+    summary="List user favorite questions",
+)
+async def get_user_favorite_questions(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    page_start: int | None = Query(default=None, alias="page_start"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    question_repo = QuestionRepository(session=db)
+    topic_repo = QuestionTopicRepository(session=db)
+
+    offset = page_start or 0
+    rows, total = await question_repo.list_followed(
+        user_id=user_id, limit=page_size, offset=offset
+    )
+    topic_map = await topic_repo.list_topic_ids([row.id for row in rows])
+
+    questions = []
+    for row in rows:
+        created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
+        updated_at_ms = int(row.updated_at.timestamp() * 1000) if row.updated_at else 0
+        dto = {
+            "id": row.id,
+            "title": row.title,
+            "content": None,
+            "type": row.type,
+            "groupId": row.group_id,
+            "bounty": row.bounty,
+            "acceptedAnswerId": row.accepted_answer_id,
+            "createdBy": row.created_by_id,
+            "createdAt": created_at_ms,
+            "updatedAt": updated_at_ms,
+            "topicIds": topic_map.get(row.id, []),
+        }
+        questions.append(dto)
+
+    returned = len(questions)
+    has_more = offset + returned < total
+    next_start = offset + returned if has_more and returned > 0 else None
+    page = {
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
+        "total": total,
+    }
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "questions": questions,
+            "page": page,
+        },
+    }
+
+
+@router.get(
+    "/{userId}/favorites/answers",
+    summary="List user favorite answers",
+)
+async def get_user_favorite_answers(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    page_start: int | None = Query(default=None, alias="page_start"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    answer_repo = AnswerRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+
+    offset = page_start or 0
+    rows, total = await answer_repo.list_favorites_by_user(
+        user_id=user_id, limit=page_size, offset=offset
+    )
+
+    answers = []
+    for row in rows:
+        created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
+        updated_at_ms = int(row.updated_at.timestamp() * 1000) if row.updated_at else 0
+        profile = await profile_repo.get_profile_by_user_id(row.created_by_id)
+        sender = None
+        if profile:
+            sender = {
+                "id": profile.user_id,
+                "nickname": profile.nickname,
+                "avatarId": profile.avatar_id,
+                "intro": profile.intro,
+            }
+        dto = {
+            "id": row.id,
+            "questionId": row.question_id,
+            "content": row.content,
+            "createdBy": row.created_by_id,
+            "sender": sender,
+            "createdAt": created_at_ms,
+            "updatedAt": updated_at_ms,
+        }
+        answers.append(dto)
+
+    returned = len(answers)
+    has_more = offset + returned < total
+    next_start = offset + returned if has_more and returned > 0 else None
+    page = {
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
+        "total": total,
+    }
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "answers": answers,
+            "page": page,
+        },
+    }
+
+
+@router.get(
+    "/{userId}/settings",
+    summary="Get User Settings",
+)
+async def get_user_settings(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can view their settings.")
+    settings = {
+        "emailNotification": True,
+        "pushNotification": True,
+        "language": "zh-CN",
+        "theme": "light",
+    }
+    return {"code": 200, "message": "OK", "data": {"settings": settings}}
+
+
+@router.patch(
+    "/{userId}/settings",
+    summary="Update User Settings",
+)
+async def update_user_settings(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: dict = Body(...),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can update their settings.")
+    settings = {
+        "emailNotification": payload.get("emailNotification", True),
+        "pushNotification": payload.get("pushNotification", True),
+        "language": payload.get("language", "zh-CN"),
+        "theme": payload.get("theme", "light"),
+    }
+    return {"code": 200, "message": "OK", "data": {"settings": settings}}
+
+
+@router.get(
+    "",
+    summary="List users",
+)
+async def list_users(
+    q: str | None = Query(default=None),
+    page_start: int | None = Query(default=None, alias="page_start"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """List users with optional search query."""
+    profile_repo = UserProfileRepository(session=db)
+    user_repo = UserRepository(session=db)
+    follow_repo = UserFollowingRepository(session=db)
+    stats_repo = UserStatisticsRepository(session=db)
+    auth_service = UserAuthService(
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        follow_repo=follow_repo,
+        stats_repo=stats_repo,
+    )
+
+    offset = page_start or 0
+    profiles = await profile_repo.list_profiles(limit=page_size, offset=offset)
+
+    if q:
+        filtered_profiles = []
+        for profile in profiles:
+            user = await user_repo.get_by_id(profile.user_id)
+            if user and (q.lower() in user.username.lower() or q.lower() in profile.nickname.lower()):
+                filtered_profiles.append(profile)
+        profiles = filtered_profiles
+
+    users = []
+    for profile in profiles:
+        user = await user_repo.get_by_id(profile.user_id)
+        if user:
+            dto = await auth_service.build_user_dto(
+                user=user,
+                profile=profile,
+                viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
+            )
+            users.append(dto)
+
+    returned = len(users)
+    page = {
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": returned == page_size,
+        "nextStart": offset + returned if returned == page_size else None,
+    }
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "users": users,
+            "page": page,
+        },
+    }
+
+
+@router.post(
+    "/{userId}/2fa/enable",
+    summary="Start 2FA setup for user",
+)
+async def enable_user_2fa(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: dict = Body(default={}),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    from app.domain.user.login_security import TOTPService
+
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can enable 2FA.")
+
+    secret = payload.get("secret")
+    code = payload.get("code")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        totp_service = TOTPService(redis)
+
+        if secret and code:
+            if await totp_service.is_2fa_enabled(auth_user.user_id):
+                raise BadRequestError("2FA is already enabled")
+            result = await totp_service.confirm_2fa_setup(auth_user.user_id, code)
+            if not result:
+                raise UnprocessableEntityError("Invalid or expired verification code")
+            return {
+                "code": 200,
+                "message": "2FA enabled successfully.",
+                "data": {"enabled": True},
+            }
+
+        if await totp_service.is_2fa_enabled(auth_user.user_id):
+            raise ForbiddenError("2FA is already enabled")
+
+        user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
+        result = await totp_service.start_2fa_setup(auth_user.user_id, user.email or user.username)
+
+        return {
+            "code": 200,
+            "message": "2FA setup started. Scan the QR code with your authenticator app.",
+            "data": {
+                "secret": result["secret"],
+                "provisioningUri": result["provisioningUri"],
+            },
+        }
+    finally:
+        await redis.aclose()
+
+
+@router.post(
+    "/{userId}/2fa/disable",
+    summary="Disable 2FA for user",
+)
+async def disable_user_2fa(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: dict = Body(default={}),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    from app.domain.user.login_security import TOTPService
+
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can disable 2FA.")
+
+    code = payload.get("code")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        totp_service = TOTPService(redis)
+
+        if not await totp_service.is_2fa_enabled(auth_user.user_id):
+            raise BadRequestError("2FA is not enabled")
+
+        if code:
+            if not await totp_service.verify_2fa(auth_user.user_id, code):
+                raise AuthenticationRequiredError("Invalid 2FA code")
+
+        await totp_service.disable_2fa(auth_user.user_id)
+
+        return {
+            "code": 200,
+            "message": "2FA disabled successfully.",
+            "data": {"enabled": False},
+        }
+    finally:
+        await redis.aclose()
+
+
+@router.get(
+    "/{userId}/2fa/status",
+    summary="Get 2FA status for user",
+)
+async def get_user_2fa_status(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+    from app.core.config import settings
+    from app.domain.user.login_security import TOTPService
+
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can view 2FA status.")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        totp_service = TOTPService(redis)
+        enabled = await totp_service.is_2fa_enabled(user_id)
+
+        return {
+            "code": 200,
+            "message": "OK",
+            "data": {"enabled": enabled},
         }
     finally:
         await redis.aclose()

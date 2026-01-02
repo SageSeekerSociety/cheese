@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 
 from app.auth.checker import get_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError, ConflictError
 from app.db.session import get_db
 from app.domain.space.models import Space, SpaceCategory, SpaceAdminRelation, SpaceAdminRole
 from app.domain.space.repositories import (
@@ -36,7 +36,8 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
     category_repo = SpaceCategoryRepository(session=db)
     admin_repo = SpaceAdminRelationRepository(session=db)
     rank_repo = SpaceUserRankRepository(session=db)
-    return SpaceService(repo, category_repo, admin_repo, rank_repo)
+    task_repo = TaskRepository(session=db)
+    return SpaceService(repo, category_repo, admin_repo, rank_repo, task_repo)
 
 
 async def get_space_analytics_service(db=Depends(get_db)) -> SpaceAnalyticsService:
@@ -173,6 +174,10 @@ async def create_space(
     name = payload.get("name")
     if not isinstance(name, str) or not name.strip():
         raise BadRequestError("name is required")
+
+    if await service.exists_by_name(name):
+        raise ConflictError(f"Space with name '{name}' already exists")
+
     intro = payload.get("intro") or ""
     description = payload.get("description") or ""
     avatar_id = payload.get("avatarId")
@@ -394,6 +399,12 @@ async def patch_space_category(
         except (TypeError, ValueError) as exc:
             raise BadRequestError("displayOrder must be integer") from exc
 
+    # Support both "archived" (boolean) and "archivedAt" (timestamp)
+    archived = payload.get("archived")
+    if archived is None and "archivedAt" in payload:
+        archived_at_raw = payload.get("archivedAt")
+        archived = archived_at_raw is not None and archived_at_raw > 0
+
     category = await service.update_category(
         space_id=space_id,
         category_id=category_id,
@@ -401,7 +412,7 @@ async def patch_space_category(
         name=payload.get("name"),
         description=payload.get("description"),
         display_order=display_order,
-        archived=payload.get("archived"),
+        archived=archived,
     )
     return {
         "code": 200,

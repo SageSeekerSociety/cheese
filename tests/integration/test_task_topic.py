@@ -173,7 +173,6 @@ class TestTaskTopicIntegration:
         )
         assert patch_resp.status_code == 200, f"Expected 200, got {patch_resp.status_code}: {patch_resp.text}"
 
-    @pytest.mark.xfail(reason="queryTopics parameter may not return topics in Python backend response")
     def test_get_task_with_updated_topics(self, setup_task_topics: dict, api_client: httpx.Client):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]

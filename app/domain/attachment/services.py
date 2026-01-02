@@ -3,7 +3,7 @@ from __future__ import annotations
 import mimetypes
 from typing import Any, BinaryIO
 
-from app.core.errors import NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError
 from app.core.storage import StorageBackend, generate_storage_key, compute_file_hash
 from app.domain.attachment.models import Attachment, AttachmentType
 from app.domain.attachment.repositories import AttachmentRepository
@@ -36,13 +36,22 @@ class AttachmentService:
         filename: str,
         content_type: str | None = None,
         uploader_id: int,
+        attachment_type: str | None = None,
     ) -> Attachment:
         if not content_type:
             content_type, _ = mimetypes.guess_type(filename)
             content_type = content_type or "application/octet-stream"
 
-        attachment_type = detect_attachment_type(content_type)
-        storage_key = generate_storage_key(filename, prefix=f"attachments/{attachment_type.value}")
+        if attachment_type:
+            final_type = attachment_type
+        else:
+            final_type = detect_attachment_type(content_type).value
+
+        file_content = file.read()
+        file_size = len(file_content)
+        file.seek(0)
+
+        storage_key = generate_storage_key(filename, prefix=f"attachments/{final_type}")
         file_hash = compute_file_hash(file)
 
         url = await self._storage.upload(file, storage_key, content_type)
@@ -53,10 +62,11 @@ class AttachmentService:
             "storageKey": storage_key,
             "hash": file_hash,
             "uploaderId": uploader_id,
+            "size": file_size,
         }
 
         attachment = await self._repo.create(
-            attachment_type=attachment_type.value,
+            attachment_type=final_type,
             url=url,
             meta=meta,
         )
@@ -86,13 +96,17 @@ class AttachmentService:
         content_type = attachment.meta.get("contentType", "application/octet-stream")
         return content, filename, content_type
 
-    async def delete(self, attachment_id: int) -> bool:
+    async def delete(self, attachment_id: int, user_id: int) -> None:
         attachment = await self._repo.get_by_id(attachment_id)
         if attachment is None:
-            return False
+            raise NotFoundError.for_resource("attachment", attachment_id)
+
+        uploader_id = attachment.meta.get("uploaderId")
+        if uploader_id != user_id:
+            raise ForbiddenError("Only the uploader can delete the attachment")
 
         storage_key = attachment.meta.get("storageKey")
         if storage_key:
             await self._storage.delete(storage_key)
 
-        return await self._repo.delete(attachment_id)
+        await self._repo.delete(attachment_id)

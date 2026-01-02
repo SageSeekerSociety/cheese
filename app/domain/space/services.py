@@ -12,6 +12,11 @@ from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
 )
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.domain.task.repositories import TaskRepository
+
 
 class SpaceService:
     def __init__(
@@ -20,11 +25,13 @@ class SpaceService:
         category_repo: SpaceCategoryRepository,
         admin_repo: SpaceAdminRelationRepository | None = None,
         rank_repo: SpaceUserRankRepository | None = None,
+        task_repo: "TaskRepository | None" = None,
     ) -> None:
         self._repo = repo
         self._category_repo = category_repo
         self._admin_repo = admin_repo
         self._rank_repo = rank_repo
+        self._task_repo = task_repo
 
     # ------------------------------------------------------------------
     # Basic queries
@@ -32,6 +39,9 @@ class SpaceService:
 
     async def get_space(self, space_id: int) -> Space | None:
         return await self._repo.get_by_id(space_id)
+
+    async def exists_by_name(self, name: str) -> bool:
+        return await self._repo.exists_by_name(name)
 
     async def list_spaces(self, *, limit: int, offset: int = 0) -> Sequence[Space]:
         return await self._repo.list_spaces(limit=limit, offset=offset)
@@ -222,6 +232,22 @@ class SpaceService:
     ) -> None:
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
+
+        space = await self._repo.get_by_id(space_id)
+        if space is None:
+            raise NotFoundError.for_resource("space", space_id)
+
+        if space.default_category_id == category_id:
+            raise BadRequestError("Cannot delete the default category.")
+
+        if self._task_repo is not None:
+            task_count = await self._task_repo.count_tasks(
+                space_id=space_id,
+                category_id=category_id,
+            )
+            if task_count > 0:
+                raise BadRequestError("Cannot delete a category that contains tasks.")
+
         category.deleted_at = datetime.utcnow()
         category.updated_at = datetime.utcnow()
         await self._category_repo.save(category)

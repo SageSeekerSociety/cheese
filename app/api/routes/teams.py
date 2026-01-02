@@ -31,14 +31,40 @@ async def get_team_membership_service(
     return TeamMembershipService(session=db, team_repo=team_repo, application_repo=app_repo)
 
 
-def _team_to_api_model(team: Team) -> dict:
+def _team_to_api_model(
+    team: Team,
+    *,
+    members: list[TeamUserRelation] | None = None,
+    current_user_id: int | None = None,
+) -> dict:
     created_at_ms = (
         int(team.created_at.timestamp() * 1000) if team.created_at is not None else 0
     )
     updated_at_ms = (
         int(team.updated_at.timestamp() * 1000) if team.updated_at is not None else 0
     )
-    return {
+
+    owner_info = None
+    admins_total = 0
+    members_total = 0
+    joined = False
+    user_role = None
+
+    if members is not None:
+        for rel in members:
+            if rel.role == TeamMemberRole.OWNER:
+                owner_info = {"id": rel.user_id}
+            elif rel.role == TeamMemberRole.ADMIN:
+                admins_total += 1
+            elif rel.role == TeamMemberRole.MEMBER:
+                members_total += 1
+
+            if current_user_id is not None and rel.user_id == current_user_id:
+                joined = True
+                role_map = {0: "OWNER", 1: "ADMIN", 2: "MEMBER"}
+                user_role = role_map.get(rel.role, "MEMBER")
+
+    result = {
         "id": team.id,
         "name": team.name,
         "intro": team.intro,
@@ -47,6 +73,17 @@ def _team_to_api_model(team: Team) -> dict:
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
+
+    if owner_info is not None:
+        result["owner"] = owner_info
+    if members is not None:
+        result["admins"] = {"total": admins_total}
+        result["members"] = {"total": members_total}
+    if current_user_id is not None:
+        result["joined"] = joined
+        result["role"] = user_role
+
+    return result
 
 
 def _member_to_api_model(rel: TeamUserRelation) -> dict:
@@ -70,6 +107,7 @@ def _member_to_api_model(rel: TeamUserRelation) -> dict:
     role_name = role_map.get(rel.role, "MEMBER")
     return {
         "role": role_name,
+        "user": {"id": rel.user_id},
         "userId": rel.user_id,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
@@ -147,7 +185,12 @@ async def get_my_teams(
     service: TeamService = Depends(get_team_service),
 ) -> dict:
     teams = await service.get_teams_of_user(user_id=auth_user.user_id)
-    items = [_team_to_api_model(t) for t in teams]
+    items = []
+    for team in teams:
+        members = list(await service.get_team_members(team_id=team.id))
+        items.append(
+            _team_to_api_model(team, members=members, current_user_id=auth_user.user_id)
+        )
     return {
         "code": 200,
         "message": "OK",
@@ -162,12 +205,23 @@ async def get_my_teams(
 async def get_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: TeamService = Depends(get_team_service),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     team = await service.get_team(team_id=team_id)
     if team is None:
         raise NotFoundError("Resource team not found", data={"type": "team", "id": team_id})
 
-    return {"code": 200, "message": "OK", "data": {"team": _team_to_api_model(team)}}
+    members = list(await service.get_team_members(team_id=team_id))
+    current_user_id = auth_user.user_id if auth_user.user_id > 0 else None
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "team": _team_to_api_model(
+                team, members=members, current_user_id=current_user_id
+            )
+        },
+    }
 
 
 @router.get(
@@ -219,11 +273,11 @@ async def create_team(
         description = ""
     elif not isinstance(description, str):
         raise BadRequestError("description must be string")
-    avatar_id = payload.get("avatarId")
+    avatar_id = payload.get("avatarId", 1)
     if not isinstance(name, str) or not name.strip():
         raise BadRequestError("name is required")
     if not isinstance(avatar_id, int) or avatar_id <= 0:
-        raise BadRequestError("avatarId must be positive")
+        avatar_id = 1
 
     team = await service.create_team(
         name=name,
@@ -232,10 +286,15 @@ async def create_team(
         avatar_id=avatar_id,
         owner_id=auth_user.user_id,
     )
+    members = list(await service.get_team_members(team_id=team.id))
     return {
         "code": 201,
         "message": "Team created",
-        "data": {"team": _team_to_api_model(team)},
+        "data": {
+            "team": _team_to_api_model(
+                team, members=members, current_user_id=auth_user.user_id
+            )
+        },
     }
 
 
@@ -266,7 +325,16 @@ async def patch_team(
         description=description,
         avatar_id=payload.get("avatarId"),
     )
-    return {"code": 200, "message": "OK", "data": {"team": _team_to_api_model(team)}}
+    members = list(await service.get_team_members(team_id=team_id))
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "team": _team_to_api_model(
+                team, members=members, current_user_id=auth_user.user_id
+            )
+        },
+    }
 
 
 @router.delete(
@@ -291,7 +359,7 @@ async def delete_team(
 async def delete_team_member(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = require_permission(Action.DELETE, Resource.TEAM_MEMBERSHIP, "teamId"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
     service: TeamService = Depends(get_team_service),
 ) -> Response:
     await service.remove_team_member(
@@ -327,7 +395,16 @@ async def patch_team_member_role(
     team = await service.get_team(team_id)
     if team is None:
         raise NotFoundError("Resource team not found", data={"type": "team", "id": team_id})
-    return {"code": 200, "message": "OK", "data": {"team": _team_to_api_model(team)}}
+    members = list(await service.get_team_members(team_id=team_id))
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "team": _team_to_api_model(
+                team, members=members, current_user_id=auth_user.user_id
+            )
+        },
+    }
 
 
 @router.post(

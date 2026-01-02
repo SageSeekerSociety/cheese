@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, Integer, Sequence, String, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Integer, Sequence, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -43,9 +43,9 @@ class Knowledge(Base):
     project_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     discussion_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 knowledge_label_seq = Sequence("knowledge_label_seq")
@@ -55,12 +55,12 @@ class KnowledgeLabel(Base):
     __tablename__ = "knowledge_label"
 
     id: Mapped[int] = mapped_column(BigInteger, knowledge_label_seq, primary_key=True, server_default=knowledge_label_seq.next_value())
-    knowledge_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("knowledge.id"), nullable=False)
+    knowledge_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     label: Mapped[str] = mapped_column(String(length=50), nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class KnowledgeUpvote(Base):
@@ -70,7 +70,7 @@ class KnowledgeUpvote(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    knowledge_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("knowledge.id"), nullable=False)
+    knowledge_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.answers.models import Answer
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.questions.models import VoteType
@@ -10,17 +10,17 @@ from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.repositories import UserProfileRepository
 
 
-def _answer_to_dto(answer: Answer, sender: dict | None = None) -> dict:
+def _answer_to_dto(answer: Answer, author: dict | None = None) -> dict:
     created_at_ms = int(answer.created_at.timestamp() * 1000) if answer.created_at else 0
     updated_at_ms = int(answer.updated_at.timestamp() * 1000) if answer.updated_at else 0
     return {
         "id": answer.id,
-        "questionId": answer.question_id,
+        "question_id": answer.question_id,
         "content": answer.content,
-        "createdBy": answer.created_by_id,
-        "sender": sender,
-        "createdAt": created_at_ms,
-        "updatedAt": updated_at_ms,
+        "created_by": answer.created_by_id,
+        "author": author,
+        "created_at": created_at_ms,
+        "updated_at": updated_at_ms,
     }
 
 
@@ -43,27 +43,44 @@ class AnswersService:
         page_size: int,
     ) -> tuple[list[dict], dict]:
         await self._ensure_question_exists(question_id)
+        all_ids = await self._repo.list_all_answer_ids_for_question(question_id)
+
+        if page_start is not None:
+            try:
+                start_idx = all_ids.index(page_start)
+            except ValueError:
+                start_idx = 0
+        else:
+            start_idx = 0
+
+        end_idx = start_idx + page_size
+        page_ids = all_ids[start_idx:end_idx]
+
         rows = await self._repo.list_answers_for_question(
             question_id=question_id,
             limit=page_size,
-            offset=page_start or 0,
+            cursor_id=page_start if page_start else (all_ids[0] if all_ids else None),
         )
         profiles = await self._profile_repo.get_profiles_by_user_ids({row.created_by_id for row in rows})
         items = [
-            _answer_to_dto(row, sender=_profile_to_dto(profiles.get(row.created_by_id)))
+            _answer_to_dto(row, author=_profile_to_dto(profiles.get(row.created_by_id)))
             for row in rows
         ]
-        total = await self._repo.count_answers_for_question(question_id)
-        offset = page_start or 0
+
         returned = len(items)
-        has_more = offset + returned < total
-        next_start = offset + returned if has_more and returned > 0 else None
+        has_prev = start_idx > 0
+        prev_start = all_ids[0] if has_prev and len(all_ids) > 0 else 0
+        has_more = end_idx < len(all_ids)
+        next_start = all_ids[end_idx] if has_more else 0
+
+        first_id = page_ids[0] if page_ids else 0
         page = {
-            "pageStart": offset,
-            "pageSize": returned,
-            "hasMore": has_more,
-            "nextStart": next_start,
-            "total": total,
+            "page_start": first_id,
+            "page_size": returned,
+            "has_prev": has_prev,
+            "prev_start": prev_start,
+            "has_more": has_more,
+            "next_start": next_start,
         }
         return items, page
 
@@ -77,13 +94,15 @@ class AnswersService:
         await self._ensure_question_exists(question_id)
         if not content.strip():
             raise BadRequestError("content cannot be empty")
+        if await self._repo.has_user_answered_question(question_id, user_id):
+            raise BadRequestError("You have already answered this question")
         answer = await self._repo.create_answer(
             question_id=question_id,
             created_by_id=user_id,
             content=content,
         )
         profile = await self._profile_repo.get_profile_by_user_id(user_id)
-        return _answer_to_dto(answer, sender=_profile_to_dto(profile))
+        return _answer_to_dto(answer, author=_profile_to_dto(profile))
 
     async def _ensure_question_exists(self, question_id: int) -> None:
         question = await self._question_repo.get_by_id(question_id)
@@ -100,13 +119,13 @@ class AnswersService:
         self, *, answer_id: int, user_id: int, vote_type: str
     ) -> dict:
         await self._ensure_answer_exists(answer_id)
-        if vote_type not in (VoteType.UPVOTE.value, VoteType.DOWNVOTE.value):
+        if vote_type not in (VoteType.POSITIVE.value, VoteType.NEGATIVE.value):
             raise BadRequestError("Invalid vote type", data={"vote_type": vote_type})
         await self._repo.vote(answer_id=answer_id, user_id=user_id, vote_type=vote_type)
         counts = await self._repo.count_votes(answer_id)
         return {
-            "upvotes": counts.get(VoteType.UPVOTE.value, 0),
-            "downvotes": counts.get(VoteType.DOWNVOTE.value, 0),
+            "upvotes": counts.get(VoteType.POSITIVE.value, 0),
+            "downvotes": counts.get(VoteType.NEGATIVE.value, 0),
             "userVote": vote_type,
         }
 
@@ -115,8 +134,8 @@ class AnswersService:
         await self._repo.remove_vote(answer_id=answer_id, user_id=user_id)
         counts = await self._repo.count_votes(answer_id)
         return {
-            "upvotes": counts.get(VoteType.UPVOTE.value, 0),
-            "downvotes": counts.get(VoteType.DOWNVOTE.value, 0),
+            "upvotes": counts.get(VoteType.POSITIVE.value, 0),
+            "downvotes": counts.get(VoteType.NEGATIVE.value, 0),
             "userVote": None,
         }
 
@@ -127,10 +146,91 @@ class AnswersService:
         if user_id:
             user_vote = await self._repo.get_user_vote(answer_id, user_id)
         return {
-            "upvotes": counts.get(VoteType.UPVOTE.value, 0),
-            "downvotes": counts.get(VoteType.DOWNVOTE.value, 0),
+            "upvotes": counts.get(VoteType.POSITIVE.value, 0),
+            "downvotes": counts.get(VoteType.NEGATIVE.value, 0),
             "userVote": user_vote,
         }
+
+    async def get_answer(self, *, answer_id: int, user_id: int | None) -> tuple[dict, dict]:
+        answer = await self._ensure_answer_exists(answer_id)
+        profile = await self._profile_repo.get_profile_by_user_id(answer.created_by_id)
+        dto = _answer_to_dto(answer, author=_profile_to_dto(profile))
+        counts = await self._repo.count_votes(answer_id)
+        positive_count = counts.get(VoteType.POSITIVE.value, 0)
+        negative_count = counts.get(VoteType.NEGATIVE.value, 0)
+        user_attitude = "UNDEFINED"
+        if user_id:
+            vote = await self._repo.get_user_vote(answer_id, user_id)
+            if vote == VoteType.POSITIVE.value:
+                user_attitude = "POSITIVE"
+            elif vote == VoteType.NEGATIVE.value:
+                user_attitude = "NEGATIVE"
+        dto["attitudes"] = {
+            "positive_count": positive_count,
+            "negative_count": negative_count,
+            "difference": positive_count - negative_count,
+            "user_attitude": user_attitude,
+        }
+        dto["favorite_count"] = await self._repo.count_favorites(answer_id)
+        dto["is_favorite"] = False
+        if user_id:
+            dto["is_favorite"] = await self._repo.is_favorited(answer_id, user_id)
+        dto["comment_count"] = 0
+        dto["view_count"] = 0
+        dto["is_group"] = False
+
+        question = await self._question_repo.get_by_id(answer.question_id)
+        question_dto = None
+        if question:
+            author_profile = await self._profile_repo.get_profile_by_user_id(question.created_by_id)
+            created_at_ms = int(question.created_at.timestamp() * 1000) if question.created_at else 0
+            updated_at_ms = int(question.updated_at.timestamp() * 1000) if question.updated_at else 0
+            question_dto = {
+                "id": question.id,
+                "title": question.title,
+                "content": question.content,
+                "type": question.type,
+                "groupId": question.group_id,
+                "bounty": question.bounty,
+                "acceptedAnswerId": question.accepted_answer_id,
+                "createdBy": question.created_by_id,
+                "author": _profile_to_dto(author_profile),
+                "createdAt": created_at_ms,
+                "updatedAt": updated_at_ms,
+            }
+        return dto, question_dto
+
+    async def update_answer(
+        self, *, answer_id: int, user_id: int, content: str
+    ) -> dict:
+        answer = await self._ensure_answer_exists(answer_id)
+        if answer.created_by_id != user_id:
+            raise ForbiddenError("Only the answer owner can update this answer")
+        if not content.strip():
+            raise BadRequestError("content cannot be empty")
+        updated = await self._repo.update_answer(answer, content=content)
+        profile = await self._profile_repo.get_profile_by_user_id(updated.created_by_id)
+        return _answer_to_dto(updated, author=_profile_to_dto(profile))
+
+    async def delete_answer(self, *, answer_id: int, user_id: int) -> None:
+        answer = await self._ensure_answer_exists(answer_id)
+        if answer.created_by_id != user_id:
+            raise ForbiddenError("Only the answer owner can delete this answer")
+        await self._repo.soft_delete(answer)
+
+    async def add_favorite(self, *, answer_id: int, user_id: int) -> dict:
+        await self._ensure_answer_exists(answer_id)
+        await self._repo.add_favorite(answer_id=answer_id, user_id=user_id)
+        count = await self._repo.count_favorites(answer_id)
+        return {"favoriteCount": count, "isFavorited": True}
+
+    async def remove_favorite(self, *, answer_id: int, user_id: int) -> dict:
+        await self._ensure_answer_exists(answer_id)
+        removed = await self._repo.remove_favorite(answer_id=answer_id, user_id=user_id)
+        if not removed:
+            raise BadRequestError("Answer not favorited")
+        count = await self._repo.count_favorites(answer_id)
+        return {"favoriteCount": count, "isFavorited": False}
 
 
 def _profile_to_dto(profile) -> dict | None:

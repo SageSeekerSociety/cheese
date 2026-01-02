@@ -12,7 +12,8 @@ from app.domain.questions.models import (
     QuestionTopicRelation,
     QuestionQueryLog,
     QuestionSearchLog,
-    QuestionVote,
+    Attitude,
+    QuestionInvitation,
     VoteType,
 )
 
@@ -149,6 +150,25 @@ class QuestionRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
+    async def is_following(self, question_id: int, user_id: int) -> bool:
+        stmt = select(QuestionFollowerRelation.id).where(
+            QuestionFollowerRelation.question_id == question_id,
+            QuestionFollowerRelation.follower_id == user_id,
+            QuestionFollowerRelation.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def count_comments(self, question_id: int) -> int:
+        from app.domain.discussion.models import Discussion, DiscussableModelType
+        stmt = select(func.count(Discussion.id)).where(
+            Discussion.model_type == DiscussableModelType.QUESTION.value,
+            Discussion.model_id == question_id,
+            Discussion.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
     async def accept_answer(self, *, question_id: int, answer_id: int) -> Question | None:
         """Set accepted_answer_id for a question."""
         question = await self.get_by_id(question_id)
@@ -187,24 +207,25 @@ class QuestionRepository:
         self._session.add(log)
         await self._session.flush()
 
-    async def vote(self, *, question_id: int, user_id: int, vote_type: str) -> QuestionVote:
+    async def vote(self, *, question_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(question_id, user_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if existing is not None:
-            existing.vote_type = vote_type
+            existing.attitude = vote_type
             existing.updated_at = now
             await self._session.flush()
             return existing
-        vote = QuestionVote(
-            question_id=question_id,
+        attitude = Attitude(
+            attitudable_id=question_id,
+            attitudable_type="QUESTION",
             user_id=user_id,
-            vote_type=vote_type,
+            attitude=vote_type,
             created_at=now,
             updated_at=now,
         )
-        self._session.add(vote)
+        self._session.add(attitude)
         await self._session.flush()
-        return vote
+        return attitude
 
     async def remove_vote(self, *, question_id: int, user_id: int) -> bool:
         existing = await self._get_vote(question_id, user_id)
@@ -214,26 +235,28 @@ class QuestionRepository:
         await self._session.flush()
         return True
 
-    async def _get_vote(self, question_id: int, user_id: int) -> QuestionVote | None:
-        stmt: Select[tuple[QuestionVote]] = select(QuestionVote).where(
-            QuestionVote.question_id == question_id,
-            QuestionVote.user_id == user_id,
+    async def _get_vote(self, question_id: int, user_id: int) -> Attitude | None:
+        stmt: Select[tuple[Attitude]] = select(Attitude).where(
+            Attitude.attitudable_id == question_id,
+            Attitude.attitudable_type == "QUESTION",
+            Attitude.user_id == user_id,
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_user_vote(self, question_id: int, user_id: int) -> str | None:
         vote = await self._get_vote(question_id, user_id)
-        return vote.vote_type if vote else None
+        return vote.attitude if vote else None
 
     async def count_votes(self, question_id: int) -> dict[str, int]:
-        stmt = select(QuestionVote.vote_type, func.count(QuestionVote.id)).where(
-            QuestionVote.question_id == question_id
-        ).group_by(QuestionVote.vote_type)
+        stmt = select(Attitude.attitude, func.count(Attitude.id)).where(
+            Attitude.attitudable_id == question_id,
+            Attitude.attitudable_type == "QUESTION",
+        ).group_by(Attitude.attitude)
         result = await self._session.execute(stmt)
-        counts = {VoteType.UPVOTE.value: 0, VoteType.DOWNVOTE.value: 0}
-        for vote_type, count in result.all():
-            counts[vote_type] = count
+        counts = {VoteType.POSITIVE.value: 0, VoteType.NEGATIVE.value: 0}
+        for attitude, count in result.all():
+            counts[attitude] = count
         return counts
 
     async def log_search(
@@ -318,6 +341,82 @@ class QuestionRepository:
         result = await self._session.execute(stmt)
         return [{"keyword": row[0], "count": row[1]} for row in result.all()]
 
+    async def update_question(
+        self,
+        question: Question,
+        *,
+        title: str | None = None,
+        content: str | None = None,
+        type_: int | None = None,
+    ) -> Question:
+        if title is not None:
+            question.title = title
+        if content is not None:
+            question.content = content
+        if type_ is not None:
+            question.type = type_
+        question.updated_at = datetime.now(timezone.utc)
+        await self._session.flush()
+        return question
+
+    async def soft_delete(self, question: Question) -> None:
+        question.deleted_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    async def set_bounty(self, question: Question, bounty: int) -> Question:
+        question.bounty = bounty
+        question.updated_at = datetime.now(timezone.utc)
+        await self._session.flush()
+        return question
+
+    async def list_followers(
+        self, *, question_id: int, limit: int, offset: int
+    ) -> tuple[list[int], int]:
+        stmt = (
+            select(QuestionFollowerRelation.follower_id)
+            .where(
+                QuestionFollowerRelation.question_id == question_id,
+                QuestionFollowerRelation.deleted_at.is_(None),
+            )
+            .order_by(QuestionFollowerRelation.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.execute(stmt)
+        follower_ids = [row[0] for row in result.all()]
+
+        count_stmt = select(func.count(QuestionFollowerRelation.id)).where(
+            QuestionFollowerRelation.question_id == question_id,
+            QuestionFollowerRelation.deleted_at.is_(None),
+        )
+        count_result = await self._session.execute(count_stmt)
+        total = int(count_result.scalar_one() or 0)
+        return follower_ids, total
+
+    async def list_by_user(
+        self, *, user_id: int, limit: int, offset: int
+    ) -> tuple[list[Question], int]:
+        stmt = (
+            select(Question)
+            .where(
+                Question.created_by_id == user_id,
+                Question.deleted_at.is_(None),
+            )
+            .order_by(Question.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.execute(stmt)
+        rows = list(result.scalars().all())
+
+        count_stmt = select(func.count(Question.id)).where(
+            Question.created_by_id == user_id,
+            Question.deleted_at.is_(None),
+        )
+        count_result = await self._session.execute(count_stmt)
+        total = int(count_result.scalar_one() or 0)
+        return rows, total
+
 
 class QuestionTopicRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -357,3 +456,96 @@ class QuestionTopicRepository:
         for row in result.scalars().all():
             mapping.setdefault(row.question_id, []).append(row.topic_id)
         return mapping
+
+    async def validate_topic_ids(self, topic_ids: list[int]) -> set[int]:
+        from app.domain.topics.models import Topic
+        if not topic_ids:
+            return set()
+        stmt = select(Topic.id).where(
+            Topic.id.in_(topic_ids),
+            Topic.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return set(result.scalars().all())
+
+    async def get_topics_for_question(self, question_id: int) -> list[dict]:
+        from app.domain.topics.models import Topic
+        stmt = (
+            select(Topic)
+            .join(QuestionTopicRelation, QuestionTopicRelation.topic_id == Topic.id)
+            .where(
+                QuestionTopicRelation.question_id == question_id,
+                QuestionTopicRelation.deleted_at.is_(None),
+                Topic.deleted_at.is_(None),
+            )
+        )
+        result = await self._session.execute(stmt)
+        topics = result.scalars().all()
+        return [{"id": t.id, "name": t.name} for t in topics]
+
+
+class QuestionInvitationRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create_invitation(
+        self, *, question_id: int, user_id: int
+    ) -> QuestionInvitation:
+        existing = await self._get_invitation(question_id, user_id)
+        now = datetime.now(timezone.utc)
+        if existing is not None:
+            existing.updated_at = now
+            await self._session.flush()
+            return existing
+        invitation = QuestionInvitation(
+            question_id=question_id,
+            user_id=user_id,
+            created_at=now,
+            updated_at=now,
+        )
+        self._session.add(invitation)
+        await self._session.flush()
+        return invitation
+
+    async def get_by_id(self, invitation_id: int) -> QuestionInvitation | None:
+        stmt: Select[tuple[QuestionInvitation]] = select(QuestionInvitation).where(
+            QuestionInvitation.id == invitation_id,
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def list_invitations(
+        self, *, question_id: int, limit: int, offset: int
+    ) -> tuple[list[QuestionInvitation], int]:
+        stmt = (
+            select(QuestionInvitation)
+            .where(
+                QuestionInvitation.question_id == question_id,
+            )
+            .order_by(QuestionInvitation.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.execute(stmt)
+        rows = list(result.scalars().all())
+
+        count_stmt = select(func.count(QuestionInvitation.id)).where(
+            QuestionInvitation.question_id == question_id,
+        )
+        count_result = await self._session.execute(count_stmt)
+        total = int(count_result.scalar_one() or 0)
+        return rows, total
+
+    async def hard_delete(self, invitation: QuestionInvitation) -> None:
+        await self._session.delete(invitation)
+        await self._session.flush()
+
+    async def _get_invitation(
+        self, question_id: int, user_id: int
+    ) -> QuestionInvitation | None:
+        stmt: Select[tuple[QuestionInvitation]] = select(QuestionInvitation).where(
+            QuestionInvitation.question_id == question_id,
+            QuestionInvitation.user_id == user_id,
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()

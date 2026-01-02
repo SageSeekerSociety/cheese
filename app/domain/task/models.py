@@ -30,6 +30,7 @@ task_submission_review_seq = Sequence("task_submission_review_seq")
 task_ai_advice_context_seq = Sequence("task_ai_advice_context_seq")
 ai_conversation_seq = Sequence("ai_conversation_seq")
 ai_message_seq = Sequence("ai_message_seq")
+task_submission_schema_seq = Sequence("task_submission_schema_seq")
 
 
 class Base(DeclarativeBase):
@@ -54,6 +55,9 @@ class Task(Base):
     approved: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     participant_limit: Mapped[int | None] = mapped_column("participant_limit", Integer, nullable=True)
     deadline: Mapped[datetime | None] = mapped_column(nullable=True)
+    registration_start_at: Mapped[datetime | None] = mapped_column(
+        "registration_start_at", nullable=True
+    )
     default_deadline: Mapped[int] = mapped_column(BigInteger, nullable=False)
     resubmittable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     editable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -97,6 +101,32 @@ class TaskMembership(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
     deadline: Mapped[datetime | None] = mapped_column(nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class TaskSubmissionSchemaEntry(Base):
+    """Minimal mapping for task_submission_schema table (ElementCollection in Kotlin)."""
+
+    __tablename__ = "task_submission_schema"
+
+    task_id: Mapped[int] = mapped_column(
+        "task_id", BigInteger, ForeignKey("task.id"), primary_key=True
+    )
+    index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
+    description: Mapped[str] = mapped_column("description", String, nullable=False)
+    type: Mapped[int] = mapped_column("type", SmallInteger, nullable=False)
+
+
+class Topic(Base):
+    """Minimal mapping for topic table."""
+
+    __tablename__ = "topic"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    created_by_id: Mapped[int] = mapped_column("created_by_id", BigInteger, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 

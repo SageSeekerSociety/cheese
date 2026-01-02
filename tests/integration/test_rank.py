@@ -119,6 +119,7 @@ class TestRankIntegration:
             "creator": creator,
             "participant": participant,
             "space_id": space_id,
+            "default_category_id": default_category_id,
             "task1_id": task1_id,
             "task2_id": task2_id,
             "membership1_id": membership1_id,
@@ -173,7 +174,6 @@ class TestRankIntegration:
         assert data["space"]["id"] == space_id
         assert data["myRank"] == 0
 
-    @pytest.mark.xfail(reason="Rank check not fully implemented in Python backend yet")
     def test_join_rank2_task_fails_with_rank0(self, setup_rank_test: dict, api_client: httpx.Client):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
@@ -256,7 +256,6 @@ class TestRankIntegration:
         data = space_resp.json()["data"]
         assert data["myRank"] == 0
 
-    @pytest.mark.xfail(reason="Rank upgrade after update not fully implemented")
     def test_update_review_to_accepted_upgrades_rank(
         self, setup_rank_test: dict, api_client: httpx.Client
     ):
@@ -302,7 +301,6 @@ class TestRankIntegration:
         data2 = space_resp2.json()["data"]
         assert data2["myRank"] == 1
 
-    @pytest.mark.xfail(reason="Rank check not fully implemented in Python backend")
     def test_join_rank2_task_succeeds_after_rank1_achieved(
         self, setup_rank_test: dict, api_client: httpx.Client
     ):
@@ -372,7 +370,6 @@ class TestRankIntegration:
         data = resp.json()["data"]
         assert data.get("myRank") in [0, None]
 
-    @pytest.mark.xfail(reason="Task rank field may not be included in GET /tasks/{id} response")
     def test_task_has_rank_field(
         self, setup_rank_test: dict, api_client: httpx.Client
     ):
@@ -470,7 +467,6 @@ class TestRankIntegration:
         assert target_space is not None, f"Space {space_id} not found in response"
         assert target_space.get("myRank") == 0
 
-    @pytest.mark.xfail(reason="Full rank progression test requires complex setup")
     def test_rank2_review_upgrades_to_rank2(
         self, user_client: UserCreator, api_client: httpx.Client
     ):
@@ -555,7 +551,6 @@ class TestRankIntegration:
         space_resp = api_client.get(f"/spaces/{space_id}", params={"queryMyRank": "true"}, headers={"Authorization": f"Bearer {participant.token}"})
         assert space_resp.json()["data"]["myRank"] == 2
 
-    @pytest.mark.xfail(reason="Another rank 1 task should not upgrade rank further")
     def test_another_rank1_task_does_not_upgrade_further(
         self, user_client: UserCreator, api_client: httpx.Client
     ):
@@ -639,7 +634,7 @@ class TestRankIntegration:
         sub2 = api_client.post(f"/tasks/{task2_id}/participants/{m2_id}/submissions", json=[{"text": "Test"}], headers={"Authorization": f"Bearer {participant.token}"})
         s2_id = sub2.json()["data"]["submission"]["id"]
         review_resp = api_client.post(f"/tasks/{task2_id}/participants/{m2_id}/submissions/{s2_id}/review", json={"accepted": True, "score": 5, "comment": "Good"}, headers={"Authorization": f"Bearer {creator.token}"})
-        assert review_resp.json()["data"].get("hasUpgradedParticipantRank") is False
+        assert review_resp.json()["data"]["review"].get("hasUpgradedParticipantRank") is False
 
         space_check2 = api_client.get(f"/spaces/{space_id}", params={"queryMyRank": "true"}, headers={"Authorization": f"Bearer {participant.token}"})
         assert space_check2.json()["data"]["myRank"] == 1

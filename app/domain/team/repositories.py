@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import Select, and_, or_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.team.models import (
@@ -45,7 +45,11 @@ class TeamRepository:
         stmt: Select[tuple[Team]] = select(Team).where(Team.deleted_at.is_(None))
         if query:
             like = f"%{query}%"
-            stmt = stmt.where(Team.name.ilike(like))
+            try:
+                query_id = int(query)
+                stmt = stmt.where(or_(Team.name.ilike(like), Team.id == query_id))
+            except ValueError:
+                stmt = stmt.where(Team.name.ilike(like))
         stmt = stmt.order_by(Team.id.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())

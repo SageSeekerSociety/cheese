@@ -269,3 +269,26 @@ class KnowledgeRepository:
             return
         await self._session.delete(upvote)
         await self._session.flush()
+
+    async def update_labels(self, knowledge_id: int, labels: list[str]) -> None:
+        stmt: Select[tuple[KnowledgeLabel]] = select(KnowledgeLabel).where(
+            KnowledgeLabel.knowledge_id == knowledge_id,
+            KnowledgeLabel.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        existing = list(result.scalars().all())
+        now = datetime.utcnow()
+
+        for lbl_entity in existing:
+            lbl_entity.deleted_at = now
+
+        for label in labels:
+            lbl = KnowledgeLabel(
+                knowledge_id=knowledge_id,
+                label=label,
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            )
+            self._session.add(lbl)
+        await self._session.flush()

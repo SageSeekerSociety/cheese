@@ -313,7 +313,7 @@ class TestNotificationIntegration:
         if page.get("hasMore"):
             assert page.get("nextStart") is not None
 
-        cleanup_notifications_in_db(notification_ids)
+        delete_notifications_in_db(notification_ids)
 
     def test_list_notifications_empty(
         self, user_client: UserCreator, api_client: httpx.Client

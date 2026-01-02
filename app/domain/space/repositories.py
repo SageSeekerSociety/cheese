@@ -31,6 +31,13 @@ class SpaceRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
+    async def exists_by_name(self, name: str) -> bool:
+        stmt = select(Space.id).where(
+            and_(Space.name == name, Space.deleted_at.is_(None))
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
     async def create_space(
         self,
         *,
@@ -88,10 +95,11 @@ class SpaceCategoryRepository:
         self, space_id: int, include_archived: bool = False
     ) -> Sequence[SpaceCategory]:
         stmt: Select[tuple[SpaceCategory]] = select(SpaceCategory).where(
-            SpaceCategory.space_id == space_id
+            SpaceCategory.space_id == space_id,
+            SpaceCategory.deleted_at.is_(None),
         )
         if not include_archived:
-            stmt = stmt.where(SpaceCategory.deleted_at.is_(None))
+            stmt = stmt.where(SpaceCategory.archived_at.is_(None))
         stmt = stmt.order_by(SpaceCategory.display_order.asc(), SpaceCategory.name.asc())
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
@@ -184,6 +192,33 @@ class SpaceUserRankRepository:
             self._session.add(row)
         else:
             row.rank = max(0, row.rank + delta)
+            row.updated_at = now
+        await self._session.flush()
+        return row.rank
+
+    async def set_rank(self, *, space_id: int, user_id: int, rank: int) -> int:
+        from datetime import datetime as _dt
+
+        stmt: Select[tuple[SpaceUserRank]] = select(SpaceUserRank).where(
+            SpaceUserRank.space_id == space_id,
+            SpaceUserRank.user_id == user_id,
+            SpaceUserRank.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        row = result.scalar_one_or_none()
+        now = _dt.utcnow()
+        if row is None:
+            row = SpaceUserRank(
+                space_id=space_id,
+                user_id=user_id,
+                rank=max(0, rank),
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            )
+            self._session.add(row)
+        else:
+            row.rank = max(0, rank)
             row.updated_at = now
         await self._session.flush()
         return row.rank

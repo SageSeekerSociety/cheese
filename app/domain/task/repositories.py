@@ -13,6 +13,8 @@ from app.domain.task.models import (
     TaskSubmission,
     TaskSubmissionEntry,
     TaskSubmissionReview,
+    TaskSubmissionSchemaEntry,
+    Topic,
 )
 from app.domain.team.models import TeamUserRelation
 
@@ -206,6 +208,7 @@ class TaskRepository:
         category_id: int,
         submitter_type: int,
         deadline: datetime | None,
+        registration_start_at: datetime | None,
         participant_limit: int | None,
         default_deadline: int,
         resubmittable: bool,
@@ -219,6 +222,7 @@ class TaskRepository:
         """Create and persist a new Task row."""
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         deadline_naive = deadline.replace(tzinfo=None) if deadline else None
+        registration_start_naive = registration_start_at.replace(tzinfo=None) if registration_start_at else None
         task = Task(
             name=name,
             intro=intro,
@@ -230,6 +234,7 @@ class TaskRepository:
             approved=2,  # ApproveType.NONE
             participant_limit=participant_limit,
             deadline=deadline_naive,
+            registration_start_at=registration_start_naive,
             default_deadline=default_deadline,
             resubmittable=resubmittable,
             editable=editable,
@@ -408,6 +413,24 @@ class TaskSubmissionRepository:
         result = await self._session.execute(stmt)
         value = result.scalar_one()
         return int(value or 0)
+
+    async def get_by_membership_and_version(
+        self,
+        membership_id: int,
+        version: int,
+    ) -> TaskSubmission | None:
+        stmt: Select[tuple[TaskSubmission]] = select(TaskSubmission).where(
+            TaskSubmission.membership_id == membership_id,
+            TaskSubmission.version == version,
+            TaskSubmission.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def save(self, submission: TaskSubmission) -> TaskSubmission:
+        self._session.add(submission)
+        await self._session.flush()
+        return submission
 
     async def list_submissions(
         self,
@@ -841,3 +864,63 @@ class AIMessageRepository:
         review.deleted_at = now
         review.updated_at = now
         await self._session.flush()
+
+
+class TopicRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_by_task_id(self, task_id: int) -> Sequence[Topic]:
+        stmt: Select[tuple[Topic]] = (
+            select(Topic)
+            .join(TaskTopicsRelation, TaskTopicsRelation.topic_id == Topic.id)
+            .where(
+                TaskTopicsRelation.task_id == task_id,
+                TaskTopicsRelation.deleted_at.is_(None),
+                Topic.deleted_at.is_(None),
+            )
+            .order_by(Topic.id.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+
+class TaskSubmissionSchemaRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_by_task_id(self, task_id: int) -> Sequence[TaskSubmissionSchemaEntry]:
+        stmt: Select[tuple[TaskSubmissionSchemaEntry]] = (
+            select(TaskSubmissionSchemaEntry)
+            .where(TaskSubmissionSchemaEntry.task_id == task_id)
+            .order_by(TaskSubmissionSchemaEntry.index.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def replace_schema(
+        self,
+        task_id: int,
+        entries: list[dict],
+    ) -> list[TaskSubmissionSchemaEntry]:
+        type_map = {"TEXT": 0, "FILE": 1}
+        await self._session.execute(
+            TaskSubmissionSchemaEntry.__table__.delete().where(
+                TaskSubmissionSchemaEntry.task_id == task_id
+            )
+        )
+        new_entries = []
+        for idx, entry in enumerate(entries):
+            prompt = entry.get("prompt", "")
+            type_str = entry.get("type", "TEXT").upper()
+            type_int = type_map.get(type_str, 0)
+            row = TaskSubmissionSchemaEntry(
+                task_id=task_id,
+                index=idx,
+                description=prompt,
+                type=type_int,
+            )
+            self._session.add(row)
+            new_entries.append(row)
+        await self._session.flush()
+        return new_entries
