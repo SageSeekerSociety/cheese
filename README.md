@@ -1,35 +1,99 @@
-# cheese-backend-py
+# Cheese Backend (Python)
 
-Python rewrite of the Cheese backend using FastAPI, SQLAlchemy 2.x, and Pydantic v2.
+Python FastAPI backend migrated from NestJS (cheese-backend) and Kotlin Spring Boot (cheese-backend-nt).
 
-## Quick start (with uv)
+## Tech Stack
+
+- **Web Framework**: FastAPI
+- **ORM**: SQLAlchemy 2.x (async)
+- **Database**: PostgreSQL 16
+- **Configuration**: Pydantic v2 + pydantic-settings
+- **Task Queue**: taskiq (Redis)
+- **Package Manager**: uv
+
+## Quick Start
 
 ```bash
-cd cheese-backend-py
-# install deps
+# Install dependencies
 uv sync
-# apply the latest DB migrations (requires DATABASE_URL)
+
+# Run database migrations
 uv run alembic upgrade head
-# run dev server
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+
+# Start server
+DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/postgres" \
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8081
+
+# Run tests
+DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/postgres" \
+RUN_INTEGRATION_TESTS=1 uv run pytest tests/integration/ -v
 ```
 
-## Database migrations
+## Project Structure
 
-Alembic lives under `migrations/` and reuses the same `DATABASE_URL`
-value that the application uses. If the URL relies on the async driver
-(`postgresql+asyncpg://`), the migration environment automatically
-switches to psycopg2 so Alembic can run synchronously.
+```
+app/
+├── api/routes/          # FastAPI routes
+├── auth/                # Authentication & authorization
+├── core/                # Config, errors, storage
+├── db/                  # Database session
+├── domain/              # Business domain modules
+│   ├── answers/
+│   ├── attachment/
+│   ├── avatars/
+│   ├── comments/
+│   ├── discussion/
+│   ├── groups/
+│   ├── knowledge/
+│   ├── llm/
+│   ├── materials/
+│   ├── notification/
+│   ├── project/
+│   ├── questions/
+│   ├── space/
+│   ├── task/
+│   ├── team/
+│   ├── topics/
+│   └── user/
+└── middleware/          # Middleware
+```
 
-Common commands:
+## Test Status
+
+| Type | Count | Status |
+|------|-------|--------|
+| Integration Tests | 636 | ✅ All Passing |
+
+## Migration Status
+
+| Phase | Status |
+|-------|--------|
+| Phase 0: Infrastructure | ✅ Complete |
+| Phase 1: Contract Tests | ✅ Complete |
+| Phase 2: Domain Migration | ✅ Complete |
+| Phase 3: Cross-cutting Concerns | ✅ Complete |
+| Phase 4: Production Deployment | ⏳ Pending |
+
+See `PYTHON_MIGRATION_GUIDE.md` in the project root for detailed migration documentation.
+
+## Port Configuration
+
+| Service | Port |
+|---------|------|
+| cheese-backend-py | 8081 |
+| cheese-backend (legacy NestJS) | 7777 |
+| cheese-backend-nt (legacy Kotlin) | 8080 |
+| PostgreSQL | 5432 |
+| Redis | 6379 |
+
+## Database Migrations
+
+Alembic configuration is in `migrations/` directory, using `DATABASE_URL` environment variable.
 
 ```bash
-# create a new revision
+# Create new migration
 uv run alembic revision -m "short description"
 
-# apply pending migrations
+# Apply migrations
 uv run alembic upgrade head
 ```
-
-The first revision (`1c64f1712118`) creates the `ai_user_quota` table
-used by the AI advice quota service.
