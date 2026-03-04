@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from app.domain.task.repositories import TaskRepository, TaskMembershipRepository
+from app.domain.user.repositories import UserRepository, UserProfileRepository
 
 
 @dataclass
@@ -18,9 +19,13 @@ class SpaceAnalyticsService:
         self,
         task_repo: TaskRepository,
         membership_repo: TaskMembershipRepository,
+        user_repo: UserRepository | None = None,
+        profile_repo: UserProfileRepository | None = None,
     ) -> None:
         self._task_repo = task_repo
         self._membership_repo = membership_repo
+        self._user_repo = user_repo
+        self._profile_repo = profile_repo
 
     async def get_task_analytics(
         self,
@@ -87,6 +92,15 @@ class SpaceAnalyticsService:
             if getattr(membership, "completion_status", "NOT_SUBMITTED") == "COMPLETED":
                 completed_users[membership.task_id] = completed_users.get(membership.task_id, 0) + 1
 
+        # Resolve publisher names from profiles (nickname) with fallback to username
+        all_publisher_ids = list(publisher_counter.keys())
+        profiles: dict = {}
+        users: dict = {}
+        if self._profile_repo and all_publisher_ids:
+            profiles = await self._profile_repo.get_profiles_by_user_ids(all_publisher_ids)
+        if self._user_repo and all_publisher_ids:
+            users = await self._user_repo.get_by_ids(all_publisher_ids)
+
         data: list[dict] = []
         for publisher_id, count in publisher_counter.items():
             task_ids = [task.id for task in tasks if task.creator_id == publisher_id]
@@ -95,10 +109,19 @@ class SpaceAnalyticsService:
             }
             completed_total = sum(completed_users.get(task_id, 0) for task_id in task_ids)
 
+            profile = profiles.get(publisher_id)
+            user = users.get(publisher_id)
+            if profile and profile.nickname:
+                name = profile.nickname
+            elif user:
+                name = user.username
+            else:
+                name = f"User {publisher_id}"
+
             data.append(
                 {
                     "publisherId": publisher_id,
-                    "publisherName": f"User {publisher_id}",
+                    "publisherName": name,
                     "participants": len(participant_ids),
                     "completedUsers": completed_total,
                     "taskCount": count,

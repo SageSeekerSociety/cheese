@@ -1236,20 +1236,71 @@ async def sudo_auth(
         }
 
     elif method == "srp":
+        import srptools as _srp
+
         client_ephemeral = credentials.get("clientPublicEphemeral")
         client_proof = credentials.get("clientProof")
 
-        if not client_ephemeral and not client_proof:
+        user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
+        if not user.hashed_password or not user.hashed_password.startswith("SRP:"):
+            raise AuthenticationRequiredError("SRP authentication not available for this account")
+
+        parts = user.hashed_password.split(":", 2)
+        if len(parts) != 3:
+            raise AuthenticationRequiredError("Corrupted SRP data")
+        stored_salt, stored_verifier = parts[1], parts[2]
+
+        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
+        try:
+            srp_key = f"srp:sudo:{auth_user.user_id}"
+
+            if not client_ephemeral and not client_proof:
+                # SRP Step 1: Generate server ephemeral and store session state
+                server_ctx = _srp.SRPContext(user.username)
+                server_session = _srp.SRPServerSession(server_ctx, stored_verifier)
+                server_public = server_session.public
+                server_private = server_session.private
+
+                # Store server private key in Redis (expires in 5 minutes)
+                await redis.setex(srp_key, 300, server_private)
+
+                return {
+                    "code": 200,
+                    "message": "SRP initialization.",
+                    "data": {
+                        "serverPublicEphemeral": server_public,
+                        "salt": stored_salt,
+                    },
+                }
+
+            # SRP Step 2: Verify client proof
+            if not client_ephemeral or not client_proof:
+                raise BadRequestError("Both clientPublicEphemeral and clientProof are required")
+
+            server_private = await redis.get(srp_key)
+            if not server_private:
+                raise AuthenticationRequiredError("SRP session expired, please reinitialize")
+            await redis.delete(srp_key)
+
+            server_ctx = _srp.SRPContext(user.username)
+            server_session = _srp.SRPServerSession(
+                server_ctx, stored_verifier, private=server_private
+            )
+            server_session.process(client_ephemeral, stored_salt)
+
+            if not server_session.verify_proof(client_proof):
+                raise AuthenticationRequiredError("Invalid SRP proof")
+
             return {
                 "code": 200,
-                "message": "SRP initialization.",
+                "message": "Sudo mode activated via SRP.",
                 "data": {
-                    "serverPublicEphemeral": "fake-server-ephemeral",
-                    "salt": "fake-salt",
+                    "verified": True,
+                    "serverProof": server_session.key_proof,
                 },
             }
-
-        raise AuthenticationRequiredError("Invalid SRP proof")
+        finally:
+            await redis.aclose()
 
     elif method == "totp":
         code = credentials.get("code")

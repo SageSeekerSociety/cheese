@@ -1985,15 +1985,6 @@ async def get_task_ai_advice_status(
     }
 
 
-def _ai_conversation_stub(conversation_id: int) -> dict:
-    now_iso = datetime.now(timezone.utc).isoformat()
-    return {
-        "id": conversation_id,
-        "createdAt": now_iso,
-        "messages": [],
-    }
-
-
 @router.get(
     "/{taskId}/ai-advice/conversations/grouped",
     summary="List AI Advice Conversations (Grouped)",

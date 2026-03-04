@@ -509,6 +509,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "redis" },
     { name = "sqlalchemy" },
+    { name = "srptools" },
     { name = "structlog" },
     { name = "taskiq" },
     { name = "tiktoken" },
@@ -549,6 +550,7 @@ requires-dist = [
     { name = "redis", specifier = ">=5.0.0,<6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.0,<0.16.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0,<3.0.0" },
+    { name = "srptools", specifier = ">=1.0.0,<2.0.0" },
     { name = "structlog", specifier = ">=24.0.0,<25.0.0" },
     { name = "taskiq", extras = ["redis", "fastapi"], specifier = ">=0.11.0,<1.0.0" },
     { name = "tiktoken", specifier = ">=0.7.0,<1.0.0" },
@@ -1815,6 +1817,15 @@ wheels = [
 ]
 
 [[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
 name = "sniffio"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1858,6 +1869,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/32/d5/0e66097fc64fa266f29a7963296b40a80d6a997b7ac13806183700676f86/sqlalchemy-2.0.44-cp313-cp313-win32.whl", hash = "sha256:ee51625c2d51f8baadf2829fae817ad0b66b140573939dd69284d2ba3553ae73", size = 2101275, upload-time = "2025-10-10T15:03:26.096Z" },
     { url = "https://files.pythonhosted.org/packages/03/51/665617fe4f8c6450f42a6d8d69243f9420f5677395572c2fe9d21b493b7b/sqlalchemy-2.0.44-cp313-cp313-win_amd64.whl", hash = "sha256:c1c80faaee1a6c3428cecf40d16a2365bcf56c424c92c2b6f0f9ad204b899e9e", size = 2127901, upload-time = "2025-10-10T15:03:27.548Z" },
     { url = "https://files.pythonhosted.org/packages/9c/5e/6a29fa884d9fb7ddadf6b69490a9d45fded3b38541713010dad16b77d015/sqlalchemy-2.0.44-py3-none-any.whl", hash = "sha256:19de7ca1246fbef9f9d1bff8f1ab25641569df226364a0e40457dc5457c54b05", size = 1928718, upload-time = "2025-10-10T15:29:45.32Z" },
+]
+
+[[package]]
+name = "srptools"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a1/8a/d62af55a56d56216e96563bc9c29c2d16d957317742c2e5bd4e79a524b06/srptools-1.0.1.tar.gz", hash = "sha256:7fa4337256a1542e8f5bb4bed19e1d9aea98fe5ff9baf76693342a1dd6ac7c96", size = 15436, upload-time = "2020-09-12T02:06:28.244Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/b8/3f935d7f7d6bc25a88859beb0a6e246313012a12ae4844665322f771a5cb/srptools-1.0.1-py2.py3-none-any.whl", hash = "sha256:fccb44c949eb2507ba19f349a3087cb8fed2393014d7f0887b06c3186f19d1e9", size = 13183, upload-time = "2020-09-12T02:06:30.452Z" },
 ]
 
 [[package]]

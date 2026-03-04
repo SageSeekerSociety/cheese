@@ -323,6 +323,30 @@ class SpaceService:
             raise BadRequestError("Cannot remove space owner. Transfer ownership instead.")
         await self._admin_repo.remove_admin(relation)
 
+    async def update_admin_role(
+        self,
+        *,
+        space_id: int,
+        target_user_id: int,
+        new_role: SpaceAdminRole,
+        actor_user_id: int | None,
+    ) -> None:
+        """Update an existing admin's role (e.g. ADMIN <-> OWNER)."""
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
+        if self._admin_repo is None:
+            raise BadRequestError("Space admin repository unavailable")
+        relation = await self._admin_repo.get_relation(space_id, target_user_id)
+        if relation is None:
+            raise NotFoundError("Space admin relation not found")
+        if relation.role == new_role.value:
+            return  # already the desired role
+        if new_role is SpaceAdminRole.OWNER:
+            await self._promote_admin_to_owner(space_id, relation)
+        else:
+            relation.role = new_role.value
+            relation.updated_at = datetime.utcnow()
+            await self._admin_repo.save(relation)
+
     async def delete_space(self, *, space_id: int, actor_user_id: int | None) -> None:
         space = await self._get_space_or_error(space_id)
         await self._ensure_admin(space_id, actor_user_id, allow_admin=False)

@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import Select, and_, select
+from sqlalchemy import Select, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.project.models import Project
+from app.domain.project.models import Project, ProjectMembership, ProjectMemberRole
 
 
 class ProjectRepository:
@@ -92,3 +92,70 @@ class ProjectRepository:
         stmt = stmt.order_by(Project.id.asc())
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+
+class ProjectMembershipRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_member(
+        self,
+        *,
+        project_id: int,
+        user_id: int,
+        role: ProjectMemberRole,
+        notes: str = "",
+    ) -> ProjectMembership:
+        now = datetime.utcnow()
+        membership = ProjectMembership(
+            project_id=project_id,
+            user_id=user_id,
+            role=role.value,
+            notes=notes,
+            created_at=now,
+            updated_at=now,
+            deleted_at=None,
+        )
+        self._session.add(membership)
+        await self._session.flush()
+        return membership
+
+    async def get_relation(self, project_id: int, user_id: int) -> ProjectMembership | None:
+        stmt: Select[tuple[ProjectMembership]] = select(ProjectMembership).where(
+            ProjectMembership.project_id == project_id,
+            ProjectMembership.user_id == user_id,
+            ProjectMembership.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def list_members(
+        self,
+        project_id: int,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[ProjectMembership], int]:
+        base = and_(
+            ProjectMembership.project_id == project_id,
+            ProjectMembership.deleted_at.is_(None),
+        )
+        count_stmt = select(func.count(ProjectMembership.id)).where(base)
+        count_result = await self._session.execute(count_stmt)
+        total = int(count_result.scalar_one() or 0)
+
+        stmt: Select[tuple[ProjectMembership]] = (
+            select(ProjectMembership)
+            .where(base)
+            .order_by(ProjectMembership.created_at.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all()), total
+
+    async def remove_member(self, membership: ProjectMembership) -> None:
+        now = datetime.utcnow()
+        membership.deleted_at = now
+        membership.updated_at = now
+        await self._session.flush()

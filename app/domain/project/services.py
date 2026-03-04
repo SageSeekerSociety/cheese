@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from app.domain.project.models import Project
-from app.domain.project.repositories import ProjectRepository
+from app.core.errors import BadRequestError, NotFoundError
+from app.domain.project.models import Project, ProjectMemberRole, ProjectMembership
+from app.domain.project.repositories import ProjectMembershipRepository, ProjectRepository
 
 
 class ProjectService:
-    def __init__(self, repo: ProjectRepository) -> None:
+    def __init__(
+        self,
+        repo: ProjectRepository,
+        membership_repo: ProjectMembershipRepository | None = None,
+    ) -> None:
         self._repo = repo
+        self._membership_repo = membership_repo
 
     async def create_project(
         self,
@@ -87,3 +93,66 @@ class ProjectService:
             member_id=member_id,
             archived=archived,
         )
+
+    # ------------------------------------------------------------------
+    # Project membership
+    # ------------------------------------------------------------------
+
+    def _require_membership_repo(self) -> ProjectMembershipRepository:
+        if self._membership_repo is None:
+            raise BadRequestError("Project membership repository unavailable")
+        return self._membership_repo
+
+    async def list_members(
+        self,
+        project_id: int,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[ProjectMembership], int]:
+        repo = self._require_membership_repo()
+        return await repo.list_members(project_id, limit=limit, offset=offset)
+
+    async def add_member(
+        self,
+        *,
+        project_id: int,
+        user_id: int,
+        role: str,
+        notes: str = "",
+    ) -> ProjectMembership:
+        repo = self._require_membership_repo()
+        existing = await repo.get_relation(project_id, user_id)
+        if existing is not None:
+            raise BadRequestError("User is already a member of this project")
+        role_enum = self._parse_role(role)
+        return await repo.add_member(
+            project_id=project_id,
+            user_id=user_id,
+            role=role_enum,
+            notes=notes,
+        )
+
+    async def remove_member(
+        self,
+        *,
+        project_id: int,
+        user_id: int,
+    ) -> None:
+        repo = self._require_membership_repo()
+        existing = await repo.get_relation(project_id, user_id)
+        if existing is None:
+            raise NotFoundError("Project membership not found")
+        await repo.remove_member(existing)
+
+    @staticmethod
+    def _parse_role(role: str) -> ProjectMemberRole:
+        mapping = {
+            "MEMBER": ProjectMemberRole.MEMBER,
+            "ADMIN": ProjectMemberRole.ADMIN,
+            "OWNER": ProjectMemberRole.OWNER,
+        }
+        result = mapping.get(role.upper())
+        if result is None:
+            raise BadRequestError(f"Invalid role: {role}. Must be MEMBER, ADMIN, or OWNER")
+        return result

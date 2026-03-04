@@ -18,6 +18,7 @@ from app.domain.space.repositories import (
 from app.domain.space.services import SpaceService
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.task.repositories import TaskRepository, TaskMembershipRepository
+from app.domain.user.repositories import UserRepository, UserProfileRepository
 
 
 router = APIRouter(prefix="/spaces", tags=["Spaces"])
@@ -43,7 +44,14 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
 async def get_space_analytics_service(db=Depends(get_db)) -> SpaceAnalyticsService:
     task_repo = TaskRepository(session=db)
     membership_repo = TaskMembershipRepository(session=db)
-    return SpaceAnalyticsService(task_repo=task_repo, membership_repo=membership_repo)
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    return SpaceAnalyticsService(
+        task_repo=task_repo,
+        membership_repo=membership_repo,
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+    )
 
 
 def _space_to_api_model(space: Space) -> dict:
@@ -540,6 +548,19 @@ async def patch_space_manager(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     payload: dict,
     auth_user: AuthUserInfo = Depends(get_auth_user),
+    service: SpaceService = Depends(get_space_service),
 ) -> dict:
-    _ = (space_id, user_id, payload, auth_user.user_id)
+    role_str = payload.get("role")
+    if not isinstance(role_str, str):
+        raise BadRequestError("role is required")
+    role_map = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
+    new_role = role_map.get(role_str.upper())
+    if new_role is None:
+        raise BadRequestError(f"Invalid role: {role_str}. Must be OWNER or ADMIN")
+    await service.update_admin_role(
+        space_id=space_id,
+        target_user_id=user_id,
+        new_role=new_role,
+        actor_user_id=auth_user.user_id,
+    )
     return {"code": 200, "message": "OK"}

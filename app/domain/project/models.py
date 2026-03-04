@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import IntEnum
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Sequence, String, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Sequence,
+    SmallInteger,
+    String,
+    Text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -11,6 +21,7 @@ class Base(DeclarativeBase):
 
 
 project_seq = Sequence("project_seq")
+project_membership_seq = Sequence("project_membership_seq")
 
 
 class Project(Base):
@@ -34,6 +45,31 @@ class Project(Base):
     end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class ProjectMemberRole(IntEnum):
+    MEMBER = 0
+    ADMIN = 1
+    OWNER = 2
+
+
+class ProjectMembership(Base):
+    __tablename__ = "project_membership"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        project_membership_seq,
+        primary_key=True,
+        server_default=project_membership_seq.next_value(),
+    )
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("project.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    role: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    notes: Mapped[str] = mapped_column(String(500), nullable=False, default="")
 
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)

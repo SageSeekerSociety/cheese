@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
@@ -10,8 +9,8 @@ from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
-from app.domain.project.models import Project
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.models import Project, ProjectMemberRole, ProjectMembership
+from app.domain.project.repositories import ProjectMembershipRepository, ProjectRepository
 from app.domain.project.services import ProjectService
 
 
@@ -20,7 +19,8 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 
 async def get_project_service(db=Depends(get_db)) -> ProjectService:
     repo = ProjectRepository(session=db)
-    return ProjectService(repo)
+    membership_repo = ProjectMembershipRepository(session=db)
+    return ProjectService(repo, membership_repo)
 
 
 def _project_to_api_model(project: Project) -> dict:
@@ -220,6 +220,21 @@ async def get_projects(
     }
 
 
+def _membership_to_api_model(m: ProjectMembership) -> dict:
+    role_names = {
+        ProjectMemberRole.MEMBER.value: "MEMBER",
+        ProjectMemberRole.ADMIN.value: "ADMIN",
+        ProjectMemberRole.OWNER.value: "OWNER",
+    }
+    return {
+        "userId": m.user_id,
+        "role": role_names.get(m.role, "MEMBER"),
+        "notes": m.notes or "",
+        "createdAt": int(m.created_at.timestamp() * 1000) if m.created_at else 0,
+        "updatedAt": int(m.updated_at.timestamp() * 1000) if m.updated_at else 0,
+    }
+
+
 @router.get(
     "/{projectId}/members",
     summary="Enumerate Project Members",
@@ -229,31 +244,26 @@ async def get_project_members(
     page_start: str | None = Query(default=None, alias="pageStart"),
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
     auth_user: AuthUserInfo = Depends(get_auth_user),
+    service: ProjectService = Depends(get_project_service),
 ) -> dict:
-    _ = (project_id, auth_user)
-    members: list[dict] = []
-    page = {
-        "pageStart": page_start or "",
-        "pageSize": min(page_size, len(members)),
-        "hasMore": False,
-        "nextStart": None,
-        "total": len(members),
-    }
+    _ = auth_user
+    offset = int(page_start) if page_start and page_start.isdigit() else 0
+    members, total = await service.list_members(project_id, limit=page_size, offset=offset)
+    next_offset = offset + len(members)
+    has_more = next_offset < total
     return {
         "code": 200,
         "message": "success",
-        "data": {"members": members, "page": page},
-    }
-
-
-def _build_member_stub(user_id: int, role: str, notes: str | None = None) -> dict:
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    return {
-        "userId": user_id,
-        "role": role,
-        "notes": notes or "",
-        "createdAt": now_ms,
-        "updatedAt": now_ms,
+        "data": {
+            "members": [_membership_to_api_model(m) for m in members],
+            "page": {
+                "pageStart": page_start or "0",
+                "pageSize": len(members),
+                "hasMore": has_more,
+                "nextStart": str(next_offset) if has_more else None,
+                "total": total,
+            },
+        },
     }
 
 
@@ -266,8 +276,9 @@ async def add_project_member(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     payload: dict,
     auth_user: AuthUserInfo = Depends(get_auth_user),
+    service: ProjectService = Depends(get_project_service),
 ) -> dict:
-    _ = (project_id, auth_user)
+    _ = auth_user
     user_id = payload.get("userId")
     role = payload.get("role") or "MEMBER"
     notes = payload.get("notes")
@@ -276,15 +287,16 @@ async def add_project_member(
     if not isinstance(role, str):
         raise BadRequestError("role must be string")
 
-    member = _build_member_stub(
+    membership = await service.add_member(
+        project_id=project_id,
         user_id=user_id,
         role=role.upper(),
-        notes=notes if isinstance(notes, str) else None,
+        notes=notes if isinstance(notes, str) else "",
     )
     return {
         "code": 201,
         "message": "Member added",
-        "data": {"member": member},
+        "data": {"member": _membership_to_api_model(membership)},
     }
 
 
@@ -297,6 +309,7 @@ async def delete_project_member(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     auth_user: AuthUserInfo = Depends(get_auth_user),
+    service: ProjectService = Depends(get_project_service),
 ) -> None:
-    _ = (project_id, user_id, auth_user)
-    return None
+    _ = auth_user
+    await service.remove_member(project_id=project_id, user_id=user_id)
