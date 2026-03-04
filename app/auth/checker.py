@@ -116,7 +116,7 @@ class PermissionChecker:
             Resource.KNOWLEDGE: "knowledge",
             Resource.DISCUSSION: "discussion",
             Resource.QUESTION: "question",
-            Resource.ANSWER: "question",
+            Resource.ANSWER: "answer",
         }
         return mapping.get(resource)
 

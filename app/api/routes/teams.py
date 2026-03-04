@@ -149,19 +149,21 @@ async def get_teams(
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     service: TeamService = Depends(get_team_service),
 ) -> dict:
-    teams = await service.enumerate_teams(query=query or None, limit=page_size, offset=0)
-    items = [_team_to_api_model(t) for t in teams]
+    offset = int(page_start) if page_start and page_start.isdigit() else 0
+    teams = await service.enumerate_teams(query=query or None, limit=page_size + 1, offset=offset)
+    has_more = len(teams) > page_size
+    items = [_team_to_api_model(t) for t in teams[:page_size]]
+    next_start = str(offset + page_size) if has_more else None
     return {
         "code": 200,
         "message": "OK",
         "data": {
             "teams": items,
             "page": {
-                "pageStart": page_start or "",
+                "pageStart": page_start or "0",
                 "pageSize": len(items),
-                "hasMore": False,
-                "nextStart": None,
-                "total": len(items),
+                "hasMore": has_more,
+                "nextStart": next_start,
             },
         },
     }

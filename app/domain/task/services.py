@@ -507,7 +507,7 @@ class TaskMembershipService:
                         # 其他 TeamSummaryDTO 字段（name/intro/avatarId 等）后续通过 TeamService 补齐。
                     },
                     "eligibility": {
-                        "eligible": is_task_approved and approved and not reasons,
+                        "eligible": is_task_approved and not reasons,
                         "reasons": reasons,
                     },
                 }

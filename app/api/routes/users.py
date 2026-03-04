@@ -98,8 +98,13 @@ async def get_passkey_service(
 async def get_oauth_service(
     db=Depends(get_db),
 ) -> OAuthService:
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.config import settings
+
     repo = OAuthConnectionRepository(session=db)
-    return OAuthService(repo=repo)
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
+    return OAuthService(repo=repo, redis=redis)
 
 
 @router.post(
@@ -108,7 +113,7 @@ async def get_oauth_service(
     status_code=201,
 )
 async def follow_user(
-    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    user_id: Annotated[int, Path(ge=1, alias="userId")],
     auth_user: AuthUserInfo = Depends(get_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -2538,7 +2543,7 @@ async def get_oauth_login_url(
     state = secrets.token_urlsafe(32)
 
     if redirect:
-        oauth_service.store_oauth_state(state, {"redirect": redirect})
+        await oauth_service.store_oauth_state(state, {"redirect": redirect})
 
     try:
         auth_url = oauth_service.generate_authorization_url(provider_id, state)
@@ -2567,7 +2572,7 @@ async def handle_oauth_callback(
     oauth_service: OAuthService = Depends(get_oauth_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    state_data = oauth_service.get_oauth_state(state) if state else None
+    state_data = (await oauth_service.get_oauth_state(state)) if state else None
     redirect_url = state_data.get("redirect") if state_data else None
 
     try:

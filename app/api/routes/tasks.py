@@ -652,6 +652,12 @@ async def join_task_as_team(
     if not isinstance(team_id, int) or team_id <= 0:
         raise BadRequestError("teamId is required")
 
+    from app.domain.team.repositories import TeamRepository
+
+    team_repo = TeamRepository(session=db)
+    if not await team_repo.is_team_member(team_id, auth_user.user_id):
+        raise ForbiddenError("You must be a member of this team to register it for a task")
+
     task_repo = TaskRepository(session=db)
     task = await task_repo.get_by_id(task_id)
     if task is None:
@@ -710,12 +716,16 @@ async def patch_task_participant(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     """Patch a single TaskMembership by participant id."""
-    _ = auth_user  # 精细权限控制留待后续
-
     task_repo = TaskRepository(session=db)
     task = await task_repo.get_by_id(task_id)
     if task is None:
         raise NotFoundError("Task not found")
+
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    is_space_admin = await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
+    is_creator = task.creator_id == auth_user.user_id
+    if not is_creator and not is_space_admin:
+        raise ForbiddenError("Only task owner or space admin can update participants")
 
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
@@ -1302,15 +1312,29 @@ async def delete_task(
 async def delete_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
+    db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> None:
     """Soft delete a participant by membership id."""
-    _ = auth_user  # 细粒度权限留待后续
+    task_repo = TaskRepository(session=db)
+    task = await task_repo.get_by_id(task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    is_space_admin = await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
+    is_creator = task.creator_id == auth_user.user_id
 
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
+
+    is_self = not membership.is_team and membership.member_id == auth_user.user_id
+    if not is_creator and not is_space_admin and not is_self:
+        raise ForbiddenError(
+            "Only task owner, space admin, or the participant can remove participation"
+        )
 
     await membership_service.soft_delete_membership(membership)
 
@@ -1323,11 +1347,19 @@ async def delete_task_participant(
 async def delete_task_participant_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     member: Annotated[int, Query(description="Member ID (user or team)")],
+    db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> None:
     """Soft delete a participant by task + member id."""
-    _ = auth_user
+    task_repo = TaskRepository(session=db)
+    task = await task_repo.get_by_id(task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    is_space_admin = await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
+    is_creator = task.creator_id == auth_user.user_id
 
     membership = await membership_service.get_membership_by_task_and_member(
         task_id=task_id,
@@ -1335,6 +1367,12 @@ async def delete_task_participant_by_member(
     )
     if membership is None:
         raise NotFoundError("Participant not found")
+
+    is_self = not membership.is_team and membership.member_id == auth_user.user_id
+    if not is_creator and not is_space_admin and not is_self:
+        raise ForbiddenError(
+            "Only task owner, space admin, or the participant can remove participation"
+        )
 
     await membership_service.soft_delete_membership(membership)
 
@@ -1352,12 +1390,16 @@ async def patch_task_membership_by_member(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     """Patch a TaskMembership identified by (taskId, memberId) and return all participants."""
-    _ = auth_user
-
     task_repo = TaskRepository(session=db)
     task = await task_repo.get_by_id(task_id)
     if task is None:
         raise NotFoundError("Task not found")
+
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    is_space_admin = await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
+    is_creator = task.creator_id == auth_user.user_id
+    if not is_creator and not is_space_admin:
+        raise ForbiddenError("Only task owner or space admin can update participants")
 
     membership = await membership_service.get_membership_by_task_and_member(
         task_id=task_id,
@@ -2099,7 +2141,13 @@ async def delete_ai_advice_conversation(
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = (task_id, auth_user)
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
+    conversation = await service.get_conversation(
+        task_id=task_id, conversation_id=conversation_id, user_id=auth_user.user_id
+    )
+    if conversation is None:
+        raise NotFoundError("Conversation not found")
     await service.delete_conversation(conversation_id=conversation_id)
     return {"code": 200, "message": "OK"}
 

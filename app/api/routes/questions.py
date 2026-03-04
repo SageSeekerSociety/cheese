@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Path, Query, Body
 
 from app.auth.checker import get_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
-from app.core.errors import BadRequestError
+from app.core.errors import BadRequestError, ForbiddenError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.discussion.models import DiscussableModelType
@@ -360,7 +360,11 @@ async def delete_question_comment(
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     _ = question_id
-    _ = auth_user
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
+    discussion = await discussion_service.get_discussion(comment_id, auth_user.user_id)
+    if discussion["senderId"] != auth_user.user_id:
+        raise ForbiddenError("Only the author can delete this comment")
     await discussion_service.delete_discussion(comment_id)
     return {"code": 200, "message": "OK", "data": {"deleted": True}}
 
