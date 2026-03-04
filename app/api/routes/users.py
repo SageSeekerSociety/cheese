@@ -22,6 +22,7 @@ from app.core.errors import (
 from app.db.session import get_db
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.repositories import TeamMembershipApplicationRepository, TeamRepository
+from app.domain.team.services import TeamService
 from app.domain.user.models import UserFollowingRelationship
 from app.domain.user.repositories import (
     UserFollowingRepository,
@@ -201,9 +202,15 @@ async def cancel_my_join_request(
 async def leave_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     auth_user: AuthUserInfo = Depends(get_auth_user),
+    db=Depends(get_db),
 ) -> None:
-    _ = (team_id, auth_user)
-    return None
+    team_repo = TeamRepository(session=db)
+    team_service = TeamService(team_repo)
+    await team_service.remove_team_member(
+        team_id=team_id,
+        target_user_id=auth_user.user_id,
+        actor_user_id=auth_user.user_id,
+    )
 
 
 @router.post(

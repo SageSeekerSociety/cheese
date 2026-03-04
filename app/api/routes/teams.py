@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
@@ -398,20 +397,36 @@ async def add_team_member_entry(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     payload: dict,
     auth_user: AuthUserInfo = require_permission(Action.CREATE, Resource.TEAM_MEMBERSHIP, "teamId"),
+    service: TeamService = Depends(get_team_service),
 ) -> dict:
+    _ = auth_user
     user_id = payload.get("userId")
-    role = (payload.get("role") or "MEMBER").upper()
+    role_str = (payload.get("role") or "MEMBER").upper()
     if not isinstance(user_id, int) or user_id <= 0:
         raise BadRequestError("userId must be positive")
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    member = {
-        "userId": user_id,
-        "role": role,
-        "createdAt": now_ms,
-        "updatedAt": now_ms,
+
+    role_map = {"MEMBER": TeamMemberRole.MEMBER, "ADMIN": TeamMemberRole.ADMIN}
+    role_val = role_map.get(role_str)
+    if role_val is None:
+        raise BadRequestError(f"Invalid role: {role_str}. Must be MEMBER or ADMIN")
+
+    team = await service.get_team(team_id)
+    if team is None:
+        raise NotFoundError("Team not found")
+
+    relation = await service._repo.add_member(team_id, user_id, role_val)
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {
+            "member": {
+                "userId": relation.user_id,
+                "role": role_str,
+                "createdAt": int(relation.created_at.timestamp() * 1000),
+                "updatedAt": int(relation.updated_at.timestamp() * 1000),
+            }
+        },
     }
-    _ = (team_id, auth_user.user_id)
-    return {"code": 201, "message": "Created", "data": {"member": member}}
 
 
 @router.get(

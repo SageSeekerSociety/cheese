@@ -16,7 +16,7 @@ from app.auth.core import (
     ROLE_HIERARCHY,
     SystemRole,
 )
-from app.common.auth import get_current_user_id
+from app.common.auth import get_optional_user_id
 from app.db.session import get_db
 
 
@@ -126,7 +126,7 @@ permission_checker = PermissionChecker()
 
 async def get_auth_user(
     request: Request,
-    user_id: int | None = Depends(get_current_user_id),
+    user_id: int | None = Depends(get_optional_user_id),
 ) -> AuthUserInfo:
     if user_id is None:
         return AuthUserInfo(user_id=0, system_roles={SystemRole.GUEST})

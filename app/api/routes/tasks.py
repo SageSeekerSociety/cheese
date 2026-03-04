@@ -954,8 +954,14 @@ async def patch_task(
     if task is None:
         raise NotFoundError("Task not found")
 
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can update this task")
+    from app.domain.space.repositories import SpaceAdminRelationRepository
+
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    is_space_admin = await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
+    is_creator = task.creator_id == auth_user.user_id
+
+    if not is_creator and not is_space_admin:
+        raise ForbiddenError("Only task owner or space admin can update this task")
 
     # 基本字符串字段
     if "name" in payload and payload["name"] is not None:
@@ -1025,11 +1031,16 @@ async def patch_task(
     if has_rank is False:
         task.rank = None
 
-    # 审批状态与驳回原因
-    if "approved" in payload and payload["approved"] is not None:
-        task.approved = _map_approve_type(str(payload["approved"]))
-    if "rejectReason" in payload and payload["rejectReason"] is not None:
-        task.reject_reason = str(payload["rejectReason"])
+    # 审批状态与驳回原因 — 需要 space admin 权限，任务创建者不可自审
+    if ("approved" in payload and payload["approved"] is not None) or (
+        "rejectReason" in payload and payload["rejectReason"] is not None
+    ):
+        if not is_space_admin:
+            raise ForbiddenError("Only space admins can approve or reject tasks")
+        if "approved" in payload and payload["approved"] is not None:
+            task.approved = _map_approve_type(str(payload["approved"]))
+        if "rejectReason" in payload and payload["rejectReason"] is not None:
+            task.reject_reason = str(payload["rejectReason"])
 
     # 团队大小限制，仅 TEAM 类型任务允许设置
     min_team_size_raw = payload.get("minTeamSize")
@@ -1673,6 +1684,9 @@ async def post_task_submission(
         is_member = await team_service.is_team_member(membership.member_id, auth_user.user_id)
         if not is_member:
             raise ForbiddenError("Only team members can submit for this team task")
+    else:
+        if membership.member_id != auth_user.user_id:
+            raise ForbiddenError("Only the participant themselves can submit")
 
     if not task.resubmittable:
         existing, _ = await submission_service.list_submissions(
@@ -1708,7 +1722,9 @@ async def patch_task_submission(
     version: Annotated[int, Path(ge=0)],
     contents: list[dict],
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
+    team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     task = await task_service.get_task(task_id=task_id)
@@ -1717,6 +1733,18 @@ async def patch_task_submission(
 
     if not task.editable:
         raise BadRequestError("Task does not allow editing submissions")
+
+    membership = await membership_service.get_membership_by_id(participant_id)
+    if membership is None or membership.task_id != task_id:
+        raise NotFoundError.for_resource("participant", participant_id)
+
+    if membership.is_team:
+        is_member = await team_service.is_team_member(membership.member_id, auth_user.user_id)
+        if not is_member:
+            raise ForbiddenError("Only team members can edit this submission")
+    else:
+        if membership.member_id != auth_user.user_id:
+            raise ForbiddenError("Only the participant themselves can edit their submission")
 
     submission_dto = await submission_service.modify_submission(
         task_id=task_id,
@@ -2069,8 +2097,9 @@ async def delete_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     conversation_id: Annotated[str, Path(alias="conversationId")],
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = task_id
+    _ = (task_id, auth_user)
     await service.delete_conversation(conversation_id=conversation_id)
     return {"code": 200, "message": "OK"}
 

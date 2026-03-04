@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.api.routes.tasks import get_task_ai_advice_service
-from app.common.auth import get_current_user_id
+from app.common.auth import get_optional_user_id
 from app.main import app
 
 
@@ -60,7 +60,7 @@ async def test_create_ai_advice_conversation_forwards_context(python_client):
         return 99
 
     app.dependency_overrides[get_task_ai_advice_service] = _service_override
-    app.dependency_overrides[get_current_user_id] = _user_override
+    app.dependency_overrides[get_optional_user_id] = _user_override
 
     try:
         payload = {
@@ -103,7 +103,7 @@ async def test_create_ai_advice_conversation_missing_question_returns_400(python
         return 1
 
     app.dependency_overrides[get_task_ai_advice_service] = _service_override
-    app.dependency_overrides[get_current_user_id] = _user_override
+    app.dependency_overrides[get_optional_user_id] = _user_override
 
     try:
         resp = await python_client.post(
