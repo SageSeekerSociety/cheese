@@ -220,6 +220,12 @@ async def get_projects(
     }
 
 
+async def _get_project_or_404(service: ProjectService, project_id: int) -> None:
+    project = await service.get_project(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+
+
 def _membership_to_api_model(m: ProjectMembership) -> dict:
     role_names = {
         ProjectMemberRole.MEMBER.value: "MEMBER",
@@ -247,6 +253,7 @@ async def get_project_members(
     service: ProjectService = Depends(get_project_service),
 ) -> dict:
     _ = auth_user
+    await _get_project_or_404(service, project_id)
     offset = int(page_start) if page_start and page_start.isdigit() else 0
     members, total = await service.list_members(project_id, limit=page_size, offset=offset)
     next_offset = offset + len(members)
@@ -279,6 +286,7 @@ async def add_project_member(
     service: ProjectService = Depends(get_project_service),
 ) -> dict:
     _ = auth_user
+    await _get_project_or_404(service, project_id)
     user_id = payload.get("userId")
     role = payload.get("role") or "MEMBER"
     notes = payload.get("notes")
@@ -312,4 +320,5 @@ async def delete_project_member(
     service: ProjectService = Depends(get_project_service),
 ) -> None:
     _ = auth_user
+    await _get_project_or_404(service, project_id)
     await service.remove_member(project_id=project_id, user_id=user_id)

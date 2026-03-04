@@ -480,7 +480,6 @@ async def create_task(
             db.add(rel)
         await db.flush()
 
-    await db.commit()
     return {
         "code": 200,
         "message": "Task created successfully.",

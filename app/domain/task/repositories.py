@@ -873,10 +873,10 @@ class AIMessageRepository:
         await self._session.flush()
         return msg
 
-    async def soft_delete(self, review: TaskSubmissionReview) -> None:
+    async def soft_delete(self, message: AIMessage) -> None:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        review.deleted_at = now
-        review.updated_at = now
+        message.deleted_at = now
+        message.updated_at = now
         await self._session.flush()
 
 

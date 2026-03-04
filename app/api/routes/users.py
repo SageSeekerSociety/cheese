@@ -1256,8 +1256,11 @@ async def sudo_auth(
 
             if not client_ephemeral and not client_proof:
                 # SRP Step 1: Generate server ephemeral and store session state
-                server_ctx = _srp.SRPContext(user.username)
-                server_session = _srp.SRPServerSession(server_ctx, stored_verifier)
+                try:
+                    server_ctx = _srp.SRPContext(user.username)
+                    server_session = _srp.SRPServerSession(server_ctx, stored_verifier)
+                except (ValueError, _srp.SRPException):
+                    raise AuthenticationRequiredError("Corrupted SRP credentials")
                 server_public = server_session.public
                 server_private = server_session.private
 
@@ -1282,21 +1285,28 @@ async def sudo_auth(
                 raise AuthenticationRequiredError("SRP session expired, please reinitialize")
             await redis.delete(srp_key)
 
-            server_ctx = _srp.SRPContext(user.username)
-            server_session = _srp.SRPServerSession(
-                server_ctx, stored_verifier, private=server_private
-            )
-            server_session.process(client_ephemeral, stored_salt)
+            try:
+                server_ctx = _srp.SRPContext(user.username)
+                server_session = _srp.SRPServerSession(
+                    server_ctx, stored_verifier, private=server_private
+                )
+                server_session.process(client_ephemeral, stored_salt)
+            except (ValueError, TypeError, _srp.SRPException):
+                raise AuthenticationRequiredError("Invalid SRP parameters")
 
             if not server_session.verify_proof(client_proof):
                 raise AuthenticationRequiredError("Invalid SRP proof")
+
+            # key_proof is bytes; decode for JSON serialization
+            proof = server_session.key_proof
+            server_proof_str = proof.decode() if isinstance(proof, bytes) else str(proof)
 
             return {
                 "code": 200,
                 "message": "Sudo mode activated via SRP.",
                 "data": {
                     "verified": True,
-                    "serverProof": server_session.key_proof,
+                    "serverProof": server_proof_str,
                 },
             }
         finally:
