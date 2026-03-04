@@ -96,7 +96,10 @@ class TeamService:
     ) -> Team:
         team = await self._get_team_or_error(team_id)
         actor_relation = await self._repo.get_member_relation(team_id, actor_user_id)
-        if actor_relation is None or actor_relation.role not in (TeamMemberRole.OWNER, TeamMemberRole.ADMIN):
+        if actor_relation is None or actor_relation.role not in (
+            TeamMemberRole.OWNER,
+            TeamMemberRole.ADMIN,
+        ):
             raise ForbiddenError("Only team owner or admins can update team")
 
         if name is not None:
@@ -144,16 +147,23 @@ class TeamService:
     ) -> None:
         relation = await self._repo.get_member_relation(team_id, target_user_id)
         if relation is None:
-            raise NotFoundError("Resource team member not found", data={"teamId": team_id, "userId": target_user_id})
+            raise NotFoundError(
+                "Resource team member not found", data={"teamId": team_id, "userId": target_user_id}
+            )
 
         if relation.role == TeamMemberRole.OWNER:
-            raise BadRequestError("Team owner cannot be removed. Transfer ownership or disband the team.")
+            raise BadRequestError(
+                "Team owner cannot be removed. Transfer ownership or disband the team."
+            )
 
         if target_user_id != actor_user_id:
             actor_relation = await self._repo.get_member_relation(team_id, actor_user_id)
             if actor_relation is None or actor_relation.role == TeamMemberRole.MEMBER:
                 raise ForbiddenError("Only admins or owner can remove other members")
-            if actor_relation.role == TeamMemberRole.ADMIN and relation.role == TeamMemberRole.ADMIN:
+            if (
+                actor_relation.role == TeamMemberRole.ADMIN
+                and relation.role == TeamMemberRole.ADMIN
+            ):
                 raise ForbiddenError("Admins cannot remove other admins")
 
         await self._repo.soft_delete_member(relation)
@@ -199,7 +209,9 @@ class TeamService:
 
         target_relation = await self._repo.get_member_relation(team_id, new_owner_user_id)
         if target_relation is None:
-            raise NotFoundError("New owner must be an existing team member", data={"userId": new_owner_user_id})
+            raise NotFoundError(
+                "New owner must be an existing team member", data={"userId": new_owner_user_id}
+            )
 
         current_owner_relation.role = TeamMemberRole.ADMIN
         current_owner_relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)

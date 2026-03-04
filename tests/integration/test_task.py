@@ -55,9 +55,7 @@ class TestTaskIntegration:
         space_id = space_data["id"]
         category_id = space_data.get("defaultCategoryId")
 
-        deadline_ms = int(
-            (datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000
-        )
+        deadline_ms = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
 
         return {
             "creator": creator,
@@ -344,8 +342,6 @@ class TestTaskIntegration:
         self, api_client: httpx.Client, task_setup: dict
     ) -> None:
         creator = task_setup["creator"]
-        participant = task_setup["participant"]
-
         team_resp = api_client.post(
             "/teams",
             json={
@@ -357,7 +353,6 @@ class TestTaskIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         assert team_resp.status_code in [200, 201], f"Team creation failed: {team_resp.text}"
-        team_id = team_resp.json()["data"]["team"]["id"]
 
         create_resp = api_client.post(
             "/tasks",
@@ -466,9 +461,7 @@ class TestTaskIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         assert participants_resp.status_code == 200
-        member_ids = [
-            p.get("memberId") for p in participants_resp.json()["data"]["participants"]
-        ]
+        member_ids = [p.get("memberId") for p in participants_resp.json()["data"]["participants"]]
         assert participant.user_id in member_ids
 
     def test_delete_task(self, api_client: httpx.Client, task_setup: dict) -> None:
@@ -534,9 +527,7 @@ class TestTaskIntegration:
         )
         assert join_resp.status_code == 200
 
-        participants_resp = api_client.get(
-            f"/tasks/{task_id}/participants", headers=headers
-        )
+        participants_resp = api_client.get(f"/tasks/{task_id}/participants", headers=headers)
         assert participants_resp.status_code == 200
         data = participants_resp.json()
         assert "participants" in data["data"]
@@ -801,9 +792,7 @@ class TestTaskApprovalWorkflow:
             "suffix": suffix,
         }
 
-    def test_disapprove_task(
-        self, api_client: httpx.Client, approval_setup: dict
-    ) -> None:
+    def test_disapprove_task(self, api_client: httpx.Client, approval_setup: dict) -> None:
         creator = approval_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -839,9 +828,7 @@ class TestTaskApprovalWorkflow:
         get_task = get_resp.json()["data"]["task"]
         assert get_task["approved"] == "DISAPPROVED"
 
-    def test_resubmit_task(
-        self, api_client: httpx.Client, approval_setup: dict
-    ) -> None:
+    def test_resubmit_task(self, api_client: httpx.Client, approval_setup: dict) -> None:
         creator = approval_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -913,9 +900,7 @@ class TestTaskApprovalWorkflow:
         creator = approval_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
-        deadline_ms = int(
-            (datetime.now(timezone.utc) + timedelta(days=7)).timestamp() * 1000
-        )
+        deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=7)).timestamp() * 1000)
 
         create_resp = api_client.post(
             "/tasks",
@@ -1045,9 +1030,7 @@ class TestParticipantManagement:
         assert participant_setup["participant2"].user_id in participant_ids
         assert participant_setup["participant3"].user_id in participant_ids
 
-    def test_approve_participant(
-        self, api_client: httpx.Client, participant_setup: dict
-    ) -> None:
+    def test_approve_participant(self, api_client: httpx.Client, participant_setup: dict) -> None:
         creator = participant_setup["creator"]
         participant1 = participant_setup["participant1"]
         task_id = participant_setup["task_id"]
@@ -1159,9 +1142,7 @@ class TestParticipantManagement:
         )
         participant_id = join_resp.json()["data"]["participant"]["id"]
 
-        new_deadline_ms = int(
-            (datetime.now(timezone.utc) + timedelta(days=14)).timestamp() * 1000
-        )
+        new_deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=14)).timestamp() * 1000)
 
         update_resp = api_client.patch(
             f"/tasks/{task_id}/participants/{participant_id}",
@@ -1170,9 +1151,7 @@ class TestParticipantManagement:
         )
         assert update_resp.status_code == 200, f"Expected 200, got {update_resp.status_code}"
 
-    def test_remove_participant(
-        self, api_client: httpx.Client, participant_setup: dict
-    ) -> None:
+    def test_remove_participant(self, api_client: httpx.Client, participant_setup: dict) -> None:
         participant1 = participant_setup["participant1"]
         task_id = participant_setup["task_id"]
 
@@ -1249,7 +1228,9 @@ class TestParticipantManagement:
             json={},
             headers={"Authorization": f"Bearer {participant1.token}"},
         )
-        assert join_resp2.status_code == 400, f"Expected 400 for duplicate join, got {join_resp2.status_code}"
+        assert (
+            join_resp2.status_code == 400
+        ), f"Expected 400 for duplicate join, got {join_resp2.status_code}"
 
 
 class TestTaskSubmission:
@@ -1324,9 +1305,7 @@ class TestTaskSubmission:
             "participant_id": participant_id,
         }
 
-    def test_create_submission(
-        self, api_client: httpx.Client, submission_setup: dict
-    ) -> None:
+    def test_create_submission(self, api_client: httpx.Client, submission_setup: dict) -> None:
         participant = submission_setup["participant"]
         task_id = submission_setup["task_id"]
         participant_id = submission_setup["participant_id"]
@@ -1339,9 +1318,7 @@ class TestTaskSubmission:
         assert submission_resp.status_code == 200
         assert "submission" in submission_resp.json()["data"]
 
-    def test_list_submissions(
-        self, api_client: httpx.Client, submission_setup: dict
-    ) -> None:
+    def test_list_submissions(self, api_client: httpx.Client, submission_setup: dict) -> None:
         participant = submission_setup["participant"]
         task_id = submission_setup["task_id"]
         participant_id = submission_setup["participant_id"]
@@ -1440,9 +1417,7 @@ class TestTaskReview:
             "submission_id": submission_id,
         }
 
-    def test_create_review(
-        self, api_client: httpx.Client, review_setup: dict
-    ) -> None:
+    def test_create_review(self, api_client: httpx.Client, review_setup: dict) -> None:
         creator = review_setup["creator"]
         task_id = review_setup["task_id"]
         participant_id = review_setup["participant_id"]
@@ -1460,9 +1435,7 @@ class TestTaskReview:
         assert review_resp.status_code == 200
         assert "review" in review_resp.json()["data"]
 
-    def test_update_review(
-        self, api_client: httpx.Client, review_setup: dict
-    ) -> None:
+    def test_update_review(self, api_client: httpx.Client, review_setup: dict) -> None:
         creator = review_setup["creator"]
         task_id = review_setup["task_id"]
         participant_id = review_setup["participant_id"]
@@ -1488,9 +1461,7 @@ class TestTaskReview:
         )
         assert update_resp.status_code == 200
 
-    def test_delete_review(
-        self, api_client: httpx.Client, review_setup: dict
-    ) -> None:
+    def test_delete_review(self, api_client: httpx.Client, review_setup: dict) -> None:
         creator = review_setup["creator"]
         task_id = review_setup["task_id"]
         participant_id = review_setup["participant_id"]
@@ -1557,9 +1528,7 @@ class TestTeamTask:
             "suffix": suffix,
         }
 
-    def test_create_team_task(
-        self, api_client: httpx.Client, team_task_setup: dict
-    ) -> None:
+    def test_create_team_task(self, api_client: httpx.Client, team_task_setup: dict) -> None:
         creator = team_task_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -1584,9 +1553,7 @@ class TestTeamTask:
         task = create_resp.json()["data"]["task"]
         assert task["id"] > 0
 
-    def test_add_team_to_task(
-        self, api_client: httpx.Client, team_task_setup: dict
-    ) -> None:
+    def test_add_team_to_task(self, api_client: httpx.Client, team_task_setup: dict) -> None:
         creator = team_task_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -1621,9 +1588,7 @@ class TestTeamTask:
         )
         assert join_resp.status_code == 200, f"Join failed: {join_resp.text}"
 
-    def test_get_teams_for_task(
-        self, api_client: httpx.Client, team_task_setup: dict
-    ) -> None:
+    def test_get_teams_for_task(self, api_client: httpx.Client, team_task_setup: dict) -> None:
         creator = team_task_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -1683,9 +1648,7 @@ class TestCategoryIntegration:
             "suffix": suffix,
         }
 
-    def test_create_category(
-        self, api_client: httpx.Client, category_setup: dict
-    ) -> None:
+    def test_create_category(self, api_client: httpx.Client, category_setup: dict) -> None:
         creator = category_setup["creator"]
         space_id = category_setup["space_id"]
         headers = {"Authorization": f"Bearer {creator.token}"}
@@ -1701,9 +1664,7 @@ class TestCategoryIntegration:
         assert create_resp.status_code == 201, f"Create category failed: {create_resp.text}"
         assert "category" in create_resp.json()["data"]
 
-    def test_list_categories(
-        self, api_client: httpx.Client, category_setup: dict
-    ) -> None:
+    def test_list_categories(self, api_client: httpx.Client, category_setup: dict) -> None:
         creator = category_setup["creator"]
         space_id = category_setup["space_id"]
         headers = {"Authorization": f"Bearer {creator.token}"}
@@ -1778,7 +1739,9 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert delete_resp.status_code == 403, f"Expected 403 Forbidden, got {delete_resp.status_code}"
+        assert (
+            delete_resp.status_code == 403
+        ), f"Expected 403 Forbidden, got {delete_resp.status_code}"
 
     def test_delete_task_success_for_owner(
         self, api_client: httpx.Client, permission_setup: dict
@@ -1836,7 +1799,9 @@ class TestTaskPermissions:
             json={"name": "Should Fail"},
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert update_resp.status_code == 403, f"Expected 403 Forbidden, got {update_resp.status_code}"
+        assert (
+            update_resp.status_code == 403
+        ), f"Expected 403 Forbidden, got {update_resp.status_code}"
 
     def test_join_unapproved_task_fails(
         self, api_client: httpx.Client, permission_setup: dict
@@ -1899,7 +1864,9 @@ class TestTaskPermissions:
             },
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert enum_resp.status_code == 200, f"Expected 200, got {enum_resp.status_code}: {enum_resp.text}"
+        assert (
+            enum_resp.status_code == 200
+        ), f"Expected 200, got {enum_resp.status_code}: {enum_resp.text}"
         tasks = enum_resp.json()["data"]["tasks"]
         assert len(tasks) >= 1
 
@@ -1935,7 +1902,9 @@ class TestTaskPermissions:
             },
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert enum_resp.status_code == 403, f"Expected 403, got {enum_resp.status_code}: {enum_resp.text}"
+        assert (
+            enum_resp.status_code == 403
+        ), f"Expected 403, got {enum_resp.status_code}: {enum_resp.text}"
 
     def test_get_unapproved_task_as_space_admin(
         self, api_client: httpx.Client, permission_setup: dict
@@ -1964,7 +1933,9 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert get_resp.status_code == 200, f"Expected 200, got {get_resp.status_code}: {get_resp.text}"
+        assert (
+            get_resp.status_code == 200
+        ), f"Expected 200, got {get_resp.status_code}: {get_resp.text}"
         assert get_resp.json()["data"]["task"]["approved"] == "NONE"
 
     def test_get_unapproved_task_fails_for_non_admin(
@@ -1995,7 +1966,9 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert get_resp.status_code == 403, f"Expected 403, got {get_resp.status_code}: {get_resp.text}"
+        assert (
+            get_resp.status_code == 403
+        ), f"Expected 403, got {get_resp.status_code}: {get_resp.text}"
 
 
 class TestTaskJoinedFilter:
@@ -2005,7 +1978,9 @@ class TestTaskJoinedFilter:
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
         participant = user_client.create_user()
-        participant.token = user_client.login(api_client, participant.username, participant.password)
+        participant.token = user_client.login(
+            api_client, participant.username, participant.password
+        )
 
         suffix = random.randint(10000000, 99999999)
 
@@ -2110,7 +2085,9 @@ class TestParticipantEdgeCases:
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
         participant = user_client.create_user()
-        participant.token = user_client.login(api_client, participant.username, participant.password)
+        participant.token = user_client.login(
+            api_client, participant.username, participant.password
+        )
 
         suffix = random.randint(10000000, 99999999)
 
@@ -2166,9 +2143,7 @@ class TestParticipantEdgeCases:
         participant = edge_setup["participant"]
         task_id = edge_setup["task_id"]
 
-        deadline_ms = int(
-            (datetime.now(timezone.utc) + timedelta(days=30)).timestamp() * 1000
-        )
+        deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp() * 1000)
 
         add_resp = api_client.post(
             f"/tasks/{task_id}/participants",
@@ -2178,9 +2153,7 @@ class TestParticipantEdgeCases:
         )
         assert add_resp.status_code == 200, f"Add participant failed: {add_resp.text}"
 
-    def test_get_single_participant(
-        self, api_client: httpx.Client, edge_setup: dict
-    ) -> None:
+    def test_get_single_participant(self, api_client: httpx.Client, edge_setup: dict) -> None:
         creator = edge_setup["creator"]
         participant = edge_setup["participant"]
         task_id = edge_setup["task_id"]
@@ -2199,9 +2172,7 @@ class TestParticipantEdgeCases:
         assert get_resp.status_code == 200
         assert get_resp.json()["data"]["participant"]["id"] == participant_id
 
-    def test_remove_self_from_task(
-        self, api_client: httpx.Client, edge_setup: dict
-    ) -> None:
+    def test_remove_self_from_task(self, api_client: httpx.Client, edge_setup: dict) -> None:
         participant = edge_setup["participant"]
         task_id = edge_setup["task_id"]
 
@@ -2273,9 +2244,7 @@ class TestTaskFullUpdate:
         )
         task_id = create_resp.json()["data"]["task"]["id"]
 
-        new_deadline_ms = int(
-            (datetime.now(timezone.utc) + timedelta(days=14)).timestamp() * 1000
-        )
+        new_deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=14)).timestamp() * 1000)
 
         patch_resp = api_client.patch(
             f"/tasks/{task_id}",
@@ -2365,9 +2334,7 @@ class TestParticipantPermissions:
         user2 = perm_setup["user2"]
         task_id = perm_setup["task_id"]
 
-        deadline_ms = int(
-            (datetime.now(timezone.utc) + timedelta(days=30)).timestamp() * 1000
-        )
+        deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp() * 1000)
 
         add_resp = api_client.post(
             f"/tasks/{task_id}/participants",
@@ -2443,9 +2410,7 @@ class TestTeamParticipant:
             "task_id": task_id,
         }
 
-    def test_add_team_to_task(
-        self, api_client: httpx.Client, team_participant_setup: dict
-    ) -> None:
+    def test_add_team_to_task(self, api_client: httpx.Client, team_participant_setup: dict) -> None:
         creator = team_participant_setup["creator"]
         team_id = team_participant_setup["team_id"]
         task_id = team_participant_setup["task_id"]
@@ -2478,7 +2443,9 @@ class TestTeamParticipant:
             json={},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert add_again_resp.status_code == 400, f"Expected 400 for duplicate add, got {add_again_resp.status_code}"
+        assert (
+            add_again_resp.status_code == 400
+        ), f"Expected 400 for duplicate add, got {add_again_resp.status_code}"
 
     def test_list_team_participants(
         self, api_client: httpx.Client, team_participant_setup: dict
@@ -2654,9 +2621,7 @@ class TestParticipantWorkflow:
         none_status = none_resp.json()["data"]["participants"]
         assert len(none_status) == 2
 
-    def test_participants_remove_self(
-        self, api_client: httpx.Client, workflow_setup: dict
-    ) -> None:
+    def test_participants_remove_self(self, api_client: httpx.Client, workflow_setup: dict) -> None:
         creator = workflow_setup["creator"]
         users = workflow_setup["users"]
         task_id = workflow_setup["task_id"]
@@ -2813,9 +2778,7 @@ class TestCategoryDeletion:
 
 class TestArchivedCategoryAndRejectReason:
     @pytest.fixture
-    def archived_category_setup(
-        self, user_client: UserCreator, api_client: httpx.Client
-    ) -> dict:
+    def archived_category_setup(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
@@ -2979,9 +2942,7 @@ class TestArchivedCategoryAndRejectReason:
 
 class TestRegistrationStartTime:
     @pytest.fixture
-    def registration_start_setup(
-        self, user_client: UserCreator, api_client: httpx.Client
-    ) -> dict:
+    def registration_start_setup(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
@@ -3012,9 +2973,7 @@ class TestRegistrationStartTime:
         registration_start_at = int(
             (datetime.now(timezone.utc) + timedelta(days=2)).timestamp() * 1000
         )
-        deadline_ms = int(
-            (datetime.now(timezone.utc) + timedelta(days=10)).timestamp() * 1000
-        )
+        deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=10)).timestamp() * 1000)
 
         return {
             "creator": creator,
@@ -3080,9 +3039,9 @@ class TestRegistrationStartTime:
         has_registration_not_started = any(
             r.get("code") == "REGISTRATION_NOT_STARTED" for r in reasons
         )
-        assert has_registration_not_started, (
-            "Expected REGISTRATION_NOT_STARTED reason when start time is in the future"
-        )
+        assert (
+            has_registration_not_started
+        ), "Expected REGISTRATION_NOT_STARTED reason when start time is in the future"
 
         clear_start_resp = api_client.patch(
             f"/tasks/{task_id}",

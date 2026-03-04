@@ -9,11 +9,10 @@ from typing import TYPE_CHECKING
 import pyotp
 from redis.asyncio import Redis
 
-from app.core.config import settings
-from app.core.errors import BadRequestError, ForbiddenError
+from app.core.errors import ForbiddenError
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    pass
 
 
 logger = logging.getLogger(__name__)

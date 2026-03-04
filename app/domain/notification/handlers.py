@@ -30,8 +30,7 @@ class NotificationDelivery:
 class NotificationChannelHandler(Protocol):
     name: str
 
-    async def send_batch(self, deliveries: Sequence[NotificationDelivery]) -> None:
-        ...
+    async def send_batch(self, deliveries: Sequence[NotificationDelivery]) -> None: ...
 
 
 class InAppNotificationHandler:
@@ -118,7 +117,9 @@ class RedisEmailQueueNotificationHandler:
         try:
             await self._redis.rpush(self._queue_key, *items)
         except Exception:
-            logger.exception("Failed to enqueue notification batch into Redis queue %s", self._queue_key)
+            logger.exception(
+                "Failed to enqueue notification batch into Redis queue %s", self._queue_key
+            )
 
 
 class NotificationEventHandler:
@@ -142,7 +143,9 @@ class NotificationEventHandler:
         if self._deduplicator is not None:
             dedup = await self._deduplicator.should_process(event)
             if not dedup.should_process:
-                logger.debug("Skip duplicate notification event %s (cache=%s)", event.type, dedup.cache_key)
+                logger.debug(
+                    "Skip duplicate notification event %s (cache=%s)", event.type, dedup.cache_key
+                )
                 return
 
         if notification_config.is_aggregatable(event.type):

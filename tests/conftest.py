@@ -98,8 +98,10 @@ class ResponseComparator:
         """
         diffs: list[str] = []
 
-        if type(kotlin_data) != type(python_data):
-            diffs.append(f"{path}: type mismatch - Kotlin={type(kotlin_data).__name__}, Python={type(python_data).__name__}")
+        if type(kotlin_data) is not type(python_data):
+            diffs.append(
+                f"{path}: type mismatch - Kotlin={type(kotlin_data).__name__}, Python={type(python_data).__name__}"
+            )
             return diffs
 
         if isinstance(kotlin_data, dict):
@@ -125,7 +127,9 @@ class ResponseComparator:
 
         elif isinstance(kotlin_data, list):
             if len(kotlin_data) != len(python_data):
-                diffs.append(f"{path}: list length mismatch - Kotlin={len(kotlin_data)}, Python={len(python_data)}")
+                diffs.append(
+                    f"{path}: list length mismatch - Kotlin={len(kotlin_data)}, Python={len(python_data)}"
+                )
             else:
                 for i, (k_item, p_item) in enumerate(zip(kotlin_data, python_data)):
                     child_diffs = self.compare_structure(k_item, p_item, f"{path}[{i}]")
@@ -146,8 +150,10 @@ class ResponseComparator:
         """
         diffs: list[str] = []
 
-        if type(kotlin_data) != type(python_data):
-            diffs.append(f"{path}: type mismatch - Kotlin={type(kotlin_data).__name__}, Python={type(python_data).__name__}")
+        if type(kotlin_data) is not type(python_data):
+            diffs.append(
+                f"{path}: type mismatch - Kotlin={type(kotlin_data).__name__}, Python={type(python_data).__name__}"
+            )
             return diffs
 
         if isinstance(kotlin_data, dict):
@@ -171,7 +177,9 @@ class ResponseComparator:
 
         else:
             if kotlin_data != python_data:
-                diffs.append(f"{path}: value mismatch - Kotlin={kotlin_data!r}, Python={python_data!r}")
+                diffs.append(
+                    f"{path}: value mismatch - Kotlin={kotlin_data!r}, Python={python_data!r}"
+                )
 
         return diffs
 
@@ -217,7 +225,9 @@ class DualEndpointTester:
         diffs: list[str] = []
 
         if kotlin_resp.status_code != python_resp.status_code:
-            diffs.append(f"status_code: Kotlin={kotlin_resp.status_code}, Python={python_resp.status_code}")
+            diffs.append(
+                f"status_code: Kotlin={kotlin_resp.status_code}, Python={python_resp.status_code}"
+            )
 
         if kotlin_resp.status_code == 200 and python_resp.status_code == 200:
             k_json = kotlin_resp.json()
@@ -243,11 +253,15 @@ class DualEndpointTester:
         diffs: list[str] = []
 
         if kotlin_resp.status_code != python_resp.status_code:
-            diffs.append(f"status_code: Kotlin={kotlin_resp.status_code}, Python={python_resp.status_code}")
+            diffs.append(
+                f"status_code: Kotlin={kotlin_resp.status_code}, Python={python_resp.status_code}"
+            )
 
         if kotlin_resp.status_code in (200, 201) and python_resp.status_code in (200, 201):
             if compare_structure:
-                diffs.extend(self.comparator.compare_structure(kotlin_resp.json(), python_resp.json()))
+                diffs.extend(
+                    self.comparator.compare_structure(kotlin_resp.json(), python_resp.json())
+                )
 
         return kotlin_resp, python_resp, diffs
 

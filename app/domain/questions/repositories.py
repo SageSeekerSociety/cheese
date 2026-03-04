@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.questions.models import (
@@ -78,7 +78,9 @@ class QuestionRepository:
         count_stmt = select(func.count(Question.id)).where(Question.deleted_at.is_(None))
         if keyword:
             like = f"%{keyword.strip()}%"
-            count_stmt = count_stmt.where(or_(Question.title.ilike(like), Question.content.ilike(like)))
+            count_stmt = count_stmt.where(
+                or_(Question.title.ilike(like), Question.content.ilike(like))
+            )
         count_result = await self._session.execute(count_stmt)
         total = int(count_result.scalar_one() or 0)
         return rows, total
@@ -110,7 +112,9 @@ class QuestionRepository:
         await self._session.flush()
         return True
 
-    async def _get_follow_relation(self, question_id: int, user_id: int) -> QuestionFollowerRelation | None:
+    async def _get_follow_relation(
+        self, question_id: int, user_id: int
+    ) -> QuestionFollowerRelation | None:
         stmt: Select[tuple[QuestionFollowerRelation]] = select(QuestionFollowerRelation).where(
             QuestionFollowerRelation.question_id == question_id,
             QuestionFollowerRelation.follower_id == user_id,
@@ -118,7 +122,9 @@ class QuestionRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def list_followed(self, *, user_id: int, limit: int, offset: int) -> tuple[list[Question], int]:
+    async def list_followed(
+        self, *, user_id: int, limit: int, offset: int
+    ) -> tuple[list[Question], int]:
         stmt = (
             select(Question)
             .join(QuestionFollowerRelation, QuestionFollowerRelation.question_id == Question.id)
@@ -161,6 +167,7 @@ class QuestionRepository:
 
     async def count_comments(self, question_id: int) -> int:
         from app.domain.discussion.models import Discussion, DiscussableModelType
+
         stmt = select(func.count(Discussion.id)).where(
             Discussion.model_type == DiscussableModelType.QUESTION.value,
             Discussion.model_id == question_id,
@@ -249,10 +256,14 @@ class QuestionRepository:
         return vote.attitude if vote else None
 
     async def count_votes(self, question_id: int) -> dict[str, int]:
-        stmt = select(Attitude.attitude, func.count(Attitude.id)).where(
-            Attitude.attitudable_id == question_id,
-            Attitude.attitudable_type == "QUESTION",
-        ).group_by(Attitude.attitude)
+        stmt = (
+            select(Attitude.attitude, func.count(Attitude.id))
+            .where(
+                Attitude.attitudable_id == question_id,
+                Attitude.attitudable_type == "QUESTION",
+            )
+            .group_by(Attitude.attitude)
+        )
         result = await self._session.execute(stmt)
         counts = {VoteType.POSITIVE.value: 0, VoteType.NEGATIVE.value: 0}
         for attitude, count in result.all():
@@ -288,9 +299,12 @@ class QuestionRepository:
     async def get_trending_questions(self, *, limit: int = 10, days: int = 7) -> list[Question]:
         cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         from datetime import timedelta
+
         cutoff = cutoff - timedelta(days=days)
         subq = (
-            select(QuestionQueryLog.question_id, func.count(QuestionQueryLog.id).label("view_count"))
+            select(
+                QuestionQueryLog.question_id, func.count(QuestionQueryLog.id).label("view_count")
+            )
             .where(QuestionQueryLog.created_at >= cutoff)
             .group_by(QuestionQueryLog.question_id)
             .subquery()
@@ -330,6 +344,7 @@ class QuestionRepository:
 
     async def get_popular_search_terms(self, *, limit: int = 10, days: int = 7) -> list[dict]:
         from datetime import timedelta
+
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         stmt = (
             select(QuestionSearchLog.keywords, func.count(QuestionSearchLog.id).label("count"))
@@ -422,7 +437,9 @@ class QuestionTopicRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def replace_topics(self, *, question_id: int, topic_ids: Sequence[int], user_id: int) -> None:
+    async def replace_topics(
+        self, *, question_id: int, topic_ids: Sequence[int], user_id: int
+    ) -> None:
         stmt = select(QuestionTopicRelation).where(
             QuestionTopicRelation.question_id == question_id,
             QuestionTopicRelation.deleted_at.is_(None),
@@ -447,10 +464,14 @@ class QuestionTopicRepository:
     async def list_topic_ids(self, question_ids: Sequence[int]) -> dict[int, list[int]]:
         if not question_ids:
             return {}
-        stmt: Select[tuple[QuestionTopicRelation]] = select(QuestionTopicRelation).where(
-            QuestionTopicRelation.question_id.in_(list(question_ids)),
-            QuestionTopicRelation.deleted_at.is_(None),
-        ).order_by(QuestionTopicRelation.question_id.asc(), QuestionTopicRelation.id.asc())
+        stmt: Select[tuple[QuestionTopicRelation]] = (
+            select(QuestionTopicRelation)
+            .where(
+                QuestionTopicRelation.question_id.in_(list(question_ids)),
+                QuestionTopicRelation.deleted_at.is_(None),
+            )
+            .order_by(QuestionTopicRelation.question_id.asc(), QuestionTopicRelation.id.asc())
+        )
         result = await self._session.execute(stmt)
         mapping: dict[int, list[int]] = {}
         for row in result.scalars().all():
@@ -459,6 +480,7 @@ class QuestionTopicRepository:
 
     async def validate_topic_ids(self, topic_ids: list[int]) -> set[int]:
         from app.domain.topics.models import Topic
+
         if not topic_ids:
             return set()
         stmt = select(Topic.id).where(
@@ -470,6 +492,7 @@ class QuestionTopicRepository:
 
     async def get_topics_for_question(self, question_id: int) -> list[dict]:
         from app.domain.topics.models import Topic
+
         stmt = (
             select(Topic)
             .join(QuestionTopicRelation, QuestionTopicRelation.topic_id == Topic.id)
@@ -488,9 +511,7 @@ class QuestionInvitationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create_invitation(
-        self, *, question_id: int, user_id: int
-    ) -> QuestionInvitation:
+    async def create_invitation(self, *, question_id: int, user_id: int) -> QuestionInvitation:
         existing = await self._get_invitation(question_id, user_id)
         now = datetime.now(timezone.utc)
         if existing is not None:
@@ -540,9 +561,7 @@ class QuestionInvitationRepository:
         await self._session.delete(invitation)
         await self._session.flush()
 
-    async def _get_invitation(
-        self, question_id: int, user_id: int
-    ) -> QuestionInvitation | None:
+    async def _get_invitation(self, question_id: int, user_id: int) -> QuestionInvitation | None:
         stmt: Select[tuple[QuestionInvitation]] = select(QuestionInvitation).where(
             QuestionInvitation.question_id == question_id,
             QuestionInvitation.user_id == user_id,

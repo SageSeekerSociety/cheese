@@ -88,19 +88,24 @@ class VoteType(str, Enum):
 class Attitude(Base):
     __tablename__ = "attitude"
     __table_args__ = (
-        UniqueConstraint("attitudable_id", "user_id", "attitudable_type", name="attitude_attitudable_id_user_id_attitudable_type_key"),
+        UniqueConstraint(
+            "attitudable_id",
+            "user_id",
+            "attitudable_type",
+            name="attitude_attitudable_id_user_id_attitudable_type_key",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     attitudable_type: Mapped[str] = mapped_column(
         PgEnum("COMMENT", "QUESTION", "ANSWER", name="AttitudableType", create_type=False),
-        nullable=False
+        nullable=False,
     )
     attitudable_id: Mapped[int] = mapped_column(Integer, nullable=False)
     attitude: Mapped[str] = mapped_column(
         PgEnum("POSITIVE", "NEGATIVE", name="AttitudeTypeNotUndefined", create_type=False),
-        nullable=False
+        nullable=False,
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)

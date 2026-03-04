@@ -13,4 +13,3 @@ class NotificationTriggerEvent:
     type: NotificationType
     payload: dict[str, Any]
     actor_id: int | None = None
-

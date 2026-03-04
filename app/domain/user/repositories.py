@@ -85,9 +85,7 @@ class UserProfileRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get_profiles_by_user_ids(
-        self, user_ids: Sequence[int]
-    ) -> dict[int, UserProfile]:
+    async def get_profiles_by_user_ids(self, user_ids: Sequence[int]) -> dict[int, UserProfile]:
         if not user_ids:
             return {}
         stmt: Select[tuple[UserProfile]] = select(UserProfile).where(
@@ -125,9 +123,7 @@ class UserProfileRepository:
         await self._session.flush()
         return profile
 
-    async def list_profiles(
-        self, *, limit: int, offset: int
-    ) -> list[UserProfile]:
+    async def list_profiles(self, *, limit: int, offset: int) -> list[UserProfile]:
         stmt: Select[tuple[UserProfile]] = (
             select(UserProfile)
             .where(UserProfile.deleted_at.is_(None))

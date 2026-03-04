@@ -40,6 +40,7 @@ class UserProfileService:
         profile = await self._profile_repo.get_profile_by_user_id(user_id)
         if profile is None:
             from app.core.errors import NotFoundError
+
             raise NotFoundError("User profile not found")
         await self._profile_repo.update_profile(
             profile, nickname=nickname, intro=intro, avatar_id=avatar_id
@@ -74,9 +75,7 @@ class UserAuthService:
         if user is None or not user.hashed_password:
             return None
 
-        if not bcrypt.checkpw(
-            password.encode("utf-8"), user.hashed_password.encode("utf-8")
-        ):
+        if not bcrypt.checkpw(password.encode("utf-8"), user.hashed_password.encode("utf-8")):
             return None
 
         profile = await self._profile_repo.get_profile_by_user_id(user.id)

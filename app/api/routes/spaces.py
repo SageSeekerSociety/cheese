@@ -4,8 +4,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
-from app.auth.checker import get_auth_user, require_permission
-from app.auth.core import Action, AuthUserInfo, Resource
+from app.auth.checker import get_auth_user
+from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError, ConflictError
 from app.db.session import get_db
 from app.domain.space.models import Space, SpaceCategory, SpaceAdminRelation, SpaceAdminRole
@@ -67,7 +67,9 @@ def _space_to_api_model(space: Space) -> dict:
 def _category_to_api_model(cat: SpaceCategory) -> dict:
     created_at_ms = int(cat.created_at.timestamp() * 1000) if cat.created_at else 0
     updated_at_ms = int(cat.updated_at.timestamp() * 1000) if cat.updated_at else 0
-    archived_at_ms = int(cat.archived_at.timestamp() * 1000) if getattr(cat, "archived_at", None) else None
+    archived_at_ms = (
+        int(cat.archived_at.timestamp() * 1000) if getattr(cat, "archived_at", None) else None
+    )
     return {
         "id": cat.id,
         "spaceId": cat.space_id,
@@ -308,9 +310,7 @@ async def export_space_participants(
     return Response(
         content=csv_payload,
         media_type="text/csv",
-        headers={
-            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"
-        },
+        headers={"Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"},
     )
 
 
@@ -346,39 +346,6 @@ async def create_space_category(
         "message": "Created",
         "data": {"category": _category_to_api_model(category)},
     }
-
-
-@router.get(
-    "/{spaceId}/analytics/tasks",
-    summary="Get Space Task Analytics",
-)
-async def get_space_task_analytics(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-) -> dict:
-    _ = space_id
-    return {"code": 200, "message": "OK", "data": {"analytics": {}}}
-
-
-@router.get(
-    "/{spaceId}/participants/export",
-    summary="Export Space Participants",
-)
-async def export_space_participants(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-) -> dict:
-    _ = space_id
-    return {"code": 200, "message": "OK", "data": {"exportUrl": ""}}
-
-
-@router.get(
-    "/{spaceId}/publishers/participation",
-    summary="List Publisher Participation",
-)
-async def list_space_publishers_participation(
-    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-) -> dict:
-    _ = space_id
-    return {"code": 200, "message": "OK", "data": {"publishers": []}}
 
 
 @router.patch(
@@ -449,7 +416,9 @@ async def delete_space_category(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> None:
-    await service.delete_category(space_id=space_id, category_id=category_id, actor_user_id=auth_user.user_id)
+    await service.delete_category(
+        space_id=space_id, category_id=category_id, actor_user_id=auth_user.user_id
+    )
     return None
 
 

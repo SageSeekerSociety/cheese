@@ -48,7 +48,11 @@ class NotificationDTO:
         )
 
         notification_type = notification.type
-        type_str = notification_type.value if hasattr(notification_type, "value") else str(notification_type)
+        type_str = (
+            notification_type.value
+            if hasattr(notification_type, "value")
+            else str(notification_type)
+        )
 
         return cls(
             id=notification.id,

@@ -142,8 +142,11 @@ class MaterialBundleService:
         page_ids = all_ids[start_idx:end_idx]
 
         bundles = await self._repo.list_bundles(
-            keyword=title_keyword, id_gte=id_gte, limit=page_size,
-            cursor_id=page_start, descending=descending
+            keyword=title_keyword,
+            id_gte=id_gte,
+            limit=page_size,
+            cursor_id=page_start,
+            descending=descending,
         )
         items = [_bundle_to_dto(b) for b in bundles]
 
@@ -227,7 +230,9 @@ class MaterialBundleService:
             current_mids = await self._repo.get_materials_for_bundle(bundle_id)
             for mid in current_mids:
                 if mid not in material_ids:
-                    await self._repo.remove_material_from_bundle(bundle_id=bundle_id, material_id=mid)
+                    await self._repo.remove_material_from_bundle(
+                        bundle_id=bundle_id, material_id=mid
+                    )
             for mid in material_ids:
                 if mid not in current_mids:
                     await self._repo.add_material_to_bundle(bundle_id=bundle_id, material_id=mid)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,7 +74,9 @@ class DiscussionService:
                 "Resource discussion not found",
                 data={"type": "discussion", "id": discussion_id},
             )
-        return await self._build_discussion_dto(entity, current_user_id=current_user_id, include_subs=True)
+        return await self._build_discussion_dto(
+            entity, current_user_id=current_user_id, include_subs=True
+        )
 
     async def list_discussions(
         self,
@@ -176,7 +177,6 @@ class DiscussionService:
         for row in rows:
             user_ids.update(row.mentioned_user_ids or [])
         user_map = await self._load_user_map(user_ids)
-        label_map = {}
         dtos: list[dict] = []
         for row in rows:
             dtos.append(
@@ -201,10 +201,16 @@ class DiscussionService:
     ) -> dict:
         sender = None
         if user_map is None:
-            user_map = await self._load_user_map({entity.sender_id, *(entity.mentioned_user_ids or [])})
+            user_map = await self._load_user_map(
+                {entity.sender_id, *(entity.mentioned_user_ids or [])}
+            )
         sender = user_map.get(entity.sender_id)
-        mentioned = [user_map.get(uid) for uid in entity.mentioned_user_ids or [] if user_map.get(uid)]
-        summary = await self.get_reaction_summary(entity.id, current_user_id) if with_reactions else []
+        mentioned = [
+            user_map.get(uid) for uid in entity.mentioned_user_ids or [] if user_map.get(uid)
+        ]
+        summary = (
+            await self.get_reaction_summary(entity.id, current_user_id) if with_reactions else []
+        )
 
         sub_info = None
         if include_subs:

@@ -136,7 +136,13 @@ class TeamMembershipService:
             initiator_id=initiator_user_id,
             type=ApplicationType.INVITATION.value,
             status=ApplicationStatus.PENDING.value,
-            role=("OWNER" if role == TeamMemberRole.OWNER else "ADMIN" if role == TeamMemberRole.ADMIN else "MEMBER"),
+            role=(
+                "OWNER"
+                if role == TeamMemberRole.OWNER
+                else "ADMIN"
+                if role == TeamMemberRole.ADMIN
+                else "MEMBER"
+            ),
             message=message or "",
             processed_by_id=None,
             processed_at=None,

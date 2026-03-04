@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
 import uuid
 from abc import ABC, abstractmethod
@@ -88,6 +87,7 @@ class S3StorageBackend(StorageBackend):
     def _get_client(self):
         if self._client is None:
             import boto3
+
             self._client = boto3.client(
                 "s3",
                 endpoint_url=self._endpoint_url,
@@ -109,6 +109,7 @@ class S3StorageBackend(StorageBackend):
 
     async def download(self, key: str) -> bytes | None:
         import io
+
         client = self._get_client()
         try:
             buffer = io.BytesIO()

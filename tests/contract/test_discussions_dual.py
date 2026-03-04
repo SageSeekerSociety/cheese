@@ -102,7 +102,7 @@ class TestDiscussionReactionsDualEndpoint:
 
         structural_diffs = [d for d in diffs if "missing" in d.lower()]
         if structural_diffs:
-            pytest.fail(f"Toggle reaction structure differs:\n" + "\n".join(structural_diffs))
+            pytest.fail("Toggle reaction structure differs:\n" + "\n".join(structural_diffs))
 
     async def test_remove_reaction_structure_match(
         self,
@@ -154,7 +154,7 @@ class TestDiscussionReactionsDualEndpoint:
 
         structural_diffs = [d for d in diffs if "missing" in d.lower()]
         if structural_diffs:
-            pytest.fail(f"Remove reaction structure differs:\n" + "\n".join(structural_diffs))
+            pytest.fail("Remove reaction structure differs:\n" + "\n".join(structural_diffs))
 
 
 @pytest.mark.anyio

@@ -7,7 +7,7 @@ from app.domain.comments.models import Comment
 from app.domain.comments.repositories import CommentRepository
 
 if TYPE_CHECKING:
-    from app.domain.user.repositories import UserRepository
+    pass
 
 
 def _comment_to_dto(comment: Comment) -> dict:
@@ -107,9 +107,7 @@ class CommentService:
             raise NotFoundError("Comment not found", data={"id": comment_id})
         return comment
 
-    async def vote_comment(
-        self, *, comment_id: int, user_id: int, vote_type: str
-    ) -> dict:
+    async def vote_comment(self, *, comment_id: int, user_id: int, vote_type: str) -> dict:
         from app.core.errors import BadRequestError
 
         await self._ensure_comment_exists(comment_id)

@@ -6,7 +6,13 @@ from datetime import datetime
 from sqlalchemy import Select, and_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.space.models import Space, SpaceCategory, SpaceUserRank, SpaceAdminRelation, SpaceAdminRole
+from app.domain.space.models import (
+    Space,
+    SpaceCategory,
+    SpaceUserRank,
+    SpaceAdminRelation,
+    SpaceAdminRole,
+)
 
 
 class SpaceRepository:
@@ -32,9 +38,7 @@ class SpaceRepository:
         return int(result.scalar_one() or 0)
 
     async def exists_by_name(self, name: str) -> bool:
-        stmt = select(Space.id).where(
-            and_(Space.name == name, Space.deleted_at.is_(None))
-        )
+        stmt = select(Space.id).where(and_(Space.name == name, Space.deleted_at.is_(None)))
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
@@ -228,7 +232,9 @@ class SpaceAdminRelationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def add_admin(self, *, space_id: int, user_id: int, role: SpaceAdminRole) -> SpaceAdminRelation:
+    async def add_admin(
+        self, *, space_id: int, user_id: int, role: SpaceAdminRole
+    ) -> SpaceAdminRelation:
         from datetime import datetime as _dt
 
         now = _dt.utcnow()
@@ -254,10 +260,14 @@ class SpaceAdminRelationRepository:
         return result.scalar_one_or_none()
 
     async def list_admins(self, space_id: int) -> Sequence[SpaceAdminRelation]:
-        stmt: Select[tuple[SpaceAdminRelation]] = select(SpaceAdminRelation).where(
-            SpaceAdminRelation.space_id == space_id,
-            SpaceAdminRelation.deleted_at.is_(None),
-        ).order_by(SpaceAdminRelation.created_at.asc())
+        stmt: Select[tuple[SpaceAdminRelation]] = (
+            select(SpaceAdminRelation)
+            .where(
+                SpaceAdminRelation.space_id == space_id,
+                SpaceAdminRelation.deleted_at.is_(None),
+            )
+            .order_by(SpaceAdminRelation.created_at.asc())
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

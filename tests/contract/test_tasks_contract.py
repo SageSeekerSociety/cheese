@@ -28,7 +28,17 @@ async def test_python_get_task_shape(python_client: AsyncClient) -> None:
     assert "participation" in data
 
     task = data["task"]
-    for key in ("id", "name", "intro", "description", "defaultDeadline", "resubmittable", "editable", "createdAt", "updatedAt"):
+    for key in (
+        "id",
+        "name",
+        "intro",
+        "description",
+        "defaultDeadline",
+        "resubmittable",
+        "editable",
+        "createdAt",
+        "updatedAt",
+    ):
         assert key in task
 
 

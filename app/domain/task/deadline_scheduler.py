@@ -35,11 +35,13 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
                 and_(
                     TaskMembership.deadline.isnot(None),
                     TaskMembership.deadline < now,
-                    TaskMembership.member_status.in_([
-                        MEMBERSHIP_STATUS_PENDING_REVIEW,
-                        MEMBERSHIP_STATUS_REJECTED_RESUBMITTABLE,
-                        MEMBERSHIP_STATUS_NOT_SUBMITTED,
-                    ]),
+                    TaskMembership.member_status.in_(
+                        [
+                            MEMBERSHIP_STATUS_PENDING_REVIEW,
+                            MEMBERSHIP_STATUS_REJECTED_RESUBMITTABLE,
+                            MEMBERSHIP_STATUS_NOT_SUBMITTED,
+                        ]
+                    ),
                 )
             )
             .limit(PAGE_SIZE)

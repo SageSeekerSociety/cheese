@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, BigInteger, Sequence
+from sqlalchemy import Boolean, DateTime, Index, String, BigInteger, Sequence
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -58,9 +58,7 @@ class Notification(Base):
     id: Mapped[int] = mapped_column(BigInteger, notification_seq, primary_key=True)
     receiver_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
-    type: Mapped[NotificationType] = mapped_column(
-        "type", String(length=255), nullable=False
-    )
+    type: Mapped[NotificationType] = mapped_column("type", String(length=255), nullable=False)
 
     metadata_payload: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     content: Mapped[dict | None] = mapped_column("content", JSONB, nullable=True)

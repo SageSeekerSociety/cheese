@@ -7,7 +7,6 @@ from app.auth.checker import permission_checker
 from app.auth.core import (
     Action,
     PermissionConfig,
-    PermissionRule,
     Resource,
     Role,
 )

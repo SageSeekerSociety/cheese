@@ -184,9 +184,7 @@ class GroupsService:
         await self._repo.update_group(group, name=name)
         profile = await self._profile_repo.get_by_group_id(group_id)
         if profile:
-            await self._profile_repo.update_profile(
-                profile, intro=intro, avatar_id=avatar_id
-            )
+            await self._profile_repo.update_profile(profile, intro=intro, avatar_id=avatar_id)
         member_count = await self._membership_repo.count_members(group_id)
         owner_id = await self._membership_repo.get_owner_id(group_id)
         owner_dto = {"id": owner_id} if owner_id else None
@@ -274,9 +272,7 @@ class GroupsService:
             raise NotFoundError("Group not found", data={"id": group_id})
         if await self._membership_repo.is_member(group_id, user_id):
             raise ConflictError("Already a member")
-        await self._membership_repo.add_member(
-            group_id=group_id, member_id=user_id, role="MEMBER"
-        )
+        await self._membership_repo.add_member(group_id=group_id, member_id=user_id, role="MEMBER")
         member_count = await self._membership_repo.count_members(group_id)
         return {"memberCount": member_count}
 
@@ -297,9 +293,10 @@ class GroupsService:
 def _date_to_ms(d) -> int:
     if d is None:
         return 0
-    if hasattr(d, 'timestamp'):
+    if hasattr(d, "timestamp"):
         return int(d.timestamp() * 1000)
     from datetime import datetime as dt, timezone
+
     return int(dt.combine(d, dt.min.time(), tzinfo=timezone.utc).timestamp() * 1000)
 
 
@@ -414,9 +411,7 @@ class GroupTargetService:
         )
         return _target_to_dto(target)
 
-    async def delete_target(
-        self, *, group_id: int, target_id: int, user_id: int
-    ) -> None:
+    async def delete_target(self, *, group_id: int, target_id: int, user_id: int) -> None:
         target = await self._target_repo.get_by_id(target_id)
         if target is None or target.group_id != group_id:
             raise NotFoundError("Target not found", data={"id": target_id})
@@ -459,9 +454,7 @@ class GroupQuestionService:
         }
         return question_ids, page
 
-    async def add_question(
-        self, *, group_id: int, question_id: int, user_id: int
-    ) -> dict:
+    async def add_question(self, *, group_id: int, question_id: int, user_id: int) -> dict:
         group = await self._group_repo.get_by_id(group_id)
         if group is None:
             raise NotFoundError("Group not found", data={"id": group_id})
@@ -471,9 +464,7 @@ class GroupQuestionService:
         await self._question_repo.add_question(group_id=group_id, question_id=question_id)
         return {"questionId": question_id}
 
-    async def remove_question(
-        self, *, group_id: int, question_id: int, user_id: int
-    ) -> None:
+    async def remove_question(self, *, group_id: int, question_id: int, user_id: int) -> None:
         group = await self._group_repo.get_by_id(group_id)
         if group is None:
             raise NotFoundError("Group not found", data={"id": group_id})

@@ -3,11 +3,9 @@ from __future__ import annotations
 import logging
 import random
 import string
-from datetime import datetime, timezone
 
 from redis.asyncio import Redis
 
-from app.core.config import settings
 from app.core.email import get_email_sender
 from app.core.errors import BadRequestError
 
@@ -51,7 +49,9 @@ class EmailVerificationService:
             <p style="color: #666; font-size: 12px;">If you didn't request this code, please ignore this email.</p>
         </div>
         """
-        body_text = f"Your Cheese verification code is: {code}\nThis code will expire in 10 minutes."
+        body_text = (
+            f"Your Cheese verification code is: {code}\nThis code will expire in 10 minutes."
+        )
 
         success = self._sender.send(
             to=email,

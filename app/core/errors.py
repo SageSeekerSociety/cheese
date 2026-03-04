@@ -156,7 +156,9 @@ async def base_error_handler(request: Request, exc: BaseError) -> JSONResponse:
     accept = request.headers.get("accept") or ""
     if "text/event-stream" in accept:
         body = f"event: error\ndata: {exc.args[0]}\n\n"
-        return PlainTextResponse(content=body, status_code=exc.status_code, media_type="text/event-stream")
+        return PlainTextResponse(
+            content=body, status_code=exc.status_code, media_type="text/event-stream"
+        )
     return JSONResponse(status_code=exc.status_code, content=exc.to_response_body())
 
 
@@ -167,7 +169,9 @@ async def http_exception_handler(
     detail = exc.detail if isinstance(exc.detail, str) else "HTTP error"
     if "text/event-stream" in accept:
         body = f"event: error\ndata: {detail}\n\n"
-        return PlainTextResponse(content=body, status_code=exc.status_code, media_type="text/event-stream")
+        return PlainTextResponse(
+            content=body, status_code=exc.status_code, media_type="text/event-stream"
+        )
     return JSONResponse(
         status_code=exc.status_code,
         content=format_error_response(status_code=exc.status_code, message=detail),
@@ -181,8 +185,9 @@ async def validation_exception_handler(
     message = "Invalid request parameters"
     if "text/event-stream" in accept:
         body = f"event: error\ndata: {message}\n\n"
-        return PlainTextResponse(content=body, status_code=HTTP_400_BAD_REQUEST, media_type="text/event-stream")
+        return PlainTextResponse(
+            content=body, status_code=HTTP_400_BAD_REQUEST, media_type="text/event-stream"
+        )
     data = {"details": exc.errors()}
     body = BadRequestError(message, data=data).to_response_body()
     return JSONResponse(status_code=HTTP_400_BAD_REQUEST, content=body)
-

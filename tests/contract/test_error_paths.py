@@ -77,7 +77,7 @@ class TestAuthenticationFailures:
         k_resp = await kotlin_client.get("/notifications/unread-count", headers=bad_headers)
         p_resp = await python_client.get("/notifications/unread-count", headers=bad_headers)
 
-        assert k_resp.status_code in (401, 403), f"Kotlin accepted invalid token"
+        assert k_resp.status_code in (401, 403), "Kotlin accepted invalid token"
         assert p_resp.status_code in (401, 403, 200), f"Python: {p_resp.status_code}"
 
     async def test_empty_bearer_token(
@@ -103,7 +103,7 @@ class TestAuthenticationFailures:
         bad_headers = {"Authorization": "Basic dXNlcjpwYXNz"}
 
         k_resp = await kotlin_client.get("/notifications/unread-count", headers=bad_headers)
-        p_resp = await python_client.get("/notifications/unread-count", headers=bad_headers)
+        await python_client.get("/notifications/unread-count", headers=bad_headers)
 
         assert k_resp.status_code in (401, 403)
 
@@ -461,7 +461,7 @@ class TestBusinessRuleConflicts:
 
         team_id = teams[0]["id"]
 
-        k_resp1 = await kotlin_client.post(
+        await kotlin_client.post(
             f"/teams/{team_id}/join-requests",
             json={},
             headers=auth_headers,
@@ -472,7 +472,7 @@ class TestBusinessRuleConflicts:
             headers=auth_headers,
         )
 
-        p_resp1 = await python_client.post(
+        await python_client.post(
             f"/teams/{team_id}/join-requests",
             json={},
             headers=auth_headers,

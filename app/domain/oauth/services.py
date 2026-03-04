@@ -190,7 +190,6 @@ class OAuthService:
         self._initialized = True
 
     def _get_provider_config(self, provider_id: str) -> OAuthProviderConfig | None:
-        upper_id = provider_id.upper()
         client_id = getattr(settings, f"oauth_{provider_id}_client_id", None)
         client_secret = getattr(settings, f"oauth_{provider_id}_client_secret", None)
         redirect_url = getattr(settings, f"oauth_{provider_id}_redirect_url", None)

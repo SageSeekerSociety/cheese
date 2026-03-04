@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.knowledge.models import Knowledge, KnowledgeLabel, KnowledgeUpvote
@@ -135,7 +135,9 @@ class KnowledgeRepository:
                         KnowledgeLabel.deleted_at.is_(None),
                     )
                     .group_by(KnowledgeLabel.knowledge_id)
-                    .having(func.count(func.distinct(KnowledgeLabel.label)) == len(normalized_labels))
+                    .having(
+                        func.count(func.distinct(KnowledgeLabel.label)) == len(normalized_labels)
+                    )
                 )
                 stmt = stmt.where(Knowledge.id.in_(subq))
 
@@ -177,7 +179,9 @@ class KnowledgeRepository:
                         KnowledgeLabel.deleted_at.is_(None),
                     )
                     .group_by(KnowledgeLabel.knowledge_id)
-                    .having(func.count(func.distinct(KnowledgeLabel.label)) == len(normalized_labels))
+                    .having(
+                        func.count(func.distinct(KnowledgeLabel.label)) == len(normalized_labels)
+                    )
                 )
                 count_stmt = count_stmt.where(Knowledge.id.in_(subq))
 
@@ -188,10 +192,14 @@ class KnowledgeRepository:
     async def get_labels_map(self, knowledge_ids: Sequence[int]) -> dict[int, list[str]]:
         if not knowledge_ids:
             return {}
-        stmt: Select[tuple[KnowledgeLabel]] = select(KnowledgeLabel).where(
-            KnowledgeLabel.knowledge_id.in_(list(knowledge_ids)),
-            KnowledgeLabel.deleted_at.is_(None),
-        ).order_by(KnowledgeLabel.knowledge_id.asc(), KnowledgeLabel.label.asc())
+        stmt: Select[tuple[KnowledgeLabel]] = (
+            select(KnowledgeLabel)
+            .where(
+                KnowledgeLabel.knowledge_id.in_(list(knowledge_ids)),
+                KnowledgeLabel.deleted_at.is_(None),
+            )
+            .order_by(KnowledgeLabel.knowledge_id.asc(), KnowledgeLabel.label.asc())
+        )
         result = await self._session.execute(stmt)
         labels: dict[int, list[str]] = {}
         for row in result.scalars().all():

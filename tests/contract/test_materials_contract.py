@@ -30,4 +30,3 @@ async def test_python_get_material_shape(python_client: AsyncClient) -> None:
     body = resp.json()
     assert set(body.keys()) == {"code", "message", "data"}
     assert "material" in body["data"]
-

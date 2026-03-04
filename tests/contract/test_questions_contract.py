@@ -56,4 +56,3 @@ async def test_python_add_question_shape(python_client: AsyncClient) -> None:
     body = resp.json()
     assert set(body.keys()) == {"code", "message", "data"}
     assert "id" in body["data"]
-

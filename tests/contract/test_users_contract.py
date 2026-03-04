@@ -62,4 +62,3 @@ async def test_python_get_user_identity_access_logs_shape(python_client: AsyncCl
     page = data["page"]
     for key in ("pageStart", "pageSize", "hasMore", "nextStart", "total"):
         assert key in page
-

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 import openai
 import tiktoken
@@ -215,9 +214,7 @@ class AIChatService:
             tokens_used=tokens_used,
         )
 
-        quota_info = await self._quota_service.consume_tokens(
-            user_id=user_id, tokens=tokens_used
-        )
+        quota_info = await self._quota_service.consume_tokens(user_id=user_id, tokens=tokens_used)
 
         return {
             "conversationId": conversation_id,

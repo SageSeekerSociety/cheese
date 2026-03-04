@@ -53,7 +53,9 @@ class Task(Base):
     # Business fields relevant for listing/filtering/sorting.
     submitter_type: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     approved: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    participant_limit: Mapped[int | None] = mapped_column("participant_limit", Integer, nullable=True)
+    participant_limit: Mapped[int | None] = mapped_column(
+        "participant_limit", Integer, nullable=True
+    )
     deadline: Mapped[datetime | None] = mapped_column(nullable=True)
     registration_start_at: Mapped[datetime | None] = mapped_column(
         "registration_start_at", nullable=True

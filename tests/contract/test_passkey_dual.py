@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import DualEndpointTester, ResponseComparator
+from tests.conftest import ResponseComparator
 
 
 @pytest.mark.anyio
@@ -316,6 +316,6 @@ class TestPasskeyPythonParity:
             headers=auth_headers,
         )
 
-        assert k_resp.status_code == p_resp.status_code, (
-            f"Status code mismatch: Kotlin={k_resp.status_code}, Python={p_resp.status_code}"
-        )
+        assert (
+            k_resp.status_code == p_resp.status_code
+        ), f"Status code mismatch: Kotlin={k_resp.status_code}, Python={p_resp.status_code}"

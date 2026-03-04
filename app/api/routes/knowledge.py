@@ -4,9 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user, require_permission
-from app.auth.core import Action, AuthUserInfo, Resource
-from app.core.errors import BadRequestError, NotFoundError
+from app.auth.checker import get_auth_user
+from app.auth.core import AuthUserInfo
+from app.core.errors import BadRequestError
 from app.db.session import get_db
 from app.domain.knowledge.repositories import KnowledgeRepository
 from app.domain.knowledge.services import KnowledgeService
@@ -50,7 +50,7 @@ async def create_knowledge(
     project_id = payload.get("projectId")
     discussion_id = payload.get("discussionId")
     labels_raw = payload.get("labels") or []
-    labels: list[str] = [str(l) for l in labels_raw if isinstance(l, str) and l.strip()]
+    labels: list[str] = [str(item) for item in labels_raw if isinstance(item, str) and item.strip()]
 
     knowledge = await service.create(
         name=name,

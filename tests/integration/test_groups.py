@@ -6,7 +6,6 @@ Complete equivalence migration.
 
 from __future__ import annotations
 
-import io
 import random
 
 import httpx
@@ -261,10 +260,12 @@ class TestGroupsJoinIntegration:
         self.pre_avatar_id = create_avatar_in_db()
         self._get_user_dto()
         self.group_ids: list[int] = []
-        for i, (name, intro) in enumerate([
-            ("数学之神膜膜喵", "不如原神"),
-            ("ICS膜膜膜", "pwb txdy!"),
-        ]):
+        for i, (name, intro) in enumerate(
+            [
+                ("数学之神膜膜喵", "不如原神"),
+                ("ICS膜膜膜", "pwb txdy!"),
+            ]
+        ):
             resp = self.client.post(
                 "/groups",
                 headers=self.headers,
@@ -960,7 +961,9 @@ class TestGroupTargetsIntegration:
         )
         target_id = create_resp.json()["data"]["id"]
 
-        response = self.client.delete(f"/groups/{group_id}/targets/{target_id}", headers=self.headers)
+        response = self.client.delete(
+            f"/groups/{group_id}/targets/{target_id}", headers=self.headers
+        )
         assert response.status_code in (200, 204)
 
         response = self.client.get(f"/groups/{group_id}/targets/{target_id}", headers=self.headers)

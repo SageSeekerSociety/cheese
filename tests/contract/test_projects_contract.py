@@ -52,4 +52,3 @@ async def test_python_get_projects_shape(python_client: AsyncClient) -> None:
     assert set(body.keys()) == {"code", "message", "data"}
     data = body["data"]
     assert "projects" in data
-

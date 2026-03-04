@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from app.core.config import settings
 from app.domain.notification.models import NotificationType
 
 
@@ -16,4 +15,3 @@ class NotificationConfig:
 
 
 notification_config = NotificationConfig()
-

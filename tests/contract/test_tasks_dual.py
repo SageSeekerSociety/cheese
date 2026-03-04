@@ -43,7 +43,7 @@ class TestTasksDualEndpoint:
         if diffs:
             relevant_diffs = [d for d in diffs if "missing" in d.lower() or "extra" in d.lower()]
             if relevant_diffs:
-                pytest.fail(f"Structure differences:\n" + "\n".join(relevant_diffs))
+                pytest.fail("Structure differences:\n" + "\n".join(relevant_diffs))
 
     async def test_get_task_by_id_structure(
         self,
@@ -77,7 +77,7 @@ class TestTasksDualEndpoint:
         if diffs:
             structural_diffs = [d for d in diffs if "missing" in d.lower()]
             if structural_diffs:
-                pytest.fail(f"Task detail structure differs:\n" + "\n".join(structural_diffs))
+                pytest.fail("Task detail structure differs:\n" + "\n".join(structural_diffs))
 
 
 @pytest.mark.anyio
@@ -199,7 +199,7 @@ class TestTasksPythonParity:
 
         structural = [d for d in diffs if "missing in Python" in d]
         if structural:
-            pytest.fail(f"Python missing structure:\n" + "\n".join(structural))
+            pytest.fail("Python missing structure:\n" + "\n".join(structural))
 
     async def test_participants_same_structure(
         self,
@@ -231,7 +231,7 @@ class TestTasksPythonParity:
         )
 
         if diffs:
-            pytest.fail(f"Participants structure differs:\n" + "\n".join(diffs))
+            pytest.fail("Participants structure differs:\n" + "\n".join(diffs))
 
     async def test_space_filter_works(
         self,
@@ -264,9 +264,9 @@ class TestTasksPythonParity:
 
         p_tasks = p_resp.json()["data"]["tasks"]
         for task in p_tasks:
-            assert task.get("approved") == "APPROVED", (
-                f"Python returned non-APPROVED task: {task.get('id')}"
-            )
+            assert (
+                task.get("approved") == "APPROVED"
+            ), f"Python returned non-APPROVED task: {task.get('id')}"
 
     async def test_keyword_search_works(
         self,

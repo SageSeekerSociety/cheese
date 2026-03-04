@@ -30,7 +30,9 @@ knowledge_seq = Sequence("knowledge_seq")
 class Knowledge(Base):
     __tablename__ = "knowledge"
 
-    id: Mapped[int] = mapped_column(BigInteger, knowledge_seq, primary_key=True, server_default=knowledge_seq.next_value())
+    id: Mapped[int] = mapped_column(
+        BigInteger, knowledge_seq, primary_key=True, server_default=knowledge_seq.next_value()
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     type: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -54,7 +56,12 @@ knowledge_label_seq = Sequence("knowledge_label_seq")
 class KnowledgeLabel(Base):
     __tablename__ = "knowledge_label"
 
-    id: Mapped[int] = mapped_column(BigInteger, knowledge_label_seq, primary_key=True, server_default=knowledge_label_seq.next_value())
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        knowledge_label_seq,
+        primary_key=True,
+        server_default=knowledge_label_seq.next_value(),
+    )
     knowledge_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     label: Mapped[str] = mapped_column(String(length=50), nullable=False)
 
@@ -65,9 +72,7 @@ class KnowledgeLabel(Base):
 
 class KnowledgeUpvote(Base):
     __tablename__ = "knowledge_upvote"
-    __table_args__ = (
-        UniqueConstraint("knowledge_id", "user_id", name="uq_knowledge_upvote"),
-    )
+    __table_args__ = (UniqueConstraint("knowledge_id", "user_id", name="uq_knowledge_upvote"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     knowledge_id: Mapped[int] = mapped_column(BigInteger, nullable=False)

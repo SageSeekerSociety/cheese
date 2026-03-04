@@ -11,17 +11,19 @@ from tests.integration.conftest import UserCreator
 
 class TestTaskSubmissionIntegration:
     @pytest.fixture
-    def setup_task_for_submission(
-        self, user_client: UserCreator, api_client: httpx.Client
-    ) -> dict:
+    def setup_task_for_submission(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
         participant = user_client.create_user()
-        participant.token = user_client.login(api_client, participant.username, participant.password)
+        participant.token = user_client.login(
+            api_client, participant.username, participant.password
+        )
 
         participant2 = user_client.create_user()
-        participant2.token = user_client.login(api_client, participant2.username, participant2.password)
+        participant2.token = user_client.login(
+            api_client, participant2.username, participant2.password
+        )
 
         suffix = random.randint(10000000, 99999999)
 
@@ -239,9 +241,7 @@ class TestTaskSubmissionIntegration:
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         submission = resp.json()["data"]["submission"]
         assert submission["version"] == 1
-        text_content = next(
-            (c for c in submission["content"] if c["type"] == "TEXT"), None
-        )
+        text_content = next((c for c in submission["content"] if c["type"] == "TEXT"), None)
         assert text_content is not None
         assert text_content["contentText"] == "Edited text"
 
@@ -445,9 +445,7 @@ class TestTaskSubmissionIntegration:
         )
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
-    def test_delete_task_as_owner(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
-    ):
+    def test_delete_task_as_owner(self, setup_task_for_submission: dict, api_client: httpx.Client):
         data = setup_task_for_submission
         creator = data["creator"]
 
@@ -780,9 +778,7 @@ class TestTaskSubmissionIntegration:
         assert task["name"] == new_name
         assert task["intro"] == new_intro
 
-    def test_update_task_deadline(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
-    ):
+    def test_update_task_deadline(self, setup_task_for_submission: dict, api_client: httpx.Client):
         data = setup_task_for_submission
         creator = data["creator"]
 
@@ -985,9 +981,13 @@ class TestTaskSubmissionIntegration:
         participants = data_resp.get("participants", [])
         if participants:
             approved = next(
-                (p for p in participants if p.get("member", {}).get("id") == participant.user_id
-                 or p.get("memberId") == participant.user_id),
-                None
+                (
+                    p
+                    for p in participants
+                    if p.get("member", {}).get("id") == participant.user_id
+                    or p.get("memberId") == participant.user_id
+                ),
+                None,
             )
             if approved:
                 assert approved.get("approved") == "APPROVED"
@@ -1000,10 +1000,14 @@ class TestTaskSubmissionIntegration:
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
         team_creator = user_client.create_user()
-        team_creator.token = user_client.login(api_client, team_creator.username, team_creator.password)
+        team_creator.token = user_client.login(
+            api_client, team_creator.username, team_creator.password
+        )
 
         team_member = user_client.create_user()
-        team_member.token = user_client.login(api_client, team_member.username, team_member.password)
+        team_member.token = user_client.login(
+            api_client, team_member.username, team_member.password
+        )
 
         suffix = random.randint(10000000, 99999999)
 
@@ -1207,9 +1211,7 @@ class TestTaskSubmissionIntegration:
             data["category_id"],
             data["suffix"],
         )
-        self._add_team_participant(
-            api_client, task_id, team_id, team_creator.token, creator.token
-        )
+        self._add_team_participant(api_client, task_id, team_id, team_creator.token, creator.token)
 
         resp = api_client.get(
             f"/tasks/{task_id}",
@@ -1355,8 +1357,7 @@ class TestTaskSubmissionIntegration:
         participants = data_resp.get("participants", [])
         if participants:
             approved = next(
-                (p for p in participants if p.get("member", {}).get("id") == team_id),
-                None
+                (p for p in participants if p.get("member", {}).get("id") == team_id), None
             )
             if approved:
                 assert approved.get("approved") == "APPROVED"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.topics.models import Topic
@@ -45,9 +45,7 @@ class TopicRepository:
         prev_id = None
         if page_start is not None and rows:
             prev_stmt = (
-                select(Topic.id)
-                .where(Topic.deleted_at.is_(None))
-                .where(Topic.id < page_start)
+                select(Topic.id).where(Topic.deleted_at.is_(None)).where(Topic.id < page_start)
             )
             if keyword:
                 tokens = keyword.strip().split()

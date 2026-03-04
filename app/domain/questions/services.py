@@ -6,7 +6,11 @@ from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.questions.models import Question, VoteType
 from app.domain.questions.models import QuestionInvitation
-from app.domain.questions.repositories import QuestionRepository, QuestionTopicRepository, QuestionInvitationRepository
+from app.domain.questions.repositories import (
+    QuestionRepository,
+    QuestionTopicRepository,
+    QuestionInvitationRepository,
+)
 from app.domain.user.repositories import UserProfileRepository
 
 
@@ -187,8 +191,12 @@ class QuestionsService:
         await self._ensure_question_exists(question_id)
         return await self._repo.unfollow_question(question_id=question_id, user_id=user_id)
 
-    async def list_followed(self, *, user_id: int, page_size: int, page_start: int | None) -> tuple[list[dict], dict]:
-        rows, total = await self._repo.list_followed(user_id=user_id, limit=page_size, offset=page_start or 0)
+    async def list_followed(
+        self, *, user_id: int, page_size: int, page_start: int | None
+    ) -> tuple[list[dict], dict]:
+        rows, total = await self._repo.list_followed(
+            user_id=user_id, limit=page_size, offset=page_start or 0
+        )
         topic_map = await self._topic_repo.list_topic_ids([row.id for row in rows])
         items = []
         for row in rows:
@@ -248,9 +256,7 @@ class QuestionsService:
         dto["topicIds"] = topics.get(question_id, [])
         return dto
 
-    async def vote_question(
-        self, *, question_id: int, user_id: int, vote_type: str
-    ) -> dict:
+    async def vote_question(self, *, question_id: int, user_id: int, vote_type: str) -> dict:
         await self._ensure_question_exists(question_id)
         if vote_type not in (VoteType.POSITIVE.value, VoteType.NEGATIVE.value):
             raise BadRequestError("Invalid vote type", data={"vote_type": vote_type})
@@ -454,7 +460,10 @@ class QuestionInvitationService:
             user_id=invitee_id,
         )
         user_dto = _profile_to_user(profile)
-        return {"invitation_id": invitation.id, "invitation": _invitation_to_dto(invitation, user=user_dto)}
+        return {
+            "invitation_id": invitation.id,
+            "invitation": _invitation_to_dto(invitation, user=user_dto),
+        }
 
     async def get_invitation(self, *, invitation_id: int) -> dict:
         invitation = await self._repo.get_by_id(invitation_id)
@@ -473,9 +482,7 @@ class QuestionInvitationService:
                     break
         return dto
 
-    async def delete_invitation(
-        self, *, invitation_id: int, user_id: int
-    ) -> None:
+    async def delete_invitation(self, *, invitation_id: int, user_id: int) -> None:
         invitation = await self._repo.get_by_id(invitation_id)
         if invitation is None:
             raise BadRequestError("Invitation not found")
@@ -484,9 +491,7 @@ class QuestionInvitationService:
             raise ForbiddenError("Only the question owner can delete invitations")
         await self._repo.hard_delete(invitation)
 
-    async def get_recommendations(
-        self, *, question_id: int, limit: int
-    ) -> list[dict]:
+    async def get_recommendations(self, *, question_id: int, limit: int) -> list[dict]:
         await self._ensure_question_exists(question_id)
         all_profiles = await self._profile_repo.list_profiles(limit=limit, offset=0)
         result = []
@@ -499,9 +504,7 @@ class QuestionInvitationService:
         if question is None:
             raise NotFoundError("Question not found", data={"id": question_id})
 
-    async def _get_answered_map(
-        self, question_id: int, user_ids: set[int]
-    ) -> dict[int, bool]:
+    async def _get_answered_map(self, question_id: int, user_ids: set[int]) -> dict[int, bool]:
         if not self._answer_repo or not user_ids:
             return {}
         answers = await self._answer_repo.list_answers_for_question(

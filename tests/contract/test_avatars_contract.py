@@ -24,7 +24,8 @@ async def test_python_create_avatar_shape(python_client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_python_get_avatars_shape(python_client: AsyncClient) -> None:
     resp = await python_client.get(
-        "/avatars", params={"type": "predefined"}, headers=USER_HEADER | {"Authorization": "Bearer token"}
+        "/avatars",
+        params={"type": "predefined"},
+        headers=USER_HEADER | {"Authorization": "Bearer token"},
     )
     assert resp.status_code in (200, 401, 400)
-

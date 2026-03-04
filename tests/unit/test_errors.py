@@ -1,4 +1,3 @@
-import pytest
 from starlette.status import (
     HTTP_400_BAD_REQUEST,
     HTTP_401_UNAUTHORIZED,

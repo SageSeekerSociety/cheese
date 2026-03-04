@@ -81,9 +81,7 @@ class OAuthConnectionRepository:
         refresh_token: str | None,
         token_expires: datetime | None,
     ) -> None:
-        stmt = select(UserOAuthConnection).where(
-            UserOAuthConnection.id == connection_id
-        )
+        stmt = select(UserOAuthConnection).where(UserOAuthConnection.id == connection_id)
         result = await self._session.execute(stmt)
         entity = result.scalar_one_or_none()
         if entity:

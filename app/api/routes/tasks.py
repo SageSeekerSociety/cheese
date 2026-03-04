@@ -3,13 +3,19 @@ from __future__ import annotations
 from typing import Annotated
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
-from app.auth.checker import get_auth_user, require_permission
-from app.auth.core import Action, AuthUserInfo, Resource
-from app.core.errors import BadRequestError, NotFoundError, ForbiddenError, ConflictError, QuotaExceededError
+from app.auth.checker import get_auth_user
+from app.auth.core import AuthUserInfo
+from app.core.errors import (
+    BadRequestError,
+    NotFoundError,
+    ForbiddenError,
+    ConflictError,
+    QuotaExceededError,
+)
 from app.db.session import get_db
 from app.domain.space.repositories import (
     SpaceRepository,
@@ -42,7 +48,7 @@ from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.user.repositories import UserRealNameRepository
 from app.domain.llm.repositories import AIUserQuotaRepository
-from app.domain.llm.services import AiAdviceService, QuotaExceededError
+from app.domain.llm.services import AiAdviceService
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 
 
@@ -146,15 +152,9 @@ class CreateTaskAIAdviceConversationRequest(BaseModel):
 
 
 def _task_to_api_model(task: Task) -> dict:
-    created_at_ms = (
-        int(task.created_at.timestamp() * 1000) if task.created_at is not None else 0
-    )
-    updated_at_ms = (
-        int(task.updated_at.timestamp() * 1000) if task.updated_at is not None else 0
-    )
-    deadline_ms = (
-        int(task.deadline.timestamp() * 1000) if task.deadline is not None else None
-    )
+    created_at_ms = int(task.created_at.timestamp() * 1000) if task.created_at is not None else 0
+    updated_at_ms = int(task.updated_at.timestamp() * 1000) if task.updated_at is not None else 0
+    deadline_ms = int(task.deadline.timestamp() * 1000) if task.deadline is not None else None
     registration_start_ms = (
         int(task.registration_start_at.timestamp() * 1000)
         if task.registration_start_at is not None
@@ -203,14 +203,10 @@ def _membership_to_api_model(
     (real name info, team members, etc.) can be added as needed.
     """
     created_at_ms = (
-        int(membership.created_at.timestamp() * 1000)
-        if membership.created_at is not None
-        else 0
+        int(membership.created_at.timestamp() * 1000) if membership.created_at is not None else 0
     )
     updated_at_ms = (
-        int(membership.updated_at.timestamp() * 1000)
-        if membership.updated_at is not None
-        else 0
+        int(membership.updated_at.timestamp() * 1000) if membership.updated_at is not None else 0
     )
 
     participant = participant_info or {"id": membership.member_id}
@@ -605,7 +601,9 @@ async def join_task_as_user(
         raise BadRequestError("Task is not approved for participation")
 
     if task.submitter_type != 0:
-        raise BadRequestError("This endpoint is for USER tasks only. Use /participations/team for team tasks.")
+        raise BadRequestError(
+            "This endpoint is for USER tasks only. Use /participations/team for team tasks."
+        )
 
     deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None
@@ -664,7 +662,9 @@ async def join_task_as_team(
         raise BadRequestError("Task is not approved for participation")
 
     if task.submitter_type != 1:
-        raise BadRequestError("This endpoint is for TEAM tasks only. Use /participations/user for user tasks.")
+        raise BadRequestError(
+            "This endpoint is for TEAM tasks only. Use /participations/user for user tasks."
+        )
 
     deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None
@@ -898,8 +898,7 @@ async def get_task(
     schema_entries = await schema_repo.list_by_task_id(task_id)
     type_map = {0: "TEXT", 1: "FILE"}
     submission_schema = [
-        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")}
-        for e in schema_entries
+        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")} for e in schema_entries
     ]
     task_dict["submissionSchema"] = submission_schema
 
@@ -1096,12 +1095,9 @@ async def patch_task(
 
         # 软删除旧关系
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        rel_stmt = (
-            select(TaskTopicsRelation)
-            .where(
-                TaskTopicsRelation.task_id == task.id,
-                TaskTopicsRelation.deleted_at.is_(None),
-            )
+        rel_stmt = select(TaskTopicsRelation).where(
+            TaskTopicsRelation.task_id == task.id,
+            TaskTopicsRelation.deleted_at.is_(None),
         )
         result = await db.execute(rel_stmt)
         existing = list(result.scalars().all())
@@ -1127,8 +1123,7 @@ async def patch_task(
     schema_entries = await schema_repo.list_by_task_id(task.id)
     type_map = {0: "TEXT", 1: "FILE"}
     submission_schema = [
-        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")}
-        for e in schema_entries
+        {"prompt": e.description, "type": type_map.get(e.type, "TEXT")} for e in schema_entries
     ]
     task_response = _task_to_api_model(task)
     task_response["submissionSchema"] = submission_schema
@@ -1393,7 +1388,9 @@ async def patch_task_membership_by_member(
     )
 
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
-    all_memberships = await membership_service.list_memberships_for_task(task_id=task_id, approved=None)
+    all_memberships = await membership_service.list_memberships_for_task(
+        task_id=task_id, approved=None
+    )
     participants = [_membership_to_api_model(m) for m in all_memberships]
 
     return {
@@ -1480,6 +1477,7 @@ async def get_task_participants(
     user_map: dict = {}
     if user_ids:
         from app.domain.user.repositories import UserRepository
+
         user_repo = UserRepository(session=db)
         user_map = await user_repo.get_by_ids(user_ids)
 
@@ -1546,7 +1544,7 @@ async def get_task_teams(
 
     teams = await team_service.get_teams_of_user(user_id=auth_user.user_id)
 
-    def _team_summary(t: "Team") -> dict:  # type: ignore[name-defined]
+    def _team_summary(t) -> dict:
         created_at_ms = int(t.created_at.timestamp() * 1000)
         updated_at_ms = int(t.updated_at.timestamp() * 1000)
         return {
@@ -1744,9 +1742,7 @@ async def post_task_submission_review(
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
     payload: dict,
-    review_service: TaskSubmissionReviewService = Depends(
-        get_task_submission_review_service
-    ),
+    review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
@@ -1790,9 +1786,7 @@ async def get_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
-    review_service: TaskSubmissionReviewService = Depends(
-        get_task_submission_review_service
-    ),
+    review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     _ = (task_id, participant_id, auth_user)
@@ -1818,9 +1812,7 @@ async def patch_task_submission_review(
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
     payload: dict,
-    review_service: TaskSubmissionReviewService = Depends(
-        get_task_submission_review_service
-    ),
+    review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
@@ -1871,9 +1863,7 @@ async def put_task_submission_review(
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
     payload: dict,
-    review_service: TaskSubmissionReviewService = Depends(
-        get_task_submission_review_service
-    ),
+    review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
@@ -1913,9 +1903,7 @@ async def delete_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
-    review_service: TaskSubmissionReviewService = Depends(
-        get_task_submission_review_service
-    ),
+    review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
@@ -2053,9 +2041,7 @@ async def create_ai_advice_conversation(
     if not question.strip():
         raise BadRequestError("question is required")
     context_payload = (
-        payload.context.model_dump(by_alias=True, exclude_none=True)
-        if payload.context
-        else None
+        payload.context.model_dump(by_alias=True, exclude_none=True) if payload.context else None
     )
     try:
         conversation, quota_info = await service.create_conversation(
@@ -2124,9 +2110,7 @@ async def stream_ai_advice_conversation(
         raise BadRequestError("question is required")
 
     context_payload = (
-        payload.context.model_dump(by_alias=True, exclude_none=True)
-        if payload.context
-        else None
+        payload.context.model_dump(by_alias=True, exclude_none=True) if payload.context else None
     )
 
     async def event_generator():
@@ -2142,13 +2126,17 @@ async def stream_ai_advice_conversation(
                     data = json_module.dumps({"type": "content", "data": chunk.content})
                     yield f"data: {data}\n\n"
                 if chunk.is_final and chunk.total_tokens:
-                    data = json_module.dumps({
-                        "type": "done",
-                        "tokens": chunk.total_tokens,
-                    })
+                    data = json_module.dumps(
+                        {
+                            "type": "done",
+                            "tokens": chunk.total_tokens,
+                        }
+                    )
                     yield f"data: {data}\n\n"
         except QuotaExceededError as exc:
-            data = json_module.dumps({"type": "error", "error": "quota_exceeded", "message": str(exc)})
+            data = json_module.dumps(
+                {"type": "error", "error": "quota_exceeded", "message": str(exc)}
+            )
             yield f"data: {data}\n\n"
         except LLMTimeoutError as exc:
             data = json_module.dumps({"type": "error", "error": "timeout", "message": str(exc)})
@@ -2160,12 +2148,14 @@ async def stream_ai_advice_conversation(
             data = json_module.dumps({"type": "error", "error": "rate_limit", "message": str(exc)})
             yield f"data: {data}\n\n"
         except LLMAPIError as exc:
-            data = json_module.dumps({
-                "type": "error",
-                "error": "llm_error",
-                "message": str(exc),
-                "status_code": exc.status_code,
-            })
+            data = json_module.dumps(
+                {
+                    "type": "error",
+                    "error": "llm_error",
+                    "message": str(exc),
+                    "status_code": exc.status_code,
+                }
+            )
             yield f"data: {data}\n\n"
         except ValueError as exc:
             data = json_module.dumps({"type": "error", "error": "not_found", "message": str(exc)})

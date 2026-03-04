@@ -84,18 +84,24 @@ class KnowledgeService:
     ) -> dict:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
-            raise NotFoundError("Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id})
+            raise NotFoundError(
+                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+            )
         await self._ensure_team_member(entity.team_id, user_id)
         return await self._build_dto(entity, current_user_id=user_id)
 
     async def delete(self, *, knowledge_id: int, user_id: int) -> None:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
-            raise NotFoundError("Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id})
+            raise NotFoundError(
+                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+            )
         await self._ensure_team_member(entity.team_id, user_id)
         deleted = await self._repo.soft_delete(knowledge_id)
         if not deleted:
-            raise NotFoundError("Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id})
+            raise NotFoundError(
+                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+            )
 
     async def update(
         self,
@@ -109,7 +115,9 @@ class KnowledgeService:
     ) -> dict:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
-            raise NotFoundError("Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id})
+            raise NotFoundError(
+                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+            )
         await self._ensure_team_member(entity.team_id, user_id)
         updated = await self._repo.update_entity(
             entity=entity,
@@ -124,7 +132,9 @@ class KnowledgeService:
     async def upvote(self, *, knowledge_id: int, user_id: int) -> dict:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
-            raise NotFoundError("Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id})
+            raise NotFoundError(
+                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+            )
         await self._ensure_team_member(entity.team_id, user_id)
         await self._repo.add_upvote(knowledge_id, user_id)
         return await self._build_dto(entity, current_user_id=user_id)
@@ -132,7 +142,9 @@ class KnowledgeService:
     async def remove_upvote(self, *, knowledge_id: int, user_id: int) -> dict:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
-            raise NotFoundError("Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id})
+            raise NotFoundError(
+                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+            )
         await self._ensure_team_member(entity.team_id, user_id)
         await self._repo.remove_upvote(knowledge_id, user_id)
         return await self._build_dto(entity, current_user_id=user_id)
@@ -161,9 +173,7 @@ class KnowledgeService:
         for entity in entities:
             count = count_map.get(entity.id, 0)
             is_upvoted = entity.id in user_upvotes if current_user_id is not None else False
-            result.append(
-                self._to_dto(entity, label_map.get(entity.id, []), count, is_upvoted)
-            )
+            result.append(self._to_dto(entity, label_map.get(entity.id, []), count, is_upvoted))
         return result
 
     def _to_dto(

@@ -33,7 +33,7 @@ class NotificationRepository:
         cursor_id: int | None = None,
         type_: NotificationType | None = None,
         read: bool | None = None,
-        ) -> Sequence[Notification]:
+    ) -> Sequence[Notification]:
         stmt: Select[tuple[Notification]] = select(Notification).where(
             Notification.receiver_id == user_id,
             Notification.deleted_at.is_(None),
@@ -49,10 +49,7 @@ class NotificationRepository:
         if cursor_created_at is not None and cursor_id is not None:
             stmt = stmt.where(
                 (Notification.created_at < cursor_created_at)
-                | (
-                    (Notification.created_at == cursor_created_at)
-                    & (Notification.id < cursor_id)
-                )
+                | ((Notification.created_at == cursor_created_at) & (Notification.id < cursor_id))
             )
 
         stmt = stmt.order_by(
@@ -86,9 +83,7 @@ class NotificationRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
-    async def set_read_status_for_user(
-        self, user_id: int, notification_id: int, read: bool
-    ) -> int:
+    async def set_read_status_for_user(self, user_id: int, notification_id: int, read: bool) -> int:
         stmt = (
             update(Notification)
             .where(
@@ -148,7 +143,9 @@ class NotificationRepository:
         await self._session.flush()
 
     async def soft_delete_for_user(self, user_id: int, notification_id: int) -> bool:
-        notification = await self.get_by_id_for_user(user_id=user_id, notification_id=notification_id)
+        notification = await self.get_by_id_for_user(
+            user_id=user_id, notification_id=notification_id
+        )
         if notification is None:
             return False
         notification.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)

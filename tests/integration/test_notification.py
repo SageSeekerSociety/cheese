@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 from datetime import datetime, timezone
 
 import httpx
@@ -216,7 +215,9 @@ class TestNotificationIntegration:
         data2 = resp2.json()["data"]
         assert data2["notification"]["read"] is False
 
-    def test_update_notification_not_found(self, setup_notifications: dict, api_client: httpx.Client):
+    def test_update_notification_not_found(
+        self, setup_notifications: dict, api_client: httpx.Client
+    ):
         creator = setup_notifications["creator"]
 
         resp = api_client.patch(
@@ -256,7 +257,9 @@ class TestNotificationIntegration:
         data = resp.json()["data"]
         assert "count" in data
 
-    def test_mark_all_as_read_requires_true(self, setup_notifications: dict, api_client: httpx.Client):
+    def test_mark_all_as_read_requires_true(
+        self, setup_notifications: dict, api_client: httpx.Client
+    ):
         creator = setup_notifications["creator"]
 
         resp = api_client.put(
@@ -283,7 +286,9 @@ class TestNotificationIntegration:
         )
         assert resp2.status_code == 404, f"Expected 404 after delete, got {resp2.status_code}"
 
-    def test_delete_notification_not_found(self, setup_notifications: dict, api_client: httpx.Client):
+    def test_delete_notification_not_found(
+        self, setup_notifications: dict, api_client: httpx.Client
+    ):
         creator = setup_notifications["creator"]
 
         resp = api_client.delete(
@@ -315,9 +320,7 @@ class TestNotificationIntegration:
 
         delete_notifications_in_db(notification_ids)
 
-    def test_list_notifications_empty(
-        self, user_client: UserCreator, api_client: httpx.Client
-    ):
+    def test_list_notifications_empty(self, user_client: UserCreator, api_client: httpx.Client):
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
 

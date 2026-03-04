@@ -210,7 +210,9 @@ class SpaceService:
         if name is not None:
             if not name.strip():
                 raise BadRequestError("Category name cannot be empty")
-            if name.strip() != category.name and await self._category_repo.exists_unarchived_name(space_id, name.strip()):
+            if name.strip() != category.name and await self._category_repo.exists_unarchived_name(
+                space_id, name.strip()
+            ):
                 raise BadRequestError("Category name already exists")
             category.name = name.strip()
         if description is not None:

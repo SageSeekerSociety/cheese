@@ -12,7 +12,9 @@ class SpaceRankService:
         self._space_repo = space_repo
         self._rank_repo = rank_repo
 
-    async def award_rank(self, *, space_id: int | None, user_id: int | None, delta: int = 1) -> bool:
+    async def award_rank(
+        self, *, space_id: int | None, user_id: int | None, delta: int = 1
+    ) -> bool:
         if (
             space_id is None
             or user_id is None

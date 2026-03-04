@@ -62,7 +62,11 @@ async def get_available_avatars(
     if type.upper() != "PREDEFINED":
         raise BadRequestError("Invalid avatar type")
     avatar_ids = await service.list_predefined_ids()
-    return {"code": 200, "message": "Get available avatarIds successfully", "data": {"avatarIds": avatar_ids}}
+    return {
+        "code": 200,
+        "message": "Get available avatarIds successfully",
+        "data": {"avatarIds": avatar_ids},
+    }
 
 
 @router.get(
@@ -84,7 +88,11 @@ async def get_default_avatar(
         content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
 
     etag = hashlib.md5(content).hexdigest()
-    last_modified = avatar.created_at.strftime("%a, %d %b %Y %H:%M:%S GMT") if avatar.created_at else datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    last_modified = (
+        avatar.created_at.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        if avatar.created_at
+        else datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    )
 
     return Response(
         content=content,
@@ -142,7 +150,11 @@ async def get_avatar_by_id(
         content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
 
     etag = hashlib.md5(content).hexdigest()
-    last_modified = avatar.created_at.strftime("%a, %d %b %Y %H:%M:%S GMT") if avatar.created_at else datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    last_modified = (
+        avatar.created_at.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        if avatar.created_at
+        else datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    )
 
     return Response(
         content=content,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Sequence
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.answers.models import Answer
@@ -61,7 +60,9 @@ class AnswersService:
             limit=page_size,
             cursor_id=page_start if page_start else (all_ids[0] if all_ids else None),
         )
-        profiles = await self._profile_repo.get_profiles_by_user_ids({row.created_by_id for row in rows})
+        profiles = await self._profile_repo.get_profiles_by_user_ids(
+            {row.created_by_id for row in rows}
+        )
         items = [
             _answer_to_dto(row, author=_profile_to_dto(profiles.get(row.created_by_id)))
             for row in rows
@@ -115,9 +116,7 @@ class AnswersService:
             raise NotFoundError("Answer not found", data={"id": answer_id})
         return answer
 
-    async def vote_answer(
-        self, *, answer_id: int, user_id: int, vote_type: str
-    ) -> dict:
+    async def vote_answer(self, *, answer_id: int, user_id: int, vote_type: str) -> dict:
         await self._ensure_answer_exists(answer_id)
         if vote_type not in (VoteType.POSITIVE.value, VoteType.NEGATIVE.value):
             raise BadRequestError("Invalid vote type", data={"vote_type": vote_type})
@@ -183,8 +182,12 @@ class AnswersService:
         question_dto = None
         if question:
             author_profile = await self._profile_repo.get_profile_by_user_id(question.created_by_id)
-            created_at_ms = int(question.created_at.timestamp() * 1000) if question.created_at else 0
-            updated_at_ms = int(question.updated_at.timestamp() * 1000) if question.updated_at else 0
+            created_at_ms = (
+                int(question.created_at.timestamp() * 1000) if question.created_at else 0
+            )
+            updated_at_ms = (
+                int(question.updated_at.timestamp() * 1000) if question.updated_at else 0
+            )
             question_dto = {
                 "id": question.id,
                 "title": question.title,
@@ -200,9 +203,7 @@ class AnswersService:
             }
         return dto, question_dto
 
-    async def update_answer(
-        self, *, answer_id: int, user_id: int, content: str
-    ) -> dict:
+    async def update_answer(self, *, answer_id: int, user_id: int, content: str) -> dict:
         answer = await self._ensure_answer_exists(answer_id)
         if answer.created_by_id != user_id:
             raise ForbiddenError("Only the answer owner can update this answer")

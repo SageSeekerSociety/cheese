@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any
 
 from app.domain.task.repositories import TaskRepository, TaskMembershipRepository
 
@@ -47,7 +45,9 @@ class SpaceAnalyticsService:
             sort_order="desc",
         )
         status_counter = Counter(self._status_label(task.approved) for task in tasks)
-        category_counter = Counter(getattr(task, "category_id", None) or "Uncategorized" for task in tasks)
+        category_counter = Counter(
+            getattr(task, "category_id", None) or "Uncategorized" for task in tasks
+        )
 
         memberships = await self._membership_repo.list_memberships_for_space(space_id)
         participant_counter = Counter(self._participant_label(m.approved) for m in memberships)
@@ -91,9 +91,7 @@ class SpaceAnalyticsService:
         for publisher_id, count in publisher_counter.items():
             task_ids = [task.id for task in tasks if task.creator_id == publisher_id]
             participant_ids = {
-                member
-                for task_id in task_ids
-                for member in participants_by_task.get(task_id, [])
+                member for task_id in task_ids for member in participants_by_task.get(task_id, [])
             }
             completed_total = sum(completed_users.get(task_id, 0) for task_id in task_ids)
 

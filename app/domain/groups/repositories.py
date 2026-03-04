@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -125,9 +125,7 @@ class GroupProfileRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_profiles_by_group_ids(
-        self, group_ids: Sequence[int]
-    ) -> dict[int, GroupProfile]:
+    async def get_profiles_by_group_ids(self, group_ids: Sequence[int]) -> dict[int, GroupProfile]:
         if not group_ids:
             return {}
         stmt: Select[tuple[GroupProfile]] = select(GroupProfile).where(
@@ -326,9 +324,7 @@ class GroupMembershipRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _get_membership(
-        self, group_id: int, member_id: int
-    ) -> GroupMembership | None:
+    async def _get_membership(self, group_id: int, member_id: int) -> GroupMembership | None:
         stmt: Select[tuple[GroupMembership]] = select(GroupMembership).where(
             GroupMembership.group_id == group_id,
             GroupMembership.member_id == member_id,

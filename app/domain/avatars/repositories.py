@@ -13,9 +13,9 @@ class AvatarRepository:
         self._session = session
 
     async def list_by_type(self, avatar_type: str) -> list[Avatar]:
-        stmt: Select[tuple[Avatar]] = select(Avatar).where(
-            Avatar.avatar_type == avatar_type
-        ).order_by(Avatar.id.asc())
+        stmt: Select[tuple[Avatar]] = (
+            select(Avatar).where(Avatar.avatar_type == avatar_type).order_by(Avatar.id.asc())
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
@@ -25,15 +25,18 @@ class AvatarRepository:
         return result.scalar_one_or_none()
 
     async def get_default(self) -> Avatar | None:
-        stmt: Select[tuple[Avatar]] = select(Avatar).where(
-            Avatar.avatar_type == "default"
-        ).order_by(Avatar.id.asc()).limit(1)
+        stmt: Select[tuple[Avatar]] = (
+            select(Avatar).where(Avatar.avatar_type == "default").order_by(Avatar.id.asc()).limit(1)
+        )
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
         if row is None:
-            stmt = select(Avatar).where(
-                Avatar.avatar_type == "predefined"
-            ).order_by(Avatar.id.asc()).limit(1)
+            stmt = (
+                select(Avatar)
+                .where(Avatar.avatar_type == "predefined")
+                .order_by(Avatar.id.asc())
+                .limit(1)
+            )
             result = await self._session.execute(stmt)
             row = result.scalar_one_or_none()
         return row

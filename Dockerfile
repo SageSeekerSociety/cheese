@@ -17,7 +17,7 @@ FROM base AS deps
 WORKDIR /app
 
 # Copy dependency files
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 
 # Install dependencies using uv
 RUN uv sync --frozen --no-dev

@@ -74,9 +74,7 @@ class TestAvatarsUploadIntegration:
         self.avatar_id: int | None = None
 
     def test_upload_avatar(self):
-        fake_image = io.BytesIO(
-            b"\x89PNG\r\n\x1a\n" + b"\x00" * 100 + b"fake image content"
-        )
+        fake_image = io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100 + b"fake image content")
         response = self.client.post(
             "/avatars",
             headers=self.headers,
@@ -125,9 +123,7 @@ class TestAvatarsGetIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        fake_image = io.BytesIO(
-            b"\x89PNG\r\n\x1a\n" + b"\x00" * 100 + b"fake image content"
-        )
+        fake_image = io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100 + b"fake image content")
         upload_resp = self.client.post(
             "/avatars",
             headers=self.headers,

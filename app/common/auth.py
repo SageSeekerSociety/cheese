@@ -22,9 +22,7 @@ def create_access_token(user_id: int) -> str:
         "sub": str(user_id),
         "type": "access",
         "iat": int(now.timestamp()),
-        "exp": int(
-            (now + timedelta(seconds=settings.access_token_expires_seconds)).timestamp()
-        ),
+        "exp": int((now + timedelta(seconds=settings.access_token_expires_seconds)).timestamp()),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
@@ -36,9 +34,7 @@ def create_refresh_token(user_id: int) -> str:
         "sub": str(user_id),
         "type": "refresh",
         "iat": int(now.timestamp()),
-        "exp": int(
-            (now + timedelta(seconds=settings.refresh_token_expires_seconds)).timestamp()
-        ),
+        "exp": int((now + timedelta(seconds=settings.refresh_token_expires_seconds)).timestamp()),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 

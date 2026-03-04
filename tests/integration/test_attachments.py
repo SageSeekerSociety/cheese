@@ -5,7 +5,6 @@ Migrated from cheese-backend/test/attachments.e2e-spec.ts
 
 from __future__ import annotations
 
-import random
 import io
 
 import httpx

@@ -37,12 +37,8 @@ def _team_to_api_model(
     members: list[TeamUserRelation] | None = None,
     current_user_id: int | None = None,
 ) -> dict:
-    created_at_ms = (
-        int(team.created_at.timestamp() * 1000) if team.created_at is not None else 0
-    )
-    updated_at_ms = (
-        int(team.updated_at.timestamp() * 1000) if team.updated_at is not None else 0
-    )
+    created_at_ms = int(team.created_at.timestamp() * 1000) if team.created_at is not None else 0
+    updated_at_ms = int(team.updated_at.timestamp() * 1000) if team.updated_at is not None else 0
 
     owner_info = None
     admins_total = 0
@@ -92,12 +88,8 @@ def _member_to_api_model(rel: TeamUserRelation) -> dict:
     NOTE: This is a placeholder that only exposes role and timestamps.
     User details can be enriched later by joining with user/profile tables.
     """
-    created_at_ms = (
-        int(rel.created_at.timestamp() * 1000) if rel.created_at is not None else 0
-    )
-    updated_at_ms = (
-        int(rel.updated_at.timestamp() * 1000) if rel.updated_at is not None else 0
-    )
+    created_at_ms = int(rel.created_at.timestamp() * 1000) if rel.created_at is not None else 0
+    updated_at_ms = int(rel.updated_at.timestamp() * 1000) if rel.updated_at is not None else 0
     # Map numeric role to string name (OWNER / ADMIN / MEMBER)
     role_map = {
         0: "OWNER",
@@ -188,9 +180,7 @@ async def get_my_teams(
     items = []
     for team in teams:
         members = list(await service.get_team_members(team_id=team.id))
-        items.append(
-            _team_to_api_model(team, members=members, current_user_id=auth_user.user_id)
-        )
+        items.append(_team_to_api_model(team, members=members, current_user_id=auth_user.user_id))
     return {
         "code": 200,
         "message": "OK",
@@ -217,9 +207,7 @@ async def get_team(
         "code": 200,
         "message": "OK",
         "data": {
-            "team": _team_to_api_model(
-                team, members=members, current_user_id=current_user_id
-            )
+            "team": _team_to_api_model(team, members=members, current_user_id=current_user_id)
         },
     }
 
@@ -291,9 +279,7 @@ async def create_team(
         "code": 201,
         "message": "Team created",
         "data": {
-            "team": _team_to_api_model(
-                team, members=members, current_user_id=auth_user.user_id
-            )
+            "team": _team_to_api_model(team, members=members, current_user_id=auth_user.user_id)
         },
     }
 
@@ -330,9 +316,7 @@ async def patch_team(
         "code": 200,
         "message": "OK",
         "data": {
-            "team": _team_to_api_model(
-                team, members=members, current_user_id=auth_user.user_id
-            )
+            "team": _team_to_api_model(team, members=members, current_user_id=auth_user.user_id)
         },
     }
 
@@ -400,9 +384,7 @@ async def patch_team_member_role(
         "code": 200,
         "message": "OK",
         "data": {
-            "team": _team_to_api_model(
-                team, members=members, current_user_id=auth_user.user_id
-            )
+            "team": _team_to_api_model(team, members=members, current_user_id=auth_user.user_id)
         },
     }
 

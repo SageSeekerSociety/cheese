@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from openai import AsyncOpenAI, APITimeoutError, APIConnectionError, RateLimitError, APIStatusError
-from openai.types.chat import ChatCompletionChunk
 
 from app.core.config import settings
 from app.domain.task.models import Task
@@ -15,26 +14,31 @@ from app.domain.task.models import Task
 
 class LLMError(Exception):
     """Base exception for LLM errors."""
+
     pass
 
 
 class LLMTimeoutError(LLMError):
     """Raised when LLM request times out."""
+
     pass
 
 
 class LLMConnectionError(LLMError):
     """Raised when connection to LLM fails."""
+
     pass
 
 
 class LLMRateLimitError(LLMError):
     """Raised when rate limit is exceeded."""
+
     pass
 
 
 class LLMAPIError(LLMError):
     """Raised when LLM API returns an error."""
+
     def __init__(self, message: str, status_code: int | None = None):
         super().__init__(message)
         self.status_code = status_code

@@ -48,9 +48,7 @@ async def upload_attachment(
     if type != "file":
         valid_prefixes = TYPE_MIME_PREFIXES.get(type, [])
         if not any(file_mime.startswith(prefix) for prefix in valid_prefixes):
-            raise UnprocessableEntityError(
-                f"MIME type {file_mime} does not match type {type}"
-            )
+            raise UnprocessableEntityError(f"MIME type {file_mime} does not match type {type}")
 
     attachment = await service.upload(
         file=file.file,

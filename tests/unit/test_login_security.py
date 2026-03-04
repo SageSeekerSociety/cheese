@@ -1,6 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch
-from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 
 class TestLoginRateLimiter:
@@ -11,6 +10,7 @@ class TestLoginRateLimiter:
     @pytest.fixture
     def rate_limiter(self, mock_redis):
         from app.domain.user.login_security import LoginRateLimiter
+
         return LoginRateLimiter(mock_redis)
 
     @pytest.mark.anyio
@@ -62,6 +62,7 @@ class TestTOTPService:
     @pytest.fixture
     def totp_service(self, mock_redis):
         from app.domain.user.login_security import TOTPService
+
         return TOTPService(mock_redis)
 
     def test_generate_secret(self, totp_service) -> None:
@@ -70,6 +71,7 @@ class TestTOTPService:
 
     def test_get_provisioning_uri(self, totp_service) -> None:
         from urllib.parse import unquote
+
         secret = "JBSWY3DPEHPK3PXP"
         uri = totp_service.get_provisioning_uri(secret, "test@example.com")
         assert "otpauth://totp/" in uri
@@ -78,6 +80,7 @@ class TestTOTPService:
 
     def test_verify_code_valid(self, totp_service) -> None:
         import pyotp
+
         secret = pyotp.random_base32()
         totp = pyotp.TOTP(secret)
         code = totp.now()
@@ -119,6 +122,7 @@ class TestSessionManager:
     @pytest.fixture
     def session_manager(self, mock_redis):
         from app.domain.user.login_security import SessionManager
+
         return SessionManager(mock_redis)
 
     @pytest.mark.anyio
@@ -196,6 +200,7 @@ class TestPasswordResetService:
     @pytest.fixture
     def reset_service(self, mock_redis):
         from app.domain.user.login_security import PasswordResetService
+
         return PasswordResetService(mock_redis)
 
     def test_generate_reset_token(self, reset_service) -> None:

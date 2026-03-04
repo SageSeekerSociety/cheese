@@ -171,7 +171,7 @@ class TestEligibilityPythonParity:
 
         structural = [d for d in diffs if "missing in Python" in d]
         if structural:
-            pytest.fail(f"Python missing structure:\n" + "\n".join(structural))
+            pytest.fail("Python missing structure:\n" + "\n".join(structural))
 
     async def test_user_eligibility_parity(
         self,
@@ -209,7 +209,7 @@ class TestEligibilityPythonParity:
             assert p_data.get("user") is not None, "Python missing user field"
             diffs = response_comparator.compare_structure(k_data["user"], p_data["user"])
             if diffs:
-                pytest.fail(f"User eligibility differs:\n" + "\n".join(diffs))
+                pytest.fail("User eligibility differs:\n" + "\n".join(diffs))
 
     async def test_team_eligibility_parity(
         self,
@@ -251,7 +251,7 @@ class TestEligibilityPythonParity:
                     p_data["teams"][0],
                 )
                 if diffs:
-                    pytest.fail(f"Team eligibility structure differs:\n" + "\n".join(diffs))
+                    pytest.fail("Team eligibility structure differs:\n" + "\n".join(diffs))
 
     async def test_invalid_task_same_error(
         self,

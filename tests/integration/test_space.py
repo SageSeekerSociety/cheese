@@ -5,7 +5,7 @@ import random
 import httpx
 import pytest
 
-from tests.integration.conftest import CreatedUser, UserCreator
+from tests.integration.conftest import UserCreator
 
 
 class TestSpaceIntegration:
@@ -228,9 +228,7 @@ class TestSpaceCategories:
             "default_category_id": default_cat_id,
         }
 
-    def test_create_category(
-        self, setup_space_with_category: dict, api_client: httpx.Client
-    ):
+    def test_create_category(self, setup_space_with_category: dict, api_client: httpx.Client):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         resp = api_client.post(
@@ -247,9 +245,7 @@ class TestSpaceCategories:
         assert data["name"] == "Backend Tasks"
         assert data["displayOrder"] == 10
 
-    def test_list_categories(
-        self, setup_space_with_category: dict, api_client: httpx.Client
-    ):
+    def test_list_categories(self, setup_space_with_category: dict, api_client: httpx.Client):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         api_client.post(
@@ -270,9 +266,7 @@ class TestSpaceCategories:
         categories = resp.json()["data"]["categories"]
         assert len(categories) >= 2
 
-    def test_update_category(
-        self, setup_space_with_category: dict, api_client: httpx.Client
-    ):
+    def test_update_category(self, setup_space_with_category: dict, api_client: httpx.Client):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         create_resp = api_client.post(
@@ -292,9 +286,7 @@ class TestSpaceCategories:
         assert data["name"] == "Updated Name"
         assert data["displayOrder"] == 15
 
-    def test_set_default_category(
-        self, setup_space_with_category: dict, api_client: httpx.Client
-    ):
+    def test_set_default_category(self, setup_space_with_category: dict, api_client: httpx.Client):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         create_resp = api_client.post(
@@ -312,9 +304,7 @@ class TestSpaceCategories:
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         assert resp.json()["data"]["space"]["defaultCategoryId"] == new_default_id
 
-    def test_archive_category(
-        self, setup_space_with_category: dict, api_client: httpx.Client
-    ):
+    def test_archive_category(self, setup_space_with_category: dict, api_client: httpx.Client):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         create_resp = api_client.post(
@@ -331,9 +321,7 @@ class TestSpaceCategories:
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         assert resp.json()["data"]["category"]["archivedAt"] is not None
 
-    def test_unarchive_category(
-        self, setup_space_with_category: dict, api_client: httpx.Client
-    ):
+    def test_unarchive_category(self, setup_space_with_category: dict, api_client: httpx.Client):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         create_resp = api_client.post(
@@ -451,9 +439,7 @@ class TestSpacePermissions:
             "space_id": space_id,
         }
 
-    def test_patch_space_fails_for_non_admin(
-        self, setup_two_users: dict, api_client: httpx.Client
-    ):
+    def test_patch_space_fails_for_non_admin(self, setup_two_users: dict, api_client: httpx.Client):
         other = setup_two_users["other"]
         space_id = setup_two_users["space_id"]
         resp = api_client.patch(
@@ -504,9 +490,7 @@ class TestSpaceAdmins:
             "space_id": space_id,
         }
 
-    def test_add_space_admin(
-        self, setup_space_with_admin: dict, api_client: httpx.Client
-    ):
+    def test_add_space_admin(self, setup_space_with_admin: dict, api_client: httpx.Client):
         owner = setup_space_with_admin["owner"]
         admin = setup_space_with_admin["admin"]
         space_id = setup_space_with_admin["space_id"]
@@ -517,9 +501,7 @@ class TestSpaceAdmins:
         )
         assert resp.status_code == 201
 
-    def test_list_space_admins(
-        self, setup_space_with_admin: dict, api_client: httpx.Client
-    ):
+    def test_list_space_admins(self, setup_space_with_admin: dict, api_client: httpx.Client):
         owner = setup_space_with_admin["owner"]
         admin = setup_space_with_admin["admin"]
         space_id = setup_space_with_admin["space_id"]
@@ -536,9 +518,7 @@ class TestSpaceAdmins:
         managers = resp.json()["data"]["managers"]
         assert len(managers) >= 2
 
-    def test_remove_space_admin(
-        self, setup_space_with_admin: dict, api_client: httpx.Client
-    ):
+    def test_remove_space_admin(self, setup_space_with_admin: dict, api_client: httpx.Client):
         owner = setup_space_with_admin["owner"]
         admin = setup_space_with_admin["admin"]
         space_id = setup_space_with_admin["space_id"]
@@ -553,9 +533,7 @@ class TestSpaceAdmins:
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
 
-    def test_transfer_ownership(
-        self, setup_space_with_admin: dict, api_client: httpx.Client
-    ):
+    def test_transfer_ownership(self, setup_space_with_admin: dict, api_client: httpx.Client):
         owner = setup_space_with_admin["owner"]
         new_owner = setup_space_with_admin["new_owner"]
         space_id = setup_space_with_admin["space_id"]
@@ -584,4 +562,6 @@ class TestSpaceAdmins:
             json={"userId": admin.user_id, "role": "ADMIN"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403 after losing ownership, got {resp.status_code}"
+        assert (
+            resp.status_code == 403
+        ), f"Expected 403 after losing ownership, got {resp.status_code}"

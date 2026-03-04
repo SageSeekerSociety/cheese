@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, Sequence, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Sequence, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -16,7 +16,9 @@ project_seq = Sequence("project_seq")
 class Project(Base):
     __tablename__ = "project"
 
-    id: Mapped[int] = mapped_column(BigInteger, project_seq, primary_key=True, server_default=project_seq.next_value())
+    id: Mapped[int] = mapped_column(
+        BigInteger, project_seq, primary_key=True, server_default=project_seq.next_value()
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     color_code: Mapped[str] = mapped_column("color_code", String(7), nullable=False)
@@ -36,4 +38,3 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
-

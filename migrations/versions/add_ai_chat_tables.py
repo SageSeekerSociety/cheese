@@ -4,6 +4,7 @@ Revision ID: add_ai_chat_001
 Revises: 1c64f1712118
 Create Date: 2026-01-02
 """
+
 from alembic import op
 import sqlalchemy as sa
 

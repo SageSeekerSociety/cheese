@@ -16,7 +16,9 @@ class TestRankIntegration:
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
         participant = user_client.create_user()
-        participant.token = user_client.login(api_client, participant.username, participant.password)
+        participant.token = user_client.login(
+            api_client, participant.username, participant.password
+        )
 
         suffix = random.randint(10000000, 99999999)
 
@@ -174,7 +176,9 @@ class TestRankIntegration:
         assert data["space"]["id"] == space_id
         assert data["myRank"] == 0
 
-    def test_join_rank2_task_fails_with_rank0(self, setup_rank_test: dict, api_client: httpx.Client):
+    def test_join_rank2_task_fails_with_rank0(
+        self, setup_rank_test: dict, api_client: httpx.Client
+    ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -332,9 +336,7 @@ class TestRankIntegration:
         )
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
-    def test_rank_visible_in_space_response(
-        self, setup_rank_test: dict, api_client: httpx.Client
-    ):
+    def test_rank_visible_in_space_response(self, setup_rank_test: dict, api_client: httpx.Client):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -370,9 +372,7 @@ class TestRankIntegration:
         data = resp.json()["data"]
         assert data.get("myRank") in [0, None]
 
-    def test_task_has_rank_field(
-        self, setup_rank_test: dict, api_client: httpx.Client
-    ):
+    def test_task_has_rank_field(self, setup_rank_test: dict, api_client: httpx.Client):
         creator = setup_rank_test["creator"]
         task1_id = setup_rank_test["task1_id"]
         task2_id = setup_rank_test["task2_id"]
@@ -393,9 +393,7 @@ class TestRankIntegration:
         task2 = resp2.json()["data"]["task"]
         assert task2.get("rank") == 2
 
-    def test_update_space_disable_rank(
-        self, setup_rank_test: dict, api_client: httpx.Client
-    ):
+    def test_update_space_disable_rank(self, setup_rank_test: dict, api_client: httpx.Client):
         creator = setup_rank_test["creator"]
         space_id = setup_rank_test["space_id"]
 
@@ -473,7 +471,9 @@ class TestRankIntegration:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
         participant = user_client.create_user()
-        participant.token = user_client.login(api_client, participant.username, participant.password)
+        participant.token = user_client.login(
+            api_client, participant.username, participant.password
+        )
 
         suffix = random.randint(10000000, 99999999)
         deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
@@ -512,7 +512,11 @@ class TestRankIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         task1_id = task1_resp.json()["data"]["task"]["id"]
-        api_client.patch(f"/tasks/{task1_id}", json={"approved": "APPROVED"}, headers={"Authorization": f"Bearer {creator.token}"})
+        api_client.patch(
+            f"/tasks/{task1_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
         task2_resp = api_client.post(
             "/tasks",
@@ -532,23 +536,65 @@ class TestRankIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         task2_id = task2_resp.json()["data"]["task"]["id"]
-        api_client.patch(f"/tasks/{task2_id}", json={"approved": "APPROVED"}, headers={"Authorization": f"Bearer {creator.token}"})
+        api_client.patch(
+            f"/tasks/{task2_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
-        join1 = api_client.post(f"/tasks/{task1_id}/participants", params={"member": participant.user_id}, json={}, headers={"Authorization": f"Bearer {participant.token}"})
+        join1 = api_client.post(
+            f"/tasks/{task1_id}/participants",
+            params={"member": participant.user_id},
+            json={},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         m1_id = join1.json()["data"]["participant"]["id"]
-        api_client.patch(f"/tasks/{task1_id}/participants/{m1_id}", json={"approved": "APPROVED"}, headers={"Authorization": f"Bearer {creator.token}"})
-        sub1 = api_client.post(f"/tasks/{task1_id}/participants/{m1_id}/submissions", json=[{"text": "Test"}], headers={"Authorization": f"Bearer {participant.token}"})
+        api_client.patch(
+            f"/tasks/{task1_id}/participants/{m1_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        sub1 = api_client.post(
+            f"/tasks/{task1_id}/participants/{m1_id}/submissions",
+            json=[{"text": "Test"}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         s1_id = sub1.json()["data"]["submission"]["id"]
-        api_client.post(f"/tasks/{task1_id}/participants/{m1_id}/submissions/{s1_id}/review", json={"accepted": True, "score": 5, "comment": "Good"}, headers={"Authorization": f"Bearer {creator.token}"})
+        api_client.post(
+            f"/tasks/{task1_id}/participants/{m1_id}/submissions/{s1_id}/review",
+            json={"accepted": True, "score": 5, "comment": "Good"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
-        join2 = api_client.post(f"/tasks/{task2_id}/participants", params={"member": participant.user_id}, json={}, headers={"Authorization": f"Bearer {participant.token}"})
+        join2 = api_client.post(
+            f"/tasks/{task2_id}/participants",
+            params={"member": participant.user_id},
+            json={},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         m2_id = join2.json()["data"]["participant"]["id"]
-        api_client.patch(f"/tasks/{task2_id}/participants/{m2_id}", json={"approved": "APPROVED"}, headers={"Authorization": f"Bearer {creator.token}"})
-        sub2 = api_client.post(f"/tasks/{task2_id}/participants/{m2_id}/submissions", json=[{"text": "Test"}], headers={"Authorization": f"Bearer {participant.token}"})
+        api_client.patch(
+            f"/tasks/{task2_id}/participants/{m2_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        sub2 = api_client.post(
+            f"/tasks/{task2_id}/participants/{m2_id}/submissions",
+            json=[{"text": "Test"}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         s2_id = sub2.json()["data"]["submission"]["id"]
-        api_client.post(f"/tasks/{task2_id}/participants/{m2_id}/submissions/{s2_id}/review", json={"accepted": True, "score": 5, "comment": "Good"}, headers={"Authorization": f"Bearer {creator.token}"})
+        api_client.post(
+            f"/tasks/{task2_id}/participants/{m2_id}/submissions/{s2_id}/review",
+            json={"accepted": True, "score": 5, "comment": "Good"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
-        space_resp = api_client.get(f"/spaces/{space_id}", params={"queryMyRank": "true"}, headers={"Authorization": f"Bearer {participant.token}"})
+        space_resp = api_client.get(
+            f"/spaces/{space_id}",
+            params={"queryMyRank": "true"},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         assert space_resp.json()["data"]["myRank"] == 2
 
     def test_another_rank1_task_does_not_upgrade_further(
@@ -557,7 +603,9 @@ class TestRankIntegration:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
         participant = user_client.create_user()
-        participant.token = user_client.login(api_client, participant.username, participant.password)
+        participant.token = user_client.login(
+            api_client, participant.username, participant.password
+        )
 
         suffix = random.randint(10000000, 99999999)
         deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
@@ -596,7 +644,11 @@ class TestRankIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         task1_id = task1_resp.json()["data"]["task"]["id"]
-        api_client.patch(f"/tasks/{task1_id}", json={"approved": "APPROVED"}, headers={"Authorization": f"Bearer {creator.token}"})
+        api_client.patch(
+            f"/tasks/{task1_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
         task2_resp = api_client.post(
             "/tasks",
@@ -616,27 +668,73 @@ class TestRankIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         task2_id = task2_resp.json()["data"]["task"]["id"]
-        api_client.patch(f"/tasks/{task2_id}", json={"approved": "APPROVED"}, headers={"Authorization": f"Bearer {creator.token}"})
+        api_client.patch(
+            f"/tasks/{task2_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
-        join1 = api_client.post(f"/tasks/{task1_id}/participants", params={"member": participant.user_id}, json={}, headers={"Authorization": f"Bearer {participant.token}"})
+        join1 = api_client.post(
+            f"/tasks/{task1_id}/participants",
+            params={"member": participant.user_id},
+            json={},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         m1_id = join1.json()["data"]["participant"]["id"]
-        api_client.patch(f"/tasks/{task1_id}/participants/{m1_id}", json={"approved": "APPROVED"}, headers={"Authorization": f"Bearer {creator.token}"})
-        sub1 = api_client.post(f"/tasks/{task1_id}/participants/{m1_id}/submissions", json=[{"text": "Test"}], headers={"Authorization": f"Bearer {participant.token}"})
+        api_client.patch(
+            f"/tasks/{task1_id}/participants/{m1_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        sub1 = api_client.post(
+            f"/tasks/{task1_id}/participants/{m1_id}/submissions",
+            json=[{"text": "Test"}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         s1_id = sub1.json()["data"]["submission"]["id"]
-        api_client.post(f"/tasks/{task1_id}/participants/{m1_id}/submissions/{s1_id}/review", json={"accepted": True, "score": 5, "comment": "Good"}, headers={"Authorization": f"Bearer {creator.token}"})
+        api_client.post(
+            f"/tasks/{task1_id}/participants/{m1_id}/submissions/{s1_id}/review",
+            json={"accepted": True, "score": 5, "comment": "Good"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
-        space_check1 = api_client.get(f"/spaces/{space_id}", params={"queryMyRank": "true"}, headers={"Authorization": f"Bearer {participant.token}"})
+        space_check1 = api_client.get(
+            f"/spaces/{space_id}",
+            params={"queryMyRank": "true"},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         assert space_check1.json()["data"]["myRank"] == 1
 
-        join2 = api_client.post(f"/tasks/{task2_id}/participants", params={"member": participant.user_id}, json={}, headers={"Authorization": f"Bearer {participant.token}"})
+        join2 = api_client.post(
+            f"/tasks/{task2_id}/participants",
+            params={"member": participant.user_id},
+            json={},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         m2_id = join2.json()["data"]["participant"]["id"]
-        api_client.patch(f"/tasks/{task2_id}/participants/{m2_id}", json={"approved": "APPROVED"}, headers={"Authorization": f"Bearer {creator.token}"})
-        sub2 = api_client.post(f"/tasks/{task2_id}/participants/{m2_id}/submissions", json=[{"text": "Test"}], headers={"Authorization": f"Bearer {participant.token}"})
+        api_client.patch(
+            f"/tasks/{task2_id}/participants/{m2_id}",
+            json={"approved": "APPROVED"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        sub2 = api_client.post(
+            f"/tasks/{task2_id}/participants/{m2_id}/submissions",
+            json=[{"text": "Test"}],
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         s2_id = sub2.json()["data"]["submission"]["id"]
-        review_resp = api_client.post(f"/tasks/{task2_id}/participants/{m2_id}/submissions/{s2_id}/review", json={"accepted": True, "score": 5, "comment": "Good"}, headers={"Authorization": f"Bearer {creator.token}"})
+        review_resp = api_client.post(
+            f"/tasks/{task2_id}/participants/{m2_id}/submissions/{s2_id}/review",
+            json={"accepted": True, "score": 5, "comment": "Good"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
         assert review_resp.json()["data"]["review"].get("hasUpgradedParticipantRank") is False
 
-        space_check2 = api_client.get(f"/spaces/{space_id}", params={"queryMyRank": "true"}, headers={"Authorization": f"Bearer {participant.token}"})
+        space_check2 = api_client.get(
+            f"/spaces/{space_id}",
+            params={"queryMyRank": "true"},
+            headers={"Authorization": f"Bearer {participant.token}"},
+        )
         assert space_check2.json()["data"]["myRank"] == 1
 
     def test_rank_remains_zero_after_failing_review(

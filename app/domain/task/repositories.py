@@ -7,7 +7,11 @@ from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.task.models import (
+    AIConversation,
+    AIMessage,
     Task,
+    TaskAIAdvice,
+    TaskAIAdviceContext,
     TaskMembership,
     TaskTopicsRelation,
     TaskSubmission,
@@ -222,7 +226,9 @@ class TaskRepository:
         """Create and persist a new Task row."""
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         deadline_naive = deadline.replace(tzinfo=None) if deadline else None
-        registration_start_naive = registration_start_at.replace(tzinfo=None) if registration_start_at else None
+        registration_start_naive = (
+            registration_start_at.replace(tzinfo=None) if registration_start_at else None
+        )
         task = Task(
             name=name,
             intro=intro,
@@ -451,9 +457,11 @@ class TaskSubmissionRepository:
         - 当 all_versions=False 时，仅返回每个 membership 的最新版本（按 version 最大）。
         """
         # Base query: join membership -> task for filtering
-        stmt: Select[tuple[TaskSubmission]] = select(TaskSubmission).join(
-            TaskMembership, TaskSubmission.membership_id == TaskMembership.id
-        ).join(Task, TaskMembership.task_id == Task.id)
+        stmt: Select[tuple[TaskSubmission]] = (
+            select(TaskSubmission)
+            .join(TaskMembership, TaskSubmission.membership_id == TaskMembership.id)
+            .join(Task, TaskMembership.task_id == Task.id)
+        )
         stmt = stmt.where(
             Task.deleted_at.is_(None),
             TaskSubmission.deleted_at.is_(None),
@@ -515,9 +523,11 @@ class TaskSubmissionRepository:
         all_versions: bool = False,
         reviewed: bool | None = None,
     ) -> int:
-        stmt = select(func.count(TaskSubmission.id)).join(
-            TaskMembership, TaskSubmission.membership_id == TaskMembership.id
-        ).join(Task, TaskMembership.task_id == Task.id)
+        stmt = (
+            select(func.count(TaskSubmission.id))
+            .join(TaskMembership, TaskSubmission.membership_id == TaskMembership.id)
+            .join(Task, TaskMembership.task_id == Task.id)
+        )
         stmt = stmt.where(
             Task.deleted_at.is_(None),
             TaskSubmission.deleted_at.is_(None),
@@ -568,10 +578,14 @@ class TaskSubmissionEntryRepository:
         self,
         submission_id: int,
     ) -> Sequence[TaskSubmissionEntry]:
-        stmt: Select[tuple[TaskSubmissionEntry]] = select(TaskSubmissionEntry).where(
-            TaskSubmissionEntry.task_submission_id == submission_id,
-            TaskSubmissionEntry.deleted_at.is_(None),
-        ).order_by(TaskSubmissionEntry.index.asc())
+        stmt: Select[tuple[TaskSubmissionEntry]] = (
+            select(TaskSubmissionEntry)
+            .where(
+                TaskSubmissionEntry.task_submission_id == submission_id,
+                TaskSubmissionEntry.deleted_at.is_(None),
+            )
+            .order_by(TaskSubmissionEntry.index.asc())
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

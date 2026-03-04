@@ -25,9 +25,7 @@ class Answer(Base):
 
 class AnswerVote(Base):
     __tablename__ = "answer_vote"
-    __table_args__ = (
-        UniqueConstraint("answer_id", "user_id", name="uq_answer_vote"),
-    )
+    __table_args__ = (UniqueConstraint("answer_id", "user_id", name="uq_answer_vote"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     answer_id: Mapped[int] = mapped_column(Integer, nullable=False)

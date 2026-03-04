@@ -17,7 +17,11 @@ from app.domain.discussion.repositories import (
     ReactionTypeRepository,
 )
 from app.domain.discussion.services import DiscussionService
-from app.domain.questions.repositories import QuestionRepository, QuestionTopicRepository, QuestionInvitationRepository
+from app.domain.questions.repositories import (
+    QuestionRepository,
+    QuestionTopicRepository,
+    QuestionInvitationRepository,
+)
 from app.domain.questions.services import QuestionsService, QuestionInvitationService
 from app.domain.user.repositories import UserProfileRepository
 
@@ -30,7 +34,9 @@ async def get_questions_service(db=Depends(get_db)) -> QuestionsService:
     topic_repo = QuestionTopicRepository(session=db)
     answer_repo = AnswerRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
-    return QuestionsService(repo=repo, topic_repo=topic_repo, answer_repo=answer_repo, profile_repo=profile_repo)
+    return QuestionsService(
+        repo=repo, topic_repo=topic_repo, answer_repo=answer_repo, profile_repo=profile_repo
+    )
 
 
 async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
@@ -520,7 +526,11 @@ async def invite_user_to_answer(
         inviter_id=auth_user.user_id,
         invitee_id=invitee_id,
     )
-    return {"code": 201, "message": "Created", "data": {"invitationId": result["invitation_id"], "invitation": result["invitation"]}}
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {"invitationId": result["invitation_id"], "invitation": result["invitation"]},
+    }
 
 
 @router.get(

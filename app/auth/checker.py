@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.core import (
     Action,
     AuthUserInfo,
-    Permission,
     PermissionConfig,
     Resource,
     Role,
@@ -91,7 +90,11 @@ class PermissionChecker:
 
         if SystemRole.USER in user.system_roles:
             for config in self._configs:
-                if config.role == Role.GUEST and config.action == action and config.resource == resource:
+                if (
+                    config.role == Role.GUEST
+                    and config.action == action
+                    and config.resource == resource
+                ):
                     if config.rule.check(user, action, resource, resource_id, ctx):
                         return True
 
@@ -134,7 +137,8 @@ def require_permission(
     action: Action,
     resource: Resource,
     resource_id_param: str | None = None,
-    context_builder: Callable[[Request, AsyncSession, int | None], Awaitable[dict[str, Any]]] | None = None,
+    context_builder: Callable[[Request, AsyncSession, int | None], Awaitable[dict[str, Any]]]
+    | None = None,
 ):
     async def dependency(
         request: Request,

@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.discussion.models import Discussion, DiscussionMentionedUser, DiscussionReaction, ReactionType
+from app.domain.discussion.models import (
+    Discussion,
+    DiscussionMentionedUser,
+    DiscussionReaction,
+    ReactionType,
+)
 
 
 class DiscussionRepository:
@@ -23,7 +28,10 @@ class DiscussionRepository:
         mentioned_user_ids: list[int],
     ) -> Discussion:
         now = datetime.utcnow()
-        content_json = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": content}]}]}
+        content_json = {
+            "type": "doc",
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": content}]}],
+        }
         entity = Discussion(
             model_type=model_type,
             model_id=model_id,
@@ -134,10 +142,14 @@ class ReactionTypeRepository:
         self._session = session
 
     async def list_active(self) -> list[ReactionType]:
-        stmt: Select[tuple[ReactionType]] = select(ReactionType).where(
-            ReactionType.is_active.is_(True),
-            ReactionType.deleted_at.is_(None),
-        ).order_by(ReactionType.display_order.asc(), ReactionType.id.asc())
+        stmt: Select[tuple[ReactionType]] = (
+            select(ReactionType)
+            .where(
+                ReactionType.is_active.is_(True),
+                ReactionType.deleted_at.is_(None),
+            )
+            .order_by(ReactionType.display_order.asc(), ReactionType.id.asc())
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
@@ -157,8 +169,26 @@ class ReactionTypeRepository:
             return
         now = datetime.utcnow()
         defaults = [
-            ReactionType(code="LIKE", name="Like", description="thumbs up", display_order=0, is_active=True, created_at=now, updated_at=now, deleted_at=None),
-            ReactionType(code="CHEERS", name="Cheers", description="celebration", display_order=1, is_active=True, created_at=now, updated_at=now, deleted_at=None),
+            ReactionType(
+                code="LIKE",
+                name="Like",
+                description="thumbs up",
+                display_order=0,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            ),
+            ReactionType(
+                code="CHEERS",
+                name="Cheers",
+                description="celebration",
+                display_order=1,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            ),
         ]
         for rt in defaults:
             self._session.add(rt)
@@ -236,13 +266,17 @@ class DiscussionReactionRepository:
         return True
 
     async def count_by_discussion(self, discussion_id: int) -> dict[int, int]:
-        stmt = select(
-            DiscussionReaction.reaction_type_id,
-            func.count(DiscussionReaction.id),
-        ).where(
-            DiscussionReaction.discussion_id == discussion_id,
-            DiscussionReaction.deleted_at.is_(None),
-        ).group_by(DiscussionReaction.reaction_type_id)
+        stmt = (
+            select(
+                DiscussionReaction.reaction_type_id,
+                func.count(DiscussionReaction.id),
+            )
+            .where(
+                DiscussionReaction.discussion_id == discussion_id,
+                DiscussionReaction.deleted_at.is_(None),
+            )
+            .group_by(DiscussionReaction.reaction_type_id)
+        )
         result = await self._session.execute(stmt)
         return {row[0]: int(row[1]) for row in result.all()}
 

@@ -6,7 +6,7 @@ import time
 import httpx
 import pytest
 
-from tests.integration.conftest import CreatedUser, UserCreator
+from tests.integration.conftest import UserCreator
 
 
 class TestProjectIntegration:

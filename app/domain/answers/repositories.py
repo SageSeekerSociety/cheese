@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.answers.models import Answer, AnswerFavorite
@@ -53,10 +53,14 @@ class AnswerRepository:
         return list(result.scalars().all())
 
     async def list_all_answer_ids_for_question(self, question_id: int) -> list[int]:
-        stmt = select(Answer.id).where(
-            Answer.question_id == question_id,
-            Answer.deleted_at.is_(None),
-        ).order_by(Answer.id.asc())
+        stmt = (
+            select(Answer.id)
+            .where(
+                Answer.question_id == question_id,
+                Answer.deleted_at.is_(None),
+            )
+            .order_by(Answer.id.asc())
+        )
         result = await self._session.execute(stmt)
         return [r[0] for r in result.all()]
 
@@ -118,10 +122,14 @@ class AnswerRepository:
         return vote.attitude if vote else None
 
     async def count_votes(self, answer_id: int) -> dict[str, int]:
-        stmt = select(Attitude.attitude, func.count(Attitude.id)).where(
-            Attitude.attitudable_id == answer_id,
-            Attitude.attitudable_type == "ANSWER",
-        ).group_by(Attitude.attitude)
+        stmt = (
+            select(Attitude.attitude, func.count(Attitude.id))
+            .where(
+                Attitude.attitudable_id == answer_id,
+                Attitude.attitudable_type == "ANSWER",
+            )
+            .group_by(Attitude.attitude)
+        )
         result = await self._session.execute(stmt)
         counts = {VoteType.POSITIVE.value: 0, VoteType.NEGATIVE.value: 0}
         for attitude, count in result.all():
@@ -172,8 +180,12 @@ class AnswerRepository:
         return fav is not None
 
     async def count_favorites(self, answer_id: int) -> int:
-        stmt = select(func.count()).select_from(AnswerFavorite).where(
-            AnswerFavorite.answer_id == answer_id,
+        stmt = (
+            select(func.count())
+            .select_from(AnswerFavorite)
+            .where(
+                AnswerFavorite.answer_id == answer_id,
+            )
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
@@ -218,10 +230,14 @@ class AnswerRepository:
         return int(result.scalar_one() or 0) > 0
 
     async def list_all_answer_ids_by_user(self, user_id: int) -> list[int]:
-        stmt = select(Answer.id).where(
-            Answer.created_by_id == user_id,
-            Answer.deleted_at.is_(None),
-        ).order_by(Answer.id.asc())
+        stmt = (
+            select(Answer.id)
+            .where(
+                Answer.created_by_id == user_id,
+                Answer.deleted_at.is_(None),
+            )
+            .order_by(Answer.id.asc())
+        )
         result = await self._session.execute(stmt)
         return [r[0] for r in result.all()]
 

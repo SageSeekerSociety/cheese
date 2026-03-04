@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path, Query, Request, Response, status
+from fastapi import APIRouter, Body, Depends, Header, Path, Query, Request, Response, status
 from sqlalchemy import select
 
 from app.auth.checker import get_auth_user
@@ -12,7 +12,13 @@ from app.common.auth import (
     create_refresh_token,
     decode_token,
 )
-from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFoundError, ForbiddenError, UnprocessableEntityError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    BadRequestError,
+    NotFoundError,
+    ForbiddenError,
+    UnprocessableEntityError,
+)
 from app.db.session import get_db
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.repositories import TeamMembershipApplicationRepository, TeamRepository
@@ -181,7 +187,9 @@ async def cancel_my_join_request(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
-    await membership_service.cancel_my_join_request(user_id=auth_user.user_id, request_id=request_id)
+    await membership_service.cancel_my_join_request(
+        user_id=auth_user.user_id, request_id=request_id
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -207,7 +215,9 @@ async def accept_team_invitation(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
-    await membership_service.accept_team_invitation(user_id=auth_user.user_id, invitation_id=invitation_id)
+    await membership_service.accept_team_invitation(
+        user_id=auth_user.user_id, invitation_id=invitation_id
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -220,7 +230,9 @@ async def decline_team_invitation(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
-    await membership_service.decline_team_invitation(user_id=auth_user.user_id, invitation_id=invitation_id)
+    await membership_service.decline_team_invitation(
+        user_id=auth_user.user_id, invitation_id=invitation_id
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -554,9 +566,7 @@ async def get_user_followed_questions(
     topic_repo = QuestionTopicRepository(session=db)
 
     offset = page_start or 0
-    rows, total = await question_repo.list_followed(
-        user_id=user_id, limit=page_size, offset=offset
-    )
+    rows, total = await question_repo.list_followed(user_id=user_id, limit=page_size, offset=offset)
     topic_map = await topic_repo.list_topic_ids([row.id for row in rows])
 
     questions = []
@@ -619,9 +629,7 @@ async def get_user_questions(
     topic_repo = QuestionTopicRepository(session=db)
 
     offset = page_start or 0
-    rows, total = await question_repo.list_by_user(
-        user_id=user_id, limit=page_size, offset=offset
-    )
+    rows, total = await question_repo.list_by_user(user_id=user_id, limit=page_size, offset=offset)
     topic_map = await topic_repo.list_topic_ids([row.id for row in rows])
 
     questions = []
@@ -697,9 +705,7 @@ async def get_user_answers(
     end_idx = start_idx + page_size
     page_ids = all_ids[start_idx:end_idx]
 
-    rows, _ = await answer_repo.list_by_user(
-        user_id=user_id, limit=page_size, offset=start_idx
-    )
+    rows, _ = await answer_repo.list_by_user(user_id=user_id, limit=page_size, offset=start_idx)
 
     answers = []
     for row in rows:
@@ -773,7 +779,7 @@ async def send_register_email_code(
     if not email:
         raise BadRequestError("email is required")
 
-    email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if not re.match(email_regex, email):
         raise UnprocessableEntityError("Invalid email address format")
 
@@ -825,16 +831,16 @@ async def register_user(
     password = payload.get("password")
     srp_salt = payload.get("srpSalt")
     srp_verifier = payload.get("srpVerifier")
-    is_legacy_auth = payload.get("isLegacyAuth", False)
+    _ = payload.get("isLegacyAuth", False)
 
     if not username or not nickname or not email or not email_code:
         raise BadRequestError("username, nickname, email and emailCode are required")
 
-    username_pattern = r'^[a-zA-Z0-9_-]+$'
+    username_pattern = r"^[a-zA-Z0-9_-]+$"
     if not re.match(username_pattern, username):
         raise UnprocessableEntityError("Invalid username format")
 
-    nickname_pattern = r'^[^\s]+$'
+    nickname_pattern = r"^[^\s]+$"
     if not re.match(nickname_pattern, nickname):
         raise UnprocessableEntityError("Invalid nickname format")
 
@@ -847,7 +853,9 @@ async def register_user(
     if has_password:
         password_pattern = r'^(?=.*[a-zA-Z])(?=.*[!@#$%^&*()_+\-=\[\]{};\':"\\|,.<>\/?]).{8,}$'
         if not re.match(password_pattern, password):
-            raise UnprocessableEntityError("Password must be at least 8 characters and contain letters and special characters")
+            raise UnprocessableEntityError(
+                "Password must be at least 8 characters and contain letters and special characters"
+            )
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -1043,7 +1051,9 @@ async def user_login(
             remaining_attempts = max(0, 5 - attempts)
             if remaining_attempts == 0:
                 raise ForbiddenError("Account locked due to too many failed attempts")
-            raise AuthenticationRequiredError(f"Invalid username or password. {remaining_attempts} attempts remaining")
+            raise AuthenticationRequiredError(
+                f"Invalid username or password. {remaining_attempts} attempts remaining"
+            )
 
         user, profile = auth_result
 
@@ -1210,9 +1220,12 @@ async def sudo_auth(
 
         user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
         if not user.hashed_password or user.hashed_password.startswith("SRP:"):
-            raise AuthenticationRequiredError("Password authentication not available for this account")
+            raise AuthenticationRequiredError(
+                "Password authentication not available for this account"
+            )
 
         import bcrypt
+
         if not bcrypt.checkpw(password.encode("utf-8"), user.hashed_password.encode("utf-8")):
             raise AuthenticationRequiredError("Invalid password")
 
@@ -1753,7 +1766,7 @@ async def recover_password_request(
     if not email:
         raise BadRequestError("email is required")
 
-    email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if not re.match(email_regex, email):
         raise UnprocessableEntityError("Invalid email address format")
 
@@ -1860,9 +1873,7 @@ async def get_user_favorite_questions(
     topic_repo = QuestionTopicRepository(session=db)
 
     offset = page_start or 0
-    rows, total = await question_repo.list_followed(
-        user_id=user_id, limit=page_size, offset=offset
-    )
+    rows, total = await question_repo.list_followed(user_id=user_id, limit=page_size, offset=offset)
     topic_map = await topic_repo.list_topic_ids([row.id for row in rows])
 
     questions = []
@@ -2036,7 +2047,9 @@ async def list_users(
         filtered_profiles = []
         for profile in profiles:
             user = await user_repo.get_by_id(profile.user_id)
-            if user and (q.lower() in user.username.lower() or q.lower() in profile.nickname.lower()):
+            if user and (
+                q.lower() in user.username.lower() or q.lower() in profile.nickname.lower()
+            ):
                 filtered_profiles.append(profile)
         profiles = filtered_profiles
 
@@ -2237,7 +2250,6 @@ async def passkey_register_verify(
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
     from app.core.config import settings
-    import json
 
     challenge = payload.get("challenge")
     credential = payload.get("credential")
@@ -2486,8 +2498,6 @@ async def handle_oauth_callback(
     oauth_service: OAuthService = Depends(get_oauth_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    from app.core.config import settings
-
     state_data = oauth_service.get_oauth_state(state) if state else None
     redirect_url = state_data.get("redirect") if state_data else None
 

@@ -56,7 +56,9 @@ class TestTeamApplicationIntegration:
         assert "application" in data
         assert data["application"]["id"] > 0
 
-    def test_list_pending_requests_for_user(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_list_pending_requests_for_user(
+        self, setup_team_application: dict, api_client: httpx.Client
+    ):
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
@@ -76,7 +78,9 @@ class TestTeamApplicationIntegration:
         assert "requests" in data
         assert isinstance(data["requests"], list)
 
-    def test_list_pending_requests_for_team(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_list_pending_requests_for_team(
+        self, setup_team_application: dict, api_client: httpx.Client
+    ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
@@ -164,7 +168,9 @@ class TestTeamApplicationIntegration:
         assert "invitation" in data
         assert data["invitation"]["id"] > 0
 
-    def test_list_invitations_for_user(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_list_invitations_for_user(
+        self, setup_team_application: dict, api_client: httpx.Client
+    ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -517,7 +523,9 @@ class TestTeamApplicationIntegration:
             json={"message": "Try joining again"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert resp.status_code == 409, f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        assert (
+            resp.status_code == 409
+        ), f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
 
     def test_request_fails_when_pending_exists(
         self, setup_team_application: dict, api_client: httpx.Client
@@ -536,7 +544,9 @@ class TestTeamApplicationIntegration:
             json={"message": "Second request"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert resp.status_code == 409, f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        assert (
+            resp.status_code == 409
+        ), f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
 
     def test_invitation_fails_when_already_member(
         self, setup_team_application: dict, api_client: httpx.Client
@@ -561,7 +571,9 @@ class TestTeamApplicationIntegration:
             json={"userId": invitee.user_id, "role": "ADMIN"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 409, f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        assert (
+            resp.status_code == 409
+        ), f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
 
     def test_invitation_fails_when_pending_exists(
         self, setup_team_application: dict, api_client: httpx.Client
@@ -581,7 +593,9 @@ class TestTeamApplicationIntegration:
             json={"userId": invitee.user_id, "role": "ADMIN"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 409, f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        assert (
+            resp.status_code == 409
+        ), f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
 
     def test_user_can_request_again_after_rejection(
         self, setup_team_application: dict, api_client: httpx.Client
@@ -762,8 +776,7 @@ class TestTeamApplicationIntegration:
         assert resp.status_code == 200
         invitations = resp.json()["data"]["invitations"]
         admin_invitation = next(
-            (inv for inv in invitations if inv.get("team", {}).get("id") == team_id),
-            None
+            (inv for inv in invitations if inv.get("team", {}).get("id") == team_id), None
         )
         assert admin_invitation is not None
         assert admin_invitation.get("role") == "ADMIN"

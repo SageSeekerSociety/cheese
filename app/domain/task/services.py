@@ -4,14 +4,12 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 
 from app.core.config import settings
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.core.domain_errors import (
-    NotTaskParticipantYetError,
     TaskParticipantsReachedLimitError,
     TeamSizeNotEnoughError,
     TeamSizeTooLargeError,
 )
-from app.domain.space.models import Space
 from app.domain.space.repositories import SpaceRepository, SpaceUserRankRepository
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.task.models import (
@@ -60,7 +58,7 @@ class TaskService:
             approved=approved,
             owner_id=owner_id,
             keywords=keywords,
-             topics=topics,
+            topics=topics,
             joined=joined,
             current_user_id=current_user_id,
             limit=limit,
@@ -156,14 +154,12 @@ class TaskMembershipService:
         """Create a new TaskMembership row with扩展校验（人数上限、报名窗口、实名等）。"""
 
         # 参与人数上限校验
-        auto_rejected = False
         if approved == 0 and task.participant_limit is not None:
             approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
             if approved_count >= task.participant_limit:
                 if getattr(task, "auto_reject_when_full", False):
                     # 自动拒绝：将 approved 改为 DISAPPROVED (1)
                     approved = 1
-                    auto_rejected = True
                 else:
                     raise BadRequestError("Task participant limit reached.")
 
@@ -172,7 +168,8 @@ class TaskMembershipService:
 
         # 已存在参与记录则拒绝
         existing = await self.get_membership_by_task_and_member(
-            task_id=task.id, member_id=member_id  # type: ignore[arg-type]
+            task_id=task.id,
+            member_id=member_id,  # type: ignore[arg-type]
         )
         if existing is not None and existing.deleted_at is None:
             raise BadRequestError("Member already participating in this task.")
@@ -221,7 +218,6 @@ class TaskMembershipService:
         - USER 任务在审批时（若 requireRealName）检查当前成员是否有实名记录；
         - 不实现加密实名快照与事件广播，仅更新核心字段。
         """
-        from fastapi import HTTPException, status
 
         previous_approved = membership.approved
         new_approved = previous_approved if approved is None else approved
@@ -248,7 +244,9 @@ class TaskMembershipService:
                 if task.require_real_name and self._realname_repo is not None:
                     has_identity = await self._realname_repo.has_identity(membership.member_id)
                     if not has_identity:
-                        raise BadRequestError("Cannot approve: user is missing required real name information.")
+                        raise BadRequestError(
+                            "Cannot approve: user is missing required real name information."
+                        )
 
         # 应用字段更新
         if approved is not None:
@@ -607,8 +605,7 @@ class TaskSubmissionService:
             }
 
         content_dtos = [
-            _entry_to_dto(i, e)
-            for i, e in enumerate(sorted(entries, key=lambda en: en.index))
+            _entry_to_dto(i, e) for i, e in enumerate(sorted(entries, key=lambda en: en.index))
         ]
 
         review_dto = await self._build_review_dto(review)
@@ -674,9 +671,7 @@ class TaskSubmissionService:
             entries=entry_tuples,
         )
 
-        entries = list(
-            await self._entry_repo.list_by_submission_id(submission_id=submission.id)
-        )
+        entries = list(await self._entry_repo.list_by_submission_id(submission_id=submission.id))
         review = await self._review_repo.get_by_submission_id(submission.id)
 
         return await self._build_submission_dto(
@@ -740,9 +735,7 @@ class TaskSubmissionService:
             entries=entry_tuples,
         )
 
-        entries = list(
-            await self._entry_repo.list_by_submission_id(submission_id=submission.id)
-        )
+        entries = list(await self._entry_repo.list_by_submission_id(submission_id=submission.id))
         review = await self._review_repo.get_by_submission_id(submission.id)
 
         return await self._build_submission_dto(

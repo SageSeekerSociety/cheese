@@ -43,7 +43,7 @@ class TestNotificationsDualEndpoint:
         assert python_resp.status_code == 200, f"Python returned {python_resp.status_code}"
 
         if diffs:
-            pytest.fail(f"Structure differences found:\n" + "\n".join(diffs))
+            pytest.fail("Structure differences found:\n" + "\n".join(diffs))
 
         k_data = kotlin_resp.json()["data"]
         p_data = python_resp.json()["data"]
@@ -76,11 +76,9 @@ class TestNotificationsDualEndpoint:
         assert "notifications" in p_data
 
         if k_data["notifications"] and p_data["notifications"]:
-            k_first = k_data["notifications"][0]
             p_first = p_data["notifications"][0]
 
             required_fields = {"id", "type", "read", "createdAt"}
-            k_fields = set(k_first.keys())
             p_fields = set(p_first.keys())
 
             missing_in_python = required_fields - p_fields
@@ -102,7 +100,6 @@ class TestNotificationsDualEndpoint:
         assert kotlin_resp.status_code == 200
         assert python_resp.status_code == 200
 
-        k_data = kotlin_resp.json()["data"]
         p_data = python_resp.json()["data"]
 
         assert "page" in p_data, "Python should have 'page' field"
@@ -212,7 +209,7 @@ class TestNotificationsPythonParity:
 
         diffs = response_comparator.compare_structure(k_resp.json(), p_resp.json())
         if diffs:
-            pytest.fail(f"Structure mismatch:\n" + "\n".join(diffs))
+            pytest.fail("Structure mismatch:\n" + "\n".join(diffs))
 
     async def test_type_filter_works_same_as_kotlin(
         self,
@@ -226,18 +223,17 @@ class TestNotificationsPythonParity:
         k_resp = await kotlin_client.get("/notifications", params=params, headers=auth_headers)
         p_resp = await python_client.get("/notifications", params=params, headers=auth_headers)
 
-        assert k_resp.status_code == p_resp.status_code, (
-            f"Status mismatch: Kotlin={k_resp.status_code}, Python={p_resp.status_code}"
-        )
+        assert (
+            k_resp.status_code == p_resp.status_code
+        ), f"Status mismatch: Kotlin={k_resp.status_code}, Python={p_resp.status_code}"
 
         if k_resp.status_code == 200 and p_resp.status_code == 200:
-            k_notifications = k_resp.json()["data"]["notifications"]
             p_notifications = p_resp.json()["data"]["notifications"]
 
             for n in p_notifications:
-                assert n.get("type") == "TEAM_INVITATION", (
-                    f"Python returned wrong type: {n.get('type')}"
-                )
+                assert (
+                    n.get("type") == "TEAM_INVITATION"
+                ), f"Python returned wrong type: {n.get('type')}"
 
     async def test_read_filter_works_same_as_kotlin(
         self,

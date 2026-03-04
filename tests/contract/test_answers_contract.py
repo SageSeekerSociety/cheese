@@ -33,4 +33,3 @@ async def test_python_create_answer_shape(python_client: AsyncClient) -> None:
         return
     body = resp.json()
     assert "id" in body["data"]
-

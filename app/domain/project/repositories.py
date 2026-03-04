@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Select, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession

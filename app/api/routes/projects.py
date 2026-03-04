@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
@@ -33,9 +33,7 @@ def _project_to_api_model(project: Project) -> dict:
     start_date_ms = (
         int(project.start_date.timestamp() * 1000) if project.start_date is not None else 0
     )
-    end_date_ms = (
-        int(project.end_date.timestamp() * 1000) if project.end_date is not None else 0
-    )
+    end_date_ms = int(project.end_date.timestamp() * 1000) if project.end_date is not None else 0
     return {
         "id": project.id,
         "name": project.name,

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt_text, encrypt_text
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.domain.user.models import User, UserRealNameIdentity, UserRealNameAccessLog
-from app.domain.user.repositories import UserRealNameRepository, UserProfileRepository, UserRepository
+from app.domain.user.repositories import (
+    UserRealNameRepository,
+    UserProfileRepository,
+    UserRepository,
+)
 
 
 class UserRealNameService:

@@ -127,10 +127,14 @@ class CommentRepository:
         return vote.attitude if vote else None
 
     async def count_votes(self, comment_id: int) -> dict[str, int]:
-        stmt = select(Attitude.attitude, func.count(Attitude.id)).where(
-            Attitude.attitudable_id == comment_id,
-            Attitude.attitudable_type == "COMMENT",
-        ).group_by(Attitude.attitude)
+        stmt = (
+            select(Attitude.attitude, func.count(Attitude.id))
+            .where(
+                Attitude.attitudable_id == comment_id,
+                Attitude.attitudable_type == "COMMENT",
+            )
+            .group_by(Attitude.attitude)
+        )
         result = await self._session.execute(stmt)
         counts = {"POSITIVE": 0, "NEGATIVE": 0}
         for attitude, count in result.all():

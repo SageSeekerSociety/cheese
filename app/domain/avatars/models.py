@@ -20,6 +20,6 @@ class Avatar(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     avatar_type: Mapped[str] = mapped_column(
         PgEnum("default", "predefined", "upload", name="AvatarType", create_type=False),
-        nullable=False
+        nullable=False,
     )
     usage_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

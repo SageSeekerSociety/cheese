@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Lock
@@ -38,7 +36,9 @@ class Gauge:
 class Histogram:
     name: str
     labels: dict[str, str] = field(default_factory=dict)
-    buckets: list[float] = field(default_factory=lambda: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0])
+    buckets: list[float] = field(
+        default_factory=lambda: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+    )
     _counts: list[int] = field(default_factory=list)
     _sum: float = 0.0
     _count: int = 0
@@ -78,11 +78,15 @@ class MetricsRegistry:
                 self._gauges[key] = Gauge(name=name, labels=labels or {})
             return self._gauges[key]
 
-    def histogram(self, name: str, labels: dict[str, str] | None = None, buckets: list[float] | None = None) -> Histogram:
+    def histogram(
+        self, name: str, labels: dict[str, str] | None = None, buckets: list[float] | None = None
+    ) -> Histogram:
         key = self._key(name, labels)
         with self._lock:
             if key not in self._histograms:
-                self._histograms[key] = Histogram(name=name, labels=labels or {}, buckets=buckets or [])
+                self._histograms[key] = Histogram(
+                    name=name, labels=labels or {}, buckets=buckets or []
+                )
             return self._histograms[key]
 
     def _key(self, name: str, labels: dict[str, str] | None) -> str:
@@ -95,8 +99,14 @@ class MetricsRegistry:
         with self._lock:
             return {
                 "uptime_seconds": (datetime.now(timezone.utc) - self._start_time).total_seconds(),
-                "counters": {k: {"name": v.name, "labels": v.labels, "value": v.value} for k, v in self._counters.items()},
-                "gauges": {k: {"name": v.name, "labels": v.labels, "value": v.value} for k, v in self._gauges.items()},
+                "counters": {
+                    k: {"name": v.name, "labels": v.labels, "value": v.value}
+                    for k, v in self._counters.items()
+                },
+                "gauges": {
+                    k: {"name": v.name, "labels": v.labels, "value": v.value}
+                    for k, v in self._gauges.items()
+                },
                 "histograms": {
                     k: {
                         "name": v.name,

@@ -24,9 +24,7 @@ class Settings(BaseSettings):
 
     # JWT settings for Python auth flow
     jwt_secret: str = Field(default="dev-secret", alias="JWT_SECRET")
-    access_token_expires_seconds: int = Field(
-        default=15 * 60, alias="ACCESS_TOKEN_EXPIRES_SECONDS"
-    )
+    access_token_expires_seconds: int = Field(default=15 * 60, alias="ACCESS_TOKEN_EXPIRES_SECONDS")
     refresh_token_expires_seconds: int = Field(
         default=60 * 60 * 24 * 30, alias="REFRESH_TOKEN_EXPIRES_SECONDS"
     )
@@ -46,9 +44,7 @@ class Settings(BaseSettings):
     notification_email_queue_key: str = Field(
         default="cheese:notifications:email", alias="NOTIFICATION_EMAIL_QUEUE_KEY"
     )
-    notification_email_batch_size: int = Field(
-        default=100, alias="NOTIFICATION_EMAIL_BATCH_SIZE"
-    )
+    notification_email_batch_size: int = Field(default=100, alias="NOTIFICATION_EMAIL_BATCH_SIZE")
     notification_aggregation_finalize_interval_seconds: int = Field(
         default=60, alias="NOTIFICATION_AGGREGATION_FINALIZE_INTERVAL_SECONDS"
     )

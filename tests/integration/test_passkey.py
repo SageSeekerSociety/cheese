@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import httpx
-import pytest
 
 from tests.integration.conftest import CreatedUser, UserCreator
 
 
 class TestPasskeyIntegration:
-    def test_register_challenge(
-        self, authenticated_user: CreatedUser, api_client: httpx.Client
-    ):
+    def test_register_challenge(self, authenticated_user: CreatedUser, api_client: httpx.Client):
         resp = api_client.post(
             "/users/auth/passkey/register/challenge",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
@@ -24,9 +21,7 @@ class TestPasskeyIntegration:
         assert options["rp"]["id"] is not None
         assert options["user"]["name"] is not None
 
-    def test_authenticate_challenge(
-        self, api_client: httpx.Client
-    ):
+    def test_authenticate_challenge(self, api_client: httpx.Client):
         resp = api_client.post(
             "/users/auth/passkey/authenticate/challenge",
             json={},
@@ -50,9 +45,7 @@ class TestPasskeyIntegration:
         data = resp.json()["data"]
         assert "options" in data
 
-    def test_list_passkeys_empty(
-        self, authenticated_user: CreatedUser, api_client: httpx.Client
-    ):
+    def test_list_passkeys_empty(self, authenticated_user: CreatedUser, api_client: httpx.Client):
         resp = api_client.get(
             f"/users/{authenticated_user.user_id}/passkeys",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
@@ -96,9 +89,7 @@ class TestPasskeyIntegration:
         )
         assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
 
-    def test_authenticate_verify_invalid_challenge(
-        self, api_client: httpx.Client
-    ):
+    def test_authenticate_verify_invalid_challenge(self, api_client: httpx.Client):
         resp = api_client.post(
             "/users/auth/passkey/authenticate/verify",
             json={

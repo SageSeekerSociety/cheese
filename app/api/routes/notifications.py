@@ -38,11 +38,15 @@ async def get_notification_service(
     # Register entity resolvers (team, user, project)
     team_repo = TeamRepository(session=db)
     team_service = TeamService(team_repo)
-    team_resolver = TeamEntityResolver(team_service=team_service, avatar_base_url=settings.avatar_base_url)
+    team_resolver = TeamEntityResolver(
+        team_service=team_service, avatar_base_url=settings.avatar_base_url
+    )
 
     user_profile_repo = UserProfileRepository(session=db)
     user_service = UserService(user_profile_repo)
-    user_resolver = UserEntityResolver(user_service=user_service, avatar_base_url=settings.avatar_base_url)
+    user_resolver = UserEntityResolver(
+        user_service=user_service, avatar_base_url=settings.avatar_base_url
+    )
 
     project_repo = ProjectRepository(session=db)
     project_service = ProjectService(project_repo)
@@ -61,7 +65,9 @@ def _notification_to_api_model(notification: Notification) -> dict:
     )
     return {
         "id": notification.id,
-        "type": notification.type.value if isinstance(notification.type, NotificationType) else str(notification.type),
+        "type": notification.type.value
+        if isinstance(notification.type, NotificationType)
+        else str(notification.type),
         "read": notification.read,
         "createdAt": created_at_ms or 0,
         # TODO: entities/contextMetadata to be populated when metadata resolution is ported
@@ -80,9 +86,7 @@ async def get_unread_notifications_count(
     service: NotificationQueryService = Depends(get_notification_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    count = await service.get_unread_notification_count_for_current_user(
-        user_id=auth_user.user_id
-    )
+    count = await service.get_unread_notification_count_for_current_user(user_id=auth_user.user_id)
     return {"code": 200, "message": "Success", "data": {"count": count}}
 
 
@@ -99,7 +103,9 @@ async def get_notification_by_id(
         user_id=auth_user.user_id, notification_id=notification_id
     )
     if notification is None:
-        raise NotFoundError("Resource notification not found", data={"type": "notification", "id": notification_id})
+        raise NotFoundError(
+            "Resource notification not found", data={"type": "notification", "id": notification_id}
+        )
 
     dto = await service.build_notification_dto(notification)
 
@@ -164,9 +170,9 @@ async def list_notifications(
         last = notifications[-1]
         last_created_ms = int(last.created_at.timestamp() * 1000)
         cursor_payload = {"createdAt": last_created_ms, "id": last.id}
-        encoded = base64.urlsafe_b64encode(
-            json.dumps(cursor_payload).encode("utf-8")
-        ).decode("utf-8")
+        encoded = base64.urlsafe_b64encode(json.dumps(cursor_payload).encode("utf-8")).decode(
+            "utf-8"
+        )
         next_start = encoded
 
     return {

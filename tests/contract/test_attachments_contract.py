@@ -30,4 +30,3 @@ async def test_python_get_attachment_shape(python_client: AsyncClient) -> None:
     body = resp.json()
     assert set(body.keys()) == {"code", "message", "data"}
     assert "attachment" in body["data"]
-

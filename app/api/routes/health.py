@@ -57,6 +57,7 @@ async def _check_redis() -> dict[str, Any]:
 @router.get("/metrics", summary="Application metrics")
 async def get_metrics() -> dict[str, Any]:
     from app.core.metrics import registry
+
     return registry.export()
 
 
@@ -65,6 +66,6 @@ async def readiness_check() -> dict[str, Any]:
     result = await detailed_health_check()
     if result["status"] != "healthy":
         from fastapi import HTTPException
+
         raise HTTPException(status_code=503, detail=result)
     return {"status": "ready"}
-

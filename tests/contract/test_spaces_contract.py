@@ -14,7 +14,9 @@ async def test_python_get_space_not_found(python_client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_python_get_space_shape(python_client: AsyncClient) -> None:
     """GET /spaces/{id} 结构检查。"""
-    resp = await python_client.get("/spaces/1", params={"queryMyRank": False, "queryCategories": True})
+    resp = await python_client.get(
+        "/spaces/1", params={"queryMyRank": False, "queryCategories": True}
+    )
     assert resp.status_code in (200, 404)
     if resp.status_code != 200:
         return
@@ -55,4 +57,3 @@ async def test_python_list_space_categories_shape(python_client: AsyncClient) ->
     assert set(body.keys()) == {"code", "message", "data"}
     data = body["data"]
     assert "categories" in data
-

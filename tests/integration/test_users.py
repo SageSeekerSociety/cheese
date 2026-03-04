@@ -7,12 +7,9 @@ Complete equivalence migration including SRP, OAuth, Passkey, TOTP tests.
 from __future__ import annotations
 
 import random
-from unittest.mock import patch, MagicMock
 
 import httpx
-import psycopg2
 import pytest
-from datetime import datetime, timezone
 
 from app.core.config import settings
 from tests.integration.conftest import CreatedUser, UserCreator
@@ -100,7 +97,7 @@ class TestUserRegisterLogic:
         user = self.user_client.create_user()
         response = self.client.post(
             "/users/verify/email",
-            json={"email": user.email if hasattr(user, 'email') else f"{user.username}@ruc.edu.cn"},
+            json={"email": user.email if hasattr(user, "email") else f"{user.username}@ruc.edu.cn"},
         )
         assert response.status_code in (409, 201, 422)
 

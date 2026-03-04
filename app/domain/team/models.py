@@ -3,7 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import ForeignKey, Index, Integer, SmallInteger, String, DateTime, Sequence, BigInteger
+from sqlalchemy import (
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    DateTime,
+    Sequence,
+    BigInteger,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -83,4 +92,3 @@ class TeamMembershipApplication(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
-

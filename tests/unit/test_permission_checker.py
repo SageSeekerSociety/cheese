@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from app.auth.core import (
     Action,
@@ -9,11 +9,10 @@ from app.auth.core import (
     PermissionRule,
     Resource,
     Role,
-    RoleHierarchy,
     SystemRole,
     ROLE_HIERARCHY,
 )
-from app.auth.checker import PermissionChecker, permission_checker
+from app.auth.checker import PermissionChecker
 
 
 class TestRoleHierarchy:
@@ -67,7 +66,10 @@ class TestPermissionRule:
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
         assert rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": True}) is True
         assert rule.check(user, Action.READ, Resource.TEAM, 1, {"is_admin": True}) is True
-        assert rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": False, "is_admin": False}) is False
+        assert (
+            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": False, "is_admin": False})
+            is False
+        )
 
 
 class TestAuthUserInfo:
@@ -200,7 +202,9 @@ class TestPermissionChecker:
         assert allowed is False
 
     @pytest.mark.anyio
-    async def test_role_hierarchy_allows_owner_to_do_admin_actions(self, checker: PermissionChecker) -> None:
+    async def test_role_hierarchy_allows_owner_to_do_admin_actions(
+        self, checker: PermissionChecker
+    ) -> None:
         db = AsyncMock()
         config = PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.TEAM)
         checker.register_config(config)
@@ -261,7 +265,9 @@ class TestCrossDomainPermission:
         return PermissionChecker()
 
     @pytest.mark.anyio
-    async def test_project_permission_depends_on_team_membership(self, checker: PermissionChecker) -> None:
+    async def test_project_permission_depends_on_team_membership(
+        self, checker: PermissionChecker
+    ) -> None:
         db = AsyncMock()
         config = PermissionConfig(Role.MEMBER, Action.UPDATE, Resource.PROJECT)
         checker.register_config(config)
@@ -395,9 +401,18 @@ class TestCombinedConditions:
         rule = PermissionRule(conditions=[is_owner, is_draft])
         user = AuthUserInfo(user_id=123, system_roles={SystemRole.USER})
 
-        assert rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": True, "is_draft": True}) is True
-        assert rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": True, "is_draft": False}) is False
-        assert rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": False, "is_draft": True}) is False
+        assert (
+            rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": True, "is_draft": True})
+            is True
+        )
+        assert (
+            rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": True, "is_draft": False})
+            is False
+        )
+        assert (
+            rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": False, "is_draft": True})
+            is False
+        )
 
     def test_or_conditions_any_can_match(self) -> None:
         def is_owner(user, action, resource, resource_id, context):
@@ -459,10 +474,18 @@ class TestMultipleRoles:
         user = AuthUserInfo(user_id=123, system_roles={SystemRole.USER})
 
         can_delete = await checker.check_permission(
-            db=db, user=user, action=Action.DELETE, resource=Resource.TEAM, resource_id=1,
+            db=db,
+            user=user,
+            action=Action.DELETE,
+            resource=Resource.TEAM,
+            resource_id=1,
         )
         can_update = await checker.check_permission(
-            db=db, user=user, action=Action.UPDATE, resource=Resource.TEAM, resource_id=1,
+            db=db,
+            user=user,
+            action=Action.UPDATE,
+            resource=Resource.TEAM,
+            resource_id=1,
         )
         assert can_delete is True
         assert can_update is True

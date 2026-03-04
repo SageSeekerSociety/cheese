@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Select, func, select, delete
+from sqlalchemy import Select, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.materials.models import Material, MaterialBundle, MaterialBundleRelation
@@ -120,9 +120,7 @@ class MaterialBundleRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def create(
-        self, *, title: str, content: str, creator_id: int
-    ) -> MaterialBundle:
+    async def create(self, *, title: str, content: str, creator_id: int) -> MaterialBundle:
         now = datetime.now(timezone.utc)
         bundle = MaterialBundle(
             title=title,
@@ -169,9 +167,7 @@ class MaterialBundleRepository:
         result = await self._session.execute(stmt)
         return [row for row in result.scalars().all()]
 
-    async def add_material_to_bundle(
-        self, *, bundle_id: int, material_id: int
-    ) -> None:
+    async def add_material_to_bundle(self, *, bundle_id: int, material_id: int) -> None:
         stmt = select(MaterialBundleRelation).where(
             MaterialBundleRelation.bundle_id == bundle_id,
             MaterialBundleRelation.material_id == material_id,
@@ -183,9 +179,7 @@ class MaterialBundleRepository:
         self._session.add(rel)
         await self._session.flush()
 
-    async def remove_material_from_bundle(
-        self, *, bundle_id: int, material_id: int
-    ) -> bool:
+    async def remove_material_from_bundle(self, *, bundle_id: int, material_id: int) -> bool:
         stmt = delete(MaterialBundleRelation).where(
             MaterialBundleRelation.bundle_id == bundle_id,
             MaterialBundleRelation.material_id == material_id,

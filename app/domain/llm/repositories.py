@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +42,9 @@ class AIUserQuotaRepository:
             await self._session.flush()
         return entity
 
-    async def consume(self, user_id: int, amount: float, daily_total: float) -> tuple[float, datetime]:
+    async def consume(
+        self, user_id: int, amount: float, daily_total: float
+    ) -> tuple[float, datetime]:
         entity = await self.get_or_create(user_id, daily_total)
         remaining = entity.remaining_seu or 0.0
         if remaining < amount:
@@ -188,8 +190,6 @@ class AIMessageRepository:
         return list(result.scalars().all())
 
     async def count_by_conversation(self, conversation_id: int) -> int:
-        stmt = select(func.count(AIMessage.id)).where(
-            AIMessage.conversation_id == conversation_id
-        )
+        stmt = select(func.count(AIMessage.id)).where(AIMessage.conversation_id == conversation_id)
         result = await self._session.execute(stmt)
         return result.scalar() or 0

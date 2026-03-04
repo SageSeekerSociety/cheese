@@ -43,7 +43,7 @@ class TestTeamsDualEndpoint:
         if diffs:
             relevant_diffs = [d for d in diffs if "missing" in d.lower() or "extra" in d.lower()]
             if relevant_diffs:
-                pytest.fail(f"Structure differences:\n" + "\n".join(relevant_diffs))
+                pytest.fail("Structure differences:\n" + "\n".join(relevant_diffs))
 
     async def test_my_teams_structure_match(
         self,
@@ -95,7 +95,7 @@ class TestTeamsDualEndpoint:
         if diffs:
             structural_diffs = [d for d in diffs if "missing" in d.lower()]
             if structural_diffs:
-                pytest.fail(f"Team detail structure differs:\n" + "\n".join(structural_diffs))
+                pytest.fail("Team detail structure differs:\n" + "\n".join(structural_diffs))
 
 
 @pytest.mark.anyio
@@ -187,7 +187,7 @@ class TestTeamsPythonParity:
 
         structural = [d for d in diffs if "missing in Python" in d]
         if structural:
-            pytest.fail(f"Python missing structure:\n" + "\n".join(structural))
+            pytest.fail("Python missing structure:\n" + "\n".join(structural))
 
     async def test_team_members_same_structure(
         self,
@@ -219,7 +219,7 @@ class TestTeamsPythonParity:
         )
 
         if diffs:
-            pytest.fail(f"Members structure differs:\n" + "\n".join(diffs))
+            pytest.fail("Members structure differs:\n" + "\n".join(diffs))
 
     async def test_invalid_team_id_same_error(
         self,

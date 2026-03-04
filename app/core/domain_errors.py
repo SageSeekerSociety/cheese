@@ -102,7 +102,11 @@ class YourTeamMemberRankIsNotHighEnoughError(ForbiddenError):
     def __init__(self, member_id: int, required_rank: int, current_rank: int) -> None:
         super().__init__(
             message=f"Team member rank ({current_rank}) is not high enough. Required: {required_rank}",
-            data={"memberId": member_id, "requiredRank": required_rank, "currentRank": current_rank},
+            data={
+                "memberId": member_id,
+                "requiredRank": required_rank,
+                "currentRank": current_rank,
+            },
         )
 
 

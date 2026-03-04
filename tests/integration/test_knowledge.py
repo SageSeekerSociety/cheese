@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import random
 
 import httpx
@@ -36,7 +35,6 @@ class TestKnowledgeIntegration:
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
         knowledge_name = f"Test Knowledge {random.randint(100000, 999999)}"
-        content_json = json.dumps({"text": "This is test knowledge content."})
         resp = api_client.post(
             "/knowledge",
             json={

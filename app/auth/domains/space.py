@@ -10,7 +10,7 @@ from app.auth.core import (
     Resource,
     Role,
 )
-from app.domain.space.models import Space, SpaceAdminRelation
+from app.domain.space.models import SpaceAdminRelation
 
 
 async def get_space_roles(

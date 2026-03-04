@@ -26,9 +26,7 @@ class Space(Base):
     intro: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    enable_rank: Mapped[bool] = mapped_column(
-        "enable_rank", Boolean, nullable=False, default=False
-    )
+    enable_rank: Mapped[bool] = mapped_column("enable_rank", Boolean, nullable=False, default=False)
     # Kotlin Space.defaultCategory -> default_category_id column
     default_category_id: Mapped[int | None] = mapped_column(
         "default_category_id", Integer, nullable=True
@@ -56,9 +54,7 @@ class SpaceCategory(Base):
     space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    display_order: Mapped[int] = mapped_column(
-        "display_order", Integer, nullable=False, default=0
-    )
+    display_order: Mapped[int] = mapped_column("display_order", Integer, nullable=False, default=0)
     # Archived flag (SpaceCategory.isArchived in Kotlin)
     archived_at: Mapped[datetime | None] = mapped_column(nullable=True)
 

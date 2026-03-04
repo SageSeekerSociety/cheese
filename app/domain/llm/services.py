@@ -35,9 +35,7 @@ class AiAdviceService:
 
     async def check_quota(self, *, user_id: int, amount: float = 1.0) -> bool:
         """Check if user has enough quota without consuming it."""
-        remaining, _ = await self._repo.get_quota(
-            user_id=user_id, daily_total=self._daily_quota
-        )
+        remaining, _ = await self._repo.get_quota(user_id=user_id, daily_total=self._daily_quota)
         return remaining >= amount
 
     async def consume_quota(self, *, user_id: int, amount: float = 1.0) -> QuotaInfo:

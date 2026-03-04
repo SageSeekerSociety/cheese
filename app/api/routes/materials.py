@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, File, Form, Path, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
@@ -48,9 +48,7 @@ async def upload_material(
 
     valid_prefixes = TYPE_MIME_PREFIXES.get(type, [])
     if not any(file_mime.startswith(prefix) for prefix in valid_prefixes):
-        raise UnprocessableEntityError(
-            f"MIME type {file_mime} does not match type {type}"
-        )
+        raise UnprocessableEntityError(f"MIME type {file_mime} does not match type {type}")
 
     url = f"/uploads/{file_name}"
 

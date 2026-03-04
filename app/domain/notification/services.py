@@ -108,8 +108,12 @@ class NotificationQueryService:
 
         return updated_ids
 
-    async def delete_notification_for_current_user(self, user_id: int, notification_id: int) -> bool:
-        return await self._repo.soft_delete_for_user(user_id=user_id, notification_id=notification_id)
+    async def delete_notification_for_current_user(
+        self, user_id: int, notification_id: int
+    ) -> bool:
+        return await self._repo.soft_delete_for_user(
+            user_id=user_id, notification_id=notification_id
+        )
 
     # --- Metadata / entity resolution ---
 
@@ -165,9 +169,7 @@ class NotificationQueryService:
                 nested_path = f"{path}[{idx}]" if path else f"[{idx}]"
                 self._collect_entity_pointers(nested, path=nested_path, output=output)
 
-    async def build_notification_dto(
-        self, notification: Notification
-    ) -> NotificationDTO:
+    async def build_notification_dto(self, notification: Notification) -> NotificationDTO:
         """Build NotificationDTO from Notification entity and its metadata."""
         metadata_raw = getattr(notification, "metadata_payload", None)
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import DualEndpointTester, ResponseComparator
+from tests.conftest import ResponseComparator
 
 
 @pytest.mark.anyio
@@ -48,8 +48,12 @@ class TestAIChatDualEndpoint:
             p_fields = set(p_model.keys())
 
             required_fields = {"id", "name"}
-            assert required_fields <= k_fields, f"Kotlin model missing: {required_fields - k_fields}"
-            assert required_fields <= p_fields, f"Python model missing: {required_fields - p_fields}"
+            assert (
+                required_fields <= k_fields
+            ), f"Kotlin model missing: {required_fields - k_fields}"
+            assert (
+                required_fields <= p_fields
+            ), f"Python model missing: {required_fields - p_fields}"
 
     async def test_list_conversations_structure_match(
         self,
@@ -119,8 +123,12 @@ class TestAIChatDualEndpoint:
         p_conv = p_data["conversation"]
 
         required_fields = {"id", "title"}
-        assert required_fields <= set(k_conv.keys()), f"Kotlin missing: {required_fields - set(k_conv.keys())}"
-        assert required_fields <= set(p_conv.keys()), f"Python missing: {required_fields - set(p_conv.keys())}"
+        assert required_fields <= set(
+            k_conv.keys()
+        ), f"Kotlin missing: {required_fields - set(k_conv.keys())}"
+        assert required_fields <= set(
+            p_conv.keys()
+        ), f"Python missing: {required_fields - set(p_conv.keys())}"
 
 
 @pytest.mark.anyio
@@ -247,14 +255,22 @@ class TestAIChatPythonParity:
         assert k_get.status_code == 200
         assert p_get.status_code == 200
 
-        k_delete = await kotlin_client.delete(f"/ai/conversations/{k_conv_id}", headers=auth_headers)
-        p_delete = await python_client.delete(f"/ai/conversations/{p_conv_id}", headers=auth_headers)
+        k_delete = await kotlin_client.delete(
+            f"/ai/conversations/{k_conv_id}", headers=auth_headers
+        )
+        p_delete = await python_client.delete(
+            f"/ai/conversations/{p_conv_id}", headers=auth_headers
+        )
 
         assert k_delete.status_code == 204
         assert p_delete.status_code == 204
 
-        k_get_after = await kotlin_client.get(f"/ai/conversations/{k_conv_id}", headers=auth_headers)
-        p_get_after = await python_client.get(f"/ai/conversations/{p_conv_id}", headers=auth_headers)
+        k_get_after = await kotlin_client.get(
+            f"/ai/conversations/{k_conv_id}", headers=auth_headers
+        )
+        p_get_after = await python_client.get(
+            f"/ai/conversations/{p_conv_id}", headers=auth_headers
+        )
 
         assert k_get_after.status_code == 404
         assert p_get_after.status_code == 404

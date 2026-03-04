@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
 from typing import Any
 
 from app.domain.llm.llm_client import LLMClient, GeneratedAdvice, StreamChunk
@@ -198,7 +197,9 @@ class TaskAIAdviceService:
         task = await self._task_repo.get_by_id(task_id)
         task_context = ""
         if task:
-            task_context = f"任务：{task.name}\n简介：{task.intro or ''}\n描述：{task.description or ''}"
+            task_context = (
+                f"任务：{task.name}\n简介：{task.intro or ''}\n描述：{task.description or ''}"
+            )
 
         context_info = ""
         if context:
