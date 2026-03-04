@@ -15,6 +15,8 @@ class AnalyticsFilters:
 
 
 class SpaceAnalyticsService:
+    _PAGE_SIZE = 1000
+
     def __init__(
         self,
         task_repo: TaskRepository,
@@ -27,6 +29,38 @@ class SpaceAnalyticsService:
         self._user_repo = user_repo
         self._profile_repo = profile_repo
 
+    async def _fetch_all_tasks(
+        self,
+        *,
+        space_id: int,
+        category_id: int | None = None,
+        approved: int | None = None,
+        owner_id: int | None = None,
+    ) -> list:
+        """Paginate through list_tasks until all results are fetched."""
+        all_tasks: list = []
+        offset = 0
+        while True:
+            batch = await self._task_repo.list_tasks(
+                space_id=space_id,
+                category_id=category_id,
+                approved=approved,
+                owner_id=owner_id,
+                keywords=None,
+                topics=None,
+                joined=None,
+                current_user_id=None,
+                limit=self._PAGE_SIZE,
+                offset=offset,
+                sort_by="updatedAt",
+                sort_order="desc",
+            )
+            all_tasks.extend(batch)
+            if len(batch) < self._PAGE_SIZE:
+                break
+            offset += self._PAGE_SIZE
+        return all_tasks
+
     async def get_task_analytics(
         self,
         *,
@@ -35,19 +69,11 @@ class SpaceAnalyticsService:
         task_status: str | None,
         publisher_id: int | None,
     ) -> dict:
-        tasks = await self._task_repo.list_tasks(
+        tasks = await self._fetch_all_tasks(
             space_id=space_id,
             category_id=category_id,
             approved=self._map_task_status(task_status),
             owner_id=publisher_id,
-            keywords=None,
-            topics=None,
-            joined=None,
-            current_user_id=None,
-            limit=1000,
-            offset=0,
-            sort_by="updatedAt",
-            sort_order="desc",
         )
         status_counter = Counter(self._status_label(task.approved) for task in tasks)
         category_counter = Counter(
@@ -69,20 +95,7 @@ class SpaceAnalyticsService:
         }
 
     async def get_publishers_participation(self, *, space_id: int) -> list[dict]:
-        tasks = await self._task_repo.list_tasks(
-            space_id=space_id,
-            category_id=None,
-            approved=None,
-            owner_id=None,
-            keywords=None,
-            topics=None,
-            joined=None,
-            current_user_id=None,
-            limit=1000,
-            offset=0,
-            sort_by="updatedAt",
-            sort_order="desc",
-        )
+        tasks = await self._fetch_all_tasks(space_id=space_id)
         publisher_counter = Counter(getattr(task, "creator_id", 0) for task in tasks)
         memberships = await self._membership_repo.list_memberships_for_space(space_id)
         participants_by_task: dict[int, list[int]] = {}
@@ -130,20 +143,7 @@ class SpaceAnalyticsService:
         return data
 
     async def export_participants(self, *, space_id: int) -> str:
-        tasks = await self._task_repo.list_tasks(
-            space_id=space_id,
-            category_id=None,
-            approved=None,
-            owner_id=None,
-            keywords=None,
-            topics=None,
-            joined=None,
-            current_user_id=None,
-            limit=1000,
-            offset=0,
-            sort_by="updatedAt",
-            sort_order="desc",
-        )
+        tasks = await self._fetch_all_tasks(space_id=space_id)
         memberships = await self._membership_repo.list_memberships_for_space(space_id)
         membership_map: dict[int, list] = {}
         for membership in memberships:
@@ -152,13 +152,20 @@ class SpaceAnalyticsService:
         rows = ["taskId,taskName,participantId,status"]
         for task in tasks:
             members = membership_map.get(task.id, [])
+            name = self._csv_escape(task.name)
             if not members:
-                rows.append(f"{task.id},{task.name},,0")
+                rows.append(f"{task.id},{name},,0")
             for member in members:
                 rows.append(
-                    f"{task.id},{task.name},{member.member_id},{self._participant_label(member.approved)}"
+                    f"{task.id},{name},{member.member_id},{self._participant_label(member.approved)}"
                 )
         return "\n".join(rows)
+
+    @staticmethod
+    def _csv_escape(value: str) -> str:
+        if any(c in value for c in (",", '"', "\n", "\r")):
+            return '"' + value.replace('"', '""') + '"'
+        return value
 
     def _map_task_status(self, value: str | None) -> int | None:
         mapping = {
