@@ -120,6 +120,15 @@ class DiscussionRepository:
         total = int(count_result.scalar_one() or 0)
         return rows, total
 
+    async def update_content(self, discussion_id: int, content_json: dict) -> Discussion | None:
+        entity = await self.get_by_id(discussion_id)
+        if entity is None:
+            return None
+        entity.content = content_json
+        entity.updated_at = datetime.utcnow()
+        await self._session.flush()
+        return entity
+
     async def soft_delete(self, discussion_id: int) -> bool:
         entity = await self.get_by_id(discussion_id)
         if entity is None:

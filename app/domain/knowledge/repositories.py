@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import BadRequestError
 from app.domain.knowledge.models import Knowledge, KnowledgeLabel, KnowledgeUpvote
 
 
@@ -255,7 +256,7 @@ class KnowledgeRepository:
         )
         result = await self._session.execute(stmt)
         if result.scalar_one_or_none() is not None:
-            raise ValueError("Already upvoted")
+            raise BadRequestError("Already upvoted")
         now = datetime.utcnow()
         upvote = KnowledgeUpvote(
             knowledge_id=knowledge_id,

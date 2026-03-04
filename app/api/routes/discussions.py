@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError
+from app.core.errors import BadRequestError, ForbiddenError
 from app.db.session import get_db
 from app.domain.discussion.repositories import (
     DiscussionRepository,
@@ -106,6 +106,17 @@ async def list_discussions(
     return {"code": 200, "message": "OK", "data": {"discussions": rows, "page": page}}
 
 
+@router.get(
+    "/reactions",
+    summary="Get all reaction types",
+)
+async def list_reaction_types(
+    service: DiscussionService = Depends(get_discussion_service),
+) -> dict:
+    types = await service.list_reaction_types()
+    return {"code": 200, "message": "OK", "data": {"reactionTypes": types}}
+
+
 @router.get("/{discussionId}", summary="Get Discussion")
 async def get_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
@@ -119,12 +130,18 @@ async def get_discussion(
 @router.patch("/{discussionId}", summary="Update Discussion")
 async def patch_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
-    payload: dict,
+    payload: dict = Body(...),
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
-    _ = payload
-    discussion = await service.get_discussion(discussion_id, auth_user.user_id)
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
+    content = payload.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise BadRequestError("content is required")
+    discussion = await service.update_discussion(
+        discussion_id, content=content.strip(), user_id=auth_user.user_id
+    )
     return {"code": 200, "message": "OK", "data": {"discussion": discussion}}
 
 
@@ -163,7 +180,11 @@ async def delete_discussion(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> None:
-    _ = auth_user
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
+    discussion = await service.get_discussion(discussion_id, auth_user.user_id)
+    if discussion["senderId"] != auth_user.user_id:
+        raise ForbiddenError("Only the author can delete this discussion")
     await service.delete_discussion(discussion_id)
     return None
 
@@ -202,14 +223,3 @@ async def remove_reaction(
         user_id=auth_user.user_id,
     )
     return {"code": 200, "message": "OK", "data": result}
-
-
-@router.get(
-    "/reactions",
-    summary="Get all reaction types",
-)
-async def list_reaction_types(
-    service: DiscussionService = Depends(get_discussion_service),
-) -> dict:
-    types = await service.list_reaction_types()
-    return {"code": 200, "message": "OK", "data": {"reactionTypes": types}}

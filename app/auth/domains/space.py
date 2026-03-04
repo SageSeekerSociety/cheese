@@ -10,7 +10,7 @@ from app.auth.core import (
     Resource,
     Role,
 )
-from app.domain.space.models import SpaceAdminRelation
+from app.domain.space.models import SpaceAdminRelation, SpaceAdminRole
 
 
 async def get_space_roles(
@@ -23,18 +23,18 @@ async def get_space_roles(
 
     admin_stmt = select(SpaceAdminRelation.role).where(
         SpaceAdminRelation.space_id == resource_id,
-        SpaceAdminRelation.admin_id == user_id,
+        SpaceAdminRelation.user_id == user_id,
         SpaceAdminRelation.deleted_at.is_(None),
     )
     result = await db.execute(admin_stmt)
-    role_str = result.scalar_one_or_none()
+    role_int = result.scalar_one_or_none()
 
-    if role_str is not None:
+    if role_int is not None:
         role_mapping = {
-            "OWNER": Role.OWNER,
-            "ADMIN": Role.ADMIN,
+            SpaceAdminRole.OWNER.value: Role.OWNER,
+            SpaceAdminRole.ADMIN.value: Role.ADMIN,
         }
-        role = role_mapping.get(role_str.upper())
+        role = role_mapping.get(role_int)
         if role:
             roles.add(role)
 

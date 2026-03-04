@@ -61,6 +61,8 @@ async def get_current_user_id(
         if token.lower().startswith("bearer "):
             token = token[7:].strip()
         payload = decode_token(token)
+        if payload.get("type") != "access":
+            raise AuthenticationRequiredError("Invalid token type: expected access token")
         sub = payload.get("sub")
         try:
             return int(sub)

@@ -120,6 +120,24 @@ class DiscussionService:
         }
         return dtos, page
 
+    async def update_discussion(self, discussion_id: int, *, content: str, user_id: int) -> dict:
+        entity = await self._repo.get_by_id(discussion_id)
+        if entity is None:
+            raise NotFoundError(
+                "Resource discussion not found",
+                data={"type": "discussion", "id": discussion_id},
+            )
+        from app.core.errors import ForbiddenError
+
+        if entity.sender_id != user_id:
+            raise ForbiddenError("Only the author can update this discussion")
+        content_json = {
+            "type": "doc",
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": content}]}],
+        }
+        updated = await self._repo.update_content(discussion_id, content_json)
+        return await self._build_discussion_dto(updated, current_user_id=user_id)
+
     async def delete_discussion(self, discussion_id: int) -> None:
         deleted = await self._repo.soft_delete(discussion_id)
         if not deleted:

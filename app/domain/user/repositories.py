@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy import Select, and_, func, select
@@ -59,7 +58,14 @@ class UserRepository:
         email: str,
         hashed_password: str,
     ) -> User:
-        user = User(username=username, email=email, hashed_password=hashed_password)
+        now = datetime.now(timezone.utc)
+        user = User(
+            username=username,
+            email=email,
+            hashed_password=hashed_password,
+            created_at=now,
+            updated_at=now,
+        )
         self._session.add(user)
         await self._session.flush()
         return user
@@ -113,11 +119,14 @@ class UserProfileRepository:
         intro: str,
         avatar_id: int,
     ) -> UserProfile:
+        now = datetime.now(timezone.utc)
         profile = UserProfile(
             user_id=user_id,
             nickname=nickname,
             intro=intro,
             avatar_id=avatar_id,
+            created_at=now,
+            updated_at=now,
         )
         self._session.add(profile)
         await self._session.flush()
@@ -384,14 +393,12 @@ class UserStatisticsRepository:
         return int(result.scalar_one() or 0)
 
     async def aggregate(self, user_id: int) -> dict[str, int]:
-        teams, tasks, knowledge, submissions, questions, answers = await asyncio.gather(
-            self.count_teams(user_id),
-            self.count_task_memberships(user_id),
-            self.count_knowledge_entries(user_id),
-            self.count_submissions(user_id),
-            self.count_questions(user_id),
-            self.count_answers(user_id),
-        )
+        teams = await self.count_teams(user_id)
+        tasks = await self.count_task_memberships(user_id)
+        knowledge = await self.count_knowledge_entries(user_id)
+        submissions = await self.count_submissions(user_id)
+        questions = await self.count_questions(user_id)
+        answers = await self.count_answers(user_id)
         return {
             "teamCount": teams,
             "taskParticipationCount": tasks,

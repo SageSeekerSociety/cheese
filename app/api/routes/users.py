@@ -2228,9 +2228,10 @@ async def disable_user_2fa(
         if not await totp_service.is_2fa_enabled(auth_user.user_id):
             raise BadRequestError("2FA is not enabled")
 
-        if code:
-            if not await totp_service.verify_2fa(auth_user.user_id, code):
-                raise AuthenticationRequiredError("Invalid 2FA code")
+        if not code:
+            raise BadRequestError("2FA code is required to disable 2FA")
+        if not await totp_service.verify_2fa(auth_user.user_id, code):
+            raise AuthenticationRequiredError("Invalid 2FA code")
 
         await totp_service.disable_2fa(auth_user.user_id)
 

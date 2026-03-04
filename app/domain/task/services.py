@@ -432,12 +432,13 @@ class TaskMembershipService:
                         }
                     )
 
-            reasons.append(
-                {
-                    "code": "ALREADY_PARTICIPATING",
-                    "message": "This team is already participating in this task.",
-                }
-            )
+            if approved:
+                reasons.append(
+                    {
+                        "code": "ALREADY_PARTICIPATING",
+                        "message": "This team is already participating in this task.",
+                    }
+                )
 
             if task.min_team_size is not None and team_size < task.min_team_size:
                 reasons.append(

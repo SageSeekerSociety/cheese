@@ -21,7 +21,7 @@ async def get_task_roles(
 ) -> set[Role]:
     roles: set[Role] = set()
 
-    task_stmt = select(Task.created_by_id, Task.space_id).where(
+    task_stmt = select(Task.creator_id, Task.space_id).where(
         Task.id == resource_id,
         Task.deleted_at.is_(None),
     )
@@ -31,8 +31,8 @@ async def get_task_roles(
     if task_row is None:
         return roles
 
-    created_by_id, space_id = task_row
-    if created_by_id == user_id:
+    creator_id, space_id = task_row
+    if creator_id == user_id:
         roles.add(Role.OWNER)
 
     membership_stmt = select(TaskMembership.id).where(
