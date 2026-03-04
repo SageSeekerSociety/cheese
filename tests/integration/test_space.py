@@ -562,6 +562,6 @@ class TestSpaceAdmins:
             json={"userId": admin.user_id, "role": "ADMIN"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert (
-            resp.status_code == 403
-        ), f"Expected 403 after losing ownership, got {resp.status_code}"
+        assert resp.status_code == 403, (
+            f"Expected 403 after losing ownership, got {resp.status_code}"
+        )

@@ -301,8 +301,8 @@ class LLMClient:
 - team_tips: [{role: string, description: string}] 团队协作建议"""
 
         user_prompt = f"""任务名称：{task.name}
-任务简介：{task.intro or ''}
-任务详情：{task.description or ''}
+任务简介：{task.intro or ""}
+任务详情：{task.description or ""}
 
 请分析这个任务并给出结构化的学习与执行建议。"""
 

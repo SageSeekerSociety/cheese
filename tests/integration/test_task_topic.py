@@ -171,9 +171,9 @@ class TestTaskTopicIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert (
-            patch_resp.status_code == 200
-        ), f"Expected 200, got {patch_resp.status_code}: {patch_resp.text}"
+        assert patch_resp.status_code == 200, (
+            f"Expected 200, got {patch_resp.status_code}: {patch_resp.text}"
+        )
 
     def test_get_task_with_updated_topics(self, setup_task_topics: dict, api_client: httpx.Client):
         creator = setup_task_topics["creator"]
@@ -264,9 +264,9 @@ class TestTaskTopicIntegration:
         )
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         tasks = resp.json()["data"]["tasks"]
-        assert any(
-            t["id"] == task_id for t in tasks
-        ), f"Task {task_id} not found in filtered results"
+        assert any(t["id"] == task_id for t in tasks), (
+            f"Task {task_id} not found in filtered results"
+        )
 
         resp2 = api_client.get(
             "/tasks",
@@ -279,9 +279,9 @@ class TestTaskTopicIntegration:
         )
         assert resp2.status_code == 200, f"Expected 200, got {resp2.status_code}: {resp2.text}"
         tasks2 = resp2.json()["data"]["tasks"]
-        assert not any(
-            t["id"] == task_id for t in tasks2
-        ), f"Task {task_id} should not be in results filtered by topic {topic_ids[0]}"
+        assert not any(t["id"] == task_id for t in tasks2), (
+            f"Task {task_id} should not be in results filtered by topic {topic_ids[0]}"
+        )
 
     def test_clear_task_topics(self, setup_task_topics: dict, api_client: httpx.Client):
         creator = setup_task_topics["creator"]
@@ -315,6 +315,6 @@ class TestTaskTopicIntegration:
             json={"topics": []},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert (
-            patch_resp.status_code == 200
-        ), f"Expected 200, got {patch_resp.status_code}: {patch_resp.text}"
+        assert patch_resp.status_code == 200, (
+            f"Expected 200, got {patch_resp.status_code}: {patch_resp.text}"
+        )

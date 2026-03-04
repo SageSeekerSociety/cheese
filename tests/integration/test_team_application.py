@@ -523,9 +523,9 @@ class TestTeamApplicationIntegration:
             json={"message": "Try joining again"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert (
-            resp.status_code == 409
-        ), f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 409, (
+            f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        )
 
     def test_request_fails_when_pending_exists(
         self, setup_team_application: dict, api_client: httpx.Client
@@ -544,9 +544,9 @@ class TestTeamApplicationIntegration:
             json={"message": "Second request"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert (
-            resp.status_code == 409
-        ), f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 409, (
+            f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        )
 
     def test_invitation_fails_when_already_member(
         self, setup_team_application: dict, api_client: httpx.Client
@@ -571,9 +571,9 @@ class TestTeamApplicationIntegration:
             json={"userId": invitee.user_id, "role": "ADMIN"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert (
-            resp.status_code == 409
-        ), f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 409, (
+            f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        )
 
     def test_invitation_fails_when_pending_exists(
         self, setup_team_application: dict, api_client: httpx.Client
@@ -593,9 +593,9 @@ class TestTeamApplicationIntegration:
             json={"userId": invitee.user_id, "role": "ADMIN"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert (
-            resp.status_code == 409
-        ), f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 409, (
+            f"Expected 409 Conflict, got {resp.status_code}: {resp.text}"
+        )
 
     def test_user_can_request_again_after_rejection(
         self, setup_team_application: dict, api_client: httpx.Client

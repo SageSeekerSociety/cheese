@@ -264,9 +264,9 @@ class TestTasksPythonParity:
 
         p_tasks = p_resp.json()["data"]["tasks"]
         for task in p_tasks:
-            assert (
-                task.get("approved") == "APPROVED"
-            ), f"Python returned non-APPROVED task: {task.get('id')}"
+            assert task.get("approved") == "APPROVED", (
+                f"Python returned non-APPROVED task: {task.get('id')}"
+            )
 
     async def test_keyword_search_works(
         self,

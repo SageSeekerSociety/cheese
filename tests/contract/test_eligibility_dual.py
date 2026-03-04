@@ -357,8 +357,7 @@ class TestEligibilityDualEndpoint:
             p_has_teams = p_data.get("teams") is not None
 
             assert k_has_user == p_has_user, (
-                f"Task {task_id}: user field mismatch "
-                f"(Kotlin: {k_has_user}, Python: {p_has_user})"
+                f"Task {task_id}: user field mismatch (Kotlin: {k_has_user}, Python: {p_has_user})"
             )
             assert k_has_teams == p_has_teams, (
                 f"Task {task_id}: teams field mismatch "

@@ -1228,9 +1228,9 @@ class TestParticipantManagement:
             json={},
             headers={"Authorization": f"Bearer {participant1.token}"},
         )
-        assert (
-            join_resp2.status_code == 400
-        ), f"Expected 400 for duplicate join, got {join_resp2.status_code}"
+        assert join_resp2.status_code == 400, (
+            f"Expected 400 for duplicate join, got {join_resp2.status_code}"
+        )
 
 
 class TestTaskSubmission:
@@ -1739,9 +1739,9 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert (
-            delete_resp.status_code == 403
-        ), f"Expected 403 Forbidden, got {delete_resp.status_code}"
+        assert delete_resp.status_code == 403, (
+            f"Expected 403 Forbidden, got {delete_resp.status_code}"
+        )
 
     def test_delete_task_success_for_owner(
         self, api_client: httpx.Client, permission_setup: dict
@@ -1799,9 +1799,9 @@ class TestTaskPermissions:
             json={"name": "Should Fail"},
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert (
-            update_resp.status_code == 403
-        ), f"Expected 403 Forbidden, got {update_resp.status_code}"
+        assert update_resp.status_code == 403, (
+            f"Expected 403 Forbidden, got {update_resp.status_code}"
+        )
 
     def test_join_unapproved_task_fails(
         self, api_client: httpx.Client, permission_setup: dict
@@ -1864,9 +1864,9 @@ class TestTaskPermissions:
             },
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert (
-            enum_resp.status_code == 200
-        ), f"Expected 200, got {enum_resp.status_code}: {enum_resp.text}"
+        assert enum_resp.status_code == 200, (
+            f"Expected 200, got {enum_resp.status_code}: {enum_resp.text}"
+        )
         tasks = enum_resp.json()["data"]["tasks"]
         assert len(tasks) >= 1
 
@@ -1902,9 +1902,9 @@ class TestTaskPermissions:
             },
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert (
-            enum_resp.status_code == 403
-        ), f"Expected 403, got {enum_resp.status_code}: {enum_resp.text}"
+        assert enum_resp.status_code == 403, (
+            f"Expected 403, got {enum_resp.status_code}: {enum_resp.text}"
+        )
 
     def test_get_unapproved_task_as_space_admin(
         self, api_client: httpx.Client, permission_setup: dict
@@ -1933,9 +1933,9 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert (
-            get_resp.status_code == 200
-        ), f"Expected 200, got {get_resp.status_code}: {get_resp.text}"
+        assert get_resp.status_code == 200, (
+            f"Expected 200, got {get_resp.status_code}: {get_resp.text}"
+        )
         assert get_resp.json()["data"]["task"]["approved"] == "NONE"
 
     def test_get_unapproved_task_fails_for_non_admin(
@@ -1966,9 +1966,9 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert (
-            get_resp.status_code == 403
-        ), f"Expected 403, got {get_resp.status_code}: {get_resp.text}"
+        assert get_resp.status_code == 403, (
+            f"Expected 403, got {get_resp.status_code}: {get_resp.text}"
+        )
 
 
 class TestTaskJoinedFilter:
@@ -2443,9 +2443,9 @@ class TestTeamParticipant:
             json={},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert (
-            add_again_resp.status_code == 400
-        ), f"Expected 400 for duplicate add, got {add_again_resp.status_code}"
+        assert add_again_resp.status_code == 400, (
+            f"Expected 400 for duplicate add, got {add_again_resp.status_code}"
+        )
 
     def test_list_team_participants(
         self, api_client: httpx.Client, team_participant_setup: dict
@@ -3031,17 +3031,17 @@ class TestRegistrationStartTime:
         assert eligibility is not None, "Participation eligibility should be present"
         user_eligibility = eligibility.get("user")
         assert user_eligibility is not None, "User eligibility should be available"
-        assert (
-            user_eligibility.get("eligible") is False
-        ), "User should be ineligible before registration start time"
+        assert user_eligibility.get("eligible") is False, (
+            "User should be ineligible before registration start time"
+        )
 
         reasons = user_eligibility.get("reasons", [])
         has_registration_not_started = any(
             r.get("code") == "REGISTRATION_NOT_STARTED" for r in reasons
         )
-        assert (
-            has_registration_not_started
-        ), "Expected REGISTRATION_NOT_STARTED reason when start time is in the future"
+        assert has_registration_not_started, (
+            "Expected REGISTRATION_NOT_STARTED reason when start time is in the future"
+        )
 
         clear_start_resp = api_client.patch(
             f"/tasks/{task_id}",
@@ -3050,9 +3050,9 @@ class TestRegistrationStartTime:
         )
         assert clear_start_resp.status_code == 200
         patched_task = clear_start_resp.json()["data"]["task"]
-        assert (
-            patched_task.get("registrationStartAt") is None
-        ), "Registration start should be cleared after patch"
+        assert patched_task.get("registrationStartAt") is None, (
+            "Registration start should be cleared after patch"
+        )
 
         post_eligibility_resp = api_client.get(
             f"/tasks/{task_id}",
@@ -3065,9 +3065,9 @@ class TestRegistrationStartTime:
 
         assert post_eligibility is not None, "Eligibility should still be returned"
         post_user_eligibility = post_eligibility.get("user")
-        assert (
-            post_user_eligibility is not None
-        ), "User eligibility should be available after clearing start"
-        assert (
-            post_user_eligibility.get("eligible") is True
-        ), "User should become eligible once registration start is cleared"
+        assert post_user_eligibility is not None, (
+            "User eligibility should be available after clearing start"
+        )
+        assert post_user_eligibility.get("eligible") is True, (
+            "User should become eligible once registration start is cleared"
+        )

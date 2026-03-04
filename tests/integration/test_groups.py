@@ -38,7 +38,7 @@ def create_avatar_in_db() -> int:
                 VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (f"/test/avatar_{random.randint(1000,9999)}.jpg", "test_avatar", now, "upload", 0),
+                (f"/test/avatar_{random.randint(1000, 9999)}.jpg", "test_avatar", now, "upload", 0),
             )
             avatar_id = cur.fetchone()[0]
         conn.commit()

@@ -223,17 +223,17 @@ class TestNotificationsPythonParity:
         k_resp = await kotlin_client.get("/notifications", params=params, headers=auth_headers)
         p_resp = await python_client.get("/notifications", params=params, headers=auth_headers)
 
-        assert (
-            k_resp.status_code == p_resp.status_code
-        ), f"Status mismatch: Kotlin={k_resp.status_code}, Python={p_resp.status_code}"
+        assert k_resp.status_code == p_resp.status_code, (
+            f"Status mismatch: Kotlin={k_resp.status_code}, Python={p_resp.status_code}"
+        )
 
         if k_resp.status_code == 200 and p_resp.status_code == 200:
             p_notifications = p_resp.json()["data"]["notifications"]
 
             for n in p_notifications:
-                assert (
-                    n.get("type") == "TEAM_INVITATION"
-                ), f"Python returned wrong type: {n.get('type')}"
+                assert n.get("type") == "TEAM_INVITATION", (
+                    f"Python returned wrong type: {n.get('type')}"
+                )
 
     async def test_read_filter_works_same_as_kotlin(
         self,

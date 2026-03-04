@@ -316,6 +316,6 @@ class TestPasskeyPythonParity:
             headers=auth_headers,
         )
 
-        assert (
-            k_resp.status_code == p_resp.status_code
-        ), f"Status code mismatch: Kotlin={k_resp.status_code}, Python={p_resp.status_code}"
+        assert k_resp.status_code == p_resp.status_code, (
+            f"Status code mismatch: Kotlin={k_resp.status_code}, Python={p_resp.status_code}"
+        )

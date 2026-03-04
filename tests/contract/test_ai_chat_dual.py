@@ -48,12 +48,12 @@ class TestAIChatDualEndpoint:
             p_fields = set(p_model.keys())
 
             required_fields = {"id", "name"}
-            assert (
-                required_fields <= k_fields
-            ), f"Kotlin model missing: {required_fields - k_fields}"
-            assert (
-                required_fields <= p_fields
-            ), f"Python model missing: {required_fields - p_fields}"
+            assert required_fields <= k_fields, (
+                f"Kotlin model missing: {required_fields - k_fields}"
+            )
+            assert required_fields <= p_fields, (
+                f"Python model missing: {required_fields - p_fields}"
+            )
 
     async def test_list_conversations_structure_match(
         self,
@@ -123,12 +123,12 @@ class TestAIChatDualEndpoint:
         p_conv = p_data["conversation"]
 
         required_fields = {"id", "title"}
-        assert required_fields <= set(
-            k_conv.keys()
-        ), f"Kotlin missing: {required_fields - set(k_conv.keys())}"
-        assert required_fields <= set(
-            p_conv.keys()
-        ), f"Python missing: {required_fields - set(p_conv.keys())}"
+        assert required_fields <= set(k_conv.keys()), (
+            f"Kotlin missing: {required_fields - set(k_conv.keys())}"
+        )
+        assert required_fields <= set(p_conv.keys()), (
+            f"Python missing: {required_fields - set(p_conv.keys())}"
+        )
 
 
 @pytest.mark.anyio
