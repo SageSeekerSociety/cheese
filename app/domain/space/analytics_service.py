@@ -96,7 +96,7 @@ class SpaceAnalyticsService:
 
     async def get_publishers_participation(self, *, space_id: int) -> list[dict]:
         tasks = await self._fetch_all_tasks(space_id=space_id)
-        publisher_counter = Counter(getattr(task, "creator_id", 0) for task in tasks)
+        publisher_counter = Counter(task.creator_id for task in tasks)
         memberships = await self._membership_repo.list_memberships_for_space(space_id)
         participants_by_task: dict[int, list[int]] = {}
         completed_users: dict[int, int] = {}
@@ -167,27 +167,30 @@ class SpaceAnalyticsService:
             return '"' + value.replace('"', '""') + '"'
         return value
 
+    _APPROVED_MAP: dict[str, int] = {
+        "APPROVED": 0,
+        "DISAPPROVED": 1,
+        "NONE": 2,
+    }
+    _APPROVED_REV: dict[int, str] = {v: k for k, v in _APPROVED_MAP.items()}
+
     def _map_task_status(self, value: str | None) -> int | None:
-        mapping = {
-            "APPROVED": 0,
-            "REJECTED": 1,
-            "NONE": 2,
-        }
         if value is None:
             return None
-        return mapping.get(value.upper())
+        result = self._APPROVED_MAP.get(value.upper())
+        if result is None:
+            from app.core.errors import BadRequestError
+
+            raise BadRequestError(
+                f"Invalid taskStatus: {value}. Must be APPROVED, DISAPPROVED, or NONE"
+            )
+        return result
 
     def _status_label(self, approved_value: int | None) -> str:
-        mapping = {
-            0: "APPROVED",
-            1: "REJECTED",
-            2: "NONE",
-        }
-        return mapping.get(approved_value, "UNKNOWN")
+        return self._APPROVED_REV.get(approved_value, "UNKNOWN")
 
     def _participant_label(self, approved_value: int) -> str:
-        mapping = {0: "APPROVED", 1: "REJECTED", 2: "PENDING"}
-        return mapping.get(approved_value, "UNKNOWN")
+        return self._APPROVED_REV.get(approved_value, "UNKNOWN")
 
     def _build_distribution(self, name: str, counter: Counter) -> dict:
         total = sum(counter.values()) or 1

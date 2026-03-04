@@ -85,8 +85,23 @@ class ProjectRepository:
         member_id: int | None = None,
         archived: bool | None = None,
     ) -> Sequence[Project]:
-        # Minimal implementation: filter by archived flag if provided; team/members are ignored for now.
-        stmt: Select[tuple[Project]] = select(Project).where(Project.deleted_at.is_(None))
+        stmt: Select[tuple[Project]] = select(Project).where(
+            Project.deleted_at.is_(None),
+            Project.team_id == team_id,
+        )
+        if parent_id is not None:
+            stmt = stmt.where(Project.parent_id == parent_id)
+        if leader_id is not None:
+            stmt = stmt.where(Project.leader_id == leader_id)
+        if member_id is not None:
+            stmt = stmt.where(
+                Project.id.in_(
+                    select(ProjectMembership.project_id).where(
+                        ProjectMembership.user_id == member_id,
+                        ProjectMembership.deleted_at.is_(None),
+                    )
+                )
+            )
         if archived is not None:
             stmt = stmt.where(Project.archived.is_(archived))
         stmt = stmt.order_by(Project.id.asc())

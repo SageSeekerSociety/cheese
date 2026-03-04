@@ -343,6 +343,10 @@ class SpaceService:
         if new_role is SpaceAdminRole.OWNER:
             await self._promote_admin_to_owner(space_id, relation)
         else:
+            if relation.role == SpaceAdminRole.OWNER.value:
+                raise BadRequestError(
+                    "Cannot demote owner directly. Transfer ownership to another admin first."
+                )
             relation.role = new_role.value
             relation.updated_at = datetime.utcnow()
             await self._admin_repo.save(relation)

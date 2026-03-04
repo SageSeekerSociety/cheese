@@ -280,8 +280,10 @@ async def get_space_task_analytics(
     categoryId: int | None = Query(default=None),
     taskStatus: str | None = Query(default=None),
     publisherId: int | None = Query(default=None),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
 ) -> dict:
+    _ = auth_user
     data = await service.get_task_analytics(
         space_id=space_id,
         category_id=categoryId,
@@ -297,8 +299,10 @@ async def get_space_task_analytics(
 )
 async def get_publishers_participation(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
 ) -> dict:
+    _ = auth_user
     data = await service.get_publishers_participation(space_id=space_id)
     return {"code": 200, "message": "OK", "data": data}
 
@@ -310,8 +314,10 @@ async def get_publishers_participation(
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     format: str = Query(default="csv"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
 ) -> Response:
+    _ = auth_user
     if format.lower() != "csv":
         raise BadRequestError("Only csv format is supported")
     csv_payload = await service.export_participants(space_id=space_id)
