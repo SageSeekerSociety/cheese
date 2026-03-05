@@ -2,11 +2,9 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    pass
+from app.db.base_class import Base
 
 
 class UserOAuthConnection(Base):

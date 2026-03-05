@@ -1,11 +1,9 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Integer, Sequence, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    """Base declarative for user domain."""
+from app.db.base_class import Base
 
 
 class User(Base):

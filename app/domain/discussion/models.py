@@ -3,15 +3,13 @@ from enum import Enum
 
 from sqlalchemy import Boolean, DateTime, Integer, Sequence, String
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base_class import Base
 
 discussion_seq = Sequence("discussion_seq")
 discussion_reaction_seq = Sequence("discussion_reaction_seq")
 reaction_type_seq = Sequence("reaction_type_seq")
-
-
-class Base(DeclarativeBase):
-    pass
 
 
 class DiscussableModelType(str, Enum):

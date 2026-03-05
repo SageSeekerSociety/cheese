@@ -1,11 +1,9 @@
 from datetime import date, datetime
 
 from sqlalchemy import Date, DateTime, Integer, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    pass
+from app.db.base_class import Base
 
 
 class Group(Base):

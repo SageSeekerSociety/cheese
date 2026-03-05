@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, Float, Integer, String, Text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domain.llm.models import Base
+from app.db.base_class import Base
 
 logger = logging.getLogger(__name__)
 

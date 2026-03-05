@@ -7,15 +7,15 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
-    Numeric,
     Sequence,
     SmallInteger,
     String,
     Text,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
+from app.db.base_class import Base
 from app.domain.task.types import TaskAIAdviceStatus
 
 task_seq = Sequence("task_seq")
@@ -25,13 +25,7 @@ task_submission_seq = Sequence("task_submission_seq")
 task_submission_entry_seq = Sequence("task_submission_entry_seq")
 task_submission_review_seq = Sequence("task_submission_review_seq")
 task_ai_advice_context_seq = Sequence("task_ai_advice_context_seq")
-ai_conversation_seq = Sequence("ai_conversation_seq")
-ai_message_seq = Sequence("ai_message_seq")
 task_submission_schema_seq = Sequence("task_submission_schema_seq")
-
-
-class Base(DeclarativeBase):
-    """Base declarative for task domain."""
 
 
 class Task(Base):
@@ -114,19 +108,6 @@ class TaskSubmissionSchemaEntry(Base):
     index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
     description: Mapped[str] = mapped_column("description", String, nullable=False)
     type: Mapped[int] = mapped_column("type", SmallInteger, nullable=False)
-
-
-class Topic(Base):
-    """Minimal mapping for topic table."""
-
-    __tablename__ = "topic"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    created_by_id: Mapped[int] = mapped_column("created_by_id", BigInteger, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class TaskTopicsRelation(Base):
@@ -237,56 +218,6 @@ class TaskAIAdviceContext(Base):
     task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("task.id"), nullable=False)
     section: Mapped[str | None] = mapped_column(String(64), nullable=True)
     section_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        default=lambda: datetime.now(UTC).replace(tzinfo=None),
-        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-
-class AIConversation(Base):
-    __tablename__ = "ai_conversation"
-
-    id: Mapped[int] = mapped_column(BigInteger, ai_conversation_seq, primary_key=True)
-    conversation_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    module_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    context_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    model_type: Mapped[str] = mapped_column(String(64), nullable=False, default="standard")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        default=lambda: datetime.now(UTC).replace(tzinfo=None),
-        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-
-class AIMessage(Base):
-    __tablename__ = "ai_message"
-
-    id: Mapped[int] = mapped_column(BigInteger, ai_message_seq, primary_key=True)
-    conversation_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("ai_conversation.id"), nullable=False
-    )
-    role: Mapped[str] = mapped_column(String(32), nullable=False)
-    model_type: Mapped[str] = mapped_column(String(64), nullable=False, default="standard")
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
-    reasoning_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    seu_consumed: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
-    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None)
     )

@@ -3,11 +3,9 @@ from enum import Enum
 
 from sqlalchemy import BigInteger, DateTime, Integer, Sequence, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    pass
+from app.db.base_class import Base
 
 
 class KnowledgeType(str, Enum):

@@ -3,16 +3,14 @@ from enum import Enum
 
 from sqlalchemy import BigInteger, Boolean, Integer, Sequence, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base_class import Base
 
 space_seq = Sequence("space_seq")
 space_categories_seq = Sequence("space_categories_seq")
 space_user_rank_seq = Sequence("space_user_rank_seq")
 space_admin_relation_seq = Sequence("space_admin_relation_seq")
-
-
-class Base(DeclarativeBase):
-    """Base declarative for space domain."""
 
 
 class Space(Base):

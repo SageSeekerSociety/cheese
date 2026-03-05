@@ -4,9 +4,8 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.llm.models import AIConversation, AIMessage
 from app.domain.task.models import (
-    AIConversation,
-    AIMessage,
     Task,
     TaskAIAdvice,
     TaskAIAdviceContext,
@@ -16,9 +15,9 @@ from app.domain.task.models import (
     TaskSubmissionReview,
     TaskSubmissionSchemaEntry,
     TaskTopicsRelation,
-    Topic,
 )
 from app.domain.team.models import TeamUserRelation
+from app.domain.topics.models import Topic
 
 
 class TaskRepository:

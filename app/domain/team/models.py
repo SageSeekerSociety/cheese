@@ -11,12 +11,9 @@ from sqlalchemy import (
     SmallInteger,
     String,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    """Base declarative for team domain."""
-
+from app.db.base_class import Base
 
 team_seq = Sequence("team_seq")
 team_user_relation_seq = Sequence("team_user_relation_seq")

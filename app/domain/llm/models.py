@@ -1,11 +1,9 @@
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, Sequence, String, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-
-class Base(DeclarativeBase):
-    pass
+from app.db.base_class import Base
 
 
 class AIUserQuota(Base):
@@ -68,6 +66,7 @@ class AIMessage(Base):
     seu_consumed: Mapped[float | None] = mapped_column(Float, nullable=True)
     reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     reasoning_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

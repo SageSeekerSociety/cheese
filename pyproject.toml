@@ -28,6 +28,7 @@ dependencies = [
     "webauthn>=2.0.0,<3.0.0",
     "psycopg2-binary>=2.9.0,<3.0.0",
     "srptools>=1.0.0,<2.0.0",
+    "greenlet>=3.2.4",
 ]
 
 [project.optional-dependencies]

@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     # Frontend URL (used for building links like password reset)
     frontend_url: str = Field(default="http://localhost:5173", alias="FRONTEND_URL")
 
+    # CORS configuration
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://localhost:3000", alias="CORS_ORIGINS"
+    )
+    cors_credentials: bool = Field(default=True, alias="CORS_CREDENTIALS")
+
     # Base URL for avatars (can be this backend or CDN)
     avatar_base_url: str = Field(default="http://localhost:8081", alias="AVATAR_BASE_URL")
 

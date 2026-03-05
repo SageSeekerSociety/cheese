@@ -3,11 +3,9 @@ from typing import Any
 
 from sqlalchemy import Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    pass
+from app.db.base_class import Base
 
 
 class AttachmentType(str, Enum):

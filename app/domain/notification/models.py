@@ -3,15 +3,9 @@ from enum import Enum
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Index, Sequence, String
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    """Base declarative class for notification domain.
-
-    NOTE: This may later be unified into a shared Base for all domains.
-    """
-
+from app.db.base_class import Base
 
 notification_seq = Sequence("notification_seq")
 

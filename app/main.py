@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.routes import (
@@ -50,6 +51,15 @@ def create_app() -> FastAPI:
 
     # Middleware
     app.add_middleware(TracingMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+        allow_credentials=settings.cors_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Authorization", "Content-Disposition"],
+        max_age=3600,
+    )
 
     # Global error handlers（对齐 Kotlin BaseError / GlobalErrorHandler 结构）
     app.add_exception_handler(core_errors.BaseError, core_errors.base_error_handler)

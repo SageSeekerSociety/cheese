@@ -3,7 +3,9 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, Integer, Text
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.base_class import Base
 
 
 class CommentableType(str, enum.Enum):
@@ -12,10 +14,6 @@ class CommentableType(str, enum.Enum):
     COMMENT = "COMMENT"
     MATERIAL_BUNDLE = "MATERIAL_BUNDLE"
     KNOWLEDGE = "KNOWLEDGE"
-
-
-class Base(DeclarativeBase):
-    pass
 
 
 CommentCommentabletypeEnum = SQLEnum(
