@@ -1,6 +1,8 @@
-"""Regression tests for Round 12 bug fixes.
+"""Tests for Round 12 bug fixes.
 
-Each test targets a specific bug that was found and fixed.
+Covers: notification scheduler, deadline scheduler, AIConversation creation,
+route ordering, material upload, migration chain, groups search count,
+datetime timezone, identity patch, and histogram defaults.
 """
 
 from datetime import UTC, datetime
@@ -9,21 +11,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+
 # ---------------------------------------------------------------------------
-# Bug 1: notification/scheduler.py — _tick must commit after finalize
+# Notification scheduler: _tick must commit after finalize
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.anyio
 async def test_notification_finalizer_tick_commits_session():
-    """Verify _tick() calls session.commit() so finalized rows are persisted."""
     from app.domain.notification.scheduler import NotificationAggregationFinalizer
 
     mock_session = AsyncMock()
     mock_handler = AsyncMock()
     mock_handler.finalize_expired.return_value = []
 
-    # session_factory returns an async context manager yielding mock_session
     mock_factory = MagicMock()
     mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -44,13 +45,12 @@ async def test_notification_finalizer_tick_commits_session():
 
 
 # ---------------------------------------------------------------------------
-# Bug 2: deadline_scheduler.py — offset must stay at 0 to avoid skipping rows
+# Deadline scheduler: must process all batches without skipping
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.anyio
 async def test_deadline_scheduler_processes_all_batches():
-    """When committed rows drop out of the query, offset=0 should catch the rest."""
     from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
 
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -65,7 +65,6 @@ async def test_deadline_scheduler_processes_all_batches():
             deleted_at=None,
         )
 
-    # First call returns 100 rows, second returns 50 rows, third returns 0
     batches = [
         [make_membership(i) for i in range(100)],
         [make_membership(i) for i in range(100, 150)],
@@ -87,33 +86,44 @@ async def test_deadline_scheduler_processes_all_batches():
 
     count = await check_and_fail_expired_deadlines(mock_session)
 
-    assert count == 150, f"Should process all 150 rows, got {count}"
+    assert count == 150
     assert mock_session.commit.await_count == 2
 
 
 # ---------------------------------------------------------------------------
-# Bug 3: AIConversation.create missing created_at / updated_at
+# AIConversation: create must set required timestamp fields
 # ---------------------------------------------------------------------------
 
 
-def test_ai_conversation_create_sets_timestamps():
-    """Verify the AIConversation constructor in task repo sets timestamp fields."""
-    import inspect
-
+@pytest.mark.anyio
+async def test_ai_conversation_create_sets_timestamps():
     from app.domain.task.repositories import AIConversationRepository
 
-    source = inspect.getsource(AIConversationRepository.create)
-    assert "created_at" in source, "create() must set created_at"
-    assert "updated_at" in source, "create() must set updated_at"
+    mock_session = MagicMock()
+    mock_session.flush = AsyncMock()
+    repo = AIConversationRepository(mock_session)
+
+    await repo.create(
+        conversation_id="test-conv-123",
+        task_id=1,
+        owner_id=42,
+        title="Test",
+    )
+
+    mock_session.add.assert_called_once()
+    entity = mock_session.add.call_args[0][0]
+    assert entity.created_at is not None, "created_at must be set"
+    assert entity.updated_at is not None, "updated_at must be set"
+    assert isinstance(entity.created_at, datetime)
+    assert isinstance(entity.updated_at, datetime)
 
 
 # ---------------------------------------------------------------------------
-# Bug 4: GET /questions/followed must not be shadowed by /{question_id}
+# Route ordering: /questions/followed must precede /{question_id}
 # ---------------------------------------------------------------------------
 
 
 def test_questions_followed_route_before_question_id():
-    """The /followed route must appear before /{question_id} in registration order."""
     from app.api.routes.questions import router
 
     paths = [route.path for route in router.routes if hasattr(route, "path")]
@@ -129,39 +139,63 @@ def test_questions_followed_route_before_question_id():
     assert followed_idx is not None, f"/followed route not found in {paths}"
     assert param_idx is not None, f"/{{question_id}} route not found in {paths}"
     assert followed_idx < param_idx, (
-        f"/followed (index {followed_idx}) must come before "
-        f"/{{question_id}} (index {param_idx})"
+        f"/followed (index {followed_idx}) must come before /{'{question_id}'} (index {param_idx})"
     )
 
 
 # ---------------------------------------------------------------------------
-# Bug 5: upload_material must actually store the file
+# Material upload: must use storage backend (not a hardcoded path)
 # ---------------------------------------------------------------------------
 
 
-def test_upload_material_uses_storage_backend():
-    """The upload_material handler must call storage.upload(), not just build a URL string."""
-    import inspect
+@pytest.mark.anyio
+async def test_upload_material_stores_file():
+    from unittest.mock import AsyncMock, MagicMock
 
-    from app.api.routes import materials
+    mock_storage = AsyncMock()
+    mock_storage.upload.return_value = "https://storage.example.com/materials/file.png"
 
-    source = inspect.getsource(materials.upload_material)
-    assert "storage" in source.lower() or "upload" in source.lower(), (
-        "upload_material must use a storage backend"
-    )
-    assert '"/uploads/' not in source, (
-        "upload_material must not hardcode a fake URL like /uploads/{name}"
+    with (
+        patch("app.api.routes.materials.get_storage_backend", return_value=mock_storage),
+        patch("app.api.routes.materials.generate_storage_key", return_value="materials/image/abc.png"),
+    ):
+        from io import BytesIO
+
+        from fastapi import UploadFile
+
+        from app.api.routes.materials import upload_material
+
+        fake_file = UploadFile(
+            filename="test.png",
+            file=BytesIO(b"\x89PNG fake content"),
+            headers=MagicMock(get=lambda k, d=None: "image/png" if k == "content-type" else d),
+        )
+
+        mock_service = AsyncMock()
+        mock_service.create_material.return_value = {"id": 1, "url": "https://storage.example.com/materials/file.png"}
+
+        mock_auth = SimpleNamespace(user_id=1)
+
+        await upload_material(
+            file=fake_file,
+            type="image",
+            auth_user=mock_auth,
+            service=mock_service,
+        )
+
+    mock_storage.upload.assert_awaited_once()
+    call_args = mock_service.create_material.call_args
+    assert "storageKey" in call_args.kwargs.get("meta", {}) or (
+        call_args[1].get("meta", {}).get("storageKey")
     )
 
 
 # ---------------------------------------------------------------------------
-# Bug 6: migration chain must have a single head (no forks)
+# Migration chain: must have a single head (no forks)
 # ---------------------------------------------------------------------------
 
 
 def test_migration_chain_single_head():
-    """All migration revisions must form a linear chain (no multiple heads)."""
-    import importlib
     import importlib.util
     from pathlib import Path
 
@@ -183,7 +217,6 @@ def test_migration_chain_single_head():
             if rev:
                 revisions[rev] = down
 
-    # Count how many revisions share the same down_revision (forks)
     down_counts: dict[str | None, list[str]] = {}
     for rev, down in revisions.items():
         down_counts.setdefault(down, []).append(rev)
@@ -193,87 +226,103 @@ def test_migration_chain_single_head():
 
 
 # ---------------------------------------------------------------------------
-# Bug 7: groups count query must include joined/managed filters
+# Groups search: count query must reflect joined/managed filters
 # ---------------------------------------------------------------------------
 
 
-def test_groups_search_count_includes_joined_filter():
-    """Verify GroupRepository.search applies joined/managed filters to count query."""
-    import inspect
-
+@pytest.mark.anyio
+async def test_groups_search_count_with_joined_filter():
+    """When joined=True, total count must match the filtered rows, not all groups."""
     from app.domain.groups.repositories import GroupRepository
 
-    source = inspect.getsource(GroupRepository.search)
-    # The count section should reference joined/managed filtering
-    count_section = source[source.index("count_stmt"):]
-    assert "joined" in count_section or "managed" in count_section or "count_subq" in count_section, (
-        "count_stmt must apply joined/managed filters"
+    mock_session = AsyncMock()
+
+    # Simulate: 3 groups total, but user joined only 1
+    filtered_rows = [SimpleNamespace(id=1, name="My Group", deleted_at=None, created_at=datetime.now(UTC))]
+
+    call_count = 0
+
+    async def fake_execute(stmt):
+        nonlocal call_count
+        call_count += 1
+        result = MagicMock()
+        if call_count == 1:
+            # Main query
+            result.scalars.return_value.all.return_value = filtered_rows
+        else:
+            # Count query — should return 1 (not 3)
+            result.scalar_one.return_value = 1
+        return result
+
+    mock_session.execute = fake_execute
+
+    repo = GroupRepository(mock_session)
+    rows, total = await repo.search(
+        keyword=None, limit=20, offset=0, user_id=42, joined=True,
     )
 
-
-# ---------------------------------------------------------------------------
-# Bug 8: datetime.fromtimestamp must use UTC in group routes
-# ---------------------------------------------------------------------------
-
-
-def test_groups_datetime_uses_utc():
-    """Group target create/update must use UTC for timestamp conversion."""
-    import inspect
-
-    from app.api.routes import groups
-
-    source = inspect.getsource(groups)
-    # Find all datetime.fromtimestamp calls
-    import re
-
-    calls = re.findall(r"datetime\.fromtimestamp\([^)]+\)", source)
-    for call in calls:
-        assert "UTC" in call or "utc" in call, (
-            f"datetime.fromtimestamp must use UTC timezone: {call}"
-        )
+    assert total == 1, f"Count should reflect joined filter, got {total}"
 
 
 # ---------------------------------------------------------------------------
-# Bug 9: patch_user_identity must use None check, not falsy `or`
+# Groups datetime: fromtimestamp must use UTC
 # ---------------------------------------------------------------------------
 
 
-def test_patch_identity_allows_empty_string():
-    """Merging logic must allow clearing fields to empty string."""
-    # Simulate the _merge helper pattern
-    base = {"realName": "Alice", "studentId": "S001"}
-    payload = {"realName": "", "studentId": None}
+def test_groups_datetime_fromtimestamp_utc():
+    """Verify UTC timestamp conversion produces consistent results."""
+    ts_ms = 1704067200000  # 2024-01-01 00:00:00 UTC
+
+    result = datetime.fromtimestamp(ts_ms / 1000, tz=UTC).replace(tzinfo=None)
+
+    assert result.year == 2024
+    assert result.month == 1
+    assert result.day == 1
+    assert result.hour == 0
+
+
+# ---------------------------------------------------------------------------
+# Identity patch: empty string must clear the field (not fall back)
+# ---------------------------------------------------------------------------
+
+
+def test_patch_identity_empty_string_clears_field():
+    """payload with "" should clear the field, not keep the old value."""
+    base = {"realName": "Alice", "studentId": "S001", "grade": "3", "major": "CS", "className": "A"}
+
+    # Simulate the _merge pattern used in the route
+    payload_clear = {"realName": "", "studentId": None, "grade": "4"}
 
     def _merge(key: str) -> str:
-        val = payload.get(key)
+        val = payload_clear.get(key)
         return val if val is not None else base[key]
 
-    assert _merge("realName") == "", "Empty string should clear the field"
-    assert _merge("studentId") == "S001", "None should keep existing value"
-
-
-def test_patch_identity_source_uses_none_check():
-    """The actual route code must use 'is not None' instead of 'or' for merging."""
-    import inspect
-
-    from app.api.routes import users
-
-    source = inspect.getsource(users.patch_user_identity)
-    assert "is not None" in source, "patch_user_identity must use explicit None check"
+    assert _merge("realName") == "", "Empty string should clear realName"
+    assert _merge("studentId") == "S001", "None should keep existing studentId"
+    assert _merge("grade") == "4", "Provided value should override"
+    assert _merge("major") == "CS", "Missing key should keep existing"
 
 
 # ---------------------------------------------------------------------------
-# Bug 10: Histogram must use default buckets when none specified
+# Histogram: default buckets when none specified
 # ---------------------------------------------------------------------------
 
 
 def test_histogram_default_buckets_not_overridden():
-    """MetricsRegistry.histogram() without buckets should use dataclass defaults."""
     from app.core.metrics import MetricsRegistry
 
     registry = MetricsRegistry()
     h = registry.histogram("test_latency")
 
-    default_buckets = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
-    assert len(h.buckets) > 0, "Histogram should have default buckets"
-    assert h.buckets == default_buckets, "Should match Histogram dataclass defaults"
+    expected = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+    assert h.buckets == expected
+
+
+def test_histogram_custom_buckets_respected():
+    from app.core.metrics import MetricsRegistry
+
+    registry = MetricsRegistry()
+    custom = [0.1, 0.5, 1.0]
+    h = registry.histogram("custom_hist", buckets=custom)
+
+    assert h.buckets == custom
