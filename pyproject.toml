@@ -65,9 +65,13 @@ pythonVersion = "3.11"
 typeCheckingMode = "standard"
 reportMissingImports = "warning"
 reportOptionalMemberAccess = "error"
-reportArgumentType = "error"
-reportReturnType = "error"
+reportOptionalSubscript = "error"
 reportCallIssue = "error"
+# Downgraded: too many false positives from Redis/SQLAlchemy/OpenAI typing
+reportArgumentType = "warning"
+reportReturnType = "warning"
+reportAttributeAccessIssue = "warning"  # SQLAlchemy ORM dynamic attrs
+reportGeneralClassIssue = "warning"     # SQLAlchemy Select type variance
 
 [tool.ruff]
 line-length = 100

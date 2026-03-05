@@ -81,7 +81,7 @@ class GroupsService:
         for row in rows:
             profile = profiles.get(row.id)
             member_count = await self._membership_repo.count_members(row.id)
-            items.append(_group_to_dto(row, profile, member_count))
+            items.append(_group_to_dto(row, profile, member_count=member_count))
 
         returned = len(items)
         has_more = offset + returned < total
@@ -138,13 +138,7 @@ class GroupsService:
             raise NotFoundError("Group not found", data={"id": group_id})
         profile = await self._profile_repo.get_by_group_id(group_id)
         member_count = await self._membership_repo.count_members(group_id)
-        owner_id = await self._membership_repo.get_owner_id(group_id)
-        owner_dto = {"id": owner_id} if owner_id else None
-        if owner_id:
-            owner_profile = await self._user_profile_repo.get_profile_by_user_id(owner_id)
-            if owner_profile:
-                owner_dto["nickname"] = owner_profile.nickname
-                owner_dto["avatarId"] = owner_profile.avatar_id
+        owner_dto = await self._build_owner_dto(group_id)
         is_member = False
         is_owner = False
         if user_id:
@@ -184,13 +178,7 @@ class GroupsService:
         if profile:
             await self._profile_repo.update_profile(profile, intro=intro, avatar_id=avatar_id)
         member_count = await self._membership_repo.count_members(group_id)
-        owner_id = await self._membership_repo.get_owner_id(group_id)
-        owner_dto = {"id": owner_id} if owner_id else None
-        if owner_id:
-            owner_profile = await self._user_profile_repo.get_profile_by_user_id(owner_id)
-            if owner_profile:
-                owner_dto["nickname"] = owner_profile.nickname
-                owner_dto["avatarId"] = owner_profile.avatar_id
+        owner_dto = await self._build_owner_dto(group_id)
         is_member = role is not None
         is_owner = role == "OWNER"
         return _group_to_dto(
@@ -212,6 +200,17 @@ class GroupsService:
         if role != "OWNER":
             raise ForbiddenError("Only the owner can delete the group")
         await self._repo.soft_delete(group)
+
+    async def _build_owner_dto(self, group_id: int) -> dict | None:
+        owner_id = await self._membership_repo.get_owner_id(group_id)
+        if not owner_id:
+            return None
+        owner_dto: dict = {"id": owner_id}
+        owner_profile = await self._user_profile_repo.get_profile_by_user_id(owner_id)
+        if owner_profile:
+            owner_dto["nickname"] = owner_profile.nickname
+            owner_dto["avatarId"] = owner_profile.avatar_id
+        return owner_dto
 
     async def list_members(
         self,

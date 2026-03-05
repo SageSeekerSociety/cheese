@@ -387,6 +387,8 @@ class SpaceService:
         space_id: int,
         relation: SpaceAdminRelation,
     ) -> None:
+        if self._admin_repo is None:
+            raise BadRequestError("Admin operations not available")
         current_owner = await self._admin_repo.get_owner(space_id)
         if current_owner is not None:
             current_owner.role = SpaceAdminRole.ADMIN.value
