@@ -227,6 +227,21 @@ class AnswerRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0) > 0
 
+    async def get_answerer_user_ids(self, question_id: int, user_ids: set[int]) -> set[int]:
+        if not user_ids:
+            return set()
+        stmt = (
+            select(Answer.created_by_id)
+            .where(
+                Answer.question_id == question_id,
+                Answer.created_by_id.in_(list(user_ids)),
+                Answer.deleted_at.is_(None),
+            )
+            .distinct()
+        )
+        result = await self._session.execute(stmt)
+        return {r[0] for r in result.all()}
+
     async def list_all_answer_ids_by_user(self, user_id: int) -> list[int]:
         stmt = (
             select(Answer.id)

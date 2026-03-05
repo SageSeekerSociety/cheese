@@ -106,8 +106,8 @@ class Attitude(Base):
         nullable=False,
     )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class QuestionInvitation(Base):

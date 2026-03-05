@@ -471,13 +471,9 @@ class QuestionInvitationService:
         user_dto = _profile_to_user(profile) if profile else None
         dto = _invitation_to_dto(invitation, user=user_dto)
         if self._answer_repo:
-            answers = await self._answer_repo.list_answers_for_question(
-                question_id=invitation.question_id, limit=1000, offset=0
+            dto["is_answered"] = await self._answer_repo.has_user_answered_question(
+                invitation.question_id, invitation.user_id
             )
-            for answer in answers:
-                if answer.created_by_id == invitation.user_id:
-                    dto["is_answered"] = True
-                    break
         return dto
 
     async def delete_invitation(self, *, invitation_id: int, user_id: int) -> None:
@@ -505,10 +501,7 @@ class QuestionInvitationService:
     async def _get_answered_map(self, question_id: int, user_ids: set[int]) -> dict[int, bool]:
         if not self._answer_repo or not user_ids:
             return {}
-        answers = await self._answer_repo.list_answers_for_question(
-            question_id=question_id, limit=1000, offset=0
-        )
-        answered = {answer.created_by_id for answer in answers}
+        answered = await self._answer_repo.get_answerer_user_ids(question_id, user_ids)
         return {uid: uid in answered for uid in user_ids}
 
 

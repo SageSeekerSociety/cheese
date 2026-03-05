@@ -18,8 +18,12 @@ def make_entity(**overrides):
         "discussion_id": None,
         "material_id": None,
         "created_by": 99,
-        "created_at": __import__("datetime").datetime.utcnow(),
-        "updated_at": __import__("datetime").datetime.utcnow(),
+        "created_at": __import__("datetime")
+        .datetime.now(__import__("datetime").timezone.utc)
+        .replace(tzinfo=None),
+        "updated_at": __import__("datetime")
+        .datetime.now(__import__("datetime").timezone.utc)
+        .replace(tzinfo=None),
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
