@@ -4,20 +4,19 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError, NotFoundError, ConflictError
+from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.db.session import get_db
-from app.domain.space.models import Space, SpaceCategory, SpaceAdminRelation, SpaceAdminRole
+from app.domain.space.analytics_service import SpaceAnalyticsService
+from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, SpaceCategory
 from app.domain.space.repositories import (
-    SpaceRepository,
-    SpaceCategoryRepository,
     SpaceAdminRelationRepository,
+    SpaceCategoryRepository,
+    SpaceRepository,
     SpaceUserRankRepository,
 )
 from app.domain.space.services import SpaceService
-from app.domain.space.analytics_service import SpaceAnalyticsService
-from app.domain.task.repositories import TaskRepository, TaskMembershipRepository
-from app.domain.user.repositories import UserRepository, UserProfileRepository
-
+from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 router = APIRouter(prefix="/spaces", tags=["Spaces"])
 

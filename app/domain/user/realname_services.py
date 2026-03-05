@@ -1,14 +1,14 @@
 from collections.abc import Sequence
-from datetime import timezone
+from datetime import UTC
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt_text, encrypt_text
 from app.core.errors import BadRequestError, NotFoundError
-from app.domain.user.models import User, UserRealNameIdentity, UserRealNameAccessLog
+from app.domain.user.models import User, UserRealNameAccessLog, UserRealNameIdentity
 from app.domain.user.repositories import (
-    UserRealNameRepository,
     UserProfileRepository,
+    UserRealNameRepository,
     UserRepository,
 )
 
@@ -164,7 +164,7 @@ class UserRealNameService:
                 "avatarId": profile.avatar_id,
                 "intro": profile.intro,
             }
-            access_time_ms = int(log.created_at.replace(tzinfo=timezone.utc).timestamp() * 1000)
+            access_time_ms = int(log.created_at.replace(tzinfo=UTC).timestamp() * 1000)
             logs.append(
                 {
                     "accessor": accessor_dto,

@@ -1,6 +1,7 @@
-import pytest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from app.common.auth import create_access_token, create_refresh_token, decode_token
 from app.core.errors import AuthenticationRequiredError
@@ -47,12 +48,13 @@ class TestJWTService:
             mock_settings.access_token_expires_seconds = -1
 
             import jwt
+
             from app.core.config import settings
 
             payload = {
                 "sub": "123",
                 "type": "access",
-                "exp": datetime.now(timezone.utc) - timedelta(hours=1),
+                "exp": datetime.now(UTC) - timedelta(hours=1),
             }
             expired_token = jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
@@ -76,9 +78,9 @@ class TestUserAuthService:
     @pytest.fixture
     def mock_repos(self):
         from app.domain.user.repositories import (
-            UserRepository,
-            UserProfileRepository,
             UserFollowingRepository,
+            UserProfileRepository,
+            UserRepository,
             UserStatisticsRepository,
         )
 
@@ -98,6 +100,7 @@ class TestUserAuthService:
     @pytest.mark.anyio
     async def test_authenticate_valid_credentials(self, auth_service, mock_repos) -> None:
         import bcrypt
+
         from app.domain.user.models import User, UserProfile
 
         password = "test123"
@@ -124,6 +127,7 @@ class TestUserAuthService:
     @pytest.mark.anyio
     async def test_authenticate_invalid_password(self, auth_service, mock_repos) -> None:
         import bcrypt
+
         from app.domain.user.models import User
 
         password = "correct_password"

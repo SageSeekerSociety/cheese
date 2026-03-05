@@ -1,12 +1,11 @@
 import logging
-import random
+import secrets
 import string
 
 from redis.asyncio import Redis
 
 from app.core.email import get_email_sender
 from app.core.errors import BadRequestError
-
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +14,7 @@ VERIFICATION_CODE_TTL = 10 * 60
 
 
 def generate_verification_code(length: int = 6) -> str:
-    return "".join(random.choices(string.digits, k=length))
+    return "".join(secrets.choice(string.digits) for _ in range(length))
 
 
 class EmailVerificationService:

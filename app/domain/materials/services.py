@@ -3,8 +3,8 @@ from typing import Any
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.materials.models import Material, MaterialBundle
 from app.domain.materials.repositories import (
-    MaterialRepository,
     MaterialBundleRepository,
+    MaterialRepository,
 )
 
 

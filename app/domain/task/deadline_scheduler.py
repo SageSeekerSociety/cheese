@@ -1,11 +1,10 @@
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import select, and_
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.task.models import TaskMembership
-
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
 
     Returns the number of memberships that were marked as failed.
     """
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     total_failed = 0
     offset = 0
 

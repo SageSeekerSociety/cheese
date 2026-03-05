@@ -6,12 +6,12 @@ from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError
 from app.db.session import get_db
+from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.repositories import (
-    DiscussionRepository,
     DiscussionReactionRepository,
+    DiscussionRepository,
     ReactionTypeRepository,
 )
-from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.services import DiscussionService
 from app.domain.user.repositories import UserProfileRepository
 

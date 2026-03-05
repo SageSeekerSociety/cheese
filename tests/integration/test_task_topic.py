@@ -1,5 +1,5 @@
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import psycopg2
@@ -26,7 +26,7 @@ def create_topics_in_db(topic_names: list[str], created_by: int) -> list[int]:
                     VALUES (%s, %s, %s)
                     RETURNING id
                     """,
-                    (name, created_by, datetime.now(timezone.utc)),
+                    (name, created_by, datetime.now(UTC)),
                 )
                 topic_id = cur.fetchone()[0]
                 topic_ids.append(topic_id)
@@ -77,7 +77,7 @@ class TestTaskTopicIntegration:
         category_id = setup_task_topics["default_category_id"]
         topic_ids = setup_task_topics["topic_ids"]
 
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
         task_name = f"Task with Topics {random.randint(100000, 999999)}"
 
         resp = api_client.post(
@@ -107,7 +107,7 @@ class TestTaskTopicIntegration:
         category_id = setup_task_topics["default_category_id"]
         topic_ids = setup_task_topics["topic_ids"]
 
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         create_resp = api_client.post(
             "/tasks",
@@ -141,7 +141,7 @@ class TestTaskTopicIntegration:
         category_id = setup_task_topics["default_category_id"]
         topic_ids = setup_task_topics["topic_ids"]
 
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         create_resp = api_client.post(
             "/tasks",
@@ -178,7 +178,7 @@ class TestTaskTopicIntegration:
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
         topic_ids = setup_task_topics["topic_ids"]
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         create_resp = api_client.post(
             "/tasks",
@@ -224,7 +224,7 @@ class TestTaskTopicIntegration:
         category_id = setup_task_topics["default_category_id"]
         topic_ids = setup_task_topics["topic_ids"]
 
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         create_resp = api_client.post(
             "/tasks",
@@ -287,7 +287,7 @@ class TestTaskTopicIntegration:
         category_id = setup_task_topics["default_category_id"]
         topic_ids = setup_task_topics["topic_ids"]
 
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         create_resp = api_client.post(
             "/tasks",

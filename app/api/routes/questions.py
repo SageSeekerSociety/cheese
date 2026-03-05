@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, Body
+from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.auth.checker import get_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
@@ -16,13 +16,12 @@ from app.domain.discussion.repositories import (
 )
 from app.domain.discussion.services import DiscussionService
 from app.domain.questions.repositories import (
+    QuestionInvitationRepository,
     QuestionRepository,
     QuestionTopicRepository,
-    QuestionInvitationRepository,
 )
-from app.domain.questions.services import QuestionsService, QuestionInvitationService
+from app.domain.questions.services import QuestionInvitationService, QuestionsService
 from app.domain.user.repositories import UserProfileRepository
-
 
 router = APIRouter(prefix="/questions", tags=["Questions"])
 

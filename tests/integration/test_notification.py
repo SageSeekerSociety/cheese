@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import psycopg2
@@ -25,7 +25,7 @@ def create_notifications_in_db(
 
             for i in range(count):
                 nid = start_id + i
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 cur.execute(
                     """
                     INSERT INTO notification (id, receiver_id, type, read, created_at, updated_at, is_aggregatable, finalized, version, metadata, content)

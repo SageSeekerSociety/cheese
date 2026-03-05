@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
@@ -60,7 +60,7 @@ class MetricsRegistry:
         self._counters: dict[str, Counter] = {}
         self._gauges: dict[str, Gauge] = {}
         self._histograms: dict[str, Histogram] = {}
-        self._start_time = datetime.now(timezone.utc)
+        self._start_time = datetime.now(UTC)
 
     def counter(self, name: str, labels: dict[str, str] | None = None) -> Counter:
         key = self._key(name, labels)
@@ -96,7 +96,7 @@ class MetricsRegistry:
     def export(self) -> dict[str, Any]:
         with self._lock:
             return {
-                "uptime_seconds": (datetime.now(timezone.utc) - self._start_time).total_seconds(),
+                "uptime_seconds": (datetime.now(UTC) - self._start_time).total_seconds(),
                 "counters": {
                     k: {"name": v.name, "labels": v.labels, "value": v.value}
                     for k, v in self._counters.items()
@@ -111,7 +111,9 @@ class MetricsRegistry:
                         "labels": v.labels,
                         "count": v._count,
                         "sum": v._sum,
-                        "buckets": dict(zip([str(b) for b in v.buckets] + ["+Inf"], v._counts)),
+                        "buckets": dict(
+                            zip([str(b) for b in v.buckets] + ["+Inf"], v._counts, strict=False)
+                        ),
                     }
                     for k, v in self._histograms.items()
                 },

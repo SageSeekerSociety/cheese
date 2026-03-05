@@ -5,9 +5,8 @@ Revises: add_ai_chat_001
 Create Date: 2026-01-02
 """
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision = "add_passkey_001"
 down_revision = "add_ai_chat_001"

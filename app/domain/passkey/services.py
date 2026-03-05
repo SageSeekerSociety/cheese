@@ -6,7 +6,7 @@ from webauthn import (
     verify_authentication_response,
     verify_registration_response,
 )
-from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
+from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
     PublicKeyCredentialDescriptor,
@@ -99,7 +99,7 @@ class PasskeyService:
                 expected_origin=self._origin,
             )
         except Exception as e:
-            raise BadRequestError(f"Passkey verification failed: {e}")
+            raise BadRequestError(f"Passkey verification failed: {e}") from e
 
         transports = credential.get("response", {}).get("transports", [])
         device_type = getattr(verification, "credential_device_type", "single_device")
@@ -183,7 +183,7 @@ class PasskeyService:
                 credential_current_sign_count=stored_cred.counter,
             )
         except Exception as e:
-            raise BadRequestError(f"Passkey authentication failed: {e}")
+            raise BadRequestError(f"Passkey authentication failed: {e}") from e
 
         await self._repo.update_counter(
             credential_id=credential_id_b64,

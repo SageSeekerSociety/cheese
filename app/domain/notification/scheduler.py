@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.notification.publisher import build_notification_event_handler
 
-
 logger = logging.getLogger(__name__)
 
 

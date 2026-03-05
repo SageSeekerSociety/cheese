@@ -6,7 +6,6 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.logging import bind_context, clear_context, get_logger
 
-
 logger = get_logger(__name__)
 
 TRACE_ID_HEADER = "X-Trace-ID"

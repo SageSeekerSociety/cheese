@@ -315,7 +315,7 @@ class TestMaterialBundlesGetIntegration:
         )
         self.bundle_id1 = resp.json()["data"]["id"]
         self.bundle_ids: list[int] = []
-        for i in range(20):
+        for _i in range(20):
             resp = self.client.post(
                 "/material-bundles",
                 headers=self.headers,

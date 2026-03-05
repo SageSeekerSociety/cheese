@@ -14,7 +14,6 @@ from app.domain.llm.repositories import (
 )
 from app.domain.llm.services import AiAdviceService, QuotaExceededError
 
-
 router = APIRouter(prefix="/ai", tags=["AI"])
 
 
@@ -158,4 +157,4 @@ async def chat_with_ai(
         )
         return {"code": 200, "message": "OK", "data": result}
     except QuotaExceededError as e:
-        raise BadRequestError(str(e))
+        raise BadRequestError(str(e)) from e

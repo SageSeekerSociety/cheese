@@ -1,8 +1,8 @@
 from collections import Counter
 from dataclasses import dataclass
 
-from app.domain.task.repositories import TaskRepository, TaskMembershipRepository
-from app.domain.user.repositories import UserRepository, UserProfileRepository
+from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 
 @dataclass

@@ -10,7 +10,6 @@ from app.domain.knowledge.repositories import KnowledgeRepository
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.team.repositories import TeamRepository
 
-
 router = APIRouter(prefix="/knowledge", tags=["Knowledge"])
 
 

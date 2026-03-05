@@ -13,31 +13,30 @@ from app.common.auth import (
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
-    NotFoundError,
     ForbiddenError,
+    NotFoundError,
     UnprocessableEntityError,
 )
 from app.db.session import get_db
+from app.domain.answers.repositories import AnswerRepository
+from app.domain.oauth.repositories import OAuthConnectionRepository
+from app.domain.oauth.services import OAuthService
+from app.domain.passkey.repositories import PasskeyRepository
+from app.domain.passkey.services import PasskeyService
+from app.domain.questions.repositories import QuestionRepository, QuestionTopicRepository
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.repositories import TeamMembershipApplicationRepository, TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.user.models import UserFollowingRelationship
+from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserFollowingRepository,
     UserProfileRepository,
-    UserRepository,
     UserRealNameRepository,
+    UserRepository,
     UserStatisticsRepository,
 )
-from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.services import UserAuthService, UserProfileService
-from app.domain.questions.repositories import QuestionRepository, QuestionTopicRepository
-from app.domain.answers.repositories import AnswerRepository
-from app.domain.passkey.repositories import PasskeyRepository
-from app.domain.passkey.services import PasskeyService
-from app.domain.oauth.repositories import OAuthConnectionRepository
-from app.domain.oauth.services import OAuthService
-
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -770,7 +769,9 @@ async def send_register_email_code(
     Falls back to success response if email not configured (for dev).
     """
     import re
+
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.core.errors import ConflictError
     from app.domain.user.verification_service import EmailVerificationService
@@ -820,7 +821,9 @@ async def register_user(
     - SRP auth (srpSalt/srpVerifier required)
     """
     import re
+
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.verification_service import EmailVerificationService
 
@@ -928,7 +931,7 @@ async def get_current_user(
     try:
         user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
     except ValueError:
-        raise NotFoundError("User not found")
+        raise NotFoundError("User not found") from None
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -959,7 +962,7 @@ async def get_user(
     try:
         user, profile = await auth_service.get_user_with_profile(user_id)
     except ValueError:
-        raise NotFoundError("User not found")
+        raise NotFoundError("User not found") from None
 
     user_dto = await auth_service.build_user_dto(
         user=user,
@@ -1028,8 +1031,9 @@ async def user_login(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
-    from app.domain.user.login_security import LoginRateLimiter, TOTPService, SessionManager
+    from app.domain.user.login_security import LoginRateLimiter, SessionManager, TOTPService
 
     username = payload.get("username")
     password = payload.get("password")
@@ -1207,6 +1211,7 @@ async def sudo_auth(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
@@ -1260,7 +1265,7 @@ async def sudo_auth(
                     server_ctx = _srp.SRPContext(user.username)
                     server_session = _srp.SRPServerSession(server_ctx, stored_verifier)
                 except (ValueError, _srp.SRPException):
-                    raise AuthenticationRequiredError("Corrupted SRP credentials")
+                    raise AuthenticationRequiredError("Corrupted SRP credentials") from None
                 server_public = server_session.public
                 server_private = server_session.private
 
@@ -1292,7 +1297,7 @@ async def sudo_auth(
                 )
                 server_session.process(client_ephemeral, stored_salt)
             except (ValueError, TypeError, _srp.SRPException):
-                raise AuthenticationRequiredError("Invalid SRP parameters")
+                raise AuthenticationRequiredError("Invalid SRP parameters") from None
 
             if not server_session.verify_proof(client_proof):
                 raise AuthenticationRequiredError("Invalid SRP proof")
@@ -1489,6 +1494,7 @@ async def enable_2fa(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
@@ -1523,6 +1529,7 @@ async def verify_2fa_setup(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
@@ -1561,6 +1568,7 @@ async def disable_2fa(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
@@ -1599,6 +1607,7 @@ async def get_2fa_status(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
@@ -1626,6 +1635,7 @@ async def list_sessions(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import SessionManager
 
@@ -1666,6 +1676,7 @@ async def revoke_session(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import SessionManager
 
@@ -1694,6 +1705,7 @@ async def revoke_all_sessions(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import SessionManager
 
@@ -1727,6 +1739,7 @@ async def forgot_password(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.core.email import get_email_sender
     from app.domain.user.login_security import PasswordResetService
@@ -1779,6 +1792,7 @@ async def reset_password(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import PasswordResetService
 
@@ -1818,7 +1832,9 @@ async def recover_password_request(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     import re
+
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.core.email import get_email_sender
     from app.domain.user.login_security import PasswordResetService
@@ -1879,6 +1895,7 @@ async def recover_password_verify(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import PasswordResetService
 
@@ -2153,6 +2170,7 @@ async def enable_user_2fa(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
@@ -2206,6 +2224,7 @@ async def disable_user_2fa(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
@@ -2246,6 +2265,7 @@ async def get_user_2fa_status(
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
@@ -2275,9 +2295,11 @@ async def passkey_register_challenge(
     auth_service: UserAuthService = Depends(get_user_auth_service),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-    from app.core.config import settings
     import json
+
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.config import settings
 
     user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
 
@@ -2311,6 +2333,7 @@ async def passkey_register_verify(
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
 
     challenge = payload.get("challenge")
@@ -2350,9 +2373,11 @@ async def passkey_authenticate_challenge(
     payload: dict = Body(default={}),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-    from app.core.config import settings
     import json
+
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.config import settings
 
     user_id = payload.get("userId")
 
@@ -2386,6 +2411,7 @@ async def passkey_authenticate_verify(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
+
     from app.core.config import settings
     from app.domain.user.login_security import SessionManager
 
@@ -2536,7 +2562,7 @@ async def get_oauth_login_url(
     try:
         auth_url = oauth_service.generate_authorization_url(provider_id, state)
     except NotFoundError:
-        raise NotFoundError(f"OAuth provider '{provider_id}' not found or not enabled")
+        raise NotFoundError(f"OAuth provider '{provider_id}' not found or not enabled") from None
 
     return {
         "code": 200,
@@ -2570,7 +2596,7 @@ async def handle_oauth_callback(
             state=state,
         )
     except Exception as e:
-        raise BadRequestError(f"OAuth authentication failed: {str(e)}")
+        raise BadRequestError(f"OAuth authentication failed: {e!s}") from e
 
     existing = await oauth_service.get_connection_by_provider(
         provider_id=provider_id,

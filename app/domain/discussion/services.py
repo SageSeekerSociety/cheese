@@ -6,9 +6,9 @@ from app.core.errors import BadRequestError, NotFoundError
 from app.domain.discussion.models import DiscussableModelType
 from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.repositories import DiscussionRepository
-from app.domain.user.repositories import UserProfileRepository
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import publish_notification_event
+from app.domain.user.repositories import UserProfileRepository
 
 
 class DiscussionService:
@@ -38,7 +38,7 @@ class DiscussionService:
             raise BadRequestError("content is required")
         try:
             DiscussableModelType(model_type.upper())
-        except ValueError as exc:  # noqa: PERF203
+        except ValueError as exc:
             raise BadRequestError(f"Invalid modelType: {model_type}") from exc
 
         entity = await self._repo.create(

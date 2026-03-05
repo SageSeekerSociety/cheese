@@ -1,13 +1,12 @@
-from typing import Sequence
+from collections.abc import Sequence
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.answers.repositories import AnswerRepository
-from app.domain.questions.models import Question, VoteType
-from app.domain.questions.models import QuestionInvitation
+from app.domain.questions.models import Question, QuestionInvitation, VoteType
 from app.domain.questions.repositories import (
+    QuestionInvitationRepository,
     QuestionRepository,
     QuestionTopicRepository,
-    QuestionInvitationRepository,
 )
 from app.domain.user.repositories import UserProfileRepository
 

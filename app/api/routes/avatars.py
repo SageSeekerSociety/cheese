@@ -1,6 +1,6 @@
 import hashlib
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile
@@ -11,7 +11,6 @@ from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
 from app.domain.avatars.repositories import AvatarRepository
 from app.domain.avatars.services import AvatarService
-
 
 router = APIRouter(prefix="/avatars", tags=["Avatars"])
 
@@ -89,7 +88,7 @@ async def get_default_avatar(
     last_modified = (
         avatar.created_at.strftime("%a, %d %b %Y %H:%M:%S GMT")
         if avatar.created_at
-        else datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        else datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S GMT")
     )
 
     return Response(
@@ -151,7 +150,7 @@ async def get_avatar_by_id(
     last_modified = (
         avatar.created_at.strftime("%a, %d %b %Y %H:%M:%S GMT")
         if avatar.created_at
-        else datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        else datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S GMT")
     )
 
     return Response(

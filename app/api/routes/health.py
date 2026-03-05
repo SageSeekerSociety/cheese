@@ -8,7 +8,6 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 
-
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
 

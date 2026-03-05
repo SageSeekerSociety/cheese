@@ -60,6 +60,57 @@ include = [
     "README.md",
 ]
 
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingImports = "warning"
+reportOptionalMemberAccess = "error"
+reportArgumentType = "error"
+reportReturnType = "error"
+reportCallIssue = "error"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear (catches common bugs)
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+    "ASYNC",# flake8-async (async pitfalls)
+    "S",    # flake8-bandit (security)
+    "T20",  # flake8-print (no print statements)
+]
+ignore = [
+    "S101",   # allow assert in tests
+    "S104",   # allow binding to 0.0.0.0
+    "S105",   # false positives on password variable names
+    "S106",   # false positives on password argument names
+    "B008",   # allow Depends() in function defaults (FastAPI pattern)
+    "RUF001", # ambiguous unicode — Chinese text
+    "RUF002", # ambiguous unicode — Chinese text
+    "RUF003", # ambiguous unicode — Chinese text
+    "RUF012", # mutable class variable annotations (SQLAlchemy models)
+    "RUF059", # false positives on _ = auth_user pattern
+    "SIM108", # ternary operator — style preference
+    "SIM102", # collapsible if — style preference
+    "SIM105", # contextlib.suppress — style preference
+    "SIM115", # open context manager — style preference
+    "E501",   # line too long — ruff format handles this
+    "UP042",  # unnecessary __future__ annotations
+    "ASYNC109",# false positive on timeout parameter names
+    "ASYNC230",# blocking open() — needs aiofiles dep, defer
+    "ASYNC240",# blocking os.path — needs anyio dep, defer
+    "S108",   # hardcoded /tmp — acceptable for local file ops
+    "S324",   # md5 for checksums, not security
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "T20"]
+"scripts/**" = ["T20"]

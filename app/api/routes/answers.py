@@ -19,7 +19,6 @@ from app.domain.discussion.services import DiscussionService
 from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.repositories import UserProfileRepository
 
-
 router = APIRouter(prefix="/questions/{question_id}/answers", tags=["Answers"])
 
 

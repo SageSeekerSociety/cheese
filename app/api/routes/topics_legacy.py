@@ -9,7 +9,6 @@ from app.db.session import get_db
 from app.domain.topics.repositories import TopicRepository
 from app.domain.topics.services import TopicService
 
-
 router = APIRouter(prefix="/topics", tags=["Topics"])
 
 

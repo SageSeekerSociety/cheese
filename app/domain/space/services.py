@@ -1,16 +1,15 @@
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
-from app.domain.space.models import Space, SpaceCategory, SpaceAdminRole, SpaceAdminRelation
+from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, SpaceCategory
 from app.domain.space.repositories import (
-    SpaceRepository,
-    SpaceCategoryRepository,
-    SpaceUserRankRepository,
     SpaceAdminRelationRepository,
+    SpaceCategoryRepository,
+    SpaceRepository,
+    SpaceUserRankRepository,
 )
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.domain.task.repositories import TaskRepository
@@ -163,7 +162,7 @@ class SpaceService:
                 )
             space.default_category_id = default_category_id
 
-        space.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        space.updated_at = datetime.now(UTC).replace(tzinfo=None)
         return await self._repo.save(space)
 
     # ------------------------------------------------------------------
@@ -218,11 +217,9 @@ class SpaceService:
         if display_order is not None:
             category.display_order = display_order
         if archived is not None:
-            category.archived_at = (
-                datetime.now(timezone.utc).replace(tzinfo=None) if archived else None
-            )
+            category.archived_at = datetime.now(UTC).replace(tzinfo=None) if archived else None
 
-        category.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        category.updated_at = datetime.now(UTC).replace(tzinfo=None)
         return await self._category_repo.save(category)
 
     async def delete_category(
@@ -250,8 +247,8 @@ class SpaceService:
             if task_count > 0:
                 raise BadRequestError("Cannot delete a category that contains tasks.")
 
-        category.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        category.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        category.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        category.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._category_repo.save(category)
 
     async def set_category_archived(
@@ -264,8 +261,8 @@ class SpaceService:
     ) -> SpaceCategory:
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
-        category.archived_at = datetime.now(timezone.utc).replace(tzinfo=None) if archived else None
-        category.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        category.archived_at = datetime.now(UTC).replace(tzinfo=None) if archived else None
+        category.updated_at = datetime.now(UTC).replace(tzinfo=None)
         return await self._category_repo.save(category)
 
     # ------------------------------------------------------------------
@@ -298,7 +295,7 @@ class SpaceService:
             current_owner = await self._admin_repo.get_owner(space_id)
             if current_owner is not None:
                 current_owner.role = SpaceAdminRole.ADMIN.value
-                current_owner.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                current_owner.updated_at = datetime.now(UTC).replace(tzinfo=None)
                 await self._admin_repo.save(current_owner)
         await self._admin_repo.add_admin(
             space_id=space_id,
@@ -348,14 +345,14 @@ class SpaceService:
                     "Cannot demote owner directly. Transfer ownership to another admin first."
                 )
             relation.role = new_role.value
-            relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            relation.updated_at = datetime.now(UTC).replace(tzinfo=None)
             await self._admin_repo.save(relation)
 
     async def delete_space(self, *, space_id: int, actor_user_id: int | None) -> None:
         space = await self._get_space_or_error(space_id)
         await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
-        space.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        space.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        space.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        space.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._repo.save(space)
 
     # ------------------------------------------------------------------
@@ -393,10 +390,10 @@ class SpaceService:
         current_owner = await self._admin_repo.get_owner(space_id)
         if current_owner is not None:
             current_owner.role = SpaceAdminRole.ADMIN.value
-            current_owner.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            current_owner.updated_at = datetime.now(UTC).replace(tzinfo=None)
             await self._admin_repo.save(current_owner)
         relation.role = SpaceAdminRole.OWNER.value
-        relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        relation.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._admin_repo.save(relation)
 
     async def _get_category(self, space_id: int, category_id: int) -> SpaceCategory:

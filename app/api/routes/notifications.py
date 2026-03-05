@@ -1,30 +1,29 @@
-from typing import Annotated
-from datetime import datetime, timezone
 import base64
 import json
+from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
 
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError, NotFoundError
 from app.core.config import settings
+from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
+from app.domain.notification.entity_resolvers import (
+    ProjectEntityResolver,
+    TeamEntityResolver,
+    UserEntityResolver,
+)
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.notification.services import NotificationQueryService
-from app.domain.notification.entity_resolvers import (
-    TeamEntityResolver,
-    UserEntityResolver,
-    ProjectEntityResolver,
-)
+from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import ProjectService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.user.repositories import UserProfileRepository
 from app.domain.user.services import UserService
-from app.domain.project.repositories import ProjectRepository
-from app.domain.project.services import ProjectService
-
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -136,7 +135,7 @@ async def list_notifications(
             ts = data.get("createdAt")
             cid = data.get("id")
             if isinstance(ts, (int, float)) and isinstance(cid, int):
-                cursor_created_at = datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc)
+                cursor_created_at = datetime.fromtimestamp(ts / 1000.0, tz=UTC)
                 cursor_id = cid
         except Exception:
             cursor_created_at = None
@@ -213,7 +212,7 @@ async def bulk_update_notifications(
             nid = int(item["id"])
             read = bool(item["read"])
         except Exception as exc:
-            raise BadRequestError(f"Invalid update payload: {exc}")
+            raise BadRequestError(f"Invalid update payload: {exc}") from exc
         updates.append((nid, read))
 
     updated_ids = await service.bulk_set_read_status(

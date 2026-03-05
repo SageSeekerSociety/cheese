@@ -8,8 +8,9 @@ Python backend repo so contract tests can depend on a stable JSON snapshot.
 
 import argparse
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any
 
 import yaml
 
@@ -39,9 +40,9 @@ def load_api_catalog(openapi_file: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"OpenAPI spec not found: {openapi_file}")
 
     document = yaml.safe_load(openapi_file.read_text()) or {}
-    paths: Dict[str, Any] = document.get("paths", {}) or {}
+    paths: dict[str, Any] = document.get("paths", {}) or {}
 
-    entries: List[dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
     for path, operations in paths.items():
         if not isinstance(operations, dict):
             continue
@@ -89,9 +90,9 @@ def _summarize_parameters(raw: Iterable[Any]) -> list[dict[str, Any]]:
     return summary
 
 
-def _collect_response_codes(responses: Dict[str, Any]) -> list[str]:
+def _collect_response_codes(responses: dict[str, Any]) -> list[str]:
     codes: list[str] = []
-    for status_code in responses.keys():
+    for status_code in responses:
         codes.append(str(status_code))
     return codes
 

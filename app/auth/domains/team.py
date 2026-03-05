@@ -8,7 +8,7 @@ from app.auth.core import (
     Resource,
     Role,
 )
-from app.domain.team.models import TeamUserRelation, TeamMemberRole
+from app.domain.team.models import TeamMemberRole, TeamUserRelation
 
 
 async def get_team_roles(

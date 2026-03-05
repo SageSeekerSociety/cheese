@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,7 @@ class OAuthConnectionRepository:
         refresh_token: str | None = None,
         token_expires: datetime | None = None,
     ) -> UserOAuthConnection:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         entity = UserOAuthConnection(
             user_id=user_id,
             provider_id=provider_id,
@@ -85,5 +85,5 @@ class OAuthConnectionRepository:
         if entity:
             entity.refresh_token = refresh_token
             entity.token_expires = token_expires
-            entity.updated_at = datetime.now(timezone.utc)
+            entity.updated_at = datetime.now(UTC)
             await self._session.flush()

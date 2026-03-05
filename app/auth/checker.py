@@ -1,22 +1,21 @@
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import Depends, Request
-
-from app.core.errors import AccessDeniedError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.core import (
+    ROLE_HIERARCHY,
     Action,
     AuthUserInfo,
     PermissionConfig,
     Resource,
     Role,
-    ROLE_HIERARCHY,
     SystemRole,
 )
 from app.common.auth import get_optional_user_id
+from app.core.errors import AccessDeniedError
 from app.db.session import get_db
-
 
 DomainRoleProvider = Callable[[AsyncSession, int, str, int], Awaitable[set[Role]]]
 

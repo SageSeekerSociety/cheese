@@ -1,7 +1,7 @@
 import logging
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pyotp
@@ -140,7 +140,7 @@ class SessionManager:
         user_agent: str = "",
     ) -> str:
         session_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         session_data = {
             "session_id": session_id,
@@ -173,7 +173,7 @@ class SessionManager:
 
     async def update_last_active(self, session_id: str) -> None:
         key = f"{SESSION_PREFIX}{session_id}"
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         await self._redis.hset(key, "last_active_at", now)
         await self._redis.expire(key, SESSION_TTL)
 
@@ -243,7 +243,7 @@ class PasswordResetService:
         data = {
             "user_id": str(user_id),
             "email": email,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
 
         await self._redis.hset(key, mapping=data)

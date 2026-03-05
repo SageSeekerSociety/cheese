@@ -1,5 +1,4 @@
 from datetime import datetime
-
 from enum import Enum
 
 from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint

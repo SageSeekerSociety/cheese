@@ -198,7 +198,7 @@ class TestUserFollowersListIntegration:
         return user, {"Authorization": f"Bearer {token}"}
 
     def test_get_followers_of_aux_user(self):
-        for i, user_id in enumerate(self.aux_user_ids[:-1]):
+        for _i, user_id in enumerate(self.aux_user_ids[:-1]):
             response = self.client.get(
                 f"/users/{user_id}/followers",
                 headers=self.headers,

@@ -10,13 +10,12 @@ from app.domain.comments.repositories import CommentRepository
 from app.domain.comments.services import CommentService
 from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.repositories import (
-    UserRepository,
-    UserProfileRepository,
     UserFollowingRepository,
+    UserProfileRepository,
+    UserRepository,
     UserStatisticsRepository,
 )
 from app.domain.user.services import UserAuthService
-
 
 router = APIRouter(prefix="/comments", tags=["Comments"])
 

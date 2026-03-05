@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +19,7 @@ class AnswerRepository:
         created_by_id: int,
         content: str,
     ) -> Answer:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         answer = Answer(
             question_id=question_id,
             created_by_id=created_by_id,
@@ -80,7 +80,7 @@ class AnswerRepository:
 
     async def vote(self, *, answer_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(answer_id, user_id)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if existing is not None:
             existing.attitude = vote_type
             existing.updated_at = now
@@ -137,12 +137,12 @@ class AnswerRepository:
     async def update_answer(self, answer: Answer, *, content: str | None = None) -> Answer:
         if content is not None:
             answer.content = content
-        answer.updated_at = datetime.now(timezone.utc)
+        answer.updated_at = datetime.now(UTC)
         await self._session.flush()
         return answer
 
     async def soft_delete(self, answer: Answer) -> None:
-        answer.deleted_at = datetime.now(timezone.utc)
+        answer.deleted_at = datetime.now(UTC)
         await self._session.flush()
 
     async def add_favorite(self, *, answer_id: int, user_id: int) -> bool:

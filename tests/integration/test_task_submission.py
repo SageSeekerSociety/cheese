@@ -1,5 +1,5 @@
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -62,7 +62,7 @@ class TestTaskSubmissionIntegration:
         resubmittable: bool = True,
         editable: bool = True,
     ) -> int:
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
         task_resp = api_client.post(
             "/tasks",
             json={
@@ -788,7 +788,7 @@ class TestTaskSubmissionIntegration:
             data["suffix"],
         )
 
-        new_deadline = int((datetime.now(timezone.utc).timestamp() + 14 * 24 * 3600) * 1000)
+        new_deadline = int((datetime.now(UTC).timestamp() + 14 * 24 * 3600) * 1000)
 
         resp = api_client.patch(
             f"/tasks/{task_id}",
@@ -935,7 +935,7 @@ class TestTaskSubmissionIntegration:
         creator = data["creator"]
         participant = data["participant"]
 
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
         task_resp = api_client.post(
             "/tasks",
             json={
@@ -1071,7 +1071,7 @@ class TestTaskSubmissionIntegration:
         category_id: int,
         suffix: int,
     ) -> int:
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
         task_resp = api_client.post(
             "/tasks",
             json={

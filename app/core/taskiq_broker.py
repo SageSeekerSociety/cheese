@@ -1,8 +1,7 @@
 from taskiq import TaskiqScheduler
-from taskiq_redis import RedisAsyncResultBackend, ListQueueBroker
+from taskiq_redis import ListQueueBroker, RedisAsyncResultBackend
 
 from app.core.config import settings
-
 
 broker = ListQueueBroker(
     url=settings.redis_url,

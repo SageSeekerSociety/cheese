@@ -2,7 +2,7 @@ import mimetypes
 from typing import Any, BinaryIO
 
 from app.core.errors import ForbiddenError, NotFoundError
-from app.core.storage import StorageBackend, generate_storage_key, compute_file_hash
+from app.core.storage import StorageBackend, compute_file_hash, generate_storage_key
 from app.domain.attachment.models import Attachment, AttachmentType
 from app.domain.attachment.repositories import AttachmentRepository
 

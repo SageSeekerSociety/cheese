@@ -5,7 +5,6 @@ from taskiq.schedule_sources import LabelScheduleSource
 from app.core.taskiq_broker import broker, scheduler
 from app.db.session import AsyncSessionLocal as async_session_factory
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -83,6 +82,7 @@ async def process_email_queue_task() -> dict[str, int]:
     try:
         async with async_session_factory() as session:
             from sqlalchemy import select
+
             from app.domain.user.models import User
 
             while True:

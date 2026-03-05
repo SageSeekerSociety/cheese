@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import UTC
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.project.models import Project, ProjectMemberRole, ProjectMembership
@@ -29,10 +30,10 @@ class ProjectService:
         external_task_id: int | None = None,
         github_repo: str | None = None,
     ) -> Project:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        start_dt = datetime.fromtimestamp(start_date / 1000, tz=timezone.utc)
-        end_dt = datetime.fromtimestamp(end_date / 1000, tz=timezone.utc)
+        start_dt = datetime.fromtimestamp(start_date / 1000, tz=UTC)
+        end_dt = datetime.fromtimestamp(end_date / 1000, tz=UTC)
         return await self._repo.create_project(
             name=name,
             description=description,

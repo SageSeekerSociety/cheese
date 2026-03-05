@@ -1,17 +1,17 @@
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.questions.models import (
+    Attitude,
     Question,
     QuestionFollowerRelation,
-    QuestionTopicRelation,
+    QuestionInvitation,
     QuestionQueryLog,
     QuestionSearchLog,
-    Attitude,
-    QuestionInvitation,
+    QuestionTopicRelation,
     VoteType,
 )
 
@@ -30,7 +30,7 @@ class QuestionRepository:
         group_id: int | None,
         bounty: int,
     ) -> Question:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         question = Question(
             created_by_id=created_by_id,
             title=title,
@@ -87,7 +87,7 @@ class QuestionRepository:
         existing = await self._get_follow_relation(question_id, user_id)
         if existing is not None and existing.deleted_at is None:
             return False
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if existing is None:
             relation = QuestionFollowerRelation(
                 question_id=question_id,
@@ -106,7 +106,7 @@ class QuestionRepository:
         relation = await self._get_follow_relation(question_id, user_id)
         if relation is None or relation.deleted_at is not None:
             return False
-        relation.deleted_at = datetime.now(timezone.utc)
+        relation.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return True
 
@@ -164,7 +164,7 @@ class QuestionRepository:
         return result.scalar_one_or_none() is not None
 
     async def count_comments(self, question_id: int) -> int:
-        from app.domain.discussion.models import Discussion, DiscussableModelType
+        from app.domain.discussion.models import DiscussableModelType, Discussion
 
         stmt = select(func.count(Discussion.id)).where(
             Discussion.model_type == DiscussableModelType.QUESTION.value,
@@ -180,7 +180,7 @@ class QuestionRepository:
         if question is None:
             return None
         question.accepted_answer_id = answer_id
-        question.updated_at = datetime.now(timezone.utc)
+        question.updated_at = datetime.now(UTC)
         await self._session.flush()
         return question
 
@@ -190,7 +190,7 @@ class QuestionRepository:
         if question is None:
             return None
         question.accepted_answer_id = None
-        question.updated_at = datetime.now(timezone.utc)
+        question.updated_at = datetime.now(UTC)
         await self._session.flush()
         return question
 
@@ -207,14 +207,14 @@ class QuestionRepository:
             viewer_id=viewer_id,
             ip=ip,
             user_agent=user_agent,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         self._session.add(log)
         await self._session.flush()
 
     async def vote(self, *, question_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(question_id, user_id)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if existing is not None:
             existing.attitude = vote_type
             existing.updated_at = now
@@ -289,13 +289,13 @@ class QuestionRepository:
             searcher_id=searcher_id,
             ip=ip,
             user_agent=user_agent,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         self._session.add(log)
         await self._session.flush()
 
     async def get_trending_questions(self, *, limit: int = 10, days: int = 7) -> list[Question]:
-        cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoff = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         from datetime import timedelta
 
         cutoff = cutoff - timedelta(days=days)
@@ -343,7 +343,7 @@ class QuestionRepository:
     async def get_popular_search_terms(self, *, limit: int = 10, days: int = 7) -> list[dict]:
         from datetime import timedelta
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
         stmt = (
             select(QuestionSearchLog.keywords, func.count(QuestionSearchLog.id).label("count"))
             .where(QuestionSearchLog.created_at >= cutoff)
@@ -368,17 +368,17 @@ class QuestionRepository:
             question.content = content
         if type_ is not None:
             question.type = type_
-        question.updated_at = datetime.now(timezone.utc)
+        question.updated_at = datetime.now(UTC)
         await self._session.flush()
         return question
 
     async def soft_delete(self, question: Question) -> None:
-        question.deleted_at = datetime.now(timezone.utc)
+        question.deleted_at = datetime.now(UTC)
         await self._session.flush()
 
     async def set_bounty(self, question: Question, bounty: int) -> Question:
         question.bounty = bounty
-        question.updated_at = datetime.now(timezone.utc)
+        question.updated_at = datetime.now(UTC)
         await self._session.flush()
         return question
 
@@ -444,7 +444,7 @@ class QuestionTopicRepository:
         )
         result = await self._session.execute(stmt)
         existing = list(result.scalars().all())
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for row in existing:
             row.deleted_at = now
         for topic_id in topic_ids:
@@ -511,7 +511,7 @@ class QuestionInvitationRepository:
 
     async def create_invitation(self, *, question_id: int, user_id: int) -> QuestionInvitation:
         existing = await self._get_invitation(question_id, user_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if existing is not None:
             existing.updated_at = now
             await self._session.flush()

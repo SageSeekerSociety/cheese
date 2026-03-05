@@ -5,9 +5,8 @@ Revises: 1c64f1712118
 Create Date: 2026-01-02
 """
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision = "add_ai_chat_001"
 down_revision = "1c64f1712118"

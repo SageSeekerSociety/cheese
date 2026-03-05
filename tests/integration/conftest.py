@@ -6,7 +6,7 @@ import sys
 import time
 from collections.abc import Generator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import bcrypt
 import httpx
@@ -97,7 +97,7 @@ class UserCreator:
         intro = intro or self._test_intro()
 
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         dsn = _get_psycopg2_dsn()
         conn = psycopg2.connect(dsn)

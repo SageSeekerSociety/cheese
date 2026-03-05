@@ -1,10 +1,9 @@
 from datetime import datetime
+from enum import Enum
 
 from sqlalchemy import BigInteger, Boolean, Integer, Sequence, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from enum import Enum
-
 
 space_seq = Sequence("space_seq")
 space_categories_seq = Sequence("space_categories_seq")

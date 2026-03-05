@@ -3,39 +3,39 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.routes import (
-    health,
-    notifications,
-    teams,
-    tasks,
-    users,
-    projects,
-    spaces,
-    questions,
-    discussions,
     ai,
+    answers,
     attachments,
     avatars,
-    materials,
     comments,
+    discussions,
     groups,
-    materialbundles,
-    topics_legacy,
-    answers,
+    health,
     knowledge,
+    materialbundles,
+    materials,
+    notifications,
+    projects,
+    questions,
+    spaces,
+    tasks,
+    teams,
+    topics_legacy,
+    users,
 )
-from app.core.config import settings
+from app.auth.domains import (
+    register_knowledge_permissions,
+    register_question_permissions,
+    register_space_permissions,
+    register_task_permissions,
+    register_team_permissions,
+)
 from app.core import errors as core_errors
+from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.session import AsyncSessionLocal
 from app.domain.notification.scheduler import NotificationAggregationFinalizer
 from app.middleware.tracing import TracingMiddleware
-from app.auth.domains import (
-    register_team_permissions,
-    register_task_permissions,
-    register_space_permissions,
-    register_knowledge_permissions,
-    register_question_permissions,
-)
 
 setup_logging()
 

@@ -1,5 +1,5 @@
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -38,7 +38,7 @@ class TestRankIntegration:
         space_id = space_data["id"]
         default_category_id = space_data["defaultCategoryId"]
 
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         task1_resp = api_client.post(
             "/tasks",
@@ -474,7 +474,7 @@ class TestRankIntegration:
         )
 
         suffix = random.randint(10000000, 99999999)
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         space_resp = api_client.post(
             "/spaces",
@@ -606,7 +606,7 @@ class TestRankIntegration:
         )
 
         suffix = random.randint(10000000, 99999999)
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         space_resp = api_client.post(
             "/spaces",
@@ -749,7 +749,7 @@ class TestRankIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
 
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
         suffix = random.randint(10000000, 99999999)
 
         task_resp = api_client.post(

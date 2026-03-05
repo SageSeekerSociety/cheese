@@ -1,6 +1,5 @@
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
-
-from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Header
@@ -10,7 +9,7 @@ from app.core.errors import AuthenticationRequiredError
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def create_access_token(user_id: int) -> str:

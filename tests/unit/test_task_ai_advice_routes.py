@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -42,7 +42,7 @@ class _StubTaskAIAdviceService:
         quota = _QuotaInfo(
             remaining=4.0,
             total=10.0,
-            reset_time=datetime(2025, 12, 2, tzinfo=timezone.utc),
+            reset_time=datetime(2025, 12, 2, tzinfo=UTC),
         )
         return payload, quota
 

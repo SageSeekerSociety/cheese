@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -17,7 +17,6 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.domain.task.types import TaskAIAdviceStatus
-
 
 task_seq = Sequence("task_seq")
 task_membership_seq = Sequence("task_membership_seq")
@@ -221,13 +220,13 @@ class TaskAIAdvice(Base):
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+        DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
-        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
     )
 
 
@@ -239,13 +238,13 @@ class TaskAIAdviceContext(Base):
     section: Mapped[str | None] = mapped_column(String(64), nullable=True)
     section_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+        DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
-        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -261,13 +260,13 @@ class AIConversation(Base):
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
     model_type: Mapped[str] = mapped_column(String(64), nullable=False, default="standard")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+        DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
-        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -289,12 +288,12 @@ class AIMessage(Base):
     seu_consumed: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+        DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None)
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
-        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

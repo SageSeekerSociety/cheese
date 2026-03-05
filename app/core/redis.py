@@ -1,5 +1,4 @@
 from functools import lru_cache
-from typing import Optional
 
 from redis.asyncio import Redis, from_url
 
@@ -7,7 +6,7 @@ from app.core.config import settings
 
 
 @lru_cache(maxsize=1)
-def get_redis_client() -> Optional[Redis]:
+def get_redis_client() -> Redis | None:
     """Return a lazily initialized asyncio Redis client.
 
     The underlying connection is established on-demand when the first

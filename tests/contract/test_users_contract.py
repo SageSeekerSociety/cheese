@@ -1,7 +1,6 @@
 import pytest
 from httpx import AsyncClient
 
-
 USER_HEADER = {"X-User-Id": "1"}
 
 

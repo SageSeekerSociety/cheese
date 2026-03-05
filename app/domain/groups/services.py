@@ -1,13 +1,13 @@
-from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
-from datetime import datetime
+from datetime import UTC, datetime
 
+from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.domain.groups.models import Group, GroupProfile, GroupTarget
 from app.domain.groups.repositories import (
-    GroupRepository,
-    GroupProfileRepository,
     GroupMembershipRepository,
-    GroupTargetRepository,
+    GroupProfileRepository,
     GroupQuestionRepository,
+    GroupRepository,
+    GroupTargetRepository,
 )
 from app.domain.user.repositories import UserProfileRepository
 
@@ -293,9 +293,9 @@ def _date_to_ms(d) -> int:
         return 0
     if hasattr(d, "timestamp"):
         return int(d.timestamp() * 1000)
-    from datetime import datetime as dt, timezone
+    from datetime import datetime as dt
 
-    return int(dt.combine(d, dt.min.time(), tzinfo=timezone.utc).timestamp() * 1000)
+    return int(dt.combine(d, dt.min.time(), tzinfo=UTC).timestamp() * 1000)
 
 
 def _target_to_dto(target: GroupTarget) -> dict:

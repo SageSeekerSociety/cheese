@@ -8,8 +8,8 @@ from app.auth.core import (
     Resource,
     Role,
 )
-from app.domain.questions.models import Question
 from app.domain.answers.models import Answer
+from app.domain.questions.models import Question
 
 
 async def get_question_roles(

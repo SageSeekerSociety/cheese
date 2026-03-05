@@ -9,7 +9,6 @@ from app.db.session import get_db
 from app.domain.attachment.repositories import AttachmentRepository
 from app.domain.attachment.services import AttachmentService
 
-
 router = APIRouter(prefix="/attachments", tags=["Attachments"])
 
 VALID_TYPES = {"image", "video", "audio", "file"}

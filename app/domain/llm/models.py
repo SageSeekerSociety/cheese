@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import List
 
 from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, Sequence, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -45,7 +44,7 @@ class AIConversation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    messages: Mapped[List["AIMessage"]] = relationship(
+    messages: Mapped[list["AIMessage"]] = relationship(
         "AIMessage", back_populates="conversation", lazy="selectin"
     )
 

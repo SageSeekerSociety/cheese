@@ -6,11 +6,11 @@ Complete equivalence migration.
 
 import random
 import time
+from datetime import UTC, datetime
 
 import httpx
 import psycopg2
 import pytest
-from datetime import datetime, timezone
 
 from app.core.config import settings
 from tests.integration.conftest import CreatedUser, UserCreator
@@ -26,7 +26,7 @@ def _get_psycopg2_dsn() -> str:
 
 
 def create_topic_in_db(name: str, user_id: int) -> int:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     dsn = _get_psycopg2_dsn()
     conn = psycopg2.connect(dsn)
     try:

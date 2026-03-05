@@ -2,14 +2,14 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
+    BigInteger,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
+    Sequence,
     SmallInteger,
     String,
-    DateTime,
-    Sequence,
-    BigInteger,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 

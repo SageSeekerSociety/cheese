@@ -1,6 +1,6 @@
 import os
 import random
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -55,7 +55,7 @@ class TestTaskIntegration:
         space_id = space_data["id"]
         category_id = space_data.get("defaultCategoryId")
 
-        deadline_ms = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         return {
             "creator": creator,
@@ -575,9 +575,7 @@ class TestTaskEnumeration:
 
         task_ids = []
         for i in range(5):
-            deadline_ms = int(
-                (datetime.now(timezone.utc) + timedelta(days=i + 1)).timestamp() * 1000
-            )
+            deadline_ms = int((datetime.now(UTC) + timedelta(days=i + 1)).timestamp() * 1000)
             create_resp = api_client.post(
                 "/tasks",
                 json={
@@ -900,7 +898,7 @@ class TestTaskApprovalWorkflow:
         creator = approval_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
-        deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=7)).timestamp() * 1000)
+        deadline_ms = int((datetime.now(UTC) + timedelta(days=7)).timestamp() * 1000)
 
         create_resp = api_client.post(
             "/tasks",
@@ -1142,7 +1140,7 @@ class TestParticipantManagement:
         )
         participant_id = join_resp.json()["data"]["participant"]["id"]
 
-        new_deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=14)).timestamp() * 1000)
+        new_deadline_ms = int((datetime.now(UTC) + timedelta(days=14)).timestamp() * 1000)
 
         update_resp = api_client.patch(
             f"/tasks/{task_id}/participants/{participant_id}",
@@ -2143,7 +2141,7 @@ class TestParticipantEdgeCases:
         participant = edge_setup["participant"]
         task_id = edge_setup["task_id"]
 
-        deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp() * 1000)
+        deadline_ms = int((datetime.now(UTC) + timedelta(days=30)).timestamp() * 1000)
 
         add_resp = api_client.post(
             f"/tasks/{task_id}/participants",
@@ -2244,7 +2242,7 @@ class TestTaskFullUpdate:
         )
         task_id = create_resp.json()["data"]["task"]["id"]
 
-        new_deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=14)).timestamp() * 1000)
+        new_deadline_ms = int((datetime.now(UTC) + timedelta(days=14)).timestamp() * 1000)
 
         patch_resp = api_client.patch(
             f"/tasks/{task_id}",
@@ -2334,7 +2332,7 @@ class TestParticipantPermissions:
         user2 = perm_setup["user2"]
         task_id = perm_setup["task_id"]
 
-        deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp() * 1000)
+        deadline_ms = int((datetime.now(UTC) + timedelta(days=30)).timestamp() * 1000)
 
         add_resp = api_client.post(
             f"/tasks/{task_id}/participants",
@@ -2817,7 +2815,7 @@ class TestArchivedCategoryAndRejectReason:
             archived_category_id = archived_cat_resp.json()["data"]["category"]["id"]
             api_client.patch(
                 f"/spaces/{space_id}/categories/{archived_category_id}",
-                json={"archivedAt": int(datetime.now(timezone.utc).timestamp() * 1000)},
+                json={"archivedAt": int(datetime.now(UTC).timestamp() * 1000)},
                 headers={"Authorization": f"Bearer {creator.token}"},
             )
 
@@ -2970,10 +2968,8 @@ class TestRegistrationStartTime:
         space_id = space_data["id"]
         default_category_id = space_data.get("defaultCategoryId")
 
-        registration_start_at = int(
-            (datetime.now(timezone.utc) + timedelta(days=2)).timestamp() * 1000
-        )
-        deadline_ms = int((datetime.now(timezone.utc) + timedelta(days=10)).timestamp() * 1000)
+        registration_start_at = int((datetime.now(UTC) + timedelta(days=2)).timestamp() * 1000)
+        deadline_ms = int((datetime.now(UTC) + timedelta(days=10)).timestamp() * 1000)
 
         return {
             "creator": creator,

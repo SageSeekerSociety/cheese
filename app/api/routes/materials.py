@@ -9,7 +9,6 @@ from app.db.session import get_db
 from app.domain.materials.repositories import MaterialRepository
 from app.domain.materials.services import MaterialService
 
-
 router = APIRouter(prefix="/materials", tags=["Materials"])
 
 VALID_TYPES = {"image", "video", "audio", "file"}

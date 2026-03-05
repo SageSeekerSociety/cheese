@@ -1,21 +1,21 @@
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.answers.models import Answer
+from app.domain.knowledge.models import Knowledge
+from app.domain.questions.models import Question
+from app.domain.task.models import TaskMembership, TaskSubmission
+from app.domain.team.models import TeamUserRelation
 from app.domain.user.models import (
     User,
     UserFollowingRelationship,
     UserProfile,
-    UserRealNameIdentity,
     UserRealNameAccessLog,
+    UserRealNameIdentity,
 )
-from app.domain.team.models import TeamUserRelation
-from app.domain.task.models import TaskMembership, TaskSubmission
-from app.domain.knowledge.models import Knowledge
-from app.domain.questions.models import Question
-from app.domain.answers.models import Answer
 
 
 class UserRepository:
@@ -62,7 +62,7 @@ class UserRepository:
         email: str,
         hashed_password: str,
     ) -> User:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         user = User(
             username=username,
             email=email,
@@ -125,7 +125,7 @@ class UserProfileRepository:
         intro: str,
         avatar_id: int,
     ) -> UserProfile:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         profile = UserProfile(
             user_id=user_id,
             nickname=nickname,
@@ -202,7 +202,7 @@ class UserFollowingRepository:
         rel = UserFollowingRelationship(
             follower_id=follower_id,
             followee_id=followee_id,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         self._session.add(rel)
         await self._session.flush()
@@ -217,7 +217,7 @@ class UserFollowingRepository:
         rel = result.scalar_one_or_none()
         if rel is None:
             return False
-        rel.deleted_at = datetime.now(timezone.utc)
+        rel.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return True
 
@@ -255,7 +255,7 @@ class UserRealNameRepository:
         class_name: str,
         encrypted: bool = False,
     ) -> UserRealNameIdentity:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         existing = await self.get_identity(user_id)
         if existing is None:
             identity = UserRealNameIdentity(
@@ -295,7 +295,7 @@ class UserRealNameRepository:
         module_type: str | None = None,
         module_entity_id: int | None = None,
     ) -> UserRealNameAccessLog:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         log = UserRealNameAccessLog(
             accessor_id=accessor_id,
             target_id=target_id,

@@ -1,13 +1,12 @@
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Float, Integer, String, Text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.llm.models import Base
-
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,7 @@ class LLMCallLogRepository:
             context_type=info.context_type,
             context_id=info.context_id,
             error=info.error,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         self._session.add(log)
         await self._session.flush()

@@ -1,8 +1,9 @@
+import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, Text, Enum as SQLEnum
+from sqlalchemy import DateTime, Integer, Text
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-import enum
 
 
 class CommentableType(str, enum.Enum):

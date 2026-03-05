@@ -5,11 +5,11 @@ Complete equivalence migration.
 """
 
 import random
+from datetime import UTC, datetime
 
 import httpx
 import psycopg2
 import pytest
-from datetime import datetime, timezone
 
 from app.core.config import settings
 from tests.integration.conftest import CreatedUser, UserCreator
@@ -25,7 +25,7 @@ def _get_psycopg2_dsn() -> str:
 
 
 def create_avatar_in_db() -> int:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     dsn = _get_psycopg2_dsn()
     conn = psycopg2.connect(dsn)
     try:
@@ -258,7 +258,7 @@ class TestGroupsJoinIntegration:
         self.pre_avatar_id = create_avatar_in_db()
         self._get_user_dto()
         self.group_ids: list[int] = []
-        for i, (name, intro) in enumerate(
+        for _i, (name, intro) in enumerate(
             [
                 ("数学之神膜膜喵", "不如原神"),
                 ("ICS膜膜膜", "pwb txdy!"),
@@ -849,7 +849,7 @@ class TestGroupTargetsIntegration:
 
     def test_create_target(self):
         group_id = self._create_group()
-        now = int(datetime.now(timezone.utc).timestamp() * 1000)
+        now = int(datetime.now(UTC).timestamp() * 1000)
         response = self.client.post(
             f"/groups/{group_id}/targets",
             headers=self.headers,
@@ -868,7 +868,7 @@ class TestGroupTargetsIntegration:
 
     def test_list_targets(self):
         group_id = self._create_group()
-        now = int(datetime.now(timezone.utc).timestamp() * 1000)
+        now = int(datetime.now(UTC).timestamp() * 1000)
         self.client.post(
             f"/groups/{group_id}/targets",
             headers=self.headers,
@@ -899,7 +899,7 @@ class TestGroupTargetsIntegration:
 
     def test_get_target(self):
         group_id = self._create_group()
-        now = int(datetime.now(timezone.utc).timestamp() * 1000)
+        now = int(datetime.now(UTC).timestamp() * 1000)
         create_resp = self.client.post(
             f"/groups/{group_id}/targets",
             headers=self.headers,
@@ -920,7 +920,7 @@ class TestGroupTargetsIntegration:
 
     def test_update_target(self):
         group_id = self._create_group()
-        now = int(datetime.now(timezone.utc).timestamp() * 1000)
+        now = int(datetime.now(UTC).timestamp() * 1000)
         create_resp = self.client.post(
             f"/groups/{group_id}/targets",
             headers=self.headers,
@@ -945,7 +945,7 @@ class TestGroupTargetsIntegration:
 
     def test_delete_target(self):
         group_id = self._create_group()
-        now = int(datetime.now(timezone.utc).timestamp() * 1000)
+        now = int(datetime.now(UTC).timestamp() * 1000)
         create_resp = self.client.post(
             f"/groups/{group_id}/targets",
             headers=self.headers,

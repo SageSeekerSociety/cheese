@@ -2,9 +2,9 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from app.domain.notification.dto import ResolvedEntityInfoDTO
+from app.domain.project.services import ProjectService
 from app.domain.team.services import TeamService
 from app.domain.user.services import UserService
-from app.domain.project.services import ProjectService
 
 
 class EntityInfoResolver(Protocol):

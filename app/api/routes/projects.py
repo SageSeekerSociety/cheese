@@ -11,7 +11,6 @@ from app.domain.project.models import Project, ProjectMemberRole, ProjectMembers
 from app.domain.project.repositories import ProjectMembershipRepository, ProjectRepository
 from app.domain.project.services import ProjectService
 
-
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 

@@ -1,8 +1,7 @@
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
-
 from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
 from app.domain.team.repositories import TeamRepository
 
@@ -56,7 +55,7 @@ class TeamService:
         if await self._repo.exists_by_name(name.strip()):
             raise BadRequestError("Team name already exists")
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         team = Team(
             name=name.strip(),
             intro=intro or "",
@@ -118,7 +117,7 @@ class TeamService:
                 raise BadRequestError("avatarId must be positive integer")
             team.avatar_id = avatar_id
 
-        team.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        team.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._repo._session.flush()
         return team
 
@@ -129,7 +128,7 @@ class TeamService:
             raise ForbiddenError("Only the team owner can disband a team")
 
         members = await self._repo.list_members_of_team(team_id)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         for rel in members:
             rel.deleted_at = now
             rel.updated_at = now
@@ -191,7 +190,7 @@ class TeamService:
             raise ForbiddenError("Only team owner can change member roles")
 
         relation.role = new_role
-        relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        relation.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._repo._session.flush()
 
     async def transfer_team_owner(
@@ -212,10 +211,10 @@ class TeamService:
             )
 
         current_owner_relation.role = TeamMemberRole.ADMIN
-        current_owner_relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        current_owner_relation.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
         target_relation.role = TeamMemberRole.OWNER
-        target_relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        target_relation.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._repo._session.flush()
 
     async def _get_team_or_error(self, team_id: int) -> Team:

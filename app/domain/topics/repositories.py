@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,7 +75,7 @@ class TopicRepository:
         return result.scalar_one_or_none()
 
     async def create(self, *, name: str, created_by_id: int) -> Topic:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         topic = Topic(
             name=name,
             created_by_id=created_by_id,

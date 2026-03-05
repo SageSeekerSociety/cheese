@@ -1,18 +1,18 @@
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 import logging
-from typing import Any, Protocol, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, Protocol
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.notification.config import notification_config
 from app.domain.notification.dedup import NotificationDeduplicator
 from app.domain.notification.events import NotificationTriggerEvent
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.repositories import NotificationRepository
-
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class InAppNotificationHandler:
         if not deliveries:
             return
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         to_persist: list[Notification] = []
         for delivery in deliveries:
             if delivery.is_aggregated_finalization:
@@ -90,7 +90,7 @@ class RedisEmailQueueNotificationHandler:
             return
 
         chunks: list[str] = []
-        dispatched_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+        dispatched_at = int(datetime.now(UTC).timestamp() * 1000)
 
         for delivery in deliveries:
             payload = {
@@ -167,7 +167,7 @@ class NotificationEventHandler:
         type_: NotificationType,
         payload: dict[str, Any],
     ) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         aggregation_key = self._generate_aggregation_key(type_, payload)
         if aggregation_key is None:
             await self._dispatch_to_handlers(
@@ -212,7 +212,7 @@ class NotificationEventHandler:
             await self._session.flush()
 
     async def finalize_expired(self, now: datetime | None = None) -> list[Notification]:
-        current = now or datetime.now(timezone.utc)
+        current = now or datetime.now(UTC)
         expired = await self._repo.find_expired_aggregations(current)
         if not expired:
             return []

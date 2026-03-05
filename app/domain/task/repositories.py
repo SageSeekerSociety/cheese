@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,11 +11,11 @@ from app.domain.task.models import (
     TaskAIAdvice,
     TaskAIAdviceContext,
     TaskMembership,
-    TaskTopicsRelation,
     TaskSubmission,
     TaskSubmissionEntry,
     TaskSubmissionReview,
     TaskSubmissionSchemaEntry,
+    TaskTopicsRelation,
     Topic,
 )
 from app.domain.team.models import TeamUserRelation
@@ -222,7 +222,7 @@ class TaskRepository:
         team_locking_policy: str,
     ) -> Task:
         """Create and persist a new Task row."""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         deadline_naive = deadline.replace(tzinfo=None) if deadline else None
         registration_start_naive = (
             registration_start_at.replace(tzinfo=None) if registration_start_at else None
@@ -396,7 +396,7 @@ class TaskSubmissionRepository:
         submitter_id: int,
         version: int,
     ) -> TaskSubmission:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         submission = TaskSubmission(
             membership_id=membership_id,
             submitter_id=submitter_id,
@@ -593,7 +593,7 @@ class TaskSubmissionEntryRepository:
         submission_id: int,
         entries: list[tuple[int, str | None, int | None]],
     ) -> None:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         for idx, text, attachment_id in entries:
             row = TaskSubmissionEntry(
                 task_submission_id=submission_id,
@@ -613,7 +613,7 @@ class TaskSubmissionEntryRepository:
         version: int,
     ) -> None:
         """Soft delete entries for all submissions of given (membership, version)."""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         subq = select(TaskSubmission.id).where(
             TaskSubmission.membership_id == membership_id,
             TaskSubmission.version == version,
@@ -662,7 +662,7 @@ class TaskSubmissionReviewRepository:
         score: int,
         comment: str,
     ) -> TaskSubmissionReview:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         review = TaskSubmissionReview(
             submission_id=submission_id,
             accepted=accepted,
@@ -682,7 +682,7 @@ class TaskSubmissionReviewRepository:
         return review
 
     async def soft_delete(self, review: TaskSubmissionReview) -> None:
-        review.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        review.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         self._session.add(review)
         await self._session.flush()
 
@@ -781,8 +781,8 @@ class TaskAIAdviceContextRepository:
             task_id=task_id,
             section=section,
             section_index=section_index,
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            updated_at=datetime.now(UTC).replace(tzinfo=None),
         )
         self._session.add(ctx)
         await self._session.flush()
@@ -834,7 +834,7 @@ class AIConversationRepository:
         return convo
 
     async def soft_delete(self, conversation: AIConversation) -> None:
-        conversation.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        conversation.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         self._session.add(conversation)
         await self._session.flush()
 
@@ -876,7 +876,7 @@ class AIMessageRepository:
         return msg
 
     async def soft_delete(self, message: AIMessage) -> None:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         message.deleted_at = now
         message.updated_at = now
         await self._session.flush()

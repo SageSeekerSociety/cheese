@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from app.domain.notification.models import Notification

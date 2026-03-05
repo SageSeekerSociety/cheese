@@ -1,7 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock
 
+import pytest
+
+from app.auth.checker import PermissionChecker
 from app.auth.core import (
+    ROLE_HIERARCHY,
     Action,
     AuthUserInfo,
     Permission,
@@ -10,9 +13,7 @@ from app.auth.core import (
     Resource,
     Role,
     SystemRole,
-    ROLE_HIERARCHY,
 )
-from app.auth.checker import PermissionChecker
 
 
 class TestRoleHierarchy:

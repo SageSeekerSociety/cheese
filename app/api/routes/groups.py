@@ -7,15 +7,14 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
 from app.db.session import get_db
 from app.domain.groups.repositories import (
-    GroupRepository,
-    GroupProfileRepository,
     GroupMembershipRepository,
-    GroupTargetRepository,
+    GroupProfileRepository,
     GroupQuestionRepository,
+    GroupRepository,
+    GroupTargetRepository,
 )
-from app.domain.groups.services import GroupsService, GroupTargetService, GroupQuestionService
+from app.domain.groups.services import GroupQuestionService, GroupsService, GroupTargetService
 from app.domain.user.repositories import UserProfileRepository
-
 
 router = APIRouter(prefix="/groups", tags=["Groups"])
 

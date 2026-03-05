@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from openai import AsyncOpenAI, APITimeoutError, APIConnectionError, RateLimitError, APIStatusError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 from app.core.config import settings
 from app.domain.task.models import Task
@@ -113,7 +113,7 @@ class LLMClient:
                 ),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise LLMTimeoutError(f"LLM request timed out after {timeout}s") from exc
         except APITimeoutError as exc:
             raise LLMTimeoutError(f"OpenAI API timeout: {exc}") from exc
@@ -161,7 +161,7 @@ class LLMClient:
                 ),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise LLMTimeoutError(f"LLM request timed out after {timeout}s") from exc
         except APITimeoutError as exc:
             raise LLMTimeoutError(f"OpenAI API timeout: {exc}") from exc

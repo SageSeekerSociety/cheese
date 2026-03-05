@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -148,7 +148,7 @@ class NotificationRepository:
         )
         if notification is None:
             return False
-        notification.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        notification.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return True
 

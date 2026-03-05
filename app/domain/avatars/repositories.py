@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ class AvatarRepository:
         return row
 
     async def create(self, *, url: str, name: str, avatar_type: str) -> Avatar:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         avatar = Avatar(
             url=url,
             name=name,

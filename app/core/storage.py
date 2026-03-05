@@ -2,7 +2,7 @@ import hashlib
 import shutil
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
@@ -142,7 +142,7 @@ class S3StorageBackend(StorageBackend):
 
 def generate_storage_key(filename: str, prefix: str = "uploads") -> str:
     """Generate a unique storage key for a file."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     date_path = now.strftime("%Y/%m/%d")
     unique_id = uuid.uuid4().hex[:12]
     ext = Path(filename).suffix.lower() if filename else ""

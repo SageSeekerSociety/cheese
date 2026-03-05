@@ -18,7 +18,6 @@ from httpx import AsyncClient
 
 from tests.conftest import ResponseComparator
 
-
 # =============================================================================
 # 1.6.1 Authentication Failure Scenarios
 # =============================================================================

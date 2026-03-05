@@ -131,7 +131,7 @@ class ResponseComparator:
                     f"{path}: list length mismatch - Kotlin={len(kotlin_data)}, Python={len(python_data)}"
                 )
             else:
-                for i, (k_item, p_item) in enumerate(zip(kotlin_data, python_data)):
+                for i, (k_item, p_item) in enumerate(zip(kotlin_data, python_data, strict=False)):
                     child_diffs = self.compare_structure(k_item, p_item, f"{path}[{i}]")
                     diffs.extend(child_diffs)
 
@@ -171,7 +171,7 @@ class ResponseComparator:
                 diffs.extend(child_diffs)
 
         elif isinstance(kotlin_data, list):
-            for i, (k_item, p_item) in enumerate(zip(kotlin_data, python_data)):
+            for i, (k_item, p_item) in enumerate(zip(kotlin_data, python_data, strict=False)):
                 child_diffs = self.compare_values(k_item, p_item, f"{path}[{i}]", strict)
                 diffs.extend(child_diffs)
 

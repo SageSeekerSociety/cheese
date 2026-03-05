@@ -1,5 +1,5 @@
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -38,7 +38,7 @@ class TestTaskSubmissionReviewIntegration:
         space_id = space_data["id"]
         category_id = space_data["defaultCategoryId"]
 
-        deadline = int((datetime.now(timezone.utc).timestamp() + 7 * 24 * 3600) * 1000)
+        deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         task_resp = api_client.post(
             "/tasks",

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -68,7 +68,7 @@ async def test_recursive_metadata_resolution_handles_nested_arrays() -> None:
         aggregate_until=None,
         finalized=True,
         version=0,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         updated_at=None,
         deleted_at=None,
     )
