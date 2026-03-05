@@ -23,9 +23,10 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
     """
     now = datetime.now(UTC).replace(tzinfo=None)
     total_failed = 0
-    offset = 0
 
     while True:
+        # No offset: each commit removes matched rows from the result set,
+        # so the next query at offset 0 returns the next unprocessed batch.
         stmt = (
             select(TaskMembership)
             .where(
@@ -43,7 +44,6 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
                 )
             )
             .limit(PAGE_SIZE)
-            .offset(offset)
         )
 
         result = await session.execute(stmt)
@@ -67,8 +67,6 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
 
         if len(memberships) < PAGE_SIZE:
             break
-
-        offset += PAGE_SIZE
 
     if total_failed > 0:
         logger.info("Marked %d task memberships as FAILED due to passed deadline", total_failed)

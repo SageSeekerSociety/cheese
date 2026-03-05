@@ -822,12 +822,15 @@ class AIConversationRepository:
         owner_id: int,
         title: str | None,
     ) -> AIConversation:
+        now = datetime.now(UTC).replace(tzinfo=None)
         convo = AIConversation(
             conversation_id=conversation_id,
             context_id=task_id,
             owner_id=owner_id,
             title=title,
             module_type="task_ai_advice",
+            created_at=now,
+            updated_at=now,
         )
         self._session.add(convo)
         await self._session.flush()

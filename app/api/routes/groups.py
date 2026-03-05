@@ -227,7 +227,7 @@ async def create_group_target(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> dict:
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     name = payload.get("name")
     intro = payload.get("intro", "")
@@ -240,8 +240,8 @@ async def create_group_target(
     if not started_at or not ended_at:
         raise BadRequestError("startedAt and endedAt are required")
 
-    started_at_dt = datetime.fromtimestamp(started_at / 1000)
-    ended_at_dt = datetime.fromtimestamp(ended_at / 1000)
+    started_at_dt = datetime.fromtimestamp(started_at / 1000, tz=UTC).replace(tzinfo=None)
+    ended_at_dt = datetime.fromtimestamp(ended_at / 1000, tz=UTC).replace(tzinfo=None)
 
     result = await service.create_target(
         group_id=group_id,
@@ -279,7 +279,7 @@ async def update_group_target(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> dict:
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     name = payload.get("name")
     intro = payload.get("intro")
@@ -287,8 +287,16 @@ async def update_group_target(
     ended_at = payload.get("endedAt")
     attendance_frequency = payload.get("attendanceFrequency")
 
-    started_at_dt = datetime.fromtimestamp(started_at / 1000) if started_at else None
-    ended_at_dt = datetime.fromtimestamp(ended_at / 1000) if ended_at else None
+    started_at_dt = (
+        datetime.fromtimestamp(started_at / 1000, tz=UTC).replace(tzinfo=None)
+        if started_at
+        else None
+    )
+    ended_at_dt = (
+        datetime.fromtimestamp(ended_at / 1000, tz=UTC).replace(tzinfo=None)
+        if ended_at
+        else None
+    )
 
     target = await service.update_target(
         group_id=group_id,

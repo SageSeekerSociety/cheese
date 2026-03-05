@@ -1442,12 +1442,16 @@ async def patch_user_identity(
             "major": "",
             "className": "",
         }
+    def _merge(key: str) -> str:
+        val = payload.get(key)
+        return val if val is not None else base[key]
+
     merged = {
-        "realName": payload.get("realName") or base["realName"],
-        "studentId": payload.get("studentId") or base["studentId"],
-        "grade": payload.get("grade") or base["grade"],
-        "major": payload.get("major") or base["major"],
-        "className": payload.get("className") or base["className"],
+        "realName": _merge("realName"),
+        "studentId": _merge("studentId"),
+        "grade": _merge("grade"),
+        "major": _merge("major"),
+        "className": _merge("className"),
     }
     stored = await realname_service.create_or_update_user_identity(
         user_id=user_id,

@@ -84,6 +84,19 @@ class GroupRepository:
         if keyword:
             like = f"%{keyword.strip()}%"
             count_stmt = count_stmt.where(Group.name.ilike(like))
+        if joined and user_id:
+            count_subq = select(GroupMembership.group_id).where(
+                GroupMembership.member_id == user_id,
+                GroupMembership.deleted_at.is_(None),
+            )
+            count_stmt = count_stmt.where(Group.id.in_(count_subq))
+        if managed and user_id:
+            count_subq = select(GroupMembership.group_id).where(
+                GroupMembership.member_id == user_id,
+                GroupMembership.role.in_(["OWNER", "ADMIN"]),
+                GroupMembership.deleted_at.is_(None),
+            )
+            count_stmt = count_stmt.where(Group.id.in_(count_subq))
         count_result = await self._session.execute(count_stmt)
         total = int(count_result.scalar_one() or 0)
         return rows, total

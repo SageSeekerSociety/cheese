@@ -157,6 +157,24 @@ async def add_question(
 
 
 @router.get(
+    "/followed",
+    summary="List Followed Questions",
+)
+async def list_followed_questions(
+    pageStart: int | None = Query(default=None, alias="page_start"),
+    pageSize: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    service: QuestionsService = Depends(get_questions_service),
+) -> dict:
+    items, page = await service.list_followed(
+        user_id=auth_user.user_id,
+        page_size=pageSize,
+        page_start=pageStart,
+    )
+    return {"code": 200, "message": "OK", "data": {"questions": items, "page": page}}
+
+
+@router.get(
     "/{question_id}",
     summary="Get Question",
 )
@@ -200,24 +218,6 @@ async def unfollow_question(
     if not changed:
         raise BadRequestError("Not followed")
     return {"code": 200, "message": "OK", "data": {"unfollowed": True}}
-
-
-@router.get(
-    "/followed",
-    summary="List Followed Questions",
-)
-async def list_followed_questions(
-    pageStart: int | None = Query(default=None, alias="page_start"),
-    pageSize: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
-    service: QuestionsService = Depends(get_questions_service),
-) -> dict:
-    items, page = await service.list_followed(
-        user_id=auth_user.user_id,
-        page_size=pageSize,
-        page_start=pageStart,
-    )
-    return {"code": 200, "message": "OK", "data": {"questions": items, "page": page}}
 
 
 @router.put(

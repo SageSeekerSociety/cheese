@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, UnprocessableEntityError
+from app.core.storage import generate_storage_key, get_storage_backend
 from app.db.session import get_db
 from app.domain.materials.repositories import MaterialRepository
 from app.domain.materials.services import MaterialService
@@ -48,14 +49,18 @@ async def upload_material(
     if not any(file_mime.startswith(prefix) for prefix in valid_prefixes):
         raise UnprocessableEntityError(f"MIME type {file_mime} does not match type {type}")
 
-    url = f"/uploads/{file_name}"
+    import io
+
+    storage = get_storage_backend()
+    storage_key = generate_storage_key(file_name, prefix=f"materials/{type}")
+    url = await storage.upload(io.BytesIO(file_content), storage_key, file_mime)
 
     result = await service.create_material(
         type=type,
         url=url,
         name=file_name,
         uploader_id=auth_user.user_id,
-        meta={"size": len(file_content), "mimeType": file_mime},
+        meta={"size": len(file_content), "mimeType": file_mime, "storageKey": storage_key},
     )
     return {"code": 201, "message": "Created", "data": result}
 

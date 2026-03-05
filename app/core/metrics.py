@@ -82,9 +82,10 @@ class MetricsRegistry:
         key = self._key(name, labels)
         with self._lock:
             if key not in self._histograms:
-                self._histograms[key] = Histogram(
-                    name=name, labels=labels or {}, buckets=buckets or []
-                )
+                kwargs: dict = {"name": name, "labels": labels or {}}
+                if buckets is not None:
+                    kwargs["buckets"] = buckets
+                self._histograms[key] = Histogram(**kwargs)
             return self._histograms[key]
 
     def _key(self, name: str, labels: dict[str, str] | None) -> str:

@@ -49,5 +49,6 @@ class NotificationAggregationFinalizer:
             async with self._session_factory() as session:
                 handler = build_notification_event_handler(session)
                 await handler.finalize_expired()
+                await session.commit()
         except Exception:
             logger.exception("Notification aggregation finalizer tick failed")
