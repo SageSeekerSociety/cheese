@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Sequence
 
 from app.core.errors import ForbiddenError, NotFoundError
@@ -47,7 +45,7 @@ class KnowledgeService:
         dto = await self._build_dto(entity, current_user_id=created_by)
         return dto
 
-    async def list(
+    async def find_all(
         self,
         *,
         team_id: int,
@@ -62,7 +60,7 @@ class KnowledgeService:
         sort_order: str,
     ) -> tuple[list[dict], int]:
         await self._ensure_team_member(team_id, user_id)
-        rows, total = await self._repo.list(
+        rows, total = await self._repo.find_all(
             team_id=team_id,
             project_id=project_id,
             type_=type_,

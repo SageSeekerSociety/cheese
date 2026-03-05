@@ -4,8 +4,6 @@ Migrated from cheese-backend/test/avatars.e2e-spec.ts (187 lines, 10 tests)
 Complete equivalence migration.
 """
 
-from __future__ import annotations
-
 import io
 import random
 

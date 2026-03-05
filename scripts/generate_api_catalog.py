@@ -6,8 +6,6 @@ from `cheese-backend-nt/design/API/NT-API.yml`. We keep this script inside the
 Python backend repo so contract tests can depend on a stable JSON snapshot.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 from pathlib import Path

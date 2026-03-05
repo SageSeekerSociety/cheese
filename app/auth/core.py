@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
@@ -136,11 +134,11 @@ class PermissionRule:
         return True
 
     @staticmethod
-    def allow_all() -> PermissionRule:
+    def allow_all() -> "PermissionRule":
         return PermissionRule()
 
     @staticmethod
-    def owner_only(owner_key: str = "owner_id") -> PermissionRule:
+    def owner_only(owner_key: str = "owner_id") -> "PermissionRule":
         def check_owner(
             user: AuthUserInfo,
             action: Action,

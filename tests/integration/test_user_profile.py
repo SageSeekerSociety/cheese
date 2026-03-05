@@ -3,8 +3,6 @@ Integration tests for the User Profile module.
 Migrated from cheese-backend/test/user.profile.e2e-spec.ts
 """
 
-from __future__ import annotations
-
 import random
 import io
 

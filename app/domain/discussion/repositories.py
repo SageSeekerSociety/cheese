@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime
 
 from sqlalchemy import Select, func, select
@@ -72,7 +70,7 @@ class DiscussionRepository:
         result = await self._session.execute(stmt)
         return [row[0] for row in result.all()]
 
-    async def list(
+    async def find_all(
         self,
         *,
         model_type: str | None,

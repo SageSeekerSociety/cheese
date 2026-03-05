@@ -1,6 +1,3 @@
-from __future__ import annotations
-
-
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.answers.models import Answer
 from app.domain.answers.repositories import AnswerRepository

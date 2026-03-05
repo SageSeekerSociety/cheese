@@ -4,9 +4,6 @@ Migrated from cheese-backend/test/user.follow.e2e-spec.ts (436 lines, 20 tests)
 Complete equivalence migration.
 """
 
-from __future__ import annotations
-
-
 import httpx
 import pytest
 

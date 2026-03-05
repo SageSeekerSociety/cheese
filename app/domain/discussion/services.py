@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,7 +91,7 @@ class DiscussionService:
         with_reactions: bool,
     ) -> tuple[list[dict], dict]:
         offset = page_start or 0
-        rows, total = await self._repo.list(
+        rows, total = await self._repo.find_all(
             model_type=model_type,
             model_id=model_id,
             parent_id=parent_id,

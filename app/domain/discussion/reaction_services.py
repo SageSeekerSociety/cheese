@@ -1,6 +1,3 @@
-from __future__ import annotations
-
-
 from app.core.errors import NotFoundError
 from app.domain.discussion.models import ReactionType
 from app.domain.discussion.repositories import (

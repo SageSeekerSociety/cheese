@@ -5,8 +5,6 @@ Provides methods to generate test users, teams, tasks, notifications, etc.
 with realistic but predictable data for both Kotlin and Python backends.
 """
 
-from __future__ import annotations
-
 import random
 import string
 from dataclasses import dataclass, field

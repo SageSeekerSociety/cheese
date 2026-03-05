@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Sequence
 
 from app.core.errors import BadRequestError, NotFoundError

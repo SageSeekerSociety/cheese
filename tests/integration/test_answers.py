@@ -4,8 +4,6 @@ Migrated from cheese-backend/test/answer.e2e-spec.ts (988 lines, 51 tests)
 Complete equivalence migration.
 """
 
-from __future__ import annotations
-
 import random
 
 import httpx

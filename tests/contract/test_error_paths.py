@@ -13,8 +13,6 @@ Run with:
     pytest tests/contract/test_error_paths.py -v
 """
 
-from __future__ import annotations
-
 import pytest
 from httpx import AsyncClient
 

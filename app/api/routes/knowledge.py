@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
@@ -101,7 +99,7 @@ async def list_knowledge(
     if offset < 0:
         offset = 0
 
-    rows, total = await service.list(
+    rows, total = await service.find_all(
         team_id=teamId,
         user_id=auth_user.user_id,
         project_id=projectId,

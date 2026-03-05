@@ -4,8 +4,6 @@ Migrated from cheese-backend/test/user.e2e-spec.ts (2334 lines)
 Complete equivalence migration including SRP, OAuth, Passkey, TOTP tests.
 """
 
-from __future__ import annotations
-
 import random
 
 import httpx

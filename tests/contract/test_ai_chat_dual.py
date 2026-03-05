@@ -8,8 +8,6 @@ Run with:
     pytest tests/contract/test_ai_chat_dual.py -v
 """
 
-from __future__ import annotations
-
 import pytest
 from httpx import AsyncClient
 

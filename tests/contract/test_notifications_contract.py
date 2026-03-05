@@ -8,8 +8,6 @@
 - Python 侧：后续会在迁移完成后，对齐响应结构与分页语义。
 """
 
-from __future__ import annotations
-
 import pytest
 from httpx import AsyncClient
 

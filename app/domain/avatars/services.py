@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from app.core.errors import NotFoundError
 from app.domain.avatars.models import Avatar
 from app.domain.avatars.repositories import AvatarRepository

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Sequence
 from datetime import datetime
 
@@ -98,7 +96,7 @@ class KnowledgeRepository:
         await self._session.flush()
         return entity
 
-    async def list(
+    async def find_all(
         self,
         *,
         team_id: int,

@@ -4,8 +4,6 @@ Migrated from cheese-backend/test/topic.e2e-spec.ts (361 lines, 15 tests)
 Complete equivalence migration.
 """
 
-from __future__ import annotations
-
 import random
 import time
 

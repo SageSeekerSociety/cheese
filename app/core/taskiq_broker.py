@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from taskiq import TaskiqScheduler
 from taskiq_redis import RedisAsyncResultBackend, ListQueueBroker
 

@@ -3,8 +3,6 @@ Integration tests for the Attachments module.
 Migrated from cheese-backend/test/attachments.e2e-spec.ts
 """
 
-from __future__ import annotations
-
 import io
 
 import httpx

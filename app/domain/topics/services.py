@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from app.core.errors import ConflictError, NotFoundError
 from app.domain.topics.models import Topic
 from app.domain.topics.repositories import TopicRepository

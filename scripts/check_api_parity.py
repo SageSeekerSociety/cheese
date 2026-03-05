@@ -7,8 +7,6 @@ Outputs:
 - parameter-name mismatches (same canonical path shape but different placeholder names)
 """
 
-from __future__ import annotations
-
 import json
 import re
 from collections import defaultdict

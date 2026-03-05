@@ -6,8 +6,6 @@ Migrated from:
 Complete equivalence migration (37 tests total).
 """
 
-from __future__ import annotations
-
 import io
 import random
 
