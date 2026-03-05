@@ -255,9 +255,7 @@ class UserRealNameRepository:
         class_name: str,
         encrypted: bool = False,
     ) -> UserRealNameIdentity:
-        from datetime import datetime as _dt
-
-        now = _dt.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         existing = await self.get_identity(user_id)
         if existing is None:
             identity = UserRealNameIdentity(
@@ -297,9 +295,7 @@ class UserRealNameRepository:
         module_type: str | None = None,
         module_entity_id: int | None = None,
     ) -> UserRealNameAccessLog:
-        from datetime import datetime as _dt
-
-        now = _dt.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         log = UserRealNameAccessLog(
             accessor_id=accessor_id,
             target_id=target_id,

@@ -133,9 +133,7 @@ class TeamRepository:
         return rel.role in (TeamMemberRole.OWNER, TeamMemberRole.ADMIN)
 
     async def add_member(self, team_id: int, user_id: int, role: int) -> TeamUserRelation:
-        from datetime import datetime as _dt
-
-        now = _dt.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         rel = TeamUserRelation(
             team_id=team_id,
             user_id=user_id,

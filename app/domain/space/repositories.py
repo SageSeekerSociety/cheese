@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Select, and_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,9 +51,7 @@ class SpaceRepository:
         announcements: list,
         task_templates: list,
     ) -> Space:
-        from datetime import datetime as _dt
-
-        now = _dt.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         space = Space(
             name=name,
             intro=intro,
@@ -115,9 +113,7 @@ class SpaceCategoryRepository:
         description: str | None,
         display_order: int,
     ) -> SpaceCategory:
-        from datetime import datetime as _dt
-
-        now = _dt.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         category = SpaceCategory(
             space_id=space_id,
             name=name,
@@ -173,8 +169,6 @@ class SpaceUserRankRepository:
         return int(row.rank)
 
     async def increment_rank(self, *, space_id: int, user_id: int, delta: int) -> int:
-        from datetime import datetime as _dt
-
         stmt: Select[tuple[SpaceUserRank]] = select(SpaceUserRank).where(
             SpaceUserRank.space_id == space_id,
             SpaceUserRank.user_id == user_id,
@@ -182,7 +176,7 @@ class SpaceUserRankRepository:
         )
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
-        now = _dt.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if row is None:
             row = SpaceUserRank(
                 space_id=space_id,
@@ -200,8 +194,6 @@ class SpaceUserRankRepository:
         return row.rank
 
     async def set_rank(self, *, space_id: int, user_id: int, rank: int) -> int:
-        from datetime import datetime as _dt
-
         stmt: Select[tuple[SpaceUserRank]] = select(SpaceUserRank).where(
             SpaceUserRank.space_id == space_id,
             SpaceUserRank.user_id == user_id,
@@ -209,7 +201,7 @@ class SpaceUserRankRepository:
         )
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
-        now = _dt.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if row is None:
             row = SpaceUserRank(
                 space_id=space_id,
@@ -234,9 +226,7 @@ class SpaceAdminRelationRepository:
     async def add_admin(
         self, *, space_id: int, user_id: int, role: SpaceAdminRole
     ) -> SpaceAdminRelation:
-        from datetime import datetime as _dt
-
-        now = _dt.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         relation = SpaceAdminRelation(
             space_id=space_id,
             user_id=user_id,
@@ -271,7 +261,7 @@ class SpaceAdminRelationRepository:
         return list(result.scalars().all())
 
     async def remove_admin(self, relation: SpaceAdminRelation) -> None:
-        relation.deleted_at = relation.updated_at = datetime.utcnow()
+        relation.deleted_at = relation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await self._session.flush()
 
     async def get_owner(self, space_id: int) -> SpaceAdminRelation | None:

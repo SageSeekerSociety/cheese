@@ -30,6 +30,7 @@ async def get_material_service(db=Depends(get_db)) -> MaterialService:
 @router.post(
     "",
     summary="Upload Material",
+    status_code=201,
 )
 async def upload_material(
     file: UploadFile = File(...),
@@ -57,7 +58,7 @@ async def upload_material(
         uploader_id=auth_user.user_id,
         meta={"size": len(file_content), "mimeType": file_mime},
     )
-    return {"code": 200, "message": "Material upload successfully", "data": result}
+    return {"code": 201, "message": "Created", "data": result}
 
 
 @router.get(

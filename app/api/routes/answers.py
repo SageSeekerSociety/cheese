@@ -180,6 +180,7 @@ async def list_answer_comments(
 @router.post(
     "/{answer_id}/comments",
     summary="Create Answer Comment",
+    status_code=201,
 )
 async def create_answer_comment(
     question_id: Annotated[int, Path(ge=0)],

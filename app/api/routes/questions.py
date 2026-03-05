@@ -326,6 +326,7 @@ async def list_question_comments(
 @router.post(
     "/{question_id}/comments",
     summary="Create Question Comment",
+    status_code=201,
 )
 async def create_question_comment(
     question_id: Annotated[int, Path(ge=0)],

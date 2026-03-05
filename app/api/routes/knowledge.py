@@ -23,6 +23,7 @@ async def get_knowledge_service(db=Depends(get_db)) -> KnowledgeService:
 @router.post(
     "",
     summary="Create Knowledge",
+    status_code=201,
 )
 async def create_knowledge(
     payload: dict = Body(...),
@@ -63,8 +64,8 @@ async def create_knowledge(
         discussion_id=discussion_id,
     )
     return {
-        "code": 200,
-        "message": "ok",
+        "code": 201,
+        "message": "Created",
         "data": {"knowledge": knowledge},
     }
 

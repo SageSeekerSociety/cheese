@@ -682,7 +682,7 @@ class TaskSubmissionReviewRepository:
         return review
 
     async def soft_delete(self, review: TaskSubmissionReview) -> None:
-        review.deleted_at = datetime.utcnow()
+        review.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
         self._session.add(review)
         await self._session.flush()
 
@@ -777,8 +777,8 @@ class TaskAIAdviceContextRepository:
             task_id=task_id,
             section=section,
             section_index=section_index,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         self._session.add(ctx)
         await self._session.flush()
@@ -830,7 +830,7 @@ class AIConversationRepository:
         return convo
 
     async def soft_delete(self, conversation: AIConversation) -> None:
-        conversation.deleted_at = datetime.utcnow()
+        conversation.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
         self._session.add(conversation)
         await self._session.flush()
 
