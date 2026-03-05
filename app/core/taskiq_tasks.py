@@ -5,7 +5,7 @@ import logging
 from taskiq.schedule_sources import LabelScheduleSource
 
 from app.core.taskiq_broker import broker, scheduler
-from app.db.session import async_session_factory
+from app.db.session import AsyncSessionLocal as async_session_factory
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ async def notification_aggregation_finalize_task() -> dict[str, int]:
     async with async_session_factory() as session:
         handler = build_notification_event_handler(session)
         finalized = await handler.finalize_expired()
+        await session.commit()
         count = len(finalized)
         if count > 0:
             logger.info("Finalized %d notification aggregations", count)
@@ -73,7 +74,7 @@ async def process_email_queue_task() -> dict[str, int]:
 
     from app.core.config import settings
     from app.core.email import get_email_sender
-    from app.db.session import async_session_factory
+    from app.db.session import AsyncSessionLocal as async_session_factory
 
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     queue_key = settings.notification_email_queue_key

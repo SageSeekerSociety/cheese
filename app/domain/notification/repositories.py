@@ -66,6 +66,7 @@ class NotificationRepository:
                 and_(
                     Notification.receiver_id == user_id,
                     Notification.read.is_(False),
+                    Notification.deleted_at.is_(None),
                 )
             )
             .values(read=True)
@@ -90,6 +91,7 @@ class NotificationRepository:
                 and_(
                     Notification.receiver_id == user_id,
                     Notification.id == notification_id,
+                    Notification.deleted_at.is_(None),
                 )
             )
             .values(read=read)

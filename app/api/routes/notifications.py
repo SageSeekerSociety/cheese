@@ -146,12 +146,16 @@ async def list_notifications(
 
     notifications = await service.get_notifications_for_current_user(
         user_id=auth_user.user_id,
-        limit=page_size,
+        limit=page_size + 1,
         cursor_created_at=cursor_created_at,
         cursor_id=cursor_id,
         type_=type_,
         read=read,
     )
+
+    has_more = len(notifications) > page_size
+    notifications = notifications[:page_size]
+
     # Build DTOs with resolved entities and convert to plain dicts
     items = [(await service.build_notification_dto(n)).__dict__ for n in notifications]
 
@@ -165,7 +169,6 @@ async def list_notifications(
 
     # Encode next cursor using last item's createdAt/id.
     next_start: str | None = None
-    has_more = total > 0 and returned > 0 and total > returned
     if has_more:
         last = notifications[-1]
         last_created_ms = int(last.created_at.timestamp() * 1000)

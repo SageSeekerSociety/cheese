@@ -11,10 +11,10 @@ from app.domain.task.models import TaskMembership
 
 logger = logging.getLogger(__name__)
 
-MEMBERSHIP_STATUS_PENDING_REVIEW = 1
-MEMBERSHIP_STATUS_REJECTED_RESUBMITTABLE = 3
-MEMBERSHIP_STATUS_NOT_SUBMITTED = 4
-MEMBERSHIP_STATUS_FAILED = 5
+COMPLETION_STATUS_PENDING_REVIEW = "PENDING_REVIEW"
+COMPLETION_STATUS_REJECTED_RESUBMITTABLE = "REJECTED_RESUBMITTABLE"
+COMPLETION_STATUS_NOT_SUBMITTED = "NOT_SUBMITTED"
+COMPLETION_STATUS_FAILED = "FAILED"
 
 PAGE_SIZE = 100
 
@@ -35,13 +35,14 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
                 and_(
                     TaskMembership.deadline.isnot(None),
                     TaskMembership.deadline < now,
-                    TaskMembership.member_status.in_(
+                    TaskMembership.completion_status.in_(
                         [
-                            MEMBERSHIP_STATUS_PENDING_REVIEW,
-                            MEMBERSHIP_STATUS_REJECTED_RESUBMITTABLE,
-                            MEMBERSHIP_STATUS_NOT_SUBMITTED,
+                            COMPLETION_STATUS_PENDING_REVIEW,
+                            COMPLETION_STATUS_REJECTED_RESUBMITTABLE,
+                            COMPLETION_STATUS_NOT_SUBMITTED,
                         ]
                     ),
+                    TaskMembership.deleted_at.is_(None),
                 )
             )
             .limit(PAGE_SIZE)
@@ -56,7 +57,7 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
 
         for membership in memberships:
             try:
-                membership.member_status = MEMBERSHIP_STATUS_FAILED
+                membership.completion_status = COMPLETION_STATUS_FAILED
                 membership.updated_at = now
                 total_failed += 1
             except Exception:

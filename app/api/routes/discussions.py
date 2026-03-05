@@ -183,7 +183,7 @@ async def delete_discussion(
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
     discussion = await service.get_discussion(discussion_id, auth_user.user_id)
-    if discussion["senderId"] != auth_user.user_id:
+    if discussion["sender"]["id"] != auth_user.user_id:
         raise ForbiddenError("Only the author can delete this discussion")
     await service.delete_discussion(discussion_id)
     return None

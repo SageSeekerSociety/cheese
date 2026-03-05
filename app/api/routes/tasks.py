@@ -2077,9 +2077,11 @@ async def list_ai_advice_conversations_grouped(
 async def get_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     conversation_id: Annotated[str, Path(alias="conversationId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
     _ = task_id
+    _ = auth_user
     try:
         payload = await service.get_conversation(conversation_id=conversation_id)
     except ValueError as exc:
@@ -2143,11 +2145,10 @@ async def delete_ai_advice_conversation(
 ) -> dict:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
-    conversation = await service.get_conversation(
-        task_id=task_id, conversation_id=conversation_id, user_id=auth_user.user_id
-    )
-    if conversation is None:
-        raise NotFoundError("Conversation not found")
+    try:
+        await service.get_conversation(conversation_id=conversation_id)
+    except ValueError as exc:
+        raise NotFoundError(str(exc)) from exc
     await service.delete_conversation(conversation_id=conversation_id)
     return {"code": 200, "message": "OK"}
 

@@ -218,7 +218,15 @@ async def delete_answer_comment(
 ) -> dict:
     _ = question_id
     _ = answer_id
-    _ = auth_user
+    if auth_user.user_id == 0:
+        from app.core.errors import ForbiddenError
+
+        raise ForbiddenError("Authentication required")
+    discussion = await discussion_service.get_discussion(comment_id, auth_user.user_id)
+    if discussion["sender"]["id"] != auth_user.user_id:
+        from app.core.errors import ForbiddenError
+
+        raise ForbiddenError("Only the author can delete this comment")
     await discussion_service.delete_discussion(comment_id)
     return {"code": 200, "message": "OK", "data": {"deleted": True}}
 
