@@ -407,6 +407,15 @@ class TestTeamServiceUpdateTeam:
             await svc.update_team(team_id=1, actor_user_id=42, avatar_id=-1)
 
     @pytest.mark.anyio
+    async def test_rejects_non_string_name(self):
+        svc, repo = _build_team_service()
+        repo.get_by_id.return_value = _make_team(id=1)
+        repo.get_member_relation.return_value = _make_relation(role=TeamMemberRole.OWNER)
+
+        with pytest.raises(BadRequestError, match="must be string"):
+            await svc.update_team(team_id=1, actor_user_id=42, name=12345)
+
+    @pytest.mark.anyio
     async def test_raises_not_found_for_missing_team(self):
         svc, repo = _build_team_service()
         repo.get_by_id.return_value = None

@@ -1,13 +1,10 @@
 import logging
 import smtplib
+from collections.abc import Sequence
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import TYPE_CHECKING
 
 from app.core.config import settings
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 logger = logging.getLogger(__name__)

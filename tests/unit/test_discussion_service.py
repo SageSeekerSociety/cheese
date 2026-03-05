@@ -1004,3 +1004,13 @@ class TestLoadUserMap:
 
         assert items == []
         profile_repo.get_profiles_by_user_ids.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_empty_user_ids_skips_repo_call(self):
+        """_load_user_map returns {} immediately when user_ids is empty (line 271)."""
+        svc, _repo, _rxn, profile_repo = _make_discussion_service()
+
+        result = await svc._load_user_map(set())
+
+        assert result == {}
+        profile_repo.get_profiles_by_user_ids.assert_not_awaited()

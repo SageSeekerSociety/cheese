@@ -1,11 +1,17 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
-from app.domain.groups.services import GroupsService
+from app.domain.groups.services import (
+    GroupQuestionService,
+    GroupsService,
+    GroupTargetService,
+    _date_to_ms,
+    _target_to_dto,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1032,3 +1038,906 @@ async def test_group_to_dto_is_public_always_true():
     result = await svc.get_group(group_id=1)
 
     assert result["is_public"] is True
+
+
+# ---------------------------------------------------------------------------
+# list_members — additional edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_list_members_with_prev_page():
+    repo = AsyncMock()
+    membership_repo = AsyncMock()
+    user_profile_repo = AsyncMock()
+
+    repo.get_by_id.return_value = _group(id=5)
+
+    m1 = _membership(member_id=30, role="MEMBER")
+    # prev_id=10 means there is a previous page, next_id=None means no next page
+    membership_repo.list_members_cursor.return_value = ([m1], 10, None)
+    user_profile_repo.get_profiles_by_user_ids.return_value = {
+        30: _user_profile(nickname="Charlie"),
+    }
+
+    svc = _make_service(
+        repo=repo,
+        membership_repo=membership_repo,
+        user_profile_repo=user_profile_repo,
+    )
+
+    members, page = await svc.list_members(group_id=5, page_start=30, page_size=10)
+
+    assert len(members) == 1
+    assert page["has_prev"] is True
+    assert page["prev_start"] == 10
+    assert page["has_more"] is False
+    assert page["next_start"] == 0
+
+
+@pytest.mark.anyio
+async def test_list_members_empty_result():
+    repo = AsyncMock()
+    membership_repo = AsyncMock()
+    user_profile_repo = AsyncMock()
+
+    repo.get_by_id.return_value = _group(id=5)
+    membership_repo.list_members_cursor.return_value = ([], None, None)
+    user_profile_repo.get_profiles_by_user_ids.return_value = {}
+
+    svc = _make_service(
+        repo=repo,
+        membership_repo=membership_repo,
+        user_profile_repo=user_profile_repo,
+    )
+
+    members, page = await svc.list_members(group_id=5, page_start=None, page_size=10)
+
+    assert members == []
+    assert page["page_start"] == 0
+    assert page["page_size"] == 0
+    assert page["has_prev"] is False
+    assert page["has_more"] is False
+
+
+@pytest.mark.anyio
+async def test_list_members_negative_page_size():
+    repo = AsyncMock()
+    repo.get_by_id.return_value = _group(id=5)
+
+    svc = _make_service(repo=repo)
+
+    members, page = await svc.list_members(group_id=5, page_start=None, page_size=-1)
+
+    assert members == []
+    assert page["page_size"] == 0
+
+
+# ---------------------------------------------------------------------------
+# update_group — name=None skips duplicate check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_update_group_no_name_skips_duplicate_check():
+    repo = AsyncMock()
+    profile_repo = AsyncMock()
+    membership_repo = AsyncMock()
+    user_profile_repo = AsyncMock()
+
+    group = _group(id=5)
+    repo.get_by_id.return_value = group
+    membership_repo.get_member_role.return_value = "OWNER"
+    profile_repo.get_by_group_id.return_value = _profile(group_id=5)
+    membership_repo.count_members.return_value = 1
+    membership_repo.get_owner_id.return_value = 1
+    user_profile_repo.get_profile_by_user_id.return_value = _user_profile()
+
+    svc = _make_service(
+        repo=repo,
+        profile_repo=profile_repo,
+        membership_repo=membership_repo,
+        user_profile_repo=user_profile_repo,
+    )
+
+    result = await svc.update_group(group_id=5, user_id=1, intro="New intro only")
+
+    # exists_by_name should NOT have been called since name was not provided
+    repo.exists_by_name.assert_not_awaited()
+    repo.update_group.assert_awaited_once_with(group, name=None)
+    assert result["is_owner"] is True
+
+
+# ---------------------------------------------------------------------------
+# _date_to_ms helper
+# ---------------------------------------------------------------------------
+
+
+def test_date_to_ms_none():
+    assert _date_to_ms(None) == 0
+
+
+def test_date_to_ms_datetime():
+    dt = datetime(2026, 6, 15, 10, 30, 0, tzinfo=UTC)
+    expected = int(dt.timestamp() * 1000)
+    assert _date_to_ms(dt) == expected
+
+
+def test_date_to_ms_date_object():
+    d = date(2026, 6, 15)
+    # Should convert date to datetime at midnight UTC
+    from datetime import datetime as dt
+
+    expected = int(dt.combine(d, dt.min.time(), tzinfo=UTC).timestamp() * 1000)
+    assert _date_to_ms(d) == expected
+
+
+# ---------------------------------------------------------------------------
+# _target_to_dto helper
+# ---------------------------------------------------------------------------
+
+
+def _target(
+    *,
+    id: int = 1,
+    group_id: int = 5,
+    name: str = "Target A",
+    intro: str = "Do stuff",
+    started_at=None,
+    ended_at=None,
+    attendance_frequency: str = "DAILY",
+    created_at=None,
+    **kw,
+):
+    defaults = {
+        "id": id,
+        "group_id": group_id,
+        "name": name,
+        "intro": intro,
+        "started_at": started_at or date(2026, 1, 1),
+        "ended_at": ended_at or date(2026, 6, 1),
+        "attendance_frequency": attendance_frequency,
+        "created_at": created_at or NOW,
+        "updated_at": NOW,
+        "deleted_at": None,
+    }
+    defaults.update(kw)
+    return SimpleNamespace(**defaults)
+
+
+def test_target_to_dto():
+    t = _target(id=10, group_id=5, name="Goal", intro="Desc")
+    dto = _target_to_dto(t)
+
+    assert dto["id"] == 10
+    assert dto["groupId"] == 5
+    assert dto["name"] == "Goal"
+    assert dto["intro"] == "Desc"
+    assert dto["attendanceFrequency"] == "DAILY"
+    assert isinstance(dto["startedAt"], int)
+    assert isinstance(dto["endedAt"], int)
+    assert isinstance(dto["createdAt"], int)
+    assert dto["startedAt"] > 0
+    assert dto["endedAt"] > 0
+    assert dto["createdAt"] > 0
+
+
+def test_target_to_dto_none_created_at():
+    t = _target(created_at=None)
+    # Override created_at to None explicitly
+    t.created_at = None
+    dto = _target_to_dto(t)
+
+    assert dto["createdAt"] == 0
+
+
+def test_target_to_dto_none_dates():
+    t = _target()
+    t.started_at = None
+    t.ended_at = None
+    dto = _target_to_dto(t)
+
+    assert dto["startedAt"] == 0
+    assert dto["endedAt"] == 0
+
+
+# ---------------------------------------------------------------------------
+# GroupTargetService helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_target_service(group_repo=None, target_repo=None, membership_repo=None):
+    return GroupTargetService(
+        group_repo=group_repo or AsyncMock(),
+        target_repo=target_repo or AsyncMock(),
+        membership_repo=membership_repo or AsyncMock(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GroupTargetService.list_targets
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_list_targets_success():
+    group_repo = AsyncMock()
+    target_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    t1 = _target(id=1)
+    t2 = _target(id=2)
+    target_repo.list_by_group.return_value = ([t1, t2], 5)
+
+    svc = _make_target_service(group_repo=group_repo, target_repo=target_repo)
+
+    items, page = await svc.list_targets(group_id=5, page_start=0, page_size=2)
+
+    target_repo.list_by_group.assert_awaited_once_with(group_id=5, limit=2, offset=0)
+    assert len(items) == 2
+    assert page["total"] == 5
+    assert page["hasMore"] is True
+    assert page["nextStart"] == 2
+
+
+@pytest.mark.anyio
+async def test_list_targets_no_more():
+    group_repo = AsyncMock()
+    target_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    target_repo.list_by_group.return_value = ([_target(id=1)], 1)
+
+    svc = _make_target_service(group_repo=group_repo, target_repo=target_repo)
+
+    items, page = await svc.list_targets(group_id=5, page_start=None, page_size=10)
+
+    assert len(items) == 1
+    assert page["hasMore"] is False
+    assert page["nextStart"] is None
+    assert page["pageStart"] == 0
+
+
+@pytest.mark.anyio
+async def test_list_targets_empty():
+    group_repo = AsyncMock()
+    target_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    target_repo.list_by_group.return_value = ([], 0)
+
+    svc = _make_target_service(group_repo=group_repo, target_repo=target_repo)
+
+    items, page = await svc.list_targets(group_id=5, page_start=0, page_size=10)
+
+    assert items == []
+    assert page["total"] == 0
+    assert page["hasMore"] is False
+    assert page["nextStart"] is None
+
+
+@pytest.mark.anyio
+async def test_list_targets_group_not_found():
+    group_repo = AsyncMock()
+    group_repo.get_by_id.return_value = None
+
+    svc = _make_target_service(group_repo=group_repo)
+
+    with pytest.raises(NotFoundError, match="Group not found"):
+        await svc.list_targets(group_id=999, page_start=0, page_size=10)
+
+
+# ---------------------------------------------------------------------------
+# GroupTargetService.get_target
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_get_target_success():
+    target_repo = AsyncMock()
+    t = _target(id=10, group_id=5)
+    target_repo.get_by_id.return_value = t
+
+    svc = _make_target_service(target_repo=target_repo)
+
+    result = await svc.get_target(group_id=5, target_id=10)
+
+    assert result["id"] == 10
+    assert result["groupId"] == 5
+
+
+@pytest.mark.anyio
+async def test_get_target_not_found():
+    target_repo = AsyncMock()
+    target_repo.get_by_id.return_value = None
+
+    svc = _make_target_service(target_repo=target_repo)
+
+    with pytest.raises(NotFoundError, match="Target not found"):
+        await svc.get_target(group_id=5, target_id=999)
+
+
+@pytest.mark.anyio
+async def test_get_target_wrong_group():
+    target_repo = AsyncMock()
+    t = _target(id=10, group_id=99)  # belongs to group 99, not 5
+    target_repo.get_by_id.return_value = t
+
+    svc = _make_target_service(target_repo=target_repo)
+
+    with pytest.raises(NotFoundError, match="Target not found"):
+        await svc.get_target(group_id=5, target_id=10)
+
+
+# ---------------------------------------------------------------------------
+# GroupTargetService.create_target
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_create_target_success():
+    group_repo = AsyncMock()
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = "OWNER"
+    created_target = _target(id=50)
+    target_repo.create.return_value = created_target
+
+    svc = _make_target_service(
+        group_repo=group_repo, target_repo=target_repo, membership_repo=membership_repo
+    )
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 6, 1, tzinfo=UTC)
+    result = await svc.create_target(
+        group_id=5,
+        user_id=1,
+        name="New Target",
+        intro="Do it",
+        started_at=start,
+        ended_at=end,
+        attendance_frequency="DAILY",
+    )
+
+    target_repo.create.assert_awaited_once_with(
+        group_id=5,
+        name="New Target",
+        intro="Do it",
+        started_at=start,
+        ended_at=end,
+        attendance_frequency="DAILY",
+    )
+    assert result == {"id": 50}
+
+
+@pytest.mark.anyio
+async def test_create_target_as_admin():
+    group_repo = AsyncMock()
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = "ADMIN"
+    target_repo.create.return_value = _target(id=51)
+
+    svc = _make_target_service(
+        group_repo=group_repo, target_repo=target_repo, membership_repo=membership_repo
+    )
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 6, 1, tzinfo=UTC)
+    result = await svc.create_target(
+        group_id=5,
+        user_id=2,
+        name="Admin Target",
+        intro="Go",
+        started_at=start,
+        ended_at=end,
+        attendance_frequency="WEEKLY",
+    )
+
+    assert result == {"id": 51}
+
+
+@pytest.mark.anyio
+async def test_create_target_group_not_found():
+    group_repo = AsyncMock()
+    group_repo.get_by_id.return_value = None
+
+    svc = _make_target_service(group_repo=group_repo)
+
+    with pytest.raises(NotFoundError, match="Group not found"):
+        await svc.create_target(
+            group_id=999,
+            user_id=1,
+            name="X",
+            intro="Y",
+            started_at=NOW,
+            ended_at=NOW,
+            attendance_frequency="DAILY",
+        )
+
+
+@pytest.mark.anyio
+async def test_create_target_forbidden_member():
+    group_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = "MEMBER"
+
+    svc = _make_target_service(group_repo=group_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError, match="Only owners and admins can create targets"):
+        await svc.create_target(
+            group_id=5,
+            user_id=10,
+            name="X",
+            intro="Y",
+            started_at=NOW,
+            ended_at=NOW,
+            attendance_frequency="DAILY",
+        )
+
+
+@pytest.mark.anyio
+async def test_create_target_forbidden_non_member():
+    group_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = None
+
+    svc = _make_target_service(group_repo=group_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError):
+        await svc.create_target(
+            group_id=5,
+            user_id=10,
+            name="X",
+            intro="Y",
+            started_at=NOW,
+            ended_at=NOW,
+            attendance_frequency="DAILY",
+        )
+
+
+# ---------------------------------------------------------------------------
+# GroupTargetService.update_target
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_update_target_success():
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    t = _target(id=10, group_id=5)
+    target_repo.get_by_id.return_value = t
+    membership_repo.get_member_role.return_value = "OWNER"
+
+    svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
+
+    result = await svc.update_target(
+        group_id=5,
+        target_id=10,
+        user_id=1,
+        name="Updated",
+        intro="New desc",
+    )
+
+    target_repo.update.assert_awaited_once_with(
+        t,
+        name="Updated",
+        intro="New desc",
+        started_at=None,
+        ended_at=None,
+        attendance_frequency=None,
+    )
+    assert result["id"] == 10
+    assert result["name"] == "Target A"  # still the old object, but update was called
+
+
+@pytest.mark.anyio
+async def test_update_target_not_found():
+    target_repo = AsyncMock()
+    target_repo.get_by_id.return_value = None
+
+    svc = _make_target_service(target_repo=target_repo)
+
+    with pytest.raises(NotFoundError, match="Target not found"):
+        await svc.update_target(group_id=5, target_id=999, user_id=1, name="X")
+
+
+@pytest.mark.anyio
+async def test_update_target_wrong_group():
+    target_repo = AsyncMock()
+    t = _target(id=10, group_id=99)
+    target_repo.get_by_id.return_value = t
+
+    svc = _make_target_service(target_repo=target_repo)
+
+    with pytest.raises(NotFoundError, match="Target not found"):
+        await svc.update_target(group_id=5, target_id=10, user_id=1, name="X")
+
+
+@pytest.mark.anyio
+async def test_update_target_forbidden_member():
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    target_repo.get_by_id.return_value = _target(id=10, group_id=5)
+    membership_repo.get_member_role.return_value = "MEMBER"
+
+    svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError, match="Only owners and admins can update targets"):
+        await svc.update_target(group_id=5, target_id=10, user_id=10, name="X")
+
+
+@pytest.mark.anyio
+async def test_update_target_forbidden_non_member():
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    target_repo.get_by_id.return_value = _target(id=10, group_id=5)
+    membership_repo.get_member_role.return_value = None
+
+    svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError):
+        await svc.update_target(group_id=5, target_id=10, user_id=10, name="X")
+
+
+@pytest.mark.anyio
+async def test_update_target_as_admin():
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    t = _target(id=10, group_id=5)
+    target_repo.get_by_id.return_value = t
+    membership_repo.get_member_role.return_value = "ADMIN"
+
+    svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
+
+    result = await svc.update_target(
+        group_id=5, target_id=10, user_id=2, intro="Updated by admin"
+    )
+
+    target_repo.update.assert_awaited_once()
+    assert result["id"] == 10
+
+
+# ---------------------------------------------------------------------------
+# GroupTargetService.delete_target
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_delete_target_success():
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    t = _target(id=10, group_id=5)
+    target_repo.get_by_id.return_value = t
+    membership_repo.get_member_role.return_value = "OWNER"
+
+    svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
+
+    await svc.delete_target(group_id=5, target_id=10, user_id=1)
+
+    target_repo.soft_delete.assert_awaited_once_with(t)
+
+
+@pytest.mark.anyio
+async def test_delete_target_not_found():
+    target_repo = AsyncMock()
+    target_repo.get_by_id.return_value = None
+
+    svc = _make_target_service(target_repo=target_repo)
+
+    with pytest.raises(NotFoundError, match="Target not found"):
+        await svc.delete_target(group_id=5, target_id=999, user_id=1)
+
+
+@pytest.mark.anyio
+async def test_delete_target_wrong_group():
+    target_repo = AsyncMock()
+    t = _target(id=10, group_id=99)
+    target_repo.get_by_id.return_value = t
+
+    svc = _make_target_service(target_repo=target_repo)
+
+    with pytest.raises(NotFoundError, match="Target not found"):
+        await svc.delete_target(group_id=5, target_id=10, user_id=1)
+
+
+@pytest.mark.anyio
+async def test_delete_target_forbidden_member():
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    target_repo.get_by_id.return_value = _target(id=10, group_id=5)
+    membership_repo.get_member_role.return_value = "MEMBER"
+
+    svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError, match="Only owners and admins can delete targets"):
+        await svc.delete_target(group_id=5, target_id=10, user_id=10)
+
+
+@pytest.mark.anyio
+async def test_delete_target_forbidden_non_member():
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    target_repo.get_by_id.return_value = _target(id=10, group_id=5)
+    membership_repo.get_member_role.return_value = None
+
+    svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError):
+        await svc.delete_target(group_id=5, target_id=10, user_id=10)
+
+
+@pytest.mark.anyio
+async def test_delete_target_as_admin():
+    target_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    t = _target(id=10, group_id=5)
+    target_repo.get_by_id.return_value = t
+    membership_repo.get_member_role.return_value = "ADMIN"
+
+    svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
+
+    await svc.delete_target(group_id=5, target_id=10, user_id=2)
+
+    target_repo.soft_delete.assert_awaited_once_with(t)
+
+
+# ---------------------------------------------------------------------------
+# GroupQuestionService helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_question_service(group_repo=None, question_repo=None, membership_repo=None):
+    return GroupQuestionService(
+        group_repo=group_repo or AsyncMock(),
+        question_repo=question_repo or AsyncMock(),
+        membership_repo=membership_repo or AsyncMock(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GroupQuestionService.list_questions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_list_questions_success():
+    group_repo = AsyncMock()
+    question_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    question_repo.list_by_group.return_value = ([101, 102, 103], 10)
+
+    svc = _make_question_service(group_repo=group_repo, question_repo=question_repo)
+
+    question_ids, page = await svc.list_questions(group_id=5, page_start=0, page_size=3)
+
+    question_repo.list_by_group.assert_awaited_once_with(group_id=5, limit=3, offset=0)
+    assert question_ids == [101, 102, 103]
+    assert page["total"] == 10
+    assert page["hasMore"] is True
+    assert page["nextStart"] == 3
+
+
+@pytest.mark.anyio
+async def test_list_questions_no_more():
+    group_repo = AsyncMock()
+    question_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    question_repo.list_by_group.return_value = ([101], 1)
+
+    svc = _make_question_service(group_repo=group_repo, question_repo=question_repo)
+
+    question_ids, page = await svc.list_questions(group_id=5, page_start=None, page_size=10)
+
+    assert question_ids == [101]
+    assert page["hasMore"] is False
+    assert page["nextStart"] is None
+    assert page["pageStart"] == 0
+
+
+@pytest.mark.anyio
+async def test_list_questions_empty():
+    group_repo = AsyncMock()
+    question_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    question_repo.list_by_group.return_value = ([], 0)
+
+    svc = _make_question_service(group_repo=group_repo, question_repo=question_repo)
+
+    question_ids, page = await svc.list_questions(group_id=5, page_start=0, page_size=10)
+
+    assert question_ids == []
+    assert page["total"] == 0
+    assert page["hasMore"] is False
+    assert page["nextStart"] is None
+
+
+@pytest.mark.anyio
+async def test_list_questions_group_not_found():
+    group_repo = AsyncMock()
+    group_repo.get_by_id.return_value = None
+
+    svc = _make_question_service(group_repo=group_repo)
+
+    with pytest.raises(NotFoundError, match="Group not found"):
+        await svc.list_questions(group_id=999, page_start=0, page_size=10)
+
+
+# ---------------------------------------------------------------------------
+# GroupQuestionService.add_question
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_add_question_success():
+    group_repo = AsyncMock()
+    question_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = "OWNER"
+
+    svc = _make_question_service(
+        group_repo=group_repo, question_repo=question_repo, membership_repo=membership_repo
+    )
+
+    result = await svc.add_question(group_id=5, question_id=42, user_id=1)
+
+    question_repo.add_question.assert_awaited_once_with(group_id=5, question_id=42)
+    assert result == {"questionId": 42}
+
+
+@pytest.mark.anyio
+async def test_add_question_as_admin():
+    group_repo = AsyncMock()
+    question_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = "ADMIN"
+
+    svc = _make_question_service(
+        group_repo=group_repo, question_repo=question_repo, membership_repo=membership_repo
+    )
+
+    result = await svc.add_question(group_id=5, question_id=43, user_id=2)
+
+    assert result == {"questionId": 43}
+
+
+@pytest.mark.anyio
+async def test_add_question_group_not_found():
+    group_repo = AsyncMock()
+    group_repo.get_by_id.return_value = None
+
+    svc = _make_question_service(group_repo=group_repo)
+
+    with pytest.raises(NotFoundError, match="Group not found"):
+        await svc.add_question(group_id=999, question_id=42, user_id=1)
+
+
+@pytest.mark.anyio
+async def test_add_question_forbidden_member():
+    group_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = "MEMBER"
+
+    svc = _make_question_service(group_repo=group_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError, match="Only owners and admins can add questions"):
+        await svc.add_question(group_id=5, question_id=42, user_id=10)
+
+
+@pytest.mark.anyio
+async def test_add_question_forbidden_non_member():
+    group_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = None
+
+    svc = _make_question_service(group_repo=group_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError):
+        await svc.add_question(group_id=5, question_id=42, user_id=10)
+
+
+# ---------------------------------------------------------------------------
+# GroupQuestionService.remove_question
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_remove_question_success():
+    group_repo = AsyncMock()
+    question_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = "OWNER"
+
+    svc = _make_question_service(
+        group_repo=group_repo, question_repo=question_repo, membership_repo=membership_repo
+    )
+
+    await svc.remove_question(group_id=5, question_id=42, user_id=1)
+
+    question_repo.remove_question.assert_awaited_once_with(group_id=5, question_id=42)
+
+
+@pytest.mark.anyio
+async def test_remove_question_as_admin():
+    group_repo = AsyncMock()
+    question_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = "ADMIN"
+
+    svc = _make_question_service(
+        group_repo=group_repo, question_repo=question_repo, membership_repo=membership_repo
+    )
+
+    await svc.remove_question(group_id=5, question_id=43, user_id=2)
+
+    question_repo.remove_question.assert_awaited_once_with(group_id=5, question_id=43)
+
+
+@pytest.mark.anyio
+async def test_remove_question_group_not_found():
+    group_repo = AsyncMock()
+    group_repo.get_by_id.return_value = None
+
+    svc = _make_question_service(group_repo=group_repo)
+
+    with pytest.raises(NotFoundError, match="Group not found"):
+        await svc.remove_question(group_id=999, question_id=42, user_id=1)
+
+
+@pytest.mark.anyio
+async def test_remove_question_forbidden_member():
+    group_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = "MEMBER"
+
+    svc = _make_question_service(group_repo=group_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError, match="Only owners and admins can remove questions"):
+        await svc.remove_question(group_id=5, question_id=42, user_id=10)
+
+
+@pytest.mark.anyio
+async def test_remove_question_forbidden_non_member():
+    group_repo = AsyncMock()
+    membership_repo = AsyncMock()
+
+    group_repo.get_by_id.return_value = _group(id=5)
+    membership_repo.get_member_role.return_value = None
+
+    svc = _make_question_service(group_repo=group_repo, membership_repo=membership_repo)
+
+    with pytest.raises(ForbiddenError):
+        await svc.remove_question(group_id=5, question_id=42, user_id=10)
