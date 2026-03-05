@@ -113,7 +113,7 @@ class RedisEmailQueueNotificationHandler:
         if not items or self._redis is None:
             return
         try:
-            await self._redis.rpush(self._queue_key, *items)
+            await self._redis.rpush(self._queue_key, *items)  # type: ignore[misc]
         except Exception:
             logger.exception(
                 "Failed to enqueue notification batch into Redis queue %s", self._queue_key

@@ -96,7 +96,7 @@ class TeamRepository:
         return result.scalar_one_or_none()
 
     async def is_team_member(self, team_id: int, user_id: int) -> bool:
-        stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation.id).where(
+        stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation.id).where(  # type: ignore[assignment]
             and_(
                 TeamUserRelation.team_id == team_id,
                 TeamUserRelation.user_id == user_id,
@@ -176,7 +176,7 @@ class TeamMembershipApplicationRepository:
         return result.scalar_one_or_none()
 
     async def exists_pending_for_user_and_team(self, user_id: int, team_id: int) -> bool:
-        stmt: Select[tuple[TeamMembershipApplication]] = select(TeamMembershipApplication.id).where(
+        stmt: Select[tuple[TeamMembershipApplication]] = select(TeamMembershipApplication.id).where(  # type: ignore[assignment]
             TeamMembershipApplication.user_id == user_id,
             TeamMembershipApplication.team_id == team_id,
             TeamMembershipApplication.status == ApplicationStatus.PENDING.value,

@@ -90,6 +90,7 @@ class LLMClient:
     ) -> LLMResponse:
         if not self.is_configured:
             return self._placeholder_response(prompt)
+        assert self._client is not None
 
         model = self._get_model(model_type)
         temperature = settings.openai_temperature
@@ -144,6 +145,7 @@ class LLMClient:
     ) -> LLMResponse:
         if not self.is_configured:
             return self._placeholder_response("")
+        assert self._client is not None
 
         model = self._get_model(model_type)
         temperature = settings.openai_temperature
@@ -192,6 +194,7 @@ class LLMClient:
         if not self.is_configured:
             yield StreamChunk(content=self._placeholder_response(prompt).content, is_final=True)
             return
+        assert self._client is not None
 
         model = self._get_model(model_type)
         temperature = settings.openai_temperature
@@ -203,7 +206,7 @@ class LLMClient:
         messages.append({"role": "user", "content": prompt})
 
         try:
-            stream = await self._client.chat.completions.create(
+            stream = await self._client.chat.completions.create(  # type: ignore[call-overload]
                 model=model,
                 messages=messages,
                 temperature=temperature,
@@ -239,13 +242,14 @@ class LLMClient:
         if not self.is_configured:
             yield StreamChunk(content=self._placeholder_response("").content, is_final=True)
             return
+        assert self._client is not None
 
         model = self._get_model(model_type)
         temperature = settings.openai_temperature
         max_tokens = settings.openai_max_tokens
 
         try:
-            stream = await self._client.chat.completions.create(
+            stream = await self._client.chat.completions.create(  # type: ignore[call-overload]
                 model=model,
                 messages=messages,
                 temperature=temperature,

@@ -63,6 +63,7 @@ include = [
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
+exclude = ["tests", ".venv"]
 reportMissingImports = "warning"
 reportOptionalMemberAccess = "error"
 reportOptionalSubscript = "error"
@@ -71,7 +72,6 @@ reportCallIssue = "error"
 reportArgumentType = "warning"
 reportReturnType = "warning"
 reportAttributeAccessIssue = "warning"  # SQLAlchemy ORM dynamic attrs
-reportGeneralClassIssue = "warning"     # SQLAlchemy Select type variance
 
 [tool.ruff]
 line-length = 100

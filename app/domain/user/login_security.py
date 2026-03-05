@@ -153,11 +153,11 @@ class SessionManager:
         }
 
         session_key = f"{SESSION_PREFIX}{session_id}"
-        await self._redis.hset(session_key, mapping=session_data)
+        await self._redis.hset(session_key, mapping=session_data)  # type: ignore[misc]
         await self._redis.expire(session_key, SESSION_TTL)
 
         user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        await self._redis.sadd(user_sessions_key, session_id)
+        await self._redis.sadd(user_sessions_key, session_id)  # type: ignore[misc]
         await self._redis.expire(user_sessions_key, SESSION_TTL)
 
         logger.info("Created session %s for user %d", session_id, user_id)
@@ -165,7 +165,7 @@ class SessionManager:
 
     async def get_session(self, session_id: str) -> dict | None:
         key = f"{SESSION_PREFIX}{session_id}"
-        data = await self._redis.hgetall(key)
+        data = await self._redis.hgetall(key)  # type: ignore[misc]
         if not data:
             return None
 
@@ -174,12 +174,12 @@ class SessionManager:
     async def update_last_active(self, session_id: str) -> None:
         key = f"{SESSION_PREFIX}{session_id}"
         now = datetime.now(UTC).isoformat()
-        await self._redis.hset(key, "last_active_at", now)
+        await self._redis.hset(key, "last_active_at", now)  # type: ignore[misc]
         await self._redis.expire(key, SESSION_TTL)
 
     async def list_user_sessions(self, user_id: int) -> list[dict]:
         user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        session_ids = await self._redis.smembers(user_sessions_key)
+        session_ids = await self._redis.smembers(user_sessions_key)  # type: ignore[misc]
 
         sessions = []
         for sid in session_ids:
@@ -188,7 +188,7 @@ class SessionManager:
             if session:
                 sessions.append(session)
             else:
-                await self._redis.srem(user_sessions_key, sid)
+                await self._redis.srem(user_sessions_key, sid)  # type: ignore[misc]
 
         sessions.sort(key=lambda s: s.get("last_active_at", ""), reverse=True)
         return sessions
@@ -205,14 +205,14 @@ class SessionManager:
         await self._redis.delete(session_key)
 
         user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        await self._redis.srem(user_sessions_key, session_id)
+        await self._redis.srem(user_sessions_key, session_id)  # type: ignore[misc]
 
         logger.info("Revoked session %s for user %d", session_id, user_id)
         return True
 
     async def revoke_all_sessions(self, user_id: int, except_session_id: str | None = None) -> int:
         user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
-        session_ids = await self._redis.smembers(user_sessions_key)
+        session_ids = await self._redis.smembers(user_sessions_key)  # type: ignore[misc]
 
         count = 0
         for sid in session_ids:
@@ -222,7 +222,7 @@ class SessionManager:
 
             session_key = f"{SESSION_PREFIX}{sid_str}"
             await self._redis.delete(session_key)
-            await self._redis.srem(user_sessions_key, sid)
+            await self._redis.srem(user_sessions_key, sid)  # type: ignore[misc]
             count += 1
 
         logger.info("Revoked %d sessions for user %d", count, user_id)
@@ -246,7 +246,7 @@ class PasswordResetService:
             "created_at": datetime.now(UTC).isoformat(),
         }
 
-        await self._redis.hset(key, mapping=data)
+        await self._redis.hset(key, mapping=data)  # type: ignore[misc]
         await self._redis.expire(key, PASSWORD_RESET_TTL)
 
         logger.info("Created password reset token for user %d", user_id)
@@ -254,7 +254,7 @@ class PasswordResetService:
 
     async def validate_reset_token(self, token: str) -> dict | None:
         key = f"{PASSWORD_RESET_PREFIX}{token}"
-        data = await self._redis.hgetall(key)
+        data = await self._redis.hgetall(key)  # type: ignore[misc]
 
         if not data:
             return None

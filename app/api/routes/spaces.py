@@ -72,9 +72,8 @@ def _space_to_api_model(space: Space) -> dict:
 def _category_to_api_model(cat: SpaceCategory) -> dict:
     created_at_ms = int(cat.created_at.timestamp() * 1000) if cat.created_at else 0
     updated_at_ms = int(cat.updated_at.timestamp() * 1000) if cat.updated_at else 0
-    archived_at_ms = (
-        int(cat.archived_at.timestamp() * 1000) if getattr(cat, "archived_at", None) else None
-    )
+    raw_archived_at = getattr(cat, "archived_at", None)
+    archived_at_ms = int(raw_archived_at.timestamp() * 1000) if raw_archived_at else None
     return {
         "id": cat.id,
         "spaceId": cat.space_id,

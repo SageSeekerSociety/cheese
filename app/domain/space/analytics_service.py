@@ -185,6 +185,8 @@ class SpaceAnalyticsService:
         return result
 
     def _status_label(self, approved_value: int | None) -> str:
+        if approved_value is None:
+            return "UNKNOWN"
         return self._APPROVED_REV.get(approved_value, "UNKNOWN")
 
     def _participant_label(self, approved_value: int) -> str:

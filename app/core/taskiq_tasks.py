@@ -86,7 +86,7 @@ async def process_email_queue_task() -> dict[str, int]:
             from app.domain.user.models import User
 
             while True:
-                items = await redis.lpop(queue_key, batch_size)
+                items = await redis.lpop(queue_key, batch_size)  # type: ignore[misc]
                 if not items:
                     break
 
@@ -124,4 +124,4 @@ async def process_email_queue_task() -> dict[str, int]:
     return {"processed": processed}
 
 
-scheduler.sources = [LabelScheduleSource(broker)]
+scheduler.sources = [LabelScheduleSource(broker)]  # type: ignore[misc]

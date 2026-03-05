@@ -75,10 +75,10 @@ class PasskeyService:
                 for c in (options.exclude_credentials or [])
             ],
             "authenticatorSelection": {
-                "residentKey": options.authenticator_selection.resident_key.value
+                "residentKey": options.authenticator_selection.resident_key.value  # type: ignore[union-attr]
                 if options.authenticator_selection
                 else None,
-                "userVerification": options.authenticator_selection.user_verification.value
+                "userVerification": options.authenticator_selection.user_verification.value  # type: ignore[union-attr]
                 if options.authenticator_selection
                 else None,
             },
@@ -156,7 +156,7 @@ class PasskeyService:
                 }
                 for c in (options.allow_credentials or [])
             ],
-            "userVerification": options.user_verification.value,
+            "userVerification": options.user_verification.value,  # type: ignore[union-attr]
         }
 
     async def verify_authentication(
