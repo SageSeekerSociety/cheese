@@ -765,8 +765,12 @@ class TaskAIAdviceContextRepository:
     ) -> TaskAIAdviceContext:
         stmt = select(TaskAIAdviceContext).where(
             TaskAIAdviceContext.task_id == task_id,
-            TaskAIAdviceContext.section.is_(section),
-            TaskAIAdviceContext.section_index.is_(section_index),
+            TaskAIAdviceContext.section == section
+            if section is not None
+            else TaskAIAdviceContext.section.is_(None),
+            TaskAIAdviceContext.section_index == section_index
+            if section_index is not None
+            else TaskAIAdviceContext.section_index.is_(None),
             TaskAIAdviceContext.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)

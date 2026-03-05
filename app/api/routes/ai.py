@@ -126,6 +126,8 @@ async def update_conversation(
     service: AIChatService = Depends(get_chat_service),
 ) -> dict:
     title = payload.get("title")
+    if title is None:
+        raise BadRequestError("title is required")
     conv = await service.update_conversation_title(
         conversation_id=conversation_id,
         user_id=auth_user.user_id,

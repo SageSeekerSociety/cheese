@@ -4,7 +4,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from app.domain.llm.llm_client import LLMClient, GeneratedAdvice, StreamChunk
-from app.domain.llm.services import AiAdviceService, QuotaInfo, QuotaExceededError
+from app.core.errors import QuotaExceededError
+from app.domain.llm.services import AiAdviceService, QuotaInfo
 from app.domain.task.models import TaskAIAdvice
 from app.domain.task.repositories import (
     AIConversationRepository,

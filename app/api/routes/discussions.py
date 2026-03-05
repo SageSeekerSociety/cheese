@@ -42,6 +42,8 @@ async def create_discussion(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
     model_type = payload.get("modelType")
     model_id = payload.get("modelId")
     content = payload.get("content")
@@ -181,7 +183,8 @@ async def delete_discussion(
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
     discussion = await service.get_discussion(discussion_id, auth_user.user_id)
-    if discussion["sender"]["id"] != auth_user.user_id:
+    sender = discussion.get("sender")
+    if sender is None or sender["id"] != auth_user.user_id:
         raise ForbiddenError("Only the author can delete this discussion")
     await service.delete_discussion(discussion_id)
     return None
@@ -197,6 +200,8 @@ async def toggle_reaction(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
     result = await service.toggle_reaction(
         discussion_id=discussion_id,
         reaction_type_id=reaction_type_id,
@@ -215,6 +220,8 @@ async def remove_reaction(
     auth_user: AuthUserInfo = Depends(get_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
     result = await service.remove_reaction(
         discussion_id=discussion_id,
         reaction_type_id=reaction_type_id,

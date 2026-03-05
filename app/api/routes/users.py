@@ -95,14 +95,17 @@ async def get_passkey_service(
 
 async def get_oauth_service(
     db=Depends(get_db),
-) -> OAuthService:
+):
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
 
     repo = OAuthConnectionRepository(session=db)
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
-    return OAuthService(repo=repo, redis=redis)
+    try:
+        yield OAuthService(repo=repo, redis=redis)
+    finally:
+        await redis.aclose()
 
 
 @router.post(
@@ -702,34 +705,26 @@ async def get_user_answers(
     answer_repo = AnswerRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
 
-    all_ids = await answer_repo.list_all_answer_ids_by_user(user_id)
+    offset = page_start or 0
+    if offset < 0:
+        offset = 0
 
-    if page_start is not None:
-        try:
-            start_idx = all_ids.index(page_start)
-        except ValueError:
-            start_idx = 0
-    else:
-        start_idx = 0
+    rows, total = await answer_repo.list_by_user(user_id=user_id, limit=page_size, offset=offset)
 
-    end_idx = start_idx + page_size
-    page_ids = all_ids[start_idx:end_idx]
-
-    rows, _ = await answer_repo.list_by_user(user_id=user_id, limit=page_size, offset=start_idx)
+    profile = await profile_repo.get_profile_by_user_id(user_id)
+    sender = None
+    if profile:
+        sender = {
+            "id": profile.user_id,
+            "nickname": profile.nickname,
+            "avatarId": profile.avatar_id,
+            "intro": profile.intro,
+        }
 
     answers = []
     for row in rows:
         created_at_ms = int(row.created_at.timestamp() * 1000) if row.created_at else 0
         updated_at_ms = int(row.updated_at.timestamp() * 1000) if row.updated_at else 0
-        profile = await profile_repo.get_profile_by_user_id(row.created_by_id)
-        sender = None
-        if profile:
-            sender = {
-                "id": profile.user_id,
-                "nickname": profile.nickname,
-                "avatarId": profile.avatar_id,
-                "intro": profile.intro,
-            }
         dto = {
             "id": row.id,
             "questionId": row.question_id,
@@ -742,19 +737,14 @@ async def get_user_answers(
         answers.append(dto)
 
     returned = len(answers)
-    has_prev = start_idx > 0
-    prev_start = all_ids[0] if has_prev and len(all_ids) > 0 else 0
-    has_more = end_idx < len(all_ids)
-    next_start = all_ids[end_idx] if has_more else 0
-
-    first_id = page_ids[0] if page_ids else 0
+    has_more = offset + returned < total
+    next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "page_start": first_id,
-        "page_size": returned,
-        "has_prev": has_prev,
-        "prev_start": prev_start,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
+        "total": total,
     }
     return {
         "code": 200,
