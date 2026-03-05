@@ -183,13 +183,19 @@ class AIMessageRepository:
     async def list_by_conversation(self, conversation_id: int) -> list[AIMessage]:
         stmt = (
             select(AIMessage)
-            .where(AIMessage.conversation_id == conversation_id)
+            .where(
+                AIMessage.conversation_id == conversation_id,
+                AIMessage.deleted_at.is_(None),
+            )
             .order_by(AIMessage.created_at.asc())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
     async def count_by_conversation(self, conversation_id: int) -> int:
-        stmt = select(func.count(AIMessage.id)).where(AIMessage.conversation_id == conversation_id)
+        stmt = select(func.count(AIMessage.id)).where(
+            AIMessage.conversation_id == conversation_id,
+            AIMessage.deleted_at.is_(None),
+        )
         result = await self._session.execute(stmt)
         return result.scalar() or 0

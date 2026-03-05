@@ -11,7 +11,7 @@ from app.auth.core import (
     Role,
 )
 from app.domain.knowledge.models import Knowledge
-from app.domain.team.models import TeamUserRelation
+from app.domain.team.models import TeamMemberRole, TeamUserRelation
 
 
 async def get_knowledge_roles(
@@ -43,14 +43,14 @@ async def get_knowledge_roles(
             TeamUserRelation.deleted_at.is_(None),
         )
         team_result = await db.execute(team_stmt)
-        role_str = team_result.scalar_one_or_none()
-        if role_str:
+        role_int = team_result.scalar_one_or_none()
+        if role_int is not None:
             role_mapping = {
-                "OWNER": Role.OWNER,
-                "ADMIN": Role.ADMIN,
-                "MEMBER": Role.MEMBER,
+                TeamMemberRole.OWNER: Role.OWNER,
+                TeamMemberRole.ADMIN: Role.ADMIN,
+                TeamMemberRole.MEMBER: Role.MEMBER,
             }
-            role = role_mapping.get(role_str.upper())
+            role = role_mapping.get(role_int)
             if role:
                 roles.add(role)
 

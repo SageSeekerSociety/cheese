@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Path, Query, status
 
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.project.models import Project, ProjectMemberRole, ProjectMembership
 from app.domain.project.repositories import ProjectMembershipRepository, ProjectRepository
@@ -63,14 +63,15 @@ def _validate_color_code(value: str | None) -> str:
 @router.post(
     "",
     summary="Create Project",
-    status_code=status.HTTP_200_OK,
+    status_code=status.HTTP_201_CREATED,
 )
 async def create_project(
     payload: dict,
     service: ProjectService = Depends(get_project_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = auth_user
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
     name = payload.get("name")
     description = payload.get("description") or ""
     color_code = _validate_color_code(payload.get("colorCode"))
@@ -108,8 +109,8 @@ async def create_project(
         github_repo=github_repo if isinstance(github_repo, str) else None,
     )
     return {
-        "code": 200,
-        "message": "OK",
+        "code": 201,
+        "message": "Created",
         "data": {"project": _project_to_api_model(project)},
     }
 
@@ -143,7 +144,8 @@ async def patch_project(
     service: ProjectService = Depends(get_project_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
-    _ = auth_user
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
     project = await service.get_project(project_id=project_id)
     if project is None:
         raise NotFoundError("Project not found")
@@ -186,7 +188,8 @@ async def delete_project(
     service: ProjectService = Depends(get_project_service),
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> None:
-    _ = auth_user
+    if auth_user.user_id == 0:
+        raise ForbiddenError("Authentication required")
     project = await service.get_project(project_id=project_id)
     if project is None:
         raise NotFoundError("Project not found")
