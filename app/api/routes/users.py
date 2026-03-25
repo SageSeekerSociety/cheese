@@ -1,7 +1,8 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Header, Path, Query, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
@@ -1018,6 +1019,68 @@ async def put_user_profile(
         avatar_id=payload.get("avatarId"),
     )
     return {"code": 200, "message": "Success", "data": {}}
+
+
+@router.get(
+    "/auth/methods/{username}",
+    summary="Get authentication methods for a user",
+    description="Returns which auth methods a user supports. Returns safe defaults for non-existent users.",
+    openapi_extra={"x-public": True},
+)
+async def get_auth_methods(
+    username: str,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return supported auth methods without revealing whether the user exists."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.config import settings
+    from app.domain.user.login_security import TOTPService
+
+    default_response = {
+        "code": 200,
+        "message": "Authentication methods retrieved successfully.",
+        "data": {
+            "supports_srp": False,
+            "supports_passkey": False,
+            "supports_2fa": False,
+            "requires_2fa": False,
+        },
+    }
+
+    from app.domain.user.models import User
+
+    result = await session.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    if user is None:
+        return default_response
+
+    # Check passkeys
+    from app.domain.passkey.models import PasskeyCredential
+
+    passkey_result = await session.execute(
+        select(func.count()).select_from(PasskeyCredential).where(PasskeyCredential.user_id == user.id)
+    )
+    passkey_count = passkey_result.scalar() or 0
+
+    # Check 2FA
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        totp_service = TOTPService(redis)
+        has_2fa = await totp_service.is_2fa_enabled(user.id)
+    finally:
+        await redis.aclose()
+
+    return {
+        "code": 200,
+        "message": "Authentication methods retrieved successfully.",
+        "data": {
+            "supports_srp": False,
+            "supports_passkey": passkey_count > 0,
+            "supports_2fa": has_2fa,
+            "requires_2fa": has_2fa,
+        },
+    }
 
 
 @router.post(
