@@ -806,6 +806,25 @@ async def send_register_email_code(
     }
 
 
+@router.get(
+    "/registration-config",
+    summary="Get registration configuration",
+    openapi_extra={"x-public": True},
+)
+async def get_registration_config() -> dict:
+    """Return public registration settings so the frontend can adapt its UI."""
+    from app.core.config import settings
+
+    return {
+        "code": 200,
+        "message": "Success",
+        "data": {
+            "requireInviteCode": settings.require_invite_code,
+            "inviteCodeBypassesEmail": True,
+        },
+    }
+
+
 @router.post(
     "",
     summary="Register User",
@@ -814,6 +833,7 @@ async def register_user(
     payload: dict,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Registration flow with email verification.
 
@@ -835,10 +855,31 @@ async def register_user(
     password = payload.get("password")
     srp_salt = payload.get("srpSalt")
     srp_verifier = payload.get("srpVerifier")
+    invite_code = payload.get("inviteCode")
     _ = payload.get("isLegacyAuth", False)
 
-    if not username or not nickname or not email or not email_code:
-        raise BadRequestError("username, nickname, email and emailCode are required")
+    # When a valid invite code is provided, email verification is not required
+    has_invite_code = bool(invite_code)
+    if has_invite_code:
+        from app.domain.invite.services import InviteCodeService
+
+        invite_service = InviteCodeService(session)
+        try:
+            await invite_service.validate_code(invite_code)
+        except ValueError as exc:
+            msg = str(exc)
+            error_map = {
+                "INVALID_CODE": "Invalid invite code",
+                "CODE_DISABLED": "This invite code has been disabled",
+                "CODE_EXPIRED": "This invite code has expired",
+                "CODE_EXHAUSTED": "This invite code has been fully used",
+            }
+            raise UnprocessableEntityError(error_map.get(msg, "Invalid invite code")) from exc
+
+    if not username or not nickname or not email:
+        raise BadRequestError("username, nickname, and email are required")
+    if not has_invite_code and not email_code:
+        raise BadRequestError("emailCode is required (or provide an inviteCode)")
 
     username_pattern = r"^[a-zA-Z0-9_-]+$"
     if not re.match(username_pattern, username):
@@ -861,14 +902,16 @@ async def register_user(
                 "Password must be at least 8 characters and contain letters and special characters"
             )
 
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        service = EmailVerificationService(redis)
-        is_valid = await service.verify_code(email, email_code)
-        if not is_valid:
-            raise UnprocessableEntityError("Invalid or expired verification code")
-    finally:
-        await redis.aclose()
+    # Skip email verification if registering with invite code
+    if not has_invite_code:
+        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        try:
+            service = EmailVerificationService(redis)
+            is_valid = await service.verify_code(email, email_code)
+            if not is_valid:
+                raise UnprocessableEntityError("Invalid or expired verification code")
+        finally:
+            await redis.aclose()
 
     try:
         if has_password:
@@ -893,6 +936,13 @@ async def register_user(
         if msg == "EMAIL_TAKEN":
             raise UnprocessableEntityError("Email already registered") from exc
         raise
+
+    # Consume invite code after successful registration
+    if settings.require_invite_code and invite_code:
+        from app.domain.invite.services import InviteCodeService
+
+        invite_service = InviteCodeService(session)
+        await invite_service.consume_code(invite_code)
 
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
@@ -2753,6 +2803,89 @@ async def link_oauth_account(
         "message": "OAuth account linked successfully.",
         "data": {"connection": connection},
     }
+
+
+# ── Invite Code Management ──────────────────────────────────────────────
+
+
+@router.get(
+    "/invite-codes",
+    summary="List invite codes (admin)",
+)
+async def list_invite_codes(
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.domain.invite.services import InviteCodeService
+
+    service = InviteCodeService(session)
+    codes = await service.list_codes()
+    return {
+        "code": 200,
+        "message": "Success",
+        "data": {
+            "codes": [
+                {
+                    "id": c.id,
+                    "code": c.code,
+                    "maxUses": c.max_uses,
+                    "useCount": c.use_count,
+                    "isActive": c.is_active,
+                    "createdBy": c.created_by,
+                    "note": c.note,
+                    "createdAt": c.created_at.isoformat() if c.created_at else None,
+                    "expiresAt": c.expires_at.isoformat() if c.expires_at else None,
+                }
+                for c in codes
+            ]
+        },
+    }
+
+
+@router.post(
+    "/invite-codes",
+    summary="Create invite code (admin)",
+)
+async def create_invite_code(
+    payload: dict,
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.domain.invite.services import InviteCodeService
+
+    service = InviteCodeService(session)
+    invite = await service.create_code(
+        max_uses=payload.get("maxUses", 1),
+        created_by=auth_user.user_id,
+        note=payload.get("note"),
+    )
+    await session.commit()
+    return {
+        "code": 201,
+        "message": "Invite code created.",
+        "data": {
+            "code": invite.code,
+            "id": invite.id,
+            "maxUses": invite.max_uses,
+        },
+    }
+
+
+@router.delete(
+    "/invite-codes/{code_id}",
+    summary="Deactivate invite code (admin)",
+)
+async def deactivate_invite_code(
+    code_id: int,
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.domain.invite.services import InviteCodeService
+
+    service = InviteCodeService(session)
+    await service.deactivate_code(code_id)
+    await session.commit()
+    return {"code": 200, "message": "Invite code deactivated."}
 
 
 @router.get(

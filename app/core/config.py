@@ -55,6 +55,9 @@ class Settings(BaseSettings):
         default=60, alias="NOTIFICATION_AGGREGATION_FINALIZE_INTERVAL_SECONDS"
     )
 
+    # Invite code registration
+    require_invite_code: bool = Field(default=False, alias="REQUIRE_INVITE_CODE")
+
     # Rank / eligibility related flags (soft-aligned with Kotlin ApplicationConfig)
     rank_check_enforced: bool = Field(default=False, alias="APPLICATION_RANK_CHECK_ENFORCED")
     rank_jump: int = Field(default=1, alias="APPLICATION_RANK_JUMP")

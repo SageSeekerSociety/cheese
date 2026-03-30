@@ -7,6 +7,7 @@ from app.domain.avatars import models as _avatars  # noqa: F401
 from app.domain.comments import models as _comments  # noqa: F401
 from app.domain.discussion import models as _discussion  # noqa: F401
 from app.domain.groups import models as _groups  # noqa: F401
+from app.domain.invite import models as _invite  # noqa: F401
 from app.domain.knowledge import models as _knowledge  # noqa: F401
 from app.domain.llm import call_logger as _call_logger  # noqa: F401
 from app.domain.llm import models as _llm  # noqa: F401
