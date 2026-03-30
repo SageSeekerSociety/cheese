@@ -768,6 +768,8 @@ async def send_register_email_code(
 
     Uses Redis for code storage (10 min TTL) and sends via configured SMTP.
     Falls back to success response if email not configured (for dev).
+    When inviteCode is provided, any email domain is accepted;
+    otherwise only educational email addresses are allowed.
     """
     import re
 
@@ -778,6 +780,7 @@ async def send_register_email_code(
     from app.domain.user.verification_service import EmailVerificationService
 
     email = payload.get("email")
+    invite_code = payload.get("inviteCode")
     if not email:
         raise BadRequestError("email is required")
 
@@ -785,9 +788,12 @@ async def send_register_email_code(
     if not re.match(email_regex, email):
         raise UnprocessableEntityError("Invalid email address format")
 
-    allowed_suffixes = (".ruc.edu.cn", ".edu.cn", ".edu")
-    if not any(email.endswith(suffix) for suffix in allowed_suffixes):
-        raise UnprocessableEntityError("Email must be from an educational institution")
+    # With a valid invite code, any email domain is allowed;
+    # without one, only educational institutions.
+    if not invite_code:
+        allowed_suffixes = (".ruc.edu.cn", ".edu.cn", ".edu")
+        if not any(email.endswith(suffix) for suffix in allowed_suffixes):
+            raise UnprocessableEntityError("Email must be from an educational institution")
 
     user_repo = UserRepository(session=db)
     if await user_repo.is_email_taken(email):
@@ -820,7 +826,7 @@ async def get_registration_config() -> dict:
         "message": "Success",
         "data": {
             "requireInviteCode": settings.require_invite_code,
-            "inviteCodeBypassesEmail": True,
+            "inviteCodeBypassesEmail": False,
         },
     }
 
@@ -858,7 +864,6 @@ async def register_user(
     invite_code = payload.get("inviteCode")
     _ = payload.get("isLegacyAuth", False)
 
-    # When a valid invite code is provided, email verification is not required
     has_invite_code = bool(invite_code)
     if has_invite_code:
         from app.domain.invite.services import InviteCodeService
@@ -878,8 +883,8 @@ async def register_user(
 
     if not username or not nickname or not email:
         raise BadRequestError("username, nickname, and email are required")
-    if not has_invite_code and not email_code:
-        raise BadRequestError("emailCode is required (or provide an inviteCode)")
+    if not email_code:
+        raise BadRequestError("emailCode is required")
 
     username_pattern = r"^[a-zA-Z0-9_-]+$"
     if not re.match(username_pattern, username):
@@ -902,16 +907,15 @@ async def register_user(
                 "Password must be at least 8 characters and contain letters and special characters"
             )
 
-    # Skip email verification if registering with invite code
-    if not has_invite_code:
-        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-        try:
-            service = EmailVerificationService(redis)
-            is_valid = await service.verify_code(email, email_code)
-            if not is_valid:
-                raise UnprocessableEntityError("Invalid or expired verification code")
-        finally:
-            await redis.aclose()
+    # Always verify email code, regardless of invite code
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        service = EmailVerificationService(redis)
+        is_valid = await service.verify_code(email, email_code)
+        if not is_valid:
+            raise UnprocessableEntityError("Invalid or expired verification code")
+    finally:
+        await redis.aclose()
 
     try:
         if has_password:
