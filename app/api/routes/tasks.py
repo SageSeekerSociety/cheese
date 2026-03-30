@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import get_auth_user, require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import (
     BadRequestError,
@@ -784,7 +784,7 @@ async def get_task(
     db=Depends(get_db),
     service: TaskService = Depends(get_task_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     task = await service.get_task(task_id=task_id)
     if task is None:
@@ -1179,7 +1179,7 @@ async def get_tasks(
     keywords: str | None = Query(default=None),
     db=Depends(get_db),
     service: TaskService = Depends(get_task_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     # 解析 sortBy / sortOrder，和 Kotlin 行为保持一致：非法值视为 400。
     if sort_by not in {"createdAt", "updatedAt", "deadline"}:

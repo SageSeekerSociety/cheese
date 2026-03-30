@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import get_auth_user, require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.db.session import get_db
@@ -104,7 +104,7 @@ async def get_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     queryMyRank: bool = Query(default=False),
     queryCategories: bool = Query(default=False),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     space = await service.get_space(space_id=space_id)
@@ -139,7 +139,7 @@ async def get_spaces(
     pageStart: int | None = Query(default=None),
     pageSize: int = Query(default=20, ge=1, le=200),
     service: SpaceService = Depends(get_space_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     offset = pageStart or 0
     spaces = await service.list_spaces(limit=pageSize, offset=offset)

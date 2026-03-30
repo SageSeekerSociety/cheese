@@ -130,6 +130,17 @@ async def get_auth_user(
     return AuthUserInfo(user_id=user_id, system_roles={SystemRole.USER})
 
 
+async def require_auth_user(
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> AuthUserInfo:
+    """Like get_auth_user but rejects anonymous/guest access."""
+    if auth_user.user_id == 0:
+        from app.core.errors import AuthenticationRequiredError
+
+        raise AuthenticationRequiredError("Login required")
+    return auth_user
+
+
 def require_permission(
     action: Action,
     resource: Resource,
