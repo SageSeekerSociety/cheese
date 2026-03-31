@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     email_smtp_username: str = Field(default="", alias="EMAIL_SMTP_USERNAME")
     email_smtp_password: str = Field(default="", alias="EMAIL_SMTP_PASSWORD")
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
+    email_smtp_ssl: bool = Field(default=False, alias="EMAIL_SMTP_SSL_ENABLE")
 
     # OpenAI / LLM configuration
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")

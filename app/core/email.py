@@ -18,6 +18,7 @@ class EmailSender:
         username: str | None = None,
         password: str | None = None,
         from_address: str | None = None,
+        use_ssl: bool | None = None,
         use_tls: bool = True,
     ) -> None:
         self._host = host or settings.email_smtp_host
@@ -25,6 +26,7 @@ class EmailSender:
         self._username = username or settings.email_smtp_username
         self._password = password or settings.email_smtp_password
         self._from_address = from_address or settings.email_from_address
+        self._use_ssl = use_ssl if use_ssl is not None else settings.email_smtp_ssl
         self._use_tls = use_tls
 
     def send(
@@ -53,12 +55,18 @@ class EmailSender:
         msg.attach(MIMEText(body_html, "html", "utf-8"))
 
         try:
-            with smtplib.SMTP(self._host, self._port, timeout=30) as server:
-                if self._use_tls:
-                    server.starttls()
-                if self._username and self._password:
-                    server.login(self._username, self._password)
-                server.sendmail(self._from_address, recipients, msg.as_string())
+            if self._use_ssl:
+                with smtplib.SMTP_SSL(self._host, self._port, timeout=30) as server:
+                    if self._username and self._password:
+                        server.login(self._username, self._password)
+                    server.sendmail(self._from_address, recipients, msg.as_string())
+            else:
+                with smtplib.SMTP(self._host, self._port, timeout=30) as server:
+                    if self._use_tls:
+                        server.starttls()
+                    if self._username and self._password:
+                        server.login(self._username, self._password)
+                    server.sendmail(self._from_address, recipients, msg.as_string())
             logger.debug("Email sent to %s: %s", recipients, subject)
             return True
         except Exception:
