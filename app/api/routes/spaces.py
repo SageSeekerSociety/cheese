@@ -86,14 +86,20 @@ def _category_to_api_model(cat: SpaceCategory) -> dict:
     }
 
 
-def _admin_to_api_model(rel: SpaceAdminRelation) -> dict:
+def _admin_to_api_model(
+    rel: SpaceAdminRelation,
+    user_info: dict | None = None,
+) -> dict:
     created_at_ms = int(rel.created_at.timestamp() * 1000) if rel.created_at else 0
     role_name_map = {SpaceAdminRole.OWNER.value: "OWNER", SpaceAdminRole.ADMIN.value: "ADMIN"}
-    return {
+    result: dict = {
         "userId": rel.user_id,
         "role": role_name_map.get(rel.role, "ADMIN"),
         "createdAt": created_at_ms,
     }
+    if user_info is not None:
+        result["user"] = user_info
+    return result
 
 
 @router.get(
@@ -106,6 +112,7 @@ async def get_space(
     queryCategories: bool = Query(default=False),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     space = await service.get_space(space_id=space_id)
     if space is None:
@@ -121,8 +128,28 @@ async def get_space(
     if queryMyRank:
         my_rank = await service.get_user_rank(space_id, viewer_id)
 
-    data = {
-        "space": _space_to_api_model(space),
+    # Include admins with user info
+    admin_relations = await service.list_admins(space_id)
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    admins_list = []
+    for rel in admin_relations:
+        user = await user_repo.get_by_id(rel.user_id)
+        profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+        user_info = {
+            "id": user.id,
+            "username": user.username,
+            "nickname": profile.nickname if profile else user.username,
+            "avatarId": profile.avatar_id if profile else None,
+            "intro": profile.intro if profile else "",
+        } if user else {"id": rel.user_id, "username": "unknown"}
+        admins_list.append(_admin_to_api_model(rel, user_info))
+
+    space_data = _space_to_api_model(space)
+    space_data["admins"] = admins_list
+
+    data: dict = {
+        "space": space_data,
         "categories": categories,
     }
     if queryMyRank:
@@ -140,17 +167,37 @@ async def get_spaces(
     pageSize: int = Query(default=20, ge=1, le=200),
     service: SpaceService = Depends(get_space_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     offset = pageStart or 0
     spaces = await service.list_spaces(limit=pageSize, offset=offset)
     total = await service.count_spaces()
     viewer_id = auth_user.user_id if auth_user.user_id > 0 else None
 
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+
     items: list[dict] = []
     for s in spaces:
         dto = _space_to_api_model(s)
         if queryMyRank:
             dto["myRank"] = await service.get_user_rank(s.id, viewer_id)
+
+        admin_relations = await service.list_admins(s.id)
+        admins_list = []
+        for rel in admin_relations:
+            user = await user_repo.get_by_id(rel.user_id)
+            profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+            user_info = {
+                "id": user.id,
+                "username": user.username,
+                "nickname": profile.nickname if profile else user.username,
+                "avatarId": profile.avatar_id if profile else None,
+                "intro": profile.intro if profile else "",
+            } if user else {"id": rel.user_id, "username": "unknown"}
+            admins_list.append(_admin_to_api_model(rel, user_info))
+        dto["admins"] = admins_list
+
         items.append(dto)
 
     returned = len(items)
