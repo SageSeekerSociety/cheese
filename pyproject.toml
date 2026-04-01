@@ -27,7 +27,7 @@ dependencies = [
     "pyotp>=2.9.0,<3.0.0",
     "webauthn>=2.0.0,<3.0.0",
     "psycopg2-binary>=2.9.0,<3.0.0",
-    "srptools>=1.0.0,<2.0.0",
+    "srp_rs",
     "greenlet>=3.2.4",
 ]
 
@@ -48,6 +48,9 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 index-url = "https://pypi.org/simple"
+
+[tool.uv.sources]
+srp_rs = { path = "srp_rs", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
@@ -122,5 +125,6 @@ ignore = [
 
 [dependency-groups]
 dev = [
+    "playwright>=1.58.0",
     "pytest-cov>=7.0.0",
 ]

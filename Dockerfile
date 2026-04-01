@@ -1,11 +1,15 @@
 # ---- Base ----
 FROM python:3.11-slim AS base
 
-# Install system dependencies
+# Install system dependencies (including Rust toolchain for building srp_rs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     postgresql-client \
+    build-essential \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/root/.cargo/bin:$PATH"
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -16,10 +20,11 @@ WORKDIR /app
 FROM base AS deps
 WORKDIR /app
 
-# Copy dependency files
+# Copy dependency files and srp_rs source (needed for build)
 COPY pyproject.toml uv.lock README.md ./
+COPY srp_rs/ ./srp_rs/
 
-# Install dependencies using uv
+# Install dependencies using uv (includes building srp_rs from source)
 RUN uv sync --frozen --no-dev
 
 # ---- Development ----

@@ -11,6 +11,8 @@ from app.common.auth import (
     create_refresh_token,
     decode_token,
 )
+from app.common.srp import generate_server_ephemeral as _srp_generate_ephemeral
+from app.common.srp import verify_session as _srp_verify_session
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
@@ -40,21 +42,6 @@ from app.domain.user.repositories import (
 from app.domain.user.services import UserAuthService, UserProfileService
 
 router = APIRouter(prefix="/users", tags=["Users"])
-
-
-def _create_srp_context(username: str):
-    """Create SRP context with 2048-bit prime + SHA-256 to match the JS frontend library."""
-    import hashlib
-
-    import srptools as _srp
-    from srptools.constants import PRIME_2048, PRIME_2048_GEN
-
-    return _srp.SRPContext(
-        username,
-        prime=PRIME_2048,
-        generator=PRIME_2048_GEN,
-        hash_func=hashlib.sha256,
-    )
 
 
 async def get_user_auth_service(
@@ -1268,7 +1255,6 @@ async def srp_login_init(
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     """SRP login step 1: return server ephemeral and salt."""
-    import srptools as _srp
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
@@ -1286,16 +1272,12 @@ async def srp_login_init(
         raise AuthenticationRequiredError("Invalid username or password")
     stored_salt, stored_verifier = parts[1], parts[2]
 
-    try:
-        server_ctx = _create_srp_context(username)
-        server_session = _srp.SRPServerSession(server_ctx, stored_verifier)
-    except (ValueError, _srp.SRPException):
-        raise AuthenticationRequiredError("Invalid username or password") from None
+    server_public, server_secret = _srp_generate_ephemeral(stored_verifier)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
     try:
         srp_key = f"srp:login:{username}"
-        await redis.setex(srp_key, 300, server_session.private)
+        await redis.setex(srp_key, 300, server_secret)
     finally:
         await redis.aclose()
 
@@ -1303,7 +1285,7 @@ async def srp_login_init(
         "code": 200,
         "message": "SRP initialization.",
         "data": {
-            "serverPublicEphemeral": server_session.public,
+            "serverPublicEphemeral": server_public,
             "salt": stored_salt,
         },
     }
@@ -1320,7 +1302,6 @@ async def srp_login_verify(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """SRP login step 2: verify client proof and return tokens."""
-    import srptools as _srp
     from redis.asyncio import Redis as AsyncRedis
 
     from app.common.auth import create_access_token, create_refresh_token
@@ -1355,22 +1336,21 @@ async def srp_login_verify(
             raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
 
         srp_key = f"srp:login:{username}"
-        server_private = await redis.get(srp_key)
-        if not server_private:
+        server_secret = await redis.get(srp_key)
+        if not server_secret:
             raise AuthenticationRequiredError("SRP session expired, please reinitialize")
         await redis.delete(srp_key)
 
-        try:
-            server_ctx = _create_srp_context(username)
-            server_session = _srp.SRPServerSession(
-                server_ctx, stored_verifier, private=server_private
-            )
-            server_session.process(client_public, stored_salt)
-        except (ValueError, TypeError, _srp.SRPException):
-            await rate_limiter.record_failed_attempt(username)
-            raise AuthenticationRequiredError("Invalid username or password") from None
+        success, server_proof_hex = _srp_verify_session(
+            server_secret_hex=server_secret,
+            client_public_hex=client_public,
+            salt_hex=stored_salt,
+            username=username,
+            verifier_hex=stored_verifier,
+            client_proof_hex=client_proof,
+        )
 
-        if not server_session.verify_proof(client_proof):
+        if not success:
             await rate_limiter.record_failed_attempt(username)
             raise AuthenticationRequiredError("Invalid username or password")
 
@@ -1402,9 +1382,6 @@ async def srp_login_verify(
             is_valid_totp = await totp_service.verify_2fa(user.id, totp_code)
             if not is_valid_totp:
                 raise AuthenticationRequiredError("Invalid 2FA code")
-
-        proof = server_session.key_proof
-        server_proof_str = proof.decode() if isinstance(proof, bytes) else str(proof)
 
         access_token = create_access_token(user.id)
         refresh_token = create_refresh_token(user.id)
@@ -1439,7 +1416,7 @@ async def srp_login_verify(
             "data": {
                 "user": user_dto,
                 "accessToken": access_token,
-                "serverProof": server_proof_str,
+                "serverProof": server_proof_hex,
                 "requires2FA": False,
                 "sessionId": session_id,
             },
@@ -1564,8 +1541,6 @@ async def sudo_auth(
         }
 
     elif method == "srp":
-        import srptools as _srp
-
         client_ephemeral = credentials.get("clientPublicEphemeral")
         client_proof = credentials.get("clientProof")
 
@@ -1584,16 +1559,10 @@ async def sudo_auth(
 
             if not client_ephemeral and not client_proof:
                 # SRP Step 1: Generate server ephemeral and store session state
-                try:
-                    server_ctx = _create_srp_context(user.username)
-                    server_session = _srp.SRPServerSession(server_ctx, stored_verifier)
-                except (ValueError, _srp.SRPException):
-                    raise AuthenticationRequiredError("Corrupted SRP credentials") from None
-                server_public = server_session.public
-                server_private = server_session.private
+                server_public, server_secret = _srp_generate_ephemeral(stored_verifier)
 
-                # Store server private key in Redis (expires in 5 minutes)
-                await redis.setex(srp_key, 300, server_private)
+                # Store server secret in Redis (expires in 5 minutes)
+                await redis.setex(srp_key, 300, server_secret)
 
                 return {
                     "code": 200,
@@ -1608,33 +1577,29 @@ async def sudo_auth(
             if not client_ephemeral or not client_proof:
                 raise BadRequestError("Both clientPublicEphemeral and clientProof are required")
 
-            server_private = await redis.get(srp_key)
-            if not server_private:
+            server_secret = await redis.get(srp_key)
+            if not server_secret:
                 raise AuthenticationRequiredError("SRP session expired, please reinitialize")
             await redis.delete(srp_key)
 
-            try:
-                server_ctx = _create_srp_context(user.username)
-                server_session = _srp.SRPServerSession(
-                    server_ctx, stored_verifier, private=server_private
-                )
-                server_session.process(client_ephemeral, stored_salt)
-            except (ValueError, TypeError, _srp.SRPException):
-                raise AuthenticationRequiredError("Invalid SRP parameters") from None
+            success, server_proof_hex = _srp_verify_session(
+                server_secret_hex=server_secret,
+                client_public_hex=client_ephemeral,
+                salt_hex=stored_salt,
+                username=user.username,
+                verifier_hex=stored_verifier,
+                client_proof_hex=client_proof,
+            )
 
-            if not server_session.verify_proof(client_proof):
+            if not success:
                 raise AuthenticationRequiredError("Invalid SRP proof")
-
-            # key_proof is bytes; decode for JSON serialization
-            proof = server_session.key_proof
-            server_proof_str = proof.decode() if isinstance(proof, bytes) else str(proof)
 
             return {
                 "code": 200,
                 "message": "Sudo mode activated via SRP.",
                 "data": {
                     "verified": True,
-                    "serverProof": server_proof_str,
+                    "serverProof": server_proof_hex,
                 },
             }
         finally:
