@@ -1,7 +1,0 @@
-/Users/andyl/Projects/cheese-backend-py/srp_rs/target/release/deps/libpyo3_macros-e5a0c69dc011dbe5.dylib: /Users/andyl/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-macros-0.24.2/src/lib.rs
-
-/Users/andyl/Projects/cheese-backend-py/srp_rs/target/release/deps/pyo3_macros-e5a0c69dc011dbe5.d: /Users/andyl/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-macros-0.24.2/src/lib.rs
-
-/Users/andyl/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/pyo3-macros-0.24.2/src/lib.rs:
-
-# env-dep:CARGO_PKG_VERSION=0.24.2
