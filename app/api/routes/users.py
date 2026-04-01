@@ -42,6 +42,21 @@ from app.domain.user.services import UserAuthService, UserProfileService
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
+def _create_srp_context(username: str):
+    """Create SRP context with 2048-bit prime + SHA-256 to match the JS frontend library."""
+    import hashlib
+
+    import srptools as _srp
+    from srptools.constants import PRIME_2048, PRIME_2048_GEN
+
+    return _srp.SRPContext(
+        username,
+        prime=PRIME_2048,
+        generator=PRIME_2048_GEN,
+        hash_func=hashlib.sha256,
+    )
+
+
 async def get_user_auth_service(
     db=Depends(get_db),
 ) -> UserAuthService:
@@ -1272,7 +1287,7 @@ async def srp_login_init(
     stored_salt, stored_verifier = parts[1], parts[2]
 
     try:
-        server_ctx = _srp.SRPContext(username)
+        server_ctx = _create_srp_context(username)
         server_session = _srp.SRPServerSession(server_ctx, stored_verifier)
     except (ValueError, _srp.SRPException):
         raise AuthenticationRequiredError("Invalid username or password") from None
@@ -1346,7 +1361,7 @@ async def srp_login_verify(
         await redis.delete(srp_key)
 
         try:
-            server_ctx = _srp.SRPContext(username)
+            server_ctx = _create_srp_context(username)
             server_session = _srp.SRPServerSession(
                 server_ctx, stored_verifier, private=server_private
             )
@@ -1570,7 +1585,7 @@ async def sudo_auth(
             if not client_ephemeral and not client_proof:
                 # SRP Step 1: Generate server ephemeral and store session state
                 try:
-                    server_ctx = _srp.SRPContext(user.username)
+                    server_ctx = _create_srp_context(user.username)
                     server_session = _srp.SRPServerSession(server_ctx, stored_verifier)
                 except (ValueError, _srp.SRPException):
                     raise AuthenticationRequiredError("Corrupted SRP credentials") from None
@@ -1599,7 +1614,7 @@ async def sudo_auth(
             await redis.delete(srp_key)
 
             try:
-                server_ctx = _srp.SRPContext(user.username)
+                server_ctx = _create_srp_context(user.username)
                 server_session = _srp.SRPServerSession(
                     server_ctx, stored_verifier, private=server_private
                 )
