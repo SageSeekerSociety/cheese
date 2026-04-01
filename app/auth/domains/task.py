@@ -8,6 +8,7 @@ from app.auth.core import (
     Resource,
     Role,
 )
+from app.domain.space.models import SpaceAdminRelation
 from app.domain.task.models import Task, TaskMembership
 
 
@@ -42,6 +43,17 @@ async def get_task_roles(
     membership_result = await db.execute(membership_stmt)
     if membership_result.scalar_one_or_none() is not None:
         roles.add(Role.PARTICIPANT)
+
+    # Space OWNER/ADMIN gets SPACE_ADMIN role on tasks in their space
+    if space_id is not None:
+        space_admin_stmt = select(SpaceAdminRelation.role).where(
+            SpaceAdminRelation.space_id == space_id,
+            SpaceAdminRelation.user_id == user_id,
+            SpaceAdminRelation.deleted_at.is_(None),
+        )
+        space_result = await db.execute(space_admin_stmt)
+        if space_result.scalar_one_or_none() is not None:
+            roles.add(Role.SPACE_ADMIN)
 
     return roles
 
