@@ -73,6 +73,10 @@ class UserAuthService:
         if user is None or not user.hashed_password:
             return None
 
+        # SRP users cannot authenticate via legacy password
+        if user.hashed_password.startswith("SRP:"):
+            return None
+
         if not bcrypt.checkpw(password.encode("utf-8"), user.hashed_password.encode("utf-8")):
             return None
 

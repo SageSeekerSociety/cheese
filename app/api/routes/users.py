@@ -1125,11 +1125,13 @@ async def get_auth_methods(
     finally:
         await redis.aclose()
 
+    supports_srp = bool(user.hashed_password and user.hashed_password.startswith("SRP:"))
+
     return {
         "code": 200,
         "message": "Authentication methods retrieved successfully.",
         "data": {
-            "supports_srp": False,
+            "supports_srp": supports_srp,
             "supports_passkey": passkey_count > 0,
             "supports_2fa": has_2fa,
             "requires_2fa": has_2fa,
@@ -1234,6 +1236,195 @@ async def user_login(
             "data": {
                 "user": user_dto,
                 "accessToken": access_token,
+                "requires2FA": False,
+                "sessionId": session_id,
+            },
+        }
+    finally:
+        await redis.aclose()
+
+
+@router.post(
+    "/auth/srp/init",
+    summary="SRP Login Step 1: Initialize",
+)
+async def srp_login_init(
+    payload: dict,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    """SRP login step 1: return server ephemeral and salt."""
+    import srptools as _srp
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.config import settings
+
+    username = payload.get("username")
+    if not username:
+        raise BadRequestError("username is required")
+
+    user = await auth_service._user_repo.get_by_username(username)
+    if user is None or not user.hashed_password or not user.hashed_password.startswith("SRP:"):
+        raise AuthenticationRequiredError("Invalid username or password")
+
+    parts = user.hashed_password.split(":", 2)
+    if len(parts) != 3:
+        raise AuthenticationRequiredError("Invalid username or password")
+    stored_salt, stored_verifier = parts[1], parts[2]
+
+    try:
+        server_ctx = _srp.SRPContext(username)
+        server_session = _srp.SRPServerSession(server_ctx, stored_verifier)
+    except (ValueError, _srp.SRPException):
+        raise AuthenticationRequiredError("Invalid username or password") from None
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        srp_key = f"srp:login:{username}"
+        await redis.setex(srp_key, 300, server_session.private)
+    finally:
+        await redis.aclose()
+
+    return {
+        "code": 200,
+        "message": "SRP initialization.",
+        "data": {
+            "serverPublicEphemeral": server_session.public,
+            "salt": stored_salt,
+        },
+    }
+
+
+@router.post(
+    "/auth/srp/verify",
+    summary="SRP Login Step 2: Verify",
+)
+async def srp_login_verify(
+    payload: dict,
+    response: Response,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """SRP login step 2: verify client proof and return tokens."""
+    import srptools as _srp
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.common.auth import create_access_token, create_refresh_token
+    from app.core.config import settings
+    from app.domain.user.login_security import LoginRateLimiter, SessionManager, TOTPService
+
+    username = payload.get("username")
+    client_public = payload.get("clientPublicEphemeral")
+    client_proof = payload.get("clientProof")
+    totp_code = payload.get("totpCode")
+
+    if not username or not client_public or not client_proof:
+        raise BadRequestError("username, clientPublicEphemeral, and clientProof are required")
+
+    user = await auth_service._user_repo.get_by_username(username)
+    if user is None or not user.hashed_password or not user.hashed_password.startswith("SRP:"):
+        raise AuthenticationRequiredError("Invalid username or password")
+
+    parts = user.hashed_password.split(":", 2)
+    if len(parts) != 3:
+        raise AuthenticationRequiredError("Invalid username or password")
+    stored_salt, stored_verifier = parts[1], parts[2]
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        rate_limiter = LoginRateLimiter(
+            AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        )
+
+        if await rate_limiter.is_locked_out(username):
+            remaining = await rate_limiter.get_remaining_lockout_seconds(username)
+            raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+
+        srp_key = f"srp:login:{username}"
+        server_private = await redis.get(srp_key)
+        if not server_private:
+            raise AuthenticationRequiredError("SRP session expired, please reinitialize")
+        await redis.delete(srp_key)
+
+        try:
+            server_ctx = _srp.SRPContext(username)
+            server_session = _srp.SRPServerSession(
+                server_ctx, stored_verifier, private=server_private
+            )
+            server_session.process(client_public, stored_salt)
+        except (ValueError, TypeError, _srp.SRPException):
+            await rate_limiter.record_failed_attempt(username)
+            raise AuthenticationRequiredError("Invalid username or password") from None
+
+        if not server_session.verify_proof(client_proof):
+            await rate_limiter.record_failed_attempt(username)
+            raise AuthenticationRequiredError("Invalid username or password")
+
+        # SRP verified — clear rate limiter
+        await rate_limiter.clear_attempts(username)
+
+        profile = await auth_service._profile_repo.get_profile_by_user_id(user.id)
+        if profile is None:
+            raise AuthenticationRequiredError("Invalid username or password")
+
+        # Check 2FA
+        totp_service = TOTPService(
+            AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        )
+        requires_2fa = await totp_service.is_2fa_enabled(user.id)
+        if requires_2fa and not totp_code:
+            temp_token = create_access_token(user.id)
+            return {
+                "code": 200,
+                "message": "2FA required",
+                "data": {
+                    "requires2FA": True,
+                    "tempToken": temp_token,
+                    "serverProof": "",
+                },
+            }
+
+        if requires_2fa:
+            is_valid_totp = await totp_service.verify_2fa(user.id, totp_code)
+            if not is_valid_totp:
+                raise AuthenticationRequiredError("Invalid 2FA code")
+
+        proof = server_session.key_proof
+        server_proof_str = proof.decode() if isinstance(proof, bytes) else str(proof)
+
+        access_token = create_access_token(user.id)
+        refresh_token = create_refresh_token(user.id)
+        session_mgr = SessionManager(
+            AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        )
+        session_id = await session_mgr.create_session(user.id)
+
+        response.set_cookie(
+            "REFRESH_TOKEN",
+            refresh_token,
+            httponly=True,
+            samesite="lax",
+            path="/users/auth",
+        )
+        response.set_cookie(
+            "SESSION_ID",
+            session_id,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+
+        user_dto = await auth_service.build_user_dto(
+            user=user,
+            profile=profile,
+            viewer_id=user.id,
+        )
+        return {
+            "code": 201,
+            "message": "Login successfully.",
+            "data": {
+                "user": user_dto,
+                "accessToken": access_token,
+                "serverProof": server_proof_str,
                 "requires2FA": False,
                 "sessionId": session_id,
             },
