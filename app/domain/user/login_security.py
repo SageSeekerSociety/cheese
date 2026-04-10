@@ -1,12 +1,13 @@
 import logging
-import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import jwt
 import pyotp
 from redis.asyncio import Redis
 
+from app.core.config import settings
 from app.core.errors import ForbiddenError
 
 if TYPE_CHECKING:
@@ -233,16 +234,26 @@ class PasswordResetService:
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
 
-    def generate_reset_token(self) -> str:
-        return secrets.token_urlsafe(32)
+    def generate_reset_token(self, username: str) -> str:
+        """Generate a JWT token that the frontend can decode to get username."""
+        payload = {
+            "payload": {
+                "authorization": {
+                    "username": username,
+                }
+            },
+            "exp": datetime.now(UTC) + timedelta(seconds=PASSWORD_RESET_TTL),
+        }
+        return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
-    async def create_reset_token(self, user_id: int, email: str) -> str:
-        token = self.generate_reset_token()
+    async def create_reset_token(self, user_id: int, email: str, username: str) -> str:
+        token = self.generate_reset_token(username)
         key = f"{PASSWORD_RESET_PREFIX}{token}"
 
         data = {
             "user_id": str(user_id),
             "email": email,
+            "username": username,
             "created_at": datetime.now(UTC).isoformat(),
         }
 

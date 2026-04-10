@@ -29,6 +29,7 @@ dependencies = [
     "psycopg2-binary>=2.9.0,<3.0.0",
     "srp_rs",
     "greenlet>=3.2.4",
+    "pyjwt>=2.10.1",
 ]
 
 [project.optional-dependencies]

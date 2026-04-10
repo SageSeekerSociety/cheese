@@ -2,6 +2,7 @@ import hashlib
 import os
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile
 
@@ -96,7 +97,7 @@ async def get_default_avatar(
         media_type="image/png",
         headers={
             "Cache-Control": "public, max-age=31536000",
-            "Content-Disposition": f'inline; filename="{avatar.name}"',
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(avatar.name, safe='')}",
             "ETag": f'"{etag}"',
             "Last-Modified": last_modified,
         },
@@ -158,7 +159,7 @@ async def get_avatar_by_id(
         media_type="image/png",
         headers={
             "Cache-Control": "public, max-age=31536000",
-            "Content-Disposition": f'inline; filename="{avatar.name}"',
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(avatar.name, safe='')}",
             "ETag": f'"{etag}"',
             "Last-Modified": last_modified,
         },

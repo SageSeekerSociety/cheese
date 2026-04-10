@@ -1115,7 +1115,9 @@ async def get_auth_methods(
     from app.domain.passkey.models import PasskeyCredential
 
     passkey_result = await session.execute(
-        select(func.count()).select_from(PasskeyCredential).where(PasskeyCredential.user_id == user.id)
+        select(func.count())
+        .select_from(PasskeyCredential)
+        .where(PasskeyCredential.user_id == user.id)
     )
     passkey_count = passkey_result.scalar() or 0
 
@@ -1362,9 +1364,7 @@ async def srp_login_verify(
             raise AuthenticationRequiredError("Invalid username or password")
 
         # Check 2FA
-        totp_service = TOTPService(
-            AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-        )
+        totp_service = TOTPService(AsyncRedis.from_url(settings.redis_url, decode_responses=False))
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
         if requires_2fa and not totp_code:
             temp_token = create_access_token(user.id)
@@ -1730,6 +1730,7 @@ async def patch_user_identity(
             "major": "",
             "className": "",
         }
+
     def _merge(key: str) -> str:
         val = payload.get(key)
         return val if val is not None else base[key]
@@ -2050,10 +2051,10 @@ async def forgot_password(
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         reset_service = PasswordResetService(redis)
-        token = await reset_service.create_reset_token(user.id, email)
+        token = await reset_service.create_reset_token(user.id, email, username=user.username)
 
         sender = get_email_sender()
-        reset_url = f"{settings.frontend_url}/reset-password?token={token}"
+        reset_url = f"{settings.frontend_url}/account/recover/password/verify?token={token}"
         subject = "[Cheese] Password Reset Request"
         body_html = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -2153,10 +2154,10 @@ async def recover_password_request(
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         reset_service = PasswordResetService(redis)
-        token = await reset_service.create_reset_token(user.id, email)
+        token = await reset_service.create_reset_token(user.id, email, user.username)
 
         sender = get_email_sender()
-        reset_url = f"{settings.frontend_url}/reset-password?token={token}"
+        reset_url = f"{settings.frontend_url}/account/recover/password/verify?token={token}"
         subject = "[Cheese] Password Reset Request"
         body_html = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
