@@ -327,6 +327,14 @@ class TaskMembershipRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
+    async def count_memberships_for_task(self, task_id: int) -> int:
+        stmt = select(func.count(TaskMembership.id)).where(
+            TaskMembership.task_id == task_id,
+            TaskMembership.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
     async def count_team_members(self, team_id: int) -> int:
         """Count active members in a team using team_user_relation."""
         stmt = select(func.count(TeamUserRelation.id)).where(

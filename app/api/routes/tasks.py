@@ -48,6 +48,7 @@ from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.user.repositories import UserRealNameRepository
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -187,6 +188,65 @@ def _task_to_api_model(task: Task) -> dict:
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
+
+
+async def _enrich_task_models(
+    db,
+    task_models: list[dict],
+    *,
+    space_id: int,
+) -> list[dict]:
+    if not task_models:
+        return task_models
+
+    task_ids = [task_model["id"] for task_model in task_models]
+    creator_ids = [task_model.get("creator", {}).get("id") for task_model in task_models]
+    creator_ids = [creator_id for creator_id in creator_ids if isinstance(creator_id, int)]
+
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    membership_repo = TaskMembershipRepository(session=db)
+
+    users = await user_repo.get_by_ids(creator_ids)
+    profiles = await profile_repo.get_profiles_by_user_ids(creator_ids)
+    memberships = await membership_repo.list_memberships_for_space(space_id)
+
+    participant_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
+    for membership in memberships:
+        if membership.task_id in participant_counts:
+            participant_counts[membership.task_id] += 1
+
+    for task_model in task_models:
+        creator_id = task_model.get("creator", {}).get("id")
+        user = users.get(creator_id) if isinstance(creator_id, int) else None
+        profile = profiles.get(creator_id) if isinstance(creator_id, int) else None
+
+        if user is not None:
+            nickname = profile.nickname if profile and profile.nickname else user.username
+            avatar_id = profile.avatar_id if profile else None
+            intro = profile.intro if profile else ""
+            task_model["creator"] = {
+                "id": user.id,
+                "username": user.username,
+                "nickname": nickname,
+                "avatarId": avatar_id,
+                "intro": intro,
+            }
+        else:
+            task_model["creator"] = {
+                "id": creator_id,
+                "username": "unknown",
+                "nickname": "unknown",
+                "avatarId": None,
+                "intro": "",
+            }
+
+        task_model["participants"] = {
+            "total": participant_counts.get(task_model["id"], 0),
+            "examples": [],
+        }
+
+    return task_models
 
 
 def _membership_to_api_model(
@@ -932,11 +992,13 @@ async def get_task(
         }
     )
 
+    enriched_task = (await _enrich_task_models(db, [task_dict], space_id=task.space_id))[0]
+
     return {
         "code": 200,
         "message": "OK",
         "data": {
-            "task": task_dict,
+            "task": enriched_task,
             "participation": participation,
         },
     }
@@ -1235,6 +1297,7 @@ async def get_tasks(
         sort_order=sort_order,
     )
     items = [_task_to_api_model(t) for t in tasks]
+    items = await _enrich_task_models(db, items, space_id=space)
 
     # 使用与 list / count 相同的过滤条件计算 total，以支持 hasMore/nextStart。
     total = await service.count_tasks(
