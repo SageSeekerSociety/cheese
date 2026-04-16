@@ -47,6 +47,7 @@ from app.domain.task.services import (
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
+from app.domain.topics.repositories import TopicRepository as GlobalTopicRepository
 from app.domain.user.repositories import UserRealNameRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -206,10 +207,64 @@ async def _enrich_task_models(
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
     membership_repo = TaskMembershipRepository(session=db)
+    category_repo = SpaceCategoryRepository(session=db)
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    space_repo = SpaceRepository(session=db)
 
-    users = await user_repo.get_by_ids(creator_ids)
-    profiles = await profile_repo.get_profiles_by_user_ids(creator_ids)
+    admin_relations = await admin_repo.list_admins(space_id)
+    admin_user_ids = [rel.user_id for rel in admin_relations]
+    all_user_ids = list({*creator_ids, *admin_user_ids})
+
+    users = await user_repo.get_by_ids(all_user_ids)
+    profiles = await profile_repo.get_profiles_by_user_ids(all_user_ids)
     memberships = await membership_repo.list_memberships_for_space(space_id)
+    categories = await category_repo.list_categories_for_space(space_id, include_archived=True)
+    space = await space_repo.get_by_id(space_id)
+    space_name = space.name if space is not None else "Unknown Space"
+
+    role_name_map = {0: "OWNER", 1: "ADMIN"}
+    admins_payload: list[dict] = []
+    for rel in admin_relations:
+        user = users.get(rel.user_id)
+        profile = profiles.get(rel.user_id)
+        if user is not None:
+            nickname = profile.nickname if profile and profile.nickname else user.username
+            avatar_id = profile.avatar_id if profile else None
+            intro = profile.intro if profile else ""
+            user_payload = {
+                "id": user.id,
+                "username": user.username,
+                "nickname": nickname,
+                "avatarId": avatar_id,
+                "intro": intro,
+                "follow_count": 0,
+                "fans_count": 0,
+                "question_count": 0,
+                "answer_count": 0,
+            }
+        else:
+            user_payload = {
+                "id": rel.user_id,
+                "username": "unknown",
+                "nickname": "unknown",
+                "avatarId": None,
+                "intro": "",
+                "follow_count": 0,
+                "fans_count": 0,
+                "question_count": 0,
+                "answer_count": 0,
+            }
+
+        admins_payload.append(
+            {
+                "role": role_name_map.get(rel.role, "ADMIN"),
+                "user": user_payload,
+            }
+        )
+
+    category_name_map: dict[int, str] = {
+        int(category.id): category.name for category in categories if getattr(category, "name", None)
+    }
 
     participant_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
     for membership in memberships:
@@ -218,6 +273,9 @@ async def _enrich_task_models(
 
     for task_model in task_models:
         creator_id = task_model.get("creator", {}).get("id")
+        category_id = task_model.get("categoryId")
+        if not isinstance(category_id, int):
+            category_id = task_model.get("category", {}).get("id")
         user = users.get(creator_id) if isinstance(creator_id, int) else None
         profile = profiles.get(creator_id) if isinstance(creator_id, int) else None
 
@@ -245,6 +303,26 @@ async def _enrich_task_models(
             "total": participant_counts.get(task_model["id"], 0),
             "examples": [],
         }
+
+        current_space_id = task_model.get("space", {}).get("id")
+        if not isinstance(current_space_id, int):
+            current_space_id = space_id
+        task_model["space"] = {
+            "id": current_space_id,
+            "name": space_name,
+            "admins": admins_payload,
+        }
+
+        resolved_category_name = (
+            category_name_map.get(category_id)
+            if isinstance(category_id, int)
+            else None
+        )
+        task_model["category"] = {
+            "id": category_id,
+            "name": resolved_category_name or "Uncategorized",
+        }
+        task_model["categoryId"] = category_id
 
     return task_models
 
@@ -527,14 +605,14 @@ async def create_task(
     if topics:
         now = datetime.now(UTC).replace(tzinfo=None)
         for topic_id in topics:
-            rel = TaskTopicsRelation(
+            relation = TaskTopicsRelation(
                 task_id=task.id,
                 topic_id=topic_id,
                 created_at=now,
                 updated_at=now,
                 deleted_at=None,
             )
-            db.add(rel)
+            db.add(relation)
         await db.flush()
 
     return {
@@ -1221,7 +1299,7 @@ async def patch_task(
     summary="Enumerate Tasks",
 )
 async def get_tasks(
-    space: int = Query(..., alias="spaceId", description="Space ID"),
+    space: int = Query(..., alias="space", description="Space ID"),
     categoryId: int | None = Query(default=None),
     approved: str | None = Query(default=None),
     owner: int | None = Query(default=None),
