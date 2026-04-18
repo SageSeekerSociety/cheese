@@ -7,6 +7,7 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.db.session import get_db
 from app.domain.space.analytics_service import SpaceAnalyticsService
+from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, SpaceCategory
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -49,6 +50,12 @@ async def get_space_analytics_service(db=Depends(get_db)) -> SpaceAnalyticsServi
         user_repo=user_repo,
         profile_repo=profile_repo,
     )
+
+
+async def get_space_member_publishing_service(
+    db=Depends(get_db),
+) -> SpaceMemberPublishingService:
+    return SpaceMemberPublishingService(session=db)
 
 
 def _space_to_api_model(space: Space) -> dict:
@@ -524,11 +531,15 @@ async def export_space_analytics_publishers(
 )
 async def get_space_me_publishing(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceMemberPublishingService = Depends(get_space_member_publishing_service),
 ) -> dict:
     """Return the authenticated user's publishing summary in this space."""
-    # TODO: implement
-    raise NotImplementedError("me/publishing not yet implemented")
+    data = await service.get_my_publishing_overview(
+        space_id=space_id,
+        user_id=auth_user.user_id,
+    )
+    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.get(
@@ -545,11 +556,23 @@ async def get_space_me_published_tasks(
     hasPendingReview: bool | None = Query(default=None),
     sortBy: str = Query(default="createdAt"),
     sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceMemberPublishingService = Depends(get_space_member_publishing_service),
 ) -> dict:
     """Return the authenticated user's published tasks in this space."""
-    # TODO: implement
-    raise NotImplementedError("me/publishing/tasks not yet implemented")
+    items = await service.get_my_published_tasks(
+        space_id=space_id,
+        user_id=auth_user.user_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        category_id=categoryId,
+        approved=approved,
+        has_pending_participant_approval=hasPendingParticipantApproval,
+        has_pending_review=hasPendingReview,
+        sort_by=sortBy,
+        sort_order=sortOrder,
+    )
+    return {"code": 200, "message": "OK", "data": {"tasks": items}}
 
 
 @router.get(
