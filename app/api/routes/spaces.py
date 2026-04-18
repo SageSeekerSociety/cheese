@@ -317,6 +317,8 @@ async def list_space_categories(
 @router.get(
     "/{spaceId}/analytics/tasks",
     summary="Get Space Task Analytics",
+    deprecated=True,
+    description="Deprecated: use the new analytics endpoints (overview, alerts, publishers, tasks, participants) instead.",
 )
 async def get_space_task_analytics(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -339,6 +341,8 @@ async def get_space_task_analytics(
 @router.get(
     "/{spaceId}/publishers/participation",
     summary="Get Publishers Participation",
+    deprecated=True,
+    description="Deprecated: use GET /spaces/{spaceId}/analytics/publishers instead.",
 )
 async def get_publishers_participation(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -353,6 +357,8 @@ async def get_publishers_participation(
 @router.get(
     "/{spaceId}/participants/export",
     summary="Export Space Participants",
+    deprecated=True,
+    description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",
 )
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -369,6 +375,233 @@ async def export_space_participants(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"},
     )
+
+
+# ---------------------------------------------------------------------------
+# New Analytics Endpoints (NT-API aligned)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{spaceId}/analytics/overview",
+    summary="Get Space Analytics Overview",
+)
+async def get_space_analytics_overview(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
+    categoryId: int | None = Query(default=None),
+    publisherId: int | None = Query(default=None),
+    taskApproved: str | None = Query(default=None),
+    groupBy: str = Query(default="day"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Return KPI cards, trend data, and distribution summaries for the space."""
+    # TODO: implement via SpaceAnalyticsService
+    raise NotImplementedError("analytics/overview not yet implemented")
+
+
+@router.get(
+    "/{spaceId}/analytics/alerts",
+    summary="Get Space Analytics Alerts",
+)
+async def get_space_analytics_alerts(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Return governance alert cards for the space."""
+    # TODO: implement via SpaceAnalyticsService
+    raise NotImplementedError("analytics/alerts not yet implemented")
+
+
+@router.get(
+    "/{spaceId}/analytics/publishers",
+    summary="Get Space Analytics Publishers",
+)
+async def get_space_analytics_publishers(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
+    categoryId: int | None = Query(default=None),
+    taskApproved: str | None = Query(default=None),
+    sortBy: str = Query(default="taskCount"),
+    sortOrder: str = Query(default="desc"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Return publisher comparison table data."""
+    # TODO: implement via SpaceAnalyticsService
+    raise NotImplementedError("analytics/publishers not yet implemented")
+
+
+@router.get(
+    "/{spaceId}/analytics/participants",
+    summary="Get Space Analytics Participants",
+)
+async def get_space_analytics_participants(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
+    categoryId: int | None = Query(default=None),
+    publisherId: int | None = Query(default=None),
+    taskApproved: str | None = Query(default=None),
+    participationApproved: str | None = Query(default=None),
+    completionStatus: str | None = Query(default=None),
+    realName: str = Query(default="all"),
+    groupBy: str = Query(default="day"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Return participant population and completion analytics."""
+    # TODO: implement via SpaceAnalyticsService
+    raise NotImplementedError("analytics/participants not yet implemented")
+
+
+@router.get(
+    "/{spaceId}/analytics/participants/export",
+    summary="Export Space Analytics Participants",
+)
+async def export_space_analytics_participants(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
+    categoryId: int | None = Query(default=None),
+    publisherId: int | None = Query(default=None),
+    taskApproved: str | None = Query(default=None),
+    participationApproved: str | None = Query(default=None),
+    completionStatus: str | None = Query(default=None),
+    realName: str = Query(default="all"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> Response:
+    """Export participant analytics as CSV."""
+    # TODO: implement via SpaceAnalyticsService
+    raise NotImplementedError("analytics/participants/export not yet implemented")
+
+
+@router.get(
+    "/{spaceId}/analytics/tasks/export",
+    summary="Export Space Analytics Tasks",
+)
+async def export_space_analytics_tasks(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
+    categoryId: int | None = Query(default=None),
+    publisherId: int | None = Query(default=None),
+    taskApproved: str | None = Query(default=None),
+    hasPendingReview: bool | None = Query(default=None),
+    hasPendingApproval: bool | None = Query(default=None),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> Response:
+    """Export task analytics as CSV."""
+    # TODO: implement via SpaceAnalyticsService
+    raise NotImplementedError("analytics/tasks/export not yet implemented")
+
+
+@router.get(
+    "/{spaceId}/analytics/publishers/export",
+    summary="Export Space Analytics Publishers",
+)
+async def export_space_analytics_publishers(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
+    categoryId: int | None = Query(default=None),
+    taskApproved: str | None = Query(default=None),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> Response:
+    """Export publisher analytics as CSV."""
+    # TODO: implement via SpaceAnalyticsService
+    raise NotImplementedError("analytics/publishers/export not yet implemented")
+
+
+# ---------------------------------------------------------------------------
+# Space Member Self-Resources (NT-API aligned)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{spaceId}/me/publishing",
+    summary="Get Space My Publishing Overview",
+)
+async def get_space_me_publishing(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Return the authenticated user's publishing summary in this space."""
+    # TODO: implement
+    raise NotImplementedError("me/publishing not yet implemented")
+
+
+@router.get(
+    "/{spaceId}/me/publishing/tasks",
+    summary="Get Space My Published Tasks",
+)
+async def get_space_me_published_tasks(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
+    categoryId: int | None = Query(default=None),
+    approved: str | None = Query(default=None),
+    hasPendingParticipantApproval: bool | None = Query(default=None),
+    hasPendingReview: bool | None = Query(default=None),
+    sortBy: str = Query(default="createdAt"),
+    sortOrder: str = Query(default="desc"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Return the authenticated user's published tasks in this space."""
+    # TODO: implement
+    raise NotImplementedError("me/publishing/tasks not yet implemented")
+
+
+@router.get(
+    "/{spaceId}/me/participating",
+    summary="Get Space My Participating Overview",
+)
+async def get_space_me_participating(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Return the authenticated user's participation summary in this space."""
+    # TODO: implement
+    raise NotImplementedError("me/participating not yet implemented")
+
+
+@router.get(
+    "/{spaceId}/me/participations",
+    summary="Get Space My Participations",
+)
+async def get_space_me_participations(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    approved: str | None = Query(default=None),
+    completionStatus: str | None = Query(default=None),
+    identityType: str | None = Query(default=None),
+    sortBy: str = Query(default="joinedAt"),
+    sortOrder: str = Query(default="desc"),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Return the authenticated user's participation list in this space."""
+    # TODO: implement
+    raise NotImplementedError("me/participations not yet implemented")
+
+
+# ---------------------------------------------------------------------------
+# Space Topics (NT-API aligned)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{spaceId}/topics",
+    summary="List or search topics in a space",
+)
+async def get_space_topics(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    keyword: str | None = Query(default=None),
+    sort: str = Query(default="name"),
+    limit: int = Query(default=20, ge=1, le=100),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """List or search topics associated with the space. Supports fuzzy keyword search and popularity sorting."""
+    # TODO: implement
+    raise NotImplementedError("space topics not yet implemented")
 
 
 @router.post(

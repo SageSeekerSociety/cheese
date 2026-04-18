@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", alias="ENVIRONMENT")
 
     # Frontend URL (used for building links like password reset)
-    frontend_url: str = Field(default="http://localhost:5173", alias="FRONTEND_URL")
+    frontend_url: str = Field(default="http://localhost:3000", alias="FRONTEND_URL")
 
     # CORS configuration
     cors_origins: str = Field(
