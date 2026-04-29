@@ -1,12 +1,14 @@
+import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 
 from app.auth.checker import get_auth_user, require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.db.session import get_db
 from app.domain.space.analytics_service import SpaceAnalyticsService
+from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.member_participating_service import SpaceMemberParticipatingService
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, SpaceCategory
@@ -17,8 +19,16 @@ from app.domain.space.repositories import (
     SpaceUserRankRepository,
 )
 from app.domain.space.services import SpaceService
+from app.domain.space.topics_service import SpaceTopicsService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
-from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.realname_services import UserRealNameService
+from app.domain.user.repositories import (
+    UserProfileRepository,
+    UserRealNameRepository,
+    UserRepository,
+)
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/spaces", tags=["Spaces"])
 
@@ -63,6 +73,32 @@ async def get_space_member_participating_service(
     db=Depends(get_db),
 ) -> SpaceMemberParticipatingService:
     return SpaceMemberParticipatingService(session=db)
+
+
+async def get_space_analytics_view_service(
+    db=Depends(get_db),
+) -> SpaceAnalyticsViewService:
+    return SpaceAnalyticsViewService(session=db)
+
+
+async def get_space_topics_service(
+    db=Depends(get_db),
+) -> SpaceTopicsService:
+    return SpaceTopicsService(session=db)
+
+
+async def get_space_user_realname_service(
+    db=Depends(get_db),
+) -> UserRealNameService:
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    realname_repo = UserRealNameRepository(session=db)
+    return UserRealNameService(
+        session=db,
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        realname_repo=realname_repo,
+    )
 
 
 def _space_to_api_model(space: Space) -> dict:
@@ -331,23 +367,34 @@ async def list_space_categories(
 @router.get(
     "/{spaceId}/analytics/tasks",
     summary="Get Space Task Analytics",
-    deprecated=True,
-    description="Deprecated: use the new analytics endpoints (overview, alerts, publishers, tasks, participants) instead.",
 )
 async def get_space_task_analytics(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
     categoryId: int | None = Query(default=None),
-    taskStatus: str | None = Query(default=None),
     publisherId: int | None = Query(default=None),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
-    service: SpaceAnalyticsService = Depends(get_space_analytics_service),
+    taskApproved: str | None = Query(default=None),
+    hasPendingReview: bool | None = Query(default=None),
+    hasPendingApproval: bool | None = Query(default=None),
+    sortBy: str = Query(default="createdAt"),
+    sortOrder: str = Query(default="desc"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
 ) -> dict:
+    """Return per-task analytics table rows for the space."""
     _ = auth_user
-    data = await service.get_task_analytics(
+    data = await service.get_tasks(
         space_id=space_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
         category_id=categoryId,
-        task_status=taskStatus,
         publisher_id=publisherId,
+        task_approved=taskApproved,
+        has_pending_review=hasPendingReview,
+        has_pending_approval=hasPendingApproval,
+        sort_by=sortBy,
+        sort_order=sortOrder,
     )
     return {"code": 200, "message": "OK", "data": data}
 
@@ -408,11 +455,21 @@ async def get_space_analytics_overview(
     publisherId: int | None = Query(default=None),
     taskApproved: str | None = Query(default=None),
     groupBy: str = Query(default="day"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
 ) -> dict:
     """Return KPI cards, trend data, and distribution summaries for the space."""
-    # TODO: implement via SpaceAnalyticsService
-    raise NotImplementedError("analytics/overview not yet implemented")
+    _ = auth_user
+    data = await service.get_overview(
+        space_id=space_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        category_id=categoryId,
+        publisher_id=publisherId,
+        task_approved=taskApproved,
+        group_by=groupBy,
+    )
+    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.get(
@@ -421,11 +478,13 @@ async def get_space_analytics_overview(
 )
 async def get_space_analytics_alerts(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
 ) -> dict:
     """Return governance alert cards for the space."""
-    # TODO: implement via SpaceAnalyticsService
-    raise NotImplementedError("analytics/alerts not yet implemented")
+    _ = auth_user
+    data = await service.get_alerts(space_id=space_id)
+    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.get(
@@ -440,11 +499,21 @@ async def get_space_analytics_publishers(
     taskApproved: str | None = Query(default=None),
     sortBy: str = Query(default="taskCount"),
     sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
 ) -> dict:
     """Return publisher comparison table data."""
-    # TODO: implement via SpaceAnalyticsService
-    raise NotImplementedError("analytics/publishers not yet implemented")
+    _ = auth_user
+    data = await service.get_publishers(
+        space_id=space_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        category_id=categoryId,
+        task_approved=taskApproved,
+        sort_by=sortBy,
+        sort_order=sortOrder,
+    )
+    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.get(
@@ -462,11 +531,24 @@ async def get_space_analytics_participants(
     completionStatus: str | None = Query(default=None),
     realName: str = Query(default="all"),
     groupBy: str = Query(default="day"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
 ) -> dict:
     """Return participant population and completion analytics."""
-    # TODO: implement via SpaceAnalyticsService
-    raise NotImplementedError("analytics/participants not yet implemented")
+    _ = auth_user
+    data = await service.get_participants(
+        space_id=space_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        category_id=categoryId,
+        publisher_id=publisherId,
+        task_approved=taskApproved,
+        participation_approved=participationApproved,
+        completion_status=completionStatus,
+        real_name=realName,
+        group_by=groupBy,
+    )
+    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.get(
@@ -474,6 +556,7 @@ async def get_space_analytics_participants(
     summary="Export Space Analytics Participants",
 )
 async def export_space_analytics_participants(
+    request: Request,
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     from_ts: int | None = Query(default=None, alias="from"),
     to_ts: int | None = Query(default=None, alias="to"),
@@ -483,11 +566,68 @@ async def export_space_analytics_participants(
     participationApproved: str | None = Query(default=None),
     completionStatus: str | None = Query(default=None),
     realName: str = Query(default="all"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    realname_service: UserRealNameService = Depends(get_space_user_realname_service),
 ) -> Response:
-    """Export participant analytics as CSV."""
-    # TODO: implement via SpaceAnalyticsService
-    raise NotImplementedError("analytics/participants/export not yet implemented")
+    """Export participant analytics as CSV (22 columns, NT-aligned).
+
+    Writes one `UserRealNameAccessLog` row per distinct personal (non-team)
+    target user to audit real-name data access, matching NT's
+    `auditSpaceParticipantExport` behavior.
+    """
+    csv_text, memberships = await service.export_participants_csv(
+        space_id=space_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        category_id=categoryId,
+        publisher_id=publisherId,
+        task_approved=taskApproved,
+        participation_approved=participationApproved,
+        completion_status=completionStatus,
+        real_name=realName,
+    )
+
+    # Audit: per-target user real-name access log (dedup by member_id).
+    access_reason = (
+        "Export space analytics participants with filters: "
+        f"from={from_ts}, to={to_ts}, categoryId={categoryId}, "
+        f"publisherId={publisherId}, taskApproved={taskApproved}, "
+        f"participationApproved={participationApproved}, "
+        f"completionStatus={completionStatus}, realName={realName}"
+    )
+    ip_address = request.client.host if request.client else ""
+    seen_target_ids: set[int] = set()
+    for m in memberships:
+        if m.is_team:
+            continue
+        if m.member_id in seen_target_ids:
+            continue
+        seen_target_ids.add(m.member_id)
+        try:
+            await realname_service.log_access(
+                accessor_id=auth_user.user_id,
+                target_id=m.member_id,
+                access_reason=access_reason,
+                access_type="EXPORT",
+                ip_address=ip_address,
+                module_type="SPACE",
+                module_entity_id=space_id,
+            )
+        except NotFoundError:
+            # Target user may have been soft-deleted; skip audit but continue export.
+            _logger.warning(
+                "Skip participant export audit: user not found",
+                extra={"space_id": space_id, "target_id": m.member_id},
+            )
+
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"
+        },
+    )
 
 
 @router.get(
@@ -503,11 +643,28 @@ async def export_space_analytics_tasks(
     taskApproved: str | None = Query(default=None),
     hasPendingReview: bool | None = Query(default=None),
     hasPendingApproval: bool | None = Query(default=None),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
 ) -> Response:
-    """Export task analytics as CSV."""
-    # TODO: implement via SpaceAnalyticsService
-    raise NotImplementedError("analytics/tasks/export not yet implemented")
+    """Export task analytics as CSV (16 columns, NT-aligned)."""
+    _ = auth_user
+    csv_text = await service.export_tasks_csv(
+        space_id=space_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        category_id=categoryId,
+        publisher_id=publisherId,
+        task_approved=taskApproved,
+        has_pending_review=hasPendingReview,
+        has_pending_approval=hasPendingApproval,
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="space-{space_id}-tasks.csv"'
+        },
+    )
 
 
 @router.get(
@@ -520,11 +677,25 @@ async def export_space_analytics_publishers(
     to_ts: int | None = Query(default=None, alias="to"),
     categoryId: int | None = Query(default=None),
     taskApproved: str | None = Query(default=None),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
 ) -> Response:
-    """Export publisher analytics as CSV."""
-    # TODO: implement via SpaceAnalyticsService
-    raise NotImplementedError("analytics/publishers/export not yet implemented")
+    """Export publisher analytics as CSV (11 columns, NT-aligned)."""
+    _ = auth_user
+    csv_text = await service.export_publishers_csv(
+        space_id=space_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        category_id=categoryId,
+        task_approved=taskApproved,
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -649,10 +820,23 @@ async def get_space_topics(
     sort: str = Query(default="name"),
     limit: int = Query(default=20, ge=1, le=100),
     auth_user: AuthUserInfo = Depends(get_auth_user),
+    service: SpaceTopicsService = Depends(get_space_topics_service),
 ) -> dict:
-    """List or search topics associated with the space. Supports fuzzy keyword search and popularity sorting."""
-    # TODO: implement
-    raise NotImplementedError("space topics not yet implemented")
+    """List or search topics associated with the space.
+
+    NT-aligned (see `SpaceController.getSpaceTopics`):
+    - Limit is capped at 50 regardless of the client-requested value.
+    - If `keyword` is provided, perform a fuzzy search (sort is ignored).
+    - Otherwise, return the hottest topics (most non-deleted tasks in the space).
+    """
+    safe_limit = min(limit, 50)
+
+    if keyword and keyword.strip():
+        topics = await service.search_topics(space_id, keyword, safe_limit)
+    else:
+        topics = await service.get_hot_topics(space_id, safe_limit)
+
+    return {"code": 200, "message": "OK", "data": {"topics": topics}}
 
 
 @router.post(
