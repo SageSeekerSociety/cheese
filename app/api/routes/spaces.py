@@ -7,6 +7,7 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.db.session import get_db
 from app.domain.space.analytics_service import SpaceAnalyticsService
+from app.domain.space.member_participating_service import SpaceMemberParticipatingService
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, SpaceCategory
 from app.domain.space.repositories import (
@@ -56,6 +57,12 @@ async def get_space_member_publishing_service(
     db=Depends(get_db),
 ) -> SpaceMemberPublishingService:
     return SpaceMemberPublishingService(session=db)
+
+
+async def get_space_member_participating_service(
+    db=Depends(get_db),
+) -> SpaceMemberParticipatingService:
+    return SpaceMemberParticipatingService(session=db)
 
 
 def _space_to_api_model(space: Space) -> dict:
@@ -581,11 +588,17 @@ async def get_space_me_published_tasks(
 )
 async def get_space_me_participating(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceMemberParticipatingService = Depends(
+        get_space_member_participating_service
+    ),
 ) -> dict:
     """Return the authenticated user's participation summary in this space."""
-    # TODO: implement
-    raise NotImplementedError("me/participating not yet implemented")
+    data = await service.get_overview(
+        space_id=space_id,
+        user_id=auth_user.user_id,
+    )
+    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.get(
@@ -599,11 +612,26 @@ async def get_space_me_participations(
     identityType: str | None = Query(default=None),
     sortBy: str = Query(default="joinedAt"),
     sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceMemberParticipatingService = Depends(
+        get_space_member_participating_service
+    ),
 ) -> dict:
     """Return the authenticated user's participation list in this space."""
-    # TODO: implement
-    raise NotImplementedError("me/participations not yet implemented")
+    participations = await service.get_participations(
+        space_id=space_id,
+        user_id=auth_user.user_id,
+        approved=approved,
+        completion_status=completionStatus,
+        identity_type=identityType,
+        sort_by=sortBy,
+        sort_order=sortOrder,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"participations": participations},
+    }
 
 
 # ---------------------------------------------------------------------------
