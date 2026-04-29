@@ -4,7 +4,10 @@ Revision ID: 219831eb75a3
 Revises: a95752502bb0
 Create Date: 2026-03-05
 
-All demo users use password: demo123
+All demo users use password: demo12345
+
+Note: password must be >=8 chars and username must be >=4 chars to pass frontend
+validation (see cheese-frontend src/views/account/SignIn.vue).
 """
 
 # ruff: noqa: S608
@@ -16,8 +19,8 @@ down_revision = "a95752502bb0"
 branch_labels = None
 depends_on = None
 
-# Pre-computed bcrypt hash for "demo123"
-DEMO_PW = "$2b$12$Z8q/6VTMChH0c/Iruw5by.Fi4/J/QJF2VhCFNyR96.J1s7jkGGlA2"
+# Pre-computed bcrypt hash for "demo12345"
+DEMO_PW = "$2b$12$H7AVsXie7xe6vkopOoZGGOKgxwmaiui9XsBXBIsDqllOb.aX.MFHS"
 
 NOW = "NOW()"
 
@@ -41,10 +44,10 @@ def upgrade() -> None:
     # ── Users ────────────────────────────────────────────────────────
     users = [
         (1, "alice",  "alice@demo.test",  "Alice"),
-        (2, "bob",    "bob@demo.test",    "Bob"),
+        (2, "bobby",  "bob@demo.test",    "Bob"),
         (3, "carol",  "carol@demo.test",  "Carol"),
         (4, "david",  "david@demo.test",  "David"),
-        (5, "eve",    "eve@demo.test",    "Eve"),
+        (5, "evelyn", "eve@demo.test",    "Eve"),
         (6, "frank",  "frank@demo.test",  "Frank"),
         (7, "grace",  "grace@demo.test",  "Grace"),
         (8, "henry",  "henry@demo.test",  "Henry"),
