@@ -53,32 +53,19 @@ class TaskPdfDraftService:
         user_id: int,
         default_topic_ids: list[int] | None = None,
     ) -> tuple[dict[str, Any], int]:
-        if not pdf_bytes:
-            raise BadRequestError("Uploaded PDF is empty")
-
-        markdown_text, image_map, temp_dir = self._extract_pdf_markdown_and_images(pdf_bytes)
-        try:
-            payload, token_used = await self.generate_task_payload_from_text(
-                text=markdown_text,
-                template=template,
-                space_id=space_id,
-                category_id=category_id,
-                forced_submitter_type=forced_submitter_type,
-                user_id=user_id,
-                default_topic_ids=default_topic_ids,
-            )
-
-            # Upload extracted images to storage and replace placeholders in description
-            if payload.get("description") and image_map:
-                payload["description"] = await self._upload_and_replace_images(
-                    markdown_text=payload["description"],
-                    image_map=image_map,
-                )
-
-            return payload, token_used
-        finally:
-            if temp_dir and os.path.isdir(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
+        """Convenience wrapper: return a single task payload from a PDF."""
+        payloads, token_used = await self.generate_task_payloads_from_pdf(
+            pdf_bytes=pdf_bytes,
+            template=template,
+            space_id=space_id,
+            category_id=category_id,
+            forced_submitter_type=forced_submitter_type,
+            user_id=user_id,
+            default_topic_ids=default_topic_ids,
+        )
+        if not payloads:
+            raise BadRequestError("No task payload extracted from PDF")
+        return payloads[0], token_used
 
     async def generate_task_payloads_from_pdf(
         self,
@@ -199,59 +186,19 @@ class TaskPdfDraftService:
         user_id: int,
         default_topic_ids: list[int] | None = None,
     ) -> tuple[dict[str, Any], int]:
-        normalized_text = text.strip()
-        if not normalized_text:
-            raise BadRequestError("PDF content is empty or unreadable")
-        if not self._llm_client.is_configured:
-            raise BadRequestError("LLM is not configured")
-
-        if self._quota_service is not None:
-            has_quota = await self._quota_service.pre_check_and_reserve(
-                user_id=user_id,
-                estimated_tokens=3000,
-            )
-            if not has_quota:
-                raise BadRequestError("AI quota exhausted")
-
-        system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(text=normalized_text, template=template)
-
-        try:
-            response = await self._llm_client.get_completion(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                model_type="reasoning",
-                json_response=True,
-                timeout=self._timeout_seconds,
-            )
-        except LLMTimeoutError as exc:
-            raise BadRequestError(str(exc)) from exc
-        except LLMConnectionError as exc:
-            raise BadRequestError(str(exc)) from exc
-        except LLMAPIError as exc:
-            raise BadRequestError(str(exc)) from exc
-
-        parsed = self._parse_llm_json(response.content)
-        candidate = parsed.get("task") if isinstance(parsed.get("task"), dict) else parsed
-        payload = self._normalize_task_payload(
-            llm_result=candidate,
+        """Convenience wrapper: return a single task payload from text."""
+        payloads, token_used = await self.generate_task_payloads_from_text(
+            text=text,
             template=template,
-            forced_submitter_type=forced_submitter_type,
             space_id=space_id,
             category_id=category_id,
+            forced_submitter_type=forced_submitter_type,
+            user_id=user_id,
             default_topic_ids=default_topic_ids,
         )
-
-        if self._quota_service is not None and response.total_tokens > 0:
-            try:
-                await self._quota_service.consume_tokens(
-                    user_id=user_id,
-                    tokens=response.total_tokens,
-                )
-            except QuotaExceededError as exc:
-                raise BadRequestError(str(exc)) from exc
-
-        return payload, response.total_tokens
+        if not payloads:
+            raise BadRequestError("No task payload extracted from text")
+        return payloads[0], token_used
 
     def _extract_pdf_markdown_and_images(
         self, pdf_bytes: bytes
@@ -284,9 +231,7 @@ class TaskPdfDraftService:
                 use_ocr=False,
                 write_images=True,
                 image_path=str(images_dir),
-                image_format="png",
-                ignore_images=False,
-                pages=None,
+                image_format="png"
             )
 
             if not markdown_text or not markdown_text.strip():
@@ -363,26 +308,23 @@ class TaskPdfDraftService:
             "你的任务是：\n"
             "1. 修正 Markdown 的排版格式，使其结构清晰、层级正确、可读性强；\n"
             "2. **必须保留所有图片占位标记**，不要删除或修改它们；\n"
-            "3. 将修正后的 Markdown 放入 JSON 的 `description` 字段；\n"
-            "4. 从内容中提炼出合适的 `name`（赛题名称）和 `intro`（简短介绍）。\n\n"
+            "3. 可以将图片中提取的文本（picture text部分）删除；\n"
+            "4. 将修正后的 Markdown 放入 JSON 的 `description` 字段；\n"
+            "5. 从内容中提炼出合适的 `name`（赛题名称）和 `intro`（简短介绍）。\n\n"
+            "**输出格式要求**：请将结果包裹在 `{\"tasks\": [...]}` 中，"
+            "数组里每个元素包含 name、intro、description 三个字段。"
+            "形如 "
+            "{\"tasks\": [{\"name\": \"...\", \"intro\": \"...\", \"description\": \"...\"}]}。\n\n"
             "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"
-            "输出格式优先为 {\"tasks\": [...]}，其中每个任务对象都能直接用于发布。"
-            "必须输出字段: name, intro, description, submitterType, resubmittable, editable, defaultDeadline。"
-            "可选字段: participantLimit, deadline, registrationStartAt, requireRealName, "
-            "minTeamSize, maxTeamSize, rank, teamLockingPolicy, topics, submissionSchema。"
-            "submitterType 只能是 USER 或 TEAM。teamLockingPolicy 只能是 NO_LOCK 或 LOCK_ON_APPROVAL。"
         )
 
     def _build_user_prompt(self, *, text: str, template: dict[str, Any]) -> str:
-        template_json = json.dumps(template, ensure_ascii=False)
         clipped = text[:12000]
         return (
-            "下面是当前赛题模板（可能为空对象）：\n"
-            f"{template_json}\n\n"
             "下面是从 PDF 中提取的 Markdown 文本（可能包含图片占位标记如 "
             "`![描述](images/xxx.png)`，请务必保留这些标记）：\n"
             f"{clipped}\n\n"
-            "请基于模板和 PDF 内容生成一个 JSON 对象，"
+            "请基于以上 PDF 内容生成一个 JSON 对象，"
             "其中 `description` 字段放置修正排版后的完整 Markdown。"
         )
 
@@ -425,17 +367,19 @@ class TaskPdfDraftService:
         return text
 
     def _extract_task_candidates(self, parsed: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract task objects from LLM response.
+
+        LLM 始终返回 {\"tasks\": [task1, task2, ...]} 格式。
+        """
         tasks_value = parsed.get("tasks")
         if isinstance(tasks_value, list):
             candidates = [item for item in tasks_value if isinstance(item, dict)]
             if candidates:
                 return candidates
-
-        single = parsed.get("task")
-        if isinstance(single, dict):
-            return [single]
-
-        return [parsed]
+        raise BadRequestError(
+            "LLM response must contain a non-empty \"tasks\" array. "
+            f"Got: {type(tasks_value).__name__ if tasks_value is not None else 'missing'}"
+        )
 
     def _normalize_task_payload(
         self,
@@ -447,158 +391,71 @@ class TaskPdfDraftService:
         category_id: int | None,
         default_topic_ids: list[int] | None,
     ) -> dict[str, Any]:
+        """Build the final task payload.
+
+        Only name, intro, description come from the AI result (with optional
+        template fallback).  All other fields are filled by the system with
+        fixed defaults — the AI is not asked for them and they are never read
+        from llm_result.
+        """
+        # --- Core fields: AI output, with template as fallback ---
         template_defaults = self._extract_template_defaults(template)
+        name = str(llm_result.get("name") or template_defaults.get("name") or "").strip()
+        intro = str(llm_result.get("intro") or template_defaults.get("intro") or "").strip()
+        description = str(
+            llm_result.get("description") or template_defaults.get("description") or ""
+        ).strip()
+
+        if not name:
+            raise BadRequestError("LLM output missing required field: name")
+        if not intro:
+            raise BadRequestError("LLM output missing required field: intro")
+        if not description:
+            raise BadRequestError("LLM output missing required field: description")
+
+        # --- System-filled fields ---
         now = datetime.now(UTC)
-        registration_start_ms = int(now.timestamp() * 1000)
-        deadline_ms = int((now + timedelta(days=7)).timestamp() * 1000)
-        merged: dict[str, Any] = {
-            "submitterType": "TEAM",
+        submitter_type = forced_submitter_type if forced_submitter_type in {"USER", "TEAM"} else "TEAM"
+
+        payload: dict[str, Any] = {
+            "name": name,
+            "intro": intro,
+            "description": description,
+            "submitterType": submitter_type,
             "resubmittable": True,
             "editable": True,
             "defaultDeadline": 365,
             "teamLockingPolicy": "LOCK_ON_APPROVAL",
             "topics": default_topic_ids or [],
+            "space": space_id,
             "rank": 3,
             "requireRealName": True,
             "minTeamSize": 1,
             "maxTeamSize": 3,
-            "registrationStartAt": registration_start_ms,
-            "deadline": deadline_ms,
+            "registrationStartAt": int(now.timestamp() * 1000),
+            "deadline": int((now + timedelta(days=7)).timestamp() * 1000),
             "participantLimit": None,
-        }
-        merged.update(template_defaults)
-        merged.update(llm_result)
-
-        if forced_submitter_type in {"USER", "TEAM"}:
-            merged["submitterType"] = forced_submitter_type
-        else:
-            merged["submitterType"] = "TEAM"
-
-        # Force required template defaults.
-        merged["rank"] = 3
-        merged["teamLockingPolicy"] = "LOCK_ON_APPROVAL"
-        merged["minTeamSize"] = 1
-        merged["maxTeamSize"] = 3
-        merged["registrationStartAt"] = registration_start_ms
-        merged["deadline"] = deadline_ms
-        merged["defaultDeadline"] = 365
-        merged["participantLimit"] = None
-        merged["requireRealName"] = True
-        if default_topic_ids:
-            merged["topics"] = default_topic_ids
-
-        payload: dict[str, Any] = {
-            "name": str(merged.get("name", "")).strip(),
-            "intro": str(merged.get("intro", "")).strip(),
-            "description": str(merged.get("description", "")).strip(),
-            "submitterType": self._normalize_submitter_type(merged.get("submitterType")),
-            "resubmittable": self._to_bool(merged.get("resubmittable", True)),
-            "editable": self._to_bool(merged.get("editable", True)),
-            "defaultDeadline": self._to_int(merged.get("defaultDeadline", 30), default=30),
-            "teamLockingPolicy": self._normalize_team_locking_policy(
-                merged.get("teamLockingPolicy")
-            ),
-            "topics": self._normalize_topics(merged.get("topics")),
-            "space": space_id,
         }
 
         if category_id is not None:
             payload["categoryId"] = category_id
 
-        optional_int_fields = [
-            "participantLimit",
-            "deadline",
-            "registrationStartAt",
-            "minTeamSize",
-            "maxTeamSize",
-            "rank",
-        ]
-        for key in optional_int_fields:
-            if key in merged and merged[key] is not None:
-                payload[key] = self._to_int(merged[key])
-
-        if "requireRealName" in merged and merged["requireRealName"] is not None:
-            payload["requireRealName"] = self._to_bool(merged["requireRealName"])
-
-        if isinstance(merged.get("submissionSchema"), list):
-            payload["submissionSchema"] = merged["submissionSchema"]
-
-        for required_key in ("name", "intro", "description"):
-            if not payload[required_key]:
-                raise BadRequestError(f"LLM output missing required field: {required_key}")
-
-        if payload["submitterType"] != "TEAM":
+        if submitter_type != "TEAM":
             payload.pop("minTeamSize", None)
             payload.pop("maxTeamSize", None)
+            payload.pop("teamLockingPolicy", None)
 
         return payload
 
     def _extract_template_defaults(self, template: dict[str, Any]) -> dict[str, Any]:
+        """Extract only core fields from the template as fallback values.
+
+        Only name, intro, description are relevant — all other fields are
+        filled by the system and never read from templates.
+        """
         if "task" in template and isinstance(template["task"], dict):
             source = template["task"]
         else:
             source = template
-        allowed_keys = {
-            "name",
-            "intro",
-            "description",
-            "submitterType",
-            "resubmittable",
-            "editable",
-            "defaultDeadline",
-            "participantLimit",
-            "deadline",
-            "registrationStartAt",
-            "requireRealName",
-            "minTeamSize",
-            "maxTeamSize",
-            "rank",
-            "teamLockingPolicy",
-            "topics",
-            "submissionSchema",
-        }
+        allowed_keys = {"name", "intro", "description"}
         return {k: v for k, v in source.items() if k in allowed_keys}
-
-    def _normalize_submitter_type(self, value: Any) -> str:
-        text = str(value or "USER").upper()
-        return text if text in {"USER", "TEAM"} else "USER"
-
-    def _normalize_team_locking_policy(self, value: Any) -> str:
-        text = str(value or "NO_LOCK").upper()
-        return text if text in {"NO_LOCK", "LOCK_ON_APPROVAL"} else "NO_LOCK"
-
-    def _normalize_topics(self, value: Any) -> list[int]:
-        if not isinstance(value, list):
-            return []
-        topics: list[int] = []
-        for item in value:
-            try:
-                topics.append(int(item))
-            except (TypeError, ValueError):
-                continue
-        return topics
-
-    def _to_int(self, value: Any, *, default: int | None = None) -> int:
-        if value is None:
-            if default is None:
-                raise BadRequestError("Invalid integer field")
-            return default
-        try:
-            return int(value)
-        except (TypeError, ValueError) as exc:
-            if default is not None:
-                return default
-            raise BadRequestError(f"Invalid integer value: {value}") from exc
-
-    def _to_bool(self, value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {"true", "1", "yes", "y"}:
-                return True
-            if lowered in {"false", "0", "no", "n"}:
-                return False
-        if isinstance(value, (int, float)):
-            return bool(value)
-        return bool(value)

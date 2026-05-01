@@ -628,7 +628,7 @@ async def _create_task_entity(
 async def create_task(
     payload: dict,
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Create a new task (simplified port of Kotlin TaskService.createTask).
 
@@ -642,11 +642,14 @@ async def create_task(
         creator_user_id=auth_user.user_id,
     )
 
+    task_model = _task_to_api_model(task)
+    task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[0]
+
     return {
         "code": 200,
         "message": "Task created successfully.",
         "data": {
-            "task": _task_to_api_model(task),
+            "task": task_model,
         },
     }
 
@@ -659,7 +662,7 @@ async def create_task_from_pdf(
     space_id: Annotated[int, Form(alias="spaceId")],
     pdf_file: Annotated[UploadFile, File(alias="file")],
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     draft_service: TaskPdfDraftService = Depends(get_task_pdf_draft_service),
     category_id: Annotated[int | None, Form(alias="categoryId")] = None,
     template_index: Annotated[int, Form(alias="templateIndex")] = 0,
@@ -713,11 +716,14 @@ async def create_task_from_pdf(
         creator_user_id=auth_user.user_id,
     )
 
+    task_model = _task_to_api_model(task)
+    task_model = (await _enrich_task_models(db, [task_model], space_id=space_id))[0]
+
     return {
         "code": 200,
         "message": "Task created from PDF successfully.",
         "data": {
-            "task": _task_to_api_model(task),
+            "task": task_model,
             "draft": payload,
             "templateUsed": template,
             "tokenUsed": token_used,
@@ -733,7 +739,7 @@ async def preview_task_from_pdf(
     space_id: Annotated[int, Form(alias="spaceId")],
     pdf_file: Annotated[UploadFile, File(alias="file")],
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     draft_service: TaskPdfDraftService = Depends(get_task_pdf_draft_service),
     category_id: Annotated[int | None, Form(alias="categoryId")] = None,
     template_index: Annotated[int, Form(alias="templateIndex")] = 0,
@@ -803,7 +809,7 @@ async def preview_task_from_pdf(
 async def confirm_publish_task_from_pdf(
     payload: ConfirmTaskPublishFromPdfRequest,
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     drafts = payload.drafts
     if not drafts:
@@ -812,6 +818,7 @@ async def confirm_publish_task_from_pdf(
         raise BadRequestError("At most 20 drafts can be published at once")
 
     created_tasks: list[Task] = []
+    space_id: int | None = None
     for draft in drafts:
         if not isinstance(draft, dict):
             raise BadRequestError("Each draft must be an object")
@@ -821,12 +828,21 @@ async def confirm_publish_task_from_pdf(
             creator_user_id=auth_user.user_id,
         )
         created_tasks.append(created)
+        if space_id is None and "space" in draft:
+            try:
+                space_id = int(draft["space"])
+            except (TypeError, ValueError):
+                pass
+
+    task_models = [_task_to_api_model(task) for task in created_tasks]
+    if space_id is not None:
+        task_models = await _enrich_task_models(db, task_models, space_id=space_id)
 
     return {
         "code": 200,
         "message": "Task drafts published successfully.",
         "data": {
-            "tasks": [_task_to_api_model(task) for task in created_tasks],
+            "tasks": task_models,
             "count": len(created_tasks),
         },
     }
