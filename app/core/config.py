@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     openai_reasoning_model: str = Field(default="o1-mini", alias="OPENAI_REASONING_MODEL")
     openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
     openai_max_tokens: int = Field(default=4096, alias="OPENAI_MAX_TOKENS")
+    openai_timeout_seconds: float = Field(default=180.0, alias="OPENAI_TIMEOUT_SECONDS")
+    openai_pdf_timeout_seconds: float = Field(
+        default=300.0,
+        alias="OPENAI_PDF_TIMEOUT_SECONDS",
+    )
     ai_daily_quota: float = Field(default=10.0, alias="AI_DAILY_QUOTA")
 
     # WebAuthn / Passkey configuration

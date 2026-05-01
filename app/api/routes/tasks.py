@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
@@ -44,6 +44,7 @@ from app.domain.task.services import (
     TaskSubmissionReviewService,
     TaskSubmissionService,
 )
+from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
@@ -127,6 +128,11 @@ async def get_task_ai_advice_service(db=Depends(get_db)) -> TaskAIAdviceService:
     )
 
 
+async def get_task_pdf_draft_service(db=Depends(get_db)) -> TaskPdfDraftService:
+    _ = db
+    return TaskPdfDraftService()
+
+
 class TaskAIAdviceConversationContext(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
@@ -148,6 +154,12 @@ class CreateTaskAIAdviceConversationRequest(BaseModel):
     @classmethod
     def _strip_question(cls, value: str) -> str:
         return value.strip()
+
+
+class ConfirmTaskPublishFromPdfRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    drafts: list[dict]
 
 
 def _task_to_api_model(task: Task) -> dict:
@@ -440,21 +452,12 @@ def _map_approve_type_to_int(value: str | None) -> int | None:
     return mapping[upper]
 
 
-@router.post(
-    "",
-    summary="Create Task",
-)
-async def create_task(
+async def _create_task_entity(
+    *,
     payload: dict,
-    db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
-) -> dict:
-    """Create a new task (simplified port of Kotlin TaskService.createTask).
-
-    NOTE:
-    - 当前版本不检查复杂权限，只要求提供 space 并验证 category 归属；
-    - submissionSchema / topics 仅做占位处理，暂不影响提交与评分。
-    """
+    db,
+    creator_user_id: int,
+) -> Task:
     required_fields = [
         "name",
         "submitterType",
@@ -560,9 +563,9 @@ async def create_task(
     topics_raw = payload.get("topics") or []
     topics: list[int] = []
     if isinstance(topics_raw, list):
-        for t in topics_raw:
+        for topic in topics_raw:
             try:
-                topics.append(int(t))
+                topics.append(int(topic))
             except (TypeError, ValueError):
                 # 忽略无法解析的 topicId，避免因为单个坏值整体失败
                 continue
@@ -584,7 +587,7 @@ async def create_task(
         name=name,
         intro=intro,
         description=description,
-        creator_id=auth_user.user_id,
+        creator_id=creator_user_id,
         space_id=space_id,
         category_id=effective_category_id,
         submitter_type=submitter_type,
@@ -615,11 +618,216 @@ async def create_task(
             db.add(relation)
         await db.flush()
 
+    return task
+
+
+@router.post(
+    "",
+    summary="Create Task",
+)
+async def create_task(
+    payload: dict,
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    """Create a new task (simplified port of Kotlin TaskService.createTask).
+
+    NOTE:
+    - 当前版本不检查复杂权限，只要求提供 space 并验证 category 归属；
+    - submissionSchema / topics 仅做占位处理，暂不影响提交与评分。
+    """
+    task = await _create_task_entity(
+        payload=payload,
+        db=db,
+        creator_user_id=auth_user.user_id,
+    )
+
     return {
         "code": 200,
         "message": "Task created successfully.",
         "data": {
             "task": _task_to_api_model(task),
+        },
+    }
+
+
+@router.post(
+    "/publish/from-pdf",
+    summary="Create Task From PDF",
+)
+async def create_task_from_pdf(
+    space_id: Annotated[int, Form(alias="spaceId")],
+    pdf_file: Annotated[UploadFile, File(alias="file")],
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    draft_service: TaskPdfDraftService = Depends(get_task_pdf_draft_service),
+    category_id: Annotated[int | None, Form(alias="categoryId")] = None,
+    template_index: Annotated[int, Form(alias="templateIndex")] = 0,
+    forced_submitter_type: Annotated[str | None, Form(alias="submitterType")] = None,
+) -> dict:
+    filename = (pdf_file.filename or "").lower()
+    content_type = (pdf_file.content_type or "").lower()
+    if not filename.endswith(".pdf") and "pdf" not in content_type:
+        raise BadRequestError("Only PDF file is supported")
+
+    pdf_bytes = await pdf_file.read()
+    if not pdf_bytes:
+        raise BadRequestError("Uploaded PDF is empty")
+    if len(pdf_bytes) > 15 * 1024 * 1024:
+        raise BadRequestError("PDF file is too large (max 15MB)")
+
+    space_repo = SpaceRepository(session=db)
+    space = await space_repo.get_by_id(space_id)
+    if space is None:
+        raise NotFoundError("Space not found")
+
+    resolved_category_id = category_id
+    if resolved_category_id is None:
+        category_repo = SpaceCategoryRepository(session=db)
+        categories = await category_repo.list_categories_for_space(space_id, include_archived=False)
+        for category in categories:
+            if category.name.strip().lower() == "general":
+                resolved_category_id = category.id
+                break
+
+    default_topic_ids: list[int] = []
+    global_topic_repo = GlobalTopicRepository(session=db)
+    default_topic = await global_topic_repo.get_by_name("计算机系统")
+    if default_topic is not None:
+        default_topic_ids.append(default_topic.id)
+
+    template = draft_service.pick_template(space.task_templates or [], template_index)
+    payload, token_used = await draft_service.generate_task_payload_from_pdf(
+        pdf_bytes=pdf_bytes,
+        template=template,
+        space_id=space_id,
+        category_id=resolved_category_id,
+        forced_submitter_type=forced_submitter_type,
+        user_id=auth_user.user_id,
+        default_topic_ids=default_topic_ids,
+    )
+
+    task = await _create_task_entity(
+        payload=payload,
+        db=db,
+        creator_user_id=auth_user.user_id,
+    )
+
+    return {
+        "code": 200,
+        "message": "Task created from PDF successfully.",
+        "data": {
+            "task": _task_to_api_model(task),
+            "draft": payload,
+            "templateUsed": template,
+            "tokenUsed": token_used,
+        },
+    }
+
+
+@router.post(
+    "/publish/from-pdf/preview",
+    summary="Preview Task Drafts From PDF",
+)
+async def preview_task_from_pdf(
+    space_id: Annotated[int, Form(alias="spaceId")],
+    pdf_file: Annotated[UploadFile, File(alias="file")],
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+    draft_service: TaskPdfDraftService = Depends(get_task_pdf_draft_service),
+    category_id: Annotated[int | None, Form(alias="categoryId")] = None,
+    template_index: Annotated[int, Form(alias="templateIndex")] = 0,
+    forced_submitter_type: Annotated[str | None, Form(alias="submitterType")] = None,
+    max_tasks: Annotated[int, Form(alias="maxTasks")] = 5,
+) -> dict:
+    filename = (pdf_file.filename or "").lower()
+    content_type = (pdf_file.content_type or "").lower()
+    if not filename.endswith(".pdf") and "pdf" not in content_type:
+        raise BadRequestError("Only PDF file is supported")
+    if max_tasks < 1 or max_tasks > 20:
+        raise BadRequestError("maxTasks must be between 1 and 20")
+
+    pdf_bytes = await pdf_file.read()
+    if not pdf_bytes:
+        raise BadRequestError("Uploaded PDF is empty")
+    if len(pdf_bytes) > 15 * 1024 * 1024:
+        raise BadRequestError("PDF file is too large (max 15MB)")
+
+    space_repo = SpaceRepository(session=db)
+    space = await space_repo.get_by_id(space_id)
+    if space is None:
+        raise NotFoundError("Space not found")
+
+    resolved_category_id = category_id
+    if resolved_category_id is None:
+        category_repo = SpaceCategoryRepository(session=db)
+        categories = await category_repo.list_categories_for_space(space_id, include_archived=False)
+        for category in categories:
+            if category.name.strip().lower() == "general":
+                resolved_category_id = category.id
+                break
+
+    default_topic_ids: list[int] = []
+    global_topic_repo = GlobalTopicRepository(session=db)
+    default_topic = await global_topic_repo.get_by_name("计算机系统")
+    if default_topic is not None:
+        default_topic_ids.append(default_topic.id)
+
+    template = draft_service.pick_template(space.task_templates or [], template_index)
+    drafts, token_used = await draft_service.generate_task_payloads_from_pdf(
+        pdf_bytes=pdf_bytes,
+        template=template,
+        space_id=space_id,
+        category_id=resolved_category_id,
+        forced_submitter_type=forced_submitter_type,
+        user_id=auth_user.user_id,
+        default_topic_ids=default_topic_ids,
+    )
+    drafts = drafts[:max_tasks]
+
+    return {
+        "code": 200,
+        "message": "Task drafts previewed from PDF successfully.",
+        "data": {
+            "drafts": drafts,
+            "templateUsed": template,
+            "tokenUsed": token_used,
+        },
+    }
+
+
+@router.post(
+    "/publish/from-pdf/confirm",
+    summary="Confirm Publish Task Drafts From PDF",
+)
+async def confirm_publish_task_from_pdf(
+    payload: ConfirmTaskPublishFromPdfRequest,
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(get_auth_user),
+) -> dict:
+    drafts = payload.drafts
+    if not drafts:
+        raise BadRequestError("drafts is required")
+    if len(drafts) > 20:
+        raise BadRequestError("At most 20 drafts can be published at once")
+
+    created_tasks: list[Task] = []
+    for draft in drafts:
+        if not isinstance(draft, dict):
+            raise BadRequestError("Each draft must be an object")
+        created = await _create_task_entity(
+            payload=draft,
+            db=db,
+            creator_user_id=auth_user.user_id,
+        )
+        created_tasks.append(created)
+
+    return {
+        "code": 200,
+        "message": "Task drafts published successfully.",
+        "data": {
+            "tasks": [_task_to_api_model(task) for task in created_tasks],
+            "count": len(created_tasks),
         },
     }
 

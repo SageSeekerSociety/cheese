@@ -22,6 +22,7 @@ dependencies = [
     "python-multipart>=0.0.7,<1.0.0",
     "alembic>=1.17.2",
     "openai>=1.50.0,<2.0.0",
+    "pymupdf4llm>=0.4.0",
     "tiktoken>=0.7.0,<1.0.0",
     "structlog>=24.0.0,<25.0.0",
     "pyotp>=2.9.0,<3.0.0",
@@ -68,7 +69,7 @@ include = [
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
-exclude = ["tests", ".venv"]
+exclude = ["tests", ".venv", "__pycache__", "node_modules", ".*"]
 reportMissingImports = "warning"
 reportOptionalMemberAccess = "error"
 reportOptionalSubscript = "error"

@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.routes import (
@@ -93,6 +94,13 @@ def create_app() -> FastAPI:
     app.include_router(topics_legacy.router)
     app.include_router(answers.router)
     app.include_router(knowledge.router)
+
+    # Mount uploads directory for serving images and other static files
+    import os
+    uploads_path = os.path.abspath(settings.storage_local_path)
+    if not os.path.isdir(uploads_path):
+        os.makedirs(uploads_path, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=uploads_path), name="uploads")
 
     finalizer = NotificationAggregationFinalizer(
         session_factory=AsyncSessionLocal,

@@ -86,7 +86,7 @@ class LLMClient:
         system_prompt: str = "",
         model_type: str | None = None,
         json_response: bool = False,
-        timeout: float = 60.0,
+        timeout: float | None = None,
     ) -> LLMResponse:
         if not self.is_configured:
             return self._placeholder_response(prompt)
@@ -95,6 +95,7 @@ class LLMClient:
         model = self._get_model(model_type)
         temperature = settings.openai_temperature
         max_tokens = settings.openai_max_tokens
+        effective_timeout = timeout or settings.openai_timeout_seconds
 
         messages = []
         if system_prompt:
@@ -112,10 +113,10 @@ class LLMClient:
                     max_tokens=max_tokens,
                     response_format=response_format,
                 ),
-                timeout=timeout,
+                timeout=effective_timeout,
             )
         except TimeoutError as exc:
-            raise LLMTimeoutError(f"LLM request timed out after {timeout}s") from exc
+            raise LLMTimeoutError(f"LLM request timed out after {effective_timeout}s") from exc
         except APITimeoutError as exc:
             raise LLMTimeoutError(f"OpenAI API timeout: {exc}") from exc
         except APIConnectionError as exc:
@@ -141,7 +142,7 @@ class LLMClient:
         messages: list[dict[str, str]],
         model_type: str | None = None,
         json_response: bool = False,
-        timeout: float = 60.0,
+        timeout: float | None = None,
     ) -> LLMResponse:
         if not self.is_configured:
             return self._placeholder_response("")
@@ -150,6 +151,7 @@ class LLMClient:
         model = self._get_model(model_type)
         temperature = settings.openai_temperature
         max_tokens = settings.openai_max_tokens
+        effective_timeout = timeout or settings.openai_timeout_seconds
         response_format = {"type": "json_object"} if json_response else {"type": "text"}
 
         try:
@@ -161,10 +163,10 @@ class LLMClient:
                     max_tokens=max_tokens,
                     response_format=response_format,
                 ),
-                timeout=timeout,
+                timeout=effective_timeout,
             )
         except TimeoutError as exc:
-            raise LLMTimeoutError(f"LLM request timed out after {timeout}s") from exc
+            raise LLMTimeoutError(f"LLM request timed out after {effective_timeout}s") from exc
         except APITimeoutError as exc:
             raise LLMTimeoutError(f"OpenAI API timeout: {exc}") from exc
         except APIConnectionError as exc:
