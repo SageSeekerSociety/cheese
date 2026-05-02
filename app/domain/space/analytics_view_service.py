@@ -16,7 +16,7 @@ import csv
 import io
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -187,7 +187,7 @@ class SpaceAnalyticsViewService:
             approved_value=None,
         )
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         pending_task_approval = sum(1 for t in ctx.tasks if t.approved == APPROVED_MAP["NONE"])
         pending_participant_approval = sum(
@@ -1008,14 +1008,14 @@ class SpaceAnalyticsViewService:
 
     @staticmethod
     def _resolve_window(from_ts: int | None, to_ts: int | None) -> tuple[datetime, datetime]:
-        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        now_utc = datetime.now(UTC).replace(tzinfo=None)
         to_dt = (
-            datetime.fromtimestamp(to_ts / 1000, tz=timezone.utc).replace(tzinfo=None)
+            datetime.fromtimestamp(to_ts / 1000, tz=UTC).replace(tzinfo=None)
             if to_ts is not None
             else now_utc
         )
         from_dt = (
-            datetime.fromtimestamp(from_ts / 1000, tz=timezone.utc).replace(tzinfo=None)
+            datetime.fromtimestamp(from_ts / 1000, tz=UTC).replace(tzinfo=None)
             if from_ts is not None
             else to_dt - timedelta(days=DEFAULT_WINDOW_DAYS)
         )
@@ -1108,7 +1108,7 @@ class SpaceAnalyticsViewService:
         if dt is None:
             return None
         naive = dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
-        return int(naive.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        return int(naive.replace(tzinfo=UTC).timestamp() * 1000)
 
     @staticmethod
     def _build_distribution(name: str, counter: Counter) -> dict:

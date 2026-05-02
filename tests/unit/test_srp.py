@@ -7,8 +7,6 @@ as the secure-remote-password JS library to verify compatibility.
 import hashlib
 import os
 
-import pytest
-
 from srp_rs import generate_server_ephemeral, verify_session
 
 # ---- Minimal SrpInteger that matches Rust/JS hex_length semantics ----
@@ -28,7 +26,7 @@ N_HEX = (
 class _SI:
     """Tiny SrpInteger mimic for client-side test math."""
 
-    __slots__ = ("v", "hl")
+    __slots__ = ("hl", "v")
 
     def __init__(self, v: int, hl: int) -> None:
         self.v = v
@@ -66,7 +64,7 @@ class _SI:
         mx = max(len(a), len(b))
         a = b"\x00" * (mx - len(a)) + a
         b = b"\x00" * (mx - len(b)) + b
-        return _SI(int(bytes(x ^ y for x, y in zip(a, b)).hex(), 16), self.hl)
+        return _SI(int(bytes(x ^ y for x, y in zip(a, b, strict=True)).hex(), 16), self.hl)
 
 
 def _H(*args: _SI) -> _SI:

@@ -1,5 +1,4 @@
-from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,15 +39,15 @@ class _Context:
     """In-memory aggregate used by both overview and list endpoints."""
 
     __slots__ = (
-        "memberships",
-        "tasks_by_id",
+        "admin_team_ids",
         "categories_by_id",
         "creators_by_id",
-        "teams_by_id",
-        "admin_team_ids",
-        "submissions_by_membership_id",
-        "reviews_by_submission_id",
         "current_user_id",
+        "memberships",
+        "reviews_by_submission_id",
+        "submissions_by_membership_id",
+        "tasks_by_id",
+        "teams_by_id",
     )
 
     def __init__(
@@ -406,7 +405,7 @@ class SpaceMemberParticipatingService:
     def _to_timestamp_ms(value: datetime | None) -> int | None:
         if value is None:
             return None
-        return int(value.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        return int(value.replace(tzinfo=UTC).timestamp() * 1000)
 
     @staticmethod
     def _parse_approved_filter(value: str | None) -> str | None:

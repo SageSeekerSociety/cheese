@@ -44,13 +44,16 @@ from app.domain.task.services import (
     TaskSubmissionReviewService,
     TaskSubmissionService,
 )
-from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
+from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.topics.repositories import TopicRepository as GlobalTopicRepository
-from app.domain.user.repositories import UserRealNameRepository
-from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.repositories import (
+    UserProfileRepository,
+    UserRealNameRepository,
+    UserRepository,
+)
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
