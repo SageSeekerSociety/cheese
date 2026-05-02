@@ -1136,7 +1136,9 @@ class TestTaskMembershipServiceAdditional:
         codes = [r["code"] for r in result["user"]["reasons"]]
         assert "USER_RANK_NOT_HIGH_ENOUGH" in codes
         # Verify the details contain expected data
-        rank_reason = next(r for r in result["user"]["reasons"] if r["code"] == "USER_RANK_NOT_HIGH_ENOUGH")
+        rank_reason = next(
+            r for r in result["user"]["reasons"] if r["code"] == "USER_RANK_NOT_HIGH_ENOUGH"
+        )
         assert rank_reason["details"]["actualRank"] == 0
         assert rank_reason["details"]["requiredRank"] == 4
 
@@ -1351,7 +1353,8 @@ class TestTaskMembershipServiceAdditional:
         codes = [r["code"] for r in result["teams"][0]["eligibility"]["reasons"]]
         assert "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH" in codes
         rank_reason = next(
-            r for r in result["teams"][0]["eligibility"]["reasons"]
+            r
+            for r in result["teams"][0]["eligibility"]["reasons"]
             if r["code"] == "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH"
         )
         assert rank_reason["details"]["teamId"] == 99

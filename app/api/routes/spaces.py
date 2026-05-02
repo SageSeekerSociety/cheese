@@ -186,13 +186,17 @@ async def get_space(
     for rel in admin_relations:
         user = await user_repo.get_by_id(rel.user_id)
         profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
-        user_info = {
-            "id": user.id,
-            "username": user.username,
-            "nickname": profile.nickname if profile else user.username,
-            "avatarId": profile.avatar_id if profile else None,
-            "intro": profile.intro if profile else "",
-        } if user else {"id": rel.user_id, "username": "unknown"}
+        user_info = (
+            {
+                "id": user.id,
+                "username": user.username,
+                "nickname": profile.nickname if profile else user.username,
+                "avatarId": profile.avatar_id if profile else None,
+                "intro": profile.intro if profile else "",
+            }
+            if user
+            else {"id": rel.user_id, "username": "unknown"}
+        )
         admins_list.append(_admin_to_api_model(rel, user_info))
 
     space_data = _space_to_api_model(space)
@@ -238,13 +242,17 @@ async def get_spaces(
         for rel in admin_relations:
             user = await user_repo.get_by_id(rel.user_id)
             profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
-            user_info = {
-                "id": user.id,
-                "username": user.username,
-                "nickname": profile.nickname if profile else user.username,
-                "avatarId": profile.avatar_id if profile else None,
-                "intro": profile.intro if profile else "",
-            } if user else {"id": rel.user_id, "username": "unknown"}
+            user_info = (
+                {
+                    "id": user.id,
+                    "username": user.username,
+                    "nickname": profile.nickname if profile else user.username,
+                    "avatarId": profile.avatar_id if profile else None,
+                    "intro": profile.intro if profile else "",
+                }
+                if user
+                else {"id": rel.user_id, "username": "unknown"}
+            )
             admins_list.append(_admin_to_api_model(rel, user_info))
         dto["admins"] = admins_list
 
@@ -624,9 +632,7 @@ async def export_space_analytics_participants(
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"
-        },
+        headers={"Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"},
     )
 
 
@@ -661,9 +667,7 @@ async def export_space_analytics_tasks(
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="space-{space_id}-tasks.csv"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="space-{space_id}-tasks.csv"'},
     )
 
 
@@ -692,9 +696,7 @@ async def export_space_analytics_publishers(
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'},
     )
 
 
@@ -760,9 +762,7 @@ async def get_space_me_published_tasks(
 async def get_space_me_participating(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
+    service: SpaceMemberParticipatingService = Depends(get_space_member_participating_service),
 ) -> dict:
     """Return the authenticated user's participation summary in this space."""
     data = await service.get_overview(
@@ -784,9 +784,7 @@ async def get_space_me_participations(
     sortBy: str = Query(default="joinedAt"),
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
+    service: SpaceMemberParticipatingService = Depends(get_space_member_participating_service),
 ) -> dict:
     """Return the authenticated user's participation list in this space."""
     participations = await service.get_participations(

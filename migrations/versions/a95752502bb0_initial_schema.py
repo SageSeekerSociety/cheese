@@ -71,7 +71,12 @@ def upgrade() -> None:
     # -----------------------------------------------------------------------
     op.create_table(
         "ai_conversation",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("ai_conversation_seq", start=1, increment=50), nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger(),
+            sa.Sequence("ai_conversation_seq", start=1, increment=50),
+            nullable=False,
+        ),
         sa.Column("owner_id", sa.BigInteger(), nullable=False),
         sa.Column("context_id", sa.BigInteger(), nullable=True),
         sa.Column("conversation_id", sa.String(255), nullable=False),
@@ -136,7 +141,12 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("attitudable_id", "user_id", "attitudable_type", name="attitude_attitudable_id_user_id_attitudable_type_key"),
+        sa.UniqueConstraint(
+            "attitudable_id",
+            "user_id",
+            "attitudable_type",
+            name="attitude_attitudable_id_user_id_attitudable_type_key",
+        ),
     )
 
     op.create_table(
@@ -370,8 +380,18 @@ def upgrade() -> None:
         sa.Column("deleted_at", sa.DateTime(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("idx_notification_receiver_read_created", "notification", ["receiver_id", "read", "created_at"], postgresql_using="btree")
-    op.create_index("idx_notification_aggregation", "notification", ["receiver_id", "aggregation_key", "aggregate_until"], postgresql_using="btree")
+    op.create_index(
+        "idx_notification_receiver_read_created",
+        "notification",
+        ["receiver_id", "read", "created_at"],
+        postgresql_using="btree",
+    )
+    op.create_index(
+        "idx_notification_aggregation",
+        "notification",
+        ["receiver_id", "aggregation_key", "aggregate_until"],
+        postgresql_using="btree",
+    )
 
     op.create_table(
         "passkey",
@@ -621,7 +641,12 @@ def upgrade() -> None:
 
     op.create_table(
         "user_ai_quota",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("user_ai_quota_seq", start=1, increment=50), nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger(),
+            sa.Sequence("user_ai_quota_seq", start=1, increment=50),
+            nullable=False,
+        ),
         sa.Column("user_id", sa.BigInteger(), nullable=True),
         sa.Column("daily_seu_quota", sa.Float(), nullable=True),
         sa.Column("remaining_seu", sa.Float(), nullable=True),
@@ -636,7 +661,9 @@ def upgrade() -> None:
 
     op.create_table(
         "user_following_relationship",
-        sa.Column("id", sa.Integer(), sa.Sequence("user_following_relationship_id_seq"), nullable=False),
+        sa.Column(
+            "id", sa.Integer(), sa.Sequence("user_following_relationship_id_seq"), nullable=False
+        ),
         sa.Column("followee_id", sa.Integer(), nullable=False),
         sa.Column("follower_id", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -709,7 +736,12 @@ def upgrade() -> None:
     # -----------------------------------------------------------------------
     op.create_table(
         "ai_message",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("ai_message_seq", start=1, increment=50), nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger(),
+            sa.Sequence("ai_message_seq", start=1, increment=50),
+            nullable=False,
+        ),
         sa.Column("conversation_id", sa.BigInteger(), nullable=False),
         sa.Column("parent_id", sa.BigInteger(), nullable=True),
         sa.Column("role", sa.String(255), nullable=False),
@@ -816,7 +848,9 @@ def upgrade() -> None:
 
     op.create_table(
         "team_membership_application",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("team_membership_application_seq"), nullable=False),
+        sa.Column(
+            "id", sa.BigInteger(), sa.Sequence("team_membership_application_seq"), nullable=False
+        ),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("team_id", sa.BigInteger(), nullable=False),
         sa.Column("initiator_id", sa.Integer(), nullable=False),

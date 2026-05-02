@@ -116,7 +116,7 @@ ignore = [
     "UP042",  # unnecessary __future__ annotations
     "ASYNC109",# false positive on timeout parameter names
     "ASYNC230",# blocking open() — needs aiofiles dep, defer
-    "ASYNC240",# blocking os.path — needs anyio dep, defer
+    # "ASYNC240",# blocking os.path — needs anyio dep, defer
     "S108",   # hardcoded /tmp — acceptable for local file ops
     "S324",   # md5 for checksums, not security
 ]

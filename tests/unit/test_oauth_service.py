@@ -672,9 +672,7 @@ class TestHandleCallback:
 
         mock_provider = AsyncMock()
         mock_provider.exchange_code.return_value = {"access_token": "tok123"}
-        mock_provider.get_user_info.return_value = OAuthUserInfo(
-            id="uid-1", email="user@test.com"
-        )
+        mock_provider.get_user_info.return_value = OAuthUserInfo(id="uid-1", email="user@test.com")
         svc._providers = {"github": mock_provider}
 
         access_token, user_info = await svc.handle_callback("github", "auth-code")

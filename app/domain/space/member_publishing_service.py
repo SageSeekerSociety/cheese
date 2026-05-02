@@ -100,8 +100,7 @@ class SpaceMemberPublishingService:
             items = [
                 item
                 for item in items
-                if (item["pendingParticipantApprovalCount"] > 0)
-                == has_pending_participant_approval
+                if (item["pendingParticipantApprovalCount"] > 0) == has_pending_participant_approval
             ]
         if has_pending_review is not None:
             items = [
@@ -171,8 +170,7 @@ class SpaceMemberPublishingService:
         )
         reviews_by_submission_id = await self._load_reviews_by_submission_id(
             submission_ids=[
-                int(submission.id)
-                for submission in latest_submissions_by_membership_id.values()
+                int(submission.id) for submission in latest_submissions_by_membership_id.values()
             ]
         )
 
@@ -244,9 +242,7 @@ class SpaceMemberPublishingService:
             .where(TaskSubmission.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
-        return {
-            int(submission.membership_id): submission for submission in result.scalars().all()
-        }
+        return {int(submission.membership_id): submission for submission in result.scalars().all()}
 
     async def _load_reviews_by_submission_id(
         self,
@@ -261,9 +257,7 @@ class SpaceMemberPublishingService:
             TaskSubmissionReview.submission_id.in_(submission_ids),
         )
         result = await self._session.execute(stmt)
-        return {
-            int(review.submission_id): review for review in result.scalars().all()
-        }
+        return {int(review.submission_id): review for review in result.scalars().all()}
 
     def _build_task_item(
         self,

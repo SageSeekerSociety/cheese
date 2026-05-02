@@ -22,7 +22,10 @@ def _make_entity(**overrides) -> SimpleNamespace:
         "model_id": 10,
         "parent_id": None,
         "sender_id": 99,
-        "content": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "hello"}]}]},
+        "content": {
+            "type": "doc",
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": "hello"}]}],
+        },
         "mentioned_user_ids": [],
         "created_at": _NOW,
         "updated_at": _NOW,
@@ -128,7 +131,9 @@ class TestReactionServiceToggle:
         assert result["active"] is True
         assert isinstance(result["summary"], list)
         r_repo.toggle.assert_awaited_once_with(
-            discussion_id=10, user_id=5, reaction_type_id=1,
+            discussion_id=10,
+            user_id=5,
+            reaction_type_id=1,
         )
 
     @pytest.mark.anyio
@@ -171,7 +176,9 @@ class TestReactionServiceRemove:
         assert result["removed"] is True
         assert isinstance(result["summary"], list)
         r_repo.remove.assert_awaited_once_with(
-            discussion_id=10, user_id=5, reaction_type_id=1,
+            discussion_id=10,
+            user_id=5,
+            reaction_type_id=1,
         )
 
     @pytest.mark.anyio
@@ -268,15 +275,31 @@ class TestReactionServiceListTypes:
     @pytest.mark.anyio
     async def test_returns_formatted_list(self):
         svc, _r_repo, rt_repo = _make_reaction_service()
-        like = _make_reaction_type(id=1, code="LIKE", name="Like", description="thumbs up", display_order=0)
-        cheers = _make_reaction_type(id=2, code="CHEERS", name="Cheers", description="celebration", display_order=1)
+        like = _make_reaction_type(
+            id=1, code="LIKE", name="Like", description="thumbs up", display_order=0
+        )
+        cheers = _make_reaction_type(
+            id=2, code="CHEERS", name="Cheers", description="celebration", display_order=1
+        )
         rt_repo.list_active.return_value = [like, cheers]
 
         result = await svc.list_reaction_types()
 
         assert len(result) == 2
-        assert result[0] == {"id": 1, "code": "LIKE", "name": "Like", "description": "thumbs up", "displayOrder": 0}
-        assert result[1] == {"id": 2, "code": "CHEERS", "name": "Cheers", "description": "celebration", "displayOrder": 1}
+        assert result[0] == {
+            "id": 1,
+            "code": "LIKE",
+            "name": "Like",
+            "description": "thumbs up",
+            "displayOrder": 0,
+        }
+        assert result[1] == {
+            "id": 2,
+            "code": "CHEERS",
+            "name": "Cheers",
+            "description": "celebration",
+            "displayOrder": 1,
+        }
 
     @pytest.mark.anyio
     async def test_empty_list(self):
@@ -295,7 +318,9 @@ class TestReactionServiceListTypes:
 
 class TestReactionTypeToDict:
     def test_converts_all_fields(self):
-        rt = _make_reaction_type(id=3, code="HEART", name="Heart", description="love", display_order=5)
+        rt = _make_reaction_type(
+            id=3, code="HEART", name="Heart", description="love", display_order=5
+        )
 
         result = DiscussionReactionService._reaction_type_to_dict(rt)
 
@@ -355,7 +380,9 @@ class TestCreateDiscussion:
     @patch("app.domain.discussion.services.publish_notification_event", new_callable=AsyncMock)
     async def test_publishes_notification_for_mentions(self, mock_publish):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
-        entity = _make_entity(id=42, sender_id=5, mentioned_user_ids=[10, 20], content="hey @user10 @user20")
+        entity = _make_entity(
+            id=42, sender_id=5, mentioned_user_ids=[10, 20], content="hey @user10 @user20"
+        )
         repo.create.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
@@ -385,7 +412,10 @@ class TestCreateDiscussion:
 
         with pytest.raises(BadRequestError, match="content is required"):
             await svc.create_discussion(
-                user_id=5, content="", model_type="PROJECT", model_id=10,
+                user_id=5,
+                content="",
+                model_type="PROJECT",
+                model_id=10,
             )
 
     @pytest.mark.anyio
@@ -394,7 +424,10 @@ class TestCreateDiscussion:
 
         with pytest.raises(BadRequestError, match="content is required"):
             await svc.create_discussion(
-                user_id=5, content="   ", model_type="PROJECT", model_id=10,
+                user_id=5,
+                content="   ",
+                model_type="PROJECT",
+                model_id=10,
             )
 
     @pytest.mark.anyio
@@ -403,7 +436,10 @@ class TestCreateDiscussion:
 
         with pytest.raises(BadRequestError, match="Invalid modelType"):
             await svc.create_discussion(
-                user_id=5, content="hello", model_type="BOGUS", model_id=10,
+                user_id=5,
+                content="hello",
+                model_type="BOGUS",
+                model_id=10,
             )
 
     @pytest.mark.anyio
@@ -468,7 +504,10 @@ class TestCreateDiscussion:
         profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
 
         await svc.create_discussion(
-            user_id=5, content="hello", model_type="project", model_id=10,
+            user_id=5,
+            content="hello",
+            model_type="project",
+            model_id=10,
         )
 
         create_kwargs = repo.create.call_args.kwargs
@@ -486,7 +525,10 @@ class TestCreateDiscussion:
         profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
 
         await svc.create_discussion(
-            user_id=5, content="  hello  ", model_type="PROJECT", model_id=10,
+            user_id=5,
+            content="  hello  ",
+            model_type="PROJECT",
+            model_id=10,
         )
 
         create_kwargs = repo.create.call_args.kwargs
@@ -680,7 +722,14 @@ class TestUpdateDiscussion:
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(id=5, sender_id=7)
         repo.get_by_id.return_value = entity
-        updated_entity = _make_entity(id=5, sender_id=7, content={"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "new"}]}]})
+        updated_entity = _make_entity(
+            id=5,
+            sender_id=7,
+            content={
+                "type": "doc",
+                "content": [{"type": "paragraph", "content": [{"type": "text", "text": "new"}]}],
+            },
+        )
         repo.update_content.return_value = updated_entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
@@ -756,7 +805,8 @@ class TestDiscussionServiceGetReactionSummary:
 
         assert result == [{"reactionTypeId": 1, "count": 3}]
         rxn_svc.get_reaction_summary.assert_awaited_once_with(
-            discussion_id=10, current_user_id=7,
+            discussion_id=10,
+            current_user_id=7,
         )
 
 
@@ -792,7 +842,9 @@ class TestDiscussionServiceToggleReaction:
 
         assert result == {"active": True, "summary": []}
         rxn_svc.toggle.assert_awaited_once_with(
-            discussion_id=10, user_id=7, reaction_type_id=1,
+            discussion_id=10,
+            user_id=7,
+            reaction_type_id=1,
         )
 
 
@@ -811,7 +863,9 @@ class TestDiscussionServiceRemoveReaction:
 
         assert result == {"removed": True, "summary": []}
         rxn_svc.remove.assert_awaited_once_with(
-            discussion_id=10, user_id=7, reaction_type_id=1,
+            discussion_id=10,
+            user_id=7,
+            reaction_type_id=1,
         )
 
 

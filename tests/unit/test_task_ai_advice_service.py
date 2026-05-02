@@ -110,9 +110,7 @@ def _build_service(
 class TestInit:
     def test_default_llm_client_used_when_none(self):
         """When llm_client is not passed, a default LLMClient() is created."""
-        with patch(
-            "app.domain.task.task_ai_advice_service.LLMClient"
-        ) as mock_cls:
+        with patch("app.domain.task.task_ai_advice_service.LLMClient") as mock_cls:
             instance = mock_cls.return_value
             svc = TaskAIAdviceService(
                 advice_repo=AsyncMock(),
@@ -198,9 +196,7 @@ class TestRequestAdvice:
     async def test_generates_new_advice_when_not_completed(self):
         """If latest advice exists but is not COMPLETED, generate fresh advice."""
         advice_repo = AsyncMock()
-        advice_repo.get_latest.return_value = _make_advice(
-            status=TaskAIAdviceStatus.FAILED.value
-        )
+        advice_repo.get_latest.return_value = _make_advice(status=TaskAIAdviceStatus.FAILED.value)
 
         new_advice = _make_advice()
         advice_repo.create.return_value = new_advice
@@ -511,7 +507,9 @@ class TestCreateConversation:
         message_repo.create_message.return_value = user_msg
         message_repo.list_for_conversation.return_value = [user_msg]
 
-        llm_response = LLMResponse(content="a", total_tokens=10, prompt_tokens=5, completion_tokens=5)
+        llm_response = LLMResponse(
+            content="a", total_tokens=10, prompt_tokens=5, completion_tokens=5
+        )
         llm_client = AsyncMock()
         llm_client.get_completion_with_history.return_value = llm_response
 
@@ -558,7 +556,9 @@ class TestCreateConversation:
         message_repo.create_message.return_value = user_msg
         message_repo.list_for_conversation.return_value = [user_msg]
 
-        llm_response = LLMResponse(content="a", total_tokens=10, prompt_tokens=5, completion_tokens=5)
+        llm_response = LLMResponse(
+            content="a", total_tokens=10, prompt_tokens=5, completion_tokens=5
+        )
         llm_client = AsyncMock()
         llm_client.get_completion_with_history.return_value = llm_response
 
@@ -605,7 +605,9 @@ class TestCreateConversation:
         message_repo.create_message.return_value = user_msg
         message_repo.list_for_conversation.return_value = [user_msg]
 
-        llm_response = LLMResponse(content="a", total_tokens=10, prompt_tokens=5, completion_tokens=5)
+        llm_response = LLMResponse(
+            content="a", total_tokens=10, prompt_tokens=5, completion_tokens=5
+        )
         llm_client = AsyncMock()
         llm_client.get_completion_with_history.return_value = llm_response
 
@@ -648,7 +650,9 @@ class TestCreateConversation:
         message_repo.create_message.return_value = user_msg
         message_repo.list_for_conversation.return_value = [user_msg]
 
-        llm_response = LLMResponse(content="a", total_tokens=10, prompt_tokens=5, completion_tokens=5)
+        llm_response = LLMResponse(
+            content="a", total_tokens=10, prompt_tokens=5, completion_tokens=5
+        )
         llm_client = AsyncMock()
         llm_client.get_completion_with_history.return_value = llm_response
 
@@ -1038,9 +1042,7 @@ class TestBuildMessageHistory:
         message_repo.list_for_conversation.return_value = []
 
         svc = _build_service(task_repo=task_repo, message_repo=message_repo)
-        history = await svc._build_message_history(
-            100, 1, context={"section": "knowledge_fields"}
-        )
+        history = await svc._build_message_history(100, 1, context={"section": "knowledge_fields"})
 
         assert "knowledge_fields" in history[0]["content"]
 
@@ -1073,9 +1075,7 @@ class TestBuildMessageHistory:
         message_repo.list_for_conversation.return_value = []
 
         svc = _build_service(task_repo=task_repo, message_repo=message_repo)
-        history = await svc._build_message_history(
-            100, 1, context={"section": ""}
-        )
+        history = await svc._build_message_history(100, 1, context={"section": ""})
 
         # Empty section should not add context_info block
         assert "当前关注的内容区块" not in history[0]["content"]
@@ -1418,7 +1418,7 @@ class TestSafeLoad:
 
     def test_loads_json_array(self):
         svc = _build_service()
-        result = svc._safe_load('[1, 2, 3]')
+        result = svc._safe_load("[1, 2, 3]")
         assert result == [1, 2, 3]
 
 

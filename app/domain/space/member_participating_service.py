@@ -104,9 +104,7 @@ class SpaceMemberParticipatingService:
                 for r in rows
                 if r["approved"] == "APPROVED" and r["completionStatus"] == "NOT_SUBMITTED"
             ),
-            "pendingReviewCount": sum(
-                1 for r in rows if r["completionStatus"] == "PENDING_REVIEW"
-            ),
+            "pendingReviewCount": sum(1 for r in rows if r["completionStatus"] == "PENDING_REVIEW"),
             "resubmittableCount": sum(
                 1 for r in rows if r["completionStatus"] == "REJECTED_RESUBMITTABLE"
             ),
@@ -167,9 +165,7 @@ class SpaceMemberParticipatingService:
     async def _ensure_space_exists(self, space_id: int) -> Space:
         space = await self._space_repo.get_by_id(space_id)
         if space is None:
-            raise NotFoundError(
-                "Resource space not found", data={"type": "space", "id": space_id}
-            )
+            raise NotFoundError("Resource space not found", data={"type": "space", "id": space_id})
         return space
 
     async def _load_context(self, *, space_id: int, user_id: int) -> _Context:
@@ -208,9 +204,7 @@ class SpaceMemberParticipatingService:
             current_user_id=user_id,
         )
 
-    async def _load_user_team_relations(
-        self, user_id: int
-    ) -> tuple[list[int], set[int]]:
+    async def _load_user_team_relations(self, user_id: int) -> tuple[list[int], set[int]]:
         stmt = select(TeamUserRelation).where(
             TeamUserRelation.user_id == user_id,
             TeamUserRelation.deleted_at.is_(None),
@@ -316,10 +310,7 @@ class SpaceMemberParticipatingService:
             .where(TaskSubmission.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
-        return {
-            int(submission.membership_id): submission
-            for submission in result.scalars().all()
-        }
+        return {int(submission.membership_id): submission for submission in result.scalars().all()}
 
     async def _load_reviews_by_submission_id(
         self,
@@ -332,9 +323,7 @@ class SpaceMemberParticipatingService:
             TaskSubmissionReview.submission_id.in_(submission_ids),
         )
         result = await self._session.execute(stmt)
-        return {
-            int(review.submission_id): review for review in result.scalars().all()
-        }
+        return {int(review.submission_id): review for review in result.scalars().all()}
 
     # ------------------------------------------------------------------
     # Row construction
@@ -342,12 +331,8 @@ class SpaceMemberParticipatingService:
 
     def _build_row(self, membership: TaskMembership, context: _Context) -> dict:
         task = context.tasks_by_id.get(int(membership.task_id))
-        category = (
-            context.categories_by_id.get(int(task.category_id)) if task is not None else None
-        )
-        creator = (
-            context.creators_by_id.get(int(task.creator_id)) if task is not None else None
-        )
+        category = context.categories_by_id.get(int(task.category_id)) if task is not None else None
+        creator = context.creators_by_id.get(int(task.creator_id)) if task is not None else None
         latest_submission = context.submissions_by_membership_id.get(int(membership.id))
         latest_review = (
             context.reviews_by_submission_id.get(int(latest_submission.id))
@@ -458,8 +443,7 @@ class SpaceMemberParticipatingService:
         normalized = sort_by.strip()
         if normalized not in PARTICIPATION_SORT_FIELDS:
             raise BadRequestError(
-                "sortBy must be one of joinedAt, deadline, latestSubmissionAt, "
-                "completionStatus"
+                "sortBy must be one of joinedAt, deadline, latestSubmissionAt, completionStatus"
             )
         return normalized
 

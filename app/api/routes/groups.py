@@ -293,9 +293,7 @@ async def update_group_target(
         else None
     )
     ended_at_dt = (
-        datetime.fromtimestamp(ended_at / 1000, tz=UTC).replace(tzinfo=None)
-        if ended_at
-        else None
+        datetime.fromtimestamp(ended_at / 1000, tz=UTC).replace(tzinfo=None) if ended_at else None
     )
 
     target = await service.update_target(

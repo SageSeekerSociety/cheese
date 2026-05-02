@@ -158,7 +158,9 @@ class SpaceAnalyticsViewService:
         entity_metrics = self._compute_entity_metrics(ctx)
         student_metrics = self._compute_overview_student_metrics(ctx)
         task_distributions = self._compute_task_distributions(ctx)
-        trends = self._compute_overview_trends(ctx, from_dt=from_dt, to_dt=to_dt, group_by=group_by_norm)
+        trends = self._compute_overview_trends(
+            ctx, from_dt=from_dt, to_dt=to_dt, group_by=group_by_norm
+        )
 
         return {
             "summary": {
@@ -187,9 +189,7 @@ class SpaceAnalyticsViewService:
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        pending_task_approval = sum(
-            1 for t in ctx.tasks if t.approved == APPROVED_MAP["NONE"]
-        )
+        pending_task_approval = sum(1 for t in ctx.tasks if t.approved == APPROVED_MAP["NONE"])
         pending_participant_approval = sum(
             1 for m in ctx.memberships if m.approved == APPROVED_MAP["NONE"]
         )
@@ -542,16 +542,18 @@ class SpaceAnalyticsViewService:
             # NT uses creator.username directly (no nickname fallback).
             creator_user = ctx.users_by_id.get(task.creator_id)
             creator_name = creator_user.username if creator_user else ""
-            identity = (
-                ctx.identities_by_user_id.get(m.member_id) if not m.is_team else None
+            identity = ctx.identities_by_user_id.get(m.member_id) if not m.is_team else None
+            id_fields = (
+                self._decode_identity(identity)
+                if identity
+                else {
+                    "realName": "",
+                    "studentId": "",
+                    "grade": "",
+                    "major": "",
+                    "className": "",
+                }
             )
-            id_fields = self._decode_identity(identity) if identity else {
-                "realName": "",
-                "studentId": "",
-                "grade": "",
-                "major": "",
-                "className": "",
-            }
             # NT hard-codes an empty string for the Username column.
             username = ""
             approval_status = APPROVED_REVERSE_MAP.get(m.approved, "NONE")
@@ -673,9 +675,7 @@ class SpaceAnalyticsViewService:
         identities_by_user_id: dict[int, UserRealNameIdentity] = {}
         member_users_by_user_id: dict[int, User] = {}
         if include_participant_details and memberships:
-            personal_member_ids = list(
-                {m.member_id for m in memberships if not m.is_team}
-            )
+            personal_member_ids = list({m.member_id for m in memberships if not m.is_team})
             if personal_member_ids:
                 id_stmt = select(UserRealNameIdentity).where(
                     UserRealNameIdentity.user_id.in_(personal_member_ids),
@@ -683,9 +683,7 @@ class SpaceAnalyticsViewService:
                 )
                 id_rows = (await self._session.execute(id_stmt)).scalars().all()
                 identities_by_user_id = {i.user_id: i for i in id_rows}
-                member_users_by_user_id = await self._user_repo.get_by_ids(
-                    personal_member_ids
-                )
+                member_users_by_user_id = await self._user_repo.get_by_ids(personal_member_ids)
 
         return _Context(
             tasks=tasks,
@@ -711,15 +709,11 @@ class SpaceAnalyticsViewService:
         publisher_count = len({t.creator_id for t in ctx.tasks})
         participant_count = len(ctx.memberships)
 
-        approved_count = sum(
-            1 for m in ctx.memberships if m.approved == APPROVED_MAP["APPROVED"]
-        )
+        approved_count = sum(1 for m in ctx.memberships if m.approved == APPROVED_MAP["APPROVED"])
         submitted_count = sum(
             1 for m in ctx.memberships if ctx.submissions_by_membership_id.get(m.id)
         )
-        success_count = sum(
-            1 for m in ctx.memberships if m.completion_status == SUCCESS_STATUS
-        )
+        success_count = sum(1 for m in ctx.memberships if m.completion_status == SUCCESS_STATUS)
 
         participation_rate = self._safe_ratio(approved_count, len(ctx.memberships))
         submission_rate = self._safe_ratio(submitted_count, approved_count)
@@ -758,9 +752,7 @@ class SpaceAnalyticsViewService:
 
         return {
             "byCategory": self._build_distribution("Task Categories", category_counter),
-            "byApprovalStatus": self._build_distribution(
-                "Task Approval Status", approval_counter
-            ),
+            "byApprovalStatus": self._build_distribution("Task Approval Status", approval_counter),
             "byCompletionStatus": self._build_distribution(
                 "Participant Completion Status", completion_counter
             ),
@@ -824,9 +816,7 @@ class SpaceAnalyticsViewService:
 
     def _count_pending_submission_reviews(self, ctx: _Context) -> int:
         """A submission is pending review if it has no review row yet."""
-        return sum(
-            1 for s in ctx.submissions if s.id not in ctx.reviews_by_submission_id
-        )
+        return sum(1 for s in ctx.submissions if s.id not in ctx.reviews_by_submission_id)
 
     def _count_stalled_tasks(self, ctx: _Context, *, now: datetime) -> int:
         """Tasks that have at least one approved participant but no submission for 14 days."""
@@ -834,9 +824,7 @@ class SpaceAnalyticsViewService:
         stalled = 0
         for task in ctx.tasks:
             members = ctx.memberships_by_task_id.get(task.id, [])
-            approved_members = [
-                m for m in members if m.approved == APPROVED_MAP["APPROVED"]
-            ]
+            approved_members = [m for m in members if m.approved == APPROVED_MAP["APPROVED"]]
             if not approved_members:
                 continue
             latest_submission: datetime | None = None
@@ -882,20 +870,12 @@ class SpaceAnalyticsViewService:
             members = [m for m in ctx.memberships if m.task_id in task_ids]
 
             participant_count = len({(m.member_id, m.is_team) for m in members})
-            approved_count = sum(
-                1 for m in members if m.approved == APPROVED_MAP["APPROVED"]
-            )
-            submitted_count = sum(
-                1 for m in members if m.completion_status in SUBMITTED_STATUSES
-            )
-            success_count = sum(
-                1 for m in members if m.completion_status == SUCCESS_STATUS
-            )
+            approved_count = sum(1 for m in members if m.approved == APPROVED_MAP["APPROVED"])
+            submitted_count = sum(1 for m in members if m.completion_status in SUBMITTED_STATUSES)
+            success_count = sum(1 for m in members if m.completion_status == SUCCESS_STATUS)
 
             task_count = len(tasks)
-            avg_participants = (
-                round(participant_count / task_count, 4) if task_count > 0 else 0.0
-            )
+            avg_participants = round(participant_count / task_count, 4) if task_count > 0 else 0.0
             submission_rate = self._safe_ratio(submitted_count, approved_count)
             success_rate = self._safe_ratio(success_count, submitted_count)
             last_created_at = max(t.created_at for t in tasks)
@@ -920,35 +900,21 @@ class SpaceAnalyticsViewService:
     def _compute_task_row(self, task: Task, ctx: _Context) -> dict:
         members = ctx.memberships_by_task_id.get(task.id, [])
         participant_count = len(members)
-        pending_approval = sum(
-            1 for m in members if m.approved == APPROVED_MAP["NONE"]
-        )
-        approved = sum(
-            1 for m in members if m.approved == APPROVED_MAP["APPROVED"]
-        )
-        rejected = sum(
-            1 for m in members if m.approved == APPROVED_MAP["DISAPPROVED"]
-        )
-        submitted = sum(
-            1 for m in members if m.completion_status in SUBMITTED_STATUSES
-        )
+        pending_approval = sum(1 for m in members if m.approved == APPROVED_MAP["NONE"])
+        approved = sum(1 for m in members if m.approved == APPROVED_MAP["APPROVED"])
+        rejected = sum(1 for m in members if m.approved == APPROVED_MAP["DISAPPROVED"])
+        submitted = sum(1 for m in members if m.completion_status in SUBMITTED_STATUSES)
 
         # pendingReview: a membership counts once if it has submissions
         # but none of them has been reviewed yet.
         pending_review = 0
         for m in members:
             subs = ctx.submissions_by_membership_id.get(m.id, [])
-            if subs and all(
-                s.id not in ctx.reviews_by_submission_id for s in subs
-            ):
+            if subs and all(s.id not in ctx.reviews_by_submission_id for s in subs):
                 pending_review += 1
 
-        resubmittable = sum(
-            1 for m in members if m.completion_status == "REJECTED_RESUBMITTABLE"
-        )
-        successful = sum(
-            1 for m in members if m.completion_status == SUCCESS_STATUS
-        )
+        resubmittable = sum(1 for m in members if m.completion_status == "REJECTED_RESUBMITTABLE")
+        successful = sum(1 for m in members if m.completion_status == SUCCESS_STATUS)
         failed = sum(1 for m in members if m.completion_status == "FAILED")
 
         submission_rate = self._safe_ratio(submitted, approved)
@@ -1103,9 +1069,7 @@ class SpaceAnalyticsViewService:
     def _normalize_group_by(value: str) -> str:
         key = (value or "day").lower()
         if key not in GROUP_BY_VALUES:
-            raise BadRequestError(
-                f"Invalid groupBy: {value}. Must be day, week, or month"
-            )
+            raise BadRequestError(f"Invalid groupBy: {value}. Must be day, week, or month")
         return key
 
     @staticmethod
@@ -1113,8 +1077,7 @@ class SpaceAnalyticsViewService:
         key = value or "taskCount"
         if key not in PUBLISHER_SORT_FIELDS:
             raise BadRequestError(
-                "Invalid sortBy: "
-                f"{value}. Must be one of {sorted(PUBLISHER_SORT_FIELDS)}"
+                f"Invalid sortBy: {value}. Must be one of {sorted(PUBLISHER_SORT_FIELDS)}"
             )
         return key
 
@@ -1123,8 +1086,7 @@ class SpaceAnalyticsViewService:
         key = value or "createdAt"
         if key not in TASK_SORT_FIELDS:
             raise BadRequestError(
-                "Invalid sortBy: "
-                f"{value}. Must be one of {sorted(TASK_SORT_FIELDS)}"
+                f"Invalid sortBy: {value}. Must be one of {sorted(TASK_SORT_FIELDS)}"
             )
         return key
 
@@ -1244,10 +1206,7 @@ class SpaceAnalyticsViewService:
             if completion_status is not None and m.completion_status != completion_status:
                 continue
             if real_name != "all":
-                has_rn = (
-                    not m.is_team
-                    and m.member_id in ctx.identities_by_user_id
-                )
+                has_rn = not m.is_team and m.member_id in ctx.identities_by_user_id
                 if real_name == "with" and not has_rn:
                     continue
                 if real_name == "without" and has_rn:
@@ -1261,23 +1220,11 @@ class SpaceAnalyticsViewService:
         ctx: _Context,
     ) -> dict:
         participant_count = len(memberships)
-        approved = sum(
-            1 for m in memberships if m.approved == APPROVED_MAP["APPROVED"]
-        )
-        pending = sum(
-            1 for m in memberships if m.approved == APPROVED_MAP["NONE"]
-        )
-        disapproved = sum(
-            1 for m in memberships if m.approved == APPROVED_MAP["DISAPPROVED"]
-        )
-        submitted = sum(
-            1
-            for m in memberships
-            if ctx.submissions_by_membership_id.get(m.id)
-        )
-        successful = sum(
-            1 for m in memberships if m.completion_status == SUCCESS_STATUS
-        )
+        approved = sum(1 for m in memberships if m.approved == APPROVED_MAP["APPROVED"])
+        pending = sum(1 for m in memberships if m.approved == APPROVED_MAP["NONE"])
+        disapproved = sum(1 for m in memberships if m.approved == APPROVED_MAP["DISAPPROVED"])
+        submitted = sum(1 for m in memberships if ctx.submissions_by_membership_id.get(m.id))
+        successful = sum(1 for m in memberships if m.completion_status == SUCCESS_STATUS)
         return {
             "participantCount": participant_count,
             "approvedParticipantCount": approved,
@@ -1294,9 +1241,7 @@ class SpaceAnalyticsViewService:
     ) -> dict:
         personal_member_ids = {m.member_id for m in memberships if not m.is_team}
         student_count = len(personal_member_ids)
-        with_real_name = sum(
-            1 for uid in personal_member_ids if uid in ctx.identities_by_user_id
-        )
+        with_real_name = sum(1 for uid in personal_member_ids if uid in ctx.identities_by_user_id)
         return {
             "studentCount": student_count,
             "studentsWithRealNameCount": with_real_name,
@@ -1310,9 +1255,7 @@ class SpaceAnalyticsViewService:
         approval_counter: Counter[str] = Counter(
             APPROVED_REVERSE_MAP.get(m.approved, "NONE") for m in memberships
         )
-        completion_counter: Counter[str] = Counter(
-            m.completion_status for m in memberships
-        )
+        completion_counter: Counter[str] = Counter(m.completion_status for m in memberships)
 
         grade_counter: Counter[str] = Counter()
         major_counter: Counter[str] = Counter()
@@ -1349,9 +1292,7 @@ class SpaceAnalyticsViewService:
             ),
             "byGrade": self._build_distribution("Participant Grades", grade_counter),
             "byMajor": self._build_distribution("Participant Majors", major_counter),
-            "byClassName": self._build_distribution(
-                "Participant Classes", class_counter
-            ),
+            "byClassName": self._build_distribution("Participant Classes", class_counter),
             "byRealNameStatus": self._build_distribution(
                 "Participant Real Name Status", real_name_counter
             ),
@@ -1367,9 +1308,7 @@ class SpaceAnalyticsViewService:
         group_by: str,
     ) -> dict:
         membership_ids = {m.id for m in memberships}
-        submissions = [
-            s for s in ctx.submissions if s.membership_id in membership_ids
-        ]
+        submissions = [s for s in ctx.submissions if s.membership_id in membership_ids]
         participants_joined = self._bucketize(
             (m.created_at for m in memberships),
             from_dt=from_dt,
@@ -1383,11 +1322,7 @@ class SpaceAnalyticsViewService:
             group_by=group_by,
         )
         successes_achieved = self._bucketize(
-            (
-                m.updated_at
-                for m in memberships
-                if m.completion_status == SUCCESS_STATUS
-            ),
+            (m.updated_at for m in memberships if m.completion_status == SUCCESS_STATUS),
             from_dt=from_dt,
             to_dt=to_dt,
             group_by=group_by,

@@ -153,9 +153,7 @@ class TestSrpFullFlow:
         A_hex, M1_hex, K = _client_prove(username, password, salt, server_pub)
 
         # Server step 3
-        success, server_proof = verify_session(
-            server_sec, A_hex, salt, username, verifier, M1_hex
-        )
+        success, server_proof = verify_session(server_sec, A_hex, salt, username, verifier, M1_hex)
         assert success is True
         assert len(server_proof) == 64  # SHA-256 hash
 
@@ -172,9 +170,7 @@ class TestSrpFullFlow:
         server_pub, server_sec = generate_server_ephemeral(verifier)
         A_hex, M1_hex, _ = _client_prove(username, "wrongpassword", salt, server_pub)
 
-        success, server_proof = verify_session(
-            server_sec, A_hex, salt, username, verifier, M1_hex
-        )
+        success, server_proof = verify_session(server_sec, A_hex, salt, username, verifier, M1_hex)
         assert success is False
         assert server_proof == ""
 
@@ -185,9 +181,7 @@ class TestSrpFullFlow:
         # Client uses correct password but server has different username
         A_hex, M1_hex, _ = _client_prove("alice", "password123", salt, server_pub)
 
-        success, _ = verify_session(
-            server_sec, A_hex, salt, "bob", verifier, M1_hex
-        )
+        success, _ = verify_session(server_sec, A_hex, salt, "bob", verifier, M1_hex)
         assert success is False
 
     def test_tampered_client_proof_fails(self) -> None:
@@ -199,9 +193,7 @@ class TestSrpFullFlow:
 
         # Tamper with proof
         tampered = format((int(M1_hex, 16) ^ 1), "064x")
-        success, _ = verify_session(
-            server_sec, A_hex, salt, username, verifier, tampered
-        )
+        success, _ = verify_session(server_sec, A_hex, salt, username, verifier, tampered)
         assert success is False
 
     def test_multiple_users_independent(self) -> None:
@@ -229,7 +221,5 @@ class TestSrpFullFlow:
         server_pub, server_sec = generate_server_ephemeral(verifier)
         A_hex, M1_hex, _ = _client_prove(username, password, salt, server_pub)
 
-        success, _ = verify_session(
-            server_sec, A_hex, salt, username, verifier, M1_hex
-        )
+        success, _ = verify_session(server_sec, A_hex, salt, username, verifier, M1_hex)
         assert success is True

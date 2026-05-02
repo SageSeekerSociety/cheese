@@ -189,9 +189,7 @@ async def test_set_read_status():
     svc = _make_service(repo=repo)
     result = await svc.set_read_status(user_id=10, notification_id=5, desired_read_status=True)
 
-    repo.set_read_status_for_user.assert_awaited_once_with(
-        user_id=10, notification_id=5, read=True
-    )
+    repo.set_read_status_for_user.assert_awaited_once_with(user_id=10, notification_id=5, read=True)
     assert result == 1
 
 
@@ -400,9 +398,11 @@ async def test_resolve_entities_with_pointers():
     resolver = _FakeResolver("team", {"42": team_info})
 
     svc = _make_service(resolvers=[resolver])
-    result = await svc.resolve_entities_from_metadata([
-        {"actor": {"type": "team", "id": "42"}},
-    ])
+    result = await svc.resolve_entities_from_metadata(
+        [
+            {"actor": {"type": "team", "id": "42"}},
+        ]
+    )
 
     assert "actor" in result
     assert result["actor"] is team_info
@@ -412,9 +412,11 @@ async def test_resolve_entities_with_pointers():
 async def test_resolve_entities_missing_resolver():
     """When no resolver exists for an entity type, the pointer key still appears with None."""
     svc = _make_service(resolvers=[])
-    result = await svc.resolve_entities_from_metadata([
-        {"actor": {"type": "unknown_type", "id": "1"}},
-    ])
+    result = await svc.resolve_entities_from_metadata(
+        [
+            {"actor": {"type": "unknown_type", "id": "1"}},
+        ]
+    )
 
     # The pointer is collected but no resolver handles "unknown_type",
     # so resolved_by_type won't have "unknown_type" and flattened[path] = entity_map.get(id) = None
@@ -428,9 +430,11 @@ async def test_resolve_entities_nested_mapping():
     resolver = _FakeResolver("user", {"7": user_info})
 
     svc = _make_service(resolvers=[resolver])
-    result = await svc.resolve_entities_from_metadata([
-        {"deep": {"nested": {"type": "user", "id": "7"}}},
-    ])
+    result = await svc.resolve_entities_from_metadata(
+        [
+            {"deep": {"nested": {"type": "user", "id": "7"}}},
+        ]
+    )
 
     assert "deep.nested" in result
     assert result["deep.nested"] is user_info
@@ -442,9 +446,11 @@ async def test_resolve_entities_in_sequence():
     resolver = _FakeResolver("user", {"1": user_info})
 
     svc = _make_service(resolvers=[resolver])
-    result = await svc.resolve_entities_from_metadata([
-        {"actors": [{"type": "user", "id": "1"}]},
-    ])
+    result = await svc.resolve_entities_from_metadata(
+        [
+            {"actors": [{"type": "user", "id": "1"}]},
+        ]
+    )
 
     assert "actors[0]" in result
     assert result["actors[0]"] is user_info
@@ -458,12 +464,14 @@ async def test_resolve_entities_multiple_types():
     user_resolver = _FakeResolver("user", {"20": user_info})
 
     svc = _make_service(resolvers=[team_resolver, user_resolver])
-    result = await svc.resolve_entities_from_metadata([
-        {
-            "team": {"type": "team", "id": "10"},
-            "user": {"type": "user", "id": "20"},
-        },
-    ])
+    result = await svc.resolve_entities_from_metadata(
+        [
+            {
+                "team": {"type": "team", "id": "10"},
+                "user": {"type": "user", "id": "20"},
+            },
+        ]
+    )
 
     assert result["team"] is team_info
     assert result["user"] is user_info
@@ -485,10 +493,12 @@ async def test_resolve_entities_deduplicates_ids():
             return {eid: original_user_info for eid in entity_ids}
 
     svc = _make_service(resolvers=[_CountingResolver()])
-    result = await svc.resolve_entities_from_metadata([
-        {"a": {"type": "user", "id": "5"}},
-        {"b": {"type": "user", "id": "5"}},
-    ])
+    result = await svc.resolve_entities_from_metadata(
+        [
+            {"a": {"type": "user", "id": "5"}},
+            {"b": {"type": "user", "id": "5"}},
+        ]
+    )
 
     assert call_count == 1
     assert result["a"] is original_user_info
@@ -501,9 +511,11 @@ async def test_resolve_entities_unresolved_entity():
     resolver = _FakeResolver("user", {})  # resolves nothing
 
     svc = _make_service(resolvers=[resolver])
-    result = await svc.resolve_entities_from_metadata([
-        {"actor": {"type": "user", "id": "999"}},
-    ])
+    result = await svc.resolve_entities_from_metadata(
+        [
+            {"actor": {"type": "user", "id": "999"}},
+        ]
+    )
 
     assert result["actor"] is None
 

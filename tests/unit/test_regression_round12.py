@@ -156,7 +156,9 @@ async def test_upload_material_stores_file():
 
     with (
         patch("app.api.routes.materials.get_storage_backend", return_value=mock_storage),
-        patch("app.api.routes.materials.generate_storage_key", return_value="materials/image/abc.png"),
+        patch(
+            "app.api.routes.materials.generate_storage_key", return_value="materials/image/abc.png"
+        ),
     ):
         from io import BytesIO
 
@@ -171,7 +173,10 @@ async def test_upload_material_stores_file():
         )
 
         mock_service = AsyncMock()
-        mock_service.create_material.return_value = {"id": 1, "url": "https://storage.example.com/materials/file.png"}
+        mock_service.create_material.return_value = {
+            "id": 1,
+            "url": "https://storage.example.com/materials/file.png",
+        }
 
         mock_auth = SimpleNamespace(user_id=1)
 
@@ -237,7 +242,9 @@ async def test_groups_search_count_with_joined_filter():
     mock_session = AsyncMock()
 
     # Simulate: 3 groups total, but user joined only 1
-    filtered_rows = [SimpleNamespace(id=1, name="My Group", deleted_at=None, created_at=datetime.now(UTC))]
+    filtered_rows = [
+        SimpleNamespace(id=1, name="My Group", deleted_at=None, created_at=datetime.now(UTC))
+    ]
 
     call_count = 0
 
@@ -257,7 +264,11 @@ async def test_groups_search_count_with_joined_filter():
 
     repo = GroupRepository(mock_session)
     rows, total = await repo.search(
-        keyword=None, limit=20, offset=0, user_id=42, joined=True,
+        keyword=None,
+        limit=20,
+        offset=0,
+        user_id=42,
+        joined=True,
     )
 
     assert total == 1, f"Count should reflect joined filter, got {total}"

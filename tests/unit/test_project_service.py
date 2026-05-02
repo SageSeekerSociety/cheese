@@ -409,9 +409,7 @@ class TestListMembers:
 
         assert result == members
         assert total == 1
-        membership_repo.list_members.assert_awaited_once_with(
-            1, limit=20, offset=0
-        )
+        membership_repo.list_members.assert_awaited_once_with(1, limit=20, offset=0)
 
     @pytest.mark.anyio
     async def test_lists_members_with_custom_pagination(self):
@@ -423,9 +421,7 @@ class TestListMembers:
 
         assert result == []
         assert total == 0
-        membership_repo.list_members.assert_awaited_once_with(
-            1, limit=5, offset=10
-        )
+        membership_repo.list_members.assert_awaited_once_with(1, limit=5, offset=10)
 
     @pytest.mark.anyio
     async def test_raises_when_membership_repo_unavailable(self):
@@ -468,9 +464,7 @@ class TestAddMember:
         membership_repo.add_member.return_value = expected
         svc = _make_service(membership_repo=membership_repo)
 
-        result = await svc.add_member(
-            project_id=1, user_id=42, role="ADMIN", notes="Lead dev"
-        )
+        result = await svc.add_member(project_id=1, user_id=42, role="ADMIN", notes="Lead dev")
 
         assert result is expected
         membership_repo.add_member.assert_awaited_once_with(

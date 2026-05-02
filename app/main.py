@@ -97,6 +97,7 @@ def create_app() -> FastAPI:
 
     # Mount uploads directory for serving images and other static files
     import os
+
     uploads_path = os.path.abspath(settings.storage_local_path)
     if not os.path.isdir(uploads_path):
         os.makedirs(uploads_path, exist_ok=True)

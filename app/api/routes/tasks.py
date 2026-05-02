@@ -275,7 +275,9 @@ async def _enrich_task_models(
         )
 
     category_name_map: dict[int, str] = {
-        int(category.id): category.name for category in categories if getattr(category, "name", None)
+        int(category.id): category.name
+        for category in categories
+        if getattr(category, "name", None)
     }
 
     participant_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
@@ -326,9 +328,7 @@ async def _enrich_task_models(
         }
 
         resolved_category_name = (
-            category_name_map.get(category_id)
-            if isinstance(category_id, int)
-            else None
+            category_name_map.get(category_id) if isinstance(category_id, int) else None
         )
         task_model["category"] = {
             "id": category_id,
