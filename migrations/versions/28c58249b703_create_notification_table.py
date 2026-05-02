@@ -8,9 +8,7 @@ Create Date: 2026-05-02 22:15:58.135042
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic.
 revision: str = "9b3dbc5ade4c"
@@ -23,44 +21,36 @@ def upgrade() -> None:
     # 1. 创建序列（如果不存在）
     op.execute("CREATE SEQUENCE IF NOT EXISTS notification_seq")
 
-    # 2. 创建 notification 表
-    op.create_table(
-        "notification",
-        sa.Column(
-            "id",
-            sa.BigInteger(),
-            nullable=False,
-            server_default=sa.text("nextval('notification_seq'::regclass)"),
-        ),
-        sa.Column("receiver_id", sa.BigInteger(), nullable=False),
-        sa.Column("type", sa.String(length=255), nullable=False),
-        sa.Column("metadata", JSONB, nullable=True),
-        sa.Column("content", JSONB, nullable=True),
-        sa.Column("read", sa.Boolean(), nullable=False, server_default="false"),
-        sa.Column("is_aggregatable", sa.Boolean(), nullable=False, server_default="false"),
-        sa.Column("aggregation_key", sa.String(length=255), nullable=True),
-        sa.Column("aggregate_until", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("finalized", sa.Boolean(), nullable=False, server_default="true"),
-        sa.Column("version", sa.BigInteger(), nullable=False, server_default="0"),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-    )
+    # 2. 创建表（如果不存在）
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS notification (
+            id BIGINT DEFAULT nextval('notification_seq'::regclass) NOT NULL,
+            receiver_id BIGINT NOT NULL,
+            type VARCHAR(255) NOT NULL,
+            metadata JSONB,
+            content JSONB,
+            read BOOLEAN DEFAULT false NOT NULL,
+            is_aggregatable BOOLEAN DEFAULT false NOT NULL,
+            aggregation_key VARCHAR(255),
+            aggregate_until TIMESTAMPTZ,
+            finalized BOOLEAN DEFAULT true NOT NULL,
+            version BIGINT DEFAULT 0 NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ,
+            deleted_at TIMESTAMPTZ,
+            PRIMARY KEY (id)
+        )
+    """)
 
-    # 3. 创建索引（与模型中的 index 一致）
-    op.create_index(
-        "idx_notification_receiver_read_created",
-        "notification",
-        ["receiver_id", "read", "created_at"],
-        postgresql_using="btree",
-    )
-    op.create_index(
-        "idx_notification_aggregation",
-        "notification",
-        ["receiver_id", "aggregation_key", "aggregate_until"],
-        postgresql_using="btree",
-    )
+    # 3. 创建索引（如果不存在）
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_notification_receiver_read_created
+        ON notification (receiver_id, read, created_at)
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_notification_aggregation
+        ON notification (receiver_id, aggregation_key, aggregate_until)
+    """)
 
 
 def downgrade() -> None:
