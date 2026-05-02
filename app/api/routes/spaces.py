@@ -47,7 +47,7 @@ def _expect_list(value: list | str | None, field: str) -> list:
         if isinstance(parsed, list):
             return parsed
         raise BadRequestError(f"{field} must be a JSON array")
-    raise BadRequestError(f"{field} must be a list")
+    raise BadRequestError(f"{field} must be a list or a JSON array string")
 
 
 async def get_space_service(db=Depends(get_db)) -> SpaceService:
@@ -121,8 +121,8 @@ def _space_to_api_model(space: Space) -> dict:
         "avatarId": space.avatar_id,
         "enableRank": space.enable_rank,
         "defaultCategoryId": space.default_category_id,
-        "announcements": json.dumps(space.announcements or []),
-        "taskTemplates": json.dumps(space.task_templates or []),
+        "announcements": space.announcements or [],
+        "taskTemplates": space.task_templates or [],
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
