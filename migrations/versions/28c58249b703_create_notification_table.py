@@ -18,10 +18,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # 1. 创建序列（如果不存在）
+    # 序列（IF NOT EXISTS）
     op.execute("CREATE SEQUENCE IF NOT EXISTS notification_seq")
 
-    # 2. 创建表（如果不存在）
+    # 表（IF NOT EXISTS）
     op.execute("""
         CREATE TABLE IF NOT EXISTS notification (
             id BIGINT DEFAULT nextval('notification_seq'::regclass) NOT NULL,
@@ -42,15 +42,13 @@ def upgrade() -> None:
         )
     """)
 
-    # 3. 创建索引（如果不存在）
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_notification_receiver_read_created
-        ON notification (receiver_id, read, created_at)
-    """)
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_notification_aggregation
-        ON notification (receiver_id, aggregation_key, aggregate_until)
-    """)
+    # 索引（IF NOT EXISTS）
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notification_receiver_read_created ON notification (receiver_id, read, created_at)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notification_aggregation ON notification (receiver_id, aggregation_key, aggregate_until)"
+    )
 
 
 def downgrade() -> None:
