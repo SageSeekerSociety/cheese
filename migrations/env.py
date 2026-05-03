@@ -56,9 +56,7 @@ def run_migrations_offline() -> None:
 
     def include_object(object, name, type_, reflected, compare_to):
         # 忽略 PostGIS 内部表，避免自动迁移生成 drop/create 这些表
-        if type_ == "table" and name == "spatial_ref_sys":
-            return False
-        return True
+        return not (type_ == "table" and name == "spatial_ref_sys")
 
     context.configure(
         url=url,
@@ -87,9 +85,7 @@ def run_migrations_online() -> None:
 
     def include_object(object, name, type_, reflected, compare_to):
         # 忽略 PostGIS 内部表，避免自动迁移生成 drop/create 这些表
-        if type_ == "table" and name == "spatial_ref_sys":
-            return False
-        return True
+        return not (type_ == "table" and name == "spatial_ref_sys")
 
     with connectable.connect() as connection:
         context.configure(
