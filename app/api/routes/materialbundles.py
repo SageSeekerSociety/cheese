@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
 from app.db.session import get_db
@@ -27,7 +27,7 @@ async def list_material_bundles(
     page_start: int | None = Query(default=None, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     sort: str | None = Query(default=None),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: MaterialBundleService = Depends(get_bundle_service),
 ) -> dict:
     if q and len(q) > 100:
@@ -47,7 +47,7 @@ async def list_material_bundles(
 )
 async def get_material_bundle(
     bundle_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: MaterialBundleService = Depends(get_bundle_service),
 ) -> dict:
     bundle = await service.get_bundle_detail(bundle_id)
@@ -61,7 +61,7 @@ async def get_material_bundle(
 )
 async def create_material_bundle(
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: MaterialBundleService = Depends(get_bundle_service),
 ) -> dict:
     title = payload.get("title")
@@ -87,7 +87,7 @@ async def create_material_bundle(
 async def update_material_bundle(
     bundle_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: MaterialBundleService = Depends(get_bundle_service),
 ) -> dict:
     title = payload.get("title")
@@ -111,7 +111,7 @@ async def update_material_bundle(
 )
 async def delete_material_bundle(
     bundle_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: MaterialBundleService = Depends(get_bundle_service),
 ) -> None:
     await service.delete_bundle(bundle_id=bundle_id, user_id=auth_user.user_id)

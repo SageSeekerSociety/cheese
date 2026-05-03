@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
 from app.db.session import get_db
@@ -42,7 +42,7 @@ async def list_groups(
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     joined: bool | None = Query(default=None),
     managed: bool | None = Query(default=None),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
@@ -64,7 +64,7 @@ async def list_groups(
 )
 async def create_group(
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
     name = payload.get("name")
@@ -87,7 +87,7 @@ async def create_group(
 )
 async def get_group(
     group_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
@@ -102,7 +102,7 @@ async def get_group(
 async def update_group(
     group_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
     name = payload.get("name")
@@ -125,7 +125,7 @@ async def update_group(
 )
 async def delete_group(
     group_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupsService = Depends(get_groups_service),
 ) -> None:
     await service.delete_group(group_id=group_id, user_id=auth_user.user_id)
@@ -156,7 +156,7 @@ async def list_group_members(
 )
 async def join_group(
     group_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
     result = await service.join_group(group_id=group_id, user_id=auth_user.user_id)
@@ -169,7 +169,7 @@ async def join_group(
 )
 async def leave_group(
     group_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
     result = await service.leave_group(group_id=group_id, user_id=auth_user.user_id)
@@ -224,7 +224,7 @@ async def list_group_targets(
 async def create_group_target(
     group_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> dict:
     from datetime import UTC, datetime
@@ -276,7 +276,7 @@ async def update_group_target(
     group_id: Annotated[int, Path(ge=0)],
     target_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> dict:
     from datetime import UTC, datetime
@@ -317,7 +317,7 @@ async def update_group_target(
 async def delete_group_target(
     group_id: Annotated[int, Path(ge=0)],
     target_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> None:
     await service.delete_target(group_id=group_id, target_id=target_id, user_id=auth_user.user_id)
@@ -348,7 +348,7 @@ async def list_group_questions(
 async def add_group_question(
     group_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupQuestionService = Depends(get_question_service),
 ) -> dict:
     question_id = payload.get("questionId")
@@ -370,7 +370,7 @@ async def add_group_question(
 async def remove_group_question(
     group_id: Annotated[int, Path(ge=0)],
     question_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupQuestionService = Depends(get_question_service),
 ) -> None:
     await service.remove_question(

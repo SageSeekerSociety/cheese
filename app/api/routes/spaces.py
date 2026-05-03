@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 
-from app.auth.checker import get_auth_user, require_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.db.session import get_db
@@ -279,7 +279,7 @@ async def get_spaces(
 )
 async def create_space(
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     name = payload.get("name")
@@ -319,7 +319,7 @@ async def create_space(
 async def patch_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     announcements = payload.get("announcements")
@@ -351,7 +351,7 @@ async def patch_space(
 )
 async def delete_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> None:
     await service.delete_space(space_id=space_id, actor_user_id=auth_user.user_id)
@@ -415,7 +415,7 @@ async def get_space_task_analytics(
 )
 async def get_publishers_participation(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
 ) -> dict:
     _ = auth_user
@@ -432,7 +432,7 @@ async def get_publishers_participation(
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     format: str = Query(default="csv"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
 ) -> Response:
     _ = auth_user
@@ -817,7 +817,7 @@ async def get_space_topics(
     keyword: str | None = Query(default=None),
     sort: str = Query(default="name"),
     limit: int = Query(default=20, ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceTopicsService = Depends(get_space_topics_service),
 ) -> dict:
     """List or search topics associated with the space.
@@ -845,7 +845,7 @@ async def get_space_topics(
 async def create_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     name = payload.get("name")
@@ -879,7 +879,7 @@ async def patch_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     display_order = None
@@ -936,7 +936,7 @@ async def get_space_category(
 async def delete_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> None:
     await service.delete_category(
@@ -952,7 +952,7 @@ async def delete_space_category(
 async def archive_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     category = await service.set_category_archived(
@@ -975,7 +975,7 @@ async def archive_space_category(
 async def unarchive_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     category = await service.set_category_archived(
@@ -1015,7 +1015,7 @@ async def list_space_admins(
 async def add_space_admin(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     user_id = payload.get("userId")
@@ -1043,7 +1043,7 @@ async def add_space_admin(
 async def delete_space_admin(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> Response:
     await service.remove_admin(
@@ -1062,7 +1062,7 @@ async def patch_space_manager(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     role_str = payload.get("role")

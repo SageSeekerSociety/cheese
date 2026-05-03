@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
 from app.db.session import get_db
@@ -57,7 +57,7 @@ async def list_answers(
     question_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     _ = auth_user
@@ -77,7 +77,7 @@ async def list_answers(
 async def create_answer(
     question_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     content = payload.get("content")
@@ -103,7 +103,7 @@ async def vote_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     _ = question_id
@@ -121,7 +121,7 @@ async def vote_answer(
 async def remove_answer_vote(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     _ = question_id
@@ -136,7 +136,7 @@ async def remove_answer_vote(
 async def get_answer_votes(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     _ = question_id
@@ -156,7 +156,7 @@ async def list_answer_comments(
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     sort_by: str = Query(default="createdAt"),
     sort_order: str = Query(default="asc"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     _ = question_id
@@ -185,7 +185,7 @@ async def create_answer_comment(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     _ = question_id
@@ -211,7 +211,7 @@ async def delete_answer_comment(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
     comment_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     _ = question_id
@@ -236,7 +236,7 @@ async def delete_answer_comment(
 async def get_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
@@ -256,7 +256,7 @@ async def update_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     from app.core.errors import NotFoundError
@@ -282,7 +282,7 @@ async def update_answer(
 async def delete_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     from app.core.errors import NotFoundError
@@ -301,7 +301,7 @@ async def delete_answer(
 async def favorite_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     _ = question_id
@@ -316,7 +316,7 @@ async def favorite_answer(
 async def unfavorite_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     _ = question_id
@@ -332,7 +332,7 @@ async def attitude_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     _ = question_id

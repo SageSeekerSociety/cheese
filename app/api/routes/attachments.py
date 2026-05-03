@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 from fastapi.responses import Response
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, UnprocessableEntityError
 from app.core.storage import get_storage_backend
@@ -35,7 +35,7 @@ async def get_attachment_service(db=Depends(get_db)) -> AttachmentService:
 async def upload_attachment(
     file: UploadFile = File(...),
     type: str = Form(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AttachmentService = Depends(get_attachment_service),
 ) -> dict:
     if type not in VALID_TYPES:
@@ -67,7 +67,7 @@ async def upload_attachment(
 )
 async def get_attachment_detail(
     attachmentId: int = Path(..., ge=0),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AttachmentService = Depends(get_attachment_service),
 ) -> dict:
     attachment = await service.get(attachmentId)
@@ -84,7 +84,7 @@ async def get_attachment_detail(
 )
 async def download_attachment(
     attachmentId: int = Path(..., ge=0),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AttachmentService = Depends(get_attachment_service),
 ) -> Response:
     content, filename, content_type = await service.download(attachmentId)
@@ -104,7 +104,7 @@ async def download_attachment(
 )
 async def delete_attachment(
     attachmentId: int = Path(..., ge=0),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AttachmentService = Depends(get_attachment_service),
 ) -> None:
     await service.delete(attachmentId, user_id=auth_user.user_id)

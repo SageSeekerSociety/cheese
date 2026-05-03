@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile, sta
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
-from app.auth.checker import get_auth_user, require_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import (
     BadRequestError,
@@ -861,7 +861,7 @@ async def create_task_participant(
     payload: dict | None = None,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Create a TaskMembership for a given member.
 
@@ -947,7 +947,7 @@ async def join_task_as_user(
     payload: dict | None = None,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Allow authenticated user to join a task themselves."""
     if payload is None:
@@ -1007,7 +1007,7 @@ async def join_task_as_team(
     payload: dict,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Allow team to join a task."""
     team_id = payload.get("teamId")
@@ -1075,7 +1075,7 @@ async def patch_task_participant(
     payload: dict,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Patch a single TaskMembership by participant id."""
     task_repo = TaskRepository(session=db)
@@ -1317,7 +1317,7 @@ async def patch_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     payload: dict,
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Patch basic mutable fields of a task.
 
@@ -1642,7 +1642,7 @@ async def get_tasks(
 async def delete_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     """Soft delete a task and its participants.
 
@@ -1679,7 +1679,7 @@ async def delete_task_participant(
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     """Soft delete a participant by membership id."""
     task_repo = TaskRepository(session=db)
@@ -1714,7 +1714,7 @@ async def delete_task_participant_by_member(
     member: Annotated[int, Query(description="Member ID (user or team)")],
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     """Soft delete a participant by task + member id."""
     task_repo = TaskRepository(session=db)
@@ -1752,7 +1752,7 @@ async def patch_task_membership_by_member(
     payload: dict,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Patch a TaskMembership identified by (taskId, memberId) and return all participants."""
     task_repo = TaskRepository(session=db)
@@ -1826,7 +1826,7 @@ async def patch_task_membership_by_member(
 async def resubmit_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Resubmit a previously disapproved task for approval."""
     task_repo = TaskRepository(session=db)
@@ -1941,7 +1941,7 @@ async def get_task_teams(
     filter: str = Query(default="eligible"),
     service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Return teams that current user can use for a team-type task.
 
@@ -2004,7 +2004,7 @@ async def get_task_submissions(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Enumerate submissions for a given task participant."""
     task = await task_service.get_task(task_id=task_id)
@@ -2074,7 +2074,7 @@ async def post_task_submission(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     task = await task_service.get_task(task_id=task_id)
     if task is None:
@@ -2132,7 +2132,7 @@ async def patch_task_submission(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     task = await task_service.get_task(task_id=task_id)
     if task is None:
@@ -2178,7 +2178,7 @@ async def post_task_submission_review(
     payload: dict,
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = participant_id
 
@@ -2221,7 +2221,7 @@ async def get_task_submission_review(
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = (task_id, participant_id, auth_user)
 
@@ -2248,7 +2248,7 @@ async def patch_task_submission_review(
     payload: dict,
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = participant_id
 
@@ -2299,7 +2299,7 @@ async def put_task_submission_review(
     payload: dict,
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = participant_id
 
@@ -2339,7 +2339,7 @@ async def delete_task_submission_review(
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = participant_id
 
@@ -2363,7 +2363,7 @@ async def delete_task_submission_review(
 )
 async def request_task_ai_advice(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     ai_service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
     try:
@@ -2442,7 +2442,7 @@ async def list_ai_advice_conversations_grouped(
 async def get_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     conversation_id: Annotated[str, Path(alias="conversationId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
     _ = task_id
@@ -2461,7 +2461,7 @@ async def get_ai_advice_conversation(
 async def create_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     payload: CreateTaskAIAdviceConversationRequest,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
     question = payload.question.strip()
@@ -2506,7 +2506,7 @@ async def delete_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     conversation_id: Annotated[str, Path(alias="conversationId")],
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
@@ -2525,7 +2525,7 @@ async def delete_ai_advice_conversation(
 async def stream_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     payload: CreateTaskAIAdviceConversationRequest,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ):
     """Stream AI response via Server-Sent Events (SSE)."""
