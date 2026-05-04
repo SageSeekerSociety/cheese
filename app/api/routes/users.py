@@ -607,10 +607,10 @@ async def get_user_followed_questions(
     has_more = offset + returned < total
     next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "pageStart": offset,
-        "pageSize": returned,
-        "hasMore": has_more,
-        "nextStart": next_start,
+        "page_start": offset,
+        "page_size": returned,
+        "has_more": has_more,
+        "next_start": next_start,
         "total": total,
     }
     return {
@@ -670,10 +670,10 @@ async def get_user_questions(
     has_more = offset + returned < total
     next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "pageStart": offset,
-        "pageSize": returned,
-        "hasMore": has_more,
-        "nextStart": next_start,
+        "page_start": offset,
+        "page_size": returned,
+        "has_more": has_more,
+        "next_start": next_start,
         "total": total,
     }
     return {
@@ -742,10 +742,10 @@ async def get_user_answers(
     has_more = offset + returned < total
     next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "pageStart": offset,
-        "pageSize": returned,
-        "hasMore": has_more,
-        "nextStart": next_start,
+        "page_start": offset,
+        "page_size": returned,
+        "has_more": has_more,
+        "next_start": next_start,
         "total": total,
     }
     return {
@@ -2270,10 +2270,10 @@ async def get_user_favorite_questions(
     has_more = offset + returned < total
     next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "pageStart": offset,
-        "pageSize": returned,
-        "hasMore": has_more,
-        "nextStart": next_start,
+        "page_start": offset,
+        "page_size": returned,
+        "has_more": has_more,
+        "next_start": next_start,
         "total": total,
     }
     return {
@@ -2333,10 +2333,10 @@ async def get_user_favorite_answers(
     has_more = offset + returned < total
     next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "pageStart": offset,
-        "pageSize": returned,
-        "hasMore": has_more,
-        "nextStart": next_start,
+        "page_start": offset,
+        "page_size": returned,
+        "has_more": has_more,
+        "next_start": next_start,
         "total": total,
     }
     return {
@@ -2437,10 +2437,10 @@ async def list_users(
 
     returned = len(users)
     page = {
-        "pageStart": offset,
-        "pageSize": returned,
-        "hasMore": returned == page_size,
-        "nextStart": offset + returned if returned == page_size else None,
+        "page_start": offset,
+        "page_size": returned,
+        "has_more": returned == page_size,
+        "next_start": offset + returned if returned == page_size else None,
     }
     return {
         "code": 200,

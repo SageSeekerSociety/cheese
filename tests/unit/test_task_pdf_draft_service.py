@@ -27,7 +27,7 @@ class _FakeLLMClient:
 @pytest.mark.anyio
 async def test_generate_payload_from_text_merges_template_and_llm_result() -> None:
     llm = _FakeLLMClient(
-        '{"task":{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}}'
+        '{"task":[{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}]}'
     )
     quota_service = SimpleNamespace(
         pre_check_and_reserve=AsyncMock(return_value=True),
@@ -61,7 +61,7 @@ async def test_generate_payload_from_text_merges_template_and_llm_result() -> No
 @pytest.mark.anyio
 async def test_generate_payload_from_text_respects_forced_submitter_type() -> None:
     llm = _FakeLLMClient(
-        '{"task":{"name":"比赛","intro":"介绍","description":"详情","submitterType":"USER"}}'
+        '{"task":[{"name":"比赛","intro":"介绍","description":"详情","submitterType":"USER"}]}'
     )
     service = TaskPdfDraftService(llm_client=llm, quota_service=None)
 
@@ -79,7 +79,7 @@ async def test_generate_payload_from_text_respects_forced_submitter_type() -> No
 
 @pytest.mark.anyio
 async def test_generate_payload_from_text_requires_required_fields() -> None:
-    llm = _FakeLLMClient('{"task":{"intro":"只有介绍","description":"只有详情"}}')
+    llm = _FakeLLMClient('{"task":[{"intro":"只有介绍","description":"只有详情"}]}')
     service = TaskPdfDraftService(llm_client=llm, quota_service=None)
 
     with pytest.raises(BadRequestError, match="missing required field: name"):

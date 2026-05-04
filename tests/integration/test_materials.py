@@ -45,9 +45,9 @@ class TestMaterialsUploadIntegration:
             files={"file": ("test.jpg", fake_file, "image/jpeg")},
             data={"type": "image"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 200
+        assert data["code"] == 201
         assert "id" in data["data"]
 
     def test_upload_video_material(self):
@@ -58,9 +58,9 @@ class TestMaterialsUploadIntegration:
             files={"file": ("test.mp4", fake_file, "video/mp4")},
             data={"type": "video"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 200
+        assert data["code"] == 201
         assert "id" in data["data"]
 
     def test_upload_audio_material(self):
@@ -71,9 +71,9 @@ class TestMaterialsUploadIntegration:
             files={"file": ("test.mp3", fake_file, "audio/mpeg")},
             data={"type": "audio"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 200
+        assert data["code"] == 201
         assert "id" in data["data"]
 
     def test_upload_file_material(self):
@@ -84,9 +84,9 @@ class TestMaterialsUploadIntegration:
             files={"file": ("test.pdf", fake_file, "application/pdf")},
             data={"type": "file"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 200
+        assert data["code"] == 201
         assert "id" in data["data"]
 
     def test_get_material(self):

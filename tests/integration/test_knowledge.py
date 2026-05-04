@@ -24,6 +24,12 @@ class TestKnowledgeIntegration:
         )
         assert team_resp.status_code == 201, f"Team creation failed: {team_resp.text}"
         team_id = team_resp.json()["data"]["team"]["id"]
+        member_resp = api_client.post(
+            f"/teams/{team_id}/members",
+            json={"userId": creator.user_id, "role": "MEMBER"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert member_resp.status_code == 201, f"Add member failed: {member_resp.text}"
         return {
             "creator": creator,
             "team_id": team_id,
@@ -47,7 +53,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
         data = resp.json()["data"]["knowledge"]
         assert data["name"] == knowledge_name
         assert data["teamId"] == team_id
@@ -68,7 +74,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         resp = api_client.get(
@@ -128,7 +134,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         updated_name = "Updated Knowledge Name"
@@ -166,7 +172,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         resp = api_client.delete(
@@ -231,7 +237,7 @@ class TestKnowledgeIntegration:
             json={"labels": ["new-label-1", "new-label-2"]},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
         data = resp.json()["data"]["knowledge"]
         assert "new-label-1" in data["labels"]
         assert "new-label-2" in data["labels"]
