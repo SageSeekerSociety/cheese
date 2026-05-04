@@ -255,7 +255,7 @@ class UserRealNameRepository:
         class_name: str,
         encrypted: bool = False,
     ) -> UserRealNameIdentity:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         existing = await self.get_identity(user_id)
         if existing is None:
             identity = UserRealNameIdentity(
@@ -295,7 +295,7 @@ class UserRealNameRepository:
         module_type: str | None = None,
         module_entity_id: int | None = None,
     ) -> UserRealNameAccessLog:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         log = UserRealNameAccessLog(
             accessor_id=accessor_id,
             target_id=target_id,

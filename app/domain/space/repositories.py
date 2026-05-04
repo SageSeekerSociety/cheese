@@ -51,7 +51,7 @@ class SpaceRepository:
         announcements: list,
         task_templates: list,
     ) -> Space:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         space = Space(
             name=name,
             intro=intro,
@@ -113,7 +113,7 @@ class SpaceCategoryRepository:
         description: str | None,
         display_order: int,
     ) -> SpaceCategory:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         category = SpaceCategory(
             space_id=space_id,
             name=name,
@@ -176,7 +176,7 @@ class SpaceUserRankRepository:
         )
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if row is None:
             row = SpaceUserRank(
                 space_id=space_id,
@@ -201,7 +201,7 @@ class SpaceUserRankRepository:
         )
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if row is None:
             row = SpaceUserRank(
                 space_id=space_id,
@@ -226,7 +226,7 @@ class SpaceAdminRelationRepository:
     async def add_admin(
         self, *, space_id: int, user_id: int, role: SpaceAdminRole
     ) -> SpaceAdminRelation:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         relation = SpaceAdminRelation(
             space_id=space_id,
             user_id=user_id,
@@ -261,7 +261,7 @@ class SpaceAdminRelationRepository:
         return list(result.scalars().all())
 
     async def remove_admin(self, relation: SpaceAdminRelation) -> None:
-        relation.deleted_at = relation.updated_at = datetime.now(UTC)
+        relation.deleted_at = relation.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
 
     async def get_owner(self, space_id: int) -> SpaceAdminRelation | None:

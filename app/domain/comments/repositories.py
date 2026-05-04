@@ -58,7 +58,7 @@ class CommentRepository:
         content: str,
         created_by_id: int,
     ) -> Comment:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         comment = Comment(
             commentable_type=commentable_type,
             commentable_id=commentable_id,
@@ -75,17 +75,17 @@ class CommentRepository:
     async def update(self, comment: Comment, *, content: str | None = None) -> Comment:
         if content is not None:
             comment.content = content
-        comment.updated_at = datetime.now(UTC)
+        comment.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return comment
 
     async def soft_delete(self, comment: Comment) -> None:
-        comment.deleted_at = datetime.now(UTC)
+        comment.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
 
     async def vote(self, *, comment_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(comment_id, user_id)
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if existing is not None:
             existing.attitude = vote_type
             existing.updated_at = now

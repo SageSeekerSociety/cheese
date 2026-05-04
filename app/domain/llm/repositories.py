@@ -18,7 +18,7 @@ class AIUserQuotaRepository:
         )
         result = await self._session.execute(stmt)
         entity = result.scalar_one_or_none()
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if entity is None:
             entity = AIUserQuota(
                 user_id=user_id,
@@ -49,15 +49,15 @@ class AIUserQuotaRepository:
             raise ValueError("AI quota exhausted")
         entity.remaining_seu = remaining - amount
         entity.total_seu_consumed = (entity.total_seu_consumed or 0.0) + amount
-        entity.updated_at = datetime.now(UTC)
+        entity.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
-        reset_at = entity.last_reset_time or datetime.now(UTC)
+        reset_at = entity.last_reset_time or datetime.now(UTC).replace(tzinfo=None)
         return entity.remaining_seu, reset_at
 
     async def get_quota(self, user_id: int, daily_total: float) -> tuple[float, datetime]:
         entity = await self.get_or_create(user_id, daily_total)
         remaining = max(0.0, entity.remaining_seu or 0.0)
-        reset_at = entity.last_reset_time or datetime.now(UTC)
+        reset_at = entity.last_reset_time or datetime.now(UTC).replace(tzinfo=None)
         return remaining, reset_at
 
 
@@ -73,7 +73,7 @@ class AIConversationRepository:
         model_type: str = "standard",
         module_type: str = "GENERAL",
     ) -> AIConversation:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         conversation_uuid = str(uuid.uuid4())
         entity = AIConversation(
             owner_id=user_id,
@@ -135,7 +135,7 @@ class AIConversationRepository:
         entity = await self.get_by_id(conversation_id)
         if entity is None:
             return False
-        entity.deleted_at = datetime.now(UTC)
+        entity.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return True
 
@@ -144,7 +144,7 @@ class AIConversationRepository:
         if entity is None:
             return None
         entity.title = title
-        entity.updated_at = datetime.now(UTC)
+        entity.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return entity
 
@@ -163,7 +163,7 @@ class AIMessageRepository:
         tokens_used: int | None = None,
         seu_consumed: float | None = None,
     ) -> AIMessage:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         entity = AIMessage(
             conversation_id=conversation_id,
             role=role,

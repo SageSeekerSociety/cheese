@@ -1,5 +1,3 @@
-import os
-
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,21 +43,12 @@ setup_logging()
 
 
 def create_app() -> FastAPI:
-    if os.getenv("ENVIRONMENT") == "test":
-        app = FastAPI(
-            title="Cheese Backend (Python)",
-            version="0.1.0",
-            docs_url="/docs",
-            redoc_url="/redoc",
-            debug=True,
-        )
-    else:
-        app = FastAPI(
-            title="Cheese Backend (Python)",
-            version="0.1.0",
-            docs_url="/docs",
-            redoc_url="/redoc",
-        )
+    app = FastAPI(
+        title="Cheese Backend (Python)",
+        version="0.1.0",
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
 
     # Middleware
     app.add_middleware(TracingMiddleware)
@@ -107,6 +96,8 @@ def create_app() -> FastAPI:
     app.include_router(knowledge.router)
 
     # Mount uploads directory for serving images and other static files
+    import os
+
     uploads_path = os.path.abspath(settings.storage_local_path)
     if not os.path.isdir(uploads_path):
         os.makedirs(uploads_path, exist_ok=True)
