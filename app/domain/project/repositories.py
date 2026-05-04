@@ -26,7 +26,7 @@ class ProjectRepository:
         external_task_id: int | None = None,
         github_repo: str | None = None,
     ) -> Project:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         project = Project(
             name=name,
             description=description,
@@ -66,12 +66,12 @@ class ProjectRepository:
         return result.scalar_one_or_none()
 
     async def save(self, project: Project) -> Project:
-        project.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        project.updated_at = datetime.now(UTC)
         await self._session.flush()
         return project
 
     async def soft_delete(self, project: Project) -> None:
-        project.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        project.deleted_at = datetime.now(UTC)
         await self._session.flush()
 
     async def list_projects(
@@ -119,7 +119,7 @@ class ProjectMembershipRepository:
         role: ProjectMemberRole,
         notes: str = "",
     ) -> ProjectMembership:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         membership = ProjectMembership(
             project_id=project_id,
             user_id=user_id,
@@ -168,7 +168,7 @@ class ProjectMembershipRepository:
         return list(result.scalars().all()), total
 
     async def remove_member(self, membership: ProjectMembership) -> None:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         membership.deleted_at = now
         membership.updated_at = now
         await self._session.flush()

@@ -214,7 +214,7 @@ class QuestionRepository:
 
     async def vote(self, *, question_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(question_id, user_id)
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         if existing is not None:
             existing.attitude = vote_type
             existing.updated_at = now

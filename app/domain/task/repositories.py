@@ -221,11 +221,9 @@ class TaskRepository:
         team_locking_policy: str,
     ) -> Task:
         """Create and persist a new Task row."""
-        now = datetime.now(UTC).replace(tzinfo=None)
-        deadline_naive = deadline.replace(tzinfo=None) if deadline else None
-        registration_start_naive = (
-            registration_start_at.replace(tzinfo=None) if registration_start_at else None
-        )
+        now = datetime.now(UTC)
+        deadline_naive = deadline if deadline else None
+        registration_start_naive = registration_start_at if registration_start_at else None
         task = Task(
             name=name,
             intro=intro,
@@ -403,7 +401,7 @@ class TaskSubmissionRepository:
         submitter_id: int,
         version: int,
     ) -> TaskSubmission:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         submission = TaskSubmission(
             membership_id=membership_id,
             submitter_id=submitter_id,
@@ -600,7 +598,7 @@ class TaskSubmissionEntryRepository:
         submission_id: int,
         entries: list[tuple[int, str | None, int | None]],
     ) -> None:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         for idx, text, attachment_id in entries:
             row = TaskSubmissionEntry(
                 task_submission_id=submission_id,
@@ -620,7 +618,7 @@ class TaskSubmissionEntryRepository:
         version: int,
     ) -> None:
         """Soft delete entries for all submissions of given (membership, version)."""
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         subq = select(TaskSubmission.id).where(
             TaskSubmission.membership_id == membership_id,
             TaskSubmission.version == version,
@@ -669,7 +667,7 @@ class TaskSubmissionReviewRepository:
         score: int,
         comment: str,
     ) -> TaskSubmissionReview:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         review = TaskSubmissionReview(
             submission_id=submission_id,
             accepted=accepted,
@@ -689,7 +687,7 @@ class TaskSubmissionReviewRepository:
         return review
 
     async def soft_delete(self, review: TaskSubmissionReview) -> None:
-        review.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        review.deleted_at = datetime.now(UTC)
         self._session.add(review)
         await self._session.flush()
 
@@ -788,8 +786,8 @@ class TaskAIAdviceContextRepository:
             task_id=task_id,
             section=section,
             section_index=section_index,
-            created_at=datetime.now(UTC).replace(tzinfo=None),
-            updated_at=datetime.now(UTC).replace(tzinfo=None),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         self._session.add(ctx)
         await self._session.flush()
@@ -829,7 +827,7 @@ class AIConversationRepository:
         owner_id: int,
         title: str | None,
     ) -> AIConversation:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         convo = AIConversation(
             conversation_id=conversation_id,
             context_id=task_id,
@@ -844,7 +842,7 @@ class AIConversationRepository:
         return convo
 
     async def soft_delete(self, conversation: AIConversation) -> None:
-        conversation.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        conversation.deleted_at = datetime.now(UTC)
         self._session.add(conversation)
         await self._session.flush()
 
@@ -886,7 +884,7 @@ class AIMessageRepository:
         return msg
 
     async def soft_delete(self, message: AIMessage) -> None:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         message.deleted_at = now
         message.updated_at = now
         await self._session.flush()

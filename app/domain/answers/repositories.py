@@ -80,7 +80,7 @@ class AnswerRepository:
 
     async def vote(self, *, answer_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(answer_id, user_id)
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         if existing is not None:
             existing.attitude = vote_type
             existing.updated_at = now
