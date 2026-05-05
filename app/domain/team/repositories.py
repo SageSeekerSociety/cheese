@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ConflictError
 from app.domain.team.models import (
     ApplicationStatus,
     ApplicationType,
@@ -133,6 +134,12 @@ class TeamRepository:
         return rel.role in (TeamMemberRole.OWNER, TeamMemberRole.ADMIN)
 
     async def add_member(self, team_id: int, user_id: int, role: int) -> TeamUserRelation:
+        existing = await self.get_member_relation(team_id, user_id)
+        if existing is not None:
+            raise ConflictError(
+                "User is already a member of this team",
+                data={"teamId": team_id, "userId": user_id},
+            )
         now = datetime.now(UTC).replace(tzinfo=None)
         rel = TeamUserRelation(
             team_id=team_id,

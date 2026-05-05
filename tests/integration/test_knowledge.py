@@ -24,12 +24,6 @@ class TestKnowledgeIntegration:
         )
         assert team_resp.status_code == 201, f"Team creation failed: {team_resp.text}"
         team_id = team_resp.json()["data"]["team"]["id"]
-        member_resp = api_client.post(
-            f"/teams/{team_id}/members",
-            json={"userId": creator.user_id, "role": "MEMBER"},
-            headers={"Authorization": f"Bearer {creator.token}"},
-        )
-        assert member_resp.status_code == 201, f"Add member failed: {member_resp.text}"
         return {
             "creator": creator,
             "team_id": team_id,
