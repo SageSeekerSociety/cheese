@@ -26,7 +26,7 @@ class KnowledgeRepository:
         created_by: int,
         labels: list[str] | None,
     ) -> Knowledge:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         knowledge = Knowledge(
             name=name,
             description=description or "",
@@ -70,7 +70,7 @@ class KnowledgeRepository:
         entity = await self.get_by_id(knowledge_id)
         if entity is None:
             return False
-        entity.deleted_at = datetime.now(UTC)
+        entity.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return True
 
@@ -91,7 +91,7 @@ class KnowledgeRepository:
             entity.content = content
         if project_id is not None:
             entity.project_id = project_id
-        entity.updated_at = datetime.now(UTC)
+        entity.updated_at = datetime.now(UTC).replace(tzinfo=None)
         self._session.add(entity)
         await self._session.flush()
         return entity
@@ -255,7 +255,7 @@ class KnowledgeRepository:
         result = await self._session.execute(stmt)
         if result.scalar_one_or_none() is not None:
             raise BadRequestError("Already upvoted")
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         upvote = KnowledgeUpvote(
             knowledge_id=knowledge_id,
             user_id=user_id,
@@ -284,7 +284,7 @@ class KnowledgeRepository:
         )
         result = await self._session.execute(stmt)
         existing = list(result.scalars().all())
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         for lbl_entity in existing:
             lbl_entity.deleted_at = now
