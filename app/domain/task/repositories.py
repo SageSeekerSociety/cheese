@@ -219,6 +219,7 @@ class TaskRepository:
         min_team_size: int | None,
         max_team_size: int | None,
         team_locking_policy: str,
+        video_url: str | None = None,
     ) -> Task:
         """Create and persist a new Task row."""
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -247,6 +248,7 @@ class TaskRepository:
             max_team_size=max_team_size,
             reject_reason="",
             team_locking_policy=team_locking_policy,
+            video_url=video_url,
             created_at=now,
             updated_at=now,
             deleted_at=None,

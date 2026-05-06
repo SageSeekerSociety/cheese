@@ -61,6 +61,7 @@ class Task(Base):
     min_team_size: Mapped[int | None] = mapped_column("min_team_size", Integer, nullable=True)
     max_team_size: Mapped[int | None] = mapped_column("max_team_size", Integer, nullable=True)
     reject_reason: Mapped[str] = mapped_column("reject_reason", String, nullable=False, default="")
+    video_url: Mapped[str | None] = mapped_column("video_url", String, nullable=True)
     team_locking_policy: Mapped[str] = mapped_column(
         "team_locking_policy", String(50), nullable=False, default="NO_LOCK"
     )

@@ -198,6 +198,7 @@ def _task_to_api_model(task: Task) -> dict:
         "maxTeamSize": task.max_team_size,
         "teamLockingPolicy": task.team_locking_policy,
         "rejectReason": task.reject_reason,
+        "videoUrl": task.video_url,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -560,6 +561,8 @@ async def _create_task_entity(
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
 
+    video_url = payload.get("videoUrl") or None
+
     topics_raw = payload.get("topics") or []
     topics: list[int] = []
     if isinstance(topics_raw, list):
@@ -602,6 +605,7 @@ async def _create_task_entity(
         min_team_size=min_team_size,
         max_team_size=max_team_size,
         team_locking_policy=team_locking_policy,
+        video_url=video_url,
     )
 
     # 简单设置话题关联：先不做复杂校验，仅插入关系行。
@@ -1341,6 +1345,10 @@ async def patch_task(
         task.intro = str(payload["intro"])
     if "description" in payload and payload["description"] is not None:
         task.description = str(payload["description"])
+
+    # 视频链接
+    if "videoUrl" in payload:
+        task.video_url = payload["videoUrl"] if payload["videoUrl"] else None
 
     # 布尔开关
     if "resubmittable" in payload and payload["resubmittable"] is not None:
