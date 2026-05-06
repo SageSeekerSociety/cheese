@@ -207,7 +207,7 @@ async def toggle_reaction(
         reaction_type_id=reaction_type_id,
         user_id=auth_user.user_id,
     )
-    return {"code": 200, "message": "OK", "data": result}
+    return {"code": 200, "message": "OK", "data": {"reaction": result}}
 
 
 @router.delete(
@@ -227,4 +227,4 @@ async def remove_reaction(
         reaction_type_id=reaction_type_id,
         user_id=auth_user.user_id,
     )
-    return {"code": 200, "message": "OK", "data": result}
+    return {"code": 200, "message": "OK", "data": {"reaction": result}}

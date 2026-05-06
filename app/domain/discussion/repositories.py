@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, func, select
@@ -9,6 +10,20 @@ from app.domain.discussion.models import (
     DiscussionReaction,
     ReactionType,
 )
+
+
+def _content_str_to_json(content: str) -> dict:
+    """Parse TipTap JSON string; fall back to wrapping as plain text doc."""
+    try:
+        parsed = json.loads(content)
+    except (ValueError, TypeError):
+        parsed = None
+    if isinstance(parsed, dict):
+        return parsed
+    return {
+        "type": "doc",
+        "content": [{"type": "paragraph", "content": [{"type": "text", "text": content}]}],
+    }
 
 
 class DiscussionRepository:
@@ -26,10 +41,7 @@ class DiscussionRepository:
         mentioned_user_ids: list[int],
     ) -> Discussion:
         now = datetime.now(UTC).replace(tzinfo=None)
-        content_json = {
-            "type": "doc",
-            "content": [{"type": "paragraph", "content": [{"type": "text", "text": content}]}],
-        }
+        content_json = _content_str_to_json(content)
         entity = Discussion(
             model_type=model_type,
             model_id=model_id,
