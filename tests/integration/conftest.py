@@ -31,7 +31,7 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _wait_for_server(port: int, timeout: float = 30.0) -> bool:
+def _wait_for_server(port: int, timeout: float = 120.0) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         try:

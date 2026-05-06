@@ -511,9 +511,7 @@ class TestUserAuthService:
         dto = await service.build_user_dto(user, profile, viewer_id=99)
 
         assert dto["is_follow"] is True
-        repos["follow_repo"].is_following.assert_awaited_once_with(
-            follower_id=99, followee_id=5
-        )
+        repos["follow_repo"].is_following.assert_awaited_once_with(follower_id=99, followee_id=5)
 
     @pytest.mark.anyio
     async def test_build_user_dto_viewer_does_not_follow(self, service, repos) -> None:
@@ -886,9 +884,7 @@ class TestUserRealNameService:
         accessor_user = _user(id=2, username="bob")
         user_repo.get_by_id.side_effect = [_user(id=1), accessor_user]
 
-        logs, page = await service.get_access_logs(
-            target_user_id=1, page_size=10, page_start=None
-        )
+        logs, page = await service.get_access_logs(target_user_id=1, page_size=10, page_start=None)
 
         assert len(logs) == 1
         assert logs[0]["accessor"]["id"] == 2
@@ -1098,9 +1094,7 @@ class TestEmailVerificationService:
         sender.send.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_send_code_existing_but_enough_time_passed(
-        self, service, redis, sender
-    ) -> None:
+    async def test_send_code_existing_but_enough_time_passed(self, service, redis, sender) -> None:
         redis.get.return_value = b"123456"
         redis.ttl.return_value = 500  # 500 < 600 - 60 = 540 -> enough time passed
         sender.send.return_value = True

@@ -51,9 +51,7 @@ class SpaceTopicsService:
         topics = list(result.scalars().all())
         return [_topic_to_dto(t) for t in topics]
 
-    async def search_topics(
-        self, space_id: int, keyword: str, limit: int
-    ) -> list[dict]:
+    async def search_topics(self, space_id: int, keyword: str, limit: int) -> list[dict]:
         """Fuzzy search topics linked to non-deleted tasks in the space.
 
         Mirrors NT `searchTopicsInSpace`: case-insensitive LIKE match, ordered

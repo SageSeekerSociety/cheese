@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,8 +100,7 @@ class SpaceMemberPublishingService:
             items = [
                 item
                 for item in items
-                if (item["pendingParticipantApprovalCount"] > 0)
-                == has_pending_participant_approval
+                if (item["pendingParticipantApprovalCount"] > 0) == has_pending_participant_approval
             ]
         if has_pending_review is not None:
             items = [
@@ -171,8 +170,7 @@ class SpaceMemberPublishingService:
         )
         reviews_by_submission_id = await self._load_reviews_by_submission_id(
             submission_ids=[
-                int(submission.id)
-                for submission in latest_submissions_by_membership_id.values()
+                int(submission.id) for submission in latest_submissions_by_membership_id.values()
             ]
         )
 
@@ -244,9 +242,7 @@ class SpaceMemberPublishingService:
             .where(TaskSubmission.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
-        return {
-            int(submission.membership_id): submission for submission in result.scalars().all()
-        }
+        return {int(submission.membership_id): submission for submission in result.scalars().all()}
 
     async def _load_reviews_by_submission_id(
         self,
@@ -261,9 +257,7 @@ class SpaceMemberPublishingService:
             TaskSubmissionReview.submission_id.in_(submission_ids),
         )
         result = await self._session.execute(stmt)
-        return {
-            int(review.submission_id): review for review in result.scalars().all()
-        }
+        return {int(review.submission_id): review for review in result.scalars().all()}
 
     def _build_task_item(
         self,
@@ -359,7 +353,7 @@ class SpaceMemberPublishingService:
     def _to_timestamp_ms(value: datetime | None) -> int | None:
         if value is None:
             return None
-        return int(value.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        return int(value.replace(tzinfo=UTC).timestamp() * 1000)
 
     @staticmethod
     def _parse_timestamp_param(value: int | None, field_name: str) -> datetime | None:
@@ -370,7 +364,7 @@ class SpaceMemberPublishingService:
 
         epoch_value = value / 1000 if value >= 10**11 else value
         try:
-            return datetime.fromtimestamp(epoch_value, timezone.utc).replace(tzinfo=None)
+            return datetime.fromtimestamp(epoch_value, UTC).replace(tzinfo=None)
         except (OverflowError, OSError, ValueError) as exc:
             raise BadRequestError(f"{field_name} is not a valid timestamp") from exc
 

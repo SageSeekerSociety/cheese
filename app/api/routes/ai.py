@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
 from app.db.session import get_db
@@ -36,7 +36,7 @@ async def get_chat_service(db=Depends(get_db)) -> AIChatService:
 @router.get("/quota", summary="Get Current User's AI Quota")
 async def get_ai_quota(
     service: AiAdviceService = Depends(get_ai_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     quota = await service.get_quota(user_id=auth_user.user_id)
     return {
@@ -65,7 +65,7 @@ async def list_ai_models(
 async def list_conversations(
     pageStart: int | None = Query(default=None),
     pageSize: int = Query(default=20, ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AIChatService = Depends(get_chat_service),
 ) -> dict:
     convs, page = await service.list_conversations(
@@ -79,7 +79,7 @@ async def list_conversations(
 @router.post("/conversations", summary="Create AI Conversation", status_code=201)
 async def create_conversation(
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AIChatService = Depends(get_chat_service),
 ) -> dict:
     title = payload.get("title")
@@ -95,7 +95,7 @@ async def create_conversation(
 @router.get("/conversations/{conversationId}", summary="Get AI Conversation")
 async def get_conversation(
     conversation_id: Annotated[int, Path(ge=1, alias="conversationId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AIChatService = Depends(get_chat_service),
 ) -> dict:
     conv = await service.get_conversation(
@@ -108,7 +108,7 @@ async def get_conversation(
 @router.delete("/conversations/{conversationId}", summary="Delete AI Conversation", status_code=204)
 async def delete_conversation(
     conversation_id: Annotated[int, Path(ge=1, alias="conversationId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AIChatService = Depends(get_chat_service),
 ) -> None:
     await service.delete_conversation(
@@ -121,7 +121,7 @@ async def delete_conversation(
 async def update_conversation(
     conversation_id: Annotated[int, Path(ge=1, alias="conversationId")],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AIChatService = Depends(get_chat_service),
 ) -> dict:
     title = payload.get("title")
@@ -138,7 +138,7 @@ async def update_conversation(
 @router.post("/chat", summary="Chat with AI")
 async def chat_with_ai(
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AIChatService = Depends(get_chat_service),
 ) -> dict:
     message = payload.get("message")

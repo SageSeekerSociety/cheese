@@ -164,12 +164,12 @@ class TaskMembershipService:
         # 报名窗口校验（已移除 registration_start_at 和 registration_deadline）
         now = datetime.now(UTC).replace(tzinfo=None)
 
-        # 已存在参与记录则拒绝
+        # 已存在参与记录则拒绝（DISAPPROVED 除外，允许重新申请）
         existing = await self.get_membership_by_task_and_member(
             task_id=task.id,
             member_id=member_id,  # type: ignore[arg-type]
         )
-        if existing is not None and existing.deleted_at is None:
+        if existing is not None and existing.deleted_at is None and existing.approved != 1:
             raise BadRequestError("Member already participating in this task.")
 
         # requireRealName：简化为只校验提交者本人
@@ -322,9 +322,9 @@ class TaskMembershipService:
                         }
                     )
 
-            # 已经参与则视为不可再加入。
+            # 已经参与则视为不可再加入（DISAPPROVED 除外）
             existing = await self.get_user_membership(task_id=task.id, user_id=user_id)  # type: ignore[arg-type]
-            if existing is not None:
+            if existing is not None and existing.approved != 1:
                 reasons.append(
                     {
                         "code": "ALREADY_PARTICIPATING",
@@ -389,7 +389,6 @@ class TaskMembershipService:
         )
         teams_status: list[dict] = []
         for membership in team_memberships:
-            approved = membership.approved == 0
             team_size = await self._repo.count_team_members(membership.member_id)
 
             reasons: list[dict] = []
@@ -430,7 +429,9 @@ class TaskMembershipService:
                         }
                     )
 
-            if approved:
+            # 已有 membership 记录（且未软删除）视为已参与
+            # NONE(待审批) 和 APPROVED(已批准) 不可重复加入，DISAPPROVED(已拒绝) 允许重新申请
+            if membership.approved != 1:
                 reasons.append(
                     {
                         "code": "ALREADY_PARTICIPATING",

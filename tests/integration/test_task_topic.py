@@ -5,17 +5,21 @@ import httpx
 import psycopg2
 import pytest
 
+from app.core.config import settings
 from tests.integration.conftest import UserCreator
 
 
+def _get_psycopg2_dsn() -> str:
+    db_url = settings.database_url
+    if db_url.startswith("postgresql+psycopg2://"):
+        return db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
+    elif db_url.startswith("postgresql+asyncpg://"):
+        return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return db_url
+
+
 def create_topics_in_db(topic_names: list[str], created_by: int) -> list[int]:
-    conn = psycopg2.connect(
-        host="localhost",
-        port=5432,
-        user="postgres",
-        password="postgres",
-        database="postgres",
-    )
+    conn = psycopg2.connect(_get_psycopg2_dsn())
     topic_ids = []
     try:
         with conn.cursor() as cur:
@@ -245,16 +249,19 @@ class TestTaskTopicIntegration:
         assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
         task_id = create_resp.json()["data"]["task"]["id"]
 
-        api_client.patch(
+        approve_resp = api_client.patch(
             f"/tasks/{task_id}",
             json={"approved": "APPROVED"},
             headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert approve_resp.status_code == 200, (
+            f"Task approval failed: {approve_resp.status_code}: {approve_resp.text}"
         )
 
         resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": space_id,
+                "space": space_id,
                 "approved": "APPROVED",
                 "topics": [topic_ids[1]],
             },
@@ -269,7 +276,7 @@ class TestTaskTopicIntegration:
         resp2 = api_client.get(
             "/tasks",
             params={
-                "spaceId": space_id,
+                "space": space_id,
                 "approved": "APPROVED",
                 "topics": [topic_ids[0]],
             },

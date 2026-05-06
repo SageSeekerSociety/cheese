@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
 from app.db.session import get_db
@@ -26,7 +26,7 @@ async def get_knowledge_service(db=Depends(get_db)) -> KnowledgeService:
 )
 async def create_knowledge(
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     name = payload.get("name")
@@ -83,7 +83,7 @@ async def list_knowledge(
     pageSize: int = Query(default=20, ge=1, le=200),
     sortBy: str = Query(default="createdAt"),
     sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     _ = auth_user
@@ -132,7 +132,7 @@ async def list_knowledge(
 )
 async def get_knowledge_by_id(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     knowledge = await service.get(knowledge_id=knowledge_id, user_id=auth_user.user_id)
@@ -150,7 +150,7 @@ async def get_knowledge_by_id(
 async def patch_knowledge(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     labels_raw = payload.get("labels")
@@ -182,7 +182,7 @@ async def patch_knowledge(
 )
 async def delete_knowledge(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     await service.delete(knowledge_id=knowledge_id, user_id=auth_user.user_id)
@@ -198,7 +198,7 @@ async def delete_knowledge(
 )
 async def upvote_knowledge(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     try:
@@ -218,7 +218,7 @@ async def upvote_knowledge(
 )
 async def remove_upvote_knowledge(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     knowledge = await service.remove_upvote(knowledge_id=knowledge_id, user_id=auth_user.user_id)

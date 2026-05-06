@@ -205,12 +205,12 @@ class TestPasswordResetService:
         return PasswordResetService(mock_redis)
 
     def test_generate_reset_token(self, reset_service) -> None:
-        token = reset_service.generate_reset_token()
+        token = reset_service.generate_reset_token(username="testuser")
         assert len(token) > 32
 
     @pytest.mark.anyio
     async def test_create_reset_token(self, reset_service, mock_redis) -> None:
-        token = await reset_service.create_reset_token(123, "test@example.com")
+        token = await reset_service.create_reset_token(123, "test@example.com", username="testuser")
         assert token is not None
         mock_redis.hset.assert_called()
         mock_redis.expire.assert_called()

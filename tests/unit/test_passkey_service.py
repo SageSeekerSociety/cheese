@@ -87,9 +87,7 @@ class TestGenerateRegistrationOptions:
         svc, repo = _make_service()
         repo.list_by_user.return_value = []
 
-        result = await svc.generate_registration_options(
-            user_id=42, username="bob"
-        )
+        result = await svc.generate_registration_options(user_id=42, username="bob")
 
         assert result["user"]["displayName"] == "bob"
 
@@ -99,9 +97,7 @@ class TestGenerateRegistrationOptions:
         existing = _cred_entity(credential_id="Y3JlZC0x")
         repo.list_by_user.return_value = [existing]
 
-        result = await svc.generate_registration_options(
-            user_id=42, username="alice"
-        )
+        result = await svc.generate_registration_options(user_id=42, username="alice")
 
         assert len(result["excludeCredentials"]) == 1
 
@@ -129,7 +125,10 @@ class TestVerifyRegistration:
         )
         repo.create.return_value = created_cred
 
-        with patch("app.domain.passkey.services.verify_registration_response", return_value=fake_verification):
+        with patch(
+            "app.domain.passkey.services.verify_registration_response",
+            return_value=fake_verification,
+        ):
             result = await svc.verify_registration(
                 user_id=42,
                 challenge="Y2hhbGxlbmdl",
@@ -170,7 +169,10 @@ class TestVerifyRegistration:
         )
         repo.create.return_value = _cred_entity()
 
-        with patch("app.domain.passkey.services.verify_registration_response", return_value=fake_verification):
+        with patch(
+            "app.domain.passkey.services.verify_registration_response",
+            return_value=fake_verification,
+        ):
             await svc.verify_registration(
                 user_id=42,
                 challenge="Y2hhbGxlbmdl",
@@ -247,7 +249,10 @@ class TestVerifyAuthentication:
 
         fake_verification = SimpleNamespace(new_sign_count=6)
 
-        with patch("app.domain.passkey.services.verify_authentication_response", return_value=fake_verification):
+        with patch(
+            "app.domain.passkey.services.verify_authentication_response",
+            return_value=fake_verification,
+        ):
             user_id = await svc.verify_authentication(
                 challenge="Y2hhbGxlbmdl",
                 credential={"id": "Y3JlZC1pZA", "response": {}},
@@ -267,7 +272,10 @@ class TestVerifyAuthentication:
         repo.get_by_credential_id.return_value = stored
         fake_verification = SimpleNamespace(new_sign_count=1)
 
-        with patch("app.domain.passkey.services.verify_authentication_response", return_value=fake_verification):
+        with patch(
+            "app.domain.passkey.services.verify_authentication_response",
+            return_value=fake_verification,
+        ):
             await svc.verify_authentication(
                 challenge="Y2hhbGxlbmdl",
                 credential={"rawId": "cmF3LWlk", "response": {}},

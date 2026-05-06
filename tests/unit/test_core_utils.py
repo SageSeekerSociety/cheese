@@ -380,10 +380,10 @@ def test_histogram_observe_bucket_assignment():
     from app.core.metrics import Histogram
 
     h = Histogram(name="test_hist", buckets=[1.0, 5.0, 10.0])
-    h.observe(0.5)   # bucket 0 (<=1.0)
-    h.observe(1.0)   # bucket 0 (<=1.0)
-    h.observe(3.0)   # bucket 1 (<=5.0)
-    h.observe(7.0)   # bucket 2 (<=10.0)
+    h.observe(0.5)  # bucket 0 (<=1.0)
+    h.observe(1.0)  # bucket 0 (<=1.0)
+    h.observe(3.0)  # bucket 1 (<=5.0)
+    h.observe(7.0)  # bucket 2 (<=10.0)
     h.observe(99.0)  # overflow bucket (+Inf)
 
     # _counts has len(buckets)+1 entries

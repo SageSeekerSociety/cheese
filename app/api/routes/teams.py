@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
-from app.auth.checker import get_auth_user, require_permission
+from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
@@ -171,7 +171,7 @@ async def get_teams(
     summary="Query My Teams",
 )
 async def get_my_teams(
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TeamService = Depends(get_team_service),
 ) -> dict:
     teams = await service.get_teams_of_user(user_id=auth_user.user_id)
@@ -193,7 +193,7 @@ async def get_my_teams(
 async def get_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: TeamService = Depends(get_team_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     team = await service.get_team(team_id=team_id)
     if team is None:
@@ -245,7 +245,7 @@ async def get_team_members(
 )
 async def create_team(
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TeamService = Depends(get_team_service),
 ) -> dict:
     name = payload.get("name")
@@ -341,7 +341,7 @@ async def delete_team(
 async def delete_team_member(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TeamService = Depends(get_team_service),
 ) -> Response:
     await service.remove_team_member(
@@ -584,7 +584,7 @@ async def cancel_team_invitation(
 async def create_team_join_request_via_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> dict:
     message = payload.get("message")
@@ -610,7 +610,7 @@ async def create_team_join_request_via_team(
 async def create_team_request_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> dict:
     return await create_team_join_request_via_team(

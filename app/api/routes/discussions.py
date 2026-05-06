@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError
 from app.db.session import get_db
@@ -39,7 +39,7 @@ async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
 @router.post("", summary="Create Discussion", status_code=201)
 async def create_discussion(
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if auth_user.user_id == 0:
@@ -79,7 +79,7 @@ async def list_discussions(
     sortOrder: str = Query(default="desc"),
     withReactions: bool = Query(default=True),
     withSubDiscussions: bool = Query(default=True),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if sortBy not in {"createdAt", "updatedAt"}:
@@ -120,7 +120,7 @@ async def list_reaction_types(
 @router.get("/{discussionId}", summary="Get Discussion")
 async def get_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     discussion = await service.get_discussion(discussion_id, auth_user.user_id)
@@ -131,7 +131,7 @@ async def get_discussion(
 async def patch_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if auth_user.user_id == 0:
@@ -152,7 +152,7 @@ async def list_sub_discussions(
     pageSize: int = Query(default=20, ge=1, le=100),
     sortBy: str = Query(default="createdAt"),
     sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if sortBy not in {"createdAt", "updatedAt"}:
@@ -177,7 +177,7 @@ async def list_sub_discussions(
 @router.delete("/{discussionId}", summary="Delete Discussion", status_code=204)
 async def delete_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> None:
     if auth_user.user_id == 0:
@@ -197,7 +197,7 @@ async def delete_discussion(
 async def toggle_reaction(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
     reaction_type_id: Annotated[int, Path(ge=1, alias="reactionTypeId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if auth_user.user_id == 0:
@@ -217,7 +217,7 @@ async def toggle_reaction(
 async def remove_reaction(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
     reaction_type_id: Annotated[int, Path(ge=1, alias="reactionTypeId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if auth_user.user_id == 0:

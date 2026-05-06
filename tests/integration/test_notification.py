@@ -4,19 +4,23 @@ import httpx
 import psycopg2
 import pytest
 
+from app.core.config import settings
 from tests.integration.conftest import UserCreator
+
+
+def _get_psycopg2_dsn() -> str:
+    db_url = settings.database_url
+    if db_url.startswith("postgresql+psycopg2://"):
+        return db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
+    elif db_url.startswith("postgresql+asyncpg://"):
+        return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return db_url
 
 
 def create_notifications_in_db(
     receiver_id: int, count: int = 3, notification_type: str = "MENTION", read: bool = False
 ) -> list[int]:
-    conn = psycopg2.connect(
-        host="localhost",
-        port=5432,
-        user="postgres",
-        password="postgres",
-        database="postgres",
-    )
+    conn = psycopg2.connect(_get_psycopg2_dsn())
     notification_ids = []
     try:
         with conn.cursor() as cur:
@@ -55,13 +59,7 @@ def create_notifications_in_db(
 def delete_notifications_in_db(notification_ids: list[int]) -> None:
     if not notification_ids:
         return
-    conn = psycopg2.connect(
-        host="localhost",
-        port=5432,
-        user="postgres",
-        password="postgres",
-        database="postgres",
-    )
+    conn = psycopg2.connect(_get_psycopg2_dsn())
     try:
         with conn.cursor() as cur:
             cur.execute(

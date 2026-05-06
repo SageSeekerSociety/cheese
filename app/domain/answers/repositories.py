@@ -255,18 +255,15 @@ class AnswerRepository:
         return [r[0] for r in result.all()]
 
     async def list_by_user(
-        self, *, user_id: int, limit: int, offset: int
+        self, *, user_id: int, limit: int, cursor: int | None = None
     ) -> tuple[Sequence[Answer], int]:
-        stmt = (
-            select(Answer)
-            .where(
-                Answer.created_by_id == user_id,
-                Answer.deleted_at.is_(None),
-            )
-            .order_by(Answer.id.asc())
-            .limit(limit)
-            .offset(offset)
+        stmt = select(Answer).where(
+            Answer.created_by_id == user_id,
+            Answer.deleted_at.is_(None),
         )
+        if cursor is not None:
+            stmt = stmt.where(Answer.id >= cursor)
+        stmt = stmt.order_by(Answer.id.asc()).limit(limit)
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
 

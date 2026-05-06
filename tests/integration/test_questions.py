@@ -288,7 +288,7 @@ class TestQuestionsListByUserIntegration:
         response = self.client.get(
             f"/users/{self.user.user_id}/questions",
             headers=self.headers,
-            params={"page_size": 2},
+            params={"pageSize": 2},
         )
         assert response.status_code == 200
         data = response.json()
@@ -613,7 +613,7 @@ class TestQuestionsFollowIntegration:
         response = self.client.get(
             f"/users/{self.user.user_id}/follow/questions",
             headers=self.headers,
-            params={"page_size": 2},
+            params={"pageSize": 2},
         )
         assert response.status_code == 200
         data = response.json()

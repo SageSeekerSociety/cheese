@@ -1,3 +1,4 @@
+import json
 from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,8 +10,6 @@ from app.domain.discussion.repositories import DiscussionRepository, _content_st
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import publish_notification_event
 from app.domain.user.repositories import UserProfileRepository
-
-import json
 
 
 class DiscussionService:

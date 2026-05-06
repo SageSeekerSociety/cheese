@@ -1155,9 +1155,7 @@ class TestListFollowers:
         repo.get_by_id.return_value = _question(id=10)
         repo.list_followers.return_value = ([42, 43], 5)
 
-        follower_ids, page = await svc.list_followers(
-            question_id=10, page_size=2, page_start=0
-        )
+        follower_ids, page = await svc.list_followers(question_id=10, page_size=2, page_start=0)
 
         assert follower_ids == [42, 43]
         assert page["pageStart"] == 0
@@ -1172,9 +1170,7 @@ class TestListFollowers:
         repo.get_by_id.return_value = _question(id=10)
         repo.list_followers.return_value = ([45], 5)
 
-        follower_ids, page = await svc.list_followers(
-            question_id=10, page_size=10, page_start=4
-        )
+        follower_ids, page = await svc.list_followers(question_id=10, page_size=10, page_start=4)
 
         assert page["hasMore"] is False
         assert page["nextStart"] is None
@@ -1185,9 +1181,7 @@ class TestListFollowers:
         repo.get_by_id.return_value = _question(id=10)
         repo.list_followers.return_value = ([], 0)
 
-        follower_ids, page = await svc.list_followers(
-            question_id=10, page_size=10, page_start=None
-        )
+        follower_ids, page = await svc.list_followers(question_id=10, page_size=10, page_start=None)
 
         assert follower_ids == []
         assert page["hasMore"] is False

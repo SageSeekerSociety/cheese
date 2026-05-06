@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
@@ -65,7 +65,7 @@ def _validate_color_code(value: str | None) -> str:
 async def create_project(
     payload: dict,
     service: ProjectService = Depends(get_project_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
@@ -139,7 +139,7 @@ async def patch_project(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     payload: dict,
     service: ProjectService = Depends(get_project_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
@@ -183,7 +183,7 @@ async def patch_project(
 async def delete_project(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     service: ProjectService = Depends(get_project_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
@@ -249,7 +249,7 @@ async def get_project_members(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     page_start: str | None = Query(default=None, alias="pageStart"),
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
 ) -> dict:
     _ = auth_user
@@ -282,7 +282,7 @@ async def get_project_members(
 async def add_project_member(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
 ) -> dict:
     _ = auth_user
@@ -316,7 +316,7 @@ async def add_project_member(
 async def delete_project_member(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
 ) -> None:
     _ = auth_user

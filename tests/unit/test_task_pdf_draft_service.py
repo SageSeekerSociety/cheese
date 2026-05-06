@@ -27,7 +27,7 @@ class _FakeLLMClient:
 @pytest.mark.anyio
 async def test_generate_payload_from_text_merges_template_and_llm_result() -> None:
     llm = _FakeLLMClient(
-        '{"task":{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}}'
+        '{"tasks":[{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}]}'
     )
     quota_service = SimpleNamespace(
         pre_check_and_reserve=AsyncMock(return_value=True),
@@ -49,11 +49,13 @@ async def test_generate_payload_from_text_merges_template_and_llm_result() -> No
     assert payload["space"] == 7
     assert payload["categoryId"] == 9
     assert payload["submitterType"] == "TEAM"
-    assert payload["editable"] is False
-    assert payload["resubmittable"] is False
-    assert payload["defaultDeadline"] == 45
-    assert payload["minTeamSize"] == 2
-    assert payload["maxTeamSize"] == 5
+    # System-filled defaults: editable/resubmittable/defaultDeadline 等
+    # 由服务硬编码，不从 LLM 或 template 读取
+    assert payload["editable"] is True
+    assert payload["resubmittable"] is True
+    assert payload["defaultDeadline"] == 365
+    assert payload["minTeamSize"] == 1
+    assert payload["maxTeamSize"] == 3
     quota_service.pre_check_and_reserve.assert_awaited_once()
     quota_service.consume_tokens.assert_awaited_once()
 
@@ -61,7 +63,7 @@ async def test_generate_payload_from_text_merges_template_and_llm_result() -> No
 @pytest.mark.anyio
 async def test_generate_payload_from_text_respects_forced_submitter_type() -> None:
     llm = _FakeLLMClient(
-        '{"task":{"name":"比赛","intro":"介绍","description":"详情","submitterType":"USER"}}'
+        '{"tasks":[{"name":"比赛","intro":"介绍","description":"详情","submitterType":"USER"}]}'
     )
     service = TaskPdfDraftService(llm_client=llm, quota_service=None)
 
@@ -79,7 +81,7 @@ async def test_generate_payload_from_text_respects_forced_submitter_type() -> No
 
 @pytest.mark.anyio
 async def test_generate_payload_from_text_requires_required_fields() -> None:
-    llm = _FakeLLMClient('{"task":{"intro":"只有介绍","description":"只有详情"}}')
+    llm = _FakeLLMClient('{"tasks":[{"intro":"只有介绍","description":"只有详情"}]}')
     service = TaskPdfDraftService(llm_client=llm, quota_service=None)
 
     with pytest.raises(BadRequestError, match="missing required field: name"):

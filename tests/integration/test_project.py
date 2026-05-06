@@ -51,7 +51,7 @@ class TestProjectIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
         data = resp.json()["data"]["project"]
         assert data["name"] == "Test Project"
 
@@ -101,7 +101,7 @@ class TestProjectIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201
         project_id = create_resp.json()["data"]["project"]["id"]
 
         resp = api_client.patch(
@@ -136,7 +136,7 @@ class TestProjectIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201
         project_id = create_resp.json()["data"]["project"]["id"]
 
         resp = api_client.delete(

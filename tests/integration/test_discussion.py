@@ -66,9 +66,8 @@ class TestDiscussionIntegration:
         )
         assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
         data = resp.json()["data"]["discussion"]
-        content = data["content"]
-        assert content["type"] == "doc"
-        assert content["content"][0]["content"][0]["text"] == "This is a test discussion comment."
+        # content is stored as a string (plain text or JSON serialized string)
+        assert "This is a test discussion comment." in data["content"]
 
     def test_create_nested_discussion(self, setup_discussion: dict, api_client: httpx.Client):
         creator = setup_discussion["creator"]
@@ -187,7 +186,9 @@ class TestDiscussionIntegration:
         )
         assert resp.status_code == 200, f"Toggle reaction failed: {resp.text}"
         data = resp.json()["data"]
-        assert "active" in data and "summary" in data
+        # NT DiscussionReactionSummary: {reaction: {reactionType, count, hasReacted}}
+        assert "reaction" in data
+        assert data["reaction"]["hasReacted"] is True
 
     def test_remove_reaction(self, setup_discussion: dict, api_client: httpx.Client):
         creator = setup_discussion["creator"]
@@ -213,5 +214,6 @@ class TestDiscussionIntegration:
         )
         assert resp.status_code == 200, f"Remove reaction failed: {resp.text}"
         data = resp.json()["data"]
-        assert "removed" in data and "summary" in data
-        assert data["removed"] is True
+        # NT DiscussionReactionSummary: {reaction: {reactionType, count, hasReacted}}
+        assert "reaction" in data
+        assert data["reaction"]["hasReacted"] is False

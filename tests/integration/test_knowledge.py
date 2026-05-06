@@ -47,7 +47,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
         data = resp.json()["data"]["knowledge"]
         assert data["name"] == knowledge_name
         assert data["teamId"] == team_id
@@ -68,7 +68,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         resp = api_client.get(
@@ -128,7 +128,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         updated_name = "Updated Knowledge Name"
@@ -166,7 +166,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         resp = api_client.delete(
@@ -223,7 +223,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         resp = api_client.patch(
