@@ -887,7 +887,7 @@ class TestUserProfile:
         response = self.client.get(
             "/users",
             headers=self.headers,
-            params={"page_size": 2},
+            params={"pageSize": 2},
         )
         assert response.status_code == 200
         data = response.json()

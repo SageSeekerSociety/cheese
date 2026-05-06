@@ -128,8 +128,10 @@ class TestReactionServiceToggle:
 
         result = await svc.toggle(discussion_id=10, user_id=5, reaction_type_id=1)
 
-        assert result["active"] is True
-        assert isinstance(result["summary"], list)
+        # NT DiscussionReactionSummary: {reactionType, count, hasReacted}
+        assert result["hasReacted"] is True
+        assert result["count"] == 3
+        assert result["reactionType"]["id"] == 1
         r_repo.toggle.assert_awaited_once_with(
             discussion_id=10,
             user_id=5,
@@ -142,11 +144,12 @@ class TestReactionServiceToggle:
         rt_repo.get_by_id.return_value = _make_reaction_type(id=1)
         r_repo.toggle.return_value = None  # toggled off
         r_repo.count_by_discussion.return_value = {}
+        r_repo.has_user_reacted.return_value = False
         rt_repo.list_active.return_value = [_make_reaction_type(id=1)]
 
         result = await svc.toggle(discussion_id=10, user_id=5, reaction_type_id=1)
 
-        assert result["active"] is False
+        assert result["hasReacted"] is False
 
     @pytest.mark.anyio
     async def test_toggle_unknown_type_raises_not_found(self):
@@ -169,12 +172,14 @@ class TestReactionServiceRemove:
         rt_repo.get_by_id.return_value = _make_reaction_type(id=1)
         r_repo.remove.return_value = True
         r_repo.count_by_discussion.return_value = {}
+        r_repo.has_user_reacted.return_value = False
         rt_repo.list_active.return_value = [_make_reaction_type(id=1)]
 
         result = await svc.remove(discussion_id=10, user_id=5, reaction_type_id=1)
 
-        assert result["removed"] is True
-        assert isinstance(result["summary"], list)
+        # NT DiscussionReactionSummary: {reactionType, count, hasReacted}
+        assert result["hasReacted"] is False
+        assert result["reactionType"]["id"] == 1
         r_repo.remove.assert_awaited_once_with(
             discussion_id=10,
             user_id=5,
@@ -187,11 +192,12 @@ class TestReactionServiceRemove:
         rt_repo.get_by_id.return_value = _make_reaction_type(id=1)
         r_repo.remove.return_value = False
         r_repo.count_by_discussion.return_value = {}
+        r_repo.has_user_reacted.return_value = False
         rt_repo.list_active.return_value = [_make_reaction_type(id=1)]
 
         result = await svc.remove(discussion_id=10, user_id=5, reaction_type_id=1)
 
-        assert result["removed"] is False
+        assert result["hasReacted"] is False
 
     @pytest.mark.anyio
     async def test_remove_unknown_type_raises_not_found(self):
@@ -219,17 +225,18 @@ class TestReactionServiceGetSummary:
 
         result = await svc.get_reaction_summary(discussion_id=10, current_user_id=7)
 
+        # NT DiscussionReactionSummary: [{reactionType: {id, code, ...}, count, hasReacted}]
         assert len(result) == 2
         like_entry = result[0]
-        assert like_entry["reactionTypeId"] == 1
-        assert like_entry["code"] == "LIKE"
+        assert like_entry["reactionType"]["id"] == 1
+        assert like_entry["reactionType"]["code"] == "LIKE"
         assert like_entry["count"] == 5
-        assert like_entry["reacted"] is True
+        assert like_entry["hasReacted"] is True
 
         cheers_entry = result[1]
-        assert cheers_entry["reactionTypeId"] == 2
+        assert cheers_entry["reactionType"]["id"] == 2
         assert cheers_entry["count"] == 0
-        assert cheers_entry["reacted"] is False  # count=0, no check needed
+        assert cheers_entry["hasReacted"] is False  # count=0, no check needed
 
     @pytest.mark.anyio
     async def test_summary_without_user_sets_reacted_false(self):
@@ -237,10 +244,11 @@ class TestReactionServiceGetSummary:
         like = _make_reaction_type(id=1)
         rt_repo.list_active.return_value = [like]
         r_repo.count_by_discussion.return_value = {1: 3}
+        r_repo.has_user_reacted.return_value = False
 
         result = await svc.get_reaction_summary(discussion_id=10, current_user_id=None)
 
-        assert result[0]["reacted"] is False
+        assert result[0]["hasReacted"] is False
         r_repo.has_user_reacted.assert_not_awaited()
 
     @pytest.mark.anyio
@@ -253,7 +261,7 @@ class TestReactionServiceGetSummary:
 
         result = await svc.get_reaction_summary(discussion_id=10, current_user_id=7)
 
-        assert result[0]["reacted"] is False
+        assert result[0]["hasReacted"] is False
 
     @pytest.mark.anyio
     async def test_summary_empty_when_no_active_types(self):
@@ -292,6 +300,7 @@ class TestReactionServiceListTypes:
             "name": "Like",
             "description": "thumbs up",
             "displayOrder": 0,
+            "isActive": True,
         }
         assert result[1] == {
             "id": 2,
@@ -299,6 +308,7 @@ class TestReactionServiceListTypes:
             "name": "Cheers",
             "description": "celebration",
             "displayOrder": 1,
+            "isActive": True,
         }
 
     @pytest.mark.anyio
@@ -330,6 +340,7 @@ class TestReactionTypeToDict:
             "name": "Heart",
             "description": "love",
             "displayOrder": 5,
+            "isActive": True,
         }
 
     def test_none_description(self):
