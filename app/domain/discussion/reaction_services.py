@@ -29,17 +29,22 @@ class DiscussionReactionService:
         reaction_type = await self._reaction_type_repo.get_by_id(reaction_type_id)
         if reaction_type is None:
             raise NotFoundError("reaction type not found", data={"id": reaction_type_id})
-        result = await self._reaction_repo.toggle(
+        await self._reaction_repo.toggle(
             discussion_id=discussion_id,
             user_id=user_id,
             reaction_type_id=reaction_type_id,
         )
-        active = result is not None
-        summary = await self.get_reaction_summary(
+        counts = await self._reaction_repo.count_by_discussion(discussion_id)
+        has_reacted = await self._reaction_repo.has_user_reacted(
             discussion_id=discussion_id,
-            current_user_id=user_id,
+            user_id=user_id,
+            reaction_type_id=reaction_type_id,
         )
-        return {"active": active, "summary": summary}
+        return {
+            "reactionType": self._reaction_type_to_dict(reaction_type),
+            "count": counts.get(reaction_type_id, 0),
+            "hasReacted": has_reacted,
+        }
 
     async def remove(
         self,
@@ -52,16 +57,22 @@ class DiscussionReactionService:
         reaction_type = await self._reaction_type_repo.get_by_id(reaction_type_id)
         if reaction_type is None:
             raise NotFoundError("reaction type not found", data={"id": reaction_type_id})
-        removed = await self._reaction_repo.remove(
+        await self._reaction_repo.remove(
             discussion_id=discussion_id,
             user_id=user_id,
             reaction_type_id=reaction_type_id,
         )
-        summary = await self.get_reaction_summary(
+        counts = await self._reaction_repo.count_by_discussion(discussion_id)
+        has_reacted = await self._reaction_repo.has_user_reacted(
             discussion_id=discussion_id,
-            current_user_id=user_id,
+            user_id=user_id,
+            reaction_type_id=reaction_type_id,
         )
-        return {"removed": removed, "summary": summary}
+        return {
+            "reactionType": self._reaction_type_to_dict(reaction_type),
+            "count": counts.get(reaction_type_id, 0),
+            "hasReacted": has_reacted,
+        }
 
     async def get_reaction_summary(
         self,
@@ -84,12 +95,9 @@ class DiscussionReactionService:
                 )
             summaries.append(
                 {
-                    "reactionTypeId": rt.id,
-                    "code": rt.code,
-                    "name": rt.name,
-                    "description": rt.description,
+                    "reactionType": self._reaction_type_to_dict(rt),
                     "count": total,
-                    "reacted": active,
+                    "hasReacted": active,
                 }
             )
         return summaries
@@ -107,4 +115,5 @@ class DiscussionReactionService:
             "name": rt.name,
             "description": rt.description,
             "displayOrder": rt.display_order,
+            "isActive": rt.is_active,
         }

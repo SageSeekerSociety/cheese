@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Annotated
 
@@ -33,12 +34,20 @@ _logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/spaces", tags=["Spaces"])
 
 
-def _expect_list(value: list | None, field: str) -> list:
+def _expect_list(value: list | str | None, field: str) -> list:
     if value is None:
         return []
-    if not isinstance(value, list):
-        raise BadRequestError(f"{field} must be a list")
-    return value
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise BadRequestError(f"{field} must be a valid JSON array") from exc
+        if isinstance(parsed, list):
+            return parsed
+        raise BadRequestError(f"{field} must be a JSON array")
+    raise BadRequestError(f"{field} must be a list or a JSON array string")
 
 
 async def get_space_service(db=Depends(get_db)) -> SpaceService:
