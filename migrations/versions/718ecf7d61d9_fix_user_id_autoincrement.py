@@ -1,7 +1,7 @@
 """fix_user_id_autoincrement
 
 Revision ID: 718ecf7d61d9
-Revises: c3a1b2d4e5f6
+Revises: 99da558b24a8
 Create Date: 2026-05-02 19:41:04.971810
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "718ecf7d61d9"
-down_revision: str | Sequence[str] | None = "c3a1b2d4e5f6"
+down_revision: str | Sequence[str] | None = "99da558b24a8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
