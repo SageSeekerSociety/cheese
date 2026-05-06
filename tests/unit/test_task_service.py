@@ -1191,7 +1191,8 @@ class TestTaskMembershipServiceAdditional:
         assert result["user"] is None
         assert result["teams"] is not None
         assert len(result["teams"]) == 1
-        assert result["teams"][0]["eligibility"]["eligible"] is True
+        # Team already has a membership (pending approval), so not eligible to re-join
+        assert result["teams"][0]["eligibility"]["eligible"] is False
         assert result["teams"][0]["team"]["id"] == 99
 
     @pytest.mark.anyio
