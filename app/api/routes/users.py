@@ -572,8 +572,8 @@ async def get_followees(
 )
 async def get_user_followed_questions(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -607,10 +607,10 @@ async def get_user_followed_questions(
     has_more = offset + returned < total
     next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "page_start": offset,
-        "page_size": returned,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
         "total": total,
     }
     return {
@@ -629,8 +629,8 @@ async def get_user_followed_questions(
 )
 async def get_user_questions(
     user_id: Annotated[int, Path(alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -670,10 +670,10 @@ async def get_user_questions(
     has_more = offset + returned < total
     next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "page_start": offset,
-        "page_size": returned,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
         "total": total,
     }
     return {
@@ -692,8 +692,8 @@ async def get_user_questions(
 )
 async def get_user_answers(
     user_id: Annotated[int, Path(alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -707,11 +707,21 @@ async def get_user_answers(
     answer_repo = AnswerRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
 
-    offset = page_start or 0
-    if offset < 0:
-        offset = 0
+    all_ids = await answer_repo.list_all_answer_ids_by_user(user_id)
 
-    rows, total = await answer_repo.list_by_user(user_id=user_id, limit=page_size, offset=offset)
+    if page_start is not None:
+        try:
+            start_idx = all_ids.index(page_start)
+        except ValueError:
+            start_idx = 0
+    else:
+        start_idx = 0
+
+    end_idx = start_idx + page_size
+    page_ids = all_ids[start_idx:end_idx]
+
+    cursor = page_start if page_start else (all_ids[0] if all_ids else None)
+    rows, total = await answer_repo.list_by_user(user_id=user_id, limit=page_size, cursor=cursor)
 
     profile = await profile_repo.get_profile_by_user_id(user_id)
     sender = None
@@ -739,13 +749,15 @@ async def get_user_answers(
         answers.append(dto)
 
     returned = len(answers)
-    has_more = offset + returned < total
-    next_start = offset + returned if has_more and returned > 0 else None
+    has_more = end_idx < len(all_ids)
+    next_start = all_ids[end_idx] if has_more else 0
+
+    first_id = page_ids[0] if page_ids else 0
     page = {
-        "page_start": offset,
-        "page_size": returned,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": first_id,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
         "total": total,
     }
     return {
@@ -2235,8 +2247,8 @@ async def recover_password_verify(
 )
 async def get_user_favorite_questions(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -2270,10 +2282,10 @@ async def get_user_favorite_questions(
     has_more = offset + returned < total
     next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "page_start": offset,
-        "page_size": returned,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
         "total": total,
     }
     return {
@@ -2292,8 +2304,8 @@ async def get_user_favorite_questions(
 )
 async def get_user_favorite_answers(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -2333,10 +2345,10 @@ async def get_user_favorite_answers(
     has_more = offset + returned < total
     next_start = offset + returned if has_more and returned > 0 else None
     page = {
-        "page_start": offset,
-        "page_size": returned,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": has_more,
+        "nextStart": next_start,
         "total": total,
     }
     return {
@@ -2394,8 +2406,8 @@ async def update_user_settings(
 )
 async def list_users(
     q: str | None = Query(default=None),
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -2437,10 +2449,10 @@ async def list_users(
 
     returned = len(users)
     page = {
-        "page_start": offset,
-        "page_size": returned,
-        "has_more": returned == page_size,
-        "next_start": offset + returned if returned == page_size else None,
+        "pageStart": offset,
+        "pageSize": returned,
+        "hasMore": returned == page_size,
+        "nextStart": offset + returned if returned == page_size else None,
     }
     return {
         "code": 200,

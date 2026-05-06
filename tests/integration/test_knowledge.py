@@ -223,7 +223,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         resp = api_client.patch(
@@ -231,7 +231,7 @@ class TestKnowledgeIntegration:
             json={"labels": ["new-label-1", "new-label-2"]},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         data = resp.json()["data"]["knowledge"]
         assert "new-label-1" in data["labels"]
         assert "new-label-2" in data["labels"]

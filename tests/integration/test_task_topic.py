@@ -258,7 +258,7 @@ class TestTaskTopicIntegration:
         resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": space_id,
+                "space": space_id,
                 "approved": "APPROVED",
                 "topics": [topic_ids[1]],
             },
@@ -273,7 +273,7 @@ class TestTaskTopicIntegration:
         resp2 = api_client.get(
             "/tasks",
             params={
-                "spaceId": space_id,
+                "space": space_id,
                 "approved": "APPROVED",
                 "topics": [topic_ids[0]],
             },

@@ -1190,7 +1190,7 @@ class TestTaskSubmissionIntegration:
             teams = eligibility.get("teams", [])
             team_status = next((t for t in teams if t.get("team", {}).get("id") == team_id), None)
             if team_status:
-                assert team_status["eligibility"]["eligible"] is True
+                assert team_status["eligibility"]["eligible"] is False
                 reasons = team_status["eligibility"].get("reasons", [])
                 assert any(r.get("code") == "ALREADY_PARTICIPATING" for r in reasons)
 
