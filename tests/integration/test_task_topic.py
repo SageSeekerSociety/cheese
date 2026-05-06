@@ -249,10 +249,13 @@ class TestTaskTopicIntegration:
         assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
         task_id = create_resp.json()["data"]["task"]["id"]
 
-        api_client.patch(
+        approve_resp = api_client.patch(
             f"/tasks/{task_id}",
             json={"approved": "APPROVED"},
             headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert approve_resp.status_code == 200, (
+            f"Task approval failed: {approve_resp.status_code}: {approve_resp.text}"
         )
 
         resp = api_client.get(

@@ -61,10 +61,13 @@ class TestTaskSubmissionReviewIntegration:
         assert task_resp.status_code == 200, f"Task creation failed: {task_resp.text}"
         task_id = task_resp.json()["data"]["task"]["id"]
 
-        api_client.patch(
+        approve_resp = api_client.patch(
             f"/tasks/{task_id}",
             json={"approved": "APPROVED"},
             headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert approve_resp.status_code == 200, (
+            f"Task approval failed: {approve_resp.status_code}: {approve_resp.text}"
         )
 
         join_resp = api_client.post(
@@ -76,10 +79,13 @@ class TestTaskSubmissionReviewIntegration:
         assert join_resp.status_code == 200, f"Join task failed: {join_resp.text}"
         membership_id = join_resp.json()["data"]["participant"]["id"]
 
-        api_client.patch(
+        approve_member_resp = api_client.patch(
             f"/tasks/{task_id}/participants/{membership_id}",
             json={"approved": "APPROVED"},
             headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert approve_member_resp.status_code == 200, (
+            f"Member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"
         )
 
         submit_resp = api_client.post(
