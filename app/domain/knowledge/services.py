@@ -25,7 +25,7 @@ class KnowledgeService:
         *,
         name: str,
         type_: str,
-        content: dict,
+        content,
         description: str | None,
         team_id: int,
         created_by: int,
@@ -113,7 +113,7 @@ class KnowledgeService:
         user_id: int,
         name: str | None = None,
         description: str | None = None,
-        content: dict | None = None,
+        content=None,
         labels: list[str] | None = None,
     ) -> dict:
         entity = await self._repo.get_by_id(knowledge_id)

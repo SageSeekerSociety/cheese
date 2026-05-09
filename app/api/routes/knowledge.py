@@ -39,15 +39,20 @@ async def create_knowledge(
 ) -> dict:
     name = payload.get("name")
     type_raw = payload.get("type", "TEXT")
-    content = payload.get("content") or {}
+    content = payload.get("content")
     description = payload.get("description")
     team_id = payload.get("teamId")
     if not isinstance(team_id, int) or team_id <= 0:
         raise BadRequestError("teamId must be a positive integer")
     if not isinstance(name, str) or not name.strip():
         raise BadRequestError("name is required")
-    if not isinstance(content, dict):
-        raise BadRequestError("content must be an object")
+    # Frontend's CreateKnowledgeRequest types content as `string` (and reads
+    # it back via JSON.parse), matching NT KnowledgeEntity.content: String?.
+    # Allow string, dict, or list — JSONB stores any JSON value verbatim.
+    if content is None:
+        content = ""
+    if not isinstance(content, (str, dict, list)):
+        raise BadRequestError("content must be a string, object, or array")
     type_str = str(type_raw).upper()
     if type_str not in {"MATERIAL", "LINK", "TEXT", "CODE"}:
         raise BadRequestError(f"Invalid knowledge type: {type_raw}")
