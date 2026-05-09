@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -236,6 +236,7 @@ async def delete_answer_comment(
 async def get_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: Annotated[int, Path(ge=0)],
+    request: Request,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
@@ -245,6 +246,15 @@ async def get_answer(
         from app.core.errors import NotFoundError
 
         raise NotFoundError("Answer not found for this question")
+
+    # Log view for view_count (mirrors NestJS AnswerService.getViewCountOfAnswer)
+    await service._repo.log_view(
+        answer_id=answer_id,
+        viewer_id=user_id,
+        ip=request.client.host if request.client else "unknown",
+        user_agent=request.headers.get("user-agent"),
+    )
+
     return {"code": 200, "message": "OK", "data": {"answer": answer, "question": question}}
 
 

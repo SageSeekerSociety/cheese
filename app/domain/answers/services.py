@@ -116,7 +116,7 @@ class AnswersService:
             await self._repo.is_favorited(answer_id, viewer_id) if viewer_id else False
         )
         dto["comment_count"] = await self._repo.count_comments(answer_id)
-        dto["view_count"] = 0
+        dto["view_count"] = await self._repo.count_views(answer_id)
         dto["is_group"] = False
 
     async def create_answer(

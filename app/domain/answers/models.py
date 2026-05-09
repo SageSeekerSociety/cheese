@@ -37,3 +37,14 @@ class AnswerFavorite(Base):
 
     answer_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class AnswerQueryLog(Base):
+    __tablename__ = "answer_query_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    viewer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    answer_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ip: Mapped[str] = mapped_column(String(length=255), nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

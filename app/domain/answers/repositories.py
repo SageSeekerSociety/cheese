@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.answers.models import Answer, AnswerFavorite
+from app.domain.answers.models import Answer, AnswerFavorite, AnswerQueryLog
 from app.domain.questions.models import Attitude, VoteType
 
 
@@ -184,6 +184,26 @@ class AnswerRepository:
             .where(
                 AnswerFavorite.answer_id == answer_id,
             )
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
+    async def log_view(
+        self, *, answer_id: int, viewer_id: int | None, ip: str, user_agent: str | None
+    ) -> None:
+        log = AnswerQueryLog(
+            answer_id=answer_id,
+            viewer_id=viewer_id,
+            ip=ip,
+            user_agent=user_agent,
+            created_at=datetime.now(UTC),
+        )
+        self._session.add(log)
+        await self._session.flush()
+
+    async def count_views(self, answer_id: int) -> int:
+        stmt = select(func.count(AnswerQueryLog.id)).where(
+            AnswerQueryLog.answer_id == answer_id,
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
