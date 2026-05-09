@@ -138,3 +138,57 @@ class CommentRepository:
         for attitude, count in result.all():
             counts[attitude] = count
         return counts
+
+    async def bulk_count_votes(self, comment_ids: list[int]) -> dict[int, dict[str, int]]:
+        """Aggregate POSITIVE/NEGATIVE counts for many comments in one query."""
+        if not comment_ids:
+            return {}
+        stmt = (
+            select(Attitude.attitudable_id, Attitude.attitude, func.count(Attitude.id))
+            .where(
+                Attitude.attitudable_id.in_(comment_ids),
+                Attitude.attitudable_type == "COMMENT",
+            )
+            .group_by(Attitude.attitudable_id, Attitude.attitude)
+        )
+        result = await self._session.execute(stmt)
+        out: dict[int, dict[str, int]] = {
+            cid: {"POSITIVE": 0, "NEGATIVE": 0} for cid in comment_ids
+        }
+        for attitudable_id, attitude, count in result.all():
+            out.setdefault(attitudable_id, {"POSITIVE": 0, "NEGATIVE": 0})[attitude] = count
+        return out
+
+    async def bulk_get_user_votes(
+        self, comment_ids: list[int], user_id: int
+    ) -> dict[int, str]:
+        if not comment_ids or user_id is None or user_id <= 0:
+            return {}
+        stmt: Select[tuple[Attitude]] = select(Attitude).where(
+            Attitude.attitudable_id.in_(comment_ids),
+            Attitude.attitudable_type == "COMMENT",
+            Attitude.user_id == user_id,
+        )
+        result = await self._session.execute(stmt)
+        return {a.attitudable_id: a.attitude for a in result.scalars().all()}
+
+    async def list_sub_comments(
+        self, parent_comment_ids: list[int]
+    ) -> dict[int, list[Comment]]:
+        """Fetch direct sub-comments (commentable_type=COMMENT) for the given parent ids."""
+        if not parent_comment_ids:
+            return {}
+        stmt: Select[tuple[Comment]] = (
+            select(Comment)
+            .where(
+                Comment.commentable_type == "COMMENT",
+                Comment.commentable_id.in_(parent_comment_ids),
+                Comment.deleted_at.is_(None),
+            )
+            .order_by(Comment.created_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        out: dict[int, list[Comment]] = {pid: [] for pid in parent_comment_ids}
+        for row in result.scalars().all():
+            out.setdefault(row.commentable_id, []).append(row)
+        return out

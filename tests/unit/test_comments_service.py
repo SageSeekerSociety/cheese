@@ -31,6 +31,11 @@ def _make_comment(**overrides) -> SimpleNamespace:
 
 def _make_service(repo: AsyncMock | None = None) -> tuple[CommentService, AsyncMock]:
     repo = repo or AsyncMock()
+    # Defaults so list_comments / get_comment enrichment helpers don't choke
+    # on AsyncMock auto-return values when tests don't care about enrichment.
+    repo.bulk_count_votes.return_value = {}
+    repo.bulk_get_user_votes.return_value = {}
+    repo.list_sub_comments.return_value = {}
     return CommentService(repo=repo), repo
 
 

@@ -22,7 +22,9 @@ router = APIRouter(prefix="/comments", tags=["Comments"])
 
 async def get_comment_service(db=Depends(get_db)) -> CommentService:
     repo = CommentRepository(session=db)
-    return CommentService(repo=repo)
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    return CommentService(repo=repo, user_repo=user_repo, profile_repo=profile_repo)
 
 
 async def get_user_auth_service(db=Depends(get_db)) -> UserAuthService:
@@ -83,29 +85,17 @@ async def get_comment_by_id(
     service: CommentService = Depends(get_comment_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    comment_dto = await service.get_comment(commentId)
-    votes = await service.get_comment_votes(comment_id=commentId, user_id=auth_user.user_id)
-    user = await auth_service._user_repo.get_by_id(comment_dto["created_by_id"])
-    profile = await auth_service._profile_repo.get_profile_by_user_id(comment_dto["created_by_id"])
-    user_dto = None
-    if user and profile:
-        user_dto = await auth_service.build_user_dto(user, profile, viewer_id=auth_user.user_id)
-    elif user:
-        user_dto = {
-            "id": user.id,
-            "username": user.username,
-            "nickname": "",
-            "intro": "",
-            "avatarId": 0,
-        }
-    user_attitude = votes.get("userVote") or "UNDEFINED"
-    comment_dto["user"] = user_dto
-    comment_dto["attitudes"] = {
-        "positive_count": votes.get("upvotes", 0),
-        "negative_count": votes.get("downvotes", 0),
-        "difference": votes.get("upvotes", 0) - votes.get("downvotes", 0),
-        "user_attitude": user_attitude,
-    }
+    comment_dto = await service.get_comment(commentId, viewer_id=auth_user.user_id)
+    # Upgrade the author's User dto to the richer build_user_dto shape (with
+    # follow/fans/question/answer counts) so /comments/{id} matches /users/{id}.
+    if comment_dto.get("created_by_id"):
+        author_id = comment_dto["created_by_id"]
+        user = await auth_service._user_repo.get_by_id(author_id)
+        profile = await auth_service._profile_repo.get_profile_by_user_id(author_id)
+        if user and profile:
+            comment_dto["user"] = await auth_service.build_user_dto(
+                user, profile, viewer_id=auth_user.user_id
+            )
     return {"code": 200, "message": "OK", "data": {"comment": comment_dto}}
 
 
@@ -160,6 +150,7 @@ async def get_comments(
         commentable_id=commentableId,
         page_start=page_start,
         page_size=page_size,
+        viewer_id=auth_user.user_id,
     )
     return {
         "code": 200,
