@@ -55,12 +55,30 @@ async def upload_material(
     storage_key = generate_storage_key(file_name, prefix=f"materials/{type}")
     url = await storage.upload(io.BytesIO(file_content), storage_key, file_mime)
 
+    # Build a meta dict whose keys match the frontend's discriminated union
+    # types (FileMeta / ImageMeta / VideoMeta / AudioMeta). For non-file types
+    # the frontend casts meta as ImageMeta / VideoMeta / AudioMeta and reads
+    # `width`/`height`/`duration`/`thumbnail` — the dimensions are placeholders
+    # until proper media-probing is wired in.
+    meta: dict = {
+        "size": len(file_content),
+        "mime": file_mime,
+        # Keep storageKey + mimeType for backwards-compat with internal code
+        # that may still read them.
+        "mimeType": file_mime,
+        "storageKey": storage_key,
+    }
+    if type == "file":
+        meta["name"] = file_name
+        # `expires` is null for now; frontend tolerates 0/null for "no expiry".
+        meta.setdefault("expires", 0)
+
     result = await service.create_material(
         type=type,
         url=url,
         name=file_name,
         uploader_id=auth_user.user_id,
-        meta={"size": len(file_content), "mimeType": file_mime, "storageKey": storage_key},
+        meta=meta,
     )
     return {"code": 201, "message": "Created", "data": result}
 
