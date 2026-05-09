@@ -89,6 +89,9 @@ def _make_service(
     answer_repo = answer_repo or AsyncMock()
     profile_repo = profile_repo or AsyncMock()
     profile_repo.get_profiles_by_user_ids.return_value = {}
+    # get_question now calls repo.count_views; default it so tests that don't
+    # care about view tracking still pass.
+    repo.count_views.return_value = 0
     svc = QuestionsService(
         repo=repo,
         topic_repo=topic_repo,

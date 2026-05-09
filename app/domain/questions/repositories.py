@@ -212,6 +212,13 @@ class QuestionRepository:
         self._session.add(log)
         await self._session.flush()
 
+    async def count_views(self, question_id: int) -> int:
+        stmt = select(func.count(QuestionQueryLog.id)).where(
+            QuestionQueryLog.question_id == question_id,
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
     async def vote(self, *, question_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(question_id, user_id)
         now = datetime.now(UTC).replace(tzinfo=None)

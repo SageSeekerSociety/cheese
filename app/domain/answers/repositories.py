@@ -188,6 +188,17 @@ class AnswerRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
+    async def count_comments(self, answer_id: int) -> int:
+        from app.domain.discussion.models import DiscussableModelType, Discussion
+
+        stmt = select(func.count(Discussion.id)).where(
+            Discussion.model_type == DiscussableModelType.ANSWER.value,
+            Discussion.model_id == answer_id,
+            Discussion.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
     async def list_favorites_by_user(
         self, *, user_id: int, limit: int, offset: int
     ) -> tuple[Sequence[Answer], int]:

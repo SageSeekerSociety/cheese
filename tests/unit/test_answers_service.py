@@ -70,6 +70,7 @@ def _make_service(
     # zeros / empty maps so tests that don't configure them still pass.
     repo.count_votes.return_value = {}
     repo.count_favorites.return_value = 0
+    repo.count_comments.return_value = 0
     repo.is_favorited.return_value = False
     repo.get_user_vote.return_value = None
     profile_repo.get_profiles_by_user_ids.return_value = {}

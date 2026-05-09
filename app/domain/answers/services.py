@@ -115,7 +115,7 @@ class AnswersService:
         dto["is_favorite"] = (
             await self._repo.is_favorited(answer_id, viewer_id) if viewer_id else False
         )
-        dto["comment_count"] = 0
+        dto["comment_count"] = await self._repo.count_comments(answer_id)
         dto["view_count"] = 0
         dto["is_group"] = False
 

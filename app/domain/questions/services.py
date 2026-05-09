@@ -182,9 +182,7 @@ class QuestionsService:
         comment_count = await self._repo.count_comments(question_id)
         dto["comment_count"] = comment_count
 
-        # No view_count column yet; return 0 so the frontend renders "0 views"
-        # rather than NaN. Tracked separately as a feature gap.
-        dto["view_count"] = 0
+        dto["view_count"] = await self._repo.count_views(question_id)
         dto["is_solved"] = question.accepted_answer_id is not None
         dto["is_answered"] = (
             await self._answer_repo.has_user_answered_question(question_id, viewer_id)
