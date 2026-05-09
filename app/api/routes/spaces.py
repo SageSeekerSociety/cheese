@@ -170,6 +170,63 @@ def _admin_to_api_model(
     return result
 
 
+async def _build_admins_payload(
+    space_id: int,
+    *,
+    service: SpaceService,
+    user_repo: UserRepository,
+    profile_repo: UserProfileRepository,
+) -> list[dict]:
+    """Hydrate admin relations with full user objects.
+
+    The frontend Space type requires `admins[].user.id`, and stores/space.ts
+    overwrites local state with whatever each mutation returns — so any
+    response that includes `space` must include hydrated admins, otherwise
+    admin-only UI silently disappears after a PATCH.
+    """
+    admin_relations = await service.list_admins(space_id)
+    admins_list: list[dict] = []
+    for rel in admin_relations:
+        user = await user_repo.get_by_id(rel.user_id)
+        profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+        user_info = (
+            {
+                "id": user.id,
+                "username": user.username,
+                "nickname": profile.nickname if profile else user.username,
+                "avatarId": profile.avatar_id if profile else None,
+                "intro": profile.intro if profile else "",
+            }
+            if user
+            else {"id": rel.user_id, "username": "unknown"}
+        )
+        admins_list.append(_admin_to_api_model(rel, user_info))
+    return admins_list
+
+
+async def _build_full_space_payload(
+    space: Space,
+    *,
+    service: SpaceService,
+    db,
+) -> dict:
+    """Build a Space response dict that matches the frontend Space type.
+
+    Always includes `admins` (hydrated) and `classificationTopics` so that any
+    GET/POST/PATCH response is interchangeable from the frontend's perspective
+    (its store overwrites local state with the response payload).
+    """
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    space_data = _space_to_api_model(space)
+    space_data["admins"] = await _build_admins_payload(
+        space.id, service=service, user_repo=user_repo, profile_repo=profile_repo
+    )
+    topics = await service.list_classification_topics(space.id)
+    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    return space_data
+
+
 @router.get(
     "/{spaceId}",
     summary="Query Space",
@@ -312,6 +369,7 @@ async def create_space(
     payload: dict,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     name = payload.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -351,9 +409,7 @@ async def create_space(
             topic_ids=classification_topic_ids,
             actor_user_id=auth_user.user_id,
         )
-    space_data = _space_to_api_model(space)
-    topics = await service.list_classification_topics(space.id)
-    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    space_data = await _build_full_space_payload(space, service=service, db=db)
     return {
         "code": 201,
         "message": "Created",
@@ -370,6 +426,7 @@ async def patch_space(
     payload: dict,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     announcements = payload.get("announcements")
     task_templates = payload.get("taskTemplates")
@@ -403,9 +460,7 @@ async def patch_space(
             topic_ids=classification_topic_ids_raw,
             actor_user_id=auth_user.user_id,
         )
-    space_data = _space_to_api_model(space)
-    topics = await service.list_classification_topics(space_id)
-    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    space_data = await _build_full_space_payload(space, service=service, db=db)
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
 
 
