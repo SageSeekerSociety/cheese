@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.domain.knowledge.repositories import KnowledgeRepository
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.team.repositories import TeamRepository
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge"])
 
@@ -16,7 +17,14 @@ router = APIRouter(prefix="/knowledge", tags=["Knowledge"])
 async def get_knowledge_service(db=Depends(get_db)) -> KnowledgeService:
     repo = KnowledgeRepository(session=db)
     team_repo = TeamRepository(session=db)
-    return KnowledgeService(repo=repo, team_repo=team_repo)
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    return KnowledgeService(
+        repo=repo,
+        team_repo=team_repo,
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+    )
 
 
 @router.post(

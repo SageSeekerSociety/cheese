@@ -4,6 +4,7 @@ from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.knowledge.models import Knowledge
 from app.domain.knowledge.repositories import KnowledgeRepository
 from app.domain.team.repositories import TeamRepository
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 
 class KnowledgeService:
@@ -11,9 +12,13 @@ class KnowledgeService:
         self,
         repo: KnowledgeRepository,
         team_repo: TeamRepository,
+        user_repo: UserRepository | None = None,
+        profile_repo: UserProfileRepository | None = None,
     ) -> None:
         self._repo = repo
         self._team_repo = team_repo
+        self._user_repo = user_repo
+        self._profile_repo = profile_repo
 
     async def create(
         self,
@@ -153,7 +158,14 @@ class KnowledgeService:
         is_upvoted = False
         if current_user_id is not None:
             is_upvoted = await self._repo.has_upvote(entity.id, current_user_id)
-        return self._to_dto(entity, label_map.get(entity.id, []), count, is_upvoted)
+        creator_map = await self._load_creators([entity.created_by])
+        return self._to_dto(
+            entity,
+            label_map.get(entity.id, []),
+            count,
+            is_upvoted,
+            creator_map.get(entity.created_by),
+        )
 
     async def _build_dtos(
         self,
@@ -167,12 +179,55 @@ class KnowledgeService:
         user_upvotes: set[int] = set()
         if current_user_id is not None:
             user_upvotes = await self._repo.list_user_upvotes(ids, current_user_id)
+        creator_ids = list({k.created_by for k in entities if k.created_by is not None})
+        creator_map = await self._load_creators(creator_ids)
         result: list[dict] = []
         for entity in entities:
             count = count_map.get(entity.id, 0)
             is_upvoted = entity.id in user_upvotes if current_user_id is not None else False
-            result.append(self._to_dto(entity, label_map.get(entity.id, []), count, is_upvoted))
+            result.append(
+                self._to_dto(
+                    entity,
+                    label_map.get(entity.id, []),
+                    count,
+                    is_upvoted,
+                    creator_map.get(entity.created_by),
+                )
+            )
         return result
+
+    async def _load_creators(self, user_ids: Sequence[int]) -> dict[int, dict]:
+        cleaned = [uid for uid in user_ids if isinstance(uid, int) and uid > 0]
+        if not cleaned or self._user_repo is None or self._profile_repo is None:
+            # Fall back to id-only User stubs so frontend's `creator.id` paths
+            # still work even when repos aren't wired in legacy tests.
+            return {uid: _user_stub(uid) for uid in cleaned}
+        users = await self._user_repo.get_by_ids(cleaned)
+        profiles = await self._profile_repo.get_profiles_by_user_ids(cleaned)
+        out: dict[int, dict] = {}
+        for uid in cleaned:
+            user = users.get(uid)
+            profile = profiles.get(uid)
+            if user is None:
+                out[uid] = _user_stub(uid)
+                continue
+            nickname = (
+                profile.nickname
+                if profile and getattr(profile, "nickname", None)
+                else user.username
+            )
+            out[uid] = {
+                "id": user.id,
+                "username": user.username,
+                "nickname": nickname,
+                "avatarId": profile.avatar_id if profile else None,
+                "intro": profile.intro if profile else "",
+                "follow_count": 0,
+                "fans_count": 0,
+                "question_count": 0,
+                "answer_count": 0,
+            }
+        return out
 
     def _to_dto(
         self,
@@ -180,6 +235,7 @@ class KnowledgeService:
         labels: list[str],
         upvote_count: int,
         is_upvoted: bool,
+        creator: dict | None = None,
     ) -> dict:
         created_at = int(entity.created_at.timestamp() * 1000) if entity.created_at else 0
         updated_at = int(entity.updated_at.timestamp() * 1000) if entity.updated_at else 0
@@ -194,6 +250,9 @@ class KnowledgeService:
             "discussionId": entity.discussion_id,
             "materialId": entity.material_id,
             "labels": labels,
+            # Frontend `Knowledge.creator: User` is required; keep
+            # `createdBy` for backwards-compat with any internal callers.
+            "creator": creator or _user_stub(entity.created_by),
             "createdBy": entity.created_by,
             "createdAt": created_at,
             "updatedAt": updated_at,
@@ -204,3 +263,18 @@ class KnowledgeService:
     async def _ensure_team_member(self, team_id: int, user_id: int) -> None:
         if not await self._team_repo.is_team_member(team_id, user_id):
             raise ForbiddenError("User is not a member of the team")
+
+
+def _user_stub(user_id: int | None) -> dict:
+    """Minimal User-shaped placeholder for unknown / deleted accounts."""
+    return {
+        "id": user_id or 0,
+        "username": "",
+        "nickname": "",
+        "avatarId": None,
+        "intro": "",
+        "follow_count": 0,
+        "fans_count": 0,
+        "question_count": 0,
+        "answer_count": 0,
+    }
