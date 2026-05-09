@@ -3,6 +3,7 @@ Integration tests for the Groups module.
 Migrated from cheese-backend/test/groups.e2e-spec.ts (783 lines, 35 tests)
 Complete equivalence migration.
 """
+
 from datetime import UTC, datetime
 
 import pytest
@@ -51,8 +52,14 @@ class TestGroupsCreateIntegration:
         self.db = db_session
         self.portal = _portal
         self.group_prefix = f"G{unique_int(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
-        self.update_avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.pre_avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
+        self.update_avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
         self.group_ids: list[int] = []
         self._get_user_dto()
 
@@ -157,7 +164,10 @@ class TestGroupsGetIntegration:
         self.db = db_session
         self.portal = _portal
         self.group_prefix = f"G{unique_int(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.pre_avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
         self._get_user_dto()
         resp = self.client.post(
             "/groups",
@@ -253,7 +263,10 @@ class TestGroupsJoinIntegration:
         self.db = db_session
         self.portal = _portal
         self.group_prefix = f"G{unique_int(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.pre_avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
         self._get_user_dto()
         self.group_ids: list[int] = []
         for _i, (name, intro) in enumerate(
@@ -364,8 +377,14 @@ class TestGroupsUpdateIntegration:
         self.db = db_session
         self.portal = _portal
         self.group_prefix = f"G{unique_int(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
-        self.update_avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.pre_avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
+        self.update_avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
         self._get_user_dto()
         self.group_ids: list[int] = []
         for name, intro in [
@@ -501,8 +520,14 @@ class TestGroupsLeaveIntegration:
         self.db = db_session
         self.portal = _portal
         self.group_prefix = f"G{unique_int(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
-        self.update_avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.pre_avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
+        self.update_avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
         self._get_user_dto()
         resp = self.client.post(
             "/groups",
@@ -605,7 +630,10 @@ class TestGroupsDeleteIntegration:
         self.db = db_session
         self.portal = _portal
         self.group_prefix = f"G{unique_int(100000, 999999)}"
-        self.avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
         self.group_ids: list[int] = []
         for name, intro in [
             ("XCPC启动", "启不动了"),
@@ -687,7 +715,10 @@ class TestGroupsMembersIntegration:
         self.db = db_session
         self.portal = _portal
         self.group_prefix = f"G{unique_int(100000, 999999)}"
-        self.avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
         self._get_user_dto()
         self.group_ids: list[int] = []
         for name, intro in [
@@ -851,7 +882,10 @@ class TestGroupTargetsIntegration:
         self.db = db_session
         self.portal = _portal
         self.group_prefix = f"GT{unique_int(100000, 999999)}"
-        self.avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.avatar_id = create_avatar_in_db(
+            self.db,
+            self.portal,
+        )
 
     def _create_group(self) -> int:
         response = self.client.post(

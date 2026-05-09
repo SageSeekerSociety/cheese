@@ -3,6 +3,7 @@ Integration tests for the User Follow module.
 Migrated from cheese-backend/test/user.follow.e2e-spec.ts (436 lines, 20 tests)
 Complete equivalence migration.
 """
+
 import pytest
 from fastapi.testclient import TestClient
 

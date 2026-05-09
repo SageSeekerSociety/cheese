@@ -5,6 +5,7 @@ Migrated from:
 - cheese-backend/test/materialbundle.e2e-spec.ts (493 lines, 23 tests)
 Complete equivalence migration (37 tests total).
 """
+
 import io
 
 import pytest

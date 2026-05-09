@@ -605,9 +605,7 @@ class TestTeamIntegration:
         )
         assert patch_resp.status_code == 403
 
-    def test_update_team_success_for_admin(
-        self, api_client: TestClient, team_setup: dict
-    ) -> None:
+    def test_update_team_success_for_admin(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         admin = team_setup["admin"]
 
@@ -874,9 +872,7 @@ class TestTeamIntegration:
         )
         assert member_data["role"] == "MEMBER"
 
-    def test_add_member_back_via_invitation(
-        self, api_client: TestClient, team_setup: dict
-    ) -> None:
+    def test_add_member_back_via_invitation(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -1022,9 +1018,7 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert member.user_id not in user_ids
 
-    def test_remove_admin_using_owner_token(
-        self, api_client: TestClient, team_setup: dict
-    ) -> None:
+    def test_remove_admin_using_owner_token(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         admin = team_setup["admin"]
 

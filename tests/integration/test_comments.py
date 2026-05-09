@@ -3,6 +3,7 @@ Integration tests for the Comments module.
 Migrated from cheese-backend/test/comment.e2e-spec.ts (624 lines, 33 tests)
 Complete equivalence migration.
 """
+
 from datetime import UTC, datetime
 
 import pytest

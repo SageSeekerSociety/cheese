@@ -601,9 +601,7 @@ class TestTaskEnumeration:
             "suffix": suffix,
         }
 
-    def test_enumerate_tasks_by_owner(
-        self, api_client: TestClient, multi_task_setup: dict
-    ) -> None:
+    def test_enumerate_tasks_by_owner(self, api_client: TestClient, multi_task_setup: dict) -> None:
         creator = multi_task_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -1046,9 +1044,7 @@ class TestParticipantManagement:
         )
         assert approve_resp.status_code == 200
 
-    def test_disapprove_participant(
-        self, api_client: TestClient, participant_setup: dict
-    ) -> None:
+    def test_disapprove_participant(self, api_client: TestClient, participant_setup: dict) -> None:
         creator = participant_setup["creator"]
         participant1 = participant_setup["participant1"]
         task_id = participant_setup["task_id"]
@@ -2035,9 +2031,7 @@ class TestTaskJoinedFilter:
             "task_ids": task_ids,
         }
 
-    def test_enumerate_tasks_joined_true(
-        self, api_client: TestClient, joined_setup: dict
-    ) -> None:
+    def test_enumerate_tasks_joined_true(self, api_client: TestClient, joined_setup: dict) -> None:
         participant = joined_setup["participant"]
         space_id = joined_setup["space_id"]
 
@@ -2054,9 +2048,7 @@ class TestTaskJoinedFilter:
         assert len(tasks) == 1
         assert tasks[0]["id"] == joined_setup["task_ids"][0]
 
-    def test_enumerate_tasks_joined_false(
-        self, api_client: TestClient, joined_setup: dict
-    ) -> None:
+    def test_enumerate_tasks_joined_false(self, api_client: TestClient, joined_setup: dict) -> None:
         participant = joined_setup["participant"]
         space_id = joined_setup["space_id"]
 
@@ -2555,9 +2547,7 @@ class TestParticipantWorkflow:
             "task_id": task_id,
         }
 
-    def test_full_participant_workflow(
-        self, api_client: TestClient, workflow_setup: dict
-    ) -> None:
+    def test_full_participant_workflow(self, api_client: TestClient, workflow_setup: dict) -> None:
         creator = workflow_setup["creator"]
         users = workflow_setup["users"]
         task_id = workflow_setup["task_id"]

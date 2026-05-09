@@ -2,6 +2,7 @@
 Integration tests for the User Profile module.
 Migrated from cheese-backend/test/user.profile.e2e-spec.ts
 """
+
 import io
 
 import pytest

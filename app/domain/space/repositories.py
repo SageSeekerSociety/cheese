@@ -304,9 +304,7 @@ class SpaceClassificationTopicsRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_topics_for_spaces(
-        self, space_ids: Sequence[int]
-    ) -> dict[int, list[Topic]]:
+    async def list_topics_for_spaces(self, space_ids: Sequence[int]) -> dict[int, list[Topic]]:
         """Bulk variant. Returns {space_id: [Topic, ...]}."""
         if not space_ids:
             return {}
@@ -326,9 +324,7 @@ class SpaceClassificationTopicsRepository:
             mapping.setdefault(sid, []).append(topic)
         return mapping
 
-    async def replace_topics_for_space(
-        self, *, space_id: int, topic_ids: Sequence[int]
-    ) -> None:
+    async def replace_topics_for_space(self, *, space_id: int, topic_ids: Sequence[int]) -> None:
         """Soft-delete existing links then insert the given ones in order."""
         now = datetime.now(UTC).replace(tzinfo=None)
         existing_stmt: Select[tuple[SpaceClassificationTopicsRelation]] = select(

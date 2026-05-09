@@ -85,9 +85,7 @@ class TestNotificationIntegration:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
-        notification_ids = create_notifications_in_db(
-            db_session, _portal, creator.user_id, count=3
-        )
+        notification_ids = create_notifications_in_db(db_session, _portal, creator.user_id, count=3)
 
         yield {
             "creator": creator,
@@ -219,9 +217,7 @@ class TestNotificationIntegration:
         data2 = resp2.json()["data"]
         assert data2["notification"]["read"] is False
 
-    def test_update_notification_not_found(
-        self, setup_notifications: dict, api_client: TestClient
-    ):
+    def test_update_notification_not_found(self, setup_notifications: dict, api_client: TestClient):
         creator = setup_notifications["creator"]
 
         resp = api_client.patch(
@@ -290,9 +286,7 @@ class TestNotificationIntegration:
         )
         assert resp2.status_code == 404, f"Expected 404 after delete, got {resp2.status_code}"
 
-    def test_delete_notification_not_found(
-        self, setup_notifications: dict, api_client: TestClient
-    ):
+    def test_delete_notification_not_found(self, setup_notifications: dict, api_client: TestClient):
         creator = setup_notifications["creator"]
 
         resp = api_client.delete(

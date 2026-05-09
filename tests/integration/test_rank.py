@@ -173,9 +173,7 @@ class TestRankIntegration:
         assert data["space"]["id"] == space_id
         assert data["myRank"] == 0
 
-    def test_join_rank2_task_fails_with_rank0(
-        self, setup_rank_test: dict, api_client: TestClient
-    ):
+    def test_join_rank2_task_fails_with_rank0(self, setup_rank_test: dict, api_client: TestClient):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -462,9 +460,7 @@ class TestRankIntegration:
         assert target_space is not None, f"Space {space_id} not found in response"
         assert target_space.get("myRank") == 0
 
-    def test_rank2_review_upgrades_to_rank2(
-        self, user_client: UserCreator, api_client: TestClient
-    ):
+    def test_rank2_review_upgrades_to_rank2(self, user_client: UserCreator, api_client: TestClient):
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
         participant = user_client.create_user()

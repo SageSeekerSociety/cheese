@@ -1,4 +1,3 @@
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -165,9 +164,7 @@ class TestTeamApplicationIntegration:
         assert "invitation" in data
         assert data["invitation"]["id"] > 0
 
-    def test_list_invitations_for_user(
-        self, setup_team_application: dict, api_client: TestClient
-    ):
+    def test_list_invitations_for_user(self, setup_team_application: dict, api_client: TestClient):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]

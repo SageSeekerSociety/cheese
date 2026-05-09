@@ -117,9 +117,7 @@ class TestTaskSubmissionIntegration:
         )
         return membership_id
 
-    def test_submit_task_first_time(
-        self, setup_task_for_submission: dict, api_client: TestClient
-    ):
+    def test_submit_task_first_time(self, setup_task_for_submission: dict, api_client: TestClient):
         data = setup_task_for_submission
         creator = data["creator"]
         participant = data["participant"]
@@ -493,9 +491,7 @@ class TestTaskSubmissionIntegration:
         )
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
-    def test_update_task_properties(
-        self, setup_task_for_submission: dict, api_client: TestClient
-    ):
+    def test_update_task_properties(self, setup_task_for_submission: dict, api_client: TestClient):
         data = setup_task_for_submission
         creator = data["creator"]
 
@@ -885,9 +881,7 @@ class TestTaskSubmissionIntegration:
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 3
 
-    def test_edit_preserves_version(
-        self, setup_task_for_submission: dict, api_client: TestClient
-    ):
+    def test_edit_preserves_version(self, setup_task_for_submission: dict, api_client: TestClient):
         data = setup_task_for_submission
         creator = data["creator"]
         participant = data["participant"]

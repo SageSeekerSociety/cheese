@@ -2,6 +2,7 @@
 Integration tests for the Attachments module.
 Migrated from cheese-backend/test/attachments.e2e-spec.ts
 """
+
 import io
 
 import pytest

@@ -3,6 +3,7 @@ Integration tests for the Questions module.
 Migrated from cheese-backend/test/question.e2e-spec.ts (1569 lines, 94 tests)
 Complete equivalence migration.
 """
+
 import time
 from datetime import UTC, datetime
 
@@ -52,7 +53,9 @@ class TestQuestionsCreateIntegration:
         self.topic_ids: list[int] = []
         for i in range(3):
             topic_name = f"Topic_{self.question_prefix}_{i}"
-            self.topic_ids.append(create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id))
+            self.topic_ids.append(
+                create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+            )
 
     def _create_aux_user(self) -> tuple[CreatedUser, dict[str, str]]:
         user = self.user_client.create_user()
@@ -399,7 +402,9 @@ class TestQuestionsUpdateIntegration:
         self.topic_ids = []
         for i in range(3):
             topic_name = f"Topic_{self.question_prefix}_{i}"
-            self.topic_ids.append(create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id))
+            self.topic_ids.append(
+                create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+            )
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,

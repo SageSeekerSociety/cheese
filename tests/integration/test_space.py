@@ -1,4 +1,3 @@
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -81,9 +80,7 @@ class TestSpaceIntegration:
         assert data["id"] == space_id
         assert data["name"] == space_name
 
-    def test_create_space_with_existing_name_fails(
-        self, setup_space: dict, api_client: TestClient
-    ):
+    def test_create_space_with_existing_name_fails(self, setup_space: dict, api_client: TestClient):
         creator = setup_space["creator"]
         space_name = setup_space["space_name"]
         resp = api_client.post(
@@ -446,9 +443,7 @@ class TestSpacePermissions:
         )
         assert resp.status_code == 403, f"Expected 403 Forbidden, got {resp.status_code}"
 
-    def test_delete_space_fails_for_non_admin(
-        self, setup_two_users: dict, api_client: TestClient
-    ):
+    def test_delete_space_fails_for_non_admin(self, setup_two_users: dict, api_client: TestClient):
         other = setup_two_users["other"]
         space_id = setup_two_users["space_id"]
         resp = api_client.delete(

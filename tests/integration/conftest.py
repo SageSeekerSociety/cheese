@@ -250,8 +250,10 @@ def db_connection(_portal: "BlockingPortal") -> Generator[AsyncConnection, None,
             )
         # Make sure subsequent serial allocations skip past the seeded ids.
         await conn.execute(
-            _text("SELECT setval('reaction_type_seq', GREATEST(last_value, 100), TRUE) "
-                  "FROM reaction_type_seq")
+            _text(
+                "SELECT setval('reaction_type_seq', GREATEST(last_value, 100), TRUE) "
+                "FROM reaction_type_seq"
+            )
         )
 
     conn = _portal.call(_open)

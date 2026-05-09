@@ -130,10 +130,9 @@ class QuestionsService:
             dto = _question_to_dto(row, include_content=False)
             dto["topicIds"] = topic_id_map.get(row.id, [])
             dto["topics"] = topic_obj_map.get(row.id, [])
-            dto["author"] = (
-                _profile_to_user(profiles_by_id.get(row.created_by_id))
-                or {"id": row.created_by_id}
-            )
+            dto["author"] = _profile_to_user(profiles_by_id.get(row.created_by_id)) or {
+                "id": row.created_by_id
+            }
             items.append(dto)
         return items
 
@@ -206,8 +205,7 @@ class QuestionsService:
                     "id": accepted.id,
                     "question_id": accepted.question_id,
                     "content": accepted.content,
-                    "author": _profile_to_user(accepted_author)
-                    or {"id": accepted.created_by_id},
+                    "author": _profile_to_user(accepted_author) or {"id": accepted.created_by_id},
                     "created_at": int(accepted.created_at.timestamp() * 1000)
                     if accepted.created_at
                     else 0,

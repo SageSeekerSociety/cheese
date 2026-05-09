@@ -504,9 +504,7 @@ class QuestionTopicRepository:
         topics = result.scalars().all()
         return [{"id": t.id, "name": t.name} for t in topics]
 
-    async def get_topics_for_questions(
-        self, question_ids: Sequence[int]
-    ) -> dict[int, list[dict]]:
+    async def get_topics_for_questions(self, question_ids: Sequence[int]) -> dict[int, list[dict]]:
         """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""
         from app.domain.topics.models import Topic
 

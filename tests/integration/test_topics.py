@@ -3,6 +3,7 @@ Integration tests for the Topics module.
 Migrated from cheese-backend/test/topic.e2e-spec.ts (361 lines, 15 tests)
 Complete equivalence migration.
 """
+
 import time
 
 import pytest
