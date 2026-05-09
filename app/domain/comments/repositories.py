@@ -159,9 +159,7 @@ class CommentRepository:
             out.setdefault(attitudable_id, {"POSITIVE": 0, "NEGATIVE": 0})[attitude] = count
         return out
 
-    async def bulk_get_user_votes(
-        self, comment_ids: list[int], user_id: int
-    ) -> dict[int, str]:
+    async def bulk_get_user_votes(self, comment_ids: list[int], user_id: int) -> dict[int, str]:
         if not comment_ids or user_id is None or user_id <= 0:
             return {}
         stmt: Select[tuple[Attitude]] = select(Attitude).where(
@@ -172,9 +170,7 @@ class CommentRepository:
         result = await self._session.execute(stmt)
         return {a.attitudable_id: a.attitude for a in result.scalars().all()}
 
-    async def list_sub_comments(
-        self, parent_comment_ids: list[int]
-    ) -> dict[int, list[Comment]]:
+    async def list_sub_comments(self, parent_comment_ids: list[int]) -> dict[int, list[Comment]]:
         """Fetch direct sub-comments (commentable_type=COMMENT) for the given parent ids."""
         if not parent_comment_ids:
             return {}

@@ -46,9 +46,7 @@ def _user_payload(user, profile, *, fallback_id: int) -> dict:
             "question_count": 0,
             "answer_count": 0,
         }
-    nickname = (
-        profile.nickname if profile and getattr(profile, "nickname", None) else user.username
-    )
+    nickname = profile.nickname if profile and getattr(profile, "nickname", None) else user.username
     return {
         "id": user.id,
         "username": user.username,

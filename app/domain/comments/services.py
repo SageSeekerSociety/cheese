@@ -59,9 +59,7 @@ class CommentService:
             offset=offset,
         )
         items = [_comment_to_dto(c) for c in comments]
-        items = await self._enrich_comment_dtos(
-            items, viewer_id=viewer_id, with_sub_comments=True
-        )
+        items = await self._enrich_comment_dtos(items, viewer_id=viewer_id, with_sub_comments=True)
         returned = len(items)
         has_more = offset + returned < total
         next_start = offset + returned if has_more and returned > 0 else None
@@ -246,7 +244,9 @@ def _build_user_dto(user_obj, profile, *, fallback_id: int) -> dict:
     """Produce a User-shaped dict with the fields the frontend type expects."""
     if user_obj is not None:
         nickname = (
-            profile.nickname if profile and getattr(profile, "nickname", None) else user_obj.username
+            profile.nickname
+            if profile and getattr(profile, "nickname", None)
+            else user_obj.username
         )
         avatar_id = profile.avatar_id if profile else None
         intro = profile.intro if profile else ""

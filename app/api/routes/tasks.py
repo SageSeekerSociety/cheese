@@ -1714,12 +1714,7 @@ async def get_tasks(
     # Only run when the frontend explicitly asks (queryJoined / querySubmittability /
     # queryJoinability / queryUserDeadline). Each flag implies the others enough
     # in practice that the cheapest correct thing is to populate them together.
-    if (
-        queryJoined
-        or querySubmittability
-        or queryJoinability
-        or queryUserDeadline
-    ):
+    if queryJoined or querySubmittability or queryJoinability or queryUserDeadline:
         membership_service = TaskMembershipService(
             repo=TaskMembershipRepository(session=db),
             realname_repo=UserRealNameRepository(session=db),
