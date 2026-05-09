@@ -60,11 +60,11 @@ async def list_answers(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
-    _ = auth_user
     answers, page = await service.list_answers(
         question_id=question_id,
         page_start=page_start,
         page_size=page_size,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
     return {"code": 200, "message": "OK", "data": {"answers": answers, "page": page}}
 

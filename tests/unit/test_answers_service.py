@@ -65,6 +65,14 @@ def _make_service(
     repo = repo or AsyncMock()
     question_repo = question_repo or AsyncMock()
     profile_repo = profile_repo or AsyncMock()
+    # list_answers now also enriches each row with attitudes / favorite_count
+    # via _attach_answer_stats. Default the underlying repo calls to numeric
+    # zeros / empty maps so tests that don't configure them still pass.
+    repo.count_votes.return_value = {}
+    repo.count_favorites.return_value = 0
+    repo.is_favorited.return_value = False
+    repo.get_user_vote.return_value = None
+    profile_repo.get_profiles_by_user_ids.return_value = {}
     svc = AnswersService(repo=repo, question_repo=question_repo, profile_repo=profile_repo)
     return svc, repo, question_repo, profile_repo
 
@@ -188,11 +196,11 @@ class TestListAnswers:
         assert len(items) == 2
         assert items[0]["id"] == 1
         assert items[1]["id"] == 2
-        assert page["page_start"] == 1
-        assert page["page_size"] == 2
-        assert page["has_prev"] is False
-        assert page["has_more"] is True
-        assert page["next_start"] == 3
+        assert page["pageStart"] == 1
+        assert page["pageSize"] == 2
+        assert page["hasPrev"] is False
+        assert page["hasMore"] is True
+        assert page["nextStart"] == 3
 
     @pytest.mark.anyio
     async def test_middle_page(self):
@@ -205,10 +213,10 @@ class TestListAnswers:
 
         items, page = await svc.list_answers(question_id=10, page_start=3, page_size=1)
 
-        assert page["has_prev"] is True
-        assert page["prev_start"] == 1
-        assert page["has_more"] is True
-        assert page["next_start"] == 4
+        assert page["hasPrev"] is True
+        assert page["prevStart"] == 1
+        assert page["hasMore"] is True
+        assert page["nextStart"] == 4
 
     @pytest.mark.anyio
     async def test_last_page(self):
@@ -221,8 +229,8 @@ class TestListAnswers:
 
         items, page = await svc.list_answers(question_id=10, page_start=3, page_size=2)
 
-        assert page["has_more"] is False
-        assert page["next_start"] == 0
+        assert page["hasMore"] is False
+        assert page["nextStart"] == 0
 
     @pytest.mark.anyio
     async def test_empty_list(self):
@@ -235,10 +243,10 @@ class TestListAnswers:
         items, page = await svc.list_answers(question_id=10, page_start=None, page_size=10)
 
         assert items == []
-        assert page["page_start"] == 0
-        assert page["page_size"] == 0
-        assert page["has_prev"] is False
-        assert page["has_more"] is False
+        assert page["pageStart"] == 0
+        assert page["pageSize"] == 0
+        assert page["hasPrev"] is False
+        assert page["hasMore"] is False
 
     @pytest.mark.anyio
     async def test_invalid_page_start_falls_back_to_zero(self):
@@ -252,8 +260,8 @@ class TestListAnswers:
         # page_start=999 does not exist in [1,2,3], so falls back to index 0
         items, page = await svc.list_answers(question_id=10, page_start=999, page_size=1)
 
-        assert page["page_start"] == 1
-        assert page["has_prev"] is False
+        assert page["pageStart"] == 1
+        assert page["hasPrev"] is False
 
     @pytest.mark.anyio
     async def test_question_not_found(self):

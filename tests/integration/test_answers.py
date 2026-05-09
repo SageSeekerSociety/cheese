@@ -297,12 +297,12 @@ class TestAnswersByQuestionIntegration:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_start"] == self.answer_ids[0]
-        assert data["data"]["page"]["page_size"] == len(self.answer_ids)
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == self.answer_ids[0]
+        assert data["data"]["page"]["pageSize"] == len(self.answer_ids)
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
         assert len(data["data"]["answers"]) == len(self.answer_ids)
         for answer in data["data"]["answers"]:
             assert answer["question_id"] == self.question_id
@@ -317,10 +317,10 @@ class TestAnswersByQuestionIntegration:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_start"] == self.answer_ids[0]
-        assert data["data"]["page"]["page_size"] == len(self.answer_ids)
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["has_more"] is False
+        assert data["data"]["page"]["pageStart"] == self.answer_ids[0]
+        assert data["data"]["page"]["pageSize"] == len(self.answer_ids)
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["hasMore"] is False
         answer_ids_sorted = sorted([a["id"] for a in data["data"]["answers"]])
         assert answer_ids_sorted == sorted(self.answer_ids)
 
@@ -333,9 +333,9 @@ class TestAnswersByQuestionIntegration:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_size"] == len(self.answer_ids)
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["has_more"] is False
+        assert data["data"]["page"]["pageSize"] == len(self.answer_ids)
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["hasMore"] is False
         answer_ids_sorted = sorted([a["id"] for a in data["data"]["answers"]])
         assert answer_ids_sorted == sorted(self.answer_ids)
 
@@ -348,12 +348,12 @@ class TestAnswersByQuestionIntegration:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_start"] == self.answer_ids[2]
-        assert data["data"]["page"]["page_size"] == 2
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.answer_ids[0]
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.answer_ids[4]
+        assert data["data"]["page"]["pageStart"] == self.answer_ids[2]
+        assert data["data"]["page"]["pageSize"] == 2
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.answer_ids[0]
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.answer_ids[4]
         assert len(data["data"]["answers"]) == 2
         assert data["data"]["answers"][0]["question_id"] == self.question_id
         assert data["data"]["answers"][1]["question_id"] == self.question_id
