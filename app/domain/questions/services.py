@@ -58,12 +58,7 @@ class QuestionsService:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        topic_map = await self._topic_repo.list_topic_ids([row.id for row in rows])
-        items = []
-        for row in rows:
-            dto = _question_to_dto(row, include_content=False)
-            dto["topicIds"] = topic_map.get(row.id, [])
-            items.append(dto)
+        items = await self._enrich_question_list(rows)
         returned = len(items)
         has_more = offset + returned < total
         next_start = offset + returned if has_more and returned > 0 else None
@@ -114,6 +109,34 @@ class QuestionsService:
         dto["topicIds"] = topic_ids
         return dto
 
+    async def _enrich_question_list(self, rows: Sequence[Question]) -> list[dict]:
+        """Build list-shaped DTOs with bulk-fetched authors and topics.
+
+        Frontend Question type expects `topics: Topic[]` and `author: User`;
+        the legacy `topicIds: number[]` is also kept for any callers that
+        haven't migrated yet.
+        """
+        question_ids = [row.id for row in rows]
+        topic_id_map = await self._topic_repo.list_topic_ids(question_ids)
+        topic_obj_map = await self._topic_repo.get_topics_for_questions(question_ids)
+        author_ids = list({row.created_by_id for row in rows})
+        profiles_by_id = (
+            await self._profile_repo.get_profiles_by_user_ids(author_ids)
+            if self._profile_repo and author_ids
+            else {}
+        )
+        items: list[dict] = []
+        for row in rows:
+            dto = _question_to_dto(row, include_content=False)
+            dto["topicIds"] = topic_id_map.get(row.id, [])
+            dto["topics"] = topic_obj_map.get(row.id, [])
+            dto["author"] = (
+                _profile_to_user(profiles_by_id.get(row.created_by_id))
+                or {"id": row.created_by_id}
+            )
+            items.append(dto)
+        return items
+
     async def get_question(self, question_id: int, viewer_id: int | None) -> dict:
         question = await self._repo.get_by_id(question_id)
         if question is None:
@@ -123,18 +146,12 @@ class QuestionsService:
         topic_objects = await self._topic_repo.get_topics_for_question(question_id)
         dto["topics"] = topic_objects
 
-        if self._profile_repo:
-            profile = await self._profile_repo.get_profile_by_user_id(question.created_by_id)
-            if profile:
-                dto["author"] = {
-                    "id": profile.user_id,
-                    "nickname": profile.nickname,
-                    "avatar_id": profile.avatar_id,
-                }
-            else:
-                dto["author"] = {"id": question.created_by_id}
-        else:
-            dto["author"] = {"id": question.created_by_id}
+        author_profile = (
+            await self._profile_repo.get_profile_by_user_id(question.created_by_id)
+            if self._profile_repo
+            else None
+        )
+        dto["author"] = _profile_to_user(author_profile) or {"id": question.created_by_id}
 
         follow_count = await self._repo.count_followers(question_id)
         dto["follow_count"] = follow_count
@@ -166,14 +183,38 @@ class QuestionsService:
         comment_count = await self._repo.count_comments(question_id)
         dto["comment_count"] = comment_count
 
+        # No view_count column yet; return 0 so the frontend renders "0 views"
+        # rather than NaN. Tracked separately as a feature gap.
+        dto["view_count"] = 0
+        dto["is_solved"] = question.accepted_answer_id is not None
+        dto["is_answered"] = (
+            await self._answer_repo.has_user_answered_question(question_id, viewer_id)
+            if self._answer_repo and viewer_id
+            else False
+        )
+
+        dto["accepted_answer"] = None
         if question.accepted_answer_id and self._answer_repo:
             accepted = await self._answer_repo.get_by_id(question.accepted_answer_id)
             if accepted:
-                dto["accepted_answer"] = {"id": accepted.id, "content": accepted.content}
-            else:
-                dto["accepted_answer"] = None
-        else:
-            dto["accepted_answer"] = None
+                accepted_author = (
+                    await self._profile_repo.get_profile_by_user_id(accepted.created_by_id)
+                    if self._profile_repo
+                    else None
+                )
+                dto["accepted_answer"] = {
+                    "id": accepted.id,
+                    "question_id": accepted.question_id,
+                    "content": accepted.content,
+                    "author": _profile_to_user(accepted_author)
+                    or {"id": accepted.created_by_id},
+                    "created_at": int(accepted.created_at.timestamp() * 1000)
+                    if accepted.created_at
+                    else 0,
+                    "updated_at": int(accepted.updated_at.timestamp() * 1000)
+                    if accepted.updated_at
+                    else 0,
+                }
 
         dto["created_at"] = dto.pop("createdAt")
         dto["updated_at"] = dto.pop("updatedAt")
@@ -194,12 +235,7 @@ class QuestionsService:
         rows, total = await self._repo.list_followed(
             user_id=user_id, limit=page_size, offset=page_start or 0
         )
-        topic_map = await self._topic_repo.list_topic_ids([row.id for row in rows])
-        items = []
-        for row in rows:
-            dto = _question_to_dto(row, include_content=False)
-            dto["topicIds"] = topic_map.get(row.id, [])
-            items.append(dto)
+        items = await self._enrich_question_list(rows)
         offset = page_start or 0
         returned = len(items)
         has_more = offset + returned < total
@@ -289,13 +325,7 @@ class QuestionsService:
 
     async def get_trending_questions(self, *, limit: int = 10, days: int = 7) -> list[dict]:
         questions = await self._repo.get_trending_questions(limit=limit, days=days)
-        topic_map = await self._topic_repo.list_topic_ids([q.id for q in questions])
-        items = []
-        for q in questions:
-            dto = _question_to_dto(q, include_content=False)
-            dto["topicIds"] = topic_map.get(q.id, [])
-            items.append(dto)
-        return items
+        return await self._enrich_question_list(questions)
 
     async def get_stats(self) -> dict:
         return await self._repo.get_stats()

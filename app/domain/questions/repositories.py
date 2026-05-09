@@ -504,6 +504,33 @@ class QuestionTopicRepository:
         topics = result.scalars().all()
         return [{"id": t.id, "name": t.name} for t in topics]
 
+    async def get_topics_for_questions(
+        self, question_ids: Sequence[int]
+    ) -> dict[int, list[dict]]:
+        """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""
+        from app.domain.topics.models import Topic
+
+        if not question_ids:
+            return {}
+        stmt = (
+            select(QuestionTopicRelation.question_id, Topic.id, Topic.name)
+            .join(Topic, Topic.id == QuestionTopicRelation.topic_id)
+            .where(
+                QuestionTopicRelation.question_id.in_(list(question_ids)),
+                QuestionTopicRelation.deleted_at.is_(None),
+                Topic.deleted_at.is_(None),
+            )
+            .order_by(
+                QuestionTopicRelation.question_id.asc(),
+                QuestionTopicRelation.id.asc(),
+            )
+        )
+        result = await self._session.execute(stmt)
+        mapping: dict[int, list[dict]] = {}
+        for question_id, topic_id, topic_name in result.all():
+            mapping.setdefault(question_id, []).append({"id": topic_id, "name": topic_name})
+        return mapping
+
 
 class QuestionInvitationRepository:
     def __init__(self, session: AsyncSession) -> None:
