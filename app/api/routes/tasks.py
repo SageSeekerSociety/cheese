@@ -2552,11 +2552,14 @@ async def list_ai_advice_conversations_grouped(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
+    # Frontend `TasksApi.getGroupedConversations` types the response as
+    # { conversations: ConversationGroupSummary[] }; "groups" was a Python-
+    # side name that left data.conversations undefined and nothing rendered.
     groups = await service.list_conversations_grouped(task_id=task_id)
     return {
         "code": 200,
         "message": "OK",
-        "data": {"groups": groups},
+        "data": {"conversations": groups},
     }
 
 
@@ -2570,13 +2573,41 @@ async def get_ai_advice_conversation(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
+    # Frontend (TaskAIAdviceChatService.getConversationById) expects
+    #   { conversations: TaskAIAdviceConversation[] }
+    # where each entry is a Q&A pair. Our internal storage is per-message
+    # (role/content rows) so we pair user→assistant rows back into Q&A
+    # records. Empty conversation = empty array.
     _ = task_id
     _ = auth_user
     try:
         payload = await service.get_conversation(conversation_id=conversation_id)
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
-    return {"code": 200, "message": "OK", "data": payload}
+
+    convo = payload.get("conversation") or {}
+    messages = convo.get("messages") or []
+    paired: list[dict] = []
+    pending_user: dict | None = None
+    for msg in messages:
+        if msg.get("role") == "user":
+            pending_user = msg
+        elif msg.get("role") == "assistant" and pending_user is not None:
+            paired.append(
+                {
+                    "id": msg.get("id", 0),
+                    "taskId": task_id,
+                    "question": pending_user.get("content") or "",
+                    "response": msg.get("content") or "",
+                    "modelType": "standard",
+                    "followupQuestions": [],
+                    "conversationId": convo.get("conversationId"),
+                    "createdAt": msg.get("createdAt"),
+                    "tokensUsed": str(msg.get("tokensUsed") or ""),
+                }
+            )
+            pending_user = None
+    return {"code": 200, "message": "OK", "data": {"conversations": paired}}
 
 
 @router.post(
@@ -2643,17 +2674,27 @@ async def delete_ai_advice_conversation(
     return {"code": 200, "message": "OK"}
 
 
-@router.post(
+@router.get(
     "/{taskId}/ai-advice/conversations/stream",
     summary="Stream AI Advice Conversation (SSE)",
 )
 async def stream_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
-    payload: CreateTaskAIAdviceConversationRequest,
+    question: str = Query(..., description="User question"),
+    modelType: str | None = Query(default=None),
+    section: str | None = Query(default=None),
+    index: int | None = Query(default=None),
+    conversationId: str | None = Query(default=None),
+    parentId: int | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ):
-    """Stream AI response via Server-Sent Events (SSE)."""
+    """Stream AI response via Server-Sent Events (SSE).
+
+    EventSource (the browser API the frontend uses) only supports GET, so
+    this endpoint accepts query params instead of a JSON body. Mirrors NT
+    streamTaskAiAdviceConversation in TaskController.kt.
+    """
     import json as json_module
 
     from fastapi.responses import StreamingResponse
@@ -2665,13 +2706,17 @@ async def stream_ai_advice_conversation(
         LLMTimeoutError,
     )
 
-    question = payload.question.strip()
+    question = question.strip() if question else ""
     if not question:
         raise BadRequestError("question is required")
 
-    context_payload = (
-        payload.context.model_dump(by_alias=True, exclude_none=True) if payload.context else None
-    )
+    context_payload: dict | None = None
+    if section:
+        context_payload = {"section": section}
+        if index is not None:
+            context_payload["index"] = index
+    _ = modelType  # streamed model selection not yet plumbed end-to-end
+    _ = parentId  # parent message id for branching, not yet plumbed
 
     async def event_generator():
         try:
@@ -2679,7 +2724,7 @@ async def stream_ai_advice_conversation(
                 task_id=task_id,
                 user_id=auth_user.user_id,
                 question=question,
-                conversation_id=payload.conversation_id,
+                conversation_id=conversationId,
                 context=context_payload,
             ):
                 if chunk.content:
