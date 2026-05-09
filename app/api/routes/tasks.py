@@ -370,6 +370,7 @@ async def _enrich_task_user_state(
     *,
     user_id: int,
     query_joinability: bool,
+    db,
 ) -> None:
     """Populate per-user task state (joined / submittable / userDeadline / ...).
 
@@ -388,22 +389,57 @@ async def _enrich_task_user_state(
             task_model.setdefault("participationEligibility", None)
         return
 
+    # Frontend Task.joinedTeams / submittableAsTeam are typed `Team[]`; the
+    # leave-task UI accesses joinedTeams[0].id and .name directly. We used to
+    # ship arrays of bare ids / `{id}` stubs, so the dialog rendered
+    # "确定要让小队\"undefined\"退出该赛题吗？". Bulk-fetch real Team rows
+    # for every team_id that shows up across the task list.
+    from app.domain.team.repositories import TeamRepository as _TeamRepo
+
+    team_repo = _TeamRepo(session=db)
+
     by_id = {task.id: task for task in tasks}
 
+    # First pass: collect team_ids needed across all rows in this list.
+    pending: dict[int, dict] = {}
+    needed_team_ids: set[int] = set()
     for task_model in task_models:
         task_id = task_model["id"]
-        task = by_id.get(task_id)
-        submitter_type = task.submitter_type if task is not None else 0
-
         user_membership = await membership_service.get_user_membership(
             task_id=task_id, user_id=user_id
         )
         team_memberships = await membership_service.list_team_memberships_for_user(
             task_id=task_id, user_id=user_id
         )
+        for m in team_memberships:
+            needed_team_ids.add(m.member_id)
+        pending[task_id] = {
+            "user_membership": user_membership,
+            "team_memberships": team_memberships,
+        }
+
+    teams_map = await team_repo.get_by_ids(list(needed_team_ids)) if needed_team_ids else {}
+
+    def _team_summary(team_id: int) -> dict:
+        team = teams_map.get(team_id)
+        if team is None:
+            return {"id": team_id, "name": "", "intro": "", "avatarId": None}
+        return {
+            "id": team.id,
+            "name": team.name,
+            "intro": team.intro,
+            "avatarId": team.avatar_id,
+        }
+
+    for task_model in task_models:
+        task_id = task_model["id"]
+        task = by_id.get(task_id)
+        submitter_type = task.submitter_type if task is not None else 0
+        user_membership = pending[task_id]["user_membership"]
+        team_memberships = pending[task_id]["team_memberships"]
 
         joined = bool(user_membership or team_memberships)
-        joined_teams = [m.member_id for m in team_memberships]
+        joined_teams = [_team_summary(m.member_id) for m in team_memberships]
         is_user_approved = bool(user_membership and user_membership.approved == 0)
 
         submittable: bool | None = None
@@ -417,7 +453,9 @@ async def _enrich_task_user_state(
         elif submitter_type == 1:  # TEAM
             approved_team_memberships = [m for m in team_memberships if m.approved == 0]
             submittable = bool(approved_team_memberships)
-            submittable_as_team = [{"id": m.member_id} for m in approved_team_memberships]
+            submittable_as_team = [
+                _team_summary(m.member_id) for m in approved_team_memberships
+            ]
             if team_memberships and team_memberships[0].deadline:
                 user_deadline_ms = int(team_memberships[0].deadline.timestamp() * 1000)
 
@@ -1334,13 +1372,15 @@ async def get_task(
     task_dict = _task_to_api_model(task)
 
     joined = False
-    joined_teams: list[int] = []
+    joined_teams: list[dict] = []
     submittable: bool | None = None
     submittable_as_team: list[dict] = []
     user_deadline_ms: int | None = None
     participation_eligibility: dict | None = None
 
     if auth_user.user_id > 0:
+        from app.domain.team.repositories import TeamRepository as _TeamRepo
+
         user_membership = await membership_service.get_user_membership(
             task_id=task_id,
             user_id=auth_user.user_id,
@@ -1351,7 +1391,27 @@ async def get_task(
         )
 
         joined = bool(user_membership or team_memberships)
-        joined_teams = [m.member_id for m in team_memberships]
+        # Hydrate joinedTeams / submittableAsTeam to Team[] (frontend type) so
+        # the leave-task dialog can render team.name. Bare ids broke
+        # useTaskParticipation.ts:115 (joinedTeams[0].id / .name).
+        team_ids_to_load = [m.member_id for m in team_memberships]
+        team_repo = _TeamRepo(session=db)
+        teams_map = (
+            await team_repo.get_by_ids(team_ids_to_load) if team_ids_to_load else {}
+        )
+
+        def _team_summary(team_id: int) -> dict:
+            team = teams_map.get(team_id)
+            if team is None:
+                return {"id": team_id, "name": "", "intro": "", "avatarId": None}
+            return {
+                "id": team.id,
+                "name": team.name,
+                "intro": team.intro,
+                "avatarId": team.avatar_id,
+            }
+
+        joined_teams = [_team_summary(m.member_id) for m in team_memberships]
 
         is_user_approved = bool(user_membership and user_membership.approved == 0)
 
@@ -1362,7 +1422,9 @@ async def get_task(
         elif task.submitter_type == 1:  # TEAM
             approved_team_memberships = [m for m in team_memberships if m.approved == 0]
             submittable = bool(approved_team_memberships)
-            submittable_as_team = [{"id": m.member_id} for m in approved_team_memberships]
+            submittable_as_team = [
+                _team_summary(m.member_id) for m in approved_team_memberships
+            ]
             if team_memberships and team_memberships[0].deadline:
                 user_deadline_ms = int(team_memberships[0].deadline.timestamp() * 1000)
 
@@ -1739,6 +1801,7 @@ async def get_tasks(
             items,
             user_id=auth_user.user_id,
             query_joinability=queryJoinability,
+            db=db,
         )
 
     # 使用与 list / count 相同的过滤条件计算 total，以支持 hasMore/nextStart。
