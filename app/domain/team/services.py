@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
 from app.domain.team.repositories import TeamRepository
 
@@ -53,7 +53,13 @@ class TeamService:
         if not name.strip():
             raise BadRequestError("Team name cannot be empty")
         if await self._repo.exists_by_name(name.strip()):
-            raise BadRequestError("Team name already exists")
+            # 409 + structured data so the frontend can distinguish "duplicate
+            # name" from a generic 400 and show a precise message instead of
+            # the catch-all "稍后重试". Mirrors how POST /spaces handles it.
+            raise ConflictError(
+                "Team name already exists",
+                data={"field": "name", "value": name.strip()},
+            )
 
         now = datetime.now(UTC).replace(tzinfo=None)
         team = Team(
@@ -106,7 +112,10 @@ class TeamService:
             if not trimmed:
                 raise BadRequestError("Team name cannot be empty")
             if trimmed != team.name and await self._repo.exists_by_name(trimmed):
-                raise BadRequestError("Team name already exists")
+                raise ConflictError(
+                    "Team name already exists",
+                    data={"field": "name", "value": trimmed},
+                )
             team.name = trimmed
         if intro is not None:
             team.intro = intro

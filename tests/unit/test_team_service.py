@@ -277,7 +277,7 @@ class TestTeamServiceCreateTeam:
         svc, repo = _build_team_service()
         repo.exists_by_name.return_value = True
 
-        with pytest.raises(BadRequestError, match="already exists"):
+        with pytest.raises(ConflictError, match="already exists"):
             await svc.create_team(
                 name="Existing",
                 intro="",
@@ -375,7 +375,7 @@ class TestTeamServiceUpdateTeam:
         repo.get_member_relation.return_value = _make_relation(role=TeamMemberRole.OWNER)
         repo.exists_by_name.return_value = True
 
-        with pytest.raises(BadRequestError, match="already exists"):
+        with pytest.raises(ConflictError, match="already exists"):
             await svc.update_team(team_id=1, actor_user_id=42, name="Taken")
 
     @pytest.mark.anyio
