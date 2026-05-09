@@ -1,10 +1,10 @@
-import httpx
+from fastapi.testclient import TestClient
 
 from tests.integration.conftest import CreatedUser
 
 
 class TestAIChatIntegration:
-    def test_list_models(self, authenticated_user: CreatedUser, api_client: httpx.Client):
+    def test_list_models(self, authenticated_user: CreatedUser, api_client: TestClient):
         resp = api_client.get(
             "/ai/models",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
@@ -18,7 +18,7 @@ class TestAIChatIntegration:
         assert "name" in model
 
     def test_list_conversations_empty(
-        self, authenticated_user: CreatedUser, api_client: httpx.Client
+        self, authenticated_user: CreatedUser, api_client: TestClient
     ):
         resp = api_client.get(
             "/ai/conversations",
@@ -29,7 +29,7 @@ class TestAIChatIntegration:
         assert "conversations" in data
         assert isinstance(data["conversations"], list)
 
-    def test_create_conversation(self, authenticated_user: CreatedUser, api_client: httpx.Client):
+    def test_create_conversation(self, authenticated_user: CreatedUser, api_client: TestClient):
         resp = api_client.post(
             "/ai/conversations",
             json={"title": "Test Conversation", "modelId": "gpt-4o-mini"},
@@ -42,7 +42,7 @@ class TestAIChatIntegration:
         assert conv["title"] == "Test Conversation"
         assert "id" in conv
 
-    def test_get_conversation(self, authenticated_user: CreatedUser, api_client: httpx.Client):
+    def test_get_conversation(self, authenticated_user: CreatedUser, api_client: TestClient):
         create_resp = api_client.post(
             "/ai/conversations",
             json={"title": "Get Test"},
@@ -60,7 +60,7 @@ class TestAIChatIntegration:
         assert data["conversation"]["id"] == conv_id
         assert "messages" in data["conversation"]
 
-    def test_delete_conversation(self, authenticated_user: CreatedUser, api_client: httpx.Client):
+    def test_delete_conversation(self, authenticated_user: CreatedUser, api_client: TestClient):
         create_resp = api_client.post(
             "/ai/conversations",
             json={"title": "Delete Test"},
@@ -82,7 +82,7 @@ class TestAIChatIntegration:
         assert get_resp.status_code == 404
 
     def test_update_conversation_title(
-        self, authenticated_user: CreatedUser, api_client: httpx.Client
+        self, authenticated_user: CreatedUser, api_client: TestClient
     ):
         create_resp = api_client.post(
             "/ai/conversations",
@@ -101,7 +101,7 @@ class TestAIChatIntegration:
         data = resp.json()["data"]
         assert data["conversation"]["title"] == "Updated Title"
 
-    def test_get_quota(self, authenticated_user: CreatedUser, api_client: httpx.Client):
+    def test_get_quota(self, authenticated_user: CreatedUser, api_client: TestClient):
         resp = api_client.get(
             "/ai/quota",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},

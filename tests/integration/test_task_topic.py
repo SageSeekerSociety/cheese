@@ -1,54 +1,49 @@
-import random
 from datetime import UTC, datetime
 
-import httpx
-import psycopg2
 import pytest
+from anyio.from_thread import BlockingPortal
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from tests.integration.conftest import UserCreator
-
-
-def _get_psycopg2_dsn() -> str:
-    db_url = settings.database_url
-    if db_url.startswith("postgresql+psycopg2://"):
-        return db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
-    elif db_url.startswith("postgresql+asyncpg://"):
-        return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    return db_url
+from app.domain.topics.models import Topic
+from tests.integration.conftest import UserCreator, unique_int
 
 
-def create_topics_in_db(topic_names: list[str], created_by: int) -> list[int]:
-    conn = psycopg2.connect(_get_psycopg2_dsn())
-    topic_ids = []
-    try:
-        with conn.cursor() as cur:
-            for name in topic_names:
-                cur.execute(
-                    """
-                    INSERT INTO topic (name, created_by_id, created_at)
-                    VALUES (%s, %s, %s)
-                    RETURNING id
-                    """,
-                    (name, created_by, datetime.now(UTC)),
-                )
-                topic_id = cur.fetchone()[0]
-                topic_ids.append(topic_id)
-        conn.commit()
-    finally:
-        conn.close()
-    return topic_ids
+def create_topics_in_db(
+    db_session: AsyncSession,
+    portal: BlockingPortal,
+    topic_names: list[str],
+    created_by: int,
+) -> list[int]:
+    topics = [
+        Topic(name=name, created_by_id=created_by, created_at=datetime.now(UTC))
+        for name in topic_names
+    ]
+
+    async def _do() -> list[int]:
+        for t in topics:
+            db_session.add(t)
+        await db_session.flush()
+        return [t.id for t in topics]
+
+    return portal.call(_do)
 
 
 class TestTaskTopicIntegration:
     @pytest.fixture
-    def setup_task_topics(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
+    def setup_task_topics(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
+    ) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
 
         topic_names = [f"Test Topic ({suffix}) ({i})" for i in range(1, 5)]
-        topic_ids = create_topics_in_db(topic_names, creator.user_id)
+        topic_ids = create_topics_in_db(db_session, _portal, topic_names, creator.user_id)
 
         space_resp = api_client.post(
             "/spaces",
@@ -75,14 +70,14 @@ class TestTaskTopicIntegration:
             "topic_names": topic_names,
         }
 
-    def test_create_task_with_topics(self, setup_task_topics: dict, api_client: httpx.Client):
+    def test_create_task_with_topics(self, setup_task_topics: dict, api_client: TestClient):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
         topic_ids = setup_task_topics["topic_ids"]
 
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
-        task_name = f"Task with Topics {random.randint(100000, 999999)}"
+        task_name = f"Task with Topics {unique_int(100000, 999999)}"
 
         resp = api_client.post(
             "/tasks",
@@ -105,7 +100,7 @@ class TestTaskTopicIntegration:
         data = resp.json()["data"]["task"]
         assert data["name"] == task_name
 
-    def test_get_task_with_topics(self, setup_task_topics: dict, api_client: httpx.Client):
+    def test_get_task_with_topics(self, setup_task_topics: dict, api_client: TestClient):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
@@ -116,7 +111,7 @@ class TestTaskTopicIntegration:
         create_resp = api_client.post(
             "/tasks",
             json={
-                "name": f"Task with Topics {random.randint(100000, 999999)}",
+                "name": f"Task with Topics {unique_int(100000, 999999)}",
                 "submitterType": "USER",
                 "deadline": deadline,
                 "resubmittable": True,
@@ -139,7 +134,7 @@ class TestTaskTopicIntegration:
         )
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
-    def test_update_task_topics(self, setup_task_topics: dict, api_client: httpx.Client):
+    def test_update_task_topics(self, setup_task_topics: dict, api_client: TestClient):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
@@ -150,7 +145,7 @@ class TestTaskTopicIntegration:
         create_resp = api_client.post(
             "/tasks",
             json={
-                "name": f"Task to Update Topics {random.randint(100000, 999999)}",
+                "name": f"Task to Update Topics {unique_int(100000, 999999)}",
                 "submitterType": "USER",
                 "deadline": deadline,
                 "resubmittable": True,
@@ -177,7 +172,7 @@ class TestTaskTopicIntegration:
             f"Expected 200, got {patch_resp.status_code}: {patch_resp.text}"
         )
 
-    def test_get_task_with_updated_topics(self, setup_task_topics: dict, api_client: httpx.Client):
+    def test_get_task_with_updated_topics(self, setup_task_topics: dict, api_client: TestClient):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
@@ -187,7 +182,7 @@ class TestTaskTopicIntegration:
         create_resp = api_client.post(
             "/tasks",
             json={
-                "name": f"Task to Verify Topics {random.randint(100000, 999999)}",
+                "name": f"Task to Verify Topics {unique_int(100000, 999999)}",
                 "submitterType": "USER",
                 "deadline": deadline,
                 "resubmittable": True,
@@ -222,7 +217,7 @@ class TestTaskTopicIntegration:
         assert topic_ids[2] in topic_id_set, "Topic 2 should be in the updated task"
         assert topic_ids[0] not in topic_id_set, "Topic 0 should not be in the updated task"
 
-    def test_enumerate_tasks_by_topics(self, setup_task_topics: dict, api_client: httpx.Client):
+    def test_enumerate_tasks_by_topics(self, setup_task_topics: dict, api_client: TestClient):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
@@ -233,7 +228,7 @@ class TestTaskTopicIntegration:
         create_resp = api_client.post(
             "/tasks",
             json={
-                "name": f"Task for Topic Filter {random.randint(100000, 999999)}",
+                "name": f"Task for Topic Filter {unique_int(100000, 999999)}",
                 "submitterType": "USER",
                 "deadline": deadline,
                 "resubmittable": True,
@@ -288,7 +283,7 @@ class TestTaskTopicIntegration:
             f"Task {task_id} should not be in results filtered by topic {topic_ids[0]}"
         )
 
-    def test_clear_task_topics(self, setup_task_topics: dict, api_client: httpx.Client):
+    def test_clear_task_topics(self, setup_task_topics: dict, api_client: TestClient):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
@@ -299,7 +294,7 @@ class TestTaskTopicIntegration:
         create_resp = api_client.post(
             "/tasks",
             json={
-                "name": f"Task to Clear Topics {random.randint(100000, 999999)}",
+                "name": f"Task to Clear Topics {unique_int(100000, 999999)}",
                 "submitterType": "USER",
                 "deadline": deadline,
                 "resubmittable": True,

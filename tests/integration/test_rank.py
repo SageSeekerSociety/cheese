@@ -1,15 +1,14 @@
-import random
 from datetime import UTC, datetime
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator
+from tests.integration.conftest import UserCreator, unique_int
 
 
 class TestRankIntegration:
     @pytest.fixture
-    def setup_rank_test(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
+    def setup_rank_test(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
@@ -18,7 +17,7 @@ class TestRankIntegration:
             api_client, participant.username, participant.password
         )
 
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
 
         space_resp = api_client.post(
             "/spaces",
@@ -126,7 +125,7 @@ class TestRankIntegration:
             "submission1_id": submission1_id,
         }
 
-    def test_get_space_with_rank_disabled(self, setup_rank_test: dict, api_client: httpx.Client):
+    def test_get_space_with_rank_disabled(self, setup_rank_test: dict, api_client: TestClient):
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
 
@@ -140,7 +139,7 @@ class TestRankIntegration:
         assert data["space"]["id"] == space_id
         assert data["myRank"] == 0 or data.get("myRank") is None
 
-    def test_enable_rank_for_space(self, setup_rank_test: dict, api_client: httpx.Client):
+    def test_enable_rank_for_space(self, setup_rank_test: dict, api_client: TestClient):
         creator = setup_rank_test["creator"]
         space_id = setup_rank_test["space_id"]
 
@@ -153,7 +152,7 @@ class TestRankIntegration:
         data = resp.json()["data"]["space"]
         assert data["enableRank"] is True
 
-    def test_get_space_with_rank_enabled(self, setup_rank_test: dict, api_client: httpx.Client):
+    def test_get_space_with_rank_enabled(self, setup_rank_test: dict, api_client: TestClient):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -175,7 +174,7 @@ class TestRankIntegration:
         assert data["myRank"] == 0
 
     def test_join_rank2_task_fails_with_rank0(
-        self, setup_rank_test: dict, api_client: httpx.Client
+        self, setup_rank_test: dict, api_client: TestClient
     ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
@@ -196,7 +195,7 @@ class TestRankIntegration:
         )
         assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
 
-    def test_review_submission_upgrades_rank(self, setup_rank_test: dict, api_client: httpx.Client):
+    def test_review_submission_upgrades_rank(self, setup_rank_test: dict, api_client: TestClient):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -227,7 +226,7 @@ class TestRankIntegration:
         assert data["myRank"] == 1
 
     def test_failing_review_does_not_upgrade_rank(
-        self, setup_rank_test: dict, api_client: httpx.Client
+        self, setup_rank_test: dict, api_client: TestClient
     ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
@@ -259,7 +258,7 @@ class TestRankIntegration:
         assert data["myRank"] == 0
 
     def test_update_review_to_accepted_upgrades_rank(
-        self, setup_rank_test: dict, api_client: httpx.Client
+        self, setup_rank_test: dict, api_client: TestClient
     ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
@@ -304,7 +303,7 @@ class TestRankIntegration:
         assert data2["myRank"] == 1
 
     def test_join_rank2_task_succeeds_after_rank1_achieved(
-        self, setup_rank_test: dict, api_client: httpx.Client
+        self, setup_rank_test: dict, api_client: TestClient
     ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
@@ -334,7 +333,7 @@ class TestRankIntegration:
         )
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
-    def test_rank_visible_in_space_response(self, setup_rank_test: dict, api_client: httpx.Client):
+    def test_rank_visible_in_space_response(self, setup_rank_test: dict, api_client: TestClient):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -356,7 +355,7 @@ class TestRankIntegration:
         assert isinstance(data["myRank"], int)
 
     def test_rank_disabled_returns_zero_or_null(
-        self, setup_rank_test: dict, api_client: httpx.Client
+        self, setup_rank_test: dict, api_client: TestClient
     ):
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -370,7 +369,7 @@ class TestRankIntegration:
         data = resp.json()["data"]
         assert data.get("myRank") in [0, None]
 
-    def test_task_has_rank_field(self, setup_rank_test: dict, api_client: httpx.Client):
+    def test_task_has_rank_field(self, setup_rank_test: dict, api_client: TestClient):
         creator = setup_rank_test["creator"]
         task1_id = setup_rank_test["task1_id"]
         task2_id = setup_rank_test["task2_id"]
@@ -391,7 +390,7 @@ class TestRankIntegration:
         task2 = resp2.json()["data"]["task"]
         assert task2.get("rank") == 2
 
-    def test_update_space_disable_rank(self, setup_rank_test: dict, api_client: httpx.Client):
+    def test_update_space_disable_rank(self, setup_rank_test: dict, api_client: TestClient):
         creator = setup_rank_test["creator"]
         space_id = setup_rank_test["space_id"]
 
@@ -421,7 +420,7 @@ class TestRankIntegration:
         assert get_resp2.json()["data"]["space"]["enableRank"] is False
 
     def test_enumerate_spaces_with_rank_disabled(
-        self, setup_rank_test: dict, api_client: httpx.Client
+        self, setup_rank_test: dict, api_client: TestClient
     ):
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -439,7 +438,7 @@ class TestRankIntegration:
             assert target_space.get("myRank") in [0, None]
 
     def test_enumerate_spaces_with_rank_enabled(
-        self, setup_rank_test: dict, api_client: httpx.Client
+        self, setup_rank_test: dict, api_client: TestClient
     ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
@@ -464,7 +463,7 @@ class TestRankIntegration:
         assert target_space.get("myRank") == 0
 
     def test_rank2_review_upgrades_to_rank2(
-        self, user_client: UserCreator, api_client: httpx.Client
+        self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
@@ -473,7 +472,7 @@ class TestRankIntegration:
             api_client, participant.username, participant.password
         )
 
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         space_resp = api_client.post(
@@ -596,7 +595,7 @@ class TestRankIntegration:
         assert space_resp.json()["data"]["myRank"] == 2
 
     def test_another_rank1_task_does_not_upgrade_further(
-        self, user_client: UserCreator, api_client: httpx.Client
+        self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
@@ -605,7 +604,7 @@ class TestRankIntegration:
             api_client, participant.username, participant.password
         )
 
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         space_resp = api_client.post(
@@ -736,7 +735,7 @@ class TestRankIntegration:
         assert space_check2.json()["data"]["myRank"] == 1
 
     def test_rank_remains_zero_after_failing_review(
-        self, setup_rank_test: dict, api_client: httpx.Client
+        self, setup_rank_test: dict, api_client: TestClient
     ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
@@ -750,7 +749,7 @@ class TestRankIntegration:
         )
 
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
 
         task_resp = api_client.post(
             "/tasks",

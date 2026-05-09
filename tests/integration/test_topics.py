@@ -3,14 +3,12 @@ Integration tests for the Topics module.
 Migrated from cheese-backend/test/topic.e2e-spec.ts (361 lines, 15 tests)
 Complete equivalence migration.
 """
-
-import random
 import time
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import CreatedUser, UserCreator
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
 class TestTopicsCreateIntegration:
@@ -19,7 +17,7 @@ class TestTopicsCreateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -28,7 +26,7 @@ class TestTopicsCreateIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.topic_code = str(random.randint(1000000000, 9999999999))
+        self.topic_code = str(unique_int(1000000000, 9999999999))
         self.topic_prefix = f"[Test({self.topic_code}) Topic]"
         self.topic_ids: list[int] = []
 
@@ -99,7 +97,7 @@ class TestTopicsSearchIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -108,7 +106,7 @@ class TestTopicsSearchIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.topic_code = str(random.randint(1000000000, 9999999999))
+        self.topic_code = str(unique_int(1000000000, 9999999999))
         self.topic_prefix = f"[Test({self.topic_code}) Topic]"
         self.topic_ids: list[int] = []
         topics = [
@@ -281,7 +279,7 @@ class TestTopicsGetIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -290,7 +288,7 @@ class TestTopicsGetIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.topic_code = str(random.randint(1000000000, 9999999999))
+        self.topic_code = str(unique_int(1000000000, 9999999999))
         self.topic_prefix = f"[Test({self.topic_code}) Topic]"
         resp = self.client.post(
             "/topics",

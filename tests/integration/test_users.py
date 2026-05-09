@@ -4,22 +4,10 @@ Migrated from cheese-backend/test/user.e2e-spec.ts (2334 lines)
 Complete equivalence migration including SRP, OAuth, Passkey, TOTP tests.
 """
 
-import random
-
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from app.core.config import settings
-from tests.integration.conftest import CreatedUser, UserCreator
-
-
-def _get_psycopg2_dsn() -> str:
-    db_url = settings.database_url
-    if db_url.startswith("postgresql+psycopg2://"):
-        return db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
-    elif db_url.startswith("postgresql+asyncpg://"):
-        return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    return db_url
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
 class TestUserRegisterLogic:
@@ -28,12 +16,12 @@ class TestUserRegisterLogic:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
     ):
         self.client = api_client
         self.user_client = user_client
-        self.test_prefix = f"U{random.randint(100000, 999999)}"
+        self.test_prefix = f"U{unique_int(100000, 999999)}"
 
     def test_verify_email_invalid_email_address(self):
         response = self.client.post(
@@ -50,7 +38,7 @@ class TestUserRegisterLogic:
         assert response.status_code == 422
 
     def test_verify_email_success(self):
-        email = f"test-{random.randint(100000, 999999)}@ruc.edu.cn"
+        email = f"test-{unique_int(100000, 999999)}@ruc.edu.cn"
         response = self.client.post(
             "/users/verify/email",
             json={"email": email},
@@ -58,8 +46,8 @@ class TestUserRegisterLogic:
         assert response.status_code in (201, 200)
 
     def test_register_user_with_srp(self):
-        email = f"test-{random.randint(100000, 999999)}@ruc.edu.cn"
-        username = f"TestUser-{random.randint(100000, 999999)}"
+        email = f"test-{unique_int(100000, 999999)}@ruc.edu.cn"
+        username = f"TestUser-{unique_int(100000, 999999)}"
         self.client.post("/users/verify/email", json={"email": email})
         response = self.client.post(
             "/users",
@@ -75,8 +63,8 @@ class TestUserRegisterLogic:
         assert response.status_code in (201, 422)
 
     def test_register_user_legacy_auth(self):
-        email = f"test-{random.randint(100000, 999999)}@ruc.edu.cn"
-        username = f"TestUser-{random.randint(100000, 999999)}"
+        email = f"test-{unique_int(100000, 999999)}@ruc.edu.cn"
+        username = f"TestUser-{unique_int(100000, 999999)}"
         self.client.post("/users/verify/email", json={"email": email})
         response = self.client.post(
             "/users",
@@ -101,7 +89,7 @@ class TestUserRegisterLogic:
 
     def test_register_username_already_registered(self):
         user = self.user_client.create_user()
-        email = f"another-{random.randint(100000, 999999)}@ruc.edu.cn"
+        email = f"another-{unique_int(100000, 999999)}@ruc.edu.cn"
         self.client.post("/users/verify/email", json={"email": email})
         response = self.client.post(
             "/users",
@@ -117,7 +105,7 @@ class TestUserRegisterLogic:
         assert response.status_code in (409, 422)
 
     def test_register_invalid_username(self):
-        email = f"test-{random.randint(100000, 999999)}@ruc.edu.cn"
+        email = f"test-{unique_int(100000, 999999)}@ruc.edu.cn"
         self.client.post("/users/verify/email", json={"email": email})
         response = self.client.post(
             "/users",
@@ -133,12 +121,12 @@ class TestUserRegisterLogic:
         assert response.status_code == 422
 
     def test_register_invalid_nickname(self):
-        email = f"test-{random.randint(100000, 999999)}@ruc.edu.cn"
+        email = f"test-{unique_int(100000, 999999)}@ruc.edu.cn"
         self.client.post("/users/verify/email", json={"email": email})
         response = self.client.post(
             "/users",
             json={
-                "username": f"TestUser-{random.randint(100000, 999999)}",
+                "username": f"TestUser-{unique_int(100000, 999999)}",
                 "nickname": "test user",
                 "password": "abc123456!!!",
                 "email": email,
@@ -149,12 +137,12 @@ class TestUserRegisterLogic:
         assert response.status_code == 422
 
     def test_register_invalid_password(self):
-        email = f"test-{random.randint(100000, 999999)}@ruc.edu.cn"
+        email = f"test-{unique_int(100000, 999999)}@ruc.edu.cn"
         self.client.post("/users/verify/email", json={"email": email})
         response = self.client.post(
             "/users",
             json={
-                "username": f"TestUser-{random.randint(100000, 999999)}",
+                "username": f"TestUser-{unique_int(100000, 999999)}",
                 "nickname": "test_user",
                 "password": "123456",
                 "email": email,
@@ -165,12 +153,12 @@ class TestUserRegisterLogic:
         assert response.status_code == 422
 
     def test_register_code_not_match(self):
-        email = f"test-{random.randint(100000, 999999)}@ruc.edu.cn"
+        email = f"test-{unique_int(100000, 999999)}@ruc.edu.cn"
         self.client.post("/users/verify/email", json={"email": email})
         response = self.client.post(
             "/users",
             json={
-                "username": f"TestUser-{random.randint(100000, 999999)}",
+                "username": f"TestUser-{unique_int(100000, 999999)}",
                 "nickname": "test_user",
                 "password": "abc123456!!!",
                 "email": email,
@@ -187,7 +175,7 @@ class TestUserLoginLogic:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -278,7 +266,7 @@ class TestCurrentUserInfo:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -313,7 +301,7 @@ class TestPasswordResetLogic:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -340,7 +328,7 @@ class TestPasswordResetLogic:
     def test_password_reset_request_non_existent_email(self):
         response = self.client.post(
             "/users/recover/password/request",
-            json={"email": f"nonexistent-{random.randint(100000, 999999)}@ruc.edu.cn"},
+            json={"email": f"nonexistent-{unique_int(100000, 999999)}@ruc.edu.cn"},
         )
         assert response.status_code in (201, 200)
 
@@ -380,7 +368,7 @@ class TestSudoModeAuthentication:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -492,7 +480,7 @@ class TestTwoFactorAuthentication:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -547,7 +535,7 @@ class TestPasskeyAuthentication:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -627,7 +615,7 @@ class TestOAuthAuthentication:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -691,7 +679,7 @@ class TestOAuthAuthentication:
             "/users/oauth/create",
             json={
                 "stateToken": "fake-state-token",
-                "username": f"testuser_{random.randint(100000, 999999)}",
+                "username": f"testuser_{unique_int(100000, 999999)}",
                 "nickname": "Test_User",
             },
             follow_redirects=False,
@@ -728,7 +716,7 @@ class TestOAuthAccountBinding:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -783,7 +771,7 @@ class TestUserProfile:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -831,7 +819,7 @@ class TestUserProfile:
         assert response.status_code == 404
 
     def test_update_user_profile(self):
-        new_nickname = f"Updated_{random.randint(100000, 999999)}"
+        new_nickname = f"Updated_{unique_int(100000, 999999)}"
         response = self.client.patch(
             f"/users/{self.user.user_id}",
             headers=self.headers,
@@ -840,7 +828,7 @@ class TestUserProfile:
         assert response.status_code == 200
 
     def test_update_user_profile_put(self):
-        new_nickname = f"Updated_{random.randint(100000, 999999)}"
+        new_nickname = f"Updated_{unique_int(100000, 999999)}"
         response = self.client.put(
             f"/users/{self.user.user_id}",
             headers=self.headers,
@@ -861,7 +849,7 @@ class TestUserProfile:
         assert response.status_code == 403
 
     def test_update_user_intro(self):
-        intro = f"Intro_{random.randint(100000, 999999)}"
+        intro = f"Intro_{unique_int(100000, 999999)}"
         response = self.client.patch(
             f"/users/{self.user.user_id}",
             headers=self.headers,
@@ -900,7 +888,7 @@ class TestUserQuestions:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -938,7 +926,7 @@ class TestUserFavorites:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -973,7 +961,7 @@ class TestUserSettings:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -1018,7 +1006,7 @@ class TestUserStatistics:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],

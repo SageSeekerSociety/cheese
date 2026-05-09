@@ -1,15 +1,14 @@
-import random
 from datetime import UTC, datetime
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator
+from tests.integration.conftest import UserCreator, unique_int
 
 
 class TestTaskSubmissionReviewIntegration:
     @pytest.fixture
-    def setup_submission(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
+    def setup_submission(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
@@ -18,7 +17,7 @@ class TestTaskSubmissionReviewIntegration:
             api_client, participant.username, participant.password
         )
 
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
 
         space_resp = api_client.post(
             "/spaces",
@@ -105,7 +104,7 @@ class TestTaskSubmissionReviewIntegration:
             "submission_id": submission_id,
         }
 
-    def test_get_submissions_not_reviewed(self, setup_submission: dict, api_client: httpx.Client):
+    def test_get_submissions_not_reviewed(self, setup_submission: dict, api_client: TestClient):
         participant = setup_submission["participant"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -124,7 +123,7 @@ class TestTaskSubmissionReviewIntegration:
         assert submissions[0]["review"].get("detail") is None
 
     def test_get_submissions_filter_reviewed_true_when_not_reviewed(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         participant = setup_submission["participant"]
         task_id = setup_submission["task_id"]
@@ -140,7 +139,7 @@ class TestTaskSubmissionReviewIntegration:
         assert data["submissions"] == []
 
     def test_get_submissions_filter_reviewed_false_when_not_reviewed(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         participant = setup_submission["participant"]
         task_id = setup_submission["task_id"]
@@ -157,7 +156,7 @@ class TestTaskSubmissionReviewIntegration:
         assert len(submissions) == 1
         assert submissions[0]["review"]["reviewed"] is False
 
-    def test_create_review_success(self, setup_submission: dict, api_client: httpx.Client):
+    def test_create_review_success(self, setup_submission: dict, api_client: TestClient):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -177,7 +176,7 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["comment"] == "Good job!"
 
     def test_create_review_forbidden_for_participant(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         participant = setup_submission["participant"]
         task_id = setup_submission["task_id"]
@@ -192,7 +191,7 @@ class TestTaskSubmissionReviewIntegration:
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
     def test_create_review_conflict_when_already_reviewed(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
@@ -212,7 +211,7 @@ class TestTaskSubmissionReviewIntegration:
         )
         assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"
 
-    def test_update_review_empty_request(self, setup_submission: dict, api_client: httpx.Client):
+    def test_update_review_empty_request(self, setup_submission: dict, api_client: TestClient):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -237,7 +236,7 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["score"] == 5
         assert review["detail"]["comment"] == "Good job!"
 
-    def test_update_review_success(self, setup_submission: dict, api_client: httpx.Client):
+    def test_update_review_success(self, setup_submission: dict, api_client: TestClient):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -263,7 +262,7 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["comment"] == "Could be better."
 
     def test_update_review_forbidden_for_participant(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         participant = setup_submission["participant"]
@@ -285,7 +284,7 @@ class TestTaskSubmissionReviewIntegration:
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
     def test_get_submissions_after_review_update(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         participant = setup_submission["participant"]
@@ -319,7 +318,7 @@ class TestTaskSubmissionReviewIntegration:
         assert submissions[0]["review"]["detail"]["comment"] == "Could be better."
 
     def test_get_submissions_filter_reviewed_true_after_update(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         participant = setup_submission["participant"]
@@ -345,7 +344,7 @@ class TestTaskSubmissionReviewIntegration:
         assert submissions[0]["review"]["reviewed"] is True
 
     def test_get_submissions_filter_reviewed_false_after_update(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         participant = setup_submission["participant"]
@@ -369,7 +368,7 @@ class TestTaskSubmissionReviewIntegration:
         assert data["submissions"] == []
 
     def test_delete_review_forbidden_for_participant(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         participant = setup_submission["participant"]
@@ -389,7 +388,7 @@ class TestTaskSubmissionReviewIntegration:
         )
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
-    def test_delete_review_success(self, setup_submission: dict, api_client: httpx.Client):
+    def test_delete_review_success(self, setup_submission: dict, api_client: TestClient):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -408,7 +407,7 @@ class TestTaskSubmissionReviewIntegration:
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
     def test_get_submissions_after_review_delete(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         participant = setup_submission["participant"]
@@ -438,7 +437,7 @@ class TestTaskSubmissionReviewIntegration:
         assert submissions[0]["review"]["reviewed"] is False
 
     def test_delete_review_not_found_when_already_deleted(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
@@ -462,7 +461,7 @@ class TestTaskSubmissionReviewIntegration:
         assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
 
     def test_update_review_not_found_when_deleted(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
@@ -487,7 +486,7 @@ class TestTaskSubmissionReviewIntegration:
         assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
 
     def test_create_review_again_after_deletion(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
@@ -518,7 +517,7 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["comment"] == "Good job!"
 
     def test_get_submissions_after_review_recreation(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         participant = setup_submission["participant"]
@@ -556,7 +555,7 @@ class TestTaskSubmissionReviewIntegration:
         assert submissions[0]["review"]["detail"]["comment"] == "Good job!"
 
     def test_get_submissions_filter_reviewed_true_after_recreation(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         participant = setup_submission["participant"]
@@ -594,7 +593,7 @@ class TestTaskSubmissionReviewIntegration:
         assert submissions[0]["review"]["detail"]["comment"] == "Good job!"
 
     def test_get_submissions_filter_reviewed_false_after_recreation(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         participant = setup_submission["participant"]
@@ -627,7 +626,7 @@ class TestTaskSubmissionReviewIntegration:
         assert data["submissions"] == []
 
     def test_get_review_directly_after_creation(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
@@ -653,7 +652,7 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["comment"] == "Excellent work!"
 
     def test_get_review_not_found_after_deletion(
-        self, setup_submission: dict, api_client: httpx.Client
+        self, setup_submission: dict, api_client: TestClient
     ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]

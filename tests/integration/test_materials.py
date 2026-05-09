@@ -5,14 +5,12 @@ Migrated from:
 - cheese-backend/test/materialbundle.e2e-spec.ts (493 lines, 23 tests)
 Complete equivalence migration (37 tests total).
 """
-
 import io
-import random
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import CreatedUser, UserCreator
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
 class TestMaterialsUploadIntegration:
@@ -21,7 +19,7 @@ class TestMaterialsUploadIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -187,7 +185,7 @@ class TestMaterialBundlesCreateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -196,7 +194,7 @@ class TestMaterialBundlesCreateIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.unique = str(random.randint(1000000000, 9999999999))
+        self.unique = str(unique_int(1000000000, 9999999999))
         self.material_ids: list[int] = []
         for mat_type, content_type, filename in [
             ("image", "image/jpeg", "test.jpg"),
@@ -279,7 +277,7 @@ class TestMaterialBundlesGetIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -288,7 +286,7 @@ class TestMaterialBundlesGetIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.unique = str(random.randint(1000000000, 9999999999))
+        self.unique = str(unique_int(1000000000, 9999999999))
         self.material_ids: list[int] = []
         for mat_type, content_type, filename in [
             ("image", "image/jpeg", "test.jpg"),
@@ -496,7 +494,7 @@ class TestMaterialBundlesUpdateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -505,7 +503,7 @@ class TestMaterialBundlesUpdateIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.unique = str(random.randint(1000000000, 9999999999))
+        self.unique = str(unique_int(1000000000, 9999999999))
         self.material_ids: list[int] = []
         for mat_type, content_type, filename in [
             ("image", "image/jpeg", "test.jpg"),
@@ -594,7 +592,7 @@ class TestMaterialBundlesDeleteIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -603,7 +601,7 @@ class TestMaterialBundlesDeleteIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.unique = str(random.randint(1000000000, 9999999999))
+        self.unique = str(unique_int(1000000000, 9999999999))
         resp = self.client.post(
             "/material-bundles",
             headers=self.headers,

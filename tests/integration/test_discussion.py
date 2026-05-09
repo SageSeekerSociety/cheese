@@ -1,18 +1,17 @@
-import random
 import time
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator
+from tests.integration.conftest import UserCreator, unique_int
 
 
 class TestDiscussionIntegration:
     @pytest.fixture
-    def setup_discussion(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
+    def setup_discussion(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
         space_resp = api_client.post(
             "/spaces",
             json={
@@ -52,7 +51,7 @@ class TestDiscussionIntegration:
             "task_id": task_id,
         }
 
-    def test_create_discussion(self, setup_discussion: dict, api_client: httpx.Client):
+    def test_create_discussion(self, setup_discussion: dict, api_client: TestClient):
         creator = setup_discussion["creator"]
         task_id = setup_discussion["task_id"]
         resp = api_client.post(
@@ -69,7 +68,7 @@ class TestDiscussionIntegration:
         # content is stored as a string (plain text or JSON serialized string)
         assert "This is a test discussion comment." in data["content"]
 
-    def test_create_nested_discussion(self, setup_discussion: dict, api_client: httpx.Client):
+    def test_create_nested_discussion(self, setup_discussion: dict, api_client: TestClient):
         creator = setup_discussion["creator"]
         task_id = setup_discussion["task_id"]
         parent_resp = api_client.post(
@@ -95,7 +94,7 @@ class TestDiscussionIntegration:
         )
         assert reply_resp.status_code == 201, f"Expected 201, got {reply_resp.status_code}"
 
-    def test_list_discussions(self, setup_discussion: dict, api_client: httpx.Client):
+    def test_list_discussions(self, setup_discussion: dict, api_client: TestClient):
         creator = setup_discussion["creator"]
         task_id = setup_discussion["task_id"]
         api_client.post(
@@ -125,7 +124,7 @@ class TestDiscussionIntegration:
         discussions = resp.json()["data"]["discussions"]
         assert len(discussions) >= 2
 
-    def test_get_discussion_by_id(self, setup_discussion: dict, api_client: httpx.Client):
+    def test_get_discussion_by_id(self, setup_discussion: dict, api_client: TestClient):
         creator = setup_discussion["creator"]
         task_id = setup_discussion["task_id"]
         create_resp = api_client.post(
@@ -146,7 +145,7 @@ class TestDiscussionIntegration:
         assert resp.status_code == 200
         assert resp.json()["data"]["discussion"]["id"] == discussion_id
 
-    def test_delete_discussion(self, setup_discussion: dict, api_client: httpx.Client):
+    def test_delete_discussion(self, setup_discussion: dict, api_client: TestClient):
         creator = setup_discussion["creator"]
         task_id = setup_discussion["task_id"]
         create_resp = api_client.post(
@@ -166,7 +165,7 @@ class TestDiscussionIntegration:
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}"
 
-    def test_toggle_reaction(self, setup_discussion: dict, api_client: httpx.Client):
+    def test_toggle_reaction(self, setup_discussion: dict, api_client: TestClient):
         creator = setup_discussion["creator"]
         task_id = setup_discussion["task_id"]
         create_resp = api_client.post(
@@ -190,7 +189,7 @@ class TestDiscussionIntegration:
         assert "reaction" in data
         assert data["reaction"]["hasReacted"] is True
 
-    def test_remove_reaction(self, setup_discussion: dict, api_client: httpx.Client):
+    def test_remove_reaction(self, setup_discussion: dict, api_client: TestClient):
         creator = setup_discussion["creator"]
         task_id = setup_discussion["task_id"]
         create_resp = api_client.post(

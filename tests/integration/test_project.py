@@ -1,18 +1,17 @@
-import random
 import time
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator
+from tests.integration.conftest import UserCreator, unique_int
 
 
 class TestProjectIntegration:
     @pytest.fixture
-    def setup_project(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
+    def setup_project(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
         team_resp = api_client.post(
             "/teams",
             json={
@@ -30,7 +29,7 @@ class TestProjectIntegration:
             "team_id": team_id,
         }
 
-    def test_create_project(self, setup_project: dict, api_client: httpx.Client):
+    def test_create_project(self, setup_project: dict, api_client: TestClient):
         creator = setup_project["creator"]
         team_id = setup_project["team_id"]
         now = int(time.time() * 1000)
@@ -55,7 +54,7 @@ class TestProjectIntegration:
         data = resp.json()["data"]["project"]
         assert data["name"] == "Test Project"
 
-    def test_get_projects(self, setup_project: dict, api_client: httpx.Client):
+    def test_get_projects(self, setup_project: dict, api_client: TestClient):
         creator = setup_project["creator"]
         team_id = setup_project["team_id"]
         now = int(time.time() * 1000)
@@ -82,7 +81,7 @@ class TestProjectIntegration:
         projects = resp.json()["data"]["projects"]
         assert isinstance(projects, list)
 
-    def test_update_project(self, setup_project: dict, api_client: httpx.Client):
+    def test_update_project(self, setup_project: dict, api_client: TestClient):
         creator = setup_project["creator"]
         team_id = setup_project["team_id"]
         now = int(time.time() * 1000)
@@ -117,7 +116,7 @@ class TestProjectIntegration:
         assert data["name"] == "Updated Project"
         assert data["description"] == "Updated Description"
 
-    def test_delete_project(self, setup_project: dict, api_client: httpx.Client):
+    def test_delete_project(self, setup_project: dict, api_client: TestClient):
         creator = setup_project["creator"]
         team_id = setup_project["team_id"]
         now = int(time.time() * 1000)

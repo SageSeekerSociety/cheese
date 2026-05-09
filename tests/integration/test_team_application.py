@@ -1,14 +1,13 @@
-import random
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator
+from tests.integration.conftest import UserCreator, unique_int
 
 
 class TestTeamApplicationIntegration:
     @pytest.fixture
-    def setup_team_application(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
+    def setup_team_application(self, user_client: UserCreator, api_client: TestClient) -> dict:
         owner = user_client.create_user()
         owner.token = user_client.login(api_client, owner.username, owner.password)
 
@@ -18,7 +17,7 @@ class TestTeamApplicationIntegration:
         invitee = user_client.create_user()
         invitee.token = user_client.login(api_client, invitee.username, invitee.password)
 
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
 
         team_resp = api_client.post(
             "/teams",
@@ -40,7 +39,7 @@ class TestTeamApplicationIntegration:
             "team_id": team_id,
         }
 
-    def test_request_to_join_team(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_request_to_join_team(self, setup_team_application: dict, api_client: TestClient):
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
@@ -55,7 +54,7 @@ class TestTeamApplicationIntegration:
         assert data["application"]["id"] > 0
 
     def test_list_pending_requests_for_user(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
@@ -77,7 +76,7 @@ class TestTeamApplicationIntegration:
         assert isinstance(data["requests"], list)
 
     def test_list_pending_requests_for_team(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
@@ -98,7 +97,7 @@ class TestTeamApplicationIntegration:
         data = resp.json()["data"]
         assert "applications" in data
 
-    def test_approve_join_request(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_approve_join_request(self, setup_team_application: dict, api_client: TestClient):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
@@ -116,7 +115,7 @@ class TestTeamApplicationIntegration:
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
 
-    def test_reject_join_request(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_reject_join_request(self, setup_team_application: dict, api_client: TestClient):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
@@ -134,7 +133,7 @@ class TestTeamApplicationIntegration:
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
 
-    def test_cancel_join_request(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_cancel_join_request(self, setup_team_application: dict, api_client: TestClient):
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
@@ -151,7 +150,7 @@ class TestTeamApplicationIntegration:
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
 
-    def test_invite_user_to_team(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_invite_user_to_team(self, setup_team_application: dict, api_client: TestClient):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -167,7 +166,7 @@ class TestTeamApplicationIntegration:
         assert data["invitation"]["id"] > 0
 
     def test_list_invitations_for_user(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -188,7 +187,7 @@ class TestTeamApplicationIntegration:
         data = resp.json()["data"]
         assert "invitations" in data
 
-    def test_accept_invitation(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_accept_invitation(self, setup_team_application: dict, api_client: TestClient):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -206,7 +205,7 @@ class TestTeamApplicationIntegration:
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
 
-    def test_decline_invitation(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_decline_invitation(self, setup_team_application: dict, api_client: TestClient):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -224,7 +223,7 @@ class TestTeamApplicationIntegration:
         )
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
 
-    def test_cancel_invitation(self, setup_team_application: dict, api_client: httpx.Client):
+    def test_cancel_invitation(self, setup_team_application: dict, api_client: TestClient):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -243,7 +242,7 @@ class TestTeamApplicationIntegration:
         assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
 
     def test_verify_membership_after_request_approval(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
@@ -272,7 +271,7 @@ class TestTeamApplicationIntegration:
         assert member["role"] == "MEMBER"
 
     def test_verify_membership_after_invitation_acceptance(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -301,7 +300,7 @@ class TestTeamApplicationIntegration:
         assert member["role"] == "ADMIN"
 
     def test_list_sent_invitations_for_team(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -326,7 +325,7 @@ class TestTeamApplicationIntegration:
         assert found is not None
 
     def test_check_rejected_request_status(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
@@ -355,7 +354,7 @@ class TestTeamApplicationIntegration:
         assert request["status"] == "REJECTED"
 
     def test_check_canceled_request_status(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
@@ -383,7 +382,7 @@ class TestTeamApplicationIntegration:
         assert request["status"] == "CANCELED"
 
     def test_check_approved_request_status(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
@@ -412,7 +411,7 @@ class TestTeamApplicationIntegration:
         assert request["status"] == "APPROVED"
 
     def test_check_canceled_invitation_status(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -441,7 +440,7 @@ class TestTeamApplicationIntegration:
         assert invitation["status"] == "CANCELED"
 
     def test_check_declined_invitation_status(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -470,7 +469,7 @@ class TestTeamApplicationIntegration:
         assert invitation["status"] == "DECLINED"
 
     def test_check_accepted_invitation_status(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -499,7 +498,7 @@ class TestTeamApplicationIntegration:
         assert invitation["status"] == "ACCEPTED"
 
     def test_request_fails_when_already_member(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
@@ -526,7 +525,7 @@ class TestTeamApplicationIntegration:
         )
 
     def test_request_fails_when_pending_exists(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
@@ -547,7 +546,7 @@ class TestTeamApplicationIntegration:
         )
 
     def test_invitation_fails_when_already_member(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -574,7 +573,7 @@ class TestTeamApplicationIntegration:
         )
 
     def test_invitation_fails_when_pending_exists(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -596,7 +595,7 @@ class TestTeamApplicationIntegration:
         )
 
     def test_user_can_request_again_after_rejection(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
@@ -622,7 +621,7 @@ class TestTeamApplicationIntegration:
         assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
 
     def test_user_can_request_again_after_cancellation(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
@@ -647,7 +646,7 @@ class TestTeamApplicationIntegration:
         assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
 
     def test_owner_can_invite_again_after_decline(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -673,7 +672,7 @@ class TestTeamApplicationIntegration:
         assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
 
     def test_invite_user_as_admin_and_verify_role(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
@@ -702,7 +701,7 @@ class TestTeamApplicationIntegration:
         assert team_data.get("role") == "ADMIN"
 
     def test_third_request_after_rejection_and_cancellation(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
@@ -754,7 +753,7 @@ class TestTeamApplicationIntegration:
         assert team_resp.status_code == 200
 
     def test_verify_admin_role_in_invitation_list(
-        self, setup_team_application: dict, api_client: httpx.Client
+        self, setup_team_application: dict, api_client: TestClient
     ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]

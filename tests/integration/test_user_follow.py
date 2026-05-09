@@ -3,9 +3,8 @@ Integration tests for the User Follow module.
 Migrated from cheese-backend/test/user.follow.e2e-spec.ts (436 lines, 20 tests)
 Complete equivalence migration.
 """
-
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from tests.integration.conftest import CreatedUser, UserCreator
 
@@ -16,7 +15,7 @@ class TestUserFollowLogicIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -168,7 +167,7 @@ class TestUserFollowersListIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -279,7 +278,7 @@ class TestUserFollowingListIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -363,7 +362,7 @@ class TestUserFollowStatisticsIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],

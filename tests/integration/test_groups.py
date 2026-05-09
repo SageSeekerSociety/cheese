@@ -3,46 +3,32 @@ Integration tests for the Groups module.
 Migrated from cheese-backend/test/groups.e2e-spec.ts (783 lines, 35 tests)
 Complete equivalence migration.
 """
-
-import random
 from datetime import UTC, datetime
 
-import httpx
-import psycopg2
 import pytest
+from anyio.from_thread import BlockingPortal
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from tests.integration.conftest import CreatedUser, UserCreator
-
-
-def _get_psycopg2_dsn() -> str:
-    db_url = settings.database_url
-    if db_url.startswith("postgresql+psycopg2://"):
-        return db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
-    elif db_url.startswith("postgresql+asyncpg://"):
-        return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    return db_url
+from app.domain.avatars.models import Avatar
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
-def create_avatar_in_db() -> int:
-    now = datetime.now(UTC)
-    dsn = _get_psycopg2_dsn()
-    conn = psycopg2.connect(dsn)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO avatar (url, name, created_at, avatar_type, usage_count)
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                (f"/test/avatar_{random.randint(1000, 9999)}.jpg", "test_avatar", now, "upload", 0),
-            )
-            avatar_id = cur.fetchone()[0]
-        conn.commit()
-        return avatar_id
-    finally:
-        conn.close()
+def create_avatar_in_db(db_session: AsyncSession, portal: BlockingPortal) -> int:
+    avatar = Avatar(
+        url=f"/test/avatar_{unique_int(1000, 9999)}.jpg",
+        name="test_avatar",
+        created_at=datetime.now(UTC),
+        avatar_type="upload",
+        usage_count=0,
+    )
+
+    async def _do() -> int:
+        db_session.add(avatar)
+        await db_session.flush()
+        return avatar.id
+
+    return portal.call(_do)
 
 
 class TestGroupsCreateIntegration:
@@ -51,18 +37,22 @@ class TestGroupsCreateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.group_prefix = f"G{random.randint(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db()
-        self.update_avatar_id = create_avatar_in_db()
+        self.db = db_session
+        self.portal = _portal
+        self.group_prefix = f"G{unique_int(100000, 999999)}"
+        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.update_avatar_id = create_avatar_in_db(self.db, self.portal, )
         self.group_ids: list[int] = []
         self._get_user_dto()
 
@@ -153,17 +143,21 @@ class TestGroupsGetIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.group_prefix = f"G{random.randint(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db()
+        self.db = db_session
+        self.portal = _portal
+        self.group_prefix = f"G{unique_int(100000, 999999)}"
+        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
         self._get_user_dto()
         resp = self.client.post(
             "/groups",
@@ -245,17 +239,21 @@ class TestGroupsJoinIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.group_prefix = f"G{random.randint(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db()
+        self.db = db_session
+        self.portal = _portal
+        self.group_prefix = f"G{unique_int(100000, 999999)}"
+        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
         self._get_user_dto()
         self.group_ids: list[int] = []
         for _i, (name, intro) in enumerate(
@@ -352,18 +350,22 @@ class TestGroupsUpdateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.group_prefix = f"G{random.randint(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db()
-        self.update_avatar_id = create_avatar_in_db()
+        self.db = db_session
+        self.portal = _portal
+        self.group_prefix = f"G{unique_int(100000, 999999)}"
+        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.update_avatar_id = create_avatar_in_db(self.db, self.portal, )
         self._get_user_dto()
         self.group_ids: list[int] = []
         for name, intro in [
@@ -485,18 +487,22 @@ class TestGroupsLeaveIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.group_prefix = f"G{random.randint(100000, 999999)}"
-        self.pre_avatar_id = create_avatar_in_db()
-        self.update_avatar_id = create_avatar_in_db()
+        self.db = db_session
+        self.portal = _portal
+        self.group_prefix = f"G{unique_int(100000, 999999)}"
+        self.pre_avatar_id = create_avatar_in_db(self.db, self.portal, )
+        self.update_avatar_id = create_avatar_in_db(self.db, self.portal, )
         self._get_user_dto()
         resp = self.client.post(
             "/groups",
@@ -585,17 +591,21 @@ class TestGroupsDeleteIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.group_prefix = f"G{random.randint(100000, 999999)}"
-        self.avatar_id = create_avatar_in_db()
+        self.db = db_session
+        self.portal = _portal
+        self.group_prefix = f"G{unique_int(100000, 999999)}"
+        self.avatar_id = create_avatar_in_db(self.db, self.portal, )
         self.group_ids: list[int] = []
         for name, intro in [
             ("XCPC启动", "启不动了"),
@@ -663,17 +673,21 @@ class TestGroupsMembersIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.group_prefix = f"G{random.randint(100000, 999999)}"
-        self.avatar_id = create_avatar_in_db()
+        self.db = db_session
+        self.portal = _portal
+        self.group_prefix = f"G{unique_int(100000, 999999)}"
+        self.avatar_id = create_avatar_in_db(self.db, self.portal, )
         self._get_user_dto()
         self.group_ids: list[int] = []
         for name, intro in [
@@ -823,24 +837,28 @@ class TestGroupTargetsIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.group_prefix = f"GT{random.randint(100000, 999999)}"
-        self.avatar_id = create_avatar_in_db()
+        self.db = db_session
+        self.portal = _portal
+        self.group_prefix = f"GT{unique_int(100000, 999999)}"
+        self.avatar_id = create_avatar_in_db(self.db, self.portal, )
 
     def _create_group(self) -> int:
         response = self.client.post(
             "/groups",
             headers=self.headers,
             json={
-                "name": f"{self.group_prefix}_{random.randint(1000, 9999)}",
+                "name": f"{self.group_prefix}_{unique_int(1000, 9999)}",
                 "intro": "Target test group",
                 "avatarId": self.avatar_id,
             },

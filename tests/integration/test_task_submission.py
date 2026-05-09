@@ -1,15 +1,14 @@
-import random
 from datetime import UTC, datetime
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator
+from tests.integration.conftest import UserCreator, unique_int
 
 
 class TestTaskSubmissionIntegration:
     @pytest.fixture
-    def setup_task_for_submission(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
+    def setup_task_for_submission(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
@@ -23,7 +22,7 @@ class TestTaskSubmissionIntegration:
             api_client, participant2.username, participant2.password
         )
 
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
 
         space_resp = api_client.post(
             "/spaces",
@@ -54,7 +53,7 @@ class TestTaskSubmissionIntegration:
 
     def _create_task(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         token: str,
         space_id: int,
         category_id: int,
@@ -94,7 +93,7 @@ class TestTaskSubmissionIntegration:
 
     def _add_participant(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         task_id: int,
         participant_token: str,
         participant_id: int,
@@ -119,7 +118,7 @@ class TestTaskSubmissionIntegration:
         return membership_id
 
     def test_submit_task_first_time(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -147,7 +146,7 @@ class TestTaskSubmissionIntegration:
         assert submission["member"]["id"] == participant.user_id
 
     def test_resubmit_task_when_resubmittable(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -181,7 +180,7 @@ class TestTaskSubmissionIntegration:
         assert submission["version"] == 2
 
     def test_resubmit_task_fails_when_not_resubmittable(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -213,7 +212,7 @@ class TestTaskSubmissionIntegration:
         assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
 
     def test_edit_submission_when_editable(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -250,7 +249,7 @@ class TestTaskSubmissionIntegration:
         assert text_content["contentText"] == "Edited text"
 
     def test_edit_submission_fails_when_not_editable(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -282,7 +281,7 @@ class TestTaskSubmissionIntegration:
         assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
 
     def test_get_submissions_for_participant(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -315,7 +314,7 @@ class TestTaskSubmissionIntegration:
         assert submissions[0]["version"] == 1
 
     def test_get_submissions_all_versions(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -354,7 +353,7 @@ class TestTaskSubmissionIntegration:
         assert len(submissions) == 2
 
     def test_get_submissions_for_owner(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -386,7 +385,7 @@ class TestTaskSubmissionIntegration:
         assert len(submissions) == 1
 
     def test_get_submissions_fails_for_other_participant(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -420,7 +419,7 @@ class TestTaskSubmissionIntegration:
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
     def test_submit_fails_before_participant_approval(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -449,7 +448,7 @@ class TestTaskSubmissionIntegration:
         )
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
-    def test_delete_task_as_owner(self, setup_task_for_submission: dict, api_client: httpx.Client):
+    def test_delete_task_as_owner(self, setup_task_for_submission: dict, api_client: TestClient):
         data = setup_task_for_submission
         creator = data["creator"]
 
@@ -474,7 +473,7 @@ class TestTaskSubmissionIntegration:
         assert get_resp.status_code == 404
 
     def test_delete_task_fails_for_non_owner(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -495,7 +494,7 @@ class TestTaskSubmissionIntegration:
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
     def test_update_task_properties(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -521,7 +520,7 @@ class TestTaskSubmissionIntegration:
         assert task["editable"] is True
 
     def test_get_task_eligibility_before_joining(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -550,7 +549,7 @@ class TestTaskSubmissionIntegration:
                 assert user_status["eligible"] is True
 
     def test_get_task_eligibility_after_joining(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -584,7 +583,7 @@ class TestTaskSubmissionIntegration:
                 assert any(r.get("code") == "ALREADY_PARTICIPATING" for r in reasons)
 
     def test_submit_task_user2_first_time(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -612,7 +611,7 @@ class TestTaskSubmissionIntegration:
         assert submission["member"]["id"] == participant2.user_id
 
     def test_multiple_participants_submissions_isolated(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -663,7 +662,7 @@ class TestTaskSubmissionIntegration:
         assert subs2[0]["member"]["id"] == participant2.user_id
 
     def test_update_task_fails_for_non_owner(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -685,7 +684,7 @@ class TestTaskSubmissionIntegration:
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
     def test_get_submissions_default_returns_latest(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -724,7 +723,7 @@ class TestTaskSubmissionIntegration:
         assert submissions[0]["version"] == 2
 
     def test_get_submissions_fails_for_irrelevant_user(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -756,7 +755,7 @@ class TestTaskSubmissionIntegration:
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
     def test_update_task_name_and_intro(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -782,7 +781,7 @@ class TestTaskSubmissionIntegration:
         assert task["name"] == new_name
         assert task["intro"] == new_intro
 
-    def test_update_task_deadline(self, setup_task_for_submission: dict, api_client: httpx.Client):
+    def test_update_task_deadline(self, setup_task_for_submission: dict, api_client: TestClient):
         data = setup_task_for_submission
         creator = data["creator"]
 
@@ -812,7 +811,7 @@ class TestTaskSubmissionIntegration:
         assert (task.get("deadline") - new_deadline) < 1000  # Allow for small time differences
 
     def test_update_submission_schema(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -849,7 +848,7 @@ class TestTaskSubmissionIntegration:
         assert "New File Entry" in prompts
 
     def test_resubmit_increments_version(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -887,7 +886,7 @@ class TestTaskSubmissionIntegration:
         assert len(submissions) == 3
 
     def test_edit_preserves_version(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -935,7 +934,7 @@ class TestTaskSubmissionIntegration:
         assert len(submissions) == 2
 
     def test_approve_participant_via_bulk_endpoint(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -998,7 +997,7 @@ class TestTaskSubmissionIntegration:
 
     @pytest.fixture
     def setup_team_task_for_submission(
-        self, user_client: UserCreator, api_client: httpx.Client
+        self, user_client: UserCreator, api_client: TestClient
     ) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
@@ -1013,7 +1012,7 @@ class TestTaskSubmissionIntegration:
             api_client, team_member.username, team_member.password
         )
 
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
 
         space_resp = api_client.post(
             "/spaces",
@@ -1071,7 +1070,7 @@ class TestTaskSubmissionIntegration:
 
     def _create_team_task(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         token: str,
         space_id: int,
         category_id: int,
@@ -1112,7 +1111,7 @@ class TestTaskSubmissionIntegration:
 
     def _add_team_participant(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         task_id: int,
         team_id: int,
         team_creator_token: str,
@@ -1137,7 +1136,7 @@ class TestTaskSubmissionIntegration:
         return membership_id
 
     def test_submit_task_team_first_time(
-        self, setup_team_task_for_submission: dict, api_client: httpx.Client
+        self, setup_team_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_team_task_for_submission
         creator = data["creator"]
@@ -1167,7 +1166,7 @@ class TestTaskSubmissionIntegration:
         assert submission["submitter"]["id"] == team_creator.user_id
 
     def test_get_task_eligibility_for_team_before_approval(
-        self, setup_team_task_for_submission: dict, api_client: httpx.Client
+        self, setup_team_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_team_task_for_submission
         creator = data["creator"]
@@ -1207,7 +1206,7 @@ class TestTaskSubmissionIntegration:
                 assert any(r.get("code") == "ALREADY_PARTICIPATING" for r in reasons)
 
     def test_get_task_eligibility_for_team_after_approval(
-        self, setup_team_task_for_submission: dict, api_client: httpx.Client
+        self, setup_team_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_team_task_for_submission
         creator = data["creator"]
@@ -1235,7 +1234,7 @@ class TestTaskSubmissionIntegration:
         assert any(t.get("id") == team_id for t in submittable_as_team)
 
     def test_get_submissions_fails_via_member_query_param(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -1270,7 +1269,7 @@ class TestTaskSubmissionIntegration:
         assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
 
     def test_get_submissions_succeeds_via_member_query_param(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
@@ -1304,7 +1303,7 @@ class TestTaskSubmissionIntegration:
         assert submissions[0]["member"]["id"] == participant.user_id
 
     def test_team_member_can_submit_for_team(
-        self, setup_team_task_for_submission: dict, api_client: httpx.Client
+        self, setup_team_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_team_task_for_submission
         creator = data["creator"]
@@ -1334,7 +1333,7 @@ class TestTaskSubmissionIntegration:
         assert submission["submitter"]["id"] == team_member.user_id
 
     def test_approve_team_participant_via_bulk_endpoint(
-        self, setup_team_task_for_submission: dict, api_client: httpx.Client
+        self, setup_team_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_team_task_for_submission
         creator = data["creator"]
@@ -1373,7 +1372,7 @@ class TestTaskSubmissionIntegration:
                 assert approved.get("approved") == "APPROVED"
 
     def test_get_submissions_succeeds_for_owner_via_participant_path(
-        self, setup_task_for_submission: dict, api_client: httpx.Client
+        self, setup_task_for_submission: dict, api_client: TestClient
     ):
         data = setup_task_for_submission
         creator = data["creator"]
