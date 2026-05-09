@@ -16,6 +16,7 @@ from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, S
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
+    SpaceClassificationTopicsRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
@@ -56,7 +57,15 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
     admin_repo = SpaceAdminRelationRepository(session=db)
     rank_repo = SpaceUserRankRepository(session=db)
     task_repo = TaskRepository(session=db)
-    return SpaceService(repo, category_repo, admin_repo, rank_repo, task_repo)
+    classification_topics_repo = SpaceClassificationTopicsRepository(session=db)
+    return SpaceService(
+        repo,
+        category_repo,
+        admin_repo,
+        rank_repo,
+        task_repo,
+        classification_topics_repo=classification_topics_repo,
+    )
 
 
 async def get_space_analytics_service(db=Depends(get_db)) -> SpaceAnalyticsService:
@@ -169,6 +178,7 @@ async def get_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     queryMyRank: bool = Query(default=False),
     queryCategories: bool = Query(default=False),
+    queryClassificationTopics: bool = Query(default=False),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
@@ -210,6 +220,12 @@ async def get_space(
 
     space_data = _space_to_api_model(space)
     space_data["admins"] = admins_list
+    # Frontend's stores/space.ts always passes queryClassificationTopics=true
+    # and reads space.classificationTopics directly. Always populate it (cheap)
+    # so callers that forget the flag still get a sensible value.
+    topics = await service.list_classification_topics(space_id)
+    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.
 
     data: dict = {
         "space": space_data,
@@ -240,6 +256,9 @@ async def get_spaces(
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
 
+    space_ids = [s.id for s in spaces]
+    topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
+
     items: list[dict] = []
     for s in spaces:
         dto = _space_to_api_model(s)
@@ -264,6 +283,9 @@ async def get_spaces(
             )
             admins_list.append(_admin_to_api_model(rel, user_info))
         dto["admins"] = admins_list
+        dto["classificationTopics"] = [
+            {"id": t.id, "name": t.name} for t in topics_by_space.get(s.id, [])
+        ]
 
         items.append(dto)
 
@@ -304,6 +326,15 @@ async def create_space(
     enable_rank = bool(payload.get("enableRank", False))
     announcements = _expect_list(payload.get("announcements"), "announcements")
     task_templates = _expect_list(payload.get("taskTemplates"), "taskTemplates")
+    classification_topic_ids_raw = payload.get("classificationTopics")
+    classification_topic_ids: list[int] = []
+    if classification_topic_ids_raw is not None:
+        if not isinstance(classification_topic_ids_raw, list) or not all(
+            isinstance(i, int) for i in classification_topic_ids_raw
+        ):
+            raise BadRequestError("classificationTopics must be an array of integers")
+        classification_topic_ids = list(classification_topic_ids_raw)
+
     space = await service.create_space(
         name=name,
         intro=intro,
@@ -314,10 +345,19 @@ async def create_space(
         announcements=announcements,
         task_templates=task_templates,
     )
+    if classification_topic_ids:
+        await service.replace_classification_topics(
+            space_id=space.id,
+            topic_ids=classification_topic_ids,
+            actor_user_id=auth_user.user_id,
+        )
+    space_data = _space_to_api_model(space)
+    topics = await service.list_classification_topics(space.id)
+    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
     return {
         "code": 201,
         "message": "Created",
-        "data": {"space": _space_to_api_model(space)},
+        "data": {"space": space_data},
     }
 
 
@@ -338,6 +378,13 @@ async def patch_space(
     if task_templates is not None:
         task_templates = _expect_list(task_templates, "taskTemplates")
 
+    classification_topic_ids_raw = payload.get("classificationTopics")
+    if classification_topic_ids_raw is not None and (
+        not isinstance(classification_topic_ids_raw, list)
+        or not all(isinstance(i, int) for i in classification_topic_ids_raw)
+    ):
+        raise BadRequestError("classificationTopics must be an array of integers")
+
     space = await service.update_space(
         space_id=space_id,
         actor_user_id=auth_user.user_id,
@@ -350,7 +397,16 @@ async def patch_space(
         task_templates=task_templates,
         default_category_id=payload.get("defaultCategoryId"),
     )
-    return {"code": 200, "message": "OK", "data": {"space": _space_to_api_model(space)}}
+    if classification_topic_ids_raw is not None:
+        await service.replace_classification_topics(
+            space_id=space_id,
+            topic_ids=classification_topic_ids_raw,
+            actor_user_id=auth_user.user_id,
+        )
+    space_data = _space_to_api_model(space)
+    topics = await service.list_classification_topics(space_id)
+    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    return {"code": 200, "message": "OK", "data": {"space": space_data}}
 
 
 @router.delete(
