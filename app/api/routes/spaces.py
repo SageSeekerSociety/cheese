@@ -121,8 +121,8 @@ def _space_to_api_model(space: Space) -> dict:
         "avatarId": space.avatar_id,
         "enableRank": space.enable_rank,
         "defaultCategoryId": space.default_category_id,
-        "announcements": space.announcements or [],
-        "taskTemplates": space.task_templates or [],
+        "announcements": json.dumps(space.announcements or []),
+        "taskTemplates": json.dumps(space.task_templates or []),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
