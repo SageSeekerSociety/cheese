@@ -387,11 +387,17 @@ async def create_space(
     classification_topic_ids_raw = payload.get("classificationTopics")
     classification_topic_ids: list[int] = []
     if classification_topic_ids_raw is not None:
-        if not isinstance(classification_topic_ids_raw, list) or not all(
-            isinstance(i, int) for i in classification_topic_ids_raw
-        ):
-            raise BadRequestError("classificationTopics must be an array of integers")
-        classification_topic_ids = list(classification_topic_ids_raw)
+        if not isinstance(classification_topic_ids_raw, list):
+            raise BadRequestError("classificationTopics must be an array")
+        for item in classification_topic_ids_raw:
+            if isinstance(item, bool):
+                raise BadRequestError("classificationTopics must contain integers")
+            try:
+                classification_topic_ids.append(int(item))
+            except (TypeError, ValueError) as exc:
+                raise BadRequestError(
+                    "classificationTopics must contain integers"
+                ) from exc
 
     space = await service.create_space(
         name=name,
@@ -436,11 +442,20 @@ async def patch_space(
         task_templates = _expect_list(task_templates, "taskTemplates")
 
     classification_topic_ids_raw = payload.get("classificationTopics")
-    if classification_topic_ids_raw is not None and (
-        not isinstance(classification_topic_ids_raw, list)
-        or not all(isinstance(i, int) for i in classification_topic_ids_raw)
-    ):
-        raise BadRequestError("classificationTopics must be an array of integers")
+    classification_topic_ids: list[int] | None = None
+    if classification_topic_ids_raw is not None:
+        if not isinstance(classification_topic_ids_raw, list):
+            raise BadRequestError("classificationTopics must be an array")
+        classification_topic_ids = []
+        for item in classification_topic_ids_raw:
+            if isinstance(item, bool):
+                raise BadRequestError("classificationTopics must contain integers")
+            try:
+                classification_topic_ids.append(int(item))
+            except (TypeError, ValueError) as exc:
+                raise BadRequestError(
+                    "classificationTopics must contain integers"
+                ) from exc
 
     space = await service.update_space(
         space_id=space_id,
@@ -454,10 +469,10 @@ async def patch_space(
         task_templates=task_templates,
         default_category_id=payload.get("defaultCategoryId"),
     )
-    if classification_topic_ids_raw is not None:
+    if classification_topic_ids is not None:
         await service.replace_classification_topics(
             space_id=space_id,
-            topic_ids=classification_topic_ids_raw,
+            topic_ids=classification_topic_ids,
             actor_user_id=auth_user.user_id,
         )
     space_data = await _build_full_space_payload(space, service=service, db=db)

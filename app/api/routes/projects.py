@@ -160,8 +160,16 @@ async def create_project(
         raise BadRequestError("name is required")
     if not isinstance(team_id, int) or team_id <= 0:
         raise BadRequestError("teamId is required")
-    if not isinstance(leader_id, int) or leader_id <= 0:
+    # leader_id is a user-typed UID in the create-project dialog, so apply the
+    # same str→int coercion we use for space/team/project member adds.
+    if isinstance(leader_id, bool) or leader_id is None:
         raise BadRequestError("leaderId is required")
+    try:
+        leader_id = int(leader_id)
+    except (TypeError, ValueError):
+        raise BadRequestError("leaderId must be a positive integer") from None
+    if leader_id <= 0:
+        raise BadRequestError("leaderId must be a positive integer")
     if not isinstance(start_date, int):
         raise BadRequestError("startDate is required")
     if not isinstance(end_date, int):
@@ -193,9 +201,11 @@ async def create_project(
 )
 async def get_project(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    _ = auth_user
     project = await service.get_project(project_id=project_id)
     if project is None:
         raise NotFoundError("Project not found")
@@ -280,9 +290,11 @@ async def get_projects(
     leader_id: int | None = Query(default=None),
     member_id: int | None = Query(default=None),
     archived: bool | None = Query(default=None),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    _ = auth_user
     projects = await service.list_projects(
         team_id=team_id,
         parent_id=parent_id,
@@ -365,11 +377,19 @@ async def add_project_member(
 ) -> dict:
     _ = auth_user
     await _get_project_or_404(service, project_id)
-    user_id = payload.get("userId")
+    raw_user_id = payload.get("userId")
     role = payload.get("role") or "MEMBER"
     notes = payload.get("notes")
-    if not isinstance(user_id, int) or user_id <= 0:
-        raise BadRequestError("userId must be positive")
+    # Same-shape coercion as POST /spaces/{id}/managers — frontend
+    # text-fields often submit "5" instead of 5.
+    if isinstance(raw_user_id, bool) or raw_user_id is None:
+        raise BadRequestError("userId is required")
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        raise BadRequestError("userId must be a positive integer") from None
+    if user_id <= 0:
+        raise BadRequestError("userId must be a positive integer")
     if not isinstance(role, str):
         raise BadRequestError("role must be string")
 

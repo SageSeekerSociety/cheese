@@ -142,7 +142,16 @@ async def add_question(
     topic_ids = payload.get("topics") or payload.get("topicIds") or []
     if not isinstance(topic_ids, list):
         raise BadRequestError("topics must be an array")
-    topic_ints = [int(t) for t in topic_ids if isinstance(t, int)]
+    # Coerce each entry: frontend sometimes ships ["5","7"] from a select
+    # control without numeric binding. Drop anything that fails int().
+    topic_ints: list[int] = []
+    for t in topic_ids:
+        if isinstance(t, bool):
+            continue
+        try:
+            topic_ints.append(int(t))
+        except (TypeError, ValueError):
+            continue
 
     question = await service.create_question(
         user_id=auth_user.user_id,
@@ -385,7 +394,16 @@ async def update_question(
     if topics is not None:
         if not isinstance(topics, list):
             raise BadRequestError("topics must be an array")
-        topic_ids = [int(t) for t in topics if isinstance(t, int) and t > 0]
+        topic_ids = []
+        for t in topics:
+            if isinstance(t, bool):
+                continue
+            try:
+                v = int(t)
+            except (TypeError, ValueError):
+                continue
+            if v > 0:
+                topic_ids.append(v)
     question = await service.update_question(
         question_id=question_id,
         user_id=auth_user.user_id,
@@ -520,9 +538,15 @@ async def invite_user_to_answer(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
-    invitee_id = payload.get("user_id")
-    if not isinstance(invitee_id, int) or invitee_id <= 0:
+    raw_invitee = payload.get("user_id")
+    if isinstance(raw_invitee, bool) or raw_invitee is None:
         raise BadRequestError("user_id is required")
+    try:
+        invitee_id = int(raw_invitee)
+    except (TypeError, ValueError):
+        raise BadRequestError("user_id must be a positive integer") from None
+    if invitee_id <= 0:
+        raise BadRequestError("user_id must be a positive integer")
     result = await service.create_invitation(
         question_id=question_id,
         inviter_id=auth_user.user_id,

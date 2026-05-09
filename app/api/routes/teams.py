@@ -618,10 +618,16 @@ async def add_team_member_entry(
     service: TeamService = Depends(get_team_service),
 ) -> dict:
     _ = auth_user
-    user_id = payload.get("userId")
+    raw_user_id = payload.get("userId")
     role_str = (payload.get("role") or "MEMBER").upper()
-    if not isinstance(user_id, int) or user_id <= 0:
-        raise BadRequestError("userId must be positive")
+    if isinstance(raw_user_id, bool) or raw_user_id is None:
+        raise BadRequestError("userId is required")
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        raise BadRequestError("userId must be a positive integer") from None
+    if user_id <= 0:
+        raise BadRequestError("userId must be a positive integer")
 
     role_map = {"MEMBER": TeamMemberRole.MEMBER, "ADMIN": TeamMemberRole.ADMIN}
     role_val = role_map.get(role_str)
@@ -771,8 +777,14 @@ async def create_team_invitation(
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
 ) -> dict:
-    user_id = payload.get("userId")
-    if not isinstance(user_id, int) or user_id <= 0:
+    raw_user_id = payload.get("userId")
+    if isinstance(raw_user_id, bool) or raw_user_id is None:
+        raise BadRequestError("userId is required")
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        raise BadRequestError("userId must be a positive integer") from None
+    if user_id <= 0:
         raise BadRequestError("userId must be a positive integer")
     role_value = payload.get("role") if isinstance(payload.get("role"), str) else None
     role = _parse_role(role_value, allow_owner=False)

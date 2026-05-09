@@ -224,7 +224,14 @@ class TestTaskMembershipService:
         repo.save.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_create_membership_raises_when_limit_reached(self):
+    async def test_create_membership_raises_when_limit_reached(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings as _settings
+
+        # Limit enforcement is opt-in via APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK
+        # (mirrors NT applicationConfig.enforceTaskParticipantLimitCheck).
+        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
         repo = AsyncMock()
         repo.count_approved_for_task.return_value = 5
         repo.get_by_task_and_member.return_value = None
@@ -247,7 +254,12 @@ class TestTaskMembershipService:
             )
 
     @pytest.mark.anyio
-    async def test_create_membership_auto_reject_when_full(self):
+    async def test_create_membership_auto_reject_when_full(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings as _settings
+
+        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
         repo = AsyncMock()
         repo.count_approved_for_task.return_value = 5
         repo.get_by_task_and_member.return_value = None
@@ -333,7 +345,12 @@ class TestTaskMembershipService:
         repo.save.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_update_membership_approve_checks_participant_limit(self):
+    async def test_update_membership_approve_checks_participant_limit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings as _settings
+
+        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
         repo = AsyncMock()
         repo.count_approved_for_task.return_value = 5
         repo.save.side_effect = lambda m: m
@@ -466,7 +483,12 @@ class TestTaskMembershipService:
         assert "ALREADY_PARTICIPATING" in codes
 
     @pytest.mark.anyio
-    async def test_eligibility_user_participant_limit_reached(self):
+    async def test_eligibility_user_participant_limit_reached(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.core.config import settings as _settings
+
+        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
         repo = AsyncMock()
         repo.count_approved_for_task.return_value = 10
         repo.get_user_membership.return_value = None
@@ -1268,8 +1290,13 @@ class TestTaskMembershipServiceAdditional:
         assert "TEAM_TOO_LARGE" in codes
 
     @pytest.mark.anyio
-    async def test_eligibility_team_participant_limit_reached(self):
+    async def test_eligibility_team_participant_limit_reached(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """TEAM eligibility includes PARTICIPANT_LIMIT_REACHED."""
+        from app.core.config import settings as _settings
+
+        monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)
         repo = AsyncMock()
         team_membership = _make_membership(id=60, member_id=99, approved=2, is_team=True)
         repo.list_team_memberships_for_user.return_value = [team_membership]

@@ -2000,14 +2000,17 @@ async def get_task_participants(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     approved: str | None = Query(default=None),
     queryRealNameInfo: bool = Query(default=False),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     db=Depends(get_db),
 ) -> dict:
     """Return participants for a given task.
 
-    NOTE: This implementation now respects the `approved` filter, but still
-    ignores `queryRealNameInfo`（实名信息将在后续接入 user / real-name 体系）。
+    NT requires @Auth("task:enumerate:participant"); we used to expose this
+    publicly, leaking participant identities (member ids, contact info) to
+    anyone who knew a task id.
     """
+    _ = auth_user
     _ = queryRealNameInfo  # 占位，后续用于控制实名信息联查
 
     approved_value: int | None = None
@@ -2057,8 +2060,10 @@ async def get_task_participants(
 async def get_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
 ) -> dict:
+    _ = auth_user
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
