@@ -1138,9 +1138,19 @@ async def add_space_admin(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
-    user_id = payload.get("userId")
-    if not isinstance(user_id, int) or user_id <= 0:
-        raise BadRequestError("userId must be positive integer")
+    # Frontend's v-text-field for the UID isn't always strictly typed as a
+    # number — it sends "5" (string) rather than 5 even though the
+    # PostSpaceAdminRequestData type says number. Accept either, mirroring
+    # NT/Spring's auto-coercion of query params via Jackson.
+    raw_user_id = payload.get("userId")
+    if isinstance(raw_user_id, bool) or raw_user_id is None:
+        raise BadRequestError("userId is required")
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        raise BadRequestError("userId must be a positive integer") from None
+    if user_id <= 0:
+        raise BadRequestError("userId must be a positive integer")
     role_value = (payload.get("role") or "ADMIN").upper()
     role_mapping = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
     role = role_mapping.get(role_value)
