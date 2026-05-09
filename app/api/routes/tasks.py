@@ -343,6 +343,98 @@ async def _enrich_task_models(
     return task_models
 
 
+async def _enrich_task_topics(db, task_models: list[dict]) -> None:
+    """Populate `task.topics: Topic[]` for the given task dicts in-place.
+
+    Frontend `Task.topics` is an array of {id, name} objects, accessed via
+    `task.topics.length` in TaskCard.vue, so we always return at least an
+    empty array (not undefined).
+    """
+    if not task_models:
+        return
+    topic_repo = TopicRepository(session=db)
+    for task_model in task_models:
+        topic_entities = await topic_repo.list_by_task_id(task_model["id"])
+        task_model["topics"] = [{"id": t.id, "name": t.name} for t in topic_entities]
+
+
+async def _enrich_task_user_state(
+    membership_service: TaskMembershipService,
+    tasks: list[Task],
+    task_models: list[dict],
+    *,
+    user_id: int,
+    query_joinability: bool,
+) -> None:
+    """Populate per-user task state (joined / submittable / userDeadline / ...).
+
+    Mirrors the per-task computation in `get_task_detail` so list responses
+    expose the same fields the frontend expects when query flags are set.
+    """
+    if user_id <= 0:
+        # Anonymous viewer — set placeholders so the keys exist (matches the
+        # detail endpoint response shape).
+        for task_model in task_models:
+            task_model.setdefault("joined", False)
+            task_model.setdefault("joinedTeams", [])
+            task_model.setdefault("submittable", None)
+            task_model.setdefault("submittableAsTeam", [])
+            task_model.setdefault("userDeadline", None)
+            task_model.setdefault("participationEligibility", None)
+        return
+
+    by_id = {task.id: task for task in tasks}
+
+    for task_model in task_models:
+        task_id = task_model["id"]
+        task = by_id.get(task_id)
+        submitter_type = task.submitter_type if task is not None else 0
+
+        user_membership = await membership_service.get_user_membership(
+            task_id=task_id, user_id=user_id
+        )
+        team_memberships = await membership_service.list_team_memberships_for_user(
+            task_id=task_id, user_id=user_id
+        )
+
+        joined = bool(user_membership or team_memberships)
+        joined_teams = [m.member_id for m in team_memberships]
+        is_user_approved = bool(user_membership and user_membership.approved == 0)
+
+        submittable: bool | None = None
+        submittable_as_team: list[dict] = []
+        user_deadline_ms: int | None = None
+
+        if submitter_type == 0:  # USER
+            submittable = is_user_approved
+            if user_membership and user_membership.deadline:
+                user_deadline_ms = int(user_membership.deadline.timestamp() * 1000)
+        elif submitter_type == 1:  # TEAM
+            approved_team_memberships = [m for m in team_memberships if m.approved == 0]
+            submittable = bool(approved_team_memberships)
+            submittable_as_team = [{"id": m.member_id} for m in approved_team_memberships]
+            if team_memberships and team_memberships[0].deadline:
+                user_deadline_ms = int(team_memberships[0].deadline.timestamp() * 1000)
+
+        participation_eligibility: dict | None = None
+        if query_joinability and task is not None:
+            participation_eligibility = await membership_service.get_participation_eligibility(
+                task=task,
+                user_id=user_id,
+            )
+
+        task_model.update(
+            {
+                "joined": joined,
+                "joinedTeams": joined_teams,
+                "submittable": submittable,
+                "submittableAsTeam": submittable_as_team,
+                "userDeadline": user_deadline_ms,
+                "participationEligibility": participation_eligibility,
+            }
+        )
+
+
 def _membership_to_api_model(
     membership: TaskMembership,
     *,
@@ -1611,6 +1703,36 @@ async def get_tasks(
     )
     items = [_task_to_api_model(t) for t in tasks]
     items = await _enrich_task_models(db, items, space_id=space)
+
+    # Topic enrichment when requested. The frontend's Task.topics is accessed
+    # as `task.topics.length` so populate even when not asked (empty array)
+    # so undefined-checks behave consistently.
+    if queryTopics:
+        await _enrich_task_topics(db, items)
+
+    # Per-user state — joined / submittable / userDeadline / participationEligibility.
+    # Only run when the frontend explicitly asks (queryJoined / querySubmittability /
+    # queryJoinability / queryUserDeadline). Each flag implies the others enough
+    # in practice that the cheapest correct thing is to populate them together.
+    if (
+        queryJoined
+        or querySubmittability
+        or queryJoinability
+        or queryUserDeadline
+    ):
+        membership_service = TaskMembershipService(
+            repo=TaskMembershipRepository(session=db),
+            realname_repo=UserRealNameRepository(session=db),
+            space_repo=SpaceRepository(session=db),
+            space_rank_repo=SpaceUserRankRepository(session=db),
+        )
+        await _enrich_task_user_state(
+            membership_service,
+            list(tasks),
+            items,
+            user_id=auth_user.user_id,
+            query_joinability=queryJoinability,
+        )
 
     # 使用与 list / count 相同的过滤条件计算 total，以支持 hasMore/nextStart。
     total = await service.count_tasks(
