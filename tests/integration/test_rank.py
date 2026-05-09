@@ -173,7 +173,19 @@ class TestRankIntegration:
         assert data["space"]["id"] == space_id
         assert data["myRank"] == 0
 
-    def test_join_rank2_task_fails_with_rank0(self, setup_rank_test: dict, api_client: TestClient):
+    def test_join_rank2_task_fails_with_rank0(
+        self,
+        setup_rank_test: dict,
+        api_client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from app.core.config import settings as _settings
+
+        # Rank enforcement is opt-in (APPLICATION_RANK_CHECK_ENFORCED=false by
+        # default). The route used to enforce unconditionally — that's the
+        # bug we just fixed — so this test now flips the flag explicitly.
+        monkeypatch.setattr(_settings, "rank_check_enforced", True)
+
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]

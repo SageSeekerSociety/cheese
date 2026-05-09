@@ -1,7 +1,11 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from app.domain.team.repositories import TeamRepository
 from app.core.domain_errors import (
     TaskParticipantsReachedLimitError,
     TeamSizeNotEnoughError,
@@ -96,11 +100,13 @@ class TaskMembershipService:
         realname_repo: UserRealNameRepository | None = None,
         space_repo: SpaceRepository | None = None,
         space_rank_repo: SpaceUserRankRepository | None = None,
+        team_repo: "TeamRepository | None" = None,
     ) -> None:
         self._repo = repo
         self._realname_repo = realname_repo
         self._space_repo = space_repo
         self._space_rank_repo = space_rank_repo
+        self._team_repo = team_repo
 
     async def list_memberships_for_task(
         self,
@@ -383,13 +389,33 @@ class TaskMembershipService:
             }
 
         # TEAM 类型：返回 team eligibility 数组（含基本 team 尺寸限制与实名要求）。
-        team_memberships = await self.list_team_memberships_for_user(
+        # NT semantics (TaskMembershipEligibilityService.getParticipationEligibility):
+        # iterate every team the user is OWNER/ADMIN of, regardless of whether that
+        # team already has a TaskMembership row. Previously we only iterated existing
+        # memberships, so a brand-new user always saw `teams: []` and could never
+        # join a TEAM task.
+        existing_memberships = await self.list_team_memberships_for_user(
             task_id=task.id,  # type: ignore[arg-type]
             user_id=user_id,
         )
+        memberships_by_team_id = {m.member_id: m for m in existing_memberships}
+
+        if self._team_repo is not None:
+            candidate_teams = await self._team_repo.list_teams_user_can_use_to_join_task(
+                user_id=user_id,
+            )
+        else:
+            # Fallback when no TeamRepository is wired: only existing memberships.
+            candidate_teams = [
+                type("_T", (), {"id": m.member_id, "name": "", "intro": "", "avatar_id": None})()
+                for m in existing_memberships
+            ]
+
         teams_status: list[dict] = []
-        for membership in team_memberships:
-            team_size = await self._repo.count_team_members(membership.member_id)
+        for candidate in candidate_teams:
+            team_id = candidate.id
+            team_size = await self._repo.count_team_members(team_id)
+            existing = memberships_by_team_id.get(team_id)
 
             reasons: list[dict] = []
 
@@ -431,7 +457,7 @@ class TaskMembershipService:
 
             # 已有 membership 记录（且未软删除）视为已参与
             # NONE(待审批) 和 APPROVED(已批准) 不可重复加入，DISAPPROVED(已拒绝) 允许重新申请
-            if membership.approved != 1:
+            if existing is not None and existing.approved != 1:
                 reasons.append(
                     {
                         "code": "ALREADY_PARTICIPATING",
@@ -494,7 +520,7 @@ class TaskMembershipService:
                                         "actualRank": actual_rank,
                                         "requiredRank": required_rank,
                                         "taskId": task.id,
-                                        "teamId": membership.member_id,
+                                        "teamId": team_id,
                                     },
                                 }
                             )
@@ -502,8 +528,10 @@ class TaskMembershipService:
             teams_status.append(
                 {
                     "team": {
-                        "id": membership.member_id,
-                        # 其他 TeamSummaryDTO 字段（name/intro/avatarId 等）后续通过 TeamService 补齐。
+                        "id": team_id,
+                        "name": getattr(candidate, "name", None) or "",
+                        "intro": getattr(candidate, "intro", None) or "",
+                        "avatarId": getattr(candidate, "avatar_id", None),
                     },
                     "eligibility": {
                         "eligible": is_task_approved and not reasons,

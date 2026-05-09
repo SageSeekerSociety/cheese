@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -64,15 +65,19 @@ async def get_task_service(db=Depends(get_db)) -> TaskService:
 
 
 async def get_task_membership_service(db=Depends(get_db)) -> TaskMembershipService:
+    from app.domain.team.repositories import TeamRepository as _TeamRepo
+
     repo = TaskMembershipRepository(session=db)
     realname_repo = UserRealNameRepository(session=db)
     space_repo = SpaceRepository(session=db)
     space_rank_repo = SpaceUserRankRepository(session=db)
+    team_repo = _TeamRepo(session=db)
     return TaskMembershipService(
         repo=repo,
         realname_repo=realname_repo,
         space_repo=space_repo,
         space_rank_repo=space_rank_repo,
+        team_repo=team_repo,
     )
 
 
@@ -981,16 +986,23 @@ async def create_task_participant(
     if task.approved != 0 and task.creator_id != auth_user.user_id:
         raise BadRequestError("Cannot join a task that is not approved")
 
-    space_repo = SpaceRepository(session=db)
-    space = await space_repo.get_by_id(task.space_id)
-    if space is not None and space.enable_rank and task.rank is not None:
-        rank_repo = SpaceUserRankRepository(session=db)
-        user_rank = await rank_repo.get_rank(task.space_id, member)
-        rank_jump = 1
-        if user_rank + rank_jump < task.rank:
-            raise BadRequestError(
-                f"User rank ({user_rank}) is too low for this task (requires rank {task.rank - rank_jump}+)"
-            )
+    # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
+    # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
+    # eligibility service already respects this flag; the join route used to
+    # block unconditionally and rejected every user whose space_user_rank row
+    # didn't exist (most of them), making "领取赛题" impossible by default.
+    if settings.rank_check_enforced:
+        space_repo = SpaceRepository(session=db)
+        space = await space_repo.get_by_id(task.space_id)
+        if space is not None and space.enable_rank and task.rank is not None:
+            rank_repo = SpaceUserRankRepository(session=db)
+            user_rank = await rank_repo.get_rank(task.space_id, member)
+            rank_jump = settings.rank_jump
+            if user_rank + rank_jump < task.rank:
+                raise BadRequestError(
+                    f"User rank ({user_rank}) is too low for this task "
+                    f"(requires rank {task.rank - rank_jump}+)"
+                )
 
     deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None

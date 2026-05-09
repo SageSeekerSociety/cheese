@@ -79,6 +79,31 @@ class TeamRepository:
         team_result = await self._session.execute(team_stmt)
         return list(team_result.scalars().all())
 
+    async def list_teams_user_can_use_to_join_task(self, user_id: int) -> Sequence[Team]:
+        """Teams the user is OWNER or ADMIN of (eligible to join a TEAM task with).
+
+        Mirrors NT TeamRepository.getTeamsThatUserCanUseToJoinTask. The Python
+        eligibility service used to only consider teams that already had a
+        TaskMembership row, so a user who hadn't joined yet saw an empty
+        `teams` array and the frontend rendered "no eligible teams".
+        """
+        rel_stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
+            and_(
+                TeamUserRelation.user_id == user_id,
+                TeamUserRelation.deleted_at.is_(None),
+                TeamUserRelation.role.in_([TeamMemberRole.OWNER, TeamMemberRole.ADMIN]),
+            )
+        )
+        rel_result = await self._session.execute(rel_stmt)
+        team_ids = [rel.team_id for rel in rel_result.scalars().all()]
+        if not team_ids:
+            return []
+        team_stmt: Select[tuple[Team]] = select(Team).where(
+            and_(Team.id.in_(team_ids), Team.deleted_at.is_(None))
+        )
+        team_result = await self._session.execute(team_stmt)
+        return list(team_result.scalars().all())
+
     async def list_members_of_team(self, team_id: int) -> Sequence[TeamUserRelation]:
         """Return membership rows for a given team."""
         stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
