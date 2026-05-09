@@ -189,19 +189,90 @@ async def _load_team_user_maps(db, members: list[TeamUserRelation]) -> tuple[dic
     return users_map, profiles_map
 
 
-def _application_to_api_model(app) -> dict:
+def _team_summary_payload(team: Team | None, *, fallback_id: int) -> dict:
+    """TeamSummary as expected by the frontend (id/name/intro/avatarId)."""
+    if team is None:
+        return {"id": fallback_id, "name": "", "intro": "", "avatarId": None}
     return {
+        "id": team.id,
+        "name": team.name,
+        "intro": team.intro,
+        "avatarId": team.avatar_id,
+    }
+
+
+def _application_to_api_model(
+    app,
+    *,
+    users_map: dict | None = None,
+    profiles_map: dict | None = None,
+    teams_map: dict | None = None,
+) -> dict:
+    """TeamMembershipApplication payload aligned with the frontend type.
+
+    The frontend ``TeamMembershipApplication`` (cheese-frontend types/teams.ts)
+    embeds full ``user``, ``team``, ``initiator`` and optional ``processedBy``
+    objects. Bare-id responses caused Members.vue's "已发送邀请" tab to render
+    blank rows. Pass bulk-loaded users/profiles/teams maps to keep this O(1)
+    per row in list endpoints.
+    """
+    users_map = users_map or {}
+    profiles_map = profiles_map or {}
+    teams_map = teams_map or {}
+
+    payload: dict = {
         "id": app.id,
         "userId": app.user_id,
         "teamId": app.team_id,
+        "user": _user_payload(
+            users_map.get(app.user_id),
+            profiles_map.get(app.user_id),
+            fallback_id=app.user_id,
+        ),
+        "team": _team_summary_payload(teams_map.get(app.team_id), fallback_id=app.team_id),
+        "initiator": _user_payload(
+            users_map.get(app.initiator_id),
+            profiles_map.get(app.initiator_id),
+            fallback_id=app.initiator_id,
+        ),
         "type": app.type,
         "status": app.status,
         "role": app.role,
         "message": app.message,
-        "processedBy": app.processed_by_id,
         "processedAt": int(app.processed_at.timestamp() * 1000) if app.processed_at else None,
         "createdAt": int(app.created_at.timestamp() * 1000) if app.created_at else None,
+        "updatedAt": int(app.updated_at.timestamp() * 1000) if app.updated_at else None,
     }
+    if app.processed_by_id is not None:
+        payload["processedBy"] = _user_payload(
+            users_map.get(app.processed_by_id),
+            profiles_map.get(app.processed_by_id),
+            fallback_id=app.processed_by_id,
+        )
+    else:
+        payload["processedBy"] = None
+    return payload
+
+
+async def _load_application_maps(db, apps) -> tuple[dict, dict, dict]:
+    """Bulk-fetch User+UserProfile+Team for a batch of applications."""
+    if not apps:
+        return {}, {}, {}
+    user_ids = set()
+    team_ids = set()
+    for app in apps:
+        user_ids.add(app.user_id)
+        user_ids.add(app.initiator_id)
+        if app.processed_by_id is not None:
+            user_ids.add(app.processed_by_id)
+        team_ids.add(app.team_id)
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    team_repo = TeamRepository(session=db)
+    users_map = await user_repo.get_by_ids(list(user_ids))
+    profiles_map = await profile_repo.get_profiles_by_user_ids(list(user_ids))
+    teams_map = await team_repo.get_by_ids(list(team_ids))
+    return users_map, profiles_map, teams_map
 
 
 _ROLE_NAME_TO_VALUE = {
@@ -582,6 +653,7 @@ async def list_team_join_requests(
     pageSize: int | None = Query(default=None),
     auth_user: AuthUserInfo = require_permission(Action.READ, Resource.TEAM_REQUEST, "teamId"),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
     status_enum: ApplicationStatus | None = None
     if status is not None:
@@ -597,7 +669,13 @@ async def list_team_join_requests(
         page_start=pageStart,
         page_size=pageSize,
     )
-    items = [_application_to_api_model(app) for app in apps]
+    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
+    items = [
+        _application_to_api_model(
+            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+        )
+        for app in apps
+    ]
     return {
         "code": 200,
         "message": "OK",
@@ -619,6 +697,7 @@ async def list_team_requests_alias(
     pageSize: int | None = Query(default=None),
     auth_user: AuthUserInfo = require_permission(Action.READ, Resource.TEAM_REQUEST, "teamId"),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
     return await list_team_join_requests(
         team_id=team_id,
@@ -627,6 +706,7 @@ async def list_team_requests_alias(
         pageSize=pageSize,
         auth_user=auth_user,
         membership_service=membership_service,
+        db=db,
     )
 
 
@@ -641,6 +721,7 @@ async def list_team_invitations(
     pageSize: int | None = Query(default=None),
     auth_user: AuthUserInfo = require_permission(Action.READ, Resource.TEAM_INVITATION, "teamId"),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
     status_enum: ApplicationStatus | None = None
     if status is not None:
@@ -656,7 +737,13 @@ async def list_team_invitations(
         page_start=pageStart,
         page_size=pageSize,
     )
-    items = [_application_to_api_model(app) for app in apps]
+    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
+    items = [
+        _application_to_api_model(
+            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+        )
+        for app in apps
+    ]
     return {
         "code": 200,
         "message": "OK",
@@ -677,6 +764,7 @@ async def create_team_invitation(
     payload: dict,
     auth_user: AuthUserInfo = require_permission(Action.CREATE, Resource.TEAM_INVITATION, "teamId"),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
     user_id = payload.get("userId")
     if not isinstance(user_id, int) or user_id <= 0:
@@ -693,10 +781,15 @@ async def create_team_invitation(
         role=role,
         message=message,
     )
+    users_map, profiles_map, teams_map = await _load_application_maps(db, [app])
     return {
         "code": 201,
         "message": "Invitation created",
-        "data": {"invitation": _application_to_api_model(app)},
+        "data": {
+            "invitation": _application_to_api_model(
+                app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+            )
+        },
     }
 
 
@@ -729,6 +822,7 @@ async def create_team_join_request_via_team(
     payload: dict,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
     message = payload.get("message")
     if message is not None and not isinstance(message, str):
@@ -738,10 +832,15 @@ async def create_team_join_request_via_team(
         team_id=team_id,
         message=message,
     )
+    users_map, profiles_map, teams_map = await _load_application_maps(db, [app])
     return {
         "code": 201,
         "message": "Join request created",
-        "data": {"application": _application_to_api_model(app)},
+        "data": {
+            "application": _application_to_api_model(
+                app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+            )
+        },
     }
 
 
@@ -755,12 +854,14 @@ async def create_team_request_alias(
     payload: dict,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
     return await create_team_join_request_via_team(
         team_id=team_id,
         payload=payload,
         auth_user=auth_user,
         membership_service=membership_service,
+        db=db,
     )
 
 

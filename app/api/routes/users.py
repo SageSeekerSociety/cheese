@@ -261,7 +261,10 @@ async def list_my_team_requests(
     pageSize: int | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
+    from app.api.routes.teams import _application_to_api_model, _load_application_maps
+
     status_enum = None
     if status is not None:
         upper = status.upper()
@@ -277,16 +280,11 @@ async def list_my_team_requests(
         page_start=pageStart,
         page_size=pageSize,
     )
+    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
     items = [
-        {
-            "id": app.id,
-            "userId": app.user_id,
-            "teamId": app.team_id,
-            "type": app.type,
-            "status": app.status,
-            "role": app.role,
-            "message": app.message,
-        }
+        _application_to_api_model(
+            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+        )
         for app in apps
     ]
     return {
@@ -309,7 +307,10 @@ async def list_my_team_invitations(
     pageSize: int | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
+    from app.api.routes.teams import _application_to_api_model, _load_application_maps
+
     status_enum = None
     if status is not None:
         upper = status.upper()
@@ -325,17 +326,11 @@ async def list_my_team_invitations(
         page_start=pageStart,
         page_size=pageSize,
     )
+    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
     items = [
-        {
-            "id": app.id,
-            "userId": app.user_id,
-            "teamId": app.team_id,
-            "team": {"id": app.team_id},
-            "type": app.type,
-            "status": app.status,
-            "role": app.role,
-            "message": app.message,
-        }
+        _application_to_api_model(
+            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+        )
         for app in apps
     ]
     return {
