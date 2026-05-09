@@ -1,17 +1,9 @@
-import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from tests.integration.conftest import UserCreator, unique_int
-
-pytestmark = [
-    pytest.mark.skipif(
-        os.environ.get("RUN_INTEGRATION_TESTS", "").lower() not in ("1", "true"),
-        reason="Integration tests require RUN_INTEGRATION_TESTS=1 and a running database",
-    ),
-]
 
 
 class TestTaskIntegration:
@@ -226,7 +218,7 @@ class TestTaskIntegration:
 
         list_resp = api_client.get(
             "/tasks",
-            params={"spaceId": task_setup["space_id"]},
+            params={"space": task_setup["space_id"]},
             headers=headers,
         )
         assert list_resp.status_code == 200
@@ -608,7 +600,7 @@ class TestTaskEnumeration:
         list_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": multi_task_setup["space_id"],
+                "space": multi_task_setup["space_id"],
                 "owner": creator.user_id,
             },
             headers=headers,
@@ -637,7 +629,7 @@ class TestTaskEnumeration:
         approved_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": multi_task_setup["space_id"],
+                "space": multi_task_setup["space_id"],
                 "approved": "APPROVED",
             },
             headers=headers,
@@ -649,7 +641,7 @@ class TestTaskEnumeration:
         none_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": multi_task_setup["space_id"],
+                "space": multi_task_setup["space_id"],
                 "approved": "NONE",
             },
             headers=headers,
@@ -667,7 +659,7 @@ class TestTaskEnumeration:
         page1_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": multi_task_setup["space_id"],
+                "space": multi_task_setup["space_id"],
                 "pageSize": 2,
             },
             headers=headers,
@@ -681,7 +673,7 @@ class TestTaskEnumeration:
         page2_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": multi_task_setup["space_id"],
+                "space": multi_task_setup["space_id"],
                 "pageSize": 2,
                 "pageStart": next_start,
             },
@@ -700,7 +692,7 @@ class TestTaskEnumeration:
         list_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": multi_task_setup["space_id"],
+                "space": multi_task_setup["space_id"],
                 "sort_by": "createdAt",
                 "sort_order": "asc",
             },
@@ -721,7 +713,7 @@ class TestTaskEnumeration:
         list_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": multi_task_setup["space_id"],
+                "space": multi_task_setup["space_id"],
                 "sort_by": "deadline",
                 "sort_order": "desc",
             },
@@ -740,7 +732,7 @@ class TestTaskEnumeration:
         list_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": multi_task_setup["space_id"],
+                "space": multi_task_setup["space_id"],
                 "keywords": f"Task 0 ({multi_task_setup['suffix']})",
             },
             headers=headers,
@@ -1852,7 +1844,7 @@ class TestTaskPermissions:
         enum_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": permission_setup["space_id"],
+                "space": permission_setup["space_id"],
                 "approved": "NONE",
             },
             headers={"Authorization": f"Bearer {owner.token}"},
@@ -1890,7 +1882,7 @@ class TestTaskPermissions:
         enum_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": permission_setup["space_id"],
+                "space": permission_setup["space_id"],
                 "approved": "NONE",
             },
             headers={"Authorization": f"Bearer {other_user.token}"},
@@ -2038,7 +2030,7 @@ class TestTaskJoinedFilter:
         list_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": space_id,
+                "space": space_id,
                 "joined": "true",
             },
             headers={"Authorization": f"Bearer {participant.token}"},
@@ -2055,7 +2047,7 @@ class TestTaskJoinedFilter:
         list_resp = api_client.get(
             "/tasks",
             params={
-                "spaceId": space_id,
+                "space": space_id,
                 "joined": "false",
             },
             headers={"Authorization": f"Bearer {participant.token}"},

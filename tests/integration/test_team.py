@@ -1,16 +1,7 @@
-import os
-
 import pytest
 from fastapi.testclient import TestClient
 
 from tests.integration.conftest import UserCreator, unique_int
-
-pytestmark = [
-    pytest.mark.skipif(
-        os.environ.get("RUN_INTEGRATION_TESTS", "").lower() not in ("1", "true"),
-        reason="Integration tests require RUN_INTEGRATION_TESTS=1 and a running database",
-    ),
-]
 
 
 class TestTeamIntegration:
