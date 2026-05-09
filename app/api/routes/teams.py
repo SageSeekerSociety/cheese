@@ -404,10 +404,17 @@ async def get_team(
 async def get_team_members(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     queryRealNameStatus: bool = Query(default=False),
+    # NT @Auth("team:view:membership") requires MEMBER role or higher; this
+    # route used to have no auth at all, so anyone — even anonymous — could
+    # enumerate any team's roster.
+    auth_user: AuthUserInfo = require_permission(
+        Action.READ, Resource.TEAM_MEMBERSHIP, "teamId"
+    ),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
     """Return team members for a given team."""
+    _ = auth_user
     _ = queryRealNameStatus  # Placeholder, real implementation will use this flag
     relations = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map = await _load_team_user_maps(db, relations)
