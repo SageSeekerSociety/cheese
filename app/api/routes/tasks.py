@@ -2593,7 +2593,8 @@ async def delete_task_submission_review(
         raise NotFoundError.for_resource("review", submission_id)
 
     await review_service.delete_review(submission_id=submission_id)
-    return {"code": 200, "message": "OK"}
+    review_dto = await review_service.get_review_dto(submission_id)
+    return {"code": 200, "message": "OK", "data": {"review": review_dto}}
 
 
 @router.post(
@@ -2785,7 +2786,7 @@ async def delete_ai_advice_conversation(
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
     await service.delete_conversation(conversation_id=conversation_id)
-    return {"code": 200, "message": "OK"}
+    return {"code": 200, "message": "OK", "data": None}
 
 
 @router.get(

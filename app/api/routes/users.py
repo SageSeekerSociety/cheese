@@ -3068,7 +3068,7 @@ async def deactivate_invite_code(
     service = InviteCodeService(session)
     await service.deactivate_code(code_id)
     await session.commit()
-    return {"code": 200, "message": "Invite code deactivated."}
+    return {"code": 200, "message": "Invite code deactivated.", "data": None}
 
 
 @router.get(

@@ -130,7 +130,7 @@ async def delete_comment(
     service: CommentService = Depends(get_comment_service),
 ) -> dict:
     await service.delete_comment(comment_id=commentId, user_id=auth_user.user_id)
-    return {"code": 200, "message": "Comment deleted successfully"}
+    return {"code": 200, "message": "Comment deleted successfully", "data": None}
 
 
 @router.get(

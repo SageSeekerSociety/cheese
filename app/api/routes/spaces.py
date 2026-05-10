@@ -1176,7 +1176,7 @@ async def add_space_admin(
     )
     space = await service.get_space(space_id)
     if space is None:
-        return {"code": 201, "message": "Created"}
+        return {"code": 201, "message": "Created", "data": None}
     space_data = await _build_full_space_payload(space, service=service, db=db)
     return {"code": 201, "message": "Created", "data": {"space": space_data}}
 
@@ -1210,6 +1210,7 @@ async def patch_space_manager(
     payload: dict,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     role_str = payload.get("role")
     if not isinstance(role_str, str):
@@ -1224,4 +1225,8 @@ async def patch_space_manager(
         new_role=new_role,
         actor_user_id=auth_user.user_id,
     )
-    return {"code": 200, "message": "OK"}
+    space = await service.get_space(space_id)
+    if space is None:
+        return {"code": 200, "message": "OK", "data": None}
+    space_data = await _build_full_space_payload(space, service=service, db=db)
+    return {"code": 200, "message": "OK", "data": {"space": space_data}}
