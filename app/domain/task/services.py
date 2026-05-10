@@ -487,12 +487,20 @@ class TaskMembershipService:
                 )
 
             # requireRealName: 若任务要求实名，TEAM 参与需要所有队员均有实名记录。
+            # NT checks allVerified from getTeamMembers(teamId, queryRealNameStatus=true).
             if task.require_real_name and self._realname_repo is not None:
-                # 简化实现：只要发现队员中存在未实名用户就添加原因。
-                # 这里没有逐个检查所有成员，只是标记整体状态，后续可以细化为具体 missingUserIds。
-                # 为避免额外查询，这里只检查提交者自身是否实名；完整实现应结合 team 成员列表。
-                has_identity = await self._realname_repo.has_identity(user_id)
-                if not has_identity:
+                # Check all team members, not just the requesting user.
+                all_verified = True
+                if self._team_repo is not None:
+                    members = await self._team_repo.list_members_of_team(team_id)
+                    for member_rel in members:
+                        if not await self._realname_repo.has_identity(member_rel.user_id):
+                            all_verified = False
+                            break
+                else:
+                    # Fallback: check the requesting user only
+                    all_verified = await self._realname_repo.has_identity(user_id)
+                if not all_verified:
                     reasons.append(
                         {
                             "code": "TEAM_MEMBER_MISSING_REAL_NAME",
