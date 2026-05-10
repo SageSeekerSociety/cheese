@@ -1,14 +1,46 @@
+import re
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.topics.models import Topic
+
+# Matches strings that contain at least one letter or digit (ASCII or Unicode).
+# Tokens made entirely of emoji / symbols produce empty tsqueries with the
+# ``simple`` dictionary and must fall back to ILIKE.
+_HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
+
+
+def _use_fts(token: str) -> bool:
+    """Return True if this token is suitable for PostgreSQL FTS.
+
+    Short tokens (<= 2 chars) and tokens with no word-characters (pure emoji
+    / symbols) must fall back to ILIKE because ``plainto_tsquery('simple', ...)``
+    would return an empty query for them.
+    """
+    return len(token) > 2 and _HAS_WORD_CHAR_RE.search(token) is not None
 
 
 class TopicRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    @staticmethod
+    def _keyword_filter(token: str):
+        """FTS filter for a single keyword token.
+
+        Short tokens or emoji-only tokens fall back to ILIKE; longer word-
+        bearing tokens use ``to_tsvector / plainto_tsquery`` with the GIN
+        index.
+        """
+        stripped = token.strip()
+        if not _use_fts(stripped):
+            like = f"%{stripped}%"
+            return Topic.name.ilike(like)
+        tsvector = func.to_tsvector(text("'simple'"), func.coalesce(Topic.name, ""))
+        tsquery = func.plainto_tsquery(text("'simple'"), stripped)
+        return tsvector.op("@@")(tsquery)
 
     async def list_topics_cursor(
         self,
@@ -22,8 +54,7 @@ class TopicRepository:
         if keyword:
             tokens = keyword.strip().split()
             for token in tokens:
-                like = f"%{token}%"
-                base = base.where(Topic.name.ilike(like))
+                base = base.where(self._keyword_filter(token))
 
         base = base.order_by(Topic.id.asc())
 
@@ -48,8 +79,7 @@ class TopicRepository:
             if keyword:
                 tokens = keyword.strip().split()
                 for token in tokens:
-                    like = f"%{token}%"
-                    prev_stmt = prev_stmt.where(Topic.name.ilike(like))
+                    prev_stmt = prev_stmt.where(self._keyword_filter(token))
             prev_stmt = prev_stmt.order_by(Topic.id.desc()).limit(page_size)
             prev_result = await self._session.execute(prev_stmt)
             prev_ids = list(prev_result.scalars().all())

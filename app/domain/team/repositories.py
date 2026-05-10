@@ -1,7 +1,8 @@
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -13,6 +14,13 @@ from app.domain.team.models import (
     TeamMembershipApplication,
     TeamUserRelation,
 )
+
+_HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
+
+
+def _use_fts(token: str) -> bool:
+    """Return True when *token* is suitable for PostgreSQL FTS."""
+    return len(token) > 2 and _HAS_WORD_CHAR_RE.search(token) is not None
 
 
 class TeamRepository:
@@ -34,6 +42,20 @@ class TeamRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def _name_search_filter(query: str):
+        """FTS filter for team name search.
+
+        Short queries or emoji-only strings fall back to ILIKE; longer
+        word-bearing queries use ``to_tsvector / plainto_tsquery``.
+        """
+        stripped = query.strip()
+        if not _use_fts(stripped):
+            return Team.name.ilike(f"%{stripped}%")
+        tsvector = func.to_tsvector(text("'simple'"), func.coalesce(Team.name, ""))
+        tsquery = func.plainto_tsquery(text("'simple'"), stripped)
+        return tsvector.op("@@")(tsquery)
+
     async def list_teams(
         self,
         *,
@@ -43,12 +65,11 @@ class TeamRepository:
     ) -> Sequence[Team]:
         stmt: Select[tuple[Team]] = select(Team).where(Team.deleted_at.is_(None))
         if query:
-            like = f"%{query}%"
             try:
                 query_id = int(query)
-                stmt = stmt.where(or_(Team.name.ilike(like), Team.id == query_id))
+                stmt = stmt.where(or_(self._name_search_filter(query), Team.id == query_id))
             except ValueError:
-                stmt = stmt.where(Team.name.ilike(like))
+                stmt = stmt.where(self._name_search_filter(query))
         stmt = stmt.order_by(Team.id.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())

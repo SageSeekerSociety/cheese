@@ -1,7 +1,8 @@
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.questions.models import (
@@ -14,6 +15,18 @@ from app.domain.questions.models import (
     QuestionTopicRelation,
     VoteType,
 )
+
+_HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
+
+
+def _use_fts(token: str) -> bool:
+    """Return True when *token* is suitable for PostgreSQL FTS.
+
+    Short tokens (<= 2 chars) and tokens composed entirely of emoji /
+    symbols produce empty tsqueries with the ``simple`` dictionary and
+    must fall back to ILIKE.
+    """
+    return len(token) > 2 and _HAS_WORD_CHAR_RE.search(token) is not None
 
 
 class QuestionRepository:
@@ -54,6 +67,25 @@ class QuestionRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def _keyword_filter(keyword: str):
+        """Return a WHERE clause for keyword search.
+
+        Short keywords or emoji-only strings fall back to ILIKE. Longer,
+        word-bearing keywords use PostgreSQL FTS with
+        ``to_tsvector / plainto_tsquery`` which leverages the GIN index.
+        """
+        stripped = keyword.strip()
+        if not _use_fts(stripped):
+            like = f"%{stripped}%"
+            return or_(Question.title.ilike(like), Question.content.ilike(like))
+        tsvector = func.to_tsvector(
+            text("'simple'"),
+            func.coalesce(Question.title, "") + " " + func.coalesce(Question.content, ""),
+        )
+        tsquery = func.plainto_tsquery(text("'simple'"), stripped)
+        return tsvector.op("@@")(tsquery)
+
     async def search(
         self,
         *,
@@ -65,8 +97,7 @@ class QuestionRepository:
     ) -> tuple[list[Question], int]:
         stmt: Select[tuple[Question]] = select(Question).where(Question.deleted_at.is_(None))
         if keyword:
-            like = f"%{keyword.strip()}%"
-            stmt = stmt.where(or_(Question.title.ilike(like), Question.content.ilike(like)))
+            stmt = stmt.where(self._keyword_filter(keyword))
         order_col = Question.created_at if sort_by == "createdAt" else Question.updated_at
         stmt = stmt.order_by(order_col.desc() if sort_order == "desc" else order_col.asc())
         stmt = stmt.limit(limit).offset(offset)
@@ -75,10 +106,7 @@ class QuestionRepository:
 
         count_stmt = select(func.count(Question.id)).where(Question.deleted_at.is_(None))
         if keyword:
-            like = f"%{keyword.strip()}%"
-            count_stmt = count_stmt.where(
-                or_(Question.title.ilike(like), Question.content.ilike(like))
-            )
+            count_stmt = count_stmt.where(self._keyword_filter(keyword))
         count_result = await self._session.execute(count_stmt)
         total = int(count_result.scalar_one() or 0)
         return rows, total
