@@ -9,7 +9,6 @@ import tempfile
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import fitz
 import pymupdf4llm
 
 from app.core.config import settings
