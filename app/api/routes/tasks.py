@@ -438,7 +438,12 @@ async def _enrich_task_user_state(
         user_membership = pending[task_id]["user_membership"]
         team_memberships = pending[task_id]["team_memberships"]
 
-        joined = bool(user_membership or team_memberships)
+        # DISAPPROVED memberships should NOT show as "joined" — otherwise the
+        # frontend renders "退出赛题" button for rejected applications.
+        joined = bool(
+            (user_membership and user_membership.approved != 1)
+            or any(m.approved != 1 for m in team_memberships)
+        )
         joined_teams = [_team_summary(m.member_id) for m in team_memberships]
         is_user_approved = bool(user_membership and user_membership.approved == 0)
 
@@ -1419,7 +1424,12 @@ async def get_task(
             user_id=auth_user.user_id,
         )
 
-        joined = bool(user_membership or team_memberships)
+        # DISAPPROVED memberships should NOT show as "joined" — otherwise the
+        # frontend renders "退出赛题" button for rejected applications.
+        joined = bool(
+            (user_membership and user_membership.approved != 1)
+            or any(m.approved != 1 for m in team_memberships)
+        )
         # Hydrate joinedTeams / submittableAsTeam to Team[] (frontend type) so
         # the leave-task dialog can render team.name. Bare ids broke
         # useTaskParticipation.ts:115 (joinedTeams[0].id / .name).

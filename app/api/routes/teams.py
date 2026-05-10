@@ -413,20 +413,30 @@ async def get_team_members(
 ) -> dict:
     """Return team members for a given team."""
     _ = auth_user
-    _ = queryRealNameStatus  # Placeholder, real implementation will use this flag
     relations = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map = await _load_team_user_maps(db, relations)
     members = [
         _member_to_api_model(rel, users_map=users_map, profiles_map=profiles_map)
         for rel in relations
     ]
-    # allMembersVerified will be None until real-name logic is wired in
+    # Compute allMembersVerified: check real-name status for each member
+    all_verified: bool | None = None
+    if queryRealNameStatus:
+        from app.domain.user.repositories import UserRealNameRepository
+
+        realname_repo = UserRealNameRepository(session=db)
+        member_user_ids = [rel.user_id for rel in relations]
+        all_verified = True
+        for uid in member_user_ids:
+            if not await realname_repo.has_identity(uid):
+                all_verified = False
+                break
     return {
         "code": 200,
         "message": "OK",
         "data": {
             "members": members,
-            "allMembersVerified": None,
+            "allMembersVerified": all_verified,
         },
     }
 
