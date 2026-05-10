@@ -386,6 +386,39 @@ class TaskMembershipRepository:
         await self._session.flush()
         return membership
 
+    async def find_active_locked_memberships(
+        self,
+        team_id: int,
+        locking_policies: list[str],
+    ) -> Sequence[TaskMembership]:
+        """Find team task memberships that impose a lock on team changes.
+
+        Mirrors NT TaskMembershipRepository.findActiveMembershipsWithOngoingLock:
+        returns TaskMembership rows where the team is APPROVED, the task has a
+        matching locking policy, and the completion status is still ongoing.
+        """
+        ongoing_statuses = ["NOT_SUBMITTED", "PENDING_REVIEW", "REJECTED_RESUBMITTABLE"]
+        now = datetime.now(UTC).replace(tzinfo=None)
+        stmt: Select[tuple[TaskMembership]] = (
+            select(TaskMembership)
+            .join(Task, Task.id == TaskMembership.task_id)
+            .where(
+                TaskMembership.member_id == team_id,
+                TaskMembership.is_team.is_(True),
+                TaskMembership.approved == 0,  # APPROVED
+                TaskMembership.deleted_at.is_(None),
+                Task.deleted_at.is_(None),
+                Task.team_locking_policy.in_(locking_policies),
+                TaskMembership.completion_status.in_(ongoing_statuses),
+                or_(
+                    TaskMembership.deadline.is_(None),
+                    TaskMembership.deadline > now,
+                ),
+            )
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
 
 class TaskSubmissionRepository:
     def __init__(self, session: AsyncSession) -> None:

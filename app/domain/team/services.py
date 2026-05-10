@@ -6,6 +6,33 @@ from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
 from app.domain.team.repositories import TeamRepository
 
 
+async def check_team_locking_status(session, team_id: int) -> None:
+    """Check if a team is locked due to participation in tasks with locking policies.
+
+    Mirrors NT TeamService.checkTeamLockingStatus: queries TaskMembership rows
+    where the team is APPROVED in a task with LOCK_ON_APPROVAL policy and the
+    completion status is still ongoing. Raises ForbiddenError if locked.
+    """
+    from app.domain.task.repositories import TaskMembershipRepository
+
+    membership_repo = TaskMembershipRepository(session=session)
+    locking_policies = ["LOCK_ON_APPROVAL"]
+    locked = await membership_repo.find_active_locked_memberships(
+        team_id=team_id,
+        locking_policies=locking_policies,
+    )
+    if locked:
+        task_names = []
+        for m in locked:
+            # We don't eagerly load the task, so just mention the task ID.
+            task_names.append(str(m.task_id))
+        msg = (
+            "Team membership cannot be changed because the team is "
+            f"participating in locked task(s): {', '.join(task_names)}"
+        )
+        raise ForbiddenError(msg)
+
+
 class TeamService:
     def __init__(self, repo: TeamRepository) -> None:
         self._repo = repo
@@ -172,6 +199,7 @@ class TeamService:
             ):
                 raise ForbiddenError("Admins cannot remove other admins")
 
+        await check_team_locking_status(self._repo._session, team_id)
         await self._repo.soft_delete_member(relation)
 
     async def update_team_member_role(

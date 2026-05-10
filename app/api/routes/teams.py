@@ -614,6 +614,7 @@ async def add_team_member_entry(
     payload: dict,
     auth_user: AuthUserInfo = require_permission(Action.CREATE, Resource.TEAM_MEMBERSHIP, "teamId"),
     service: TeamService = Depends(get_team_service),
+    db=Depends(get_db),
 ) -> dict:
     _ = auth_user
     raw_user_id = payload.get("userId")
@@ -635,6 +636,10 @@ async def add_team_member_entry(
     team = await service.get_team(team_id)
     if team is None:
         raise NotFoundError("Team not found")
+
+    from app.domain.team.services import check_team_locking_status
+
+    await check_team_locking_status(db, team_id)
 
     relation = await service._repo.add_member(team_id, user_id, role_val)
     return {
