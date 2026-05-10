@@ -14,6 +14,7 @@ reaction_type_seq = Sequence("reaction_type_seq")
 
 class DiscussableModelType(str, Enum):
     PROJECT = "PROJECT"
+    SPACE = "SPACE"
     TEAM = "TEAM"
     TASK = "TASK"
     KNOWLEDGE = "KNOWLEDGE"

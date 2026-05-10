@@ -7,12 +7,11 @@ Complete equivalence migration (37 tests total).
 """
 
 import io
-import random
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import CreatedUser, UserCreator
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
 class TestMaterialsUploadIntegration:
@@ -21,7 +20,7 @@ class TestMaterialsUploadIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -45,9 +44,9 @@ class TestMaterialsUploadIntegration:
             files={"file": ("test.jpg", fake_file, "image/jpeg")},
             data={"type": "image"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 200
+        assert data["code"] == 201
         assert "id" in data["data"]
 
     def test_upload_video_material(self):
@@ -58,9 +57,9 @@ class TestMaterialsUploadIntegration:
             files={"file": ("test.mp4", fake_file, "video/mp4")},
             data={"type": "video"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 200
+        assert data["code"] == 201
         assert "id" in data["data"]
 
     def test_upload_audio_material(self):
@@ -71,9 +70,9 @@ class TestMaterialsUploadIntegration:
             files={"file": ("test.mp3", fake_file, "audio/mpeg")},
             data={"type": "audio"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 200
+        assert data["code"] == 201
         assert "id" in data["data"]
 
     def test_upload_file_material(self):
@@ -84,9 +83,9 @@ class TestMaterialsUploadIntegration:
             files={"file": ("test.pdf", fake_file, "application/pdf")},
             data={"type": "file"},
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 200
+        assert data["code"] == 201
         assert "id" in data["data"]
 
     def test_get_material(self):
@@ -187,7 +186,7 @@ class TestMaterialBundlesCreateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -196,7 +195,7 @@ class TestMaterialBundlesCreateIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.unique = str(random.randint(1000000000, 9999999999))
+        self.unique = str(unique_int(1000000000, 9999999999))
         self.material_ids: list[int] = []
         for mat_type, content_type, filename in [
             ("image", "image/jpeg", "test.jpg"),
@@ -279,7 +278,7 @@ class TestMaterialBundlesGetIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -288,7 +287,7 @@ class TestMaterialBundlesGetIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.unique = str(random.randint(1000000000, 9999999999))
+        self.unique = str(unique_int(1000000000, 9999999999))
         self.material_ids: list[int] = []
         for mat_type, content_type, filename in [
             ("image", "image/jpeg", "test.jpg"),
@@ -341,10 +340,10 @@ class TestMaterialBundlesGetIntegration:
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 200
-        assert data["data"]["page"]["page_size"] == 20
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is True
+        assert data["data"]["page"]["pageSize"] == 20
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is True
 
     def test_get_bundles_with_keyword(self):
         response = self.client.get(
@@ -358,11 +357,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 20
         for i, material in enumerate(data["data"]["materials"][:20]):
             assert material["id"] == self.bundle_ids[i]
-        assert data["data"]["page"]["page_size"] == 20
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageSize"] == 20
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
     def test_get_bundles_with_keyword_and_size(self):
         response = self.client.get(
@@ -376,11 +375,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 10
         for i, material in enumerate(data["data"]["materials"][:10]):
             assert material["id"] == self.bundle_ids[i]
-        assert data["data"]["page"]["page_size"] == 10
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.bundle_ids[10]
+        assert data["data"]["page"]["pageSize"] == 10
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.bundle_ids[10]
 
     def test_get_bundles_with_keyword_size_and_start(self):
         response = self.client.get(
@@ -399,11 +398,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 10
         for i, material in enumerate(data["data"]["materials"][:10]):
             assert material["id"] == self.bundle_ids[i + 4]
-        assert data["data"]["page"]["page_size"] == 10
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.bundle_ids[3]
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.bundle_ids[14]
+        assert data["data"]["page"]["pageSize"] == 10
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.bundle_ids[3]
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.bundle_ids[14]
 
     def test_get_bundles_with_search_syntax(self):
         response = self.client.get(
@@ -421,11 +420,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 10
         for i, material in enumerate(data["data"]["materials"][:10]):
             assert material["id"] == self.bundle_ids[i + 4]
-        assert data["data"]["page"]["page_size"] == 10
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.bundle_ids[14]
+        assert data["data"]["page"]["pageSize"] == 10
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.bundle_ids[14]
 
     def test_get_bundles_with_sort_newest(self):
         response = self.client.get(
@@ -444,11 +443,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 10
         for i, material in enumerate(data["data"]["materials"][:10]):
             assert material["id"] == self.bundle_ids[14 - i]
-        assert data["data"]["page"]["page_size"] == 10
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.bundle_ids[15]
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.bundle_ids[4]
+        assert data["data"]["page"]["pageSize"] == 10
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.bundle_ids[15]
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.bundle_ids[4]
 
     def test_get_bundles_keyword_too_long(self):
         response = self.client.get(
@@ -496,7 +495,7 @@ class TestMaterialBundlesUpdateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -505,7 +504,7 @@ class TestMaterialBundlesUpdateIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.unique = str(random.randint(1000000000, 9999999999))
+        self.unique = str(unique_int(1000000000, 9999999999))
         self.material_ids: list[int] = []
         for mat_type, content_type, filename in [
             ("image", "image/jpeg", "test.jpg"),
@@ -594,7 +593,7 @@ class TestMaterialBundlesDeleteIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -603,7 +602,7 @@ class TestMaterialBundlesDeleteIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.unique = str(random.randint(1000000000, 9999999999))
+        self.unique = str(unique_int(1000000000, 9999999999))
         resp = self.client.post(
             "/material-bundles",
             headers=self.headers,

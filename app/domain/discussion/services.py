@@ -1,3 +1,4 @@
+import json
 from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.discussion.models import DiscussableModelType
 from app.domain.discussion.reaction_services import DiscussionReactionService
-from app.domain.discussion.repositories import DiscussionRepository
+from app.domain.discussion.repositories import DiscussionRepository, _content_str_to_json
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import publish_notification_event
 from app.domain.user.repositories import UserProfileRepository
@@ -58,7 +59,7 @@ class DiscussionService:
                 payload={
                     "discussion": {"type": "discussion", "id": str(entity.id)},
                     "model": {"type": entity.model_type, "id": str(entity.model_id)},
-                    "excerpt": entity.content[:120],
+                    "excerpt": content.strip()[:120],
                 },
                 actor_id=user_id,
             )
@@ -129,10 +130,7 @@ class DiscussionService:
 
         if entity.sender_id != user_id:
             raise ForbiddenError("Only the author can update this discussion")
-        content_json = {
-            "type": "doc",
-            "content": [{"type": "paragraph", "content": [{"type": "text", "text": content}]}],
-        }
+        content_json = _content_str_to_json(content)
         updated = await self._repo.update_content(discussion_id, content_json)
         return await self._build_discussion_dto(updated, current_user_id=user_id)
 
@@ -251,11 +249,19 @@ class DiscussionService:
         created_at_ms = int(entity.created_at.timestamp() * 1000)
         updated_at_ms = int(entity.updated_at.timestamp() * 1000)
 
+        content_value = entity.content
+        if isinstance(content_value, (dict, list)):
+            content_value = json.dumps(content_value, ensure_ascii=False, separators=(",", ":"))
+        elif content_value is None:
+            content_value = ""
+        else:
+            content_value = str(content_value)
+
         return {
             "id": entity.id,
             "modelType": entity.model_type,
             "modelId": entity.model_id,
-            "content": entity.content,
+            "content": content_value,
             "parentId": entity.parent_id,
             "sender": sender,
             "mentionedUsers": mentioned,

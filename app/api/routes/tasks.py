@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile, sta
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
-from app.auth.checker import get_auth_user, require_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -44,13 +45,16 @@ from app.domain.task.services import (
     TaskSubmissionReviewService,
     TaskSubmissionService,
 )
-from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
+from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.topics.repositories import TopicRepository as GlobalTopicRepository
-from app.domain.user.repositories import UserRealNameRepository
-from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.repositories import (
+    UserProfileRepository,
+    UserRealNameRepository,
+    UserRepository,
+)
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -61,15 +65,19 @@ async def get_task_service(db=Depends(get_db)) -> TaskService:
 
 
 async def get_task_membership_service(db=Depends(get_db)) -> TaskMembershipService:
+    from app.domain.team.repositories import TeamRepository as _TeamRepo
+
     repo = TaskMembershipRepository(session=db)
     realname_repo = UserRealNameRepository(session=db)
     space_repo = SpaceRepository(session=db)
     space_rank_repo = SpaceUserRankRepository(session=db)
+    team_repo = _TeamRepo(session=db)
     return TaskMembershipService(
         repo=repo,
         realname_repo=realname_repo,
         space_repo=space_repo,
         space_rank_repo=space_rank_repo,
+        team_repo=team_repo,
     )
 
 
@@ -198,6 +206,7 @@ def _task_to_api_model(task: Task) -> dict:
         "maxTeamSize": task.max_team_size,
         "teamLockingPolicy": task.team_locking_policy,
         "rejectReason": task.reject_reason,
+        "videoUrl": task.video_url,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -275,7 +284,9 @@ async def _enrich_task_models(
         )
 
     category_name_map: dict[int, str] = {
-        int(category.id): category.name for category in categories if getattr(category, "name", None)
+        int(category.id): category.name
+        for category in categories
+        if getattr(category, "name", None)
     }
 
     participant_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
@@ -326,9 +337,7 @@ async def _enrich_task_models(
         }
 
         resolved_category_name = (
-            category_name_map.get(category_id)
-            if isinstance(category_id, int)
-            else None
+            category_name_map.get(category_id) if isinstance(category_id, int) else None
         )
         task_model["category"] = {
             "id": category_id,
@@ -337,6 +346,165 @@ async def _enrich_task_models(
         task_model["categoryId"] = category_id
 
     return task_models
+
+
+async def _enrich_task_topics(db, task_models: list[dict]) -> None:
+    """Populate `task.topics: Topic[]` for the given task dicts in-place.
+
+    Frontend `Task.topics` is an array of {id, name} objects, accessed via
+    `task.topics.length` in TaskCard.vue, so we always return at least an
+    empty array (not undefined).
+    """
+    if not task_models:
+        return
+    topic_repo = TopicRepository(session=db)
+    for task_model in task_models:
+        topic_entities = await topic_repo.list_by_task_id(task_model["id"])
+        task_model["topics"] = [{"id": t.id, "name": t.name} for t in topic_entities]
+
+
+async def _enrich_task_user_state(
+    membership_service: TaskMembershipService,
+    tasks: list[Task],
+    task_models: list[dict],
+    *,
+    user_id: int,
+    query_joinability: bool,
+    db,
+) -> None:
+    """Populate per-user task state (joined / submittable / userDeadline / ...).
+
+    Mirrors the per-task computation in `get_task_detail` so list responses
+    expose the same fields the frontend expects when query flags are set.
+    """
+    if user_id <= 0:
+        # Anonymous viewer — set placeholders so the keys exist (matches the
+        # detail endpoint response shape).
+        for task_model in task_models:
+            task_model.setdefault("joined", False)
+            task_model.setdefault("joinedTeams", [])
+            task_model.setdefault("submittable", None)
+            task_model.setdefault("submittableAsTeam", [])
+            task_model.setdefault("userDeadline", None)
+            task_model.setdefault("participationEligibility", None)
+        return
+
+    # Frontend Task.joinedTeams / submittableAsTeam are typed `Team[]`; the
+    # leave-task UI accesses joinedTeams[0].id and .name directly. We used to
+    # ship arrays of bare ids / `{id}` stubs, so the dialog rendered
+    # "确定要让小队\"undefined\"退出该赛题吗？". Bulk-fetch real Team rows
+    # for every team_id that shows up across the task list.
+    from app.domain.team.repositories import TeamRepository as _TeamRepo
+
+    team_repo = _TeamRepo(session=db)
+
+    by_id = {task.id: task for task in tasks}
+
+    # First pass: collect team_ids needed across all rows in this list.
+    pending: dict[int, dict] = {}
+    needed_team_ids: set[int] = set()
+    for task_model in task_models:
+        task_id = task_model["id"]
+        user_membership = await membership_service.get_user_membership(
+            task_id=task_id, user_id=user_id
+        )
+        team_memberships = await membership_service.list_team_memberships_for_user(
+            task_id=task_id, user_id=user_id
+        )
+        for m in team_memberships:
+            needed_team_ids.add(m.member_id)
+        pending[task_id] = {
+            "user_membership": user_membership,
+            "team_memberships": team_memberships,
+        }
+
+    teams_map = await team_repo.get_by_ids(list(needed_team_ids)) if needed_team_ids else {}
+
+    def _team_summary(team_id: int) -> dict:
+        team = teams_map.get(team_id)
+        if team is None:
+            return {"id": team_id, "name": "", "intro": "", "avatarId": None}
+        return {
+            "id": team.id,
+            "name": team.name,
+            "intro": team.intro,
+            "avatarId": team.avatar_id,
+        }
+
+    for task_model in task_models:
+        task_id = task_model["id"]
+        task = by_id.get(task_id)
+        submitter_type = task.submitter_type if task is not None else 0
+        user_membership = pending[task_id]["user_membership"]
+        team_memberships = pending[task_id]["team_memberships"]
+
+        joined = bool(user_membership or team_memberships)
+        joined_teams = [_team_summary(m.member_id) for m in team_memberships]
+        is_user_approved = bool(user_membership and user_membership.approved == 0)
+
+        submittable: bool | None = None
+        submittable_as_team: list[dict] = []
+        user_deadline_ms: int | None = None
+
+        if submitter_type == 0:  # USER
+            submittable = is_user_approved
+            if user_membership and user_membership.deadline:
+                user_deadline_ms = int(user_membership.deadline.timestamp() * 1000)
+        elif submitter_type == 1:  # TEAM
+            approved_team_memberships = [m for m in team_memberships if m.approved == 0]
+            submittable = bool(approved_team_memberships)
+            submittable_as_team = [_team_summary(m.member_id) for m in approved_team_memberships]
+            if team_memberships and team_memberships[0].deadline:
+                user_deadline_ms = int(team_memberships[0].deadline.timestamp() * 1000)
+
+        participation_eligibility: dict | None = None
+        if query_joinability and task is not None:
+            participation_eligibility = await membership_service.get_participation_eligibility(
+                task=task,
+                user_id=user_id,
+            )
+
+        task_model.update(
+            {
+                "joined": joined,
+                "joinedTeams": joined_teams,
+                "submittable": submittable,
+                "submittableAsTeam": submittable_as_team,
+                "userDeadline": user_deadline_ms,
+                "participationEligibility": participation_eligibility,
+            }
+        )
+
+
+def _build_participant_user_info(
+    membership: TaskMembership,
+    *,
+    user_map: dict | None = None,
+    profile_map: dict | None = None,
+) -> dict:
+    """Build a full User-shaped dict for the participant field.
+
+    For USER-type memberships, returns the complete user payload
+    (id, username, nickname, avatarId, intro, etc.) so the frontend
+    can render participant names/avatars. For TEAM-type, returns id only
+    (team info is enriched separately).
+    """
+    user_map = user_map or {}
+    profile_map = profile_map or {}
+    if not membership.is_team and membership.member_id in user_map:
+        user = user_map[membership.member_id]
+        profile = profile_map.get(membership.member_id)
+        nickname = (
+            profile.nickname if profile and getattr(profile, "nickname", None) else user.username
+        )
+        return {
+            "id": user.id,
+            "username": user.username,
+            "nickname": nickname,
+            "avatarId": profile.avatar_id if profile else None,
+            "intro": profile.intro if profile else "",
+        }
+    return {"id": membership.member_id}
 
 
 def _membership_to_api_model(
@@ -560,6 +728,8 @@ async def _create_task_entity(
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
         raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
 
+    video_url = payload.get("videoUrl") or None
+
     topics_raw = payload.get("topics") or []
     topics: list[int] = []
     if isinstance(topics_raw, list):
@@ -602,6 +772,7 @@ async def _create_task_entity(
         min_team_size=min_team_size,
         max_team_size=max_team_size,
         team_locking_policy=team_locking_policy,
+        video_url=video_url,
     )
 
     # 简单设置话题关联：先不做复杂校验，仅插入关系行。
@@ -858,7 +1029,7 @@ async def create_task_participant(
     payload: dict | None = None,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Create a TaskMembership for a given member.
 
@@ -882,16 +1053,23 @@ async def create_task_participant(
     if task.approved != 0 and task.creator_id != auth_user.user_id:
         raise BadRequestError("Cannot join a task that is not approved")
 
-    space_repo = SpaceRepository(session=db)
-    space = await space_repo.get_by_id(task.space_id)
-    if space is not None and space.enable_rank and task.rank is not None:
-        rank_repo = SpaceUserRankRepository(session=db)
-        user_rank = await rank_repo.get_rank(task.space_id, member)
-        rank_jump = 1
-        if user_rank + rank_jump < task.rank:
-            raise BadRequestError(
-                f"User rank ({user_rank}) is too low for this task (requires rank {task.rank - rank_jump}+)"
-            )
+    # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
+    # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
+    # eligibility service already respects this flag; the join route used to
+    # block unconditionally and rejected every user whose space_user_rank row
+    # didn't exist (most of them), making "领取赛题" impossible by default.
+    if settings.rank_check_enforced:
+        space_repo = SpaceRepository(session=db)
+        space = await space_repo.get_by_id(task.space_id)
+        if space is not None and space.enable_rank and task.rank is not None:
+            rank_repo = SpaceUserRankRepository(session=db)
+            user_rank = await rank_repo.get_rank(task.space_id, member)
+            rank_jump = settings.rank_jump
+            if user_rank + rank_jump < task.rank:
+                raise BadRequestError(
+                    f"User rank ({user_rank}) is too low for this task "
+                    f"(requires rank {task.rank - rank_jump}+)"
+                )
 
     deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None
@@ -944,7 +1122,7 @@ async def join_task_as_user(
     payload: dict | None = None,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Allow authenticated user to join a task themselves."""
     if payload is None:
@@ -1004,7 +1182,7 @@ async def join_task_as_team(
     payload: dict,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Allow team to join a task."""
     team_id = payload.get("teamId")
@@ -1072,7 +1250,7 @@ async def patch_task_participant(
     payload: dict,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Patch a single TaskMembership by participant id."""
     task_repo = TaskRepository(session=db)
@@ -1223,13 +1401,15 @@ async def get_task(
     task_dict = _task_to_api_model(task)
 
     joined = False
-    joined_teams: list[int] = []
+    joined_teams: list[dict] = []
     submittable: bool | None = None
     submittable_as_team: list[dict] = []
     user_deadline_ms: int | None = None
     participation_eligibility: dict | None = None
 
     if auth_user.user_id > 0:
+        from app.domain.team.repositories import TeamRepository as _TeamRepo
+
         user_membership = await membership_service.get_user_membership(
             task_id=task_id,
             user_id=auth_user.user_id,
@@ -1240,7 +1420,25 @@ async def get_task(
         )
 
         joined = bool(user_membership or team_memberships)
-        joined_teams = [m.member_id for m in team_memberships]
+        # Hydrate joinedTeams / submittableAsTeam to Team[] (frontend type) so
+        # the leave-task dialog can render team.name. Bare ids broke
+        # useTaskParticipation.ts:115 (joinedTeams[0].id / .name).
+        team_ids_to_load = [m.member_id for m in team_memberships]
+        team_repo = _TeamRepo(session=db)
+        teams_map = await team_repo.get_by_ids(team_ids_to_load) if team_ids_to_load else {}
+
+        def _team_summary(team_id: int) -> dict:
+            team = teams_map.get(team_id)
+            if team is None:
+                return {"id": team_id, "name": "", "intro": "", "avatarId": None}
+            return {
+                "id": team.id,
+                "name": team.name,
+                "intro": team.intro,
+                "avatarId": team.avatar_id,
+            }
+
+        joined_teams = [_team_summary(m.member_id) for m in team_memberships]
 
         is_user_approved = bool(user_membership and user_membership.approved == 0)
 
@@ -1251,7 +1449,7 @@ async def get_task(
         elif task.submitter_type == 1:  # TEAM
             approved_team_memberships = [m for m in team_memberships if m.approved == 0]
             submittable = bool(approved_team_memberships)
-            submittable_as_team = [{"id": m.member_id} for m in approved_team_memberships]
+            submittable_as_team = [_team_summary(m.member_id) for m in approved_team_memberships]
             if team_memberships and team_memberships[0].deadline:
                 user_deadline_ms = int(team_memberships[0].deadline.timestamp() * 1000)
 
@@ -1314,7 +1512,7 @@ async def patch_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     payload: dict,
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Patch basic mutable fields of a task.
 
@@ -1341,6 +1539,10 @@ async def patch_task(
         task.intro = str(payload["intro"])
     if "description" in payload and payload["description"] is not None:
         task.description = str(payload["description"])
+
+    # 视频链接
+    if "videoUrl" in payload:
+        task.video_url = payload["videoUrl"] if payload["videoUrl"] else None
 
     # 布尔开关
     if "resubmittable" in payload and payload["resubmittable"] is not None:
@@ -1601,6 +1803,32 @@ async def get_tasks(
     items = [_task_to_api_model(t) for t in tasks]
     items = await _enrich_task_models(db, items, space_id=space)
 
+    # Topic enrichment when requested. The frontend's Task.topics is accessed
+    # as `task.topics.length` so populate even when not asked (empty array)
+    # so undefined-checks behave consistently.
+    if queryTopics:
+        await _enrich_task_topics(db, items)
+
+    # Per-user state — joined / submittable / userDeadline / participationEligibility.
+    # Only run when the frontend explicitly asks (queryJoined / querySubmittability /
+    # queryJoinability / queryUserDeadline). Each flag implies the others enough
+    # in practice that the cheapest correct thing is to populate them together.
+    if queryJoined or querySubmittability or queryJoinability or queryUserDeadline:
+        membership_service = TaskMembershipService(
+            repo=TaskMembershipRepository(session=db),
+            realname_repo=UserRealNameRepository(session=db),
+            space_repo=SpaceRepository(session=db),
+            space_rank_repo=SpaceUserRankRepository(session=db),
+        )
+        await _enrich_task_user_state(
+            membership_service,
+            list(tasks),
+            items,
+            user_id=auth_user.user_id,
+            query_joinability=queryJoinability,
+            db=db,
+        )
+
     # 使用与 list / count 相同的过滤条件计算 total，以支持 hasMore/nextStart。
     total = await service.count_tasks(
         space_id=space,
@@ -1639,7 +1867,7 @@ async def get_tasks(
 async def delete_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     """Soft delete a task and its participants.
 
@@ -1676,7 +1904,7 @@ async def delete_task_participant(
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     """Soft delete a participant by membership id."""
     task_repo = TaskRepository(session=db)
@@ -1711,7 +1939,7 @@ async def delete_task_participant_by_member(
     member: Annotated[int, Query(description="Member ID (user or team)")],
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     """Soft delete a participant by task + member id."""
     task_repo = TaskRepository(session=db)
@@ -1749,7 +1977,7 @@ async def patch_task_membership_by_member(
     payload: dict,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Patch a TaskMembership identified by (taskId, memberId) and return all participants."""
     task_repo = TaskRepository(session=db)
@@ -1823,7 +2051,7 @@ async def patch_task_membership_by_member(
 async def resubmit_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Resubmit a previously disapproved task for approval."""
     task_repo = TaskRepository(session=db)
@@ -1860,14 +2088,17 @@ async def get_task_participants(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     approved: str | None = Query(default=None),
     queryRealNameInfo: bool = Query(default=False),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     db=Depends(get_db),
 ) -> dict:
     """Return participants for a given task.
 
-    NOTE: This implementation now respects the `approved` filter, but still
-    ignores `queryRealNameInfo`（实名信息将在后续接入 user / real-name 体系）。
+    NT requires @Auth("task:enumerate:participant"); we used to expose this
+    publicly, leaking participant identities (member ids, contact info) to
+    anyone who knew a task id.
     """
+    _ = auth_user
     _ = queryRealNameInfo  # 占位，后续用于控制实名信息联查
 
     approved_value: int | None = None
@@ -1889,18 +2120,18 @@ async def get_task_participants(
 
     user_ids = [m.member_id for m in memberships if not m.is_team]
     user_map: dict = {}
+    profile_map: dict = {}
     if user_ids:
-        from app.domain.user.repositories import UserRepository
-
         user_repo = UserRepository(session=db)
+        profile_repo = UserProfileRepository(session=db)
         user_map = await user_repo.get_by_ids(user_ids)
+        profile_map = await profile_repo.get_profiles_by_user_ids(user_ids)
 
     participants = []
     for m in memberships:
-        participant_info = {"id": m.member_id}
-        if not m.is_team and m.member_id in user_map:
-            user = user_map[m.member_id]
-            participant_info["username"] = user.username
+        participant_info = _build_participant_user_info(
+            m, user_map=user_map, profile_map=profile_map
+        )
         participants.append(_membership_to_api_model(m, participant_info=participant_info))
 
     return {
@@ -1917,15 +2148,30 @@ async def get_task_participants(
 async def get_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    db=Depends(get_db),
 ) -> dict:
+    _ = auth_user
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
+    user_map: dict = {}
+    profile_map: dict = {}
+    if not membership.is_team:
+        user_repo = UserRepository(session=db)
+        profile_repo = UserProfileRepository(session=db)
+        user_map = await user_repo.get_by_ids([membership.member_id])
+        profile_map = await profile_repo.get_profiles_by_user_ids([membership.member_id])
+    participant_info = _build_participant_user_info(
+        membership, user_map=user_map, profile_map=profile_map
+    )
     return {
         "code": 200,
         "message": "OK",
-        "data": {"participant": _membership_to_api_model(membership)},
+        "data": {
+            "participant": _membership_to_api_model(membership, participant_info=participant_info)
+        },
     }
 
 
@@ -1938,7 +2184,7 @@ async def get_task_teams(
     filter: str = Query(default="eligible"),
     service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Return teams that current user can use for a team-type task.
 
@@ -2001,7 +2247,7 @@ async def get_task_submissions(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Enumerate submissions for a given task participant."""
     task = await task_service.get_task(task_id=task_id)
@@ -2071,7 +2317,7 @@ async def post_task_submission(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     task = await task_service.get_task(task_id=task_id)
     if task is None:
@@ -2129,7 +2375,7 @@ async def patch_task_submission(
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
     team_service: TeamService = Depends(get_team_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     task = await task_service.get_task(task_id=task_id)
     if task is None:
@@ -2175,7 +2421,7 @@ async def post_task_submission_review(
     payload: dict,
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = participant_id
 
@@ -2218,7 +2464,7 @@ async def get_task_submission_review(
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = (task_id, participant_id, auth_user)
 
@@ -2245,7 +2491,7 @@ async def patch_task_submission_review(
     payload: dict,
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = participant_id
 
@@ -2296,7 +2542,7 @@ async def put_task_submission_review(
     payload: dict,
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = participant_id
 
@@ -2336,7 +2582,7 @@ async def delete_task_submission_review(
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     _ = participant_id
 
@@ -2351,7 +2597,8 @@ async def delete_task_submission_review(
         raise NotFoundError.for_resource("review", submission_id)
 
     await review_service.delete_review(submission_id=submission_id)
-    return {"code": 200, "message": "OK"}
+    review_dto = await review_service.get_review_dto(submission_id)
+    return {"code": 200, "message": "OK", "data": {"review": review_dto}}
 
 
 @router.post(
@@ -2360,7 +2607,7 @@ async def delete_task_submission_review(
 )
 async def request_task_ai_advice(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     ai_service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
     try:
@@ -2424,11 +2671,14 @@ async def list_ai_advice_conversations_grouped(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
+    # Frontend `TasksApi.getGroupedConversations` types the response as
+    # { conversations: ConversationGroupSummary[] }; "groups" was a Python-
+    # side name that left data.conversations undefined and nothing rendered.
     groups = await service.list_conversations_grouped(task_id=task_id)
     return {
         "code": 200,
         "message": "OK",
-        "data": {"groups": groups},
+        "data": {"conversations": groups},
     }
 
 
@@ -2439,16 +2689,44 @@ async def list_ai_advice_conversations_grouped(
 async def get_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     conversation_id: Annotated[str, Path(alias="conversationId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
+    # Frontend (TaskAIAdviceChatService.getConversationById) expects
+    #   { conversations: TaskAIAdviceConversation[] }
+    # where each entry is a Q&A pair. Our internal storage is per-message
+    # (role/content rows) so we pair user→assistant rows back into Q&A
+    # records. Empty conversation = empty array.
     _ = task_id
     _ = auth_user
     try:
         payload = await service.get_conversation(conversation_id=conversation_id)
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
-    return {"code": 200, "message": "OK", "data": payload}
+
+    convo = payload.get("conversation") or {}
+    messages = convo.get("messages") or []
+    paired: list[dict] = []
+    pending_user: dict | None = None
+    for msg in messages:
+        if msg.get("role") == "user":
+            pending_user = msg
+        elif msg.get("role") == "assistant" and pending_user is not None:
+            paired.append(
+                {
+                    "id": msg.get("id", 0),
+                    "taskId": task_id,
+                    "question": pending_user.get("content") or "",
+                    "response": msg.get("content") or "",
+                    "modelType": "standard",
+                    "followupQuestions": [],
+                    "conversationId": convo.get("conversationId"),
+                    "createdAt": msg.get("createdAt"),
+                    "tokensUsed": str(msg.get("tokensUsed") or ""),
+                }
+            )
+            pending_user = None
+    return {"code": 200, "message": "OK", "data": {"conversations": paired}}
 
 
 @router.post(
@@ -2458,7 +2736,7 @@ async def get_ai_advice_conversation(
 async def create_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     payload: CreateTaskAIAdviceConversationRequest,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ) -> dict:
     question = payload.question.strip()
@@ -2503,7 +2781,7 @@ async def delete_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     conversation_id: Annotated[str, Path(alias="conversationId")],
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
@@ -2512,20 +2790,30 @@ async def delete_ai_advice_conversation(
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
     await service.delete_conversation(conversation_id=conversation_id)
-    return {"code": 200, "message": "OK"}
+    return {"code": 200, "message": "OK", "data": None}
 
 
-@router.post(
+@router.get(
     "/{taskId}/ai-advice/conversations/stream",
     summary="Stream AI Advice Conversation (SSE)",
 )
 async def stream_ai_advice_conversation(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
-    payload: CreateTaskAIAdviceConversationRequest,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    question: str = Query(..., description="User question"),
+    modelType: str | None = Query(default=None),
+    section: str | None = Query(default=None),
+    index: int | None = Query(default=None),
+    conversationId: str | None = Query(default=None),
+    parentId: int | None = Query(default=None),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
 ):
-    """Stream AI response via Server-Sent Events (SSE)."""
+    """Stream AI response via Server-Sent Events (SSE).
+
+    EventSource (the browser API the frontend uses) only supports GET, so
+    this endpoint accepts query params instead of a JSON body. Mirrors NT
+    streamTaskAiAdviceConversation in TaskController.kt.
+    """
     import json as json_module
 
     from fastapi.responses import StreamingResponse
@@ -2537,13 +2825,17 @@ async def stream_ai_advice_conversation(
         LLMTimeoutError,
     )
 
-    question = payload.question.strip()
+    question = question.strip() if question else ""
     if not question:
         raise BadRequestError("question is required")
 
-    context_payload = (
-        payload.context.model_dump(by_alias=True, exclude_none=True) if payload.context else None
-    )
+    context_payload: dict | None = None
+    if section:
+        context_payload = {"section": section}
+        if index is not None:
+            context_payload["index"] = index
+    _ = modelType  # streamed model selection not yet plumbed end-to-end
+    _ = parentId  # parent message id for branching, not yet plumbed
 
     async def event_generator():
         try:
@@ -2551,7 +2843,7 @@ async def stream_ai_advice_conversation(
                 task_id=task_id,
                 user_id=auth_user.user_id,
                 question=question,
-                conversation_id=payload.conversation_id,
+                conversation_id=conversationId,
                 context=context_payload,
             ):
                 if chunk.content:

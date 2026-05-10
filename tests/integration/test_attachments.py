@@ -5,8 +5,8 @@ Migrated from cheese-backend/test/attachments.e2e-spec.ts
 
 import io
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from tests.integration.conftest import CreatedUser, UserCreator
 
@@ -15,7 +15,7 @@ class TestAttachmentsIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],

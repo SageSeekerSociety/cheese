@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
@@ -25,7 +25,7 @@ async def list_topics(
     q: str | None = Query(default=None),
     page_start: int | None = Query(default=None, alias="page_start"),
     page_size: int = Query(default=50, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TopicService = Depends(get_topic_service),
 ) -> dict:
     if page_start is not None and page_start < 0:
@@ -44,7 +44,7 @@ async def list_topics(
 )
 async def get_topic(
     topic_id: Annotated[int, Path()],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TopicService = Depends(get_topic_service),
 ) -> dict:
     topic = await service.get_topic(topic_id)
@@ -58,7 +58,7 @@ async def get_topic(
 )
 async def create_topic(
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TopicService = Depends(get_topic_service),
 ) -> dict:
     name = payload.get("name")

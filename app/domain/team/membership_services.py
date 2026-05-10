@@ -28,6 +28,14 @@ class TeamMembershipService:
         self._default_page_size = 20
 
     async def _validate_user_can_apply_or_be_invited(self, user_id: int, team_id: int) -> None:
+        from sqlalchemy import select
+
+        from app.domain.user.models import User
+
+        stmt = select(User.id).where(User.id == user_id)
+        result = await self._session.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            raise NotFoundError(f"User {user_id} does not exist")
         if await self._team_repo.is_team_member(team_id, user_id):
             raise ConflictError("User is already a member of this team.")
         if await self._app_repo.exists_pending_for_user_and_team(user_id, team_id):
@@ -171,6 +179,8 @@ class TeamMembershipService:
         return saved
 
     async def accept_team_invitation(self, *, user_id: int, invitation_id: int) -> None:
+        from app.domain.team.services import check_team_locking_status
+
         app = await self._app_repo.find_pending_by_id_and_user_and_type(
             application_id=invitation_id,
             user_id=user_id,
@@ -183,6 +193,7 @@ class TeamMembershipService:
             )
 
         team_id = app.team_id
+        await check_team_locking_status(self._session, team_id)
         if await self._team_repo.is_team_member(team_id, user_id):
             raise BadRequestError("Cannot accept invitation, user is already a member.")
 
@@ -256,6 +267,8 @@ class TeamMembershipService:
         team_id: int,
         request_id: int,
     ) -> None:
+        from app.domain.team.services import check_team_locking_status
+
         if not await self._team_repo.is_team_at_least_admin(team_id, approver_user_id):
             raise ForbiddenError(
                 f"User {approver_user_id} is not authorized to approve requests for team {team_id}."
@@ -271,6 +284,8 @@ class TeamMembershipService:
                 "Pending request for team not found",
                 data={"type": "team_membership_application", "id": request_id},
             )
+
+        await check_team_locking_status(self._session, team_id)
 
         requester_id = app.user_id
         if await self._team_repo.is_team_member(team_id, requester_id):

@@ -1,5 +1,3 @@
-import asyncio
-import io
 import json
 import os
 import pathlib
@@ -181,9 +179,7 @@ class TaskPdfDraftService:
             raise BadRequestError("No task payload extracted from text")
         return payloads[0], token_used
 
-    def _extract_pdf_markdown_and_images(
-        self, pdf_bytes: bytes
-    ) -> tuple[str, dict[str, str], str]:
+    def _extract_pdf_markdown_and_images(self, pdf_bytes: bytes) -> tuple[str, dict[str, str], str]:
         """Extract markdown text and images from PDF using pymupdf4llm.
 
         Returns:
@@ -201,9 +197,7 @@ class TaskPdfDraftService:
             images_dir = pathlib.Path(temp_dir) / "images"
             images_dir.mkdir(exist_ok=True)
 
-            with tempfile.NamedTemporaryFile(
-                delete=False, suffix=".pdf", dir=temp_dir
-            ) as tmp:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", dir=temp_dir) as tmp:
                 tmp.write(pdf_bytes)
                 tmp_path = tmp.name
 
@@ -212,7 +206,7 @@ class TaskPdfDraftService:
                 use_ocr=False,
                 write_images=True,
                 image_path=str(images_dir),
-                image_format="png"
+                image_format="png",
             )
 
             if not markdown_text or not markdown_text.strip():
@@ -292,10 +286,10 @@ class TaskPdfDraftService:
             "3. 可以将图片中提取的文本（picture text部分）删除；\n"
             "4. 将修正后的 Markdown 放入 JSON 的 `description` 字段；\n"
             "5. 从内容中提炼出合适的 `name`（赛题名称）和 `intro`（简短介绍）。\n\n"
-            "**输出格式要求**：请将结果包裹在 `{\"tasks\": [...]}` 中，"
+            '**输出格式要求**：请将结果包裹在 `{"tasks": [...]}` 中，'
             "数组里每个元素包含 name、intro、description 三个字段。"
             "形如 "
-            "{\"tasks\": [{\"name\": \"...\", \"intro\": \"...\", \"description\": \"...\"}]}。\n\n"
+            '{"tasks": [{"name": "...", "intro": "...", "description": "..."}]}。\n\n'
             "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"
         )
 
@@ -318,13 +312,10 @@ class TaskPdfDraftService:
         except json.JSONDecodeError as exc:
             preview = stripped[:800] if len(stripped) > 800 else stripped
             raise BadRequestError(
-                f"LLM response is not valid JSON. "
-                f"Content preview: {preview}..."
+                f"LLM response is not valid JSON. Content preview: {preview}..."
             ) from exc
         if not isinstance(obj, dict):
-            raise BadRequestError(
-                f"LLM response JSON must be an object, got {type(obj).__name__}."
-            )
+            raise BadRequestError(f"LLM response JSON must be an object, got {type(obj).__name__}.")
         return obj
 
     @staticmethod
@@ -358,7 +349,7 @@ class TaskPdfDraftService:
             if candidates:
                 return candidates
         raise BadRequestError(
-            "LLM response must contain a non-empty \"tasks\" array. "
+            'LLM response must contain a non-empty "tasks" array. '
             f"Got: {type(tasks_value).__name__ if tasks_value is not None else 'missing'}"
         )
 
@@ -395,8 +386,10 @@ class TaskPdfDraftService:
             raise BadRequestError("LLM output missing required field: description")
 
         # --- System-filled fields ---
-        now = datetime.now(UTC)
-        submitter_type = forced_submitter_type if forced_submitter_type in {"USER", "TEAM"} else "TEAM"
+        now = datetime.now(UTC).replace(tzinfo=None)
+        submitter_type = (
+            forced_submitter_type if forced_submitter_type in {"USER", "TEAM"} else "TEAM"
+        )
 
         payload: dict[str, Any] = {
             "name": name,

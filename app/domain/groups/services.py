@@ -225,12 +225,12 @@ class GroupsService:
 
         if page_size <= 0:
             page = {
-                "page_start": 0,
-                "page_size": 0,
-                "has_prev": False,
-                "prev_start": 0,
-                "has_more": False,
-                "next_start": 0,
+                "pageStart": 0,
+                "pageSize": 0,
+                "hasPrev": False,
+                "prevStart": 0,
+                "hasMore": False,
+                "nextStart": 0,
             }
             return [], page
 
@@ -254,12 +254,12 @@ class GroupsService:
 
         first_id = members[0]["id"] if members else 0
         page = {
-            "page_start": first_id,
-            "page_size": len(members),
-            "has_prev": prev_id is not None,
-            "prev_start": prev_id if prev_id else 0,
-            "has_more": next_id is not None,
-            "next_start": next_id if next_id else 0,
+            "pageStart": first_id,
+            "pageSize": len(members),
+            "hasPrev": prev_id is not None,
+            "prevStart": prev_id if prev_id else 0,
+            "hasMore": next_id is not None,
+            "nextStart": next_id if next_id else 0,
         }
         return members, page
 

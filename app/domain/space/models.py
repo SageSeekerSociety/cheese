@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, Boolean, Integer, Sequence, SmallInteger, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, Sequence, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -87,3 +87,19 @@ class SpaceAdminRelation(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class SpaceClassificationTopicsRelation(Base):
+    """Mirrors NT's `space_classification_topics_relation`. Many-to-many between
+    Space and Topic, used by the frontend's `Space.classificationTopics` field.
+    """
+
+    __tablename__ = "space_classification_topics_relation"
+
+    id: Mapped[int] = mapped_column(BigInteger, autoincrement=True, primary_key=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    topic_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

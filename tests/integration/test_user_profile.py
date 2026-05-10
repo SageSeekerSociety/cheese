@@ -4,19 +4,18 @@ Migrated from cheese-backend/test/user.profile.e2e-spec.ts
 """
 
 import io
-import random
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import CreatedUser, UserCreator
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
 class TestUserProfileIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -25,7 +24,7 @@ class TestUserProfileIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.profile_prefix = f"P{random.randint(100000, 999999)}"
+        self.profile_prefix = f"P{unique_int(100000, 999999)}"
 
     def _create_aux_user(self) -> tuple[CreatedUser, dict[str, str]]:
         user = self.user_client.create_user()

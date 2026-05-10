@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
@@ -22,7 +22,9 @@ router = APIRouter(prefix="/comments", tags=["Comments"])
 
 async def get_comment_service(db=Depends(get_db)) -> CommentService:
     repo = CommentRepository(session=db)
-    return CommentService(repo=repo)
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    return CommentService(repo=repo, user_repo=user_repo, profile_repo=profile_repo)
 
 
 async def get_user_auth_service(db=Depends(get_db)) -> UserAuthService:
@@ -49,7 +51,7 @@ async def get_user_auth_service(db=Depends(get_db)) -> UserAuthService:
 async def update_attitude_to_comment(
     commentId: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: CommentService = Depends(get_comment_service),
 ) -> dict:
     attitude_type = payload.get("attitude_type", "UNDEFINED")
@@ -79,33 +81,21 @@ async def update_attitude_to_comment(
 )
 async def get_comment_by_id(
     commentId: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: CommentService = Depends(get_comment_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    comment_dto = await service.get_comment(commentId)
-    votes = await service.get_comment_votes(comment_id=commentId, user_id=auth_user.user_id)
-    user = await auth_service._user_repo.get_by_id(comment_dto["created_by_id"])
-    profile = await auth_service._profile_repo.get_profile_by_user_id(comment_dto["created_by_id"])
-    user_dto = None
-    if user and profile:
-        user_dto = await auth_service.build_user_dto(user, profile, viewer_id=auth_user.user_id)
-    elif user:
-        user_dto = {
-            "id": user.id,
-            "username": user.username,
-            "nickname": "",
-            "intro": "",
-            "avatarId": 0,
-        }
-    user_attitude = votes.get("userVote") or "UNDEFINED"
-    comment_dto["user"] = user_dto
-    comment_dto["attitudes"] = {
-        "positive_count": votes.get("upvotes", 0),
-        "negative_count": votes.get("downvotes", 0),
-        "difference": votes.get("upvotes", 0) - votes.get("downvotes", 0),
-        "user_attitude": user_attitude,
-    }
+    comment_dto = await service.get_comment(commentId, viewer_id=auth_user.user_id)
+    # Upgrade the author's User dto to the richer build_user_dto shape (with
+    # follow/fans/question/answer counts) so /comments/{id} matches /users/{id}.
+    if comment_dto.get("created_by_id"):
+        author_id = comment_dto["created_by_id"]
+        user = await auth_service._user_repo.get_by_id(author_id)
+        profile = await auth_service._profile_repo.get_profile_by_user_id(author_id)
+        if user and profile:
+            comment_dto["user"] = await auth_service.build_user_dto(
+                user, profile, viewer_id=auth_user.user_id
+            )
     return {"code": 200, "message": "OK", "data": {"comment": comment_dto}}
 
 
@@ -116,7 +106,7 @@ async def get_comment_by_id(
 async def update_comment(
     commentId: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: CommentService = Depends(get_comment_service),
 ) -> dict:
     content = payload.get("content")
@@ -136,11 +126,11 @@ async def update_comment(
 )
 async def delete_comment(
     commentId: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: CommentService = Depends(get_comment_service),
 ) -> dict:
     await service.delete_comment(comment_id=commentId, user_id=auth_user.user_id)
-    return {"code": 200, "message": "Comment deleted successfully"}
+    return {"code": 200, "message": "Comment deleted successfully", "data": None}
 
 
 @router.get(
@@ -152,7 +142,7 @@ async def get_comments(
     commentableId: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None),
     page_size: int = Query(default=20, ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: CommentService = Depends(get_comment_service),
 ) -> dict:
     comments, page = await service.list_comments(
@@ -160,6 +150,7 @@ async def get_comments(
         commentable_id=commentableId,
         page_start=page_start,
         page_size=page_size,
+        viewer_id=auth_user.user_id,
     )
     return {
         "code": 200,
@@ -177,7 +168,7 @@ async def create_comment(
     commentableType: str,
     commentableId: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: CommentService = Depends(get_comment_service),
     db=Depends(get_db),
 ) -> dict:

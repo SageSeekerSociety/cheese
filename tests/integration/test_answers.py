@@ -4,45 +4,28 @@ Migrated from cheese-backend/test/answer.e2e-spec.ts (988 lines, 51 tests)
 Complete equivalence migration.
 """
 
-import random
 from datetime import UTC, datetime
 
-import httpx
-import psycopg2
 import pytest
+from anyio.from_thread import BlockingPortal
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from tests.integration.conftest import CreatedUser, UserCreator
-
-
-def _get_psycopg2_dsn() -> str:
-    db_url = settings.database_url
-    if db_url.startswith("postgresql+psycopg2://"):
-        return db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
-    elif db_url.startswith("postgresql+asyncpg://"):
-        return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    return db_url
+from app.domain.topics.models import Topic
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
-def create_topic_in_db(name: str, user_id: int) -> int:
-    now = datetime.now(UTC)
-    dsn = _get_psycopg2_dsn()
-    conn = psycopg2.connect(dsn)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO topic (name, created_by_id, created_at)
-                VALUES (%s, %s, %s)
-                RETURNING id
-                """,
-                (name, user_id, now),
-            )
-            topic_id = cur.fetchone()[0]
-        conn.commit()
-        return topic_id
-    finally:
-        conn.close()
+def create_topic_in_db(
+    db_session: AsyncSession, portal: BlockingPortal, name: str, user_id: int
+) -> int:
+    topic = Topic(name=name, created_by_id=user_id, created_at=datetime.now(UTC))
+
+    async def _do() -> int:
+        db_session.add(topic)
+        await db_session.flush()
+        return topic.id
+
+    return portal.call(_do)
 
 
 class TestAnswersCreateIntegration:
@@ -51,18 +34,22 @@ class TestAnswersCreateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.test_prefix = f"A{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.test_prefix = f"A{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         self.question_ids: list[int] = []
         self.answer_ids: list[int] = []
         for i in range(6):
@@ -168,18 +155,22 @@ class TestAnswersGetIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.test_prefix = f"A{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.test_prefix = f"A{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         create_q_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -253,18 +244,22 @@ class TestAnswersByQuestionIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.test_prefix = f"A{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.test_prefix = f"A{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         create_q_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -302,12 +297,12 @@ class TestAnswersByQuestionIntegration:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_start"] == self.answer_ids[0]
-        assert data["data"]["page"]["page_size"] == len(self.answer_ids)
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == self.answer_ids[0]
+        assert data["data"]["page"]["pageSize"] == len(self.answer_ids)
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
         assert len(data["data"]["answers"]) == len(self.answer_ids)
         for answer in data["data"]["answers"]:
             assert answer["question_id"] == self.question_id
@@ -322,10 +317,10 @@ class TestAnswersByQuestionIntegration:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_start"] == self.answer_ids[0]
-        assert data["data"]["page"]["page_size"] == len(self.answer_ids)
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["has_more"] is False
+        assert data["data"]["page"]["pageStart"] == self.answer_ids[0]
+        assert data["data"]["page"]["pageSize"] == len(self.answer_ids)
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["hasMore"] is False
         answer_ids_sorted = sorted([a["id"] for a in data["data"]["answers"]])
         assert answer_ids_sorted == sorted(self.answer_ids)
 
@@ -338,9 +333,9 @@ class TestAnswersByQuestionIntegration:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_size"] == len(self.answer_ids)
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["has_more"] is False
+        assert data["data"]["page"]["pageSize"] == len(self.answer_ids)
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["hasMore"] is False
         answer_ids_sorted = sorted([a["id"] for a in data["data"]["answers"]])
         assert answer_ids_sorted == sorted(self.answer_ids)
 
@@ -353,12 +348,12 @@ class TestAnswersByQuestionIntegration:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_start"] == self.answer_ids[2]
-        assert data["data"]["page"]["page_size"] == 2
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.answer_ids[0]
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.answer_ids[4]
+        assert data["data"]["page"]["pageStart"] == self.answer_ids[2]
+        assert data["data"]["page"]["pageSize"] == 2
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.answer_ids[0]
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.answer_ids[4]
         assert len(data["data"]["answers"]) == 2
         assert data["data"]["answers"][0]["question_id"] == self.question_id
         assert data["data"]["answers"][1]["question_id"] == self.question_id
@@ -385,18 +380,22 @@ class TestAnswersByUserIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.test_prefix = f"A{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.test_prefix = f"A{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         self.aux_user, self.aux_headers = self._create_aux_user()
         self.answer_ids: list[int] = []
         for i in range(5):
@@ -435,12 +434,10 @@ class TestAnswersByUserIntegration:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_start"] == self.answer_ids[0]
-        assert data["data"]["page"]["page_size"] == len(self.answer_ids)
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == self.answer_ids[0]
+        assert data["data"]["page"]["pageSize"] == len(self.answer_ids)
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
         assert len(data["data"]["answers"]) == len(self.answer_ids)
         for i, answer in enumerate(data["data"]["answers"]):
             assert answer["id"] == self.answer_ids[i]
@@ -449,16 +446,14 @@ class TestAnswersByUserIntegration:
         response = self.client.get(
             f"/users/{self.aux_user.user_id}/answers",
             headers=self.headers,
-            params={"page_start": self.answer_ids[0], "page_size": 2},
+            params={"pageStart": self.answer_ids[0], "pageSize": 2},
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_start"] == self.answer_ids[0]
-        assert data["data"]["page"]["page_size"] == 2
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.answer_ids[2]
+        assert data["data"]["page"]["pageStart"] == self.answer_ids[0]
+        assert data["data"]["page"]["pageSize"] == 2
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.answer_ids[2]
         assert len(data["data"]["answers"]) == 2
         assert data["data"]["answers"][0]["id"] == self.answer_ids[0]
         assert data["data"]["answers"][1]["id"] == self.answer_ids[1]
@@ -467,16 +462,14 @@ class TestAnswersByUserIntegration:
         response = self.client.get(
             f"/users/{self.aux_user.user_id}/answers",
             headers=self.headers,
-            params={"page_start": self.answer_ids[2], "page_size": 2},
+            params={"pageStart": self.answer_ids[2], "pageSize": 2},
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["data"]["page"]["page_start"] == self.answer_ids[2]
-        assert data["data"]["page"]["page_size"] == 2
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.answer_ids[0]
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.answer_ids[4]
+        assert data["data"]["page"]["pageStart"] == self.answer_ids[2]
+        assert data["data"]["page"]["pageSize"] == 2
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.answer_ids[4]
         assert len(data["data"]["answers"]) == 2
         assert data["data"]["answers"][0]["id"] == self.answer_ids[2]
         assert data["data"]["answers"][1]["id"] == self.answer_ids[3]
@@ -492,18 +485,22 @@ class TestAnswersUpdateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.test_prefix = f"A{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.test_prefix = f"A{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         q_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -576,18 +573,22 @@ class TestAnswersDeleteIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.test_prefix = f"A{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.test_prefix = f"A{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         self.question_ids: list[int] = []
         self.answer_ids: list[int] = []
         for i in range(3):
@@ -651,18 +652,22 @@ class TestAnswersFavoriteIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.test_prefix = f"A{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.test_prefix = f"A{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         self.question_ids: list[int] = []
         self.answer_ids: list[int] = []
         for i in range(5):
@@ -744,18 +749,22 @@ class TestAnswersAttitudeIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.test_prefix = f"A{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.test_prefix = f"A{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         q_resp = self.client.post(
             "/questions",
             headers=self.headers,

@@ -4,13 +4,12 @@ Migrated from cheese-backend/test/topic.e2e-spec.ts (361 lines, 15 tests)
 Complete equivalence migration.
 """
 
-import random
 import time
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import CreatedUser, UserCreator
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
 class TestTopicsCreateIntegration:
@@ -19,7 +18,7 @@ class TestTopicsCreateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -28,7 +27,7 @@ class TestTopicsCreateIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.topic_code = str(random.randint(1000000000, 9999999999))
+        self.topic_code = str(unique_int(1000000000, 9999999999))
         self.topic_prefix = f"[Test({self.topic_code}) Topic]"
         self.topic_ids: list[int] = []
 
@@ -99,7 +98,7 @@ class TestTopicsSearchIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -108,7 +107,7 @@ class TestTopicsSearchIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.topic_code = str(random.randint(1000000000, 9999999999))
+        self.topic_code = str(unique_int(1000000000, 9999999999))
         self.topic_prefix = f"[Test({self.topic_code}) Topic]"
         self.topic_ids: list[int] = []
         topics = [
@@ -147,12 +146,12 @@ class TestTopicsSearchIntegration:
         data = response.json()
         assert data["code"] == 200
         assert len(data["data"]["topics"]) == 0
-        assert data["data"]["page"]["page_size"] == 0
-        assert data["data"]["page"]["page_start"] == 0
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageSize"] == 0
+        assert data["data"]["page"]["pageStart"] == 0
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
     def test_search_topics_and_paging(self):
         time.sleep(0.5)
@@ -183,10 +182,10 @@ class TestTopicsSearchIntegration:
         assert "高等" in data2["data"]["topics"][1]["name"]
         assert self.topic_code in data2["data"]["topics"][2]["name"]
         assert "高等" in data2["data"]["topics"][2]["name"]
-        assert data2["data"]["page"]["page_size"] == 3
-        assert data2["data"]["page"]["has_prev"] is False
-        assert data2["data"]["page"]["prev_start"] == 0
-        assert data2["data"]["page"]["has_more"] is True
+        assert data2["data"]["page"]["pageSize"] == 3
+        assert data2["data"]["page"]["hasPrev"] is False
+        assert data2["data"]["page"]["prevStart"] == 0
+        assert data2["data"]["page"]["hasMore"] is True
 
         response3 = self.client.get(
             "/topics",
@@ -194,18 +193,18 @@ class TestTopicsSearchIntegration:
             params={
                 "q": f"{self.topic_code} 高等",
                 "page_size": 3,
-                "page_start": data2["data"]["page"]["next_start"],
+                "page_start": data2["data"]["page"]["nextStart"],
             },
         )
         assert response3.status_code == 200
         data3 = response3.json()
         assert data3["code"] == 200
         assert len(data3["data"]["topics"]) >= 1
-        assert data3["data"]["topics"][0]["id"] == data2["data"]["page"]["next_start"]
+        assert data3["data"]["topics"][0]["id"] == data2["data"]["page"]["nextStart"]
         assert self.topic_code in data3["data"]["topics"][0]["name"]
-        assert data3["data"]["page"]["page_start"] == data3["data"]["topics"][0]["id"]
-        assert data3["data"]["page"]["has_prev"] is True
-        assert data3["data"]["page"]["prev_start"] == data2["data"]["topics"][0]["id"]
+        assert data3["data"]["page"]["pageStart"] == data3["data"]["topics"][0]["id"]
+        assert data3["data"]["page"]["hasPrev"] is True
+        assert data3["data"]["page"]["prevStart"] == data2["data"]["topics"][0]["id"]
 
         response4 = self.client.get(
             "/topics",
@@ -213,7 +212,7 @@ class TestTopicsSearchIntegration:
             params={
                 "q": f"{self.topic_code} 高等",
                 "page_size": 3,
-                "page_start": data2["data"]["page"]["page_start"],
+                "page_start": data2["data"]["page"]["pageStart"],
             },
         )
         assert response4.status_code == 200
@@ -244,12 +243,12 @@ class TestTopicsSearchIntegration:
         data = response.json()
         assert data["code"] == 200
         assert len(data["data"]["topics"]) == 0
-        assert data["data"]["page"]["page_start"] == 0
-        assert data["data"]["page"]["page_size"] == 0
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == 0
+        assert data["data"]["page"]["pageSize"] == 0
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
     def test_search_invalid_page_start(self):
         response = self.client.get(
@@ -281,7 +280,7 @@ class TestTopicsGetIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -290,7 +289,7 @@ class TestTopicsGetIntegration:
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.topic_code = str(random.randint(1000000000, 9999999999))
+        self.topic_code = str(unique_int(1000000000, 9999999999))
         self.topic_prefix = f"[Test({self.topic_code}) Topic]"
         resp = self.client.post(
             "/topics",

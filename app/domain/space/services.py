@@ -7,9 +7,11 @@ from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, S
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
+    SpaceClassificationTopicsRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.topics.models import Topic
 
 if TYPE_CHECKING:
     from app.domain.task.repositories import TaskRepository
@@ -23,12 +25,43 @@ class SpaceService:
         admin_repo: SpaceAdminRelationRepository | None = None,
         rank_repo: SpaceUserRankRepository | None = None,
         task_repo: "TaskRepository | None" = None,
+        classification_topics_repo: SpaceClassificationTopicsRepository | None = None,
     ) -> None:
         self._repo = repo
         self._category_repo = category_repo
         self._admin_repo = admin_repo
         self._rank_repo = rank_repo
         self._task_repo = task_repo
+        self._classification_topics_repo = classification_topics_repo
+
+    # ------------------------------------------------------------------
+    # Classification topics
+    # ------------------------------------------------------------------
+
+    async def list_classification_topics(self, space_id: int) -> list[Topic]:
+        if self._classification_topics_repo is None:
+            return []
+        return await self._classification_topics_repo.list_topics_for_space(space_id)
+
+    async def list_classification_topics_for_spaces(
+        self, space_ids: Sequence[int]
+    ) -> dict[int, list[Topic]]:
+        if self._classification_topics_repo is None or not space_ids:
+            return {}
+        return await self._classification_topics_repo.list_topics_for_spaces(space_ids)
+
+    async def replace_classification_topics(
+        self, *, space_id: int, topic_ids: Sequence[int], actor_user_id: int | None
+    ) -> None:
+        if self._classification_topics_repo is None:
+            raise BadRequestError(
+                "classificationTopics is not configured on this server",
+                data={"spaceId": space_id},
+            )
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        await self._classification_topics_repo.replace_topics_for_space(
+            space_id=space_id, topic_ids=topic_ids
+        )
 
     # ------------------------------------------------------------------
     # Basic queries

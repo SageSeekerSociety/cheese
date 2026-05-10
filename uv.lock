@@ -312,6 +312,20 @@ wheels = [
 ]
 
 [[package]]
+name = "camel-converter"
+version = "5.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/cb/55feabf13527c464db60145e2e0dccd2f190b0a4a417cac2473bd2b18508/camel_converter-5.1.0.tar.gz", hash = "sha256:d979f23de232aa262dcf15a263ed9af934ff4378644dae23a7c2f8d40f4fff8f", size = 71481, upload-time = "2026-03-05T15:30:58.957Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/c3/8fc18a914da9747b7a652180758a46a3d5f22efd0dffd5a8b97acfb1ebf3/camel_converter-5.1.0-py3-none-any.whl", hash = "sha256:93f05d7d84a4353ddfd87bca909d1de45c11f5757f6a460de10534397146fe88", size = 6960, upload-time = "2026-03-05T15:31:00.135Z" },
+]
+
+[package.optional-dependencies]
+pydantic = [
+    { name = "pydantic" },
+]
+
+[[package]]
 name = "cbor2"
 version = "5.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -512,6 +526,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "greenlet" },
     { name = "httpx" },
+    { name = "meilisearch" },
     { name = "openai" },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
@@ -540,6 +555,7 @@ test = [
     { name = "anyio" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-rerunfailures" },
 ]
 
 [package.dev-dependencies]
@@ -558,6 +574,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0,<1.0.0" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "httpx", specifier = ">=0.27.0,<1.0.0" },
+    { name = "meilisearch", specifier = ">=0.41.0" },
     { name = "openai", specifier = ">=1.50.0,<2.0.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.0,<3.0.0" },
     { name = "pydantic", specifier = ">=2.7.0,<3.0.0" },
@@ -568,6 +585,7 @@ requires-dist = [
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.0,<2.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0,<9.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.23.0,<1.0.0" },
+    { name = "pytest-rerunfailures", marker = "extra == 'test'", specifier = ">=14.0,<15.0" },
     { name = "python-multipart", specifier = ">=0.0.7,<1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0,<7.0.0" },
     { name = "redis", specifier = ">=5.0.0,<6.0.0" },
@@ -1198,6 +1216,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/df/5bd7a48c256faecd1d36edc13133e51397e41b73bb77e1a69deab746ebac/markupsafe-3.0.3-cp314-cp314t-win32.whl", hash = "sha256:915c04ba3851909ce68ccc2b8e2cd691618c4dc4c4232fb7982bca3f41fd8c3d", size = 14819, upload-time = "2025-09-27T18:37:26.285Z" },
     { url = "https://files.pythonhosted.org/packages/1a/8a/0402ba61a2f16038b48b39bccca271134be00c5c9f0f623208399333c448/markupsafe-3.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4faffd047e07c38848ce017e8725090413cd80cbc23d86e55c587bf979e579c9", size = 15426, upload-time = "2025-09-27T18:37:27.316Z" },
     { url = "https://files.pythonhosted.org/packages/70/bc/6f1c2f612465f5fa89b95bead1f44dcb607670fd42891d8fdcd5d039f4f4/markupsafe-3.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:32001d6a8fc98c8cb5c947787c5d08b0a50663d139f1305bac5885d98d9b40fa", size = 14146, upload-time = "2025-09-27T18:37:28.327Z" },
+]
+
+[[package]]
+name = "meilisearch"
+version = "0.41.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "camel-converter", extra = ["pydantic"] },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/35/3d/f0f4de580446f69b3df416f63d3df46cceecddb1a3815d2b2be364a3b1e9/meilisearch-0.41.0.tar.gz", hash = "sha256:317e96e18ae6628eb19a3b4533af165fc24b6b2c8aa7a7238c76bc081e7122ee", size = 32762, upload-time = "2026-04-22T05:17:29.525Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/79/773acfa746126450eef7a084f09bda02be2aed8fbcf312dfcccfff6cce66/meilisearch-0.41.0-py3-none-any.whl", hash = "sha256:87f542031d3ee8cce89ee47576ef6137ebd7245039845f0ad2bea29e2a535851", size = 33128, upload-time = "2026-04-22T05:17:28.17Z" },
 ]
 
 [[package]]
@@ -1971,6 +2002,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5e/f7/c933acc76f5208b3b00089573cf6a2bc26dc80a8aece8f52bb7d6b1855ca/pytest_cov-7.0.0.tar.gz", hash = "sha256:33c97eda2e049a0c5298e91f519302a1334c26ac65c1a483d6206fd458361af1", size = 54328, upload-time = "2025-09-09T10:57:02.113Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ee/49/1377b49de7d0c1ce41292161ea0f721913fa8722c19fb9c1e3aa0367eecb/pytest_cov-7.0.0-py3-none-any.whl", hash = "sha256:3b8e9558b16cc1479da72058bdecf8073661c7f57f7d3c5f22a1c23507f2d861", size = 22424, upload-time = "2025-09-09T10:57:00.695Z" },
+]
+
+[[package]]
+name = "pytest-rerunfailures"
+version = "14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cc/a4/6de45fe850759e94aa9a55cda807c76245af1941047294df26c851dfb4a9/pytest-rerunfailures-14.0.tar.gz", hash = "sha256:4a400bcbcd3c7a4ad151ab8afac123d90eca3abe27f98725dc4d9702887d2e92", size = 21350, upload-time = "2024-03-13T08:21:39.444Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dc/e7/e75bd157331aecc190f5f8950d7ea3d2cf56c3c57fb44da70e60b221133f/pytest_rerunfailures-14.0-py3-none-any.whl", hash = "sha256:4197bdd2eaeffdbf50b5ea6e7236f47ff0e44d1def8dae08e409f536d84e7b32", size = 12709, upload-time = "2024-03-13T08:21:37.199Z" },
 ]
 
 [[package]]

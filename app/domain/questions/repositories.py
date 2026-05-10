@@ -1,7 +1,8 @@
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.questions.models import (
@@ -14,6 +15,18 @@ from app.domain.questions.models import (
     QuestionTopicRelation,
     VoteType,
 )
+
+_HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
+
+
+def _use_fts(token: str) -> bool:
+    """Return True when *token* is suitable for PostgreSQL FTS.
+
+    Short tokens (<= 2 chars) and tokens composed entirely of emoji /
+    symbols produce empty tsqueries with the ``simple`` dictionary and
+    must fall back to ILIKE.
+    """
+    return len(token) > 2 and _HAS_WORD_CHAR_RE.search(token) is not None
 
 
 class QuestionRepository:
@@ -30,7 +43,7 @@ class QuestionRepository:
         group_id: int | None,
         bounty: int,
     ) -> Question:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         question = Question(
             created_by_id=created_by_id,
             title=title,
@@ -54,6 +67,25 @@ class QuestionRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    @staticmethod
+    def _keyword_filter(keyword: str):
+        """Return a WHERE clause for keyword search.
+
+        Short keywords or emoji-only strings fall back to ILIKE. Longer,
+        word-bearing keywords use PostgreSQL FTS with
+        ``to_tsvector / plainto_tsquery`` which leverages the GIN index.
+        """
+        stripped = keyword.strip()
+        if not _use_fts(stripped):
+            like = f"%{stripped}%"
+            return or_(Question.title.ilike(like), Question.content.ilike(like))
+        tsvector = func.to_tsvector(
+            text("'simple'"),
+            func.coalesce(Question.title, "") + " " + func.coalesce(Question.content, ""),
+        )
+        tsquery = func.plainto_tsquery(text("'simple'"), stripped)
+        return tsvector.op("@@")(tsquery)
+
     async def search(
         self,
         *,
@@ -65,8 +97,7 @@ class QuestionRepository:
     ) -> tuple[list[Question], int]:
         stmt: Select[tuple[Question]] = select(Question).where(Question.deleted_at.is_(None))
         if keyword:
-            like = f"%{keyword.strip()}%"
-            stmt = stmt.where(or_(Question.title.ilike(like), Question.content.ilike(like)))
+            stmt = stmt.where(self._keyword_filter(keyword))
         order_col = Question.created_at if sort_by == "createdAt" else Question.updated_at
         stmt = stmt.order_by(order_col.desc() if sort_order == "desc" else order_col.asc())
         stmt = stmt.limit(limit).offset(offset)
@@ -75,10 +106,7 @@ class QuestionRepository:
 
         count_stmt = select(func.count(Question.id)).where(Question.deleted_at.is_(None))
         if keyword:
-            like = f"%{keyword.strip()}%"
-            count_stmt = count_stmt.where(
-                or_(Question.title.ilike(like), Question.content.ilike(like))
-            )
+            count_stmt = count_stmt.where(self._keyword_filter(keyword))
         count_result = await self._session.execute(count_stmt)
         total = int(count_result.scalar_one() or 0)
         return rows, total
@@ -87,7 +115,7 @@ class QuestionRepository:
         existing = await self._get_follow_relation(question_id, user_id)
         if existing is not None and existing.deleted_at is None:
             return False
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if existing is None:
             relation = QuestionFollowerRelation(
                 question_id=question_id,
@@ -106,7 +134,7 @@ class QuestionRepository:
         relation = await self._get_follow_relation(question_id, user_id)
         if relation is None or relation.deleted_at is not None:
             return False
-        relation.deleted_at = datetime.now(UTC)
+        relation.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return True
 
@@ -180,7 +208,7 @@ class QuestionRepository:
         if question is None:
             return None
         question.accepted_answer_id = answer_id
-        question.updated_at = datetime.now(UTC)
+        question.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return question
 
@@ -190,7 +218,7 @@ class QuestionRepository:
         if question is None:
             return None
         question.accepted_answer_id = None
-        question.updated_at = datetime.now(UTC)
+        question.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return question
 
@@ -211,6 +239,13 @@ class QuestionRepository:
         )
         self._session.add(log)
         await self._session.flush()
+
+    async def count_views(self, question_id: int) -> int:
+        stmt = select(func.count(QuestionQueryLog.id)).where(
+            QuestionQueryLog.question_id == question_id,
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
 
     async def vote(self, *, question_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(question_id, user_id)
@@ -368,17 +403,17 @@ class QuestionRepository:
             question.content = content
         if type_ is not None:
             question.type = type_
-        question.updated_at = datetime.now(UTC)
+        question.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return question
 
     async def soft_delete(self, question: Question) -> None:
-        question.deleted_at = datetime.now(UTC)
+        question.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
 
     async def set_bounty(self, question: Question, bounty: int) -> Question:
         question.bounty = bounty
-        question.updated_at = datetime.now(UTC)
+        question.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return question
 
@@ -444,7 +479,7 @@ class QuestionTopicRepository:
         )
         result = await self._session.execute(stmt)
         existing = list(result.scalars().all())
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         for row in existing:
             row.deleted_at = now
         for topic_id in topic_ids:
@@ -504,6 +539,31 @@ class QuestionTopicRepository:
         topics = result.scalars().all()
         return [{"id": t.id, "name": t.name} for t in topics]
 
+    async def get_topics_for_questions(self, question_ids: Sequence[int]) -> dict[int, list[dict]]:
+        """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""
+        from app.domain.topics.models import Topic
+
+        if not question_ids:
+            return {}
+        stmt = (
+            select(QuestionTopicRelation.question_id, Topic.id, Topic.name)
+            .join(Topic, Topic.id == QuestionTopicRelation.topic_id)
+            .where(
+                QuestionTopicRelation.question_id.in_(list(question_ids)),
+                QuestionTopicRelation.deleted_at.is_(None),
+                Topic.deleted_at.is_(None),
+            )
+            .order_by(
+                QuestionTopicRelation.question_id.asc(),
+                QuestionTopicRelation.id.asc(),
+            )
+        )
+        result = await self._session.execute(stmt)
+        mapping: dict[int, list[dict]] = {}
+        for question_id, topic_id, topic_name in result.all():
+            mapping.setdefault(question_id, []).append({"id": topic_id, "name": topic_name})
+        return mapping
+
 
 class QuestionInvitationRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -511,7 +571,7 @@ class QuestionInvitationRepository:
 
     async def create_invitation(self, *, question_id: int, user_id: int) -> QuestionInvitation:
         existing = await self._get_invitation(question_id, user_id)
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if existing is not None:
             existing.updated_at = now
             await self._session.flush()

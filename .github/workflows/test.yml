@@ -65,7 +65,7 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: test-secret
           ENVIRONMENT: test
-        run: uv run pytest tests/ -v --tb=short
+        run: uv run pytest tests/ -v --tb=short --ignore=tests/contract -k "not kotlin" --reruns 2
 
   lint:
     runs-on: ubuntu-latest

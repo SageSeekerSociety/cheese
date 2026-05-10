@@ -17,7 +17,7 @@ class KnowledgeRepository:
         *,
         name: str,
         type_: str,
-        content: dict,
+        content,
         description: str | None,
         team_id: int,
         material_id: int | None,
@@ -80,7 +80,7 @@ class KnowledgeRepository:
         entity: Knowledge,
         name: str | None = None,
         description: str | None = None,
-        content: dict | None = None,
+        content=None,
         project_id: int | None = None,
     ) -> Knowledge:
         if name is not None:

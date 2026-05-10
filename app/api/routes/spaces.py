@@ -1,9 +1,10 @@
+import json
 import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 
-from app.auth.checker import get_auth_user, require_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.db.session import get_db
@@ -15,6 +16,7 @@ from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, S
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
+    SpaceClassificationTopicsRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
@@ -33,12 +35,20 @@ _logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/spaces", tags=["Spaces"])
 
 
-def _expect_list(value: list | None, field: str) -> list:
+def _expect_list(value: list | str | None, field: str) -> list:
     if value is None:
         return []
-    if not isinstance(value, list):
-        raise BadRequestError(f"{field} must be a list")
-    return value
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise BadRequestError(f"{field} must be a valid JSON array") from exc
+        if isinstance(parsed, list):
+            return parsed
+        raise BadRequestError(f"{field} must be a JSON array")
+    raise BadRequestError(f"{field} must be a list or a JSON array string")
 
 
 async def get_space_service(db=Depends(get_db)) -> SpaceService:
@@ -47,7 +57,15 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
     admin_repo = SpaceAdminRelationRepository(session=db)
     rank_repo = SpaceUserRankRepository(session=db)
     task_repo = TaskRepository(session=db)
-    return SpaceService(repo, category_repo, admin_repo, rank_repo, task_repo)
+    classification_topics_repo = SpaceClassificationTopicsRepository(session=db)
+    return SpaceService(
+        repo,
+        category_repo,
+        admin_repo,
+        rank_repo,
+        task_repo,
+        classification_topics_repo=classification_topics_repo,
+    )
 
 
 async def get_space_analytics_service(db=Depends(get_db)) -> SpaceAnalyticsService:
@@ -112,8 +130,8 @@ def _space_to_api_model(space: Space) -> dict:
         "avatarId": space.avatar_id,
         "enableRank": space.enable_rank,
         "defaultCategoryId": space.default_category_id,
-        "announcements": space.announcements or [],
-        "taskTemplates": space.task_templates or [],
+        "announcements": json.dumps(space.announcements or []),
+        "taskTemplates": json.dumps(space.task_templates or []),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -152,6 +170,63 @@ def _admin_to_api_model(
     return result
 
 
+async def _build_admins_payload(
+    space_id: int,
+    *,
+    service: SpaceService,
+    user_repo: UserRepository,
+    profile_repo: UserProfileRepository,
+) -> list[dict]:
+    """Hydrate admin relations with full user objects.
+
+    The frontend Space type requires `admins[].user.id`, and stores/space.ts
+    overwrites local state with whatever each mutation returns — so any
+    response that includes `space` must include hydrated admins, otherwise
+    admin-only UI silently disappears after a PATCH.
+    """
+    admin_relations = await service.list_admins(space_id)
+    admins_list: list[dict] = []
+    for rel in admin_relations:
+        user = await user_repo.get_by_id(rel.user_id)
+        profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+        user_info = (
+            {
+                "id": user.id,
+                "username": user.username,
+                "nickname": profile.nickname if profile else user.username,
+                "avatarId": profile.avatar_id if profile else None,
+                "intro": profile.intro if profile else "",
+            }
+            if user
+            else {"id": rel.user_id, "username": "unknown"}
+        )
+        admins_list.append(_admin_to_api_model(rel, user_info))
+    return admins_list
+
+
+async def _build_full_space_payload(
+    space: Space,
+    *,
+    service: SpaceService,
+    db,
+) -> dict:
+    """Build a Space response dict that matches the frontend Space type.
+
+    Always includes `admins` (hydrated) and `classificationTopics` so that any
+    GET/POST/PATCH response is interchangeable from the frontend's perspective
+    (its store overwrites local state with the response payload).
+    """
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    space_data = _space_to_api_model(space)
+    space_data["admins"] = await _build_admins_payload(
+        space.id, service=service, user_repo=user_repo, profile_repo=profile_repo
+    )
+    topics = await service.list_classification_topics(space.id)
+    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    return space_data
+
+
 @router.get(
     "/{spaceId}",
     summary="Query Space",
@@ -160,6 +235,7 @@ async def get_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     queryMyRank: bool = Query(default=False),
     queryCategories: bool = Query(default=False),
+    queryClassificationTopics: bool = Query(default=False),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
@@ -186,17 +262,27 @@ async def get_space(
     for rel in admin_relations:
         user = await user_repo.get_by_id(rel.user_id)
         profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
-        user_info = {
-            "id": user.id,
-            "username": user.username,
-            "nickname": profile.nickname if profile else user.username,
-            "avatarId": profile.avatar_id if profile else None,
-            "intro": profile.intro if profile else "",
-        } if user else {"id": rel.user_id, "username": "unknown"}
+        user_info = (
+            {
+                "id": user.id,
+                "username": user.username,
+                "nickname": profile.nickname if profile else user.username,
+                "avatarId": profile.avatar_id if profile else None,
+                "intro": profile.intro if profile else "",
+            }
+            if user
+            else {"id": rel.user_id, "username": "unknown"}
+        )
         admins_list.append(_admin_to_api_model(rel, user_info))
 
     space_data = _space_to_api_model(space)
     space_data["admins"] = admins_list
+    # Frontend's stores/space.ts always passes queryClassificationTopics=true
+    # and reads space.classificationTopics directly. Always populate it (cheap)
+    # so callers that forget the flag still get a sensible value.
+    topics = await service.list_classification_topics(space_id)
+    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.
 
     data: dict = {
         "space": space_data,
@@ -227,6 +313,9 @@ async def get_spaces(
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
 
+    space_ids = [s.id for s in spaces]
+    topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
+
     items: list[dict] = []
     for s in spaces:
         dto = _space_to_api_model(s)
@@ -238,15 +327,22 @@ async def get_spaces(
         for rel in admin_relations:
             user = await user_repo.get_by_id(rel.user_id)
             profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
-            user_info = {
-                "id": user.id,
-                "username": user.username,
-                "nickname": profile.nickname if profile else user.username,
-                "avatarId": profile.avatar_id if profile else None,
-                "intro": profile.intro if profile else "",
-            } if user else {"id": rel.user_id, "username": "unknown"}
+            user_info = (
+                {
+                    "id": user.id,
+                    "username": user.username,
+                    "nickname": profile.nickname if profile else user.username,
+                    "avatarId": profile.avatar_id if profile else None,
+                    "intro": profile.intro if profile else "",
+                }
+                if user
+                else {"id": rel.user_id, "username": "unknown"}
+            )
             admins_list.append(_admin_to_api_model(rel, user_info))
         dto["admins"] = admins_list
+        dto["classificationTopics"] = [
+            {"id": t.id, "name": t.name} for t in topics_by_space.get(s.id, [])
+        ]
 
         items.append(dto)
 
@@ -271,8 +367,9 @@ async def get_spaces(
 )
 async def create_space(
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     name = payload.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -287,6 +384,19 @@ async def create_space(
     enable_rank = bool(payload.get("enableRank", False))
     announcements = _expect_list(payload.get("announcements"), "announcements")
     task_templates = _expect_list(payload.get("taskTemplates"), "taskTemplates")
+    classification_topic_ids_raw = payload.get("classificationTopics")
+    classification_topic_ids: list[int] = []
+    if classification_topic_ids_raw is not None:
+        if not isinstance(classification_topic_ids_raw, list):
+            raise BadRequestError("classificationTopics must be an array")
+        for item in classification_topic_ids_raw:
+            if isinstance(item, bool):
+                raise BadRequestError("classificationTopics must contain integers")
+            try:
+                classification_topic_ids.append(int(item))
+            except (TypeError, ValueError) as exc:
+                raise BadRequestError("classificationTopics must contain integers") from exc
+
     space = await service.create_space(
         name=name,
         intro=intro,
@@ -297,10 +407,17 @@ async def create_space(
         announcements=announcements,
         task_templates=task_templates,
     )
+    if classification_topic_ids:
+        await service.replace_classification_topics(
+            space_id=space.id,
+            topic_ids=classification_topic_ids,
+            actor_user_id=auth_user.user_id,
+        )
+    space_data = await _build_full_space_payload(space, service=service, db=db)
     return {
         "code": 201,
         "message": "Created",
-        "data": {"space": _space_to_api_model(space)},
+        "data": {"space": space_data},
     }
 
 
@@ -311,8 +428,9 @@ async def create_space(
 async def patch_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     announcements = payload.get("announcements")
     task_templates = payload.get("taskTemplates")
@@ -320,6 +438,20 @@ async def patch_space(
         announcements = _expect_list(announcements, "announcements")
     if task_templates is not None:
         task_templates = _expect_list(task_templates, "taskTemplates")
+
+    classification_topic_ids_raw = payload.get("classificationTopics")
+    classification_topic_ids: list[int] | None = None
+    if classification_topic_ids_raw is not None:
+        if not isinstance(classification_topic_ids_raw, list):
+            raise BadRequestError("classificationTopics must be an array")
+        classification_topic_ids = []
+        for item in classification_topic_ids_raw:
+            if isinstance(item, bool):
+                raise BadRequestError("classificationTopics must contain integers")
+            try:
+                classification_topic_ids.append(int(item))
+            except (TypeError, ValueError) as exc:
+                raise BadRequestError("classificationTopics must contain integers") from exc
 
     space = await service.update_space(
         space_id=space_id,
@@ -333,7 +465,14 @@ async def patch_space(
         task_templates=task_templates,
         default_category_id=payload.get("defaultCategoryId"),
     )
-    return {"code": 200, "message": "OK", "data": {"space": _space_to_api_model(space)}}
+    if classification_topic_ids is not None:
+        await service.replace_classification_topics(
+            space_id=space_id,
+            topic_ids=classification_topic_ids,
+            actor_user_id=auth_user.user_id,
+        )
+    space_data = await _build_full_space_payload(space, service=service, db=db)
+    return {"code": 200, "message": "OK", "data": {"space": space_data}}
 
 
 @router.delete(
@@ -343,7 +482,7 @@ async def patch_space(
 )
 async def delete_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> None:
     await service.delete_space(space_id=space_id, actor_user_id=auth_user.user_id)
@@ -407,7 +546,7 @@ async def get_space_task_analytics(
 )
 async def get_publishers_participation(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
 ) -> dict:
     _ = auth_user
@@ -424,7 +563,7 @@ async def get_publishers_participation(
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     format: str = Query(default="csv"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
 ) -> Response:
     _ = auth_user
@@ -624,9 +763,7 @@ async def export_space_analytics_participants(
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"
-        },
+        headers={"Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"},
     )
 
 
@@ -661,9 +798,7 @@ async def export_space_analytics_tasks(
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="space-{space_id}-tasks.csv"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="space-{space_id}-tasks.csv"'},
     )
 
 
@@ -692,9 +827,7 @@ async def export_space_analytics_publishers(
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'},
     )
 
 
@@ -760,9 +893,7 @@ async def get_space_me_published_tasks(
 async def get_space_me_participating(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
+    service: SpaceMemberParticipatingService = Depends(get_space_member_participating_service),
 ) -> dict:
     """Return the authenticated user's participation summary in this space."""
     data = await service.get_overview(
@@ -784,9 +915,7 @@ async def get_space_me_participations(
     sortBy: str = Query(default="joinedAt"),
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(
-        get_space_member_participating_service
-    ),
+    service: SpaceMemberParticipatingService = Depends(get_space_member_participating_service),
 ) -> dict:
     """Return the authenticated user's participation list in this space."""
     participations = await service.get_participations(
@@ -819,7 +948,7 @@ async def get_space_topics(
     keyword: str | None = Query(default=None),
     sort: str = Query(default="name"),
     limit: int = Query(default=20, ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceTopicsService = Depends(get_space_topics_service),
 ) -> dict:
     """List or search topics associated with the space.
@@ -847,7 +976,7 @@ async def get_space_topics(
 async def create_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     name = payload.get("name")
@@ -881,7 +1010,7 @@ async def patch_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     display_order = None
@@ -938,7 +1067,7 @@ async def get_space_category(
 async def delete_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> None:
     await service.delete_category(
@@ -954,7 +1083,7 @@ async def delete_space_category(
 async def archive_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     category = await service.set_category_archived(
@@ -977,7 +1106,7 @@ async def archive_space_category(
 async def unarchive_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     category = await service.set_category_archived(
@@ -1017,12 +1146,23 @@ async def list_space_admins(
 async def add_space_admin(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
-    user_id = payload.get("userId")
-    if not isinstance(user_id, int) or user_id <= 0:
-        raise BadRequestError("userId must be positive integer")
+    # Frontend's v-text-field for the UID isn't always strictly typed as a
+    # number — it sends "5" (string) rather than 5 even though the
+    # PostSpaceAdminRequestData type says number. Accept either, mirroring
+    # NT/Spring's auto-coercion of query params via Jackson.
+    raw_user_id = payload.get("userId")
+    if isinstance(raw_user_id, bool) or raw_user_id is None:
+        raise BadRequestError("userId is required")
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        raise BadRequestError("userId must be a positive integer") from None
+    if user_id <= 0:
+        raise BadRequestError("userId must be a positive integer")
     role_value = (payload.get("role") or "ADMIN").upper()
     role_mapping = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
     role = role_mapping.get(role_value)
@@ -1034,7 +1174,11 @@ async def add_space_admin(
         role=role,
         actor_user_id=auth_user.user_id,
     )
-    return {"code": 201, "message": "Created"}
+    space = await service.get_space(space_id)
+    if space is None:
+        return {"code": 201, "message": "Created", "data": None}
+    space_data = await _build_full_space_payload(space, service=service, db=db)
+    return {"code": 201, "message": "Created", "data": {"space": space_data}}
 
 
 @router.delete(
@@ -1045,7 +1189,7 @@ async def add_space_admin(
 async def delete_space_admin(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> Response:
     await service.remove_admin(
@@ -1064,8 +1208,9 @@ async def patch_space_manager(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     role_str = payload.get("role")
     if not isinstance(role_str, str):
@@ -1080,4 +1225,8 @@ async def patch_space_manager(
         new_role=new_role,
         actor_user_id=auth_user.user_id,
     )
-    return {"code": 200, "message": "OK"}
+    space = await service.get_space(space_id)
+    if space is None:
+        return {"code": 200, "message": "OK", "data": None}
+    space_data = await _build_full_space_payload(space, service=service, db=db)
+    return {"code": 200, "message": "OK", "data": {"space": space_data}}

@@ -1,17 +1,15 @@
-import random
-
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator
+from tests.integration.conftest import UserCreator, unique_int
 
 
 class TestKnowledgeIntegration:
     @pytest.fixture
-    def setup_knowledge(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
+    def setup_knowledge(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
         team_resp = api_client.post(
             "/teams",
             json={
@@ -29,10 +27,10 @@ class TestKnowledgeIntegration:
             "team_id": team_id,
         }
 
-    def test_create_knowledge(self, setup_knowledge: dict, api_client: httpx.Client):
+    def test_create_knowledge(self, setup_knowledge: dict, api_client: TestClient):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
-        knowledge_name = f"Test Knowledge {random.randint(100000, 999999)}"
+        knowledge_name = f"Test Knowledge {unique_int(100000, 999999)}"
         resp = api_client.post(
             "/knowledge",
             json={
@@ -47,19 +45,19 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
         data = resp.json()["data"]["knowledge"]
         assert data["name"] == knowledge_name
         assert data["teamId"] == team_id
         assert "test" in data["labels"]
 
-    def test_get_knowledge_success(self, setup_knowledge: dict, api_client: httpx.Client):
+    def test_get_knowledge_success(self, setup_knowledge: dict, api_client: TestClient):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
         create_resp = api_client.post(
             "/knowledge",
             json={
-                "name": f"Get Test Knowledge {random.randint(100000, 999999)}",
+                "name": f"Get Test Knowledge {unique_int(100000, 999999)}",
                 "description": "Test",
                 "type": "TEXT",
                 "content": {"text": "Test content"},
@@ -68,7 +66,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         resp = api_client.get(
@@ -80,7 +78,7 @@ class TestKnowledgeIntegration:
         assert data["id"] == knowledge_id
         assert data["teamId"] == team_id
 
-    def test_get_knowledge_not_found(self, setup_knowledge: dict, api_client: httpx.Client):
+    def test_get_knowledge_not_found(self, setup_knowledge: dict, api_client: TestClient):
         creator = setup_knowledge["creator"]
         resp = api_client.get(
             "/knowledge/99999999",
@@ -88,13 +86,13 @@ class TestKnowledgeIntegration:
         )
         assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
 
-    def test_list_knowledge_by_team(self, setup_knowledge: dict, api_client: httpx.Client):
+    def test_list_knowledge_by_team(self, setup_knowledge: dict, api_client: TestClient):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
         api_client.post(
             "/knowledge",
             json={
-                "name": f"List Test Knowledge {random.randint(100000, 999999)}",
+                "name": f"List Test Knowledge {unique_int(100000, 999999)}",
                 "description": "Test",
                 "type": "TEXT",
                 "content": {"text": "Test content"},
@@ -113,13 +111,13 @@ class TestKnowledgeIntegration:
         assert "knowledges" in data
         assert isinstance(data["knowledges"], list)
 
-    def test_update_knowledge_success(self, setup_knowledge: dict, api_client: httpx.Client):
+    def test_update_knowledge_success(self, setup_knowledge: dict, api_client: TestClient):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
         create_resp = api_client.post(
             "/knowledge",
             json={
-                "name": f"Update Test Knowledge {random.randint(100000, 999999)}",
+                "name": f"Update Test Knowledge {unique_int(100000, 999999)}",
                 "description": "Original description",
                 "type": "TEXT",
                 "content": {"text": "Original content"},
@@ -128,7 +126,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         updated_name = "Updated Knowledge Name"
@@ -151,13 +149,13 @@ class TestKnowledgeIntegration:
         assert data["content"] == updated_content
         assert data["teamId"] == team_id
 
-    def test_delete_knowledge_success(self, setup_knowledge: dict, api_client: httpx.Client):
+    def test_delete_knowledge_success(self, setup_knowledge: dict, api_client: TestClient):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
         create_resp = api_client.post(
             "/knowledge",
             json={
-                "name": f"Delete Test Knowledge {random.randint(100000, 999999)}",
+                "name": f"Delete Test Knowledge {unique_int(100000, 999999)}",
                 "description": "To be deleted",
                 "type": "TEXT",
                 "content": {"text": "Delete me"},
@@ -166,7 +164,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200, f"Create failed: {create_resp.text}"
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         resp = api_client.delete(
@@ -181,14 +179,14 @@ class TestKnowledgeIntegration:
         )
         assert get_resp.status_code == 404, f"Expected 404 after delete, got {get_resp.status_code}"
 
-    def test_list_knowledge_with_labels(self, setup_knowledge: dict, api_client: httpx.Client):
+    def test_list_knowledge_with_labels(self, setup_knowledge: dict, api_client: TestClient):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
 
         api_client.post(
             "/knowledge",
             json={
-                "name": f"Label Test Knowledge {random.randint(100000, 999999)}",
+                "name": f"Label Test Knowledge {unique_int(100000, 999999)}",
                 "description": "Has specific label",
                 "type": "TEXT",
                 "content": {"text": "Labeled content"},
@@ -207,14 +205,14 @@ class TestKnowledgeIntegration:
         data = resp.json()["data"]
         assert "knowledges" in data
 
-    def test_update_knowledge_labels(self, setup_knowledge: dict, api_client: httpx.Client):
+    def test_update_knowledge_labels(self, setup_knowledge: dict, api_client: TestClient):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
 
         create_resp = api_client.post(
             "/knowledge",
             json={
-                "name": f"Label Update Knowledge {random.randint(100000, 999999)}",
+                "name": f"Label Update Knowledge {unique_int(100000, 999999)}",
                 "description": "Original labels",
                 "type": "TEXT",
                 "content": {"text": "Content"},
@@ -223,7 +221,7 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 200
+        assert create_resp.status_code == 201, f"Create failed: {create_resp.text}"
         knowledge_id = create_resp.json()["data"]["knowledge"]["id"]
 
         resp = api_client.patch(

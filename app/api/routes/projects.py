@@ -2,14 +2,19 @@ import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.project.models import Project, ProjectMemberRole, ProjectMembership
 from app.domain.project.repositories import ProjectMembershipRepository, ProjectRepository
 from app.domain.project.services import ProjectService
+from app.domain.team.models import Team
+from app.domain.team.repositories import TeamRepository
+from app.domain.user.models import User, UserProfile
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -20,7 +25,74 @@ async def get_project_service(db=Depends(get_db)) -> ProjectService:
     return ProjectService(repo, membership_repo)
 
 
-def _project_to_api_model(project: Project) -> dict:
+# Frontend's ProjectMemberRole = 'LEADER' | 'MEMBER' | 'EXTERNAL'.
+# Python's ProjectMemberRole = MEMBER (0) | ADMIN (1) | OWNER (2).
+# OWNER is the project lead; ADMIN has no frontend counterpart so we surface
+# it as MEMBER (frontend role-color logic only special-cases LEADER).
+_PROJECT_ROLE_TO_FRONTEND = {
+    ProjectMemberRole.MEMBER.value: "MEMBER",
+    ProjectMemberRole.ADMIN.value: "MEMBER",
+    ProjectMemberRole.OWNER.value: "LEADER",
+}
+
+
+def _team_summary(team: Team | None) -> dict | None:
+    if team is None:
+        return None
+    return {
+        "id": team.id,
+        "name": team.name,
+        "intro": team.intro or "",
+        "avatarId": team.avatar_id,
+    }
+
+
+def _user_summary(user: User | None, profile: UserProfile | None) -> dict | None:
+    if user is None:
+        return None
+    return {
+        "id": user.id,
+        "username": user.username,
+        "nickname": profile.nickname if profile else user.username,
+        "avatarId": profile.avatar_id if profile else None,
+        "intro": profile.intro if profile else "",
+    }
+
+
+async def _project_to_api_model(project: Project, *, db: AsyncSession) -> dict:
+    team_repo = TeamRepository(session=db)
+    user_repo = UserRepository(session=db)
+    profile_repo = UserProfileRepository(session=db)
+    membership_repo = ProjectMembershipRepository(session=db)
+
+    team = await team_repo.get_by_id(project.team_id)
+    leader = await user_repo.get_by_id(project.leader_id)
+    leader_profile = (
+        await profile_repo.get_profile_by_user_id(project.leader_id) if leader is not None else None
+    )
+
+    memberships, total = await membership_repo.list_members(project.id, limit=5, offset=0)
+    member_user_ids = [m.user_id for m in memberships]
+    users_by_id = await user_repo.get_by_ids(member_user_ids) if member_user_ids else {}
+    profiles_by_id = (
+        await profile_repo.get_profiles_by_user_ids(member_user_ids) if member_user_ids else {}
+    )
+    examples: list[dict] = []
+    for m in memberships:
+        u = users_by_id.get(m.user_id)
+        if u is None:
+            continue
+        p = profiles_by_id.get(m.user_id)
+        examples.append(
+            {
+                "id": m.id,
+                "user": _user_summary(u, p),
+                "role": _PROJECT_ROLE_TO_FRONTEND.get(m.role, "MEMBER"),
+                "createdAt": int(m.created_at.timestamp() * 1000) if m.created_at else 0,
+                "updatedAt": int(m.updated_at.timestamp() * 1000) if m.updated_at else 0,
+            }
+        )
+
     created_at_ms = (
         int(project.created_at.timestamp() * 1000) if project.created_at is not None else 0
     )
@@ -44,8 +116,10 @@ def _project_to_api_model(project: Project) -> dict:
         "parentId": project.parent_id,
         "externalTaskId": project.external_task_id,
         "githubRepo": project.github_repo,
-        "team": None,
-        "leader": None,
+        "archived": project.archived,
+        "team": _team_summary(team),
+        "leader": _user_summary(leader, leader_profile),
+        "members": {"count": total, "examples": examples},
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -65,7 +139,8 @@ def _validate_color_code(value: str | None) -> str:
 async def create_project(
     payload: dict,
     service: ProjectService = Depends(get_project_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
@@ -85,8 +160,16 @@ async def create_project(
         raise BadRequestError("name is required")
     if not isinstance(team_id, int) or team_id <= 0:
         raise BadRequestError("teamId is required")
-    if not isinstance(leader_id, int) or leader_id <= 0:
+    # leader_id is a user-typed UID in the create-project dialog, so apply the
+    # same str→int coercion we use for space/team/project member adds.
+    if isinstance(leader_id, bool) or leader_id is None:
         raise BadRequestError("leaderId is required")
+    try:
+        leader_id = int(leader_id)
+    except (TypeError, ValueError):
+        raise BadRequestError("leaderId must be a positive integer") from None
+    if leader_id <= 0:
+        raise BadRequestError("leaderId must be a positive integer")
     if not isinstance(start_date, int):
         raise BadRequestError("startDate is required")
     if not isinstance(end_date, int):
@@ -108,7 +191,7 @@ async def create_project(
     return {
         "code": 201,
         "message": "Created",
-        "data": {"project": _project_to_api_model(project)},
+        "data": {"project": await _project_to_api_model(project, db=db)},
     }
 
 
@@ -118,8 +201,11 @@ async def create_project(
 )
 async def get_project(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
+    _ = auth_user
     project = await service.get_project(project_id=project_id)
     if project is None:
         raise NotFoundError("Project not found")
@@ -127,7 +213,7 @@ async def get_project(
     return {
         "code": 200,
         "message": "success",
-        "data": {"project": _project_to_api_model(project)},
+        "data": {"project": await _project_to_api_model(project, db=db)},
     }
 
 
@@ -139,7 +225,8 @@ async def patch_project(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     payload: dict,
     service: ProjectService = Depends(get_project_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
@@ -171,7 +258,7 @@ async def patch_project(
     return {
         "code": 200,
         "message": "success",
-        "data": {"project": _project_to_api_model(updated)},
+        "data": {"project": await _project_to_api_model(updated, db=db)},
     }
 
 
@@ -183,7 +270,7 @@ async def patch_project(
 async def delete_project(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     service: ProjectService = Depends(get_project_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
@@ -203,8 +290,11 @@ async def get_projects(
     leader_id: int | None = Query(default=None),
     member_id: int | None = Query(default=None),
     archived: bool | None = Query(default=None),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
+    _ = auth_user
     projects = await service.list_projects(
         team_id=team_id,
         parent_id=parent_id,
@@ -212,7 +302,7 @@ async def get_projects(
         member_id=member_id,
         archived=archived,
     )
-    items = [_project_to_api_model(p) for p in projects]
+    items = [await _project_to_api_model(p, db=db) for p in projects]
     return {
         "code": 200,
         "message": "success",
@@ -249,7 +339,7 @@ async def get_project_members(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     page_start: str | None = Query(default=None, alias="pageStart"),
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
 ) -> dict:
     _ = auth_user
@@ -282,16 +372,24 @@ async def get_project_members(
 async def add_project_member(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
 ) -> dict:
     _ = auth_user
     await _get_project_or_404(service, project_id)
-    user_id = payload.get("userId")
+    raw_user_id = payload.get("userId")
     role = payload.get("role") or "MEMBER"
     notes = payload.get("notes")
-    if not isinstance(user_id, int) or user_id <= 0:
-        raise BadRequestError("userId must be positive")
+    # Same-shape coercion as POST /spaces/{id}/managers — frontend
+    # text-fields often submit "5" instead of 5.
+    if isinstance(raw_user_id, bool) or raw_user_id is None:
+        raise BadRequestError("userId is required")
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        raise BadRequestError("userId must be a positive integer") from None
+    if user_id <= 0:
+        raise BadRequestError("userId must be a positive integer")
     if not isinstance(role, str):
         raise BadRequestError("role must be string")
 
@@ -316,7 +414,7 @@ async def add_project_member(
 async def delete_project_member(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
 ) -> None:
     _ = auth_user

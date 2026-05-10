@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user, require_permission
+from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import BadRequestError, ForbiddenError
 from app.db.session import get_db
@@ -110,7 +110,7 @@ async def search_questions(
     q: str | None = Query(default=None),
     page_start: int | None = Query(default=None, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     _ = auth_user
@@ -131,7 +131,7 @@ async def search_questions(
 )
 async def add_question(
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     title = payload.get("title") or ""
@@ -142,7 +142,16 @@ async def add_question(
     topic_ids = payload.get("topics") or payload.get("topicIds") or []
     if not isinstance(topic_ids, list):
         raise BadRequestError("topics must be an array")
-    topic_ints = [int(t) for t in topic_ids if isinstance(t, int)]
+    # Coerce each entry: frontend sometimes ships ["5","7"] from a select
+    # control without numeric binding. Drop anything that fails int().
+    topic_ints: list[int] = []
+    for t in topic_ids:
+        if isinstance(t, bool):
+            continue
+        try:
+            topic_ints.append(int(t))
+        except (TypeError, ValueError):
+            continue
 
     question = await service.create_question(
         user_id=auth_user.user_id,
@@ -163,7 +172,7 @@ async def add_question(
 async def list_followed_questions(
     pageStart: int | None = Query(default=None, alias="page_start"),
     pageSize: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     items, page = await service.list_followed(
@@ -180,7 +189,7 @@ async def list_followed_questions(
 )
 async def get_question(
     question_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
@@ -195,7 +204,7 @@ async def get_question(
 )
 async def follow_question(
     question_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     changed = await service.follow_question(question_id=question_id, user_id=auth_user.user_id)
@@ -211,7 +220,7 @@ async def follow_question(
 )
 async def unfollow_question(
     question_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     changed = await service.unfollow_question(question_id=question_id, user_id=auth_user.user_id)
@@ -227,7 +236,7 @@ async def unfollow_question(
 async def accept_answer(
     question_id: Annotated[int, Path(ge=0)],
     answer_id: int = Query(..., alias="answer_id"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     question = await service.accept_answer(
@@ -256,7 +265,7 @@ async def unaccept_answer(
 async def vote_question(
     question_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     vote_type = payload.get("voteType", "UPVOTE")
@@ -272,7 +281,7 @@ async def vote_question(
 )
 async def remove_question_vote(
     question_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     result = await service.remove_question_vote(question_id=question_id, user_id=auth_user.user_id)
@@ -285,7 +294,7 @@ async def remove_question_vote(
 )
 async def get_question_votes(
     question_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
@@ -303,7 +312,7 @@ async def list_question_comments(
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
     sort_by: str = Query(default="createdAt"),
     sort_order: str = Query(default="asc"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
@@ -330,7 +339,7 @@ async def list_question_comments(
 async def create_question_comment(
     question_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     content = payload.get("content", "")
@@ -354,7 +363,7 @@ async def create_question_comment(
 async def delete_question_comment(
     question_id: Annotated[int, Path(ge=0)],
     comment_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     _ = question_id
@@ -374,7 +383,7 @@ async def delete_question_comment(
 async def update_question(
     question_id: Annotated[int, Path()],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     title = payload.get("title")
@@ -385,7 +394,16 @@ async def update_question(
     if topics is not None:
         if not isinstance(topics, list):
             raise BadRequestError("topics must be an array")
-        topic_ids = [int(t) for t in topics if isinstance(t, int) and t > 0]
+        topic_ids = []
+        for t in topics:
+            if isinstance(t, bool):
+                continue
+            try:
+                v = int(t)
+            except (TypeError, ValueError):
+                continue
+            if v > 0:
+                topic_ids.append(v)
     question = await service.update_question(
         question_id=question_id,
         user_id=auth_user.user_id,
@@ -404,7 +422,7 @@ async def update_question(
 )
 async def delete_question(
     question_id: Annotated[int, Path()],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> None:
     await service.delete_question(question_id=question_id, user_id=auth_user.user_id)
@@ -435,7 +453,7 @@ async def list_question_followers(
 )
 async def follow_question_put(
     question_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     await service.follow_question(question_id=question_id, user_id=auth_user.user_id)
@@ -450,7 +468,7 @@ async def follow_question_put(
 async def set_question_bounty(
     question_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     bounty = int(payload.get("bounty", 0))
@@ -469,7 +487,7 @@ async def set_question_bounty(
 async def attitude_question(
     question_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     attitude_type = payload.get("attitude_type", "UNDEFINED")
@@ -517,12 +535,18 @@ async def list_question_invitations(
 async def invite_user_to_answer(
     question_id: Annotated[int, Path(ge=0)],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
-    invitee_id = payload.get("user_id")
-    if not isinstance(invitee_id, int) or invitee_id <= 0:
+    raw_invitee = payload.get("user_id")
+    if isinstance(raw_invitee, bool) or raw_invitee is None:
         raise BadRequestError("user_id is required")
+    try:
+        invitee_id = int(raw_invitee)
+    except (TypeError, ValueError):
+        raise BadRequestError("user_id must be a positive integer") from None
+    if invitee_id <= 0:
+        raise BadRequestError("user_id must be a positive integer")
     result = await service.create_invitation(
         question_id=question_id,
         inviter_id=auth_user.user_id,
@@ -569,7 +593,7 @@ async def get_invitation_detail(
 async def delete_invitation(
     question_id: Annotated[int, Path(ge=0)],
     invitation_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
     _ = question_id

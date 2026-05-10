@@ -1,9 +1,36 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
 from app.domain.team.repositories import TeamRepository
+
+
+async def check_team_locking_status(session, team_id: int) -> None:
+    """Check if a team is locked due to participation in tasks with locking policies.
+
+    Mirrors NT TeamService.checkTeamLockingStatus: queries TaskMembership rows
+    where the team is APPROVED in a task with LOCK_ON_APPROVAL policy and the
+    completion status is still ongoing. Raises ForbiddenError if locked.
+    """
+    from app.domain.task.repositories import TaskMembershipRepository
+
+    membership_repo = TaskMembershipRepository(session=session)
+    locking_policies = ["LOCK_ON_APPROVAL"]
+    locked = await membership_repo.find_active_locked_memberships(
+        team_id=team_id,
+        locking_policies=locking_policies,
+    )
+    if locked:
+        task_names = []
+        for m in locked:
+            # We don't eagerly load the task, so just mention the task ID.
+            task_names.append(str(m.task_id))
+        msg = (
+            "Team membership cannot be changed because the team is "
+            f"participating in locked task(s): {', '.join(task_names)}"
+        )
+        raise ForbiddenError(msg)
 
 
 class TeamService:
@@ -53,7 +80,13 @@ class TeamService:
         if not name.strip():
             raise BadRequestError("Team name cannot be empty")
         if await self._repo.exists_by_name(name.strip()):
-            raise BadRequestError("Team name already exists")
+            # 409 + structured data so the frontend can distinguish "duplicate
+            # name" from a generic 400 and show a precise message instead of
+            # the catch-all "稍后重试". Mirrors how POST /spaces handles it.
+            raise ConflictError(
+                "Team name already exists",
+                data={"field": "name", "value": name.strip()},
+            )
 
         now = datetime.now(UTC).replace(tzinfo=None)
         team = Team(
@@ -106,7 +139,10 @@ class TeamService:
             if not trimmed:
                 raise BadRequestError("Team name cannot be empty")
             if trimmed != team.name and await self._repo.exists_by_name(trimmed):
-                raise BadRequestError("Team name already exists")
+                raise ConflictError(
+                    "Team name already exists",
+                    data={"field": "name", "value": trimmed},
+                )
             team.name = trimmed
         if intro is not None:
             team.intro = intro
@@ -163,6 +199,7 @@ class TeamService:
             ):
                 raise ForbiddenError("Admins cannot remove other admins")
 
+        await check_team_locking_status(self._repo._session, team_id)
         await self._repo.soft_delete_member(relation)
 
     async def update_team_member_role(

@@ -19,6 +19,7 @@ from app.api.routes import (
     notifications,
     projects,
     questions,
+    recruitment,
     spaces,
     tasks,
     teams,
@@ -94,9 +95,12 @@ def create_app() -> FastAPI:
     app.include_router(topics_legacy.router)
     app.include_router(answers.router)
     app.include_router(knowledge.router)
+    app.include_router(recruitment.router)
+    app.include_router(recruitment.team_recruitment_router)
 
     # Mount uploads directory for serving images and other static files
     import os
+
     uploads_path = os.path.abspath(settings.storage_local_path)
     if not os.path.isdir(uploads_path):
         os.makedirs(uploads_path, exist_ok=True)
@@ -110,6 +114,20 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def _start_notification_jobs() -> None:
         await finalizer.start()
+
+    @app.on_event("startup")
+    async def _setup_search_indices() -> None:
+        from app.domain.search.meilisearch_service import setup_indices
+
+        try:
+            setup_indices()
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Meilisearch index setup failed — search will use PG FTS fallback",
+                exc_info=True,
+            )
 
     @app.on_event("shutdown")
     async def _stop_notification_jobs() -> None:

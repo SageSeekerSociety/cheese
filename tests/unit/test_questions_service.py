@@ -82,8 +82,16 @@ def _make_service(
 ) -> tuple[QuestionsService, AsyncMock, AsyncMock, AsyncMock, AsyncMock]:
     repo = repo or AsyncMock()
     topic_repo = topic_repo or AsyncMock()
+    # _enrich_question_list now also bulk-fetches topic objects and author
+    # profiles. Default these to empty so tests that don't care about author
+    # rendering still pass; tests that do care override explicitly.
+    topic_repo.get_topics_for_questions.return_value = {}
     answer_repo = answer_repo or AsyncMock()
     profile_repo = profile_repo or AsyncMock()
+    profile_repo.get_profiles_by_user_ids.return_value = {}
+    # get_question now calls repo.count_views; default it so tests that don't
+    # care about view tracking still pass.
+    repo.count_views.return_value = 0
     svc = QuestionsService(
         repo=repo,
         topic_repo=topic_repo,
@@ -339,7 +347,12 @@ class TestGetQuestion:
 
         assert result["id"] == 10
         assert result["topics"] == [{"id": 1, "name": "Python"}]
-        assert result["author"] == {"id": 50, "nickname": "alice", "avatar_id": 5}
+        assert result["author"] == {
+            "id": 50,
+            "nickname": "alice",
+            "avatarId": 5,
+            "intro": "hi there",
+        }
         assert result["follow_count"] == 5
         assert result["is_follow"] is True
         assert result["attitudes"]["positive_count"] == 3
@@ -348,7 +361,13 @@ class TestGetQuestion:
         assert result["attitudes"]["user_attitude"] == "POSITIVE"
         assert result["answer_count"] == 7
         assert result["comment_count"] == 2
-        assert result["accepted_answer"] == {"id": 1, "content": "Accepted answer"}
+        # accepted_answer now carries author + timestamps so the frontend can
+        # render Detail.vue:180 (accepted_answer.author.nickname) without crashing.
+        assert result["accepted_answer"]["id"] == 1
+        assert result["accepted_answer"]["content"] == "Accepted answer"
+        assert "author" in result["accepted_answer"]
+        assert result["view_count"] == 0
+        assert result["is_solved"] is True
         # createdAt/updatedAt keys renamed
         assert "created_at" in result
         assert "updated_at" in result
@@ -1155,9 +1174,7 @@ class TestListFollowers:
         repo.get_by_id.return_value = _question(id=10)
         repo.list_followers.return_value = ([42, 43], 5)
 
-        follower_ids, page = await svc.list_followers(
-            question_id=10, page_size=2, page_start=0
-        )
+        follower_ids, page = await svc.list_followers(question_id=10, page_size=2, page_start=0)
 
         assert follower_ids == [42, 43]
         assert page["pageStart"] == 0
@@ -1172,9 +1189,7 @@ class TestListFollowers:
         repo.get_by_id.return_value = _question(id=10)
         repo.list_followers.return_value = ([45], 5)
 
-        follower_ids, page = await svc.list_followers(
-            question_id=10, page_size=10, page_start=4
-        )
+        follower_ids, page = await svc.list_followers(question_id=10, page_size=10, page_start=4)
 
         assert page["hasMore"] is False
         assert page["nextStart"] is None
@@ -1185,9 +1200,7 @@ class TestListFollowers:
         repo.get_by_id.return_value = _question(id=10)
         repo.list_followers.return_value = ([], 0)
 
-        follower_ids, page = await svc.list_followers(
-            question_id=10, page_size=10, page_start=None
-        )
+        follower_ids, page = await svc.list_followers(question_id=10, page_size=10, page_start=None)
 
         assert follower_ids == []
         assert page["hasMore"] is False

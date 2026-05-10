@@ -1,22 +1,12 @@
-import os
-import random
-
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator
-
-pytestmark = [
-    pytest.mark.skipif(
-        os.environ.get("RUN_INTEGRATION_TESTS", "").lower() not in ("1", "true"),
-        reason="Integration tests require RUN_INTEGRATION_TESTS=1 and a running database",
-    ),
-]
+from tests.integration.conftest import UserCreator, unique_int
 
 
 class TestTeamIntegration:
     @pytest.fixture
-    def team_setup(self, user_client: UserCreator, api_client: httpx.Client) -> dict:
+    def team_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
@@ -31,7 +21,7 @@ class TestTeamIntegration:
             api_client, another_user.username, another_user.password
         )
 
-        suffix = random.randint(10000000, 99999999)
+        suffix = unique_int(10000000, 99999999)
         return {
             "creator": creator,
             "admin": admin,
@@ -43,7 +33,7 @@ class TestTeamIntegration:
             "team_avatar_id": 1,
         }
 
-    def test_create_team(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_create_team(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -65,7 +55,7 @@ class TestTeamIntegration:
         assert data["data"]["team"]["id"] > 0
         assert data["data"]["team"]["owner"]["id"] == creator.user_id
 
-    def test_get_team(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_get_team(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -91,7 +81,7 @@ class TestTeamIntegration:
         assert data["data"]["team"]["admins"]["total"] == 0
         assert data["data"]["team"]["members"]["total"] == 0
 
-    def test_enumerate_teams(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_enumerate_teams(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -116,7 +106,7 @@ class TestTeamIntegration:
         data = resp.json()
         assert len(data["data"]["teams"]) >= 1
 
-    def test_get_my_teams(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_get_my_teams(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -142,7 +132,7 @@ class TestTeamIntegration:
         assert my_team is not None
         assert my_team["owner"]["id"] == creator.user_id
 
-    def test_update_team(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_update_team(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -170,7 +160,7 @@ class TestTeamIntegration:
         assert data["data"]["team"]["name"] == updated_name
 
     def test_update_team_forbidden_for_non_member(
-        self, api_client: httpx.Client, team_setup: dict
+        self, api_client: TestClient, team_setup: dict
     ) -> None:
         creator = team_setup["creator"]
         another_user = team_setup["another_user"]
@@ -195,7 +185,7 @@ class TestTeamIntegration:
         )
         assert patch_resp.status_code == 403
 
-    def test_get_team_members(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_get_team_members(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -219,7 +209,7 @@ class TestTeamIntegration:
         assert data["data"]["members"][0]["role"] == "OWNER"
         assert data["data"]["members"][0]["userId"] == creator.user_id
 
-    def test_invite_and_accept_member(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_invite_and_accept_member(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -268,7 +258,7 @@ class TestTeamIntegration:
         assert team_data["admins"]["total"] == 0
         assert team_data["members"]["total"] == 1
 
-    def test_invite_admin(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_invite_admin(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         admin = team_setup["admin"]
 
@@ -320,7 +310,7 @@ class TestTeamIntegration:
         assert team_data["admins"]["total"] == 1
         assert team_data["members"]["total"] == 0
 
-    def test_member_cannot_invite(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_member_cannot_invite(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
         another_user = team_setup["another_user"]
@@ -355,7 +345,7 @@ class TestTeamIntegration:
         )
         assert invite_resp2.status_code == 403
 
-    def test_change_member_role(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_change_member_role(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -399,7 +389,7 @@ class TestTeamIntegration:
         )
         assert member_data["role"] == "ADMIN"
 
-    def test_remove_member(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_remove_member(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -439,7 +429,7 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert member.user_id not in user_ids
 
-    def test_delete_team(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_delete_team(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -462,7 +452,7 @@ class TestTeamIntegration:
         get_resp = api_client.get(f"/teams/{team_id}", headers=headers)
         assert get_resp.status_code == 404
 
-    def test_join_request_workflow(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_join_request_workflow(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -508,7 +498,7 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert member.user_id in user_ids
 
-    def test_enumerate_teams_by_id(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_enumerate_teams_by_id(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -534,7 +524,7 @@ class TestTeamIntegration:
         assert len(data["data"]["teams"]) >= 1
 
     def test_enumerate_teams_with_pagination(
-        self, api_client: httpx.Client, team_setup: dict
+        self, api_client: TestClient, team_setup: dict
     ) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
@@ -561,7 +551,7 @@ class TestTeamIntegration:
         assert "page" in data["data"]
         assert data["data"]["page"]["pageSize"] == 1
 
-    def test_enumerate_teams_no_filter(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_enumerate_teams_no_filter(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -571,7 +561,7 @@ class TestTeamIntegration:
         assert "teams" in data["data"]
 
     def test_update_team_forbidden_for_member(
-        self, api_client: httpx.Client, team_setup: dict
+        self, api_client: TestClient, team_setup: dict
     ) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
@@ -606,9 +596,7 @@ class TestTeamIntegration:
         )
         assert patch_resp.status_code == 403
 
-    def test_update_team_success_for_admin(
-        self, api_client: httpx.Client, team_setup: dict
-    ) -> None:
+    def test_update_team_success_for_admin(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         admin = team_setup["admin"]
 
@@ -644,7 +632,7 @@ class TestTeamIntegration:
         assert patch_resp.status_code == 200
         assert patch_resp.json()["data"]["team"]["name"] == updated_name
 
-    def test_get_team_as_member(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_get_team_as_member(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -680,7 +668,7 @@ class TestTeamIntegration:
         assert data["joined"] is True
         assert data["role"] == "MEMBER"
 
-    def test_get_team_as_non_member(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_get_team_as_non_member(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         another_user = team_setup["another_user"]
 
@@ -705,7 +693,7 @@ class TestTeamIntegration:
         assert data["joined"] is False
         assert data.get("role") is None
 
-    def test_remove_self_as_member(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_remove_self_as_member(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -745,7 +733,7 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert member.user_id not in user_ids
 
-    def test_admin_can_invite_member(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_admin_can_invite_member(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         admin = team_setup["admin"]
         member = team_setup["member"]
@@ -780,7 +768,7 @@ class TestTeamIntegration:
         )
         assert invite_member_resp.status_code == 201
 
-    def test_change_role_admin_to_member(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_change_role_admin_to_member(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         admin = team_setup["admin"]
 
@@ -824,7 +812,7 @@ class TestTeamIntegration:
         )
         assert admin_member["role"] == "MEMBER"
 
-    def test_change_role_member_to_admin(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_change_role_member_to_admin(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -875,9 +863,7 @@ class TestTeamIntegration:
         )
         assert member_data["role"] == "MEMBER"
 
-    def test_add_member_back_via_invitation(
-        self, api_client: httpx.Client, team_setup: dict
-    ) -> None:
+    def test_add_member_back_via_invitation(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -929,7 +915,7 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert member.user_id in user_ids
 
-    def test_get_team_details_as_owner(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_get_team_details_as_owner(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -959,7 +945,7 @@ class TestTeamIntegration:
         assert data["role"] == "OWNER"
 
     def test_update_team_fails_for_anonymous(
-        self, api_client: httpx.Client, team_setup: dict
+        self, api_client: TestClient, team_setup: dict
     ) -> None:
         creator = team_setup["creator"]
 
@@ -982,7 +968,7 @@ class TestTeamIntegration:
         assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
 
     def test_remove_member_using_owner_token(
-        self, api_client: httpx.Client, team_setup: dict
+        self, api_client: TestClient, team_setup: dict
     ) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
@@ -1023,9 +1009,7 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert member.user_id not in user_ids
 
-    def test_remove_admin_using_owner_token(
-        self, api_client: httpx.Client, team_setup: dict
-    ) -> None:
+    def test_remove_admin_using_owner_token(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         admin = team_setup["admin"]
 
@@ -1065,7 +1049,7 @@ class TestTeamIntegration:
         user_ids = [m["userId"] for m in members_resp.json()["data"]["members"]]
         assert admin.user_id not in user_ids
 
-    def test_add_already_member_fails(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_add_already_member_fails(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 
@@ -1113,7 +1097,7 @@ class TestTeamIntegration:
             409,
         ), f"Expected 400 or 409 when inviting already-member, got {invite_again_resp.status_code}"
 
-    def test_change_role_multiple_times(self, api_client: httpx.Client, team_setup: dict) -> None:
+    def test_change_role_multiple_times(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         member = team_setup["member"]
 

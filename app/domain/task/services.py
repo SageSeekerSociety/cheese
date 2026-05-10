@@ -1,7 +1,11 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from app.domain.team.repositories import TeamRepository
 from app.core.domain_errors import (
     TaskParticipantsReachedLimitError,
     TeamSizeNotEnoughError,
@@ -96,11 +100,13 @@ class TaskMembershipService:
         realname_repo: UserRealNameRepository | None = None,
         space_repo: SpaceRepository | None = None,
         space_rank_repo: SpaceUserRankRepository | None = None,
+        team_repo: "TeamRepository | None" = None,
     ) -> None:
         self._repo = repo
         self._realname_repo = realname_repo
         self._space_repo = space_repo
         self._space_rank_repo = space_rank_repo
+        self._team_repo = team_repo
 
     async def list_memberships_for_task(
         self,
@@ -151,8 +157,14 @@ class TaskMembershipService:
     ) -> TaskMembership:
         """Create a new TaskMembership row with扩展校验（人数上限、报名窗口、实名等）。"""
 
-        # 参与人数上限校验
-        if approved == 0 and task.participant_limit is not None:
+        # 参与人数上限校验 — 仅在 enforce_task_participant_limit_check 开启时生效
+        # （对齐 NT TaskMembershipEligibilityService.ensureTaskParticipantNotReachedLimit
+        # 与 applicationConfig.enforceTaskParticipantLimitCheck 默认 false）。
+        if (
+            settings.enforce_task_participant_limit_check
+            and approved == 0
+            and task.participant_limit is not None
+        ):
             approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
             if approved_count >= task.participant_limit:
                 if getattr(task, "auto_reject_when_full", False):
@@ -164,12 +176,12 @@ class TaskMembershipService:
         # 报名窗口校验（已移除 registration_start_at 和 registration_deadline）
         now = datetime.now(UTC).replace(tzinfo=None)
 
-        # 已存在参与记录则拒绝
+        # 已存在参与记录则拒绝（DISAPPROVED 除外，允许重新申请）
         existing = await self.get_membership_by_task_and_member(
             task_id=task.id,
             member_id=member_id,  # type: ignore[arg-type]
         )
-        if existing is not None and existing.deleted_at is None:
+        if existing is not None and existing.deleted_at is None and existing.approved != 1:
             raise BadRequestError("Member already participating in this task.")
 
         # requireRealName：简化为只校验提交者本人
@@ -223,8 +235,8 @@ class TaskMembershipService:
         # 如果本次操作是"从非 APPROVED 变为 APPROVED"，做一些基础检查。
         is_approving = previous_approved != 0 and new_approved == 0
         if is_approving:
-            # 人数上限检查
-            if task.participant_limit is not None:
+            # 人数上限检查 — 仅在 enforce_task_participant_limit_check 开启时生效
+            if settings.enforce_task_participant_limit_check and task.participant_limit is not None:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     raise TaskParticipantsReachedLimitError(task.id, task.participant_limit)  # type: ignore[arg-type]
@@ -311,8 +323,8 @@ class TaskMembershipService:
                     }
                 )
 
-            # 参与人数达到上限
-            if task.participant_limit is not None:
+            # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
+            if settings.enforce_task_participant_limit_check and task.participant_limit is not None:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(
@@ -322,9 +334,9 @@ class TaskMembershipService:
                         }
                     )
 
-            # 已经参与则视为不可再加入。
+            # 已经参与则视为不可再加入（DISAPPROVED 除外）
             existing = await self.get_user_membership(task_id=task.id, user_id=user_id)  # type: ignore[arg-type]
-            if existing is not None:
+            if existing is not None and existing.approved != 1:
                 reasons.append(
                     {
                         "code": "ALREADY_PARTICIPATING",
@@ -383,14 +395,33 @@ class TaskMembershipService:
             }
 
         # TEAM 类型：返回 team eligibility 数组（含基本 team 尺寸限制与实名要求）。
-        team_memberships = await self.list_team_memberships_for_user(
+        # NT semantics (TaskMembershipEligibilityService.getParticipationEligibility):
+        # iterate every team the user is OWNER/ADMIN of, regardless of whether that
+        # team already has a TaskMembership row. Previously we only iterated existing
+        # memberships, so a brand-new user always saw `teams: []` and could never
+        # join a TEAM task.
+        existing_memberships = await self.list_team_memberships_for_user(
             task_id=task.id,  # type: ignore[arg-type]
             user_id=user_id,
         )
+        memberships_by_team_id = {m.member_id: m for m in existing_memberships}
+
+        if self._team_repo is not None:
+            candidate_teams = await self._team_repo.list_teams_user_can_use_to_join_task(
+                user_id=user_id,
+            )
+        else:
+            # Fallback when no TeamRepository is wired: only existing memberships.
+            candidate_teams = [
+                type("_T", (), {"id": m.member_id, "name": "", "intro": "", "avatar_id": None})()
+                for m in existing_memberships
+            ]
+
         teams_status: list[dict] = []
-        for membership in team_memberships:
-            approved = membership.approved == 0
-            team_size = await self._repo.count_team_members(membership.member_id)
+        for candidate in candidate_teams:
+            team_id = candidate.id
+            team_size = await self._repo.count_team_members(team_id)
+            existing = memberships_by_team_id.get(team_id)
 
             reasons: list[dict] = []
 
@@ -419,8 +450,8 @@ class TaskMembershipService:
                     }
                 )
 
-            # 参与人数达到上限
-            if task.participant_limit is not None:
+            # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
+            if settings.enforce_task_participant_limit_check and task.participant_limit is not None:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(
@@ -430,7 +461,9 @@ class TaskMembershipService:
                         }
                     )
 
-            if approved:
+            # 已有 membership 记录（且未软删除）视为已参与
+            # NONE(待审批) 和 APPROVED(已批准) 不可重复加入，DISAPPROVED(已拒绝) 允许重新申请
+            if existing is not None and existing.approved != 1:
                 reasons.append(
                     {
                         "code": "ALREADY_PARTICIPATING",
@@ -454,12 +487,20 @@ class TaskMembershipService:
                 )
 
             # requireRealName: 若任务要求实名，TEAM 参与需要所有队员均有实名记录。
+            # NT checks allVerified from getTeamMembers(teamId, queryRealNameStatus=true).
             if task.require_real_name and self._realname_repo is not None:
-                # 简化实现：只要发现队员中存在未实名用户就添加原因。
-                # 这里没有逐个检查所有成员，只是标记整体状态，后续可以细化为具体 missingUserIds。
-                # 为避免额外查询，这里只检查提交者自身是否实名；完整实现应结合 team 成员列表。
-                has_identity = await self._realname_repo.has_identity(user_id)
-                if not has_identity:
+                # Check all team members, not just the requesting user.
+                all_verified = True
+                if self._team_repo is not None:
+                    members = await self._team_repo.list_members_of_team(team_id)
+                    for member_rel in members:
+                        if not await self._realname_repo.has_identity(member_rel.user_id):
+                            all_verified = False
+                            break
+                else:
+                    # Fallback: check the requesting user only
+                    all_verified = await self._realname_repo.has_identity(user_id)
+                if not all_verified:
                     reasons.append(
                         {
                             "code": "TEAM_MEMBER_MISSING_REAL_NAME",
@@ -493,7 +534,7 @@ class TaskMembershipService:
                                         "actualRank": actual_rank,
                                         "requiredRank": required_rank,
                                         "taskId": task.id,
-                                        "teamId": membership.member_id,
+                                        "teamId": team_id,
                                     },
                                 }
                             )
@@ -501,8 +542,10 @@ class TaskMembershipService:
             teams_status.append(
                 {
                     "team": {
-                        "id": membership.member_id,
-                        # 其他 TeamSummaryDTO 字段（name/intro/avatarId 等）后续通过 TeamService 补齐。
+                        "id": team_id,
+                        "name": getattr(candidate, "name", None) or "",
+                        "intro": getattr(candidate, "intro", None) or "",
+                        "avatarId": getattr(candidate, "avatar_id", None),
                     },
                     "eligibility": {
                         "eligible": is_task_approved and not reasons,

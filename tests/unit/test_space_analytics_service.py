@@ -21,7 +21,9 @@ def _task(id: int, space_id: int, category_id: int, approved: int, creator_id: i
     )
 
 
-def _membership(task_id: int, member_id: int, approved: int, space_id: int, completion_status="NOT_SUBMITTED"):
+def _membership(
+    task_id: int, member_id: int, approved: int, space_id: int, completion_status="NOT_SUBMITTED"
+):
     return SimpleNamespace(
         task_id=task_id,
         member_id=member_id,

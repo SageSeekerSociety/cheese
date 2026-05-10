@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
@@ -81,7 +81,7 @@ class BulkUpdateNotificationItem(dict):
 @router.get("/unread-count", summary="Get Unread Notification Count")
 async def get_unread_notifications_count(
     service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     count = await service.get_unread_notification_count_for_current_user(user_id=auth_user.user_id)
     return {"code": 200, "message": "Success", "data": {"count": count}}
@@ -94,7 +94,7 @@ async def get_unread_notifications_count(
 async def get_notification_by_id(
     notification_id: Annotated[int, Path(ge=1, alias="notificationId")],
     service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     notification = await service.get_notification_by_id_for_current_user(
         user_id=auth_user.user_id, notification_id=notification_id
@@ -123,7 +123,7 @@ async def list_notifications(
     type_: NotificationType | None = Query(default=None, alias="type"),
     read: bool | None = Query(default=None),
     service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     # Decode cursor (pageStart) into created_at/id pair, if present.
     cursor_created_at: datetime | None = None
@@ -199,7 +199,7 @@ async def list_notifications(
 async def bulk_update_notifications(
     payload: dict,
     service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Bulk update notification read status for current user.
 
@@ -230,7 +230,7 @@ async def bulk_update_notifications(
 async def set_collective_notification_status(
     payload: dict,
     service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Set collective read status for all notifications.
 
@@ -255,7 +255,7 @@ async def update_notification_status(
     notification_id: Annotated[int, Path(ge=1, alias="notificationId")],
     payload: dict,
     service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     read = payload.get("read")
     if read is None:
@@ -298,7 +298,7 @@ async def update_notification_status(
 async def delete_notification(
     notification_id: Annotated[int, Path(ge=1, alias="notificationId")],
     service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     deleted = await service.delete_notification_for_current_user(
         user_id=auth_user.user_id,

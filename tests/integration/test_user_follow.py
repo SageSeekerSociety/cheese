@@ -4,8 +4,8 @@ Migrated from cheese-backend/test/user.follow.e2e-spec.ts (436 lines, 20 tests)
 Complete equivalence migration.
 """
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from tests.integration.conftest import CreatedUser, UserCreator
 
@@ -16,7 +16,7 @@ class TestUserFollowLogicIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -168,7 +168,7 @@ class TestUserFollowersListIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -208,31 +208,31 @@ class TestUserFollowersListIntegration:
             assert data["code"] == 200
             assert len(data["data"]["users"]) == 1
             assert data["data"]["users"][0]["id"] == self.user.user_id
-            assert data["data"]["page"]["page_start"] == self.user.user_id
-            assert data["data"]["page"]["page_size"] == 1
-            assert data["data"]["page"]["has_prev"] is False
-            assert data["data"]["page"]["prev_start"] == 0
-            assert data["data"]["page"]["has_more"] is False
-            assert data["data"]["page"]["next_start"] == 0
+            assert data["data"]["page"]["pageStart"] == self.user.user_id
+            assert data["data"]["page"]["pageSize"] == 1
+            assert data["data"]["page"]["hasPrev"] is False
+            assert data["data"]["page"]["prevStart"] == 0
+            assert data["data"]["page"]["hasMore"] is False
+            assert data["data"]["page"]["nextStart"] == 0
 
     def test_get_followers_of_aux_user_with_pagination(self):
         for user_id in self.aux_user_ids[:-1]:
             response = self.client.get(
                 f"/users/{user_id}/followers",
                 headers=self.headers,
-                params={"page_start": self.user.user_id, "page_size": 1},
+                params={"pageStart": self.user.user_id, "pageSize": 1},
             )
             assert response.status_code == 200
             data = response.json()
             assert data["code"] == 200
             assert len(data["data"]["users"]) == 1
             assert data["data"]["users"][0]["id"] == self.user.user_id
-            assert data["data"]["page"]["page_start"] == self.user.user_id
-            assert data["data"]["page"]["page_size"] == 1
-            assert data["data"]["page"]["has_prev"] is False
-            assert data["data"]["page"]["prev_start"] == 0
-            assert data["data"]["page"]["has_more"] is False
-            assert data["data"]["page"]["next_start"] == 0
+            assert data["data"]["page"]["pageStart"] == self.user.user_id
+            assert data["data"]["page"]["pageSize"] == 1
+            assert data["data"]["page"]["hasPrev"] is False
+            assert data["data"]["page"]["prevStart"] == 0
+            assert data["data"]["page"]["hasMore"] is False
+            assert data["data"]["page"]["nextStart"] == 0
 
     def test_get_followers_of_main_user(self):
         response = self.client.get(
@@ -245,18 +245,18 @@ class TestUserFollowersListIntegration:
         assert len(data["data"]["users"]) == len(self.aux_user_tokens)
         assert data["data"]["users"][0]["id"] == self.aux_user_ids[0]
         assert data["data"]["users"][0]["avatarId"] is not None
-        assert data["data"]["page"]["page_start"] == self.aux_user_ids[0]
-        assert data["data"]["page"]["page_size"] == len(self.aux_user_tokens)
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == self.aux_user_ids[0]
+        assert data["data"]["page"]["pageSize"] == len(self.aux_user_tokens)
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
     def test_get_followers_with_pagination_middle(self):
         response = self.client.get(
             f"/users/{self.user.user_id}/followers",
             headers=self.headers,
-            params={"page_start": self.aux_user_ids[3], "page_size": 3},
+            params={"pageStart": self.aux_user_ids[3], "pageSize": 3},
         )
         assert response.status_code == 200
         data = response.json()
@@ -265,12 +265,12 @@ class TestUserFollowersListIntegration:
         assert data["data"]["users"][0]["id"] == self.aux_user_ids[3]
         assert data["data"]["users"][1]["id"] == self.aux_user_ids[4]
         assert data["data"]["users"][2]["id"] == self.aux_user_ids[5]
-        assert data["data"]["page"]["page_start"] == self.aux_user_ids[3]
-        assert data["data"]["page"]["page_size"] == 3
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.aux_user_ids[0]
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.aux_user_ids[6]
+        assert data["data"]["page"]["pageStart"] == self.aux_user_ids[3]
+        assert data["data"]["page"]["pageSize"] == 3
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.aux_user_ids[0]
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.aux_user_ids[6]
 
 
 class TestUserFollowingListIntegration:
@@ -279,7 +279,7 @@ class TestUserFollowingListIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
@@ -313,48 +313,48 @@ class TestUserFollowingListIntegration:
         assert data["code"] == 200
         assert len(data["data"]["users"]) == 9
         assert data["data"]["users"][0]["id"] == self.aux_user_ids[0]
-        assert data["data"]["page"]["page_start"] == self.aux_user_ids[0]
-        assert data["data"]["page"]["page_size"] == 9
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == self.aux_user_ids[0]
+        assert data["data"]["page"]["pageSize"] == 9
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
     def test_get_following_list_pagination_first_page(self):
         response = self.client.get(
             f"/users/{self.user.user_id}/follow/users",
             headers=self.headers,
-            params={"page_start": self.aux_user_ids[0], "page_size": 1},
+            params={"pageStart": self.aux_user_ids[0], "pageSize": 1},
         )
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 200
         assert len(data["data"]["users"]) == 1
         assert data["data"]["users"][0]["id"] == self.aux_user_ids[0]
-        assert data["data"]["page"]["page_start"] == self.aux_user_ids[0]
-        assert data["data"]["page"]["page_size"] == 1
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.aux_user_ids[1]
+        assert data["data"]["page"]["pageStart"] == self.aux_user_ids[0]
+        assert data["data"]["page"]["pageSize"] == 1
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.aux_user_ids[1]
 
     def test_get_following_list_pagination_middle(self):
         response = self.client.get(
             f"/users/{self.user.user_id}/follow/users",
             headers=self.headers,
-            params={"page_start": self.aux_user_ids[2], "page_size": 2},
+            params={"pageStart": self.aux_user_ids[2], "pageSize": 2},
         )
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 200
         assert len(data["data"]["users"]) == 2
         assert data["data"]["users"][0]["id"] == self.aux_user_ids[2]
-        assert data["data"]["page"]["page_start"] == self.aux_user_ids[2]
-        assert data["data"]["page"]["page_size"] == 2
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.aux_user_ids[0]
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.aux_user_ids[4]
+        assert data["data"]["page"]["pageStart"] == self.aux_user_ids[2]
+        assert data["data"]["page"]["pageSize"] == 2
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.aux_user_ids[0]
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.aux_user_ids[4]
 
 
 class TestUserFollowStatisticsIntegration:
@@ -363,7 +363,7 @@ class TestUserFollowStatisticsIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],

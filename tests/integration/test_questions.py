@@ -4,46 +4,29 @@ Migrated from cheese-backend/test/question.e2e-spec.ts (1569 lines, 94 tests)
 Complete equivalence migration.
 """
 
-import random
 import time
 from datetime import UTC, datetime
 
-import httpx
-import psycopg2
 import pytest
+from anyio.from_thread import BlockingPortal
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from tests.integration.conftest import CreatedUser, UserCreator
-
-
-def _get_psycopg2_dsn() -> str:
-    db_url = settings.database_url
-    if db_url.startswith("postgresql+psycopg2://"):
-        return db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
-    elif db_url.startswith("postgresql+asyncpg://"):
-        return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    return db_url
+from app.domain.topics.models import Topic
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
-def create_topic_in_db(name: str, user_id: int) -> int:
-    now = datetime.now(UTC)
-    dsn = _get_psycopg2_dsn()
-    conn = psycopg2.connect(dsn)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO topic (name, created_by_id, created_at)
-                VALUES (%s, %s, %s)
-                RETURNING id
-                """,
-                (name, user_id, now),
-            )
-            topic_id = cur.fetchone()[0]
-        conn.commit()
-        return topic_id
-    finally:
-        conn.close()
+def create_topic_in_db(
+    db_session: AsyncSession, portal: BlockingPortal, name: str, user_id: int
+) -> int:
+    topic = Topic(name=name, created_by_id=user_id, created_at=datetime.now(UTC))
+
+    async def _do() -> int:
+        db_session.add(topic)
+        await db_session.flush()
+        return topic.id
+
+    return portal.call(_do)
 
 
 class TestQuestionsCreateIntegration:
@@ -52,21 +35,27 @@ class TestQuestionsCreateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
         self.question_ids: list[int] = []
         self.topic_ids: list[int] = []
         for i in range(3):
             topic_name = f"Topic_{self.question_prefix}_{i}"
-            self.topic_ids.append(create_topic_in_db(topic_name, self.user.user_id))
+            self.topic_ids.append(
+                create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+            )
 
     def _create_aux_user(self) -> tuple[CreatedUser, dict[str, str]]:
         user = self.user_client.create_user()
@@ -185,18 +174,22 @@ class TestQuestionsGetIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -245,18 +238,22 @@ class TestQuestionsListByUserIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         self.question_ids = []
         for i in range(6):
             resp = self.client.post(
@@ -288,7 +285,7 @@ class TestQuestionsListByUserIntegration:
         response = self.client.get(
             f"/users/{self.user.user_id}/questions",
             headers=self.headers,
-            params={"page_size": 2},
+            params={"pageSize": 2},
         )
         assert response.status_code == 200
         data = response.json()
@@ -314,19 +311,23 @@ class TestQuestionsSearchIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_code = str(random.randint(100000, 999999))
+        self.db = db_session
+        self.portal = _portal
+        self.question_code = str(unique_int(100000, 999999))
         self.question_prefix = f"[Test({self.question_code}) Question]"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         for i in range(6):
             self.client.post(
                 "/questions",
@@ -384,20 +385,26 @@ class TestQuestionsUpdateIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
         self.topic_ids = []
         for i in range(3):
             topic_name = f"Topic_{self.question_prefix}_{i}"
-            self.topic_ids.append(create_topic_in_db(topic_name, self.user.user_id))
+            self.topic_ids.append(
+                create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+            )
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -467,18 +474,22 @@ class TestQuestionsDeleteIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -527,18 +538,22 @@ class TestQuestionsFollowIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         self.question_ids = []
         for i in range(5):
             resp = self.client.post(
@@ -613,7 +628,7 @@ class TestQuestionsFollowIntegration:
         response = self.client.get(
             f"/users/{self.user.user_id}/follow/questions",
             headers=self.headers,
-            params={"page_size": 2},
+            params={"pageSize": 2},
         )
         assert response.status_code == 200
         data = response.json()
@@ -720,18 +735,22 @@ class TestQuestionsAttitudeIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -850,18 +869,22 @@ class TestQuestionsInvitationsIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -1032,18 +1055,22 @@ class TestQuestionsBountyIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -1148,18 +1175,22 @@ class TestQuestionsAcceptAnswerIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.question_prefix = f"Q{random.randint(100000, 999999)}"
-        topic_name = f"Topic_{random.randint(100000, 999999)}"
-        self.topic_id = create_topic_in_db(topic_name, self.user.user_id)
+        self.db = db_session
+        self.portal = _portal
+        self.question_prefix = f"Q{unique_int(100000, 999999)}"
+        topic_name = f"Topic_{unique_int(100000, 999999)}"
+        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,

@@ -53,11 +53,17 @@ def run_migrations_offline() -> None:
 
     """
     url = config.get_main_option("sqlalchemy.url")
+
+    def include_object(object, name, type_, reflected, compare_to):
+        # 忽略 PostGIS 内部表，避免自动迁移生成 drop/create 这些表
+        return not (type_ == "table" and name == "spatial_ref_sys")
+
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -77,9 +83,16 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+    def include_object(object, name, type_, reflected, compare_to):
+        # 忽略 PostGIS 内部表，避免自动迁移生成 drop/create 这些表
+        return not (type_ == "table" and name == "spatial_ref_sys")
 
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

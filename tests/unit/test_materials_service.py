@@ -73,8 +73,14 @@ def _make_bundle_service(
 class TestMaterialToDto:
     def test_converts_all_fields(self):
         material = _make_material(
-            id=7, type="IMAGE", url="https://img.test/a.png", name="Photo",
-            uploader_id=42, expires=1000, download_count=5, meta={"size": 1024},
+            id=7,
+            type="IMAGE",
+            url="https://img.test/a.png",
+            name="Photo",
+            uploader_id=42,
+            expires=1000,
+            download_count=5,
+            meta={"size": 1024},
         )
         dto = _material_to_dto(material)
 
@@ -108,8 +114,13 @@ class TestMaterialToDto:
 class TestBundleToDto:
     def test_converts_all_fields(self):
         bundle = _make_bundle(
-            id=3, title="Pack", content="Body", creator_id=11,
-            rating=3.2, rating_count=7, comments_count=2,
+            id=3,
+            title="Pack",
+            content="Body",
+            creator_id=11,
+            rating=3.2,
+            rating_count=7,
+            comments_count=2,
         )
         dto = _bundle_to_dto(bundle)
 
@@ -184,14 +195,20 @@ class TestMaterialServiceCreateMaterial:
         repo.create.return_value = _make_material(id=55)
 
         result = await svc.create_material(
-            type="PDF", url="https://test.com/f.pdf",
-            name="Notes", uploader_id=1,
+            type="PDF",
+            url="https://test.com/f.pdf",
+            name="Notes",
+            uploader_id=1,
         )
 
         assert result == {"id": 55}
         repo.create.assert_awaited_once_with(
-            type="PDF", url="https://test.com/f.pdf",
-            name="Notes", uploader_id=1, expires=None, meta=None,
+            type="PDF",
+            url="https://test.com/f.pdf",
+            name="Notes",
+            uploader_id=1,
+            expires=None,
+            meta=None,
         )
 
     @pytest.mark.anyio
@@ -200,16 +217,22 @@ class TestMaterialServiceCreateMaterial:
         repo.create.return_value = _make_material(id=56)
 
         result = await svc.create_material(
-            type="VIDEO", url="https://test.com/v.mp4",
-            name="Lecture", uploader_id=2,
-            expires=3600, meta={"duration": 120},
+            type="VIDEO",
+            url="https://test.com/v.mp4",
+            name="Lecture",
+            uploader_id=2,
+            expires=3600,
+            meta={"duration": 120},
         )
 
         assert result == {"id": 56}
         repo.create.assert_awaited_once_with(
-            type="VIDEO", url="https://test.com/v.mp4",
-            name="Lecture", uploader_id=2,
-            expires=3600, meta={"duration": 120},
+            type="VIDEO",
+            url="https://test.com/v.mp4",
+            name="Lecture",
+            uploader_id=2,
+            expires=3600,
+            meta={"duration": 120},
         )
 
 
@@ -314,12 +337,12 @@ class TestBundleServiceListBundles:
         items, page = await svc.list_bundles(keyword=None, page_start=None, page_size=10)
 
         assert len(items) == 2
-        assert page["page_start"] == 1
-        assert page["page_size"] == 2
-        assert page["has_prev"] is False
-        assert page["prev_start"] == 0
-        assert page["has_more"] is False
-        assert page["next_start"] == 0
+        assert page["pageStart"] == 1
+        assert page["pageSize"] == 2
+        assert page["hasPrev"] is False
+        assert page["prevStart"] == 0
+        assert page["hasMore"] is False
+        assert page["nextStart"] == 0
 
     @pytest.mark.anyio
     async def test_pagination_with_page_start(self):
@@ -330,12 +353,12 @@ class TestBundleServiceListBundles:
 
         items, page = await svc.list_bundles(keyword=None, page_start=30, page_size=2)
 
-        assert page["page_start"] == 30
-        assert page["page_size"] == 2
-        assert page["has_prev"] is True
-        assert page["prev_start"] == 20
-        assert page["has_more"] is True
-        assert page["next_start"] == 50
+        assert page["pageStart"] == 30
+        assert page["pageSize"] == 2
+        assert page["hasPrev"] is True
+        assert page["prevStart"] == 20
+        assert page["hasMore"] is True
+        assert page["nextStart"] == 50
 
     @pytest.mark.anyio
     async def test_page_start_not_found_falls_back_to_zero(self):
@@ -345,10 +368,10 @@ class TestBundleServiceListBundles:
 
         items, page = await svc.list_bundles(keyword=None, page_start=999, page_size=2)
 
-        assert page["page_start"] == 1
-        assert page["has_prev"] is False
-        assert page["has_more"] is True
-        assert page["next_start"] == 3
+        assert page["pageStart"] == 1
+        assert page["hasPrev"] is False
+        assert page["hasMore"] is True
+        assert page["nextStart"] == 3
 
     @pytest.mark.anyio
     async def test_empty_result(self):
@@ -359,10 +382,10 @@ class TestBundleServiceListBundles:
         items, page = await svc.list_bundles(keyword=None, page_start=None, page_size=10)
 
         assert items == []
-        assert page["page_start"] == 0
-        assert page["page_size"] == 0
-        assert page["has_prev"] is False
-        assert page["has_more"] is False
+        assert page["pageStart"] == 0
+        assert page["pageSize"] == 0
+        assert page["hasPrev"] is False
+        assert page["hasMore"] is False
 
     @pytest.mark.anyio
     async def test_newest_sort_passes_descending(self):
@@ -373,10 +396,16 @@ class TestBundleServiceListBundles:
         await svc.list_bundles(keyword=None, page_start=None, page_size=1, sort="newest")
 
         repo.list_all_bundle_ids.assert_awaited_once_with(
-            keyword=None, id_gte=None, descending=True,
+            keyword=None,
+            id_gte=None,
+            descending=True,
         )
         repo.list_bundles.assert_awaited_once_with(
-            keyword=None, id_gte=None, limit=1, cursor_id=None, descending=True,
+            keyword=None,
+            id_gte=None,
+            limit=1,
+            cursor_id=None,
+            descending=True,
         )
 
     @pytest.mark.anyio
@@ -388,7 +417,9 @@ class TestBundleServiceListBundles:
         await svc.list_bundles(keyword=None, page_start=None, page_size=10, sort="oldest")
 
         repo.list_all_bundle_ids.assert_awaited_once_with(
-            keyword=None, id_gte=None, descending=False,
+            keyword=None,
+            id_gte=None,
+            descending=False,
         )
 
     @pytest.mark.anyio
@@ -400,7 +431,9 @@ class TestBundleServiceListBundles:
         await svc.list_bundles(keyword="title:math id:>=5", page_start=None, page_size=10)
 
         repo.list_all_bundle_ids.assert_awaited_once_with(
-            keyword="math", id_gte=5, descending=False,
+            keyword="math",
+            id_gte=5,
+            descending=False,
         )
 
     @pytest.mark.anyio
@@ -411,9 +444,9 @@ class TestBundleServiceListBundles:
 
         items, page = await svc.list_bundles(keyword=None, page_start=3, page_size=5)
 
-        assert page["has_more"] is False
-        assert page["next_start"] == 0
-        assert page["has_prev"] is True
+        assert page["hasMore"] is False
+        assert page["nextStart"] == 0
+        assert page["hasPrev"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -521,12 +554,16 @@ class TestBundleServiceCreateBundle:
         repo.create.return_value = _make_bundle(id=20)
 
         result = await svc.create_bundle(
-            title="New Pack", content="Some content", creator_id=5,
+            title="New Pack",
+            content="Some content",
+            creator_id=5,
         )
 
         assert result == {"id": 20}
         repo.create.assert_awaited_once_with(
-            title="New Pack", content="Some content", creator_id=5,
+            title="New Pack",
+            content="Some content",
+            creator_id=5,
         )
         repo.add_material_to_bundle.assert_not_awaited()
         material_repo.get_by_id.assert_not_awaited()
@@ -541,7 +578,10 @@ class TestBundleServiceCreateBundle:
         ]
 
         result = await svc.create_bundle(
-            title="Pack", content="Body", creator_id=5, material_ids=[1, 2],
+            title="Pack",
+            content="Body",
+            creator_id=5,
+            material_ids=[1, 2],
         )
 
         assert result == {"id": 20}
@@ -554,7 +594,10 @@ class TestBundleServiceCreateBundle:
 
         with pytest.raises(NotFoundError, match="Material not found"):
             await svc.create_bundle(
-                title="Pack", content="Body", creator_id=5, material_ids=[999],
+                title="Pack",
+                content="Body",
+                creator_id=5,
+                material_ids=[999],
             )
 
         repo.create.assert_not_awaited()
@@ -565,7 +608,10 @@ class TestBundleServiceCreateBundle:
         repo.create.return_value = _make_bundle(id=30)
 
         result = await svc.create_bundle(
-            title="Pack", content="Body", creator_id=5, material_ids=[],
+            title="Pack",
+            content="Body",
+            creator_id=5,
+            material_ids=[],
         )
 
         assert result == {"id": 30}
@@ -578,7 +624,10 @@ class TestBundleServiceCreateBundle:
         repo.create.return_value = _make_bundle(id=31)
 
         result = await svc.create_bundle(
-            title="Pack", content="Body", creator_id=5, material_ids=None,
+            title="Pack",
+            content="Body",
+            creator_id=5,
+            material_ids=None,
         )
 
         assert result == {"id": 31}
@@ -599,7 +648,10 @@ class TestBundleServiceUpdateBundle:
         repo.get_materials_for_bundle.return_value = [1]
 
         dto = await svc.update_bundle(
-            bundle_id=10, user_id=5, title="Updated", content="New body",
+            bundle_id=10,
+            user_id=5,
+            title="Updated",
+            content="New body",
         )
 
         repo.update.assert_awaited_once_with(bundle, title="Updated", content="New body")
@@ -633,14 +685,18 @@ class TestBundleServiceUpdateBundle:
         repo.get_materials_for_bundle.side_effect = [[1, 2], [2, 3]]
 
         dto = await svc.update_bundle(
-            bundle_id=10, user_id=5, material_ids=[2, 3],
+            bundle_id=10,
+            user_id=5,
+            material_ids=[2, 3],
         )
 
         repo.remove_material_from_bundle.assert_awaited_once_with(
-            bundle_id=10, material_id=1,
+            bundle_id=10,
+            material_id=1,
         )
         repo.add_material_to_bundle.assert_awaited_once_with(
-            bundle_id=10, material_id=3,
+            bundle_id=10,
+            material_id=3,
         )
         assert dto["materialIds"] == [2, 3]
 
@@ -666,7 +722,9 @@ class TestBundleServiceUpdateBundle:
         repo.get_materials_for_bundle.side_effect = [[1, 2], []]
 
         dto = await svc.update_bundle(
-            bundle_id=10, user_id=5, material_ids=[],
+            bundle_id=10,
+            user_id=5,
+            material_ids=[],
         )
 
         assert repo.remove_material_from_bundle.await_count == 2
@@ -681,7 +739,9 @@ class TestBundleServiceUpdateBundle:
         repo.get_materials_for_bundle.side_effect = [[1, 2], [1, 2]]
 
         await svc.update_bundle(
-            bundle_id=10, user_id=5, material_ids=[1, 2],
+            bundle_id=10,
+            user_id=5,
+            material_ids=[1, 2],
         )
 
         repo.remove_material_from_bundle.assert_not_awaited()

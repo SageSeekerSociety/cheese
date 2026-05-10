@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
@@ -30,7 +30,7 @@ async def get_avatar_service(db=Depends(get_db)) -> AvatarService:
 )
 async def create_avatar(
     avatar: UploadFile = File(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AvatarService = Depends(get_avatar_service),
 ) -> dict:
     file_content = await avatar.read()
@@ -54,7 +54,7 @@ async def create_avatar(
 )
 async def get_available_avatars(
     type: str = Query(default="predefined"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AvatarService = Depends(get_avatar_service),
 ) -> dict:
     if type.upper() != "PREDEFINED":
@@ -109,7 +109,7 @@ async def get_default_avatar(
     summary="Get Default Avatar ID",
 )
 async def get_default_avatar_id(
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AvatarService = Depends(get_avatar_service),
 ) -> dict:
     avatar_id = await service.get_default_id()
@@ -121,7 +121,7 @@ async def get_default_avatar_id(
     summary="Get Predefined Avatar IDs",
 )
 async def get_predefined_avatar_ids(
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AvatarService = Depends(get_avatar_service),
 ) -> dict:
     avatar_ids = await service.list_predefined_ids()

@@ -353,9 +353,7 @@ class TestDownload:
         assert content == b"file-bytes"
         assert filename == "photo.png"
         assert content_type == "image/png"
-        storage.download.assert_awaited_once_with(
-            "attachments/image/2024/01/01/abc123.png"
-        )
+        storage.download.assert_awaited_once_with("attachments/image/2024/01/01/abc123.png")
 
     @pytest.mark.anyio
     async def test_raises_not_found_when_attachment_missing(self):
@@ -392,9 +390,7 @@ class TestDownload:
     async def test_uses_default_filename_and_content_type_when_missing(self):
         repo = AsyncMock()
         storage = AsyncMock()
-        attachment = _make_attachment(
-            meta={"storageKey": "some/key"}
-        )
+        attachment = _make_attachment(meta={"storageKey": "some/key"})
         repo.get_by_id.return_value = attachment
         storage.download.return_value = b"data"
         svc = _make_service(repo=repo, storage=storage)
@@ -433,9 +429,7 @@ class TestDelete:
 
         await svc.delete(attachment_id=1, user_id=42)
 
-        storage.delete.assert_awaited_once_with(
-            "attachments/image/2024/01/01/abc123.png"
-        )
+        storage.delete.assert_awaited_once_with("attachments/image/2024/01/01/abc123.png")
         repo.delete.assert_awaited_once_with(1)
 
     @pytest.mark.anyio

@@ -13,9 +13,7 @@ class InviteCodeService:
 
     async def validate_code(self, code: str) -> InviteCode:
         """Validate an invite code. Returns the InviteCode or raises ValueError."""
-        result = await self._session.execute(
-            select(InviteCode).where(InviteCode.code == code)
-        )
+        result = await self._session.execute(select(InviteCode).where(InviteCode.code == code))
         invite = result.scalar_one_or_none()
         if invite is None:
             raise ValueError("INVALID_CODE")
@@ -29,9 +27,7 @@ class InviteCodeService:
 
     async def consume_code(self, code: str) -> None:
         """Increment usage count after successful registration."""
-        result = await self._session.execute(
-            select(InviteCode).where(InviteCode.code == code)
-        )
+        result = await self._session.execute(select(InviteCode).where(InviteCode.code == code))
         invite = result.scalar_one_or_none()
         if invite:
             invite.use_count += 1
@@ -67,9 +63,7 @@ class InviteCodeService:
 
     async def deactivate_code(self, code_id: int) -> None:
         """Deactivate an invite code."""
-        result = await self._session.execute(
-            select(InviteCode).where(InviteCode.id == code_id)
-        )
+        result = await self._session.execute(select(InviteCode).where(InviteCode.id == code_id))
         invite = result.scalar_one_or_none()
         if invite:
             invite.is_active = False

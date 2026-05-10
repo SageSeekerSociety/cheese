@@ -5,53 +5,39 @@ Complete equivalence migration.
 """
 
 import io
-import random
 from datetime import UTC, datetime
 
-import httpx
-import psycopg2
 import pytest
+from anyio.from_thread import BlockingPortal
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from tests.integration.conftest import CreatedUser, UserCreator
-
-
-def _get_psycopg2_dsn() -> str:
-    db_url = settings.database_url
-    if db_url.startswith("postgresql+psycopg2://"):
-        return db_url.replace("postgresql+psycopg2://", "postgresql://", 1)
-    elif db_url.startswith("postgresql+asyncpg://"):
-        return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    return db_url
+from app.domain.avatars.models import Avatar
+from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
-def create_predefined_avatars(count: int = 3) -> list[int]:
+def create_predefined_avatars(
+    db_session: AsyncSession, portal: BlockingPortal, count: int = 3
+) -> list[int]:
     now = datetime.now(UTC)
-    dsn = _get_psycopg2_dsn()
-    conn = psycopg2.connect(dsn)
-    avatar_ids = []
-    try:
-        with conn.cursor() as cur:
-            for i in range(count):
-                cur.execute(
-                    """
-                    INSERT INTO avatar (url, name, created_at, avatar_type, usage_count)
-                    VALUES (%s, %s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    (
-                        f"/predefined/avatar_{random.randint(1000, 9999)}.jpg",
-                        f"predefined_avatar_{i}",
-                        now,
-                        "predefined",
-                        0,
-                    ),
-                )
-                avatar_ids.append(cur.fetchone()[0])
-        conn.commit()
-        return avatar_ids
-    finally:
-        conn.close()
+    avatars = [
+        Avatar(
+            url=f"/predefined/avatar_{unique_int(1000, 9999)}.jpg",
+            name=f"predefined_avatar_{i}",
+            created_at=now,
+            avatar_type="predefined",
+            usage_count=0,
+        )
+        for i in range(count)
+    ]
+
+    async def _do() -> list[int]:
+        for av in avatars:
+            db_session.add(av)
+        await db_session.flush()
+        return [av.id for av in avatars]
+
+    return portal.call(_do)
 
 
 class TestAvatarsUploadIntegration:
@@ -60,15 +46,19 @@ class TestAvatarsUploadIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
+        self.db = db_session
+        self.portal = _portal
         self.avatar_id: int | None = None
 
     def test_upload_avatar(self):
@@ -112,15 +102,19 @@ class TestAvatarsGetIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
+        self.db = db_session
+        self.portal = _portal
         fake_image = io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100 + b"fake image content")
         upload_resp = self.client.post(
             "/avatars",
@@ -172,15 +166,19 @@ class TestDefaultAvatarIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
+        self.db = db_session
+        self.portal = _portal
 
     def test_get_default_avatar(self):
         response = self.client.get("/avatars/default")
@@ -202,16 +200,20 @@ class TestPredefinedAvatarsIntegration:
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        api_client: httpx.Client,
+        api_client: TestClient,
         user_client: UserCreator,
         authenticated_user: CreatedUser,
         auth_headers: dict[str, str],
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
     ):
         self.client = api_client
         self.user_client = user_client
         self.user = authenticated_user
         self.headers = auth_headers
-        self.predefined_ids = create_predefined_avatars(3)
+        self.db = db_session
+        self.portal = _portal
+        self.predefined_ids = create_predefined_avatars(self.db, self.portal, 3)
 
     def test_get_predefined_avatar_ids(self):
         response = self.client.get(

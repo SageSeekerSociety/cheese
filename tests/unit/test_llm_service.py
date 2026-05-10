@@ -311,9 +311,7 @@ class TestListConversations:
         assert result[0]["id"] == 1
         assert result[1]["id"] == 2
         assert page == page_info
-        conv_repo.list_by_user.assert_awaited_once_with(
-            42, page_start=None, page_size=20
-        )
+        conv_repo.list_by_user.assert_awaited_once_with(42, page_start=None, page_size=20)
 
     @pytest.mark.anyio
     async def test_list_conversations_with_pagination(self):
@@ -429,9 +427,7 @@ class TestUpdateConversationTitle:
         svc = _build_chat_service(conv_repo=conv_repo)
 
         with pytest.raises(NotFoundError, match="Conversation not found"):
-            await svc.update_conversation_title(
-                conversation_id=999, user_id=42, title="Title"
-            )
+            await svc.update_conversation_title(conversation_id=999, user_id=42, title="Title")
 
     @pytest.mark.anyio
     async def test_update_title_wrong_owner(self):
@@ -441,9 +437,7 @@ class TestUpdateConversationTitle:
         svc = _build_chat_service(conv_repo=conv_repo)
 
         with pytest.raises(ForbiddenError, match="Access denied"):
-            await svc.update_conversation_title(
-                conversation_id=1, user_id=99, title="Title"
-            )
+            await svc.update_conversation_title(conversation_id=1, user_id=99, title="Title")
 
     @pytest.mark.anyio
     async def test_update_title_returns_none_after_ownership_check(self):
@@ -455,9 +449,7 @@ class TestUpdateConversationTitle:
         svc = _build_chat_service(conv_repo=conv_repo)
 
         with pytest.raises(NotFoundError, match="Conversation not found"):
-            await svc.update_conversation_title(
-                conversation_id=1, user_id=42, title="Title"
-            )
+            await svc.update_conversation_title(conversation_id=1, user_id=42, title="Title")
 
 
 class TestChat:
@@ -477,7 +469,10 @@ class TestChat:
         # user message saved
         user_msg = _make_message(id=100, role="user", content="Hi")
         history = [user_msg]
-        msg_repo.create.side_effect = [user_msg, _make_message(id=101, role="assistant", content="Reply")]
+        msg_repo.create.side_effect = [
+            user_msg,
+            _make_message(id=101, role="assistant", content="Reply"),
+        ]
         msg_repo.list_by_conversation.return_value = history
 
         # OpenAI response mock

@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError
 from app.db.session import get_db
@@ -39,7 +39,7 @@ async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
 @router.post("", summary="Create Discussion", status_code=201)
 async def create_discussion(
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if auth_user.user_id == 0:
@@ -75,17 +75,22 @@ async def list_discussions(
     parentId: int | None = Query(default=None),
     pageStart: int | None = Query(default=None),
     pageSize: int = Query(default=20, ge=1, le=100),
-    sortBy: str = Query(default="createdAt"),
-    sortOrder: str = Query(default="desc"),
+    sortBy: str = Query(default="createdAt", alias="sortBy"),
+    sortOrder: str = Query(default="desc", alias="sortOrder"),
+    sort_by: str | None = Query(default=None, alias="sort_by"),
+    sort_order: str | None = Query(default=None, alias="sort_order"),
     withReactions: bool = Query(default=True),
     withSubDiscussions: bool = Query(default=True),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
-    if sortBy not in {"createdAt", "updatedAt"}:
-        raise BadRequestError(f"Invalid sortBy: {sortBy}")
-    if sortOrder.lower() not in {"asc", "desc"}:
-        raise BadRequestError(f"Invalid sortOrder: {sortOrder}")
+    # Frontend sends snake_case sort params for these endpoints; accept both.
+    effective_sort_by = sort_by or sortBy
+    effective_sort_order = sort_order or sortOrder
+    if effective_sort_by not in {"createdAt", "updatedAt"}:
+        raise BadRequestError(f"Invalid sortBy: {effective_sort_by}")
+    if effective_sort_order.lower() not in {"asc", "desc"}:
+        raise BadRequestError(f"Invalid sortOrder: {effective_sort_order}")
     if modelId is not None and modelId <= 0:
         raise BadRequestError("modelId must be positive if provided")
     if parentId is not None and parentId <= 0:
@@ -97,8 +102,8 @@ async def list_discussions(
         parent_id=parentId,
         page_start=pageStart,
         page_size=pageSize,
-        sort_by=sortBy,
-        sort_order=sortOrder,
+        sort_by=effective_sort_by,
+        sort_order=effective_sort_order,
         current_user_id=auth_user.user_id,
         include_subs=withSubDiscussions,
         with_reactions=withReactions,
@@ -120,18 +125,61 @@ async def list_reaction_types(
 @router.get("/{discussionId}", summary="Get Discussion")
 async def get_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    pageStart: int | None = Query(default=None),
+    pageSize: int = Query(default=20, ge=1, le=100),
+    sortBy: str = Query(default="createdAt", alias="sortBy"),
+    sortOrder: str = Query(default="desc", alias="sortOrder"),
+    sort_by: str | None = Query(default=None, alias="sort_by"),
+    sort_order: str | None = Query(default=None, alias="sort_order"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
+    # Frontend's discussionStore.loadDiscussion expects
+    #   data: { discussion, subDiscussions: { discussions, page } }
+    # so Detail.vue can render replies inline. Without subDiscussions the
+    # `currentMessage.subDiscussions.examples` access in DiscussionDetail.vue
+    # is always undefined and the replies area never renders. Mirrors NT
+    # DiscussionController.getDiscussion which returns the same envelope.
+    # Accept both camelCase (sortBy) and snake_case (sort_by) for sort
+    # params — the frontend sends snake_case for these two keys.
+    effective_sort_by = sort_by or sortBy
+    effective_sort_order = sort_order or sortOrder
+    if effective_sort_by not in {"createdAt", "updatedAt"}:
+        raise BadRequestError(f"Invalid sortBy: {effective_sort_by}")
+    if effective_sort_order.lower() not in {"asc", "desc"}:
+        raise BadRequestError(f"Invalid sortOrder: {effective_sort_order}")
+
     discussion = await service.get_discussion(discussion_id, auth_user.user_id)
-    return {"code": 200, "message": "OK", "data": {"discussion": discussion}}
+    sub_rows, sub_page = await service.list_discussions(
+        model_type=None,
+        model_id=None,
+        parent_id=discussion_id,
+        page_start=pageStart,
+        page_size=pageSize,
+        sort_by=effective_sort_by,
+        sort_order=effective_sort_order,
+        current_user_id=auth_user.user_id,
+        include_subs=False,
+        with_reactions=True,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "discussion": discussion,
+            "subDiscussions": {
+                "discussions": sub_rows,
+                "page": sub_page,
+            },
+        },
+    }
 
 
 @router.patch("/{discussionId}", summary="Update Discussion")
 async def patch_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if auth_user.user_id == 0:
@@ -150,23 +198,27 @@ async def list_sub_discussions(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
     pageStart: int | None = Query(default=None),
     pageSize: int = Query(default=20, ge=1, le=100),
-    sortBy: str = Query(default="createdAt"),
-    sortOrder: str = Query(default="desc"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    sortBy: str = Query(default="createdAt", alias="sortBy"),
+    sortOrder: str = Query(default="desc", alias="sortOrder"),
+    sort_by: str | None = Query(default=None, alias="sort_by"),
+    sort_order: str | None = Query(default=None, alias="sort_order"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
-    if sortBy not in {"createdAt", "updatedAt"}:
-        raise BadRequestError(f"Invalid sortBy: {sortBy}")
-    if sortOrder.lower() not in {"asc", "desc"}:
-        raise BadRequestError(f"Invalid sortOrder: {sortOrder}")
+    effective_sort_by = sort_by or sortBy
+    effective_sort_order = sort_order or sortOrder
+    if effective_sort_by not in {"createdAt", "updatedAt"}:
+        raise BadRequestError(f"Invalid sortBy: {effective_sort_by}")
+    if effective_sort_order.lower() not in {"asc", "desc"}:
+        raise BadRequestError(f"Invalid sortOrder: {effective_sort_order}")
     rows, page = await service.list_discussions(
         model_type=None,
         model_id=None,
         parent_id=discussion_id,
         page_start=pageStart,
         page_size=pageSize,
-        sort_by=sortBy,
-        sort_order=sortOrder,
+        sort_by=effective_sort_by,
+        sort_order=effective_sort_order,
         current_user_id=auth_user.user_id,
         include_subs=False,
         with_reactions=True,
@@ -177,7 +229,7 @@ async def list_sub_discussions(
 @router.delete("/{discussionId}", summary="Delete Discussion", status_code=204)
 async def delete_discussion(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> None:
     if auth_user.user_id == 0:
@@ -197,7 +249,7 @@ async def delete_discussion(
 async def toggle_reaction(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
     reaction_type_id: Annotated[int, Path(ge=1, alias="reactionTypeId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if auth_user.user_id == 0:
@@ -207,7 +259,7 @@ async def toggle_reaction(
         reaction_type_id=reaction_type_id,
         user_id=auth_user.user_id,
     )
-    return {"code": 200, "message": "OK", "data": result}
+    return {"code": 200, "message": "OK", "data": {"reaction": result}}
 
 
 @router.delete(
@@ -217,7 +269,7 @@ async def toggle_reaction(
 async def remove_reaction(
     discussion_id: Annotated[int, Path(ge=1, alias="discussionId")],
     reaction_type_id: Annotated[int, Path(ge=1, alias="reactionTypeId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if auth_user.user_id == 0:
@@ -227,4 +279,4 @@ async def remove_reaction(
         reaction_type_id=reaction_type_id,
         user_id=auth_user.user_id,
     )
-    return {"code": 200, "message": "OK", "data": result}
+    return {"code": 200, "message": "OK", "data": {"reaction": result}}

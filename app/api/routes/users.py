@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, Header, Path, Query, Request, Resp
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.checker import get_auth_user
+from app.auth.checker import get_auth_user, require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
     create_access_token,
@@ -117,7 +117,7 @@ async def get_oauth_service(
 )
 async def follow_user(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     """Follow another user.
@@ -158,7 +158,7 @@ async def follow_user(
 )
 async def create_team_join_request(
     body: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> dict:
     team_id = body.get("teamId")
@@ -193,7 +193,7 @@ async def create_team_join_request(
 )
 async def cancel_my_join_request(
     request_id: Annotated[int, Path(ge=1, alias="requestId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
     await membership_service.cancel_my_join_request(
@@ -209,7 +209,7 @@ async def cancel_my_join_request(
 )
 async def leave_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> None:
     team_repo = TeamRepository(session=db)
@@ -227,7 +227,7 @@ async def leave_team(
 )
 async def accept_team_invitation(
     invitation_id: Annotated[int, Path(ge=1, alias="invitationId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
     await membership_service.accept_team_invitation(
@@ -242,7 +242,7 @@ async def accept_team_invitation(
 )
 async def decline_team_invitation(
     invitation_id: Annotated[int, Path(ge=1, alias="invitationId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
     await membership_service.decline_team_invitation(
@@ -259,9 +259,12 @@ async def list_my_team_requests(
     status: str | None = Query(default=None),
     pageStart: int | None = Query(default=None),
     pageSize: int | None = Query(default=None),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
+    from app.api.routes.teams import _application_to_api_model, _load_application_maps
+
     status_enum = None
     if status is not None:
         upper = status.upper()
@@ -277,16 +280,11 @@ async def list_my_team_requests(
         page_start=pageStart,
         page_size=pageSize,
     )
+    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
     items = [
-        {
-            "id": app.id,
-            "userId": app.user_id,
-            "teamId": app.team_id,
-            "type": app.type,
-            "status": app.status,
-            "role": app.role,
-            "message": app.message,
-        }
+        _application_to_api_model(
+            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+        )
         for app in apps
     ]
     return {
@@ -307,9 +305,12 @@ async def list_my_team_invitations(
     status: str | None = Query(default=None),
     pageStart: int | None = Query(default=None),
     pageSize: int | None = Query(default=None),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
+    db=Depends(get_db),
 ) -> dict:
+    from app.api.routes.teams import _application_to_api_model, _load_application_maps
+
     status_enum = None
     if status is not None:
         upper = status.upper()
@@ -325,17 +326,11 @@ async def list_my_team_invitations(
         page_start=pageStart,
         page_size=pageSize,
     )
+    users_map, profiles_map, teams_map = await _load_application_maps(db, apps)
     items = [
-        {
-            "id": app.id,
-            "userId": app.user_id,
-            "teamId": app.team_id,
-            "team": {"id": app.team_id},
-            "type": app.type,
-            "status": app.status,
-            "role": app.role,
-            "message": app.message,
-        }
+        _application_to_api_model(
+            app, users_map=users_map, profiles_map=profiles_map, teams_map=teams_map
+        )
         for app in apps
     ]
     return {
@@ -354,7 +349,7 @@ async def list_my_team_invitations(
 )
 async def unfollow_user(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     """Unfollow a previously followed user."""
@@ -388,9 +383,9 @@ async def unfollow_user(
 )
 async def get_followers(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     """Return followers of the given user (cursor-based pagination)."""
@@ -456,12 +451,12 @@ async def get_followers(
 
     first_id = page_follower_ids[0] if page_follower_ids else 0
     page = {
-        "page_start": first_id,
-        "page_size": returned,
-        "has_prev": has_prev,
-        "prev_start": prev_start,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": first_id,
+        "pageSize": returned,
+        "hasPrev": has_prev,
+        "prevStart": prev_start,
+        "hasMore": has_more,
+        "nextStart": next_start,
     }
 
     return {
@@ -480,9 +475,9 @@ async def get_followers(
 )
 async def get_followees(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     """Return users that the given user is following (cursor-based pagination)."""
@@ -548,12 +543,12 @@ async def get_followees(
 
     first_id = page_followee_ids[0] if page_followee_ids else 0
     page = {
-        "page_start": first_id,
-        "page_size": returned,
-        "has_prev": has_prev,
-        "prev_start": prev_start,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": first_id,
+        "pageSize": returned,
+        "hasPrev": has_prev,
+        "prevStart": prev_start,
+        "hasMore": has_more,
+        "nextStart": next_start,
     }
 
     return {
@@ -572,9 +567,9 @@ async def get_followees(
 )
 async def get_user_followed_questions(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     question_repo = QuestionRepository(session=db)
@@ -629,9 +624,9 @@ async def get_user_followed_questions(
 )
 async def get_user_questions(
     user_id: Annotated[int, Path(alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     if user_id < 1:
@@ -692,9 +687,9 @@ async def get_user_questions(
 )
 async def get_user_answers(
     user_id: Annotated[int, Path(alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     if user_id < 1:
@@ -707,11 +702,21 @@ async def get_user_answers(
     answer_repo = AnswerRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
 
-    offset = page_start or 0
-    if offset < 0:
-        offset = 0
+    all_ids = await answer_repo.list_all_answer_ids_by_user(user_id)
 
-    rows, total = await answer_repo.list_by_user(user_id=user_id, limit=page_size, offset=offset)
+    if page_start is not None:
+        try:
+            start_idx = all_ids.index(page_start)
+        except ValueError:
+            start_idx = 0
+    else:
+        start_idx = 0
+
+    end_idx = start_idx + page_size
+    page_ids = all_ids[start_idx:end_idx]
+
+    cursor = page_start if page_start else (all_ids[0] if all_ids else None)
+    rows, total = await answer_repo.list_by_user(user_id=user_id, limit=page_size, cursor=cursor)
 
     profile = await profile_repo.get_profile_by_user_id(user_id)
     sender = None
@@ -739,10 +744,12 @@ async def get_user_answers(
         answers.append(dto)
 
     returned = len(answers)
-    has_more = offset + returned < total
-    next_start = offset + returned if has_more and returned > 0 else None
+    has_more = end_idx < len(all_ids)
+    next_start = all_ids[end_idx] if has_more else 0
+
+    first_id = page_ids[0] if page_ids else 0
     page = {
-        "pageStart": offset,
+        "pageStart": first_id,
         "pageSize": returned,
         "hasMore": has_more,
         "nextStart": next_start,
@@ -981,7 +988,7 @@ async def register_user(
     summary="Get current user",
 )
 async def get_current_user(
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     """Return the profile of the current authenticated user."""
@@ -1010,7 +1017,7 @@ async def get_current_user(
 )
 async def get_user(
     user_id: Annotated[int, Path(alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     """Return the public profile of a user."""
@@ -1042,7 +1049,7 @@ async def get_user(
 async def patch_user_profile(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     profile_service: UserProfileService = Depends(get_user_profile_service),
 ) -> dict:
     if auth_user.user_id != user_id:
@@ -1063,7 +1070,7 @@ async def patch_user_profile(
 async def put_user_profile(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     profile_service: UserProfileService = Depends(get_user_profile_service),
 ) -> dict:
     if auth_user.user_id != user_id:
@@ -1641,7 +1648,7 @@ async def get_user_identity(
     moduleEntityId: int | None = Query(default=None),
     accessReason: str | None = Query(default=None),
     accessType: str = Query(default="VIEW"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     realname_service: UserRealNameService = Depends(get_user_realname_service),
 ) -> dict:
     if precise and auth_user.user_id != user_id:
@@ -1684,7 +1691,7 @@ async def get_user_identity(
 async def put_user_identity(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     realname_service: UserRealNameService = Depends(get_user_realname_service),
 ) -> dict:
     if auth_user.user_id != user_id:
@@ -1714,7 +1721,7 @@ async def put_user_identity(
 async def patch_user_identity(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     realname_service: UserRealNameService = Depends(get_user_realname_service),
 ) -> dict:
     if auth_user.user_id != user_id:
@@ -1761,7 +1768,7 @@ async def get_user_identity_access_logs(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     pageStart: int | None = Query(default=None),
     pageSize: int = Query(default=20, ge=1, le=200),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     realname_service: UserRealNameService = Depends(get_user_realname_service),
 ) -> dict:
     if auth_user.user_id != user_id:
@@ -1925,7 +1932,7 @@ async def get_2fa_status(
     summary="List active sessions",
 )
 async def list_sessions(
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -1966,7 +1973,7 @@ async def list_sessions(
 )
 async def revoke_session(
     session_id: Annotated[str, Path(alias="sessionId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -1995,7 +2002,7 @@ async def revoke_session(
 )
 async def revoke_all_sessions(
     request: Request,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -2235,9 +2242,9 @@ async def recover_password_verify(
 )
 async def get_user_favorite_questions(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     question_repo = QuestionRepository(session=db)
@@ -2292,9 +2299,9 @@ async def get_user_favorite_questions(
 )
 async def get_user_favorite_answers(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     answer_repo = AnswerRepository(session=db)
@@ -2355,7 +2362,7 @@ async def get_user_favorite_answers(
 )
 async def get_user_settings(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can view their settings.")
@@ -2375,7 +2382,7 @@ async def get_user_settings(
 async def update_user_settings(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     payload: dict = Body(...),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can update their settings.")
@@ -2394,9 +2401,9 @@ async def update_user_settings(
 )
 async def list_users(
     q: str | None = Query(default=None),
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
     """List users with optional search query."""
@@ -2459,7 +2466,7 @@ async def list_users(
 async def enable_user_2fa(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     payload: dict = Body(default={}),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -2514,7 +2521,7 @@ async def enable_user_2fa(
 async def disable_user_2fa(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     payload: dict = Body(default={}),
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -2555,7 +2562,7 @@ async def disable_user_2fa(
 )
 async def get_user_2fa_status(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -2782,7 +2789,7 @@ async def passkey_authenticate_verify(
 )
 async def list_passkeys(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
     if auth_user.user_id != user_id:
@@ -2804,7 +2811,7 @@ async def list_passkeys(
 async def delete_passkey(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     credential_id: Annotated[str, Path(alias="credentialId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
     if auth_user.user_id != user_id:
@@ -2989,7 +2996,7 @@ async def link_oauth_account(
     summary="List invite codes (admin)",
 )
 async def list_invite_codes(
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     from app.domain.invite.services import InviteCodeService
@@ -3024,7 +3031,7 @@ async def list_invite_codes(
 )
 async def create_invite_code(
     payload: dict,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     from app.domain.invite.services import InviteCodeService
@@ -3053,7 +3060,7 @@ async def create_invite_code(
 )
 async def deactivate_invite_code(
     code_id: int,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     from app.domain.invite.services import InviteCodeService
@@ -3061,7 +3068,7 @@ async def deactivate_invite_code(
     service = InviteCodeService(session)
     await service.deactivate_code(code_id)
     await session.commit()
-    return {"code": 200, "message": "Invite code deactivated."}
+    return {"code": 200, "message": "Invite code deactivated.", "data": None}
 
 
 @router.get(
@@ -3070,7 +3077,7 @@ async def deactivate_invite_code(
 )
 async def list_oauth_connections(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> dict:
     if auth_user.user_id != user_id:
@@ -3092,7 +3099,7 @@ async def list_oauth_connections(
 async def delete_oauth_connection(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     connection_id: Annotated[int, Path(alias="connectionId")],
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> dict:
     if auth_user.user_id != user_id:

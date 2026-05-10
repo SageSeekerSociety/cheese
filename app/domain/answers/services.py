@@ -37,6 +37,7 @@ class AnswersService:
         question_id: int,
         page_start: int | None,
         page_size: int,
+        viewer_id: int | None = None,
     ) -> tuple[list[dict], dict]:
         await self._ensure_question_exists(question_id)
         all_ids = await self._repo.list_all_answer_ids_for_question(question_id)
@@ -60,10 +61,11 @@ class AnswersService:
         profiles = await self._profile_repo.get_profiles_by_user_ids(
             {row.created_by_id for row in rows}
         )
-        items = [
-            _answer_to_dto(row, author=_profile_to_dto(profiles.get(row.created_by_id)))
-            for row in rows
-        ]
+        items: list[dict] = []
+        for row in rows:
+            dto = _answer_to_dto(row, author=_profile_to_dto(profiles.get(row.created_by_id)))
+            await self._attach_answer_stats(dto, answer_id=row.id, viewer_id=viewer_id)
+            items.append(dto)
 
         returned = len(items)
         has_prev = start_idx > 0
@@ -72,15 +74,50 @@ class AnswersService:
         next_start = all_ids[end_idx] if has_more else 0
 
         first_id = page_ids[0] if page_ids else 0
+        # Frontend Page type (cheese-frontend/src/types/commons.ts) uses
+        # camelCase. Snake-case keys here used to break pagination silently.
         page = {
-            "page_start": first_id,
-            "page_size": returned,
-            "has_prev": has_prev,
-            "prev_start": prev_start,
-            "has_more": has_more,
-            "next_start": next_start,
+            "pageStart": first_id,
+            "pageSize": returned,
+            "hasPrev": has_prev,
+            "prevStart": prev_start,
+            "hasMore": has_more,
+            "nextStart": next_start,
         }
         return items, page
+
+    async def _attach_answer_stats(
+        self, dto: dict, *, answer_id: int, viewer_id: int | None
+    ) -> None:
+        """Add the user-facing stats the frontend Answer type requires.
+
+        Comment/view counts are placeholders (no DB column yet); attitudes and
+        favorite state are real. Keeping this in one place so list and detail
+        always agree.
+        """
+        counts = await self._repo.count_votes(answer_id)
+        positive_count = counts.get(VoteType.POSITIVE.value, 0)
+        negative_count = counts.get(VoteType.NEGATIVE.value, 0)
+        user_attitude = "UNDEFINED"
+        if viewer_id:
+            vote = await self._repo.get_user_vote(answer_id, viewer_id)
+            if vote == VoteType.POSITIVE.value:
+                user_attitude = "POSITIVE"
+            elif vote == VoteType.NEGATIVE.value:
+                user_attitude = "NEGATIVE"
+        dto["attitudes"] = {
+            "positive_count": positive_count,
+            "negative_count": negative_count,
+            "difference": positive_count - negative_count,
+            "user_attitude": user_attitude,
+        }
+        dto["favorite_count"] = await self._repo.count_favorites(answer_id)
+        dto["is_favorite"] = (
+            await self._repo.is_favorited(answer_id, viewer_id) if viewer_id else False
+        )
+        dto["comment_count"] = await self._repo.count_comments(answer_id)
+        dto["view_count"] = await self._repo.count_views(answer_id)
+        dto["is_group"] = False
 
     async def create_answer(
         self,
@@ -151,29 +188,7 @@ class AnswersService:
         answer = await self._ensure_answer_exists(answer_id)
         profile = await self._profile_repo.get_profile_by_user_id(answer.created_by_id)
         dto = _answer_to_dto(answer, author=_profile_to_dto(profile))
-        counts = await self._repo.count_votes(answer_id)
-        positive_count = counts.get(VoteType.POSITIVE.value, 0)
-        negative_count = counts.get(VoteType.NEGATIVE.value, 0)
-        user_attitude = "UNDEFINED"
-        if user_id:
-            vote = await self._repo.get_user_vote(answer_id, user_id)
-            if vote == VoteType.POSITIVE.value:
-                user_attitude = "POSITIVE"
-            elif vote == VoteType.NEGATIVE.value:
-                user_attitude = "NEGATIVE"
-        dto["attitudes"] = {
-            "positive_count": positive_count,
-            "negative_count": negative_count,
-            "difference": positive_count - negative_count,
-            "user_attitude": user_attitude,
-        }
-        dto["favorite_count"] = await self._repo.count_favorites(answer_id)
-        dto["is_favorite"] = False
-        if user_id:
-            dto["is_favorite"] = await self._repo.is_favorited(answer_id, user_id)
-        dto["comment_count"] = 0
-        dto["view_count"] = 0
-        dto["is_group"] = False
+        await self._attach_answer_stats(dto, answer_id=answer_id, viewer_id=user_id)
 
         question = await self._question_repo.get_by_id(answer.question_id)
         question_dto = None

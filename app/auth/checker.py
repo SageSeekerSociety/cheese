@@ -153,6 +153,15 @@ def require_permission(
         db: AsyncSession = Depends(get_db),
         auth_user: AuthUserInfo = Depends(get_auth_user),
     ) -> AuthUserInfo:
+        # Reject anonymous (user_id=0) with 401 before running the permission
+        # check — otherwise unauthenticated requests get 403 AccessDenied,
+        # which conflates "no credentials" with "insufficient permissions"
+        # and breaks the standard auth flow on the frontend.
+        if auth_user.user_id == 0:
+            from app.core.errors import AuthenticationRequiredError
+
+            raise AuthenticationRequiredError("Login required")
+
         resource_id: int | None = None
         if resource_id_param:
             resource_id = request.path_params.get(resource_id_param)

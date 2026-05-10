@@ -26,12 +26,12 @@ class TopicService:
     ) -> tuple[list[dict], dict]:
         if not keyword or not keyword.strip():
             page = {
-                "page_size": 0,
-                "page_start": 0,
-                "has_prev": False,
-                "prev_start": 0,
-                "has_more": False,
-                "next_start": 0,
+                "pageSize": 0,
+                "pageStart": 0,
+                "hasPrev": False,
+                "prevStart": 0,
+                "hasMore": False,
+                "nextStart": 0,
             }
             return [], page
 
@@ -45,12 +45,12 @@ class TopicService:
         has_prev = prev_id is not None
 
         page = {
-            "page_size": returned,
-            "page_start": first_id,
-            "has_prev": has_prev,
-            "prev_start": prev_id if prev_id else 0,
-            "has_more": has_more,
-            "next_start": next_id if next_id else 0,
+            "pageSize": returned,
+            "pageStart": first_id,
+            "hasPrev": has_prev,
+            "prevStart": prev_id if prev_id else 0,
+            "hasMore": has_more,
+            "nextStart": next_id if next_id else 0,
         }
         return items, page
 

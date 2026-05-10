@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.answers.models import Answer, AnswerFavorite
+from app.domain.answers.models import Answer, AnswerFavorite, AnswerQueryLog
 from app.domain.questions.models import Attitude, VoteType
 
 
@@ -19,7 +19,7 @@ class AnswerRepository:
         created_by_id: int,
         content: str,
     ) -> Answer:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         answer = Answer(
             question_id=question_id,
             created_by_id=created_by_id,
@@ -137,12 +137,12 @@ class AnswerRepository:
     async def update_answer(self, answer: Answer, *, content: str | None = None) -> Answer:
         if content is not None:
             answer.content = content
-        answer.updated_at = datetime.now(UTC)
+        answer.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return answer
 
     async def soft_delete(self, answer: Answer) -> None:
-        answer.deleted_at = datetime.now(UTC)
+        answer.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
 
     async def add_favorite(self, *, answer_id: int, user_id: int) -> bool:
@@ -184,6 +184,37 @@ class AnswerRepository:
             .where(
                 AnswerFavorite.answer_id == answer_id,
             )
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
+    async def log_view(
+        self, *, answer_id: int, viewer_id: int | None, ip: str, user_agent: str | None
+    ) -> None:
+        log = AnswerQueryLog(
+            answer_id=answer_id,
+            viewer_id=viewer_id,
+            ip=ip,
+            user_agent=user_agent,
+            created_at=datetime.now(UTC),
+        )
+        self._session.add(log)
+        await self._session.flush()
+
+    async def count_views(self, answer_id: int) -> int:
+        stmt = select(func.count(AnswerQueryLog.id)).where(
+            AnswerQueryLog.answer_id == answer_id,
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
+    async def count_comments(self, answer_id: int) -> int:
+        from app.domain.discussion.models import DiscussableModelType, Discussion
+
+        stmt = select(func.count(Discussion.id)).where(
+            Discussion.model_type == DiscussableModelType.ANSWER.value,
+            Discussion.model_id == answer_id,
+            Discussion.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
@@ -255,18 +286,15 @@ class AnswerRepository:
         return [r[0] for r in result.all()]
 
     async def list_by_user(
-        self, *, user_id: int, limit: int, offset: int
+        self, *, user_id: int, limit: int, cursor: int | None = None
     ) -> tuple[Sequence[Answer], int]:
-        stmt = (
-            select(Answer)
-            .where(
-                Answer.created_by_id == user_id,
-                Answer.deleted_at.is_(None),
-            )
-            .order_by(Answer.id.asc())
-            .limit(limit)
-            .offset(offset)
+        stmt = select(Answer).where(
+            Answer.created_by_id == user_id,
+            Answer.deleted_at.is_(None),
         )
+        if cursor is not None:
+            stmt = stmt.where(Answer.id >= cursor)
+        stmt = stmt.order_by(Answer.id.asc()).limit(limit)
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
 
