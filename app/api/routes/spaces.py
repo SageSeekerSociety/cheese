@@ -1148,6 +1148,7 @@ async def add_space_admin(
     payload: dict,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
     # Frontend's v-text-field for the UID isn't always strictly typed as a
     # number — it sends "5" (string) rather than 5 even though the
@@ -1173,7 +1174,11 @@ async def add_space_admin(
         role=role,
         actor_user_id=auth_user.user_id,
     )
-    return {"code": 201, "message": "Created"}
+    space = await service.get_space(space_id)
+    if space is None:
+        return {"code": 201, "message": "Created"}
+    space_data = await _build_full_space_payload(space, service=service, db=db)
+    return {"code": 201, "message": "Created", "data": {"space": space_data}}
 
 
 @router.delete(

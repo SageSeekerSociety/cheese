@@ -28,6 +28,14 @@ class TeamMembershipService:
         self._default_page_size = 20
 
     async def _validate_user_can_apply_or_be_invited(self, user_id: int, team_id: int) -> None:
+        from sqlalchemy import select
+
+        from app.domain.user.models import User
+
+        stmt = select(User.id).where(User.id == user_id)
+        result = await self._session.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            raise NotFoundError(f"User {user_id} does not exist")
         if await self._team_repo.is_team_member(team_id, user_id):
             raise ConflictError("User is already a member of this team.")
         if await self._app_repo.exists_pending_for_user_and_team(user_id, team_id):
