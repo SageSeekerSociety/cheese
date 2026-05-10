@@ -115,11 +115,10 @@ class TaskPdfDraftService:
         payloads: list[dict[str, Any]] = []
         total_tokens = 0
         for result in results:
-            if isinstance(result, Exception):
-                continue
-            payload, tokens = result
-            payloads.append(payload)
-            total_tokens += tokens
+            if not isinstance(result, BaseException):
+                payload, tokens = result
+                payloads.append(payload)
+                total_tokens += tokens
 
         for _, _, temp_dir in page_data:
             if temp_dir and os.path.isdir(temp_dir):
