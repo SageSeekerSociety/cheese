@@ -5,3 +5,4 @@ uploads/
 .coverage
 /reference/
 new.md
+.testmondata*

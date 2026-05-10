@@ -133,4 +133,5 @@ ignore = [
 dev = [
     "playwright>=1.58.0",
     "pytest-cov>=7.0.0",
+    "pytest-testmon>=2.2.0",
 ]

@@ -120,10 +120,20 @@ This is distinct from `.claude/reference/` which contains project development sp
 ### Running Tests
 
 ```bash
+# Full suite (parallel, ~25s locally):
+uv run pytest tests/ -n 8 -q
+
+# Incremental (only tests affected by your changes, ~5-10s):
+uv run pytest tests/ -n 8 --testmon -q
+
+# Only last-failed (TDD loop):
+uv run pytest tests/ --lf -n 8 -q
+
+# Full check (ruff + pyright + pytest):
 bash .claude/scripts/check.sh
 ```
 
-This runs ruff + pyright + the FULL test suite. Full suite takes ~10-12 minutes — always set Bash timeout to at least 20 minutes (1200000ms).
+**Worker count**: `-n 8` is safe for most machines. CI uses `-n auto` (scales to core count). If PG connections exhaust on high-core machines, lower the number.
 
 ### Commit Gate
 
