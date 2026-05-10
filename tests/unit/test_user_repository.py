@@ -550,12 +550,12 @@ class TestUserStatisticsRepository:
     async def test_aggregate(self):
         session = _mock_session()
         session.execute.side_effect = [
-            _mock_scalar_one(3),   # teams
-            _mock_scalar_one(5),   # tasks
+            _mock_scalar_one(3),  # teams
+            _mock_scalar_one(5),  # tasks
             _mock_scalar_one(10),  # knowledge
-            _mock_scalar_one(7),   # submissions
-            _mock_scalar_one(4),   # questions
-            _mock_scalar_one(6),   # answers
+            _mock_scalar_one(7),  # submissions
+            _mock_scalar_one(4),  # questions
+            _mock_scalar_one(6),  # answers
         ]
         repo = UserStatisticsRepository(session)
 

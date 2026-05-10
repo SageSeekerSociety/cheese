@@ -162,8 +162,8 @@ class TestDiscussionRepository:
         session = _mock_session()
         d = _discussion()
         session.execute.side_effect = [
-            _mock_scalar(d),       # get entity
-            _mock_rows([]),        # load mentions
+            _mock_scalar(d),  # get entity
+            _mock_rows([]),  # load mentions
         ]
         repo = DiscussionRepository(session)
 
@@ -191,8 +191,8 @@ class TestDiscussionRepository:
         session = _mock_session()
         d = _discussion()
         session.execute.side_effect = [
-            _mock_scalar(d),       # get_by_id
-            _mock_rows([]),        # load mentions
+            _mock_scalar(d),  # get_by_id
+            _mock_rows([]),  # load mentions
         ]
         repo = DiscussionRepository(session)
 
@@ -292,9 +292,7 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(r)
         repo = DiscussionReactionRepository(session)
 
-        result = await repo.get_reaction(
-            discussion_id=1, user_id=50, reaction_type_id=1
-        )
+        result = await repo.get_reaction(discussion_id=1, user_id=50, reaction_type_id=1)
         assert result is r
 
     @pytest.mark.anyio
@@ -303,9 +301,7 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(None)
         repo = DiscussionReactionRepository(session)
 
-        result = await repo.toggle(
-            discussion_id=1, user_id=50, reaction_type_id=1
-        )
+        result = await repo.toggle(discussion_id=1, user_id=50, reaction_type_id=1)
         assert result is not None
         assert result.discussion_id == 1
         session.add.assert_called_once()
@@ -317,9 +313,7 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(existing)
         repo = DiscussionReactionRepository(session)
 
-        result = await repo.toggle(
-            discussion_id=1, user_id=50, reaction_type_id=1
-        )
+        result = await repo.toggle(discussion_id=1, user_id=50, reaction_type_id=1)
         assert result is None
         assert existing.deleted_at is not None
 
@@ -330,9 +324,7 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(existing)
         repo = DiscussionReactionRepository(session)
 
-        result = await repo.remove(
-            discussion_id=1, user_id=50, reaction_type_id=1
-        )
+        result = await repo.remove(discussion_id=1, user_id=50, reaction_type_id=1)
         assert result is True
         assert existing.deleted_at is not None
 
@@ -342,9 +334,7 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(None)
         repo = DiscussionReactionRepository(session)
 
-        result = await repo.remove(
-            discussion_id=1, user_id=50, reaction_type_id=1
-        )
+        result = await repo.remove(discussion_id=1, user_id=50, reaction_type_id=1)
         assert result is False
 
     @pytest.mark.anyio
@@ -362,9 +352,7 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(1)
         repo = DiscussionReactionRepository(session)
 
-        assert await repo.has_user_reacted(
-            discussion_id=1, user_id=50, reaction_type_id=1
-        ) is True
+        assert await repo.has_user_reacted(discussion_id=1, user_id=50, reaction_type_id=1) is True
 
     @pytest.mark.anyio
     async def test_has_user_reacted_false(self):
@@ -372,6 +360,4 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(None)
         repo = DiscussionReactionRepository(session)
 
-        assert await repo.has_user_reacted(
-            discussion_id=1, user_id=50, reaction_type_id=1
-        ) is False
+        assert await repo.has_user_reacted(discussion_id=1, user_id=50, reaction_type_id=1) is False

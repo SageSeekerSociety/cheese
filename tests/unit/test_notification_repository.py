@@ -108,9 +108,7 @@ class TestNotificationRepository:
         session.execute.return_value = _mock_scalars([])
         repo = NotificationRepository(session)
 
-        result = await repo.list_for_user(
-            10, limit=20, cursor_created_at=NOW, cursor_id=5
-        )
+        result = await repo.list_for_user(10, limit=20, cursor_created_at=NOW, cursor_id=5)
         assert list(result) == []
 
     @pytest.mark.anyio
@@ -119,9 +117,7 @@ class TestNotificationRepository:
         session.execute.return_value = _mock_scalars([])
         repo = NotificationRepository(session)
 
-        result = await repo.list_for_user(
-            10, limit=20, type_=NotificationType.REACTION
-        )
+        result = await repo.list_for_user(10, limit=20, type_=NotificationType.REACTION)
         assert list(result) == []
 
     @pytest.mark.anyio
@@ -191,9 +187,7 @@ class TestNotificationRepository:
         session.execute.return_value = _mock_scalar_one(3)
         repo = NotificationRepository(session)
 
-        result = await repo.count_for_user(
-            10, type_=NotificationType.MENTION, read=False
-        )
+        result = await repo.count_for_user(10, type_=NotificationType.MENTION, read=False)
         assert result == 3
 
     @pytest.mark.anyio

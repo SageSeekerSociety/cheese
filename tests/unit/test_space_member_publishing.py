@@ -158,7 +158,10 @@ class TestNormalizeSortBy:
         assert SpaceMemberPublishingService._normalize_sort_by("createdAt") == "createdAt"
 
     def test_participant_count(self):
-        assert SpaceMemberPublishingService._normalize_sort_by("participantCount") == "participantCount"
+        assert (
+            SpaceMemberPublishingService._normalize_sort_by("participantCount")
+            == "participantCount"
+        )
 
     def test_invalid(self):
         with pytest.raises(BadRequestError):
@@ -308,8 +311,8 @@ class TestGetMyPublishingOverview:
         session = _mock_session()
         space = SimpleNamespace(id=1, deleted_at=None)
         session.execute.side_effect = [
-            _mock_scalar(space),     # _ensure_space_exists
-            _mock_scalars([]),       # _list_my_publishing_tasks
+            _mock_scalar(space),  # _ensure_space_exists
+            _mock_scalars([]),  # _list_my_publishing_tasks
         ]
         svc = SpaceMemberPublishingService(session)
 

@@ -232,9 +232,7 @@ class TestTaskRepository:
         session.execute.return_value = _mock_scalars([])
         repo = TaskRepository(session)
 
-        result = await repo.list_tasks(
-            space_id=100, joined=True, current_user_id=10, limit=10
-        )
+        result = await repo.list_tasks(space_id=100, joined=True, current_user_id=10, limit=10)
         assert list(result) == []
 
     @pytest.mark.anyio
@@ -243,9 +241,7 @@ class TestTaskRepository:
         session.execute.return_value = _mock_scalars([])
         repo = TaskRepository(session)
 
-        result = await repo.list_tasks(
-            space_id=100, joined=False, current_user_id=10, limit=10
-        )
+        result = await repo.list_tasks(space_id=100, joined=False, current_user_id=10, limit=10)
         assert list(result) == []
 
     @pytest.mark.anyio
@@ -279,9 +275,7 @@ class TestTaskRepository:
         session.execute.return_value = _mock_scalar_one(1)
         repo = TaskRepository(session)
 
-        result = await repo.count_tasks(
-            space_id=100, joined=True, current_user_id=10
-        )
+        result = await repo.count_tasks(space_id=100, joined=True, current_user_id=10)
         assert result == 1
 
     @pytest.mark.anyio
@@ -290,9 +284,7 @@ class TestTaskRepository:
         session.execute.return_value = _mock_scalar_one(3)
         repo = TaskRepository(session)
 
-        result = await repo.count_tasks(
-            space_id=100, joined=False, current_user_id=10
-        )
+        result = await repo.count_tasks(space_id=100, joined=False, current_user_id=10)
         assert result == 3
 
     @pytest.mark.anyio
@@ -507,9 +499,7 @@ class TestTaskSubmissionRepository:
         session = _mock_session()
         repo = TaskSubmissionRepository(session)
 
-        result = await repo.create_submission(
-            membership_id=1, submitter_id=10, version=1
-        )
+        result = await repo.create_submission(membership_id=1, submitter_id=10, version=1)
         assert result.membership_id == 1
         assert result.version == 1
         session.add.assert_called_once()
@@ -585,9 +575,7 @@ class TestTaskSubmissionRepository:
         session.execute.return_value = _mock_scalars([])
         repo = TaskSubmissionRepository(session)
 
-        result = await repo.list_submissions(
-            task_id=1, reviewed=False, limit=10, sort_order="asc"
-        )
+        result = await repo.list_submissions(task_id=1, reviewed=False, limit=10, sort_order="asc")
         assert list(result) == []
 
     @pytest.mark.anyio
@@ -772,9 +760,7 @@ class TestTaskAIAdviceRepository:
         session = _mock_session()
         repo = TaskAIAdviceRepository(session)
 
-        result = await repo.create(
-            task_id=1, model_hash="abc123", status="pending"
-        )
+        result = await repo.create(task_id=1, model_hash="abc123", status="pending")
         assert result.task_id == 1
         assert result.model_hash == "abc123"
         session.add.assert_called_once()
@@ -847,9 +833,7 @@ class TestAIConversationRepository:
         session = _mock_session()
         repo = AIConversationRepository(session)
 
-        result = await repo.create(
-            conversation_id="abc", task_id=1, owner_id=10, title="Chat"
-        )
+        result = await repo.create(conversation_id="abc", task_id=1, owner_id=10, title="Chat")
         assert result.conversation_id == "abc"
         assert result.title == "Chat"
         session.add.assert_called_once()
@@ -885,9 +869,7 @@ class TestAIMessageRepository:
         session = _mock_session()
         repo = AIMessageRepository(session)
 
-        result = await repo.create_message(
-            conversation_id=1, role="user", content="Hello"
-        )
+        result = await repo.create_message(conversation_id=1, role="user", content="Hello")
         assert result.role == "user"
         assert result.content == "Hello"
         session.add.assert_called_once()

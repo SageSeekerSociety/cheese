@@ -1009,11 +1009,7 @@ class SpaceAnalyticsViewService:
     @staticmethod
     def _resolve_window(from_ts: int | None, to_ts: int | None) -> tuple[datetime, datetime]:
         now_utc = datetime.now(UTC)
-        to_dt = (
-            datetime.fromtimestamp(to_ts / 1000, tz=UTC)
-            if to_ts is not None
-            else now_utc
-        )
+        to_dt = datetime.fromtimestamp(to_ts / 1000, tz=UTC) if to_ts is not None else now_utc
         from_dt = (
             datetime.fromtimestamp(from_ts / 1000, tz=UTC)
             if from_ts is not None

@@ -104,9 +104,16 @@ def upgrade() -> None:
             column,
             existing_type=postgresql.TIMESTAMP(),
             type_=sa.DateTime(timezone=True),
-            existing_nullable=True if column in ("deleted_at", "updated_at", "deadline",
-                                                  "registration_start_at", "last_reset_time",
-                                                  "archived_at", "token_expires") else False,
+            existing_nullable=column
+            in (
+                "deleted_at",
+                "updated_at",
+                "deadline",
+                "registration_start_at",
+                "last_reset_time",
+                "archived_at",
+                "token_expires",
+            ),
             postgresql_using=f"{column} AT TIME ZONE 'UTC'",
         )
 
@@ -119,7 +126,14 @@ def downgrade() -> None:
             column,
             existing_type=sa.DateTime(timezone=True),
             type_=postgresql.TIMESTAMP(),
-            existing_nullable=True if column in ("deleted_at", "updated_at", "deadline",
-                                                  "registration_start_at", "last_reset_time",
-                                                  "archived_at", "token_expires") else False,
+            existing_nullable=column
+            in (
+                "deleted_at",
+                "updated_at",
+                "deadline",
+                "registration_start_at",
+                "last_reset_time",
+                "archived_at",
+                "token_expires",
+            ),
         )

@@ -290,9 +290,7 @@ class TestAIMessageRepository:
         session = _mock_session()
         repo = AIMessageRepository(session)
 
-        result = await repo.create(
-            conversation_id=1, role="user", content="Hello"
-        )
+        result = await repo.create(conversation_id=1, role="user", content="Hello")
         assert result.conversation_id == 1
         assert result.role == "user"
         assert result.content == "Hello"

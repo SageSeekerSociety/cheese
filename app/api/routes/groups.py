@@ -287,14 +287,8 @@ async def update_group_target(
     ended_at = payload.get("endedAt")
     attendance_frequency = payload.get("attendanceFrequency")
 
-    started_at_dt = (
-        datetime.fromtimestamp(started_at / 1000, tz=UTC)
-        if started_at
-        else None
-    )
-    ended_at_dt = (
-        datetime.fromtimestamp(ended_at / 1000, tz=UTC) if ended_at else None
-    )
+    started_at_dt = datetime.fromtimestamp(started_at / 1000, tz=UTC) if started_at else None
+    ended_at_dt = datetime.fromtimestamp(ended_at / 1000, tz=UTC) if ended_at else None
 
     target = await service.update_target(
         group_id=group_id,
