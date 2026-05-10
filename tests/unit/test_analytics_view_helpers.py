@@ -353,3 +353,111 @@ class TestBuildDistribution:
         assert result["items"][0]["label"] == "A"
         assert result["items"][0]["count"] == 3
         assert result["items"][0]["percentage"] == 60.0
+
+
+# ---------------------------------------------------------------------------
+# _csv_row
+# ---------------------------------------------------------------------------
+
+
+class TestCsvRow:
+    def test_basic(self):
+        result = SpaceAnalyticsViewService._csv_row("a", "b", "c")
+        assert result == "a,b,c"
+
+    def test_with_none(self):
+        result = SpaceAnalyticsViewService._csv_row("a", None, "c")
+        assert result == "a,,c"
+
+    def test_with_quotes(self):
+        result = SpaceAnalyticsViewService._csv_row('has "quotes"', "normal")
+        assert '"' in result  # CSV quoting applied
+
+    def test_with_commas(self):
+        result = SpaceAnalyticsViewService._csv_row("has, comma", "normal")
+        assert '"has, comma"' in result
+
+
+# ---------------------------------------------------------------------------
+# _format_local_datetime_ms
+# ---------------------------------------------------------------------------
+
+
+class TestFormatLocalDatetimeMs:
+    def test_none(self):
+        assert SpaceAnalyticsViewService._format_local_datetime_ms(None) == ""
+
+    def test_zero(self):
+        assert SpaceAnalyticsViewService._format_local_datetime_ms(0) == ""
+
+    def test_valid(self):
+        ms = int(NOW.replace(tzinfo=UTC).timestamp() * 1000)
+        result = SpaceAnalyticsViewService._format_local_datetime_ms(ms)
+        assert "2025" in result
+        assert ":" in result
+
+
+# ---------------------------------------------------------------------------
+# _format_local_datetime
+# ---------------------------------------------------------------------------
+
+
+class TestFormatLocalDatetime:
+    def test_none(self):
+        assert SpaceAnalyticsViewService._format_local_datetime(None) == ""
+
+    def test_naive(self):
+        result = SpaceAnalyticsViewService._format_local_datetime(NOW)
+        assert result == "2025-06-01 12:00:00"
+
+    def test_aware(self):
+        dt = NOW.replace(tzinfo=UTC)
+        result = SpaceAnalyticsViewService._format_local_datetime(dt)
+        assert result == "2025-06-01 12:00:00"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_user_display_name
+# ---------------------------------------------------------------------------
+
+
+class TestResolveUserDisplayName:
+    def test_profile_nickname(self):
+        from types import SimpleNamespace
+
+        ctx = SimpleNamespace(
+            profiles_by_user_id={1: SimpleNamespace(nickname="Alice")},
+            users_by_id={1: SimpleNamespace(username="alice_u")},
+        )
+        result = SpaceAnalyticsViewService._resolve_user_display_name(ctx, 1)
+        assert result == "Alice"
+
+    def test_username_fallback(self):
+        from types import SimpleNamespace
+
+        ctx = SimpleNamespace(
+            profiles_by_user_id={1: SimpleNamespace(nickname="")},
+            users_by_id={1: SimpleNamespace(username="alice_u")},
+        )
+        result = SpaceAnalyticsViewService._resolve_user_display_name(ctx, 1)
+        assert result == "alice_u"
+
+    def test_no_profile_no_user(self):
+        from types import SimpleNamespace
+
+        ctx = SimpleNamespace(
+            profiles_by_user_id={},
+            users_by_id={},
+        )
+        result = SpaceAnalyticsViewService._resolve_user_display_name(ctx, 999)
+        assert result == "User 999"
+
+    def test_profile_none(self):
+        from types import SimpleNamespace
+
+        ctx = SimpleNamespace(
+            profiles_by_user_id={},
+            users_by_id={1: SimpleNamespace(username="bob")},
+        )
+        result = SpaceAnalyticsViewService._resolve_user_display_name(ctx, 1)
+        assert result == "bob"
