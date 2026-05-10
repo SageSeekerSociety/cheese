@@ -10,6 +10,7 @@ from sqlalchemy import (
     Sequence,
     SmallInteger,
     String,
+    Text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -87,3 +88,31 @@ class TeamMembershipApplication(Base):
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class RecruitmentStatus(str, Enum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+    EXPIRED = "EXPIRED"
+
+
+class TeamRecruitmentPost(Base):
+    __tablename__ = "team_recruitment_post"
+    __table_args__ = (
+        Index("ix_recruitment_team_id", "team_id"),
+        Index("ix_recruitment_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("team.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    max_members: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="OPEN")
+    created_by: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
