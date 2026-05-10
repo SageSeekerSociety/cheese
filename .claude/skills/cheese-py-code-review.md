@@ -1,5 +1,5 @@
 ---
-name: code-review
+name: cheese-py-code-review
 description: >
   代码审查 cheese-backend-py 项目。审查架构分层(route→service→repository→model)、
   Python 3.11+ 规范、类型安全、测试覆盖、ruff/pyright/pytest、API 设计、
@@ -13,22 +13,32 @@ description: >
 
 Review changed code against cheese-backend-py project standards.
 
+项目基础规范：@CLAUDE.md
+前置检查清单（pull 后必读）：@reference/post-pull-checks.md
+并行审查流程：@reference/parallel-review.md
+同步规则（每次改前必读！）：@reference/sync-rule.md
+
 ## Review Workflow
 
 1. First, understand what files changed (`git diff`, `git status`).
 2. Read the changed files thoroughly.
 3. Cross-check with `reference/cheese-backend-nt/` (Kotlin) or `reference/cheese-backend/` (NestJS) when behavior is unclear.
-4. **MANDATORY**: Run linting and tests. If any test fails, BLOCK the commit.
-   ```bash
-   # Linux/Mac:
-   uv run ruff check .
-   uv run pyright
-   uv run python -m pytest tests/ -q
+4. **MANDATORY**: Launch background check immediately after step 1.
+   - Use the Agent tool with `subagent_type: "general-purpose"`, `run_in_background: true`, and the prompt:
 
-   # Windows (Docker):
-   docker compose exec cheese_py sh -c "cd /app && uv run ruff check . && uv run pyright && uv run python -m pytest tests/ -q"
-   ```
-   **Timeout**: set Bash timeout to at least **20 minutes** (1200000ms). Full test suite runs ~10-12 min with integration tests.
+     ```
+     Run the project check script:
+       bash .claude/scripts/check.sh
+     Set Bash timeout to 20 minutes (1200000ms). Full tests take ~10-12 min.
+     When done, report only:
+     - PASS or FAIL per step (ruff / pyright / pytest)
+     - If FAIL: which tests failed (last ~30 lines of pytest output)
+     - If PASS: just say "All checks passed" — no more than 3 lines.
+     ```
+
+   - While it runs, continue with steps 2→3→5 (read files, cross-check, review).
+   - When the agent reports back: if any step FAIL, report "Tests failed — commit blocked".
+     If PASS, note "All checks passed" in the review summary.
 5. Report findings grouped by severity. If step 4 failed, only report Critical: "Tests failed — commit blocked".
 
 ## Review Checklist

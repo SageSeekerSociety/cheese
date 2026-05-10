@@ -3,5 +3,5 @@ __pycache__/
 uploads/
 .env
 .coverage
-reference/
+/reference/
 new.md
