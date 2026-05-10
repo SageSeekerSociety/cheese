@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
@@ -15,6 +16,54 @@ from app.domain.user.repositories import UserProfileRepository, UserRepository
 # Number of admin / member examples to surface alongside the count, mirroring
 # the Kotlin TeamService implementation (PageRequest.of(0, 3)).
 _TEAM_EXAMPLES_LIMIT = 3
+
+# ── Request Models ────────────────────────────────────────────────────────────
+
+
+class CreateTeamRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1)
+    intro: str = ""
+    description: str = ""
+    avatar_id: int = Field(default=1, alias="avatarId", gt=0)
+
+
+class PatchTeamRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = None
+    intro: str | None = None
+    description: str | None = None
+    avatar_id: int | None = Field(default=None, alias="avatarId")
+
+
+class PatchTeamMemberRoleRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    role: str = Field(..., min_length=1)
+
+
+class AddTeamMemberRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: int = Field(..., alias="userId", gt=0)
+    role: str = "MEMBER"
+
+
+class CreateTeamInvitationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: int = Field(..., alias="userId", gt=0)
+    role: str | None = None
+    message: str | None = None
+
+
+class CreateTeamJoinRequestBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    message: str | None = None
+
 
 router = APIRouter(prefix="/teams", tags=["Teams"])
 
@@ -447,33 +496,16 @@ async def get_team_members(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_team(
-    payload: dict,
+    payload: CreateTeamRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
-    name = payload.get("name")
-    intro = payload.get("intro")
-    description = payload.get("description")
-    if intro is None:
-        intro = ""
-    elif not isinstance(intro, str):
-        raise BadRequestError("intro must be string")
-    if description is None:
-        description = ""
-    elif not isinstance(description, str):
-        raise BadRequestError("description must be string")
-    avatar_id = payload.get("avatarId", 1)
-    if not isinstance(name, str) or not name.strip():
-        raise BadRequestError("name is required")
-    if not isinstance(avatar_id, int) or avatar_id <= 0:
-        avatar_id = 1
-
     team = await service.create_team(
-        name=name,
-        intro=intro,
-        description=description,
-        avatar_id=avatar_id,
+        name=payload.name,
+        intro=payload.intro,
+        description=payload.description,
+        avatar_id=payload.avatar_id,
         owner_id=auth_user.user_id,
     )
     members = list(await service.get_team_members(team_id=team.id))
@@ -499,27 +531,18 @@ async def create_team(
 )
 async def patch_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    payload: dict,
+    payload: PatchTeamRequest,
     auth_user: AuthUserInfo = require_permission(Action.UPDATE, Resource.TEAM, "teamId"),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
-    intro = payload.get("intro")
-    description = payload.get("description")
-    name = payload.get("name")
-    if intro is not None and not isinstance(intro, str):
-        raise BadRequestError("intro must be string")
-    if description is not None and not isinstance(description, str):
-        raise BadRequestError("description must be string")
-    if name is not None and not isinstance(name, str):
-        raise BadRequestError("name must be string")
     team = await service.update_team(
         team_id=team_id,
         actor_user_id=auth_user.user_id,
-        name=name,
-        intro=intro,
-        description=description,
-        avatar_id=payload.get("avatarId"),
+        name=payload.name,
+        intro=payload.intro,
+        description=payload.description,
+        avatar_id=payload.avatar_id,
     )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map = await _load_team_user_maps(db, members)
@@ -578,15 +601,12 @@ async def delete_team_member(
 async def patch_team_member_role(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    payload: dict,
+    payload: PatchTeamMemberRoleRequest,
     auth_user: AuthUserInfo = require_permission(Action.UPDATE, Resource.TEAM_MEMBERSHIP, "teamId"),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
-    role_value = payload.get("role")
-    if not isinstance(role_value, str):
-        raise BadRequestError("role is required")
-    mapped_role = _parse_role(role_value, allow_owner=False)
+    mapped_role = _parse_role(payload.role, allow_owner=False)
 
     await service.update_team_member_role(
         team_id=team_id,
@@ -621,22 +641,14 @@ async def patch_team_member_role(
 )
 async def add_team_member_entry(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    payload: dict,
+    payload: AddTeamMemberRequest,
     auth_user: AuthUserInfo = require_permission(Action.CREATE, Resource.TEAM_MEMBERSHIP, "teamId"),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
     _ = auth_user
-    raw_user_id = payload.get("userId")
-    role_str = (payload.get("role") or "MEMBER").upper()
-    if isinstance(raw_user_id, bool) or raw_user_id is None:
-        raise BadRequestError("userId is required")
-    try:
-        user_id = int(raw_user_id)
-    except (TypeError, ValueError):
-        raise BadRequestError("userId must be a positive integer") from None
-    if user_id <= 0:
-        raise BadRequestError("userId must be a positive integer")
+    user_id = payload.user_id
+    role_str = payload.role.upper()
 
     role_map = {"MEMBER": TeamMemberRole.MEMBER, "ADMIN": TeamMemberRole.ADMIN}
     role_val = role_map.get(role_str)
@@ -785,31 +797,18 @@ async def list_team_invitations(
 )
 async def create_team_invitation(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    payload: dict,
+    payload: CreateTeamInvitationRequest,
     auth_user: AuthUserInfo = require_permission(Action.CREATE, Resource.TEAM_INVITATION, "teamId"),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
 ) -> dict:
-    raw_user_id = payload.get("userId")
-    if isinstance(raw_user_id, bool) or raw_user_id is None:
-        raise BadRequestError("userId is required")
-    try:
-        user_id = int(raw_user_id)
-    except (TypeError, ValueError):
-        raise BadRequestError("userId must be a positive integer") from None
-    if user_id <= 0:
-        raise BadRequestError("userId must be a positive integer")
-    role_value = payload.get("role") if isinstance(payload.get("role"), str) else None
-    role = _parse_role(role_value, allow_owner=False)
-    message = payload.get("message")
-    if message is not None and not isinstance(message, str):
-        raise BadRequestError("message must be string")
+    role = _parse_role(payload.role, allow_owner=False)
     app = await membership_service.create_team_invitation(
         initiator_user_id=auth_user.user_id,
         team_id=team_id,
-        user_id_to_invite=user_id,
+        user_id_to_invite=payload.user_id,
         role=role,
-        message=message,
+        message=payload.message,
     )
     users_map, profiles_map, teams_map = await _load_application_maps(db, [app])
     return {
@@ -849,18 +848,15 @@ async def cancel_team_invitation(
 )
 async def create_team_join_request_via_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    payload: dict,
+    payload: CreateTeamJoinRequestBody,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
 ) -> dict:
-    message = payload.get("message")
-    if message is not None and not isinstance(message, str):
-        raise BadRequestError("message must be string")
     app = await membership_service.create_team_join_request(
         user_id=auth_user.user_id,
         team_id=team_id,
-        message=message,
+        message=payload.message,
     )
     users_map, profiles_map, teams_map = await _load_application_maps(db, [app])
     return {
@@ -881,7 +877,7 @@ async def create_team_join_request_via_team(
 )
 async def create_team_request_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    payload: dict,
+    payload: CreateTeamJoinRequestBody,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
