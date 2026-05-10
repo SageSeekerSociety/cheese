@@ -62,7 +62,7 @@ class UserRepository:
         email: str,
         hashed_password: str,
     ) -> User:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         user = User(
             username=username,
             email=email,
@@ -125,7 +125,7 @@ class UserProfileRepository:
         intro: str,
         avatar_id: int,
     ) -> UserProfile:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         profile = UserProfile(
             user_id=user_id,
             nickname=nickname,
@@ -217,7 +217,7 @@ class UserFollowingRepository:
         rel = result.scalar_one_or_none()
         if rel is None:
             return False
-        rel.deleted_at = datetime.now(UTC)
+        rel.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return True
 

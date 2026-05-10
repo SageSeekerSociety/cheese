@@ -20,7 +20,7 @@ class OAuthConnectionRepository:
         refresh_token: str | None = None,
         token_expires: datetime | None = None,
     ) -> UserOAuthConnection:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         entity = UserOAuthConnection(
             user_id=user_id,
             provider_id=provider_id,
@@ -85,5 +85,5 @@ class OAuthConnectionRepository:
         if entity:
             entity.refresh_token = refresh_token
             entity.token_expires = token_expires
-            entity.updated_at = datetime.now(UTC)
+            entity.updated_at = datetime.now(UTC).replace(tzinfo=None)
             await self._session.flush()

@@ -406,7 +406,7 @@ class TaskPdfDraftService:
             raise BadRequestError("LLM output missing required field: description")
 
         # --- System-filled fields ---
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         submitter_type = (
             forced_submitter_type if forced_submitter_type in {"USER", "TEAM"} else "TEAM"
         )

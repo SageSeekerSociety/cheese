@@ -167,7 +167,7 @@ class NotificationEventHandler:
         type_: NotificationType,
         payload: dict[str, Any],
     ) -> None:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         aggregation_key = self._generate_aggregation_key(type_, payload)
         if aggregation_key is None:
             await self._dispatch_to_handlers(
@@ -212,7 +212,7 @@ class NotificationEventHandler:
             await self._session.flush()
 
     async def finalize_expired(self, now: datetime | None = None) -> list[Notification]:
-        current = now or datetime.now(UTC)
+        current = now or datetime.now(UTC).replace(tzinfo=None)
         expired = await self._repo.find_expired_aggregations(current)
         if not expired:
             return []

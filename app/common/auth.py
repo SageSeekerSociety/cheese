@@ -9,7 +9,7 @@ from app.core.errors import AuthenticationRequiredError
 
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def create_access_token(user_id: int) -> str:

@@ -26,7 +26,7 @@ class GroupRepository:
         self._session = session
 
     async def create_group(self, *, name: str) -> Group:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         group = Group(
             name=name,
             created_at=now,
@@ -104,7 +104,7 @@ class GroupRepository:
     async def update_group(self, group: Group, *, name: str | None = None) -> Group:
         if name is not None:
             group.name = name
-        group.updated_at = datetime.now(UTC)
+        group.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return group
 
@@ -119,7 +119,7 @@ class GroupRepository:
         return result.scalar_one_or_none() is not None
 
     async def soft_delete(self, group: Group) -> None:
-        group.deleted_at = datetime.now(UTC)
+        group.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
 
 
@@ -149,7 +149,7 @@ class GroupProfileRepository:
     async def create_profile(
         self, *, group_id: int, intro: str, avatar_id: int | None
     ) -> GroupProfile:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         profile = GroupProfile(
             group_id=group_id,
             intro=intro,
@@ -173,7 +173,7 @@ class GroupProfileRepository:
             profile.intro = intro
         if avatar_id is not None:
             profile.avatar_id = avatar_id
-        profile.updated_at = datetime.now(UTC)
+        profile.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return profile
 
@@ -186,7 +186,7 @@ class GroupMembershipRepository:
         self, *, group_id: int, member_id: int, role: str = "MEMBER"
     ) -> GroupMembership:
         existing = await self._get_membership(group_id, member_id)
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if existing is not None:
             if existing.deleted_at is None:
                 return existing
@@ -211,7 +211,7 @@ class GroupMembershipRepository:
         membership = await self._get_membership(group_id, member_id)
         if membership is None or membership.deleted_at is not None:
             return False
-        membership.deleted_at = datetime.now(UTC)
+        membership.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return True
 
@@ -389,7 +389,7 @@ class GroupTargetRepository:
         ended_at: datetime,
         attendance_frequency: str,
     ) -> GroupTarget:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         target = GroupTarget(
             group_id=group_id,
             name=name,
@@ -425,12 +425,12 @@ class GroupTargetRepository:
             target.ended_at = _to_date(ended_at)
         if attendance_frequency is not None:
             target.attendance_frequency = attendance_frequency
-        target.updated_at = datetime.now(UTC)
+        target.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return target
 
     async def soft_delete(self, target: GroupTarget) -> None:
-        target.deleted_at = datetime.now(UTC)
+        target.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
 
 
@@ -464,7 +464,7 @@ class GroupQuestionRepository:
 
     async def add_question(self, *, group_id: int, question_id: int) -> GroupQuestionRelationship:
         existing = await self._get_relationship(group_id, question_id)
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if existing is not None:
             if existing.deleted_at is None:
                 return existing
@@ -487,7 +487,7 @@ class GroupQuestionRepository:
         rel = await self._get_relationship(group_id, question_id)
         if rel is None or rel.deleted_at is not None:
             return False
-        rel.deleted_at = datetime.now(UTC)
+        rel.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return True
 

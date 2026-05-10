@@ -19,7 +19,7 @@ class AnswerRepository:
         created_by_id: int,
         content: str,
     ) -> Answer:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         answer = Answer(
             question_id=question_id,
             created_by_id=created_by_id,
@@ -137,12 +137,12 @@ class AnswerRepository:
     async def update_answer(self, answer: Answer, *, content: str | None = None) -> Answer:
         if content is not None:
             answer.content = content
-        answer.updated_at = datetime.now(UTC)
+        answer.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return answer
 
     async def soft_delete(self, answer: Answer) -> None:
-        answer.deleted_at = datetime.now(UTC)
+        answer.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
 
     async def add_favorite(self, *, answer_id: int, user_id: int) -> bool:

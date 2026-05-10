@@ -26,7 +26,7 @@ class MaterialRepository:
         expires: int | None = None,
         meta: dict[str, Any] | None = None,
     ) -> Material:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         material = Material(
             type=type,
             url=url,
@@ -119,7 +119,7 @@ class MaterialBundleRepository:
         return result.scalar_one_or_none()
 
     async def create(self, *, title: str, content: str, creator_id: int) -> MaterialBundle:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(tzinfo=None)
         bundle = MaterialBundle(
             title=title,
             content=content,
@@ -146,7 +146,7 @@ class MaterialBundleRepository:
             bundle.title = title
         if content is not None:
             bundle.content = content
-        bundle.updated_at = datetime.now(UTC)
+        bundle.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self._session.flush()
         return bundle
 
