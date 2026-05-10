@@ -340,10 +340,10 @@ class TestMaterialBundlesGetIntegration:
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 200
-        assert data["data"]["page"]["page_size"] == 20
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is True
+        assert data["data"]["page"]["pageSize"] == 20
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is True
 
     def test_get_bundles_with_keyword(self):
         response = self.client.get(
@@ -357,11 +357,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 20
         for i, material in enumerate(data["data"]["materials"][:20]):
             assert material["id"] == self.bundle_ids[i]
-        assert data["data"]["page"]["page_size"] == 20
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageSize"] == 20
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
     def test_get_bundles_with_keyword_and_size(self):
         response = self.client.get(
@@ -375,11 +375,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 10
         for i, material in enumerate(data["data"]["materials"][:10]):
             assert material["id"] == self.bundle_ids[i]
-        assert data["data"]["page"]["page_size"] == 10
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.bundle_ids[10]
+        assert data["data"]["page"]["pageSize"] == 10
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.bundle_ids[10]
 
     def test_get_bundles_with_keyword_size_and_start(self):
         response = self.client.get(
@@ -398,11 +398,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 10
         for i, material in enumerate(data["data"]["materials"][:10]):
             assert material["id"] == self.bundle_ids[i + 4]
-        assert data["data"]["page"]["page_size"] == 10
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.bundle_ids[3]
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.bundle_ids[14]
+        assert data["data"]["page"]["pageSize"] == 10
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.bundle_ids[3]
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.bundle_ids[14]
 
     def test_get_bundles_with_search_syntax(self):
         response = self.client.get(
@@ -420,11 +420,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 10
         for i, material in enumerate(data["data"]["materials"][:10]):
             assert material["id"] == self.bundle_ids[i + 4]
-        assert data["data"]["page"]["page_size"] == 10
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.bundle_ids[14]
+        assert data["data"]["page"]["pageSize"] == 10
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.bundle_ids[14]
 
     def test_get_bundles_with_sort_newest(self):
         response = self.client.get(
@@ -443,11 +443,11 @@ class TestMaterialBundlesGetIntegration:
         assert len(data["data"]["materials"]) == 10
         for i, material in enumerate(data["data"]["materials"][:10]):
             assert material["id"] == self.bundle_ids[14 - i]
-        assert data["data"]["page"]["page_size"] == 10
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.bundle_ids[15]
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.bundle_ids[4]
+        assert data["data"]["page"]["pageSize"] == 10
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.bundle_ids[15]
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.bundle_ids[4]
 
     def test_get_bundles_keyword_too_long(self):
         response = self.client.get(

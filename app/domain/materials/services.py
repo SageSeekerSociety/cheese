@@ -156,12 +156,12 @@ class MaterialBundleService:
 
         first_id = page_ids[0] if page_ids else 0
         page = {
-            "page_start": first_id,
-            "page_size": returned,
-            "has_prev": has_prev,
-            "prev_start": prev_start,
-            "has_more": has_more,
-            "next_start": next_start,
+            "pageStart": first_id,
+            "pageSize": returned,
+            "hasPrev": has_prev,
+            "prevStart": prev_start,
+            "hasMore": has_more,
+            "nextStart": next_start,
         }
         return items, page
 

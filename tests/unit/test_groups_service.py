@@ -815,9 +815,9 @@ async def test_list_members_success():
     assert members[0]["role"] == "OWNER"
     assert members[1]["id"] == 20
     assert members[1]["nickname"] == "Member"
-    assert page["page_size"] == 2
-    assert page["has_more"] is True
-    assert page["next_start"] == 30
+    assert page["pageSize"] == 2
+    assert page["hasMore"] is True
+    assert page["nextStart"] == 30
 
 
 @pytest.mark.anyio
@@ -841,8 +841,8 @@ async def test_list_members_zero_page_size():
     members, page = await svc.list_members(group_id=5, page_start=None, page_size=0)
 
     assert members == []
-    assert page["page_size"] == 0
-    assert page["has_more"] is False
+    assert page["pageSize"] == 0
+    assert page["hasMore"] is False
 
 
 @pytest.mark.anyio
@@ -869,7 +869,7 @@ async def test_list_members_no_profile_for_member():
     assert members[0]["nickname"] == ""
     assert members[0]["avatarId"] is None
     assert members[0]["intro"] == ""
-    assert page["has_more"] is False
+    assert page["hasMore"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -1043,10 +1043,10 @@ async def test_list_members_with_prev_page():
     members, page = await svc.list_members(group_id=5, page_start=30, page_size=10)
 
     assert len(members) == 1
-    assert page["has_prev"] is True
-    assert page["prev_start"] == 10
-    assert page["has_more"] is False
-    assert page["next_start"] == 0
+    assert page["hasPrev"] is True
+    assert page["prevStart"] == 10
+    assert page["hasMore"] is False
+    assert page["nextStart"] == 0
 
 
 @pytest.mark.anyio
@@ -1068,10 +1068,10 @@ async def test_list_members_empty_result():
     members, page = await svc.list_members(group_id=5, page_start=None, page_size=10)
 
     assert members == []
-    assert page["page_start"] == 0
-    assert page["page_size"] == 0
-    assert page["has_prev"] is False
-    assert page["has_more"] is False
+    assert page["pageStart"] == 0
+    assert page["pageSize"] == 0
+    assert page["hasPrev"] is False
+    assert page["hasMore"] is False
 
 
 @pytest.mark.anyio
@@ -1084,7 +1084,7 @@ async def test_list_members_negative_page_size():
     members, page = await svc.list_members(group_id=5, page_start=None, page_size=-1)
 
     assert members == []
-    assert page["page_size"] == 0
+    assert page["pageSize"] == 0
 
 
 # ---------------------------------------------------------------------------

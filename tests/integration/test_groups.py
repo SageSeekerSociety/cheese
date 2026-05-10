@@ -777,12 +777,12 @@ class TestGroupsMembersIntegration:
         assert data["code"] == 200
         assert len(data["data"]["members"]) == 1
         assert data["data"]["members"][0]["id"] == self.user.user_id
-        assert data["data"]["page"]["page_start"] == self.user.user_id
-        assert data["data"]["page"]["page_size"] == 1
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is True
-        assert data["data"]["page"]["next_start"] == self.aux_user.user_id
+        assert data["data"]["page"]["pageStart"] == self.user.user_id
+        assert data["data"]["page"]["pageSize"] == 1
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is True
+        assert data["data"]["page"]["nextStart"] == self.aux_user.user_id
 
     def test_get_group_members_from_specific_user(self):
         response = self.client.get(
@@ -795,12 +795,12 @@ class TestGroupsMembersIntegration:
         assert data["code"] == 200
         assert len(data["data"]["members"]) == 1
         assert data["data"]["members"][0]["id"] == self.aux_user.user_id
-        assert data["data"]["page"]["page_start"] == self.aux_user.user_id
-        assert data["data"]["page"]["page_size"] == 1
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.user.user_id
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == self.aux_user.user_id
+        assert data["data"]["page"]["pageSize"] == 1
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.user.user_id
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
     def test_get_group_members_from_quit_user(self):
         response = self.client.get(
@@ -812,12 +812,12 @@ class TestGroupsMembersIntegration:
         data = response.json()
         assert data["code"] == 200
         assert len(data["data"]["members"]) == 0
-        assert data["data"]["page"]["page_start"] == 0
-        assert data["data"]["page"]["page_size"] == 0
-        assert data["data"]["page"]["has_prev"] is True
-        assert data["data"]["page"]["prev_start"] == self.user.user_id
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == 0
+        assert data["data"]["page"]["pageSize"] == 0
+        assert data["data"]["page"]["hasPrev"] is True
+        assert data["data"]["page"]["prevStart"] == self.user.user_id
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
     def test_get_group_members_for_another_user(self):
         response = self.client.get(
@@ -830,12 +830,12 @@ class TestGroupsMembersIntegration:
         assert len(data["data"]["members"]) == 2
         assert data["data"]["members"][0]["id"] == self.user.user_id
         assert data["data"]["members"][1]["id"] == self.aux_user.user_id
-        assert data["data"]["page"]["page_start"] == self.user.user_id
-        assert data["data"]["page"]["page_size"] == 2
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == self.user.user_id
+        assert data["data"]["page"]["pageSize"] == 2
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
     def test_get_group_members_not_found(self):
         response = self.client.get(
@@ -854,12 +854,12 @@ class TestGroupsMembersIntegration:
         data = response.json()
         assert data["code"] == 200
         assert len(data["data"]["members"]) == 0
-        assert data["data"]["page"]["page_start"] == 0
-        assert data["data"]["page"]["page_size"] == 0
-        assert data["data"]["page"]["has_prev"] is False
-        assert data["data"]["page"]["prev_start"] == 0
-        assert data["data"]["page"]["has_more"] is False
-        assert data["data"]["page"]["next_start"] == 0
+        assert data["data"]["page"]["pageStart"] == 0
+        assert data["data"]["page"]["pageSize"] == 0
+        assert data["data"]["page"]["hasPrev"] is False
+        assert data["data"]["page"]["prevStart"] == 0
+        assert data["data"]["page"]["hasMore"] is False
+        assert data["data"]["page"]["nextStart"] == 0
 
 
 class TestGroupTargetsIntegration:

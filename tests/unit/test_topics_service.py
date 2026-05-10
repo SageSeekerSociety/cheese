@@ -66,10 +66,10 @@ class TestListTopics:
         items, page = await svc.list_topics(keyword=None, page_start=None, page_size=10)
 
         assert items == []
-        assert page["page_size"] == 0
-        assert page["page_start"] == 0
-        assert page["has_prev"] is False
-        assert page["has_more"] is False
+        assert page["pageSize"] == 0
+        assert page["pageStart"] == 0
+        assert page["hasPrev"] is False
+        assert page["hasMore"] is False
 
     @pytest.mark.anyio
     async def test_whitespace_keyword_returns_empty(self):
@@ -78,7 +78,7 @@ class TestListTopics:
         items, page = await svc.list_topics(keyword="   ", page_start=None, page_size=10)
 
         assert items == []
-        assert page["page_size"] == 0
+        assert page["pageSize"] == 0
 
     @pytest.mark.anyio
     async def test_empty_string_keyword_returns_empty(self):
@@ -87,7 +87,7 @@ class TestListTopics:
         items, page = await svc.list_topics(keyword="", page_start=None, page_size=10)
 
         assert items == []
-        assert page["page_size"] == 0
+        assert page["pageSize"] == 0
 
     @pytest.mark.anyio
     async def test_with_results_no_prev_no_more(self):
@@ -103,12 +103,12 @@ class TestListTopics:
         assert len(items) == 2
         assert items[0]["name"] == "Go"
         assert items[1]["name"] == "Golang"
-        assert page["page_size"] == 2
-        assert page["page_start"] == 1
-        assert page["has_prev"] is False
-        assert page["prev_start"] == 0
-        assert page["has_more"] is False
-        assert page["next_start"] == 0
+        assert page["pageSize"] == 2
+        assert page["pageStart"] == 1
+        assert page["hasPrev"] is False
+        assert page["prevStart"] == 0
+        assert page["hasMore"] is False
+        assert page["nextStart"] == 0
 
     @pytest.mark.anyio
     async def test_with_results_has_prev_and_more(self):
@@ -119,12 +119,12 @@ class TestListTopics:
         items, page = await svc.list_topics(keyword="Mid", page_start=5, page_size=1)
 
         assert len(items) == 1
-        assert page["page_size"] == 1
-        assert page["page_start"] == 5
-        assert page["has_prev"] is True
-        assert page["prev_start"] == 3
-        assert page["has_more"] is True
-        assert page["next_start"] == 7
+        assert page["pageSize"] == 1
+        assert page["pageStart"] == 5
+        assert page["hasPrev"] is True
+        assert page["prevStart"] == 3
+        assert page["hasMore"] is True
+        assert page["nextStart"] == 7
 
     @pytest.mark.anyio
     async def test_empty_results_with_keyword(self):
@@ -134,10 +134,10 @@ class TestListTopics:
         items, page = await svc.list_topics(keyword="xyz", page_start=None, page_size=10)
 
         assert items == []
-        assert page["page_size"] == 0
-        assert page["page_start"] == 0
-        assert page["has_prev"] is False
-        assert page["has_more"] is False
+        assert page["pageSize"] == 0
+        assert page["pageStart"] == 0
+        assert page["hasPrev"] is False
+        assert page["hasMore"] is False
 
 
 # ---------------------------------------------------------------------------

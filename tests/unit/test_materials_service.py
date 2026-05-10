@@ -337,12 +337,12 @@ class TestBundleServiceListBundles:
         items, page = await svc.list_bundles(keyword=None, page_start=None, page_size=10)
 
         assert len(items) == 2
-        assert page["page_start"] == 1
-        assert page["page_size"] == 2
-        assert page["has_prev"] is False
-        assert page["prev_start"] == 0
-        assert page["has_more"] is False
-        assert page["next_start"] == 0
+        assert page["pageStart"] == 1
+        assert page["pageSize"] == 2
+        assert page["hasPrev"] is False
+        assert page["prevStart"] == 0
+        assert page["hasMore"] is False
+        assert page["nextStart"] == 0
 
     @pytest.mark.anyio
     async def test_pagination_with_page_start(self):
@@ -353,12 +353,12 @@ class TestBundleServiceListBundles:
 
         items, page = await svc.list_bundles(keyword=None, page_start=30, page_size=2)
 
-        assert page["page_start"] == 30
-        assert page["page_size"] == 2
-        assert page["has_prev"] is True
-        assert page["prev_start"] == 20
-        assert page["has_more"] is True
-        assert page["next_start"] == 50
+        assert page["pageStart"] == 30
+        assert page["pageSize"] == 2
+        assert page["hasPrev"] is True
+        assert page["prevStart"] == 20
+        assert page["hasMore"] is True
+        assert page["nextStart"] == 50
 
     @pytest.mark.anyio
     async def test_page_start_not_found_falls_back_to_zero(self):
@@ -368,10 +368,10 @@ class TestBundleServiceListBundles:
 
         items, page = await svc.list_bundles(keyword=None, page_start=999, page_size=2)
 
-        assert page["page_start"] == 1
-        assert page["has_prev"] is False
-        assert page["has_more"] is True
-        assert page["next_start"] == 3
+        assert page["pageStart"] == 1
+        assert page["hasPrev"] is False
+        assert page["hasMore"] is True
+        assert page["nextStart"] == 3
 
     @pytest.mark.anyio
     async def test_empty_result(self):
@@ -382,10 +382,10 @@ class TestBundleServiceListBundles:
         items, page = await svc.list_bundles(keyword=None, page_start=None, page_size=10)
 
         assert items == []
-        assert page["page_start"] == 0
-        assert page["page_size"] == 0
-        assert page["has_prev"] is False
-        assert page["has_more"] is False
+        assert page["pageStart"] == 0
+        assert page["pageSize"] == 0
+        assert page["hasPrev"] is False
+        assert page["hasMore"] is False
 
     @pytest.mark.anyio
     async def test_newest_sort_passes_descending(self):
@@ -444,9 +444,9 @@ class TestBundleServiceListBundles:
 
         items, page = await svc.list_bundles(keyword=None, page_start=3, page_size=5)
 
-        assert page["has_more"] is False
-        assert page["next_start"] == 0
-        assert page["has_prev"] is True
+        assert page["hasMore"] is False
+        assert page["nextStart"] == 0
+        assert page["hasPrev"] is True
 
 
 # ---------------------------------------------------------------------------
