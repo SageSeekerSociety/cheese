@@ -1157,7 +1157,7 @@ class SpaceAnalyticsViewService:
         """
         if not ms:
             return ""
-        dt = datetime.fromtimestamp(ms / 1000)
+        dt = datetime.fromtimestamp(ms / 1000, tz=UTC)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
 
     @staticmethod
