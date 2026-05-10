@@ -1651,9 +1651,9 @@ async def patch_task(
     # deadline / registrationStartAt / participantLimit 及其 hasXxx 标志
     if payload.deadline is not None:
         try:
-            task.deadline = datetime.fromtimestamp(
-                int(payload.deadline) / 1000.0, tz=UTC
-            ).replace(tzinfo=None)
+            task.deadline = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
+                tzinfo=None
+            )
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
     if payload.has_deadline is False:

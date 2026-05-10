@@ -14,7 +14,7 @@ description: 审查流程 — 支持并行（Claude Code）和串行（其他 AI
 ```
 Step 1: git diff / git status
          │
-         ├──→ 后台启动 check-runner agent
+         ├──→ 后台启动 general-purpose agent（check-runner prompt）
          │    run_in_background: true, timeout: 20min
          │
          └──→ Step 2→3: 读改动文件、对照 reference/

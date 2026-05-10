@@ -242,7 +242,9 @@ async def patch_project(
     if project is None:
         raise NotFoundError("Project not found")
 
-    color_code = _validate_color_code(payload.color_code) if payload.color_code is not None else None
+    color_code = (
+        _validate_color_code(payload.color_code) if payload.color_code is not None else None
+    )
 
     updated = await service.update_project(
         project,

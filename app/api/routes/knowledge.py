@@ -1,4 +1,5 @@
-from typing import Annotated
+# ── Request Models ────────────────────────────────────────────────────────────
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 from pydantic import BaseModel, ConfigDict
@@ -11,11 +12,6 @@ from app.domain.knowledge.repositories import KnowledgeRepository
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.team.repositories import TeamRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
-
-# ── Request Models ────────────────────────────────────────────────────────────
-
-
-from typing import Any
 
 
 class PatchKnowledgeRequest(BaseModel):

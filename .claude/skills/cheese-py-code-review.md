@@ -23,12 +23,22 @@ Review changed code against cheese-backend-py project standards.
 1. First, understand what files changed (`git diff`, `git status`).
 2. Read the changed files thoroughly.
 3. Cross-check with `reference/cheese-backend-nt/` (Kotlin) or `reference/cheese-backend/` (NestJS) when behavior is unclear.
-4. **MANDATORY**: Launch check-runner agent in background immediately after step 1.
-   - Use the Agent tool with `subagent_type: "check-runner"` and `run_in_background: true`.
+4. **MANDATORY**: Launch background check immediately after step 1.
+   - Use the Agent tool with `subagent_type: "general-purpose"`, `run_in_background: true`, and the prompt:
+
+     ```
+     Run the project check script:
+       bash .claude/scripts/check.sh
+     Set Bash timeout to 20 minutes (1200000ms). Full tests take ~10-12 min.
+     When done, report only:
+     - PASS or FAIL per step (ruff / pyright / pytest)
+     - If FAIL: which tests failed (last ~30 lines of pytest output)
+     - If PASS: just say "All checks passed" — no more than 3 lines.
+     ```
+
    - While it runs, continue with steps 2→3→5 (read files, cross-check, review).
    - When the agent reports back: if any step FAIL, report "Tests failed — commit blocked".
      If PASS, note "All checks passed" in the review summary.
-   - Timeout is 20 minutes — the agent handles this.
 5. Report findings grouped by severity. If step 4 failed, only report Critical: "Tests failed — commit blocked".
 
 ## Review Checklist
