@@ -115,6 +115,96 @@ class TestTOTPService:
         assert result is True
 
 
+class TestTOTPServiceExtended:
+    """Additional TOTP tests for uncovered methods."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def totp_service(self, mock_redis):
+        from app.domain.user.login_security import TOTPService
+
+        return TOTPService(mock_redis)
+
+    @pytest.mark.anyio
+    async def test_confirm_2fa_setup_no_pending_secret(self, totp_service, mock_redis):
+        mock_redis.get.return_value = None
+        result = await totp_service.confirm_2fa_setup(123, "123456")
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_confirm_2fa_setup_invalid_code(self, totp_service, mock_redis):
+        mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
+        result = await totp_service.confirm_2fa_setup(123, "000000")
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_confirm_2fa_setup_valid_code(self, totp_service, mock_redis):
+        import pyotp
+
+        secret = pyotp.random_base32()
+        totp = pyotp.TOTP(secret)
+        code = totp.now()
+        mock_redis.get.return_value = secret.encode()
+
+        result = await totp_service.confirm_2fa_setup(123, code)
+        assert result == secret
+        mock_redis.delete.assert_called_once()
+        mock_redis.set.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_verify_2fa_no_secret(self, totp_service, mock_redis):
+        mock_redis.get.return_value = None
+        result = await totp_service.verify_2fa(123, "123456")
+        assert result is False
+
+    @pytest.mark.anyio
+    async def test_verify_2fa_valid(self, totp_service, mock_redis):
+        import pyotp
+
+        secret = pyotp.random_base32()
+        totp = pyotp.TOTP(secret)
+        code = totp.now()
+        mock_redis.get.return_value = secret.encode()
+
+        result = await totp_service.verify_2fa(123, code)
+        assert result is True
+
+    @pytest.mark.anyio
+    async def test_verify_2fa_invalid(self, totp_service, mock_redis):
+        mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
+        result = await totp_service.verify_2fa(123, "000000")
+        assert result is False
+
+
+class TestLoginRateLimiterExtended:
+    """Additional rate limiter tests for uncovered methods."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        return AsyncMock()
+
+    @pytest.fixture
+    def rate_limiter(self, mock_redis):
+        from app.domain.user.login_security import LoginRateLimiter
+
+        return LoginRateLimiter(mock_redis)
+
+    @pytest.mark.anyio
+    async def test_get_remaining_lockout_seconds_locked(self, rate_limiter, mock_redis):
+        mock_redis.ttl.return_value = 300
+        result = await rate_limiter.get_remaining_lockout_seconds("testuser")
+        assert result == 300
+
+    @pytest.mark.anyio
+    async def test_get_remaining_lockout_seconds_not_locked(self, rate_limiter, mock_redis):
+        mock_redis.ttl.return_value = -1
+        result = await rate_limiter.get_remaining_lockout_seconds("testuser")
+        assert result == 0
+
+
 class TestSessionManager:
     @pytest.fixture
     def mock_redis(self):
@@ -191,6 +281,37 @@ class TestSessionManager:
         }
         with pytest.raises(ForbiddenError):
             await session_manager.revoke_session("test-id", 123)
+
+    @pytest.mark.anyio
+    async def test_update_last_active(self, session_manager, mock_redis) -> None:
+        await session_manager.update_last_active("test-id")
+        mock_redis.hset.assert_called_once()
+        mock_redis.expire.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_list_user_sessions_with_stale(self, session_manager, mock_redis) -> None:
+        """Sessions that no longer exist in Redis get cleaned from the set."""
+        mock_redis.smembers.return_value = {b"alive", b"stale"}
+        mock_redis.hgetall.side_effect = [
+            {b"session_id": b"alive", b"last_active_at": b"2024-01-01"},
+            {},  # stale session returns empty
+        ]
+        sessions = await session_manager.list_user_sessions(123)
+        assert len(sessions) == 1
+        mock_redis.srem.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_revoke_all_sessions(self, session_manager, mock_redis) -> None:
+        mock_redis.smembers.return_value = {b"s1", b"s2", b"s3"}
+        count = await session_manager.revoke_all_sessions(123)
+        assert count == 3
+        assert mock_redis.delete.call_count == 3
+
+    @pytest.mark.anyio
+    async def test_revoke_all_sessions_except_current(self, session_manager, mock_redis) -> None:
+        mock_redis.smembers.return_value = {b"s1", b"s2", b"s3"}
+        count = await session_manager.revoke_all_sessions(123, except_session_id="s2")
+        assert count == 2  # s2 is excluded
 
 
 class TestPasswordResetService:
