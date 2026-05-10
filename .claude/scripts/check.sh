@@ -12,30 +12,30 @@ DC="docker compose exec cheese_py sh -c"
 echo "==> ruff check"
 if $DC "cd /app && uv run ruff check ." 2>&1 | tail -1; then
     echo "  PASS: ruff"
-    ((PASS++))
+    ((++PASS))
 else
     echo "  FAIL: ruff"
-    ((FAIL++))
+    ((++FAIL))
 fi
 
 # --- pyright ---
 echo "==> pyright"
 if $DC "cd /app && uv run pyright" 2>&1 | tail -2; then
     echo "  PASS: pyright"
-    ((PASS++))
+    ((++PASS))
 else
     echo "  FAIL: pyright"
-    ((FAIL++))
+    ((++FAIL))
 fi
 
 # --- pytest ---
 echo "==> pytest"
 if $DC "cd /app && uv run python -m pytest tests/ -q" 2>&1 | tail -3; then
     echo "  PASS: pytest"
-    ((PASS++))
+    ((++PASS))
 else
     echo "  FAIL: pytest"
-    ((FAIL++))
+    ((++FAIL))
 fi
 
 # --- summary ---

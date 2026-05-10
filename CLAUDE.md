@@ -12,7 +12,8 @@ This directory contains AI-assisted development tooling. Other AIs (or humans) s
 │   └── cheese-py-code-review.md     # Code review checklist and workflow
 ├── scripts/
 │   ├── check.sh                     # ruff + pyright + pytest, one command
-│   └── post-pull.sh                 # Post-git-pull checks (migrations, deps, health)
+│   ├── post-pull.sh                 # Post-git-pull checks (migrations, deps, health)
+│   └── pre-commit                   # Copy to .git/hooks/ to block commits on check failure
 ├── reference/
 │   ├── post-pull-checks.md          # Detailed post-pull checklist
 │   ├── parallel-review.md           # Review workflow (parallel + serial modes)
@@ -48,6 +49,7 @@ Instead of typing long Docker commands, use the scripts in `.claude/scripts/`:
 ```bash
 bash .claude/scripts/check.sh       # ruff + pyright + pytest, prints "3/3 passed" or failures
 bash .claude/scripts/post-pull.sh   # migration check, alembic upgrade, dep sync, health check
+bash .claude/scripts/pre-commit     # install as .git/hooks/pre-commit to block commits on check failure
 ```
 
 Scripts run git commands on the host and Python/DB commands in Docker automatically.
@@ -125,7 +127,15 @@ This runs ruff + pyright + the FULL test suite. Full suite takes ~10-12 minutes 
 
 ### Commit Gate
 
-Tests MUST pass before any commit. If a test fails, fix it — do NOT bypass. Run the full suite for the affected domain, not just a single file. New features require tests (unit + integration as appropriate).
+Tests MUST pass before any commit. A pre-commit hook enforces this automatically — it runs `bash .claude/scripts/check.sh` and blocks the commit on failure.
+
+```bash
+# Install the hook (once per clone):
+cp .claude/scripts/pre-commit .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+If a test fails, fix it — do NOT bypass with `--no-verify`. Run the full suite for the affected domain, not just a single file. New features require tests (unit + integration as appropriate).
 
 ## Linting & Type Checking
 
