@@ -1,66 +1,144 @@
 # Project Conventions
 
+## .claude/ Directory Structure
+
+This directory contains AI-assisted development tooling. Other AIs (or humans) should read it to understand how this project is developed:
+
+```
+.claude/
+├── agents/
+│   └── check-runner.md              # Background test runner (parallel to review)
+├── skills/
+│   └── cheese-py-code-review.md     # Code review checklist and workflow
+├── scripts/
+│   ├── check.sh                     # ruff + pyright + pytest, one command
+│   └── post-pull.sh                 # Post-git-pull checks (migrations, deps, health)
+├── reference/
+│   ├── post-pull-checks.md          # Detailed post-pull checklist
+│   ├── parallel-review.md           # Review workflow (parallel + serial modes)
+│   └── sync-rule.md                 # CLAUDE.md ↔ .claude/ sync rules (highest priority)
+└── settings.json                    # Permissions allowlist for common commands
+```
+
+- **agents/** — Subagent definitions. `check-runner` runs tests in background while main review proceeds.
+- **skills/** — AI skill definitions. `cheese-py-code-review.md` is the code review skill.
+- **scripts/** — Shell scripts that wrap Docker commands. Use these to save tokens.
+- **reference/** — Project-specific specs and checklists (tracked in git).
+- **settings.json** — Pre-approved commands to reduce permission prompts.
+
 ## Operating System
 
-This project targets **Linux / macOS**. All scripts, venv paths, and toolchain assume a Unix environment.
-
-**Windows users**: do NOT run `uv sync`, `uv run`, or any Python commands directly on the host. Use Docker instead:
+This project targets **Linux / macOS**. All Python execution, testing, and tooling run **inside Docker**:
 
 ```bash
 docker compose up -d                          # start all services (DB, Redis, backend)
-docker compose exec cheese_py <command>       # run commands inside the container
+docker compose exec cheese_py sh -c "<cmd>"   # run commands inside the container
 docker compose logs cheese_py                 # view backend logs
 docker compose restart cheese_py              # restart backend
 ```
 
-The Docker container mounts the project directory as a volume, so file changes on the host are immediately reflected inside the container. Code editing can be done on Windows; execution must happen in Docker.
+The Docker container mounts the project directory as a volume — file changes on the host are immediately reflected inside. Code editing can be done on Windows; execution must happen in Docker.
 
-## Python version
-- Python version is managed by uv (pinned in `.python-version`). Currently >=3.11.
-- Do NOT use `from __future__ import annotations`. The project targets Python 3.11+ where `list[str]`, `dict[int, str]`, `X | None` etc. work natively in annotations.
-- Do NOT name methods `list`, `set`, `dict`, `type`, or other builtin names — they shadow builtins in class scope and break type annotations.
-- Use quoted strings (`"PermissionRule"`) only for genuine forward references (e.g., self-referencing class in a `@staticmethod` return type).
+**Important**: do NOT run `uv sync`, `uv run`, or any Python commands directly on the Windows host. Always use `docker compose exec cheese_py sh -c "cd /app && <command>"`.
 
-## Datetime convention
-- All DB columns use `DateTime(timezone=True)` (PostgreSQL `TIMESTAMPTZ`). Always pass `datetime.now(UTC)` (timezone-aware) — never `.replace(tzinfo=None)`.
+## Pre-written Scripts
 
-## Reference code
+Instead of typing long Docker commands, use the scripts in `.claude/scripts/`:
 
-The `reference/` directory contains the original implementations this project is migrated from. Always consult them when unclear about expected behavior, API contracts, or business logic:
+```bash
+bash .claude/scripts/check.sh       # ruff + pyright + pytest, prints "3/3 passed" or failures
+bash .claude/scripts/post-pull.sh   # migration check, alembic upgrade, dep sync, health check
+```
 
-- `reference/cheese-backend/` — **NestJS (TypeScript)** original backend (comments, materials, answers, questions, etc.)
-- `reference/cheese-backend-nt/` — **Kotlin (Spring Boot)** backend (teams, tasks, spaces, notifications, auth, AI, etc.)
-- `reference/cheese-frontend/` — **Vue** frontend (useful for understanding API contract expectations)
+Scripts run git commands on the host and Python/DB commands in Docker automatically.
 
-When fixing bugs or implementing features, cross-reference with the corresponding reference code to verify correctness.
+## Python Conventions
+
+- Python >=3.11. Version pinned in `.python-version`, managed by uv.
+- Do NOT use `from __future__ import annotations`. `list[str]`, `dict[int, str]`, `X | None` work natively.
+- Do NOT name methods `list`, `set`, `dict`, `type` — they shadow builtins and break annotations.
+- Use quoted forward references (`"ClassName"`) only for genuine self-referencing cases (e.g., `@staticmethod` returning the class itself).
+- All function signatures must be type-annotated. No `Any` unless at external boundaries.
+- Pydantic v2 for request/response schemas.
+- Async/await throughout. `AsyncSession` for database access.
+- Dependency injection via FastAPI `Depends()`.
+
+## Architecture
+
+```
+Route → Service → Repository → Model
+(app/api/routes/) → (app/domain/**/services.py) → (app/domain/**/repositories.py) → (app/domain/**/models.py)
+```
+
+- **Routes**: parameter parsing, DI, call service, return response. No business logic.
+- **Services**: all business logic, validation, cross-domain coordination.
+- **Repositories**: data access only. No business logic.
+- **Models**: SQLAlchemy 2.0 style (`mapped_column`, `Mapped[]`).
+
+## API Design
+
+- RESTful: GET/POST/PUT/DELETE on `/resource`.
+- Pagination: `pageStart` + `pageSize`. Return `{data: [...], total: int}`.
+- Response format: `{"code": 200, "message": "...", "data": {...}}`.
+- Errors: use `app.core.errors` classes, not raw `HTTPException`.
+- Auth: `Depends(require_auth_user)` for protected endpoints; `Depends(get_auth_user)` for public-aware.
+- JWT: `Authorization: Bearer <token>`, always check `type` claim.
+
+## Datetime
+
+- All DB columns use `DateTime(timezone=True)` (PostgreSQL `TIMESTAMPTZ`).
+- Always pass `datetime.now(UTC)` (timezone-aware). Never use `.replace(tzinfo=None)`.
+
+## Security
+
+- Validate all input via Pydantic schemas.
+- Use SQLAlchemy ORM for queries (parameterized). Raw SQL must use `text()` with bind params.
+- No hardcoded secrets; use `app.core.config.settings`.
+
+## Reference Code
+
+The root-level `reference/` directory (gitignored) contains original implementations this project is migrated from. Consult when unclear about expected behavior:
+
+- `reference/cheese-backend/` — NestJS/TypeScript (comments, materials, answers, questions)
+- `reference/cheese-backend-nt/` — Kotlin/Spring Boot (teams, tasks, spaces, notifications, auth, AI)
+- `reference/cheese-frontend/` — Vue (API contract expectations)
+
+This is distinct from `.claude/reference/` which contains project development specs (tracked in git).
 
 ## Testing
 
-- Write **normal functional tests**, not regression-style tests. Test actual behavior (mock dependencies, call the function, assert outputs), not source code inspection (`inspect.getsource` is not acceptable).
-- Use `pytest.mark.anyio` for async tests.
-- Use `SimpleNamespace` for lightweight fakes, `AsyncMock`/`MagicMock` for repository/service mocks.
-- Test files go in `tests/unit/` for unit tests, `tests/contract/` for API contract comparisons, `tests/integration/` for DB-backed tests.
-- Run tests: `uv run python -m pytest tests/unit/ -q`
+- Write **functional tests** that test actual behavior. Use mocked dependencies, call the function, assert outputs. Do NOT inspect source code (`inspect.getsource` is unacceptable).
+- `pytest.mark.anyio` for async tests.
+- `SimpleNamespace` + `AsyncMock`/`MagicMock` for fakes.
+- Test locations:
+  - `tests/unit/` — unit tests (no DB)
+  - `tests/integration/` — DB-backed tests
+  - `tests/contract/` — API contract comparisons
 
-**Commit gate**: tests MUST pass before any commit. If a test fails, fix it first — do NOT bypass. Run the full suite for the affected domain, not just a single file.
+### Running Tests
 
-**New features require tests**: when adding a new API endpoint, service, or domain feature, write corresponding tests (unit + integration as appropriate). Do NOT submit untested code.
+```bash
+bash .claude/scripts/check.sh
+```
 
-On Windows (Docker): `docker compose exec cheese_py sh -c "cd /app && uv run python -m pytest tests/ -q"`
+This runs ruff + pyright + the FULL test suite. Full suite takes ~10-12 minutes — always set Bash timeout to at least 20 minutes (1200000ms).
 
-**Test timeout**: full test suite takes ~10-12 minutes. Always set Bash timeout to at least **20 minutes** (1200000ms) when running the full suite. Integration tests hit real databases and are slow — do not abort early.
+### Commit Gate
+
+Tests MUST pass before any commit. If a test fails, fix it — do NOT bypass. Run the full suite for the affected domain, not just a single file. New features require tests (unit + integration as appropriate).
 
 ## Linting & Type Checking
 
-- **ruff**: `uv run ruff check .` — must pass with zero errors.
-- **pyright**: `uv run pyright` — must have zero errors in app code (warnings are acceptable for third-party library type issues).
-- Config is in `pyproject.toml` under `[tool.ruff]` and `[tool.pyright]`.
+- **ruff**: zero errors (`uv run ruff check .`)
+- **pyright**: zero errors in app code (third-party type issues may be warnings)
+- Config in `pyproject.toml` under `[tool.ruff]` and `[tool.pyright]`
 
-## Workflow preferences
+## Workflow Preferences
 
 - Communicate in Chinese (user preference).
-- When auditing for bugs, focus on **real runtime bugs** (crashes, data corruption, security, incorrect behavior). Do not report style issues or theoretical concerns.
-- Always run `ruff check`, `pytest`, and `pyright` after making changes to verify nothing is broken.
-- **Commit gate**: tests must pass. Block the commit if any test fails — no exceptions.
+- Bug auditing: focus on real runtime bugs (crashes, data corruption, security, incorrect behavior). Do not report style issues or theoretical concerns.
 - Commit messages in English, concise, focused on "why".
-- **CLAUDE.md ↔ .claude/skills/**: these two are peer project specifications. When updating conventions, testing rules, timezone settings, or workflow preferences in one, sync the other immediately.
+- After making changes, always run `bash .claude/scripts/check.sh` to verify.
+- After `git pull`, run `bash .claude/scripts/post-pull.sh`.
+- **CLAUDE.md ↔ .claude/**: these are peer project specifications. When updating conventions, scripts, agents, skills, or reference docs in one, sync the other immediately. See `.claude/reference/sync-rule.md` for the full checklist.
+- **All commits go through PR**: never commit directly to main. Always create a feature branch, commit there, and open a pull request. This ensures code review happens before merge.

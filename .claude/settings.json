@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash .claude/scripts/check.sh *)",
+      "Bash(bash .claude/scripts/post-pull.sh *)",
+      "Bash(docker compose exec cheese_py *)",
+      "Bash(docker compose up *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose restart *)",
+      "Bash(docker compose ps *)",
+      "Bash(git diff *)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(uv run ruff *)",
+      "Bash(uv run pyright *)",
+      "Bash(uv run python -m pytest *)",
+      "Bash(curl -sf http://localhost:8000 *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)"
+    ]
+  }
+}
