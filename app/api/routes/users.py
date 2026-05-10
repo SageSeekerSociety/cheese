@@ -383,8 +383,8 @@ async def unfollow_user(
 )
 async def get_followers(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -451,12 +451,12 @@ async def get_followers(
 
     first_id = page_follower_ids[0] if page_follower_ids else 0
     page = {
-        "page_start": first_id,
-        "page_size": returned,
-        "has_prev": has_prev,
-        "prev_start": prev_start,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": first_id,
+        "pageSize": returned,
+        "hasPrev": has_prev,
+        "prevStart": prev_start,
+        "hasMore": has_more,
+        "nextStart": next_start,
     }
 
     return {
@@ -475,8 +475,8 @@ async def get_followers(
 )
 async def get_followees(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    page_start: int | None = Query(default=None, alias="page_start"),
-    page_size: int = Query(default=20, ge=1, le=200, alias="page_size"),
+    page_start: int | None = Query(default=None, alias="pageStart"),
+    page_size: int = Query(default=20, ge=1, le=200, alias="pageSize"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -543,12 +543,12 @@ async def get_followees(
 
     first_id = page_followee_ids[0] if page_followee_ids else 0
     page = {
-        "page_start": first_id,
-        "page_size": returned,
-        "has_prev": has_prev,
-        "prev_start": prev_start,
-        "has_more": has_more,
-        "next_start": next_start,
+        "pageStart": first_id,
+        "pageSize": returned,
+        "hasPrev": has_prev,
+        "prevStart": prev_start,
+        "hasMore": has_more,
+        "nextStart": next_start,
     }
 
     return {
