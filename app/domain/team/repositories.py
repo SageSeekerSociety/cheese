@@ -186,7 +186,7 @@ class TeamRepository:
                 "User is already a member of this team",
                 data={"teamId": team_id, "userId": user_id},
             )
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         rel = TeamUserRelation(
             team_id=team_id,
             user_id=user_id,
@@ -200,12 +200,12 @@ class TeamRepository:
         return rel
 
     async def soft_delete_member(self, relation: TeamUserRelation) -> None:
-        relation.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        relation.deleted_at = datetime.now(UTC)
         relation.updated_at = relation.deleted_at
         await self._session.flush()
 
     async def soft_delete_team(self, team: Team) -> None:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         team.deleted_at = now
         team.updated_at = now
         await self._session.flush()

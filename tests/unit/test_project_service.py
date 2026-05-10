@@ -14,7 +14,7 @@ from app.domain.project.services import ProjectService
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = datetime.now(UTC).replace(tzinfo=None)
+_NOW = datetime.now(UTC)
 
 
 def _make_project(**overrides):

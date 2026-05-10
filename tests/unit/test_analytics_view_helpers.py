@@ -257,25 +257,25 @@ class TestNormalizeSortOrder:
 
 class TestBucketKey:
     def test_day(self):
-        dt = datetime(2025, 6, 15, 14, 30, 45)
+        dt = datetime(2025, 6, 15, 14, 30, 45, tzinfo=UTC)
         result = SpaceAnalyticsViewService._bucket_key(dt, "day")
-        assert result == datetime(2025, 6, 15, 0, 0, 0)
+        assert result == datetime(2025, 6, 15, 0, 0, 0, tzinfo=UTC)
 
     def test_week(self):
         # 2025-06-15 is a Sunday (weekday=6) -> Monday = 2025-06-09
-        dt = datetime(2025, 6, 15, 14, 30, 45)
+        dt = datetime(2025, 6, 15, 14, 30, 45, tzinfo=UTC)
         result = SpaceAnalyticsViewService._bucket_key(dt, "week")
         assert result.weekday() == 0  # Monday
 
     def test_month(self):
-        dt = datetime(2025, 6, 15, 14, 30, 45)
+        dt = datetime(2025, 6, 15, 14, 30, 45, tzinfo=UTC)
         result = SpaceAnalyticsViewService._bucket_key(dt, "month")
-        assert result == datetime(2025, 6, 1, 0, 0, 0)
+        assert result == datetime(2025, 6, 1, 0, 0, 0, tzinfo=UTC)
 
     def test_aware_datetime(self):
         dt = datetime(2025, 6, 15, 14, 30, 45, tzinfo=UTC)
         result = SpaceAnalyticsViewService._bucket_key(dt, "day")
-        assert result.tzinfo is None
+        assert result.tzinfo is not None
 
 
 # ---------------------------------------------------------------------------

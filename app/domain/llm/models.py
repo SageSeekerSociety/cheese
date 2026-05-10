@@ -18,10 +18,10 @@ class AIUserQuota(Base):
     daily_seu_quota: Mapped[float | None] = mapped_column(Float, nullable=True)
     remaining_seu: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_seu_consumed: Mapped[float | None] = mapped_column(Float, nullable=True)
-    last_reset_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_reset_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AIConversation(Base):
@@ -38,9 +38,9 @@ class AIConversation(Base):
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     model_type: Mapped[str] = mapped_column(Text, nullable=False, default="standard")
     module_type: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     messages: Mapped[list["AIMessage"]] = relationship(
         "AIMessage", back_populates="conversation", lazy="selectin"
@@ -67,9 +67,9 @@ class AIMessage(Base):
     reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     reasoning_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     conversation: Mapped["AIConversation"] = relationship(
         "AIConversation", back_populates="messages"

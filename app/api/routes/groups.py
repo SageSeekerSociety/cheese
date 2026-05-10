@@ -240,8 +240,8 @@ async def create_group_target(
     if not started_at or not ended_at:
         raise BadRequestError("startedAt and endedAt are required")
 
-    started_at_dt = datetime.fromtimestamp(started_at / 1000, tz=UTC).replace(tzinfo=None)
-    ended_at_dt = datetime.fromtimestamp(ended_at / 1000, tz=UTC).replace(tzinfo=None)
+    started_at_dt = datetime.fromtimestamp(started_at / 1000, tz=UTC)
+    ended_at_dt = datetime.fromtimestamp(ended_at / 1000, tz=UTC)
 
     result = await service.create_target(
         group_id=group_id,
@@ -288,12 +288,12 @@ async def update_group_target(
     attendance_frequency = payload.get("attendanceFrequency")
 
     started_at_dt = (
-        datetime.fromtimestamp(started_at / 1000, tz=UTC).replace(tzinfo=None)
+        datetime.fromtimestamp(started_at / 1000, tz=UTC)
         if started_at
         else None
     )
     ended_at_dt = (
-        datetime.fromtimestamp(ended_at / 1000, tz=UTC).replace(tzinfo=None) if ended_at else None
+        datetime.fromtimestamp(ended_at / 1000, tz=UTC) if ended_at else None
     )
 
     target = await service.update_target(

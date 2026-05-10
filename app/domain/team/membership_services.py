@@ -47,7 +47,7 @@ class TeamMembershipService:
         new_status: ApplicationStatus,
         processor_id: int,
     ) -> TeamMembershipApplication:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         app.status = new_status.value
         app.processed_by_id = processor_id
         app.processed_at = now
@@ -68,7 +68,7 @@ class TeamMembershipService:
 
         await self._validate_user_can_apply_or_be_invited(user_id, team_id)
 
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         app = TeamMembershipApplication(
             user_id=user_id,
             team_id=team_id,
@@ -135,7 +135,7 @@ class TeamMembershipService:
 
         await self._validate_user_can_apply_or_be_invited(user_id_to_invite, team_id)
 
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         app = TeamMembershipApplication(
             user_id=user_id_to_invite,
             team_id=team_id,

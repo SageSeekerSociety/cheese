@@ -43,7 +43,7 @@ class QuestionRepository:
         group_id: int | None,
         bounty: int,
     ) -> Question:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         question = Question(
             created_by_id=created_by_id,
             title=title,
@@ -115,7 +115,7 @@ class QuestionRepository:
         existing = await self._get_follow_relation(question_id, user_id)
         if existing is not None and existing.deleted_at is None:
             return False
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         if existing is None:
             relation = QuestionFollowerRelation(
                 question_id=question_id,
@@ -134,7 +134,7 @@ class QuestionRepository:
         relation = await self._get_follow_relation(question_id, user_id)
         if relation is None or relation.deleted_at is not None:
             return False
-        relation.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        relation.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return True
 
@@ -208,7 +208,7 @@ class QuestionRepository:
         if question is None:
             return None
         question.accepted_answer_id = answer_id
-        question.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        question.updated_at = datetime.now(UTC)
         await self._session.flush()
         return question
 
@@ -218,7 +218,7 @@ class QuestionRepository:
         if question is None:
             return None
         question.accepted_answer_id = None
-        question.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        question.updated_at = datetime.now(UTC)
         await self._session.flush()
         return question
 
@@ -249,7 +249,7 @@ class QuestionRepository:
 
     async def vote(self, *, question_id: int, user_id: int, vote_type: str) -> Attitude:
         existing = await self._get_vote(question_id, user_id)
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         if existing is not None:
             existing.attitude = vote_type
             existing.updated_at = now
@@ -403,17 +403,17 @@ class QuestionRepository:
             question.content = content
         if type_ is not None:
             question.type = type_
-        question.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        question.updated_at = datetime.now(UTC)
         await self._session.flush()
         return question
 
     async def soft_delete(self, question: Question) -> None:
-        question.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        question.deleted_at = datetime.now(UTC)
         await self._session.flush()
 
     async def set_bounty(self, question: Question, bounty: int) -> Question:
         question.bounty = bounty
-        question.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        question.updated_at = datetime.now(UTC)
         await self._session.flush()
         return question
 
@@ -479,7 +479,7 @@ class QuestionTopicRepository:
         )
         result = await self._session.execute(stmt)
         existing = list(result.scalars().all())
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         for row in existing:
             row.deleted_at = now
         for topic_id in topic_ids:
@@ -571,7 +571,7 @@ class QuestionInvitationRepository:
 
     async def create_invitation(self, *, question_id: int, user_id: int) -> QuestionInvitation:
         existing = await self._get_invitation(question_id, user_id)
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         if existing is not None:
             existing.updated_at = now
             await self._session.flush()

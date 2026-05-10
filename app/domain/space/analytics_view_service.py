@@ -187,7 +187,7 @@ class SpaceAnalyticsViewService:
             approved_value=None,
         )
 
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
 
         pending_task_approval = sum(1 for t in ctx.tasks if t.approved == APPROVED_MAP["NONE"])
         pending_participant_approval = sum(
@@ -969,15 +969,15 @@ class SpaceAnalyticsViewService:
 
     @staticmethod
     def _bucket_key(dt: datetime, group_by: str) -> datetime:
-        # Normalize to naive UTC at bucket start
-        naive = dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+        # Normalize to UTC at bucket start
+        aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
         if group_by == "day":
-            return naive.replace(hour=0, minute=0, second=0, microsecond=0)
+            return aware.replace(hour=0, minute=0, second=0, microsecond=0)
         if group_by == "week":
-            start = naive.replace(hour=0, minute=0, second=0, microsecond=0)
+            start = aware.replace(hour=0, minute=0, second=0, microsecond=0)
             return start - timedelta(days=start.weekday())
         # month
-        return naive.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return aware.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     def _bucketize(
         self,
@@ -987,16 +987,16 @@ class SpaceAnalyticsViewService:
         to_dt: datetime,
         group_by: str,
     ) -> list[dict]:
-        from_naive = from_dt.replace(tzinfo=None) if from_dt.tzinfo else from_dt
-        to_naive = to_dt.replace(tzinfo=None) if to_dt.tzinfo else to_dt
+        from_aware = from_dt if from_dt.tzinfo else from_dt.replace(tzinfo=UTC)
+        to_aware = to_dt if to_dt.tzinfo else to_dt.replace(tzinfo=UTC)
         counter: Counter[datetime] = Counter()
         for v in values:
             if v is None:
                 continue
-            naive = v.replace(tzinfo=None) if v.tzinfo is not None else v
-            if naive < from_naive or naive > to_naive:
+            aware = v if v.tzinfo is not None else v.replace(tzinfo=UTC)
+            if aware < from_aware or aware > to_aware:
                 continue
-            counter[self._bucket_key(naive, group_by)] += 1
+            counter[self._bucket_key(aware, group_by)] += 1
         return [
             {"bucket": self._to_timestamp_ms(bucket) or 0, "count": count}
             for bucket, count in sorted(counter.items())
@@ -1008,14 +1008,14 @@ class SpaceAnalyticsViewService:
 
     @staticmethod
     def _resolve_window(from_ts: int | None, to_ts: int | None) -> tuple[datetime, datetime]:
-        now_utc = datetime.now(UTC).replace(tzinfo=None)
+        now_utc = datetime.now(UTC)
         to_dt = (
-            datetime.fromtimestamp(to_ts / 1000, tz=UTC).replace(tzinfo=None)
+            datetime.fromtimestamp(to_ts / 1000, tz=UTC)
             if to_ts is not None
             else now_utc
         )
         from_dt = (
-            datetime.fromtimestamp(from_ts / 1000, tz=UTC).replace(tzinfo=None)
+            datetime.fromtimestamp(from_ts / 1000, tz=UTC)
             if from_ts is not None
             else to_dt - timedelta(days=DEFAULT_WINDOW_DAYS)
         )
@@ -1107,8 +1107,8 @@ class SpaceAnalyticsViewService:
     def _to_timestamp_ms(dt: datetime | None) -> int | None:
         if dt is None:
             return None
-        naive = dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
-        return int(naive.replace(tzinfo=UTC).timestamp() * 1000)
+        aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+        return int(aware.timestamp() * 1000)
 
     @staticmethod
     def _build_distribution(name: str, counter: Counter) -> dict:
@@ -1168,8 +1168,7 @@ class SpaceAnalyticsViewService:
     def _format_local_datetime(dt: datetime | None) -> str:
         if dt is None:
             return ""
-        naive = dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
-        return naive.strftime("%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
 
     @staticmethod
     def _decode_identity(identity: UserRealNameIdentity) -> dict:

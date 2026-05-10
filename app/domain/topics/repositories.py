@@ -105,7 +105,7 @@ class TopicRepository:
         return result.scalar_one_or_none()
 
     async def create(self, *, name: str, created_by_id: int) -> Topic:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         topic = Topic(
             name=name,
             created_by_id=created_by_id,

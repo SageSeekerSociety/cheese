@@ -6,6 +6,9 @@
 - Do NOT name methods `list`, `set`, `dict`, `type`, or other builtin names — they shadow builtins in class scope and break type annotations.
 - Use quoted strings (`"PermissionRule"`) only for genuine forward references (e.g., self-referencing class in a `@staticmethod` return type).
 
+## Datetime convention
+- All DB columns use `DateTime(timezone=True)` (PostgreSQL `TIMESTAMPTZ`). Always pass `datetime.now(UTC)` (timezone-aware) — never `.replace(tzinfo=None)`.
+
 ## Reference code
 
 The `reference/` directory contains the original implementations this project is migrated from. Always consult them when unclear about expected behavior, API contracts, or business logic:

@@ -26,7 +26,7 @@ class LLMCallLog(Base):
     context_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     context_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 @dataclass

@@ -27,7 +27,7 @@ def _patch_team_locking_check():
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = datetime.now(UTC).replace(tzinfo=None)
+_NOW = datetime.now(UTC)
 
 
 def _make_team(**overrides):

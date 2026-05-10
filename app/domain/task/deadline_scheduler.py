@@ -21,7 +21,7 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
 
     Returns the number of memberships that were marked as failed.
     """
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
     total_failed = 0
 
     while True:

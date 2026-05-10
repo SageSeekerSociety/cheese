@@ -62,7 +62,7 @@ class UserRepository:
         email: str,
         hashed_password: str,
     ) -> User:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         user = User(
             username=username,
             email=email,
@@ -125,7 +125,7 @@ class UserProfileRepository:
         intro: str,
         avatar_id: int,
     ) -> UserProfile:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         profile = UserProfile(
             user_id=user_id,
             nickname=nickname,
@@ -217,7 +217,7 @@ class UserFollowingRepository:
         rel = result.scalar_one_or_none()
         if rel is None:
             return False
-        rel.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        rel.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return True
 
@@ -255,7 +255,7 @@ class UserRealNameRepository:
         class_name: str,
         encrypted: bool = False,
     ) -> UserRealNameIdentity:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         existing = await self.get_identity(user_id)
         if existing is None:
             identity = UserRealNameIdentity(
@@ -295,7 +295,7 @@ class UserRealNameRepository:
         module_type: str | None = None,
         module_entity_id: int | None = None,
     ) -> UserRealNameAccessLog:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         log = UserRealNameAccessLog(
             accessor_id=accessor_id,
             target_id=target_id,

@@ -11,7 +11,7 @@ from app.domain.comments.services import CommentService, _comment_to_dto
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = datetime.now(UTC).replace(tzinfo=None)
+_NOW = datetime.now(UTC)
 
 
 def _make_comment(**overrides) -> SimpleNamespace:

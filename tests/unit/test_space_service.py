@@ -14,7 +14,7 @@ from app.domain.space.services import SpaceService
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = datetime.now(UTC).replace(tzinfo=None)
+_NOW = datetime.now(UTC)
 
 
 def _make_space(**overrides):

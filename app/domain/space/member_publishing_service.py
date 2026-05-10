@@ -353,7 +353,8 @@ class SpaceMemberPublishingService:
     def _to_timestamp_ms(value: datetime | None) -> int | None:
         if value is None:
             return None
-        return int(value.replace(tzinfo=UTC).timestamp() * 1000)
+        aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return int(aware.timestamp() * 1000)
 
     @staticmethod
     def _parse_timestamp_param(value: int | None, field_name: str) -> datetime | None:
@@ -364,7 +365,7 @@ class SpaceMemberPublishingService:
 
         epoch_value = value / 1000 if value >= 10**11 else value
         try:
-            return datetime.fromtimestamp(epoch_value, UTC).replace(tzinfo=None)
+            return datetime.fromtimestamp(epoch_value, UTC)
         except (OverflowError, OSError, ValueError) as exc:
             raise BadRequestError(f"{field_name} is not a valid timestamp") from exc
 

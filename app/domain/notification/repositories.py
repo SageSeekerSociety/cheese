@@ -148,7 +148,7 @@ class NotificationRepository:
         )
         if notification is None:
             return False
-        notification.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        notification.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return True
 

@@ -88,7 +88,7 @@ class TeamService:
                 data={"field": "name", "value": name.strip()},
             )
 
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         team = Team(
             name=name.strip(),
             intro=intro or "",
@@ -153,7 +153,7 @@ class TeamService:
                 raise BadRequestError("avatarId must be positive integer")
             team.avatar_id = avatar_id
 
-        team.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        team.updated_at = datetime.now(UTC)
         await self._repo._session.flush()
         return team
 
@@ -164,7 +164,7 @@ class TeamService:
             raise ForbiddenError("Only the team owner can disband a team")
 
         members = await self._repo.list_members_of_team(team_id)
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         for rel in members:
             rel.deleted_at = now
             rel.updated_at = now
@@ -227,7 +227,7 @@ class TeamService:
             raise ForbiddenError("Only team owner can change member roles")
 
         relation.role = new_role
-        relation.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        relation.updated_at = datetime.now(UTC)
         await self._repo._session.flush()
 
     async def transfer_team_owner(
@@ -248,10 +248,10 @@ class TeamService:
             )
 
         current_owner_relation.role = TeamMemberRole.ADMIN
-        current_owner_relation.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        current_owner_relation.updated_at = datetime.now(UTC)
 
         target_relation.role = TeamMemberRole.OWNER
-        target_relation.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        target_relation.updated_at = datetime.now(UTC)
         await self._repo._session.flush()
 
     async def _get_team_or_error(self, team_id: int) -> Team:

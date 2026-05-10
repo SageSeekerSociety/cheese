@@ -23,7 +23,7 @@ from app.domain.task.services import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = datetime.now(UTC).replace(tzinfo=None)
+_NOW = datetime.now(UTC)
 
 
 def _make_task(**overrides):
@@ -1102,7 +1102,7 @@ class TestTaskMembershipServiceAdditional:
         repo.get_user_membership.return_value = None
 
         svc, _ = self._build_service(repo=repo)
-        future = datetime(2099, 1, 1)
+        future = datetime(2099, 1, 1, tzinfo=UTC)
         task = _make_task(submitter_type=0, approved=0, registration_start_at=future)
 
         result = await svc.get_participation_eligibility(task=task, user_id=42)
@@ -1319,7 +1319,7 @@ class TestTaskMembershipServiceAdditional:
         repo.count_approved_for_task.return_value = 0
 
         svc, _ = self._build_service(repo=repo)
-        future = datetime(2099, 1, 1)
+        future = datetime(2099, 1, 1, tzinfo=UTC)
         task = _make_task(submitter_type=1, approved=0, registration_start_at=future)
 
         result = await svc.get_participation_eligibility(task=task, user_id=42)

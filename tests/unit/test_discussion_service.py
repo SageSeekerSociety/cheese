@@ -12,7 +12,7 @@ from app.domain.discussion.services import DiscussionService
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = datetime.now(UTC).replace(tzinfo=None)
+_NOW = datetime.now(UTC)
 
 
 def _make_entity(**overrides) -> SimpleNamespace:

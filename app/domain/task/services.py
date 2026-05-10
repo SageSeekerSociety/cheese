@@ -174,7 +174,7 @@ class TaskMembershipService:
                     raise BadRequestError("Task participant limit reached.")
 
         # 报名窗口校验（已移除 registration_start_at 和 registration_deadline）
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
 
         # 已存在参与记录则拒绝（DISAPPROVED 除外，允许重新申请）
         existing = await self.get_membership_by_task_and_member(
@@ -206,7 +206,7 @@ class TaskMembershipService:
         return await self._repo.save(membership)
 
     async def soft_delete_membership(self, membership: TaskMembership) -> None:
-        membership.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        membership.deleted_at = datetime.now(UTC)
         await self._repo.save(membership)
 
     async def update_membership(
@@ -270,7 +270,7 @@ class TaskMembershipService:
         # TaskMembership 目前模型中不包含 rejectReason 等附加字段，仅在 Task 上维护，故此处忽略。
         _ = reject_reason
 
-        membership.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        membership.updated_at = datetime.now(UTC)
         return await self._repo.save(membership)
 
     async def get_participation_eligibility(
@@ -290,7 +290,7 @@ class TaskMembershipService:
         is_task_approved = task.approved == 0
 
         # 报名窗口检查
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         registration_not_started = (
             task.registration_start_at is not None and now < task.registration_start_at
         )
@@ -757,7 +757,7 @@ class TaskSubmissionService:
         )
 
         # Update submission timestamp
-        submission.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        submission.updated_at = datetime.now(UTC)
         submission = await self._submission_repo.save(submission)
 
         entry_tuples: list[tuple[int, str | None, int | None]] = []
@@ -918,7 +918,7 @@ class TaskSubmissionReviewService:
             review.score = score
         if comment is not None:
             review.comment = comment
-        review.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        review.updated_at = datetime.now(UTC)
         await self._review_repo.save(review)
         has_upgraded = await self._maybe_award_rank(
             submission_id=submission_id,

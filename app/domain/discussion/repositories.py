@@ -40,7 +40,7 @@ class DiscussionRepository:
         parent_id: int | None,
         mentioned_user_ids: list[int],
     ) -> Discussion:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         content_json = _content_str_to_json(content)
         entity = Discussion(
             model_type=model_type,
@@ -135,7 +135,7 @@ class DiscussionRepository:
         if entity is None:
             return None
         entity.content = content_json
-        entity.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        entity.updated_at = datetime.now(UTC)
         await self._session.flush()
         return entity
 
@@ -143,7 +143,7 @@ class DiscussionRepository:
         entity = await self.get_by_id(discussion_id)
         if entity is None:
             return False
-        entity.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        entity.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return True
 
@@ -186,7 +186,7 @@ class ReactionTypeRepository:
         result = await self._session.execute(stmt)
         if int(result.scalar_one() or 0) > 0:
             return
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         defaults = [
             ReactionType(
                 code="LIKE",
@@ -246,7 +246,7 @@ class DiscussionReactionRepository:
             user_id=user_id,
             reaction_type_id=reaction_type_id,
         )
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         if existing is not None:
             existing.deleted_at = now
             existing.updated_at = now
@@ -278,7 +278,7 @@ class DiscussionReactionRepository:
         )
         if existing is None:
             return False
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         existing.deleted_at = now
         existing.updated_at = now
         await self._session.flush()

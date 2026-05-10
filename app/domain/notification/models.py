@@ -70,9 +70,9 @@ class Notification(Base):
 
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
-    updated_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def is_aggregation_active(self, now: datetime | None = None) -> bool:
         from datetime import datetime as _dt

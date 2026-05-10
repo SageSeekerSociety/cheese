@@ -21,7 +21,7 @@ def create_notifications_in_db(
     """Insert notifications via ORM and return their ids."""
     # Notification.created_at / updated_at are naive `timestamp without time
     # zone` columns; pass a naive UTC datetime to match the schema.
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
     sample_content = {"actorId": 1, "targetType": "comment", "targetId": 123}
 
     notifications = [
