@@ -136,7 +136,9 @@ class UserCreator:
         avatar_id = avatar_id or self._test_avatar_id()
         intro = intro or self._test_intro()
 
-        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        # rounds=4 in tests (vs default 12) saves ~300ms per user creation.
+        # Tests don't need brute-force resistance.
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
 
         async def _coro() -> int:
             return await self._do_insert(
