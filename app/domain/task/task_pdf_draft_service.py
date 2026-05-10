@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import pathlib
@@ -7,6 +8,7 @@ import tempfile
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import fitz
 import pymupdf4llm
 
 from app.core.config import settings
@@ -77,31 +79,56 @@ class TaskPdfDraftService:
         if not pdf_bytes:
             raise BadRequestError("Uploaded PDF is empty")
 
-        markdown_text, image_map, temp_dir = self._extract_pdf_markdown_and_images(pdf_bytes)
-        try:
-            payloads, token_used = await self.generate_task_payloads_from_text(
-                text=markdown_text,
+        page_pdfs = self._split_pdf_to_pages(pdf_bytes)
+        if not page_pdfs:
+            raise BadRequestError("PDF has no pages")
+
+        page_data: list[tuple[str, dict[str, str], str]] = []
+        for page_pdf in page_pdfs:
+            markdown_text, image_map, temp_dir = self._extract_pdf_markdown_and_images(page_pdf)
+            page_data.append((markdown_text, image_map, temp_dir))
+
+        async def process_page(
+            markdown_text: str,
+            image_map: dict[str, str],
+        ) -> tuple[dict[str, Any], int]:
+            payload, tokens = await self._generate_single_task_from_page(
+                markdown_text=markdown_text,
                 template=template,
                 space_id=space_id,
                 category_id=category_id,
                 forced_submitter_type=forced_submitter_type,
-                user_id=user_id,
                 default_topic_ids=default_topic_ids,
             )
+            if payload.get("description") and image_map:
+                payload["description"] = await self._upload_and_replace_images(
+                    markdown_text=payload["description"],
+                    image_map=image_map,
+                )
+            return payload, tokens
 
-            # Upload extracted images to storage and replace placeholders in descriptions
-            for payload in payloads:
-                if payload.get("description") and image_map:
-                    payload["description"] = await self._upload_and_replace_images(
-                        markdown_text=payload["description"],
-                        image_map=image_map,
-                    )
+        results = await asyncio.gather(
+            *[process_page(md, im) for md, im, _ in page_data],
+            return_exceptions=True,
+        )
 
-            return payloads, token_used
-        finally:
-            # Clean up temp directory
+        payloads: list[dict[str, Any]] = []
+        total_tokens = 0
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            payload, tokens = result
+            payloads.append(payload)
+            total_tokens += tokens
+
+        for _, _, temp_dir in page_data:
             if temp_dir and os.path.isdir(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
+
+        if not payloads:
+            raise BadRequestError("No task payload extracted from PDF")
+
+        return payloads, total_tokens
 
     async def generate_task_payloads_from_text(
         self,
@@ -179,6 +206,49 @@ class TaskPdfDraftService:
             raise BadRequestError("No task payload extracted from text")
         return payloads[0], token_used
 
+    async def _generate_single_task_from_page(
+        self,
+        *,
+        markdown_text: str,
+        template: dict[str, Any],
+        space_id: int,
+        category_id: int | None,
+        forced_submitter_type: str | None,
+        default_topic_ids: list[int] | None = None,
+    ) -> tuple[dict[str, Any], int]:
+        normalized_text = markdown_text.strip()
+        if not normalized_text:
+            raise BadRequestError("Page content is empty")
+
+        system_prompt = self._build_single_page_system_prompt()
+        user_prompt = self._build_single_page_user_prompt(text=normalized_text, template=template)
+
+        try:
+            response = await self._llm_client.get_completion(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                model_type="reasoning",
+                json_response=True,
+                timeout=self._timeout_seconds,
+            )
+        except LLMTimeoutError as exc:
+            raise BadRequestError(str(exc)) from exc
+        except LLMConnectionError as exc:
+            raise BadRequestError(str(exc)) from exc
+        except LLMAPIError as exc:
+            raise BadRequestError(str(exc)) from exc
+
+        parsed = self._parse_llm_json(response.content)
+        payload = self._normalize_task_payload(
+            llm_result=parsed,
+            template=template,
+            forced_submitter_type=forced_submitter_type,
+            space_id=space_id,
+            category_id=category_id,
+            default_topic_ids=default_topic_ids,
+        )
+        return payload, response.total_tokens
+
     def _extract_pdf_markdown_and_images(self, pdf_bytes: bytes) -> tuple[str, dict[str, str], str]:
         """Extract markdown text and images from PDF using pymupdf4llm.
 
@@ -235,6 +305,21 @@ class TaskPdfDraftService:
                     os.remove(tmp_path)
                 except OSError:
                     pass
+
+    @staticmethod
+    def _split_pdf_to_pages(pdf_bytes: bytes) -> list[bytes]:
+        """Split a multi-page PDF into a list of single-page PDF bytes."""
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            page_pdfs: list[bytes] = []
+            for page in doc:
+                single_page_doc = fitz.open()
+                single_page_doc.insert_pdf(doc, from_page=page.number, to_page=page.number)
+                page_pdfs.append(single_page_doc.tobytes())
+                single_page_doc.close()
+            return page_pdfs
+        finally:
+            doc.close()
 
     async def _upload_and_replace_images(
         self,
@@ -300,6 +385,33 @@ class TaskPdfDraftService:
             "`![描述](images/xxx.png)`，请务必保留这些标记）：\n"
             f"{clipped}\n\n"
             "请基于以上 PDF 内容生成一个 JSON 对象，"
+            "其中 `description` 字段放置修正排版后的完整 Markdown。"
+        )
+
+    def _build_single_page_system_prompt(self) -> str:
+        return (
+            "你是比赛运营专家。你将收到从 PDF 单页提取的 Markdown 文本，"
+            "文本中可能包含排版错乱、多余换行、标题层级错误等问题，"
+            "也可能包含图片占位标记（如 `![描述](images/xxx.png)`）。"
+            "你的任务是：\n"
+            "1. 修正 Markdown 的排版格式，使其结构清晰、层级正确、可读性强；\n"
+            "2. **必须保留所有图片占位标记**，不要删除或修改它们；\n"
+            "3. 可以将图片中提取的文本（picture text部分）删除；\n"
+            "4. 将修正后的 Markdown 放入 JSON 的 `description` 字段；\n"
+            "5. 从内容中提炼出合适的 `name`（赛题名称）和 `intro`（简短介绍）。\n\n"
+            "**输出格式要求**：请输出一个 JSON 对象，"
+            "包含 name、intro、description 三个字段。"
+            "形如 "
+            '{"name": "...", "intro": "...", "description": "..."}。\n\n'
+            "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"
+        )
+
+    def _build_single_page_user_prompt(self, *, text: str, template: dict[str, Any]) -> str:
+        return (
+            "下面是从 PDF 单页中提取的 Markdown 文本（可能包含图片占位标记如 "
+            "`![描述](images/xxx.png)`，请务必保留这些标记）：\n"
+            f"{text}\n\n"
+            "请基于以上内容生成一个 JSON 对象，"
             "其中 `description` 字段放置修正排版后的完整 Markdown。"
         )
 
@@ -386,7 +498,7 @@ class TaskPdfDraftService:
             raise BadRequestError("LLM output missing required field: description")
 
         # --- System-filled fields ---
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         submitter_type = (
             forced_submitter_type if forced_submitter_type in {"USER", "TEAM"} else "TEAM"
         )

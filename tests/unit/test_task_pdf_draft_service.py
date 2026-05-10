@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.core.errors import BadRequestError
@@ -24,7 +26,7 @@ class _FakeLLMClient:
 @pytest.mark.anyio
 async def test_generate_payload_from_text_merges_template_and_llm_result() -> None:
     llm = _FakeLLMClient(
-        '{"tasks":[{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}]}'
+        '{"task":{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}}'
     )
     service = TaskPdfDraftService(llm_client=llm)
 
@@ -42,17 +44,17 @@ async def test_generate_payload_from_text_merges_template_and_llm_result() -> No
     assert payload["space"] == 7
     assert payload["categoryId"] == 9
     assert payload["submitterType"] == "TEAM"
-    assert payload["editable"] is True
-    assert payload["resubmittable"] is True
-    assert payload["defaultDeadline"] == 365
-    assert payload["minTeamSize"] == 1
-    assert payload["maxTeamSize"] == 3
+    assert payload["editable"] is False
+    assert payload["resubmittable"] is False
+    assert payload["defaultDeadline"] == 45
+    assert payload["minTeamSize"] == 2
+    assert payload["maxTeamSize"] == 5
 
 
 @pytest.mark.anyio
 async def test_generate_payload_from_text_respects_forced_submitter_type() -> None:
     llm = _FakeLLMClient(
-        '{"tasks":[{"name":"比赛","intro":"介绍","description":"详情","submitterType":"USER"}]}'
+        '{"task":{"name":"比赛","intro":"介绍","description":"详情","submitterType":"USER"}}'
     )
     service = TaskPdfDraftService(llm_client=llm)
 
@@ -70,8 +72,8 @@ async def test_generate_payload_from_text_respects_forced_submitter_type() -> No
 
 @pytest.mark.anyio
 async def test_generate_payload_from_text_requires_required_fields() -> None:
-    llm = _FakeLLMClient('{"tasks":[{"intro":"只有介绍","description":"只有详情"}]}')
-    service = TaskPdfDraftService(llm_client=llm, quota_service=None)
+    llm = _FakeLLMClient('{"task":{"intro":"只有介绍","description":"只有详情"}}')
+    service = TaskPdfDraftService(llm_client=llm)
 
     with pytest.raises(BadRequestError, match="missing required field: name"):
         await service.generate_task_payload_from_text(
@@ -97,4 +99,117 @@ async def test_generate_payload_from_text_rejects_invalid_llm_json() -> None:
             category_id=None,
             forced_submitter_type=None,
             user_id=2,
+        )
+
+
+def test_split_pdf_to_pages() -> None:
+    import fitz
+
+    doc = fitz.open()
+    doc.new_page(width=612, height=792)
+    doc.new_page(width=612, height=792)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    pages = TaskPdfDraftService._split_pdf_to_pages(pdf_bytes)
+    assert len(pages) == 2
+    for page_bytes in pages:
+        page_doc = fitz.open(stream=page_bytes, filetype="pdf")
+        assert page_doc.page_count == 1
+        page_doc.close()
+
+
+def test_split_pdf_to_pages_single_page() -> None:
+    import fitz
+
+    doc = fitz.open()
+    doc.new_page(width=612, height=792)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    pages = TaskPdfDraftService._split_pdf_to_pages(pdf_bytes)
+    assert len(pages) == 1
+
+
+@pytest.mark.anyio
+async def test_generate_single_task_from_page() -> None:
+    llm = _FakeLLMClient('{"name":"单页赛题","intro":"单页介绍","description":"单页详细说明"}')
+    service = TaskPdfDraftService(llm_client=llm)
+
+    payload, tokens = await service._generate_single_task_from_page(
+        markdown_text="# 单页赛题内容",
+        template={},
+        space_id=1,
+        category_id=None,
+        forced_submitter_type=None,
+        default_topic_ids=None,
+    )
+
+    assert tokens == 1200
+    assert payload["name"] == "单页赛题"
+    assert payload["intro"] == "单页介绍"
+    assert payload["description"] == "单页详细说明"
+    assert payload["space"] == 1
+
+
+@pytest.mark.anyio
+async def test_generate_single_task_from_page_empty_content() -> None:
+    llm = _FakeLLMClient("{}")
+    service = TaskPdfDraftService(llm_client=llm)
+
+    with pytest.raises(BadRequestError, match="Page content is empty"):
+        await service._generate_single_task_from_page(
+            markdown_text="   ",
+            template={},
+            space_id=1,
+            category_id=None,
+            forced_submitter_type=None,
+        )
+
+
+@pytest.mark.anyio
+async def test_generate_task_payloads_from_pdf_parallel() -> None:
+    import fitz
+
+    doc = fitz.open()
+    doc.new_page(width=612, height=792)
+    doc.new_page(width=612, height=792)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    llm = _FakeLLMClient('{"name":"并行赛题","intro":"并行介绍","description":"并行详情"}')
+    service = TaskPdfDraftService(llm_client=llm)
+
+    with patch.object(service, "_upload_and_replace_images", new_callable=AsyncMock) as mock_upload:
+        mock_upload.return_value = "uploaded description"
+
+        payloads, total_tokens = await service.generate_task_payloads_from_pdf(
+            pdf_bytes=pdf_bytes,
+            template={},
+            space_id=1,
+            category_id=None,
+            forced_submitter_type=None,
+            user_id=1,
+        )
+
+    assert len(payloads) == 2
+    assert total_tokens == 2400
+    for payload in payloads:
+        assert payload["name"] == "并行赛题"
+        assert payload["description"] == "uploaded description"
+    assert mock_upload.call_count == 2
+
+
+@pytest.mark.anyio
+async def test_generate_task_payloads_from_pdf_empty_pdf() -> None:
+    service = TaskPdfDraftService()
+
+    with pytest.raises(BadRequestError, match="Uploaded PDF is empty"):
+        await service.generate_task_payloads_from_pdf(
+            pdf_bytes=b"",
+            template={},
+            space_id=1,
+            category_id=None,
+            forced_submitter_type=None,
+            user_id=1,
         )
