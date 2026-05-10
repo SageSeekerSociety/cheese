@@ -142,7 +142,7 @@ class S3StorageBackend(StorageBackend):
 
 def generate_storage_key(filename: str, prefix: str = "uploads") -> str:
     """Generate a unique storage key for a file."""
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
     date_path = now.strftime("%Y/%m/%d")
     unique_id = uuid.uuid4().hex[:12]
     ext = Path(filename).suffix.lower() if filename else ""

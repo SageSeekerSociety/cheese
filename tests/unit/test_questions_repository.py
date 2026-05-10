@@ -470,10 +470,12 @@ class TestQuestionRepository:
     @pytest.mark.anyio
     async def test_count_votes(self):
         session = _mock_session()
-        session.execute.return_value = _mock_execute_rows([
-            ("POSITIVE", 3),
-            ("NEGATIVE", 1),
-        ])
+        session.execute.return_value = _mock_execute_rows(
+            [
+                ("POSITIVE", 3),
+                ("NEGATIVE", 1),
+            ]
+        )
         repo = QuestionRepository(session)
 
         counts = await repo.count_votes(10)
@@ -520,9 +522,9 @@ class TestQuestionRepository:
     async def test_get_stats(self):
         session = _mock_session()
         session.execute.side_effect = [
-            _mock_execute_scalar_one(100),   # total questions
-            _mock_execute_scalar_one(40),    # answered
-            _mock_execute_scalar_one(500),   # views
+            _mock_execute_scalar_one(100),  # total questions
+            _mock_execute_scalar_one(40),  # answered
+            _mock_execute_scalar_one(500),  # views
         ]
         repo = QuestionRepository(session)
 
@@ -535,10 +537,12 @@ class TestQuestionRepository:
     @pytest.mark.anyio
     async def test_get_popular_search_terms(self):
         session = _mock_session()
-        session.execute.return_value = _mock_execute_rows([
-            ("python", 50),
-            ("testing", 30),
-        ])
+        session.execute.return_value = _mock_execute_rows(
+            [
+                ("python", 50),
+                ("testing", 30),
+            ]
+        )
         repo = QuestionRepository(session)
 
         result = await repo.get_popular_search_terms(limit=10, days=7)
@@ -694,11 +698,13 @@ class TestQuestionTopicRepository:
     @pytest.mark.anyio
     async def test_get_topics_for_questions(self):
         session = _mock_session()
-        session.execute.return_value = _mock_execute_rows([
-            (10, 1, "Python"),
-            (10, 2, "Testing"),
-            (20, 3, "Django"),
-        ])
+        session.execute.return_value = _mock_execute_rows(
+            [
+                (10, 1, "Python"),
+                (10, 2, "Testing"),
+                (20, 3, "Django"),
+            ]
+        )
         repo = QuestionTopicRepository(session)
 
         result = await repo.get_topics_for_questions([10, 20])

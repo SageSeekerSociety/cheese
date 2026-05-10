@@ -16,7 +16,7 @@ from app.domain.materials.services import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = datetime.now(UTC).replace(tzinfo=None)
+_NOW = datetime.now(UTC)
 
 
 def _make_material(**overrides) -> SimpleNamespace:

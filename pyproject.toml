@@ -98,6 +98,7 @@ select = [
     "ASYNC",# flake8-async (async pitfalls)
     "S",    # flake8-bandit (security)
     "T20",  # flake8-print (no print statements)
+    "DTZ",  # flake8-datetimez (prevent naive datetimes — root cause of tz bugs)
 ]
 ignore = [
     "S101",   # allow assert in tests
@@ -124,7 +125,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "T20"]
+"tests/**" = ["S", "T20", "DTZ"]
 "scripts/**" = ["T20"]
 
 [dependency-groups]

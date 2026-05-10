@@ -52,7 +52,7 @@ async def test_notification_finalizer_tick_commits_session():
 async def test_deadline_scheduler_processes_all_batches():
     from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
     call_count = 0
 
     def make_membership(mid: int):
@@ -283,12 +283,13 @@ def test_groups_datetime_fromtimestamp_utc():
     """Verify UTC timestamp conversion produces consistent results."""
     ts_ms = 1704067200000  # 2024-01-01 00:00:00 UTC
 
-    result = datetime.fromtimestamp(ts_ms / 1000, tz=UTC).replace(tzinfo=None)
+    result = datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
 
     assert result.year == 2024
     assert result.month == 1
     assert result.day == 1
     assert result.hour == 0
+    assert result.tzinfo is not None
 
 
 # ---------------------------------------------------------------------------

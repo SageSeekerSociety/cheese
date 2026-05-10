@@ -40,7 +40,7 @@ class AvatarRepository:
         return row
 
     async def create(self, *, url: str, name: str, avatar_type: str) -> Avatar:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         avatar = Avatar(
             url=url,
             name=name,

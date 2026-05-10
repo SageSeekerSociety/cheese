@@ -72,9 +72,7 @@ class TestCreatePost:
         svc = _make_service(team_repo=team_repo)
 
         with pytest.raises(NotFoundError):
-            await svc.create_post(
-                team_id=999, actor_user_id=20, title="Post", content="Content"
-            )
+            await svc.create_post(team_id=999, actor_user_id=20, title="Post", content="Content")
 
     @pytest.mark.anyio
     async def test_not_admin(self):
@@ -84,9 +82,7 @@ class TestCreatePost:
         svc = _make_service(team_repo=team_repo)
 
         with pytest.raises(ForbiddenError):
-            await svc.create_post(
-                team_id=10, actor_user_id=99, title="Post", content="Content"
-            )
+            await svc.create_post(team_id=10, actor_user_id=99, title="Post", content="Content")
 
 
 class TestListOpen:

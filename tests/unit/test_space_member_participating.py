@@ -401,9 +401,7 @@ class TestGetParticipations:
         svc = SpaceMemberParticipatingService(session)
 
         with pytest.raises(BadRequestError):
-            await svc.get_participations(
-                space_id=1, user_id=100, completion_status="INVALID"
-            )
+            await svc.get_participations(space_id=1, user_id=100, completion_status="INVALID")
 
     @pytest.mark.anyio
     async def test_invalid_identity_type_filter(self):
@@ -413,9 +411,7 @@ class TestGetParticipations:
         svc = SpaceMemberParticipatingService(session)
 
         with pytest.raises(BadRequestError):
-            await svc.get_participations(
-                space_id=1, user_id=100, identity_type="INVALID"
-            )
+            await svc.get_participations(space_id=1, user_id=100, identity_type="INVALID")
 
     @pytest.mark.anyio
     async def test_invalid_sort_by(self):
@@ -425,9 +421,7 @@ class TestGetParticipations:
         svc = SpaceMemberParticipatingService(session)
 
         with pytest.raises(BadRequestError):
-            await svc.get_participations(
-                space_id=1, user_id=100, sort_by="invalid"
-            )
+            await svc.get_participations(space_id=1, user_id=100, sort_by="invalid")
 
     @pytest.mark.anyio
     async def test_invalid_sort_order(self):
@@ -437,9 +431,7 @@ class TestGetParticipations:
         svc = SpaceMemberParticipatingService(session)
 
         with pytest.raises(BadRequestError):
-            await svc.get_participations(
-                space_id=1, user_id=100, sort_order="invalid"
-            )
+            await svc.get_participations(space_id=1, user_id=100, sort_order="invalid")
 
     @pytest.mark.anyio
     async def test_empty_result(self):

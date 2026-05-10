@@ -214,8 +214,8 @@ class TestTeamRepository:
         rel = _relation(team_id=1)
         t = _team(id=1)
         session.execute.side_effect = [
-            _mock_scalars([rel]),   # relations
-            _mock_scalars([t]),     # teams
+            _mock_scalars([rel]),  # relations
+            _mock_scalars([t]),  # teams
         ]
         repo = TeamRepository(session)
 

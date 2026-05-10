@@ -226,9 +226,7 @@ class TestProjectMembershipRepository:
         session = _mock_session()
         repo = ProjectMembershipRepository(session)
 
-        result = await repo.add_member(
-            project_id=1, user_id=20, role=ProjectMemberRole.MEMBER
-        )
+        result = await repo.add_member(project_id=1, user_id=20, role=ProjectMemberRole.MEMBER)
         assert result.project_id == 1
         assert result.user_id == 20
         session.add.assert_called_once()

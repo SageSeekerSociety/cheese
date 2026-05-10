@@ -98,13 +98,15 @@ class TestRedisEmailQueueNotificationHandler:
     @pytest.mark.anyio
     async def test_send_batch_no_redis(self):
         handler = RedisEmailQueueNotificationHandler(None, queue_key="q")
-        await handler.send_batch([
-            NotificationDelivery(
-                recipient_id=10,
-                type=NotificationType.MENTION,
-                payload={},
-            )
-        ])
+        await handler.send_batch(
+            [
+                NotificationDelivery(
+                    recipient_id=10,
+                    type=NotificationType.MENTION,
+                    payload={},
+                )
+            ]
+        )
         # No error raised, just returns
 
     @pytest.mark.anyio
@@ -130,9 +132,7 @@ class TestRedisEmailQueueNotificationHandler:
     @pytest.mark.anyio
     async def test_send_batch_batches_messages(self):
         redis = AsyncMock()
-        handler = RedisEmailQueueNotificationHandler(
-            redis, queue_key="q", batch_size=2
-        )
+        handler = RedisEmailQueueNotificationHandler(redis, queue_key="q", batch_size=2)
 
         deliveries = [
             NotificationDelivery(
@@ -153,13 +153,15 @@ class TestRedisEmailQueueNotificationHandler:
         handler = RedisEmailQueueNotificationHandler(redis, queue_key="q")
 
         # Should not raise
-        await handler.send_batch([
-            NotificationDelivery(
-                recipient_id=10,
-                type=NotificationType.MENTION,
-                payload={},
-            )
-        ])
+        await handler.send_batch(
+            [
+                NotificationDelivery(
+                    recipient_id=10,
+                    type=NotificationType.MENTION,
+                    payload={},
+                )
+            ]
+        )
 
     @pytest.mark.anyio
     async def test_flush_no_redis(self):

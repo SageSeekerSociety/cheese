@@ -21,7 +21,7 @@ class PasskeyRepository:
         backed_up: bool = False,
         transports: list[str] | None = None,
     ) -> PasskeyCredential:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         entity = PasskeyCredential(
             user_id=user_id,
             credential_id=credential_id,
@@ -64,7 +64,7 @@ class PasskeyRepository:
         entity = await self.get_by_credential_id(credential_id)
         if entity:
             entity.counter = counter
-            entity.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            entity.updated_at = datetime.now(UTC)
             await self._session.flush()
 
     async def delete_by_id(self, credential_id: int, user_id: int) -> bool:

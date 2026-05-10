@@ -438,7 +438,12 @@ async def _enrich_task_user_state(
         user_membership = pending[task_id]["user_membership"]
         team_memberships = pending[task_id]["team_memberships"]
 
-        joined = bool(user_membership or team_memberships)
+        # DISAPPROVED memberships should NOT show as "joined" — otherwise the
+        # frontend renders "退出赛题" button for rejected applications.
+        joined = bool(
+            (user_membership and user_membership.approved != 1)
+            or any(m.approved != 1 for m in team_memberships)
+        )
         joined_teams = [_team_summary(m.member_id) for m in team_memberships]
         is_user_approved = bool(user_membership and user_membership.approved == 0)
 
@@ -683,7 +688,7 @@ async def _create_task_entity(
         try:
             registration_start_dt = datetime.fromtimestamp(
                 int(registration_start_ms) / 1000.0, tz=UTC
-            ).replace(tzinfo=None)
+            )
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
 
@@ -777,7 +782,7 @@ async def _create_task_entity(
 
     # 简单设置话题关联：先不做复杂校验，仅插入关系行。
     if topics:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         for topic_id in topics:
             relation = TaskTopicsRelation(
                 task_id=task.id,
@@ -1419,7 +1424,12 @@ async def get_task(
             user_id=auth_user.user_id,
         )
 
-        joined = bool(user_membership or team_memberships)
+        # DISAPPROVED memberships should NOT show as "joined" — otherwise the
+        # frontend renders "退出赛题" button for rejected applications.
+        joined = bool(
+            (user_membership and user_membership.approved != 1)
+            or any(m.approved != 1 for m in team_memberships)
+        )
         # Hydrate joinedTeams / submittableAsTeam to Team[] (frontend type) so
         # the leave-task dialog can render team.name. Bare ids broke
         # useTaskParticipation.ts:115 (joinedTeams[0].id / .name).
@@ -1571,7 +1581,7 @@ async def patch_task(
         try:
             task.registration_start_at = datetime.fromtimestamp(
                 int(registration_start_ms) / 1000.0, tz=UTC
-            ).replace(tzinfo=None)
+            )
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
     if has_registration_start is False:
@@ -1677,7 +1687,7 @@ async def patch_task(
                 continue
 
         # 软删除旧关系
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         rel_stmt = select(TaskTopicsRelation).where(
             TaskTopicsRelation.task_id == task.id,
             TaskTopicsRelation.deleted_at.is_(None),
@@ -1698,7 +1708,7 @@ async def patch_task(
             )
             db.add(rel)
 
-    task.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)
 
     # Fetch submissionSchema for response
@@ -1883,7 +1893,7 @@ async def delete_task(
     if task.creator_id != auth_user.user_id:
         raise ForbiddenError("Only task owner can delete this task")
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
     task.deleted_at = now
 
     memberships = await membership_repo.list_memberships_for_task(task_id=task_id, approved=None)
@@ -2068,7 +2078,7 @@ async def resubmit_task(
 
     task.approved = 2  # ApproveType.NONE
     task.reject_reason = ""
-    task.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)
 
     return {

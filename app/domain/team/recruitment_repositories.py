@@ -29,7 +29,7 @@ class RecruitmentRepository:
         created_by: int,
         expires_at: datetime | None,
     ) -> TeamRecruitmentPost:
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         post = TeamRecruitmentPost(
             team_id=team_id,
             title=title,
@@ -118,12 +118,12 @@ class RecruitmentRepository:
             post.status = status
         if expires_at is not ...:  # type: ignore[comparison-overlap]
             post.expires_at = expires_at
-        post.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        post.updated_at = datetime.now(UTC)
         await self._session.flush()
         return post
 
     async def soft_delete(self, post: TeamRecruitmentPost) -> None:
-        post.deleted_at = datetime.now(UTC).replace(tzinfo=None)
+        post.deleted_at = datetime.now(UTC)
         await self._session.flush()
 
     @staticmethod

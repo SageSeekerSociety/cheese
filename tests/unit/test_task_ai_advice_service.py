@@ -17,7 +17,7 @@ from app.domain.task.types import TaskAIAdviceStatus
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = datetime.now(UTC).replace(tzinfo=None)
+_NOW = datetime.now(UTC)
 
 
 def _make_task(**overrides):
