@@ -15,6 +15,13 @@ from app.domain.team.models import (
 )
 from app.domain.team.services import TeamService
 
+
+@pytest.fixture(autouse=True)
+def _patch_team_locking_check():
+    """Bypass team-locking DB queries in unit tests (covered by integration tests)."""
+    with patch("app.domain.team.services.check_team_locking_status", new_callable=AsyncMock):
+        yield
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
