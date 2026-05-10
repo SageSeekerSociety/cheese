@@ -31,6 +31,7 @@ dependencies = [
     "srp_rs",
     "greenlet>=3.2.4",
     "pyjwt>=2.10.1",
+    "meilisearch>=0.41.0",
 ]
 
 [project.optional-dependencies]

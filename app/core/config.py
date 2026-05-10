@@ -65,6 +65,11 @@ class Settings(BaseSettings):
         default=False, alias="APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK"
     )
 
+    # Meilisearch — when configured, used as primary search engine with PG FTS fallback.
+    # Leave empty to use PG FTS only.
+    meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")
+    meilisearch_api_key: str = Field(default="", alias="MEILISEARCH_API_KEY")
+
     # Storage configuration
     storage_type: str = Field(default="local", alias="STORAGE_TYPE")
     storage_local_path: str = Field(default="./uploads", alias="STORAGE_LOCAL_PATH")

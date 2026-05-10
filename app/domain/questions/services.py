@@ -50,14 +50,30 @@ class QuestionsService:
         sort_by: str,
         sort_order: str,
     ) -> tuple[list[dict], dict]:
+        from app.domain.search.meilisearch_service import INDEX_QUESTIONS
+        from app.domain.search.search_helper import meilisearch_search_ids
+
         offset = max(0, page_start) if page_start is not None else 0
-        rows, total = await self._repo.search(
-            keyword=keyword,
-            limit=page_size,
-            offset=offset,
-            sort_by=sort_by,
-            sort_order=sort_order,
+
+        # Meilisearch-first: if configured, use it for relevance-ranked CJK search.
+        ms_sort = [f"{sort_by}:{sort_order}"] if sort_by in {"createdAt", "updatedAt"} else None
+        ms_result = meilisearch_search_ids(
+            INDEX_QUESTIONS, keyword or "", limit=page_size, offset=offset, sort=ms_sort,
         )
+        if ms_result is not None:
+            hit_ids, total = ms_result
+            rows_by_id = {q.id: q for q in
+                          [await self._repo.get_by_id(qid) for qid in hit_ids] if q is not None}
+            rows = [rows_by_id[qid] for qid in hit_ids if qid in rows_by_id]
+        else:
+            # PG FTS fallback
+            rows, total = await self._repo.search(
+                keyword=keyword,
+                limit=page_size,
+                offset=offset,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
         items = await self._enrich_question_list(rows)
         returned = len(items)
         has_more = offset + returned < total
@@ -107,6 +123,19 @@ class QuestionsService:
             )
         dto = _question_to_dto(question)
         dto["topicIds"] = topic_ids
+
+        # Best-effort: index in Meilisearch for future searches
+        from app.domain.search.meilisearch_service import INDEX_QUESTIONS
+        from app.domain.search.search_helper import index_document
+
+        index_document(INDEX_QUESTIONS, {
+            "id": question.id,
+            "title": question.title,
+            "content": question.content,
+            "groupId": question.group_id,
+            "createdAt": int(question.created_at.timestamp()) if question.created_at else 0,
+            "updatedAt": int(question.updated_at.timestamp()) if question.updated_at else 0,
+        })
         return dto
 
     async def _enrich_question_list(self, rows: Sequence[Question]) -> list[dict]:
