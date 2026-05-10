@@ -61,12 +61,20 @@ class TestMeilisearchSearchIds:
         from app.domain.search.search_helper import meilisearch_search_ids
 
         meilisearch_search_ids(
-            "knowledge", "data", limit=5, offset=10,
-            filter_expr="teamId = 42", sort=["createdAt:desc"],
+            "knowledge",
+            "data",
+            limit=5,
+            offset=10,
+            filter_expr="teamId = 42",
+            sort=["createdAt:desc"],
         )
         mock_client.search.assert_called_once_with(
-            "knowledge", "data",
-            limit=5, offset=10, filter_expr="teamId = 42", sort=["createdAt:desc"],
+            "knowledge",
+            "data",
+            limit=5,
+            offset=10,
+            filter_expr="teamId = 42",
+            sort=["createdAt:desc"],
         )
 
 
@@ -85,9 +93,7 @@ class TestIndexDocument:
         from app.domain.search.search_helper import index_document
 
         index_document("questions", {"id": 1, "title": "test"})
-        mock_client.add_documents.assert_called_once_with(
-            "questions", [{"id": 1, "title": "test"}]
-        )
+        mock_client.add_documents.assert_called_once_with("questions", [{"id": 1, "title": "test"}])
 
     def test_swallows_exception(self, monkeypatch):
         mock_client = MagicMock()

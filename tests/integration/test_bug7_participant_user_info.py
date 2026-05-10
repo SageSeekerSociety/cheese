@@ -20,7 +20,9 @@ class TestBug7ParticipantUserInfo:
         creator.token = user_client.login(api_client, creator.username, creator.password)
 
         participant = user_client.create_user()
-        participant.token = user_client.login(api_client, participant.username, participant.password)
+        participant.token = user_client.login(
+            api_client, participant.username, participant.password
+        )
 
         suffix = unique_int()
 

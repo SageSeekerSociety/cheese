@@ -37,9 +37,7 @@ class TestBug12FollowPageKeyCasing:
             "headers_b": {"Authorization": f"Bearer {user_b.token}"},
         }
 
-    def test_followers_page_uses_camel_case(
-        self, api_client: TestClient, setup: dict
-    ) -> None:
+    def test_followers_page_uses_camel_case(self, api_client: TestClient, setup: dict) -> None:
         """GET /users/{id}/followers page object must use camelCase keys."""
         resp = api_client.get(
             f"/users/{setup['user_b'].user_id}/followers",
@@ -58,9 +56,7 @@ class TestBug12FollowPageKeyCasing:
         assert "has_more" not in page
         assert "next_start" not in page
 
-    def test_following_page_uses_camel_case(
-        self, api_client: TestClient, setup: dict
-    ) -> None:
+    def test_following_page_uses_camel_case(self, api_client: TestClient, setup: dict) -> None:
         """GET /users/{id}/follow/users page object must use camelCase keys."""
         resp = api_client.get(
             f"/users/{setup['user_a'].user_id}/follow/users",

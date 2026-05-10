@@ -73,9 +73,7 @@ class TestTeamRecruitment:
 
     # ----- CREATE -----
 
-    def test_owner_can_create_post(
-        self, api_client: TestClient, recruitment_setup: dict
-    ) -> None:
+    def test_owner_can_create_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
         owner = recruitment_setup["owner"]
         team_id = recruitment_setup["team_id"]
 
@@ -104,9 +102,7 @@ class TestTeamRecruitment:
         assert post["updatedAt"] is not None
         assert post["expiresAt"] is None
 
-    def test_admin_can_create_post(
-        self, api_client: TestClient, recruitment_setup: dict
-    ) -> None:
+    def test_admin_can_create_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
         admin = recruitment_setup["admin"]
         team_id = recruitment_setup["team_id"]
 
@@ -243,9 +239,7 @@ class TestTeamRecruitment:
 
     # ----- EDIT -----
 
-    def test_creator_can_edit_post(
-        self, api_client: TestClient, recruitment_setup: dict
-    ) -> None:
+    def test_creator_can_edit_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
         owner = recruitment_setup["owner"]
         team_id = recruitment_setup["team_id"]
 
@@ -290,9 +284,7 @@ class TestTeamRecruitment:
 
     # ----- DELETE -----
 
-    def test_owner_can_delete_post(
-        self, api_client: TestClient, recruitment_setup: dict
-    ) -> None:
+    def test_owner_can_delete_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
         owner = recruitment_setup["owner"]
         team_id = recruitment_setup["team_id"]
 
@@ -314,9 +306,7 @@ class TestTeamRecruitment:
         post_ids = [p["id"] for p in plaza_resp.json()["data"]["posts"]]
         assert post_id not in post_ids
 
-    def test_admin_can_delete_post(
-        self, api_client: TestClient, recruitment_setup: dict
-    ) -> None:
+    def test_admin_can_delete_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
         owner = recruitment_setup["owner"]
         admin = recruitment_setup["admin"]
         team_id = recruitment_setup["team_id"]
@@ -402,9 +392,7 @@ class TestTeamRecruitment:
         )
         assert resp.status_code == 400
 
-    def test_delete_nonexistent_post(
-        self, api_client: TestClient, recruitment_setup: dict
-    ) -> None:
+    def test_delete_nonexistent_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
         owner = recruitment_setup["owner"]
         resp = api_client.delete(
             "/recruitment/999999999",
@@ -412,9 +400,7 @@ class TestTeamRecruitment:
         )
         assert resp.status_code == 404
 
-    def test_edit_nonexistent_post(
-        self, api_client: TestClient, recruitment_setup: dict
-    ) -> None:
+    def test_edit_nonexistent_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
         owner = recruitment_setup["owner"]
         resp = api_client.patch(
             "/recruitment/999999999",

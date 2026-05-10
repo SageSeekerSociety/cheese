@@ -22,6 +22,7 @@ def _patch_team_locking_check():
     with patch("app.domain.team.services.check_team_locking_status", new_callable=AsyncMock):
         yield
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

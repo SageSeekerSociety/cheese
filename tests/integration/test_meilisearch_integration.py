@@ -94,9 +94,7 @@ class TestMeilisearchQuestionSearch:
             "q3_id": q3.json()["data"].get("id") or q3.json()["data"].get("question", {}).get("id"),
         }
 
-    def test_chinese_keyword_search(
-        self, search_setup: dict, api_client: TestClient
-    ):
+    def test_chinese_keyword_search(self, search_setup: dict, api_client: TestClient):
         """Search for Chinese keywords returns relevant results."""
         resp = api_client.get(
             "/questions",
@@ -108,9 +106,7 @@ class TestMeilisearchQuestionSearch:
         titles = [q["title"] for q in questions]
         assert any("深度学习" in t for t in titles), f"Expected '深度学习' in results: {titles}"
 
-    def test_typo_tolerant_search(
-        self, search_setup: dict, api_client: TestClient
-    ):
+    def test_typo_tolerant_search(self, search_setup: dict, api_client: TestClient):
         """Meilisearch typo tolerance finds results despite typos."""
         resp = api_client.get(
             "/questions",
@@ -122,9 +118,7 @@ class TestMeilisearchQuestionSearch:
         titles = [q["title"] for q in questions]
         assert any("PostgreSQL" in t for t in titles), f"Typo search failed: {titles}"
 
-    def test_partial_chinese_search(
-        self, search_setup: dict, api_client: TestClient
-    ):
+    def test_partial_chinese_search(self, search_setup: dict, api_client: TestClient):
         """Partial Chinese term still finds relevant results."""
         resp = api_client.get(
             "/questions",
@@ -138,9 +132,7 @@ class TestMeilisearchQuestionSearch:
             f"Partial search failed: {titles}"
         )
 
-    def test_no_results_for_unrelated_term(
-        self, search_setup: dict, api_client: TestClient
-    ):
+    def test_no_results_for_unrelated_term(self, search_setup: dict, api_client: TestClient):
         """Unrelated search term returns empty."""
         resp = api_client.get(
             "/questions",
@@ -149,6 +141,4 @@ class TestMeilisearchQuestionSearch:
         )
         assert resp.status_code == 200
         questions = resp.json()["data"]["questions"]
-        assert len(questions) == 0 or not any(
-            "量子" in q["title"] for q in questions
-        )
+        assert len(questions) == 0 or not any("量子" in q["title"] for q in questions)

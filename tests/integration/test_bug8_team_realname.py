@@ -129,9 +129,7 @@ class TestBug8TeamRealNameCheck:
 
         portal.call(_insert)
 
-    def test_no_realname_shows_missing_reason(
-        self, api_client: TestClient, setup: dict
-    ) -> None:
+    def test_no_realname_shows_missing_reason(self, api_client: TestClient, setup: dict) -> None:
         """Without any real-name info, TEAM_MEMBER_MISSING_REAL_NAME appears."""
         resp = api_client.get(
             f"/tasks/{setup['task_id']}",
@@ -140,9 +138,7 @@ class TestBug8TeamRealNameCheck:
         )
         assert resp.status_code == 200
         teams = resp.json()["data"]["task"]["participationEligibility"]["teams"]
-        team_entry = next(
-            (t for t in teams if t["team"]["id"] == setup["team_id"]), None
-        )
+        team_entry = next((t for t in teams if t["team"]["id"] == setup["team_id"]), None)
         assert team_entry is not None
         codes = [r["code"] for r in team_entry["eligibility"]["reasons"]]
         assert "TEAM_MEMBER_MISSING_REAL_NAME" in codes
@@ -164,9 +160,7 @@ class TestBug8TeamRealNameCheck:
         )
         assert resp.status_code == 200
         teams = resp.json()["data"]["task"]["participationEligibility"]["teams"]
-        team_entry = next(
-            (t for t in teams if t["team"]["id"] == setup["team_id"]), None
-        )
+        team_entry = next((t for t in teams if t["team"]["id"] == setup["team_id"]), None)
         assert team_entry is not None
         codes = [r["code"] for r in team_entry["eligibility"]["reasons"]]
         # Must still report missing because the MEMBER hasn't verified
@@ -186,9 +180,7 @@ class TestBug8TeamRealNameCheck:
         )
         assert resp.status_code == 200
         teams = resp.json()["data"]["task"]["participationEligibility"]["teams"]
-        team_entry = next(
-            (t for t in teams if t["team"]["id"] == setup["team_id"]), None
-        )
+        team_entry = next((t for t in teams if t["team"]["id"] == setup["team_id"]), None)
         assert team_entry is not None
         codes = [r["code"] for r in team_entry["eligibility"]["reasons"]]
         assert "TEAM_MEMBER_MISSING_REAL_NAME" not in codes

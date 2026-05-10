@@ -494,7 +494,9 @@ def _build_participant_user_info(
     if not membership.is_team and membership.member_id in user_map:
         user = user_map[membership.member_id]
         profile = profile_map.get(membership.member_id)
-        nickname = profile.nickname if profile and getattr(profile, "nickname", None) else user.username
+        nickname = (
+            profile.nickname if profile and getattr(profile, "nickname", None) else user.username
+        )
         return {
             "id": user.id,
             "username": user.username,
@@ -2167,7 +2169,9 @@ async def get_task_participant(
     return {
         "code": 200,
         "message": "OK",
-        "data": {"participant": _membership_to_api_model(membership, participant_info=participant_info)},
+        "data": {
+            "participant": _membership_to_api_model(membership, participant_info=participant_info)
+        },
     }
 
 
