@@ -4,6 +4,7 @@ description: >
   Run ruff + pyright + pytest via check.sh. Run this in background while
   doing code review work in parallel. Reports concise pass/fail summary.
 tools: Bash, Read
+model: sonnet
 ---
 
 Run the project check script:
