@@ -3,6 +3,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -31,6 +32,68 @@ from app.domain.user.repositories import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+# ── Request Models ────────────────────────────────────────────────────────────
+
+
+class CreateSpaceRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1)
+    intro: str = ""
+    description: str = ""
+    avatar_id: int | None = Field(default=None, alias="avatarId")
+    enable_rank: bool = Field(default=False, alias="enableRank")
+    announcements: list | str | None = None
+    task_templates: list | str | None = Field(default=None, alias="taskTemplates")
+    classification_topics: list[int] | None = Field(default=None, alias="classificationTopics")
+
+
+class PatchSpaceRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = None
+    intro: str | None = None
+    description: str | None = None
+    avatar_id: int | None = Field(default=None, alias="avatarId")
+    enable_rank: bool | None = Field(default=None, alias="enableRank")
+    announcements: list | str | None = None
+    task_templates: list | str | None = Field(default=None, alias="taskTemplates")
+    classification_topics: list[int] | None = Field(default=None, alias="classificationTopics")
+    default_category_id: int | None = Field(default=None, alias="defaultCategoryId")
+
+
+class CreateSpaceCategoryRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1)
+    description: str | None = None
+    display_order: int = Field(default=0, alias="displayOrder")
+
+
+class PatchSpaceCategoryRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = None
+    description: str | None = None
+    display_order: int | None = Field(default=None, alias="displayOrder")
+    archived: bool | None = None
+    archived_at: int | None = Field(default=None, alias="archivedAt")
+
+
+class AddSpaceManagerRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: int = Field(..., alias="userId", gt=0)
+    role: str = "ADMIN"
+
+
+class PatchSpaceManagerRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    role: str = Field(..., min_length=1)
+
 
 router = APIRouter(prefix="/spaces", tags=["Spaces"])
 
@@ -366,43 +429,24 @@ async def get_spaces(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_space(
-    payload: dict,
+    payload: CreateSpaceRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    name = payload.get("name")
-    if not isinstance(name, str) or not name.strip():
-        raise BadRequestError("name is required")
+    if await service.exists_by_name(payload.name):
+        raise ConflictError(f"Space with name '{payload.name}' already exists")
 
-    if await service.exists_by_name(name):
-        raise ConflictError(f"Space with name '{name}' already exists")
-
-    intro = payload.get("intro") or ""
-    description = payload.get("description") or ""
-    avatar_id = payload.get("avatarId")
-    enable_rank = bool(payload.get("enableRank", False))
-    announcements = _expect_list(payload.get("announcements"), "announcements")
-    task_templates = _expect_list(payload.get("taskTemplates"), "taskTemplates")
-    classification_topic_ids_raw = payload.get("classificationTopics")
-    classification_topic_ids: list[int] = []
-    if classification_topic_ids_raw is not None:
-        if not isinstance(classification_topic_ids_raw, list):
-            raise BadRequestError("classificationTopics must be an array")
-        for item in classification_topic_ids_raw:
-            if isinstance(item, bool):
-                raise BadRequestError("classificationTopics must contain integers")
-            try:
-                classification_topic_ids.append(int(item))
-            except (TypeError, ValueError) as exc:
-                raise BadRequestError("classificationTopics must contain integers") from exc
+    announcements = _expect_list(payload.announcements, "announcements")
+    task_templates = _expect_list(payload.task_templates, "taskTemplates")
+    classification_topic_ids: list[int] = payload.classification_topics or []
 
     space = await service.create_space(
-        name=name,
-        intro=intro,
-        description=description,
-        avatar_id=avatar_id,
-        enable_rank=enable_rank,
+        name=payload.name,
+        intro=payload.intro,
+        description=payload.description,
+        avatar_id=payload.avatar_id,
+        enable_rank=payload.enable_rank,
         owner_id=auth_user.user_id,
         announcements=announcements,
         task_templates=task_templates,
@@ -427,43 +471,31 @@ async def create_space(
 )
 async def patch_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    payload: dict,
+    payload: PatchSpaceRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    announcements = payload.get("announcements")
-    task_templates = payload.get("taskTemplates")
+    announcements = payload.announcements
+    task_templates = payload.task_templates
     if announcements is not None:
         announcements = _expect_list(announcements, "announcements")
     if task_templates is not None:
         task_templates = _expect_list(task_templates, "taskTemplates")
 
-    classification_topic_ids_raw = payload.get("classificationTopics")
-    classification_topic_ids: list[int] | None = None
-    if classification_topic_ids_raw is not None:
-        if not isinstance(classification_topic_ids_raw, list):
-            raise BadRequestError("classificationTopics must be an array")
-        classification_topic_ids = []
-        for item in classification_topic_ids_raw:
-            if isinstance(item, bool):
-                raise BadRequestError("classificationTopics must contain integers")
-            try:
-                classification_topic_ids.append(int(item))
-            except (TypeError, ValueError) as exc:
-                raise BadRequestError("classificationTopics must contain integers") from exc
+    classification_topic_ids: list[int] | None = payload.classification_topics
 
     space = await service.update_space(
         space_id=space_id,
         actor_user_id=auth_user.user_id,
-        name=payload.get("name"),
-        intro=payload.get("intro"),
-        description=payload.get("description"),
-        avatar_id=payload.get("avatarId"),
-        enable_rank=payload.get("enableRank"),
+        name=payload.name,
+        intro=payload.intro,
+        description=payload.description,
+        avatar_id=payload.avatar_id,
+        enable_rank=payload.enable_rank,
         announcements=announcements,
         task_templates=task_templates,
-        default_category_id=payload.get("defaultCategoryId"),
+        default_category_id=payload.default_category_id,
     )
     if classification_topic_ids is not None:
         await service.replace_classification_topics(
@@ -975,24 +1007,15 @@ async def get_space_topics(
 )
 async def create_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    payload: dict,
+    payload: CreateSpaceCategoryRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
-    name = payload.get("name")
-    if not isinstance(name, str) or not name.strip():
-        raise BadRequestError("Category name is required")
-    description = payload.get("description")
-    try:
-        display_order_raw = payload.get("displayOrder", 0)
-        display_order = int(display_order_raw)
-    except (TypeError, ValueError) as exc:
-        raise BadRequestError("displayOrder must be integer") from exc
     category = await service.create_category(
         space_id=space_id,
-        name=name,
-        description=description,
-        display_order=display_order,
+        name=payload.name,
+        description=payload.description,
+        display_order=payload.display_order,
         actor_user_id=auth_user.user_id,
     )
     return {
@@ -1009,30 +1032,22 @@ async def create_space_category(
 async def patch_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
-    payload: dict,
+    payload: PatchSpaceCategoryRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
-    display_order = None
-    if "displayOrder" in payload:
-        try:
-            display_order = int(payload.get("displayOrder"))
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError("displayOrder must be integer") from exc
-
     # Support both "archived" (boolean) and "archivedAt" (timestamp)
-    archived = payload.get("archived")
-    if archived is None and "archivedAt" in payload:
-        archived_at_raw = payload.get("archivedAt")
-        archived = archived_at_raw is not None and archived_at_raw > 0
+    archived = payload.archived
+    if archived is None and payload.archived_at is not None:
+        archived = payload.archived_at > 0
 
     category = await service.update_category(
         space_id=space_id,
         category_id=category_id,
         actor_user_id=auth_user.user_id,
-        name=payload.get("name"),
-        description=payload.get("description"),
-        display_order=display_order,
+        name=payload.name,
+        description=payload.description,
+        display_order=payload.display_order,
         archived=archived,
     )
     return {
@@ -1145,32 +1160,19 @@ async def list_space_admins(
 )
 async def add_space_admin(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
-    payload: dict,
+    payload: AddSpaceManagerRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    # Frontend's v-text-field for the UID isn't always strictly typed as a
-    # number — it sends "5" (string) rather than 5 even though the
-    # PostSpaceAdminRequestData type says number. Accept either, mirroring
-    # NT/Spring's auto-coercion of query params via Jackson.
-    raw_user_id = payload.get("userId")
-    if isinstance(raw_user_id, bool) or raw_user_id is None:
-        raise BadRequestError("userId is required")
-    try:
-        user_id = int(raw_user_id)
-    except (TypeError, ValueError):
-        raise BadRequestError("userId must be a positive integer") from None
-    if user_id <= 0:
-        raise BadRequestError("userId must be a positive integer")
-    role_value = (payload.get("role") or "ADMIN").upper()
+    role_value = payload.role.upper()
     role_mapping = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
     role = role_mapping.get(role_value)
     if role is None:
         raise BadRequestError(f"Invalid role: {role_value}")
     await service.add_admin(
         space_id=space_id,
-        target_user_id=user_id,
+        target_user_id=payload.user_id,
         role=role,
         actor_user_id=auth_user.user_id,
     )
@@ -1207,18 +1209,15 @@ async def delete_space_admin(
 async def patch_space_manager(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    payload: dict,
+    payload: PatchSpaceManagerRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    role_str = payload.get("role")
-    if not isinstance(role_str, str):
-        raise BadRequestError("role is required")
     role_map = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
-    new_role = role_map.get(role_str.upper())
+    new_role = role_map.get(payload.role.upper())
     if new_role is None:
-        raise BadRequestError(f"Invalid role: {role_str}. Must be OWNER or ADMIN")
+        raise BadRequestError(f"Invalid role: {payload.role}. Must be OWNER or ADMIN")
     await service.update_admin_role(
         space_id=space_id,
         target_user_id=user_id,
