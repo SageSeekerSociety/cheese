@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
+from pydantic import BaseModel, ConfigDict
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -10,6 +11,21 @@ from app.domain.knowledge.repositories import KnowledgeRepository
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.team.repositories import TeamRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
+
+# ── Request Models ────────────────────────────────────────────────────────────
+
+
+from typing import Any
+
+
+class PatchKnowledgeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = None
+    description: str | None = None
+    content: str | dict[str, Any] | list | None = None
+    labels: list[str] | None = None
+
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge"])
 
@@ -162,25 +178,17 @@ async def get_knowledge_by_id(
 )
 async def patch_knowledge(
     knowledge_id: Annotated[int, Path(ge=1, alias="knowledgeId")],
-    payload: dict,
+    payload: PatchKnowledgeRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
-    labels_raw = payload.get("labels")
-    labels: list[str] | None = None
-    if labels_raw is not None:
-        if isinstance(labels_raw, list):
-            labels = [str(lbl) for lbl in labels_raw]
-        else:
-            labels = None
-
     knowledge = await service.update(
         knowledge_id=knowledge_id,
         user_id=auth_user.user_id,
-        name=payload.get("name"),
-        description=payload.get("description"),
-        content=payload.get("content"),
-        labels=labels,
+        name=payload.name,
+        description=payload.description,
+        content=payload.content,
+        labels=payload.labels,
     )
     return {
         "code": 200,

@@ -170,6 +170,112 @@ class ConfirmTaskPublishFromPdfRequest(BaseModel):
     drafts: list[dict]
 
 
+class CreateTaskRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    submitter_type: str = Field(..., alias="submitterType")
+    resubmittable: bool
+    editable: bool
+    intro: str
+    description: str
+    space: int
+    participant_limit: int | None = Field(default=None, alias="participantLimit")
+    default_deadline: int = Field(default=30, alias="defaultDeadline")
+    deadline: int | None = None
+    registration_start_at: int | None = Field(default=None, alias="registrationStartAt")
+    require_real_name: bool = Field(default=False, alias="requireRealName")
+    min_team_size: int | None = Field(default=None, alias="minTeamSize")
+    max_team_size: int | None = Field(default=None, alias="maxTeamSize")
+    rank: int | None = None
+    category_id: int | None = Field(default=None, alias="categoryId")
+    team_locking_policy: str = Field(default="NO_LOCK", alias="teamLockingPolicy")
+    video_url: str | None = Field(default=None, alias="videoUrl")
+    topics: list[int] = Field(default_factory=list)
+
+
+class TaskParticipantRequest(BaseModel):
+    """Body for joining a task (user or team). All fields optional."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    deadline: int | None = None
+    email: str | None = None
+    phone: str | None = None
+    apply_reason: str | None = Field(default=None, alias="applyReason")
+    personal_advantage: str | None = Field(default=None, alias="personalAdvantage")
+    remark: str | None = None
+
+
+class JoinTaskAsTeamRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    team_id: int = Field(..., alias="teamId", gt=0)
+    deadline: int | None = None
+    email: str | None = None
+    phone: str | None = None
+    apply_reason: str | None = Field(default=None, alias="applyReason")
+    personal_advantage: str | None = Field(default=None, alias="personalAdvantage")
+    remark: str | None = None
+
+
+class PatchTaskParticipantRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    approved: str | None = None
+    deadline: int | None = None
+    reject_reason: str | None = Field(default=None, alias="rejectReason")
+    email: str | None = None
+    phone: str | None = None
+
+
+class PatchTaskRequest(BaseModel):
+    """Partial update body for task. All fields optional (PATCH semantics)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = None
+    intro: str | None = None
+    description: str | None = None
+    video_url: str | None = Field(default=None, alias="videoUrl")
+    resubmittable: bool | None = None
+    editable: bool | None = None
+    require_real_name: bool | None = Field(default=None, alias="requireRealName")
+    deadline: int | None = None
+    has_deadline: bool | None = Field(default=None, alias="hasDeadline")
+    registration_start_at: int | None = Field(default=None, alias="registrationStartAt")
+    has_registration_start: bool | None = Field(default=None, alias="hasRegistrationStart")
+    participant_limit: int | None = Field(default=None, alias="participantLimit")
+    has_participant_limit: bool | None = Field(default=None, alias="hasParticipantLimit")
+    default_deadline: int | None = Field(default=None, alias="defaultDeadline")
+    rank: int | None = None
+    has_rank: bool | None = Field(default=None, alias="hasRank")
+    approved: str | None = None
+    reject_reason: str | None = Field(default=None, alias="rejectReason")
+    min_team_size: int | None = Field(default=None, alias="minTeamSize")
+    max_team_size: int | None = Field(default=None, alias="maxTeamSize")
+    team_locking_policy: str | None = Field(default=None, alias="teamLockingPolicy")
+    category_id: int | None = Field(default=None, alias="categoryId")
+    submission_schema: list[dict] | None = Field(default=None, alias="submissionSchema")
+    topics: list[int] | None = None
+
+
+class CreateSubmissionReviewRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    score: int
+    comment: str
+
+
+class PatchSubmissionReviewRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool | None = None
+    score: int | None = None
+    comment: str | None = None
+
+
 def _task_to_api_model(task: Task) -> dict:
     created_at_ms = int(task.created_at.timestamp() * 1000) if task.created_at is not None else 0
     updated_at_ms = int(task.updated_at.timestamp() * 1000) if task.updated_at is not None else 0
@@ -627,52 +733,107 @@ def _map_approve_type_to_int(value: str | None) -> int | None:
 
 async def _create_task_entity(
     *,
-    payload: dict,
+    payload: dict | CreateTaskRequest,
     db,
     creator_user_id: int,
 ) -> Task:
-    required_fields = [
-        "name",
-        "submitterType",
-        "resubmittable",
-        "editable",
-        "intro",
-        "description",
-        "space",
-    ]
-    for field in required_fields:
-        if field not in payload:
-            raise BadRequestError(f"Missing required field: {field}")
-
-    try:
-        name = str(payload["name"])
-        submitter_type_raw = str(payload["submitterType"])
-        submitter_type = _map_submitter_type(submitter_type_raw)
-        resubmittable = bool(payload["resubmittable"])
-        editable = bool(payload["editable"])
-        intro = str(payload["intro"])
-        description = str(payload["description"])
-        space_id = int(payload["space"])
-    except (TypeError, ValueError) as exc:
-        raise BadRequestError(f"Invalid field types: {exc}") from exc
-
-    participant_limit_raw = payload.get("participantLimit")
-    participant_limit: int | None
-    if participant_limit_raw is None:
-        participant_limit = None
+    # Accept both dict (from PDF draft flow) and validated CreateTaskRequest
+    if isinstance(payload, CreateTaskRequest):
+        name = payload.name
+        submitter_type = _map_submitter_type(payload.submitter_type)
+        resubmittable = payload.resubmittable
+        editable = payload.editable
+        intro = payload.intro
+        description = payload.description
+        space_id = payload.space
+        participant_limit = payload.participant_limit
+        default_deadline = payload.default_deadline
+        deadline_ms = payload.deadline
+        registration_start_ms = payload.registration_start_at
+        require_real_name = payload.require_real_name
+        min_team_size = payload.min_team_size
+        max_team_size = payload.max_team_size
+        rank = payload.rank
+        category_id = payload.category_id
+        team_locking_policy = payload.team_locking_policy
+        video_url = payload.video_url or None
+        topics = payload.topics
     else:
+        # Dict path — used by PDF-based creation flow
+        required_fields = [
+            "name",
+            "submitterType",
+            "resubmittable",
+            "editable",
+            "intro",
+            "description",
+            "space",
+        ]
+        for field in required_fields:
+            if field not in payload:
+                raise BadRequestError(f"Missing required field: {field}")
+
         try:
-            participant_limit = int(participant_limit_raw)
+            name = str(payload["name"])
+            submitter_type_raw = str(payload["submitterType"])
+            submitter_type = _map_submitter_type(submitter_type_raw)
+            resubmittable = bool(payload["resubmittable"])
+            editable = bool(payload["editable"])
+            intro = str(payload["intro"])
+            description = str(payload["description"])
+            space_id = int(payload["space"])
         except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid participantLimit: {exc}") from exc
+            raise BadRequestError(f"Invalid field types: {exc}") from exc
 
-    default_deadline_raw = payload.get("defaultDeadline", 30)
-    try:
-        default_deadline = int(default_deadline_raw)
-    except (TypeError, ValueError) as exc:
-        raise BadRequestError(f"Invalid defaultDeadline: {exc}") from exc
+        participant_limit_raw = payload.get("participantLimit")
+        if participant_limit_raw is None:
+            participant_limit = None
+        else:
+            try:
+                participant_limit = int(participant_limit_raw)
+            except (TypeError, ValueError) as exc:
+                raise BadRequestError(f"Invalid participantLimit: {exc}") from exc
 
-    deadline_ms = payload.get("deadline")
+        default_deadline_raw = payload.get("defaultDeadline", 30)
+        try:
+            default_deadline = int(default_deadline_raw)
+        except (TypeError, ValueError) as exc:
+            raise BadRequestError(f"Invalid defaultDeadline: {exc}") from exc
+
+        deadline_ms = payload.get("deadline")
+        registration_start_ms = payload.get("registrationStartAt")
+        require_real_name = bool(payload.get("requireRealName", False))
+
+        min_team_size_raw = payload.get("minTeamSize")
+        max_team_size_raw = payload.get("maxTeamSize")
+        min_team_size = int(min_team_size_raw) if min_team_size_raw is not None else None
+        max_team_size = int(max_team_size_raw) if max_team_size_raw is not None else None
+
+        rank_raw = payload.get("rank")
+        rank = int(rank_raw) if rank_raw is not None else None
+
+        category_id_raw = payload.get("categoryId")
+        category_id = int(category_id_raw) if category_id_raw is not None else None
+
+        team_locking_policy = payload.get("teamLockingPolicy") or "NO_LOCK"
+        video_url = payload.get("videoUrl") or None
+
+        topics_raw = payload.get("topics") or []
+        topics = []
+        if isinstance(topics_raw, list):
+            for topic in topics_raw:
+                try:
+                    topics.append(int(topic))
+                except (TypeError, ValueError):
+                    continue
+
+    if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
+        raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
+
+    # Kotlin 行为：只有 TEAM 类型任务才允许设置 team size 相关字段。
+    if submitter_type != 1 and (min_team_size is not None or max_team_size is not None):
+        raise BadRequestError("minTeamSize and maxTeamSize can only be set for TEAM type tasks.")
+
     deadline_dt: datetime | None = None
     if deadline_ms is not None:
         try:
@@ -682,7 +843,6 @@ async def _create_task_entity(
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
-    registration_start_ms = payload.get("registrationStartAt")
     registration_start_dt: datetime | None = None
     if registration_start_ms is not None:
         try:
@@ -691,59 +851,6 @@ async def _create_task_entity(
             )
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
-
-    require_real_name = bool(payload.get("requireRealName", False))
-
-    min_team_size_raw = payload.get("minTeamSize")
-    max_team_size_raw = payload.get("maxTeamSize")
-    min_team_size: int | None = None
-    max_team_size: int | None = None
-    if min_team_size_raw is not None:
-        try:
-            min_team_size = int(min_team_size_raw)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid minTeamSize: {exc}") from exc
-    if max_team_size_raw is not None:
-        try:
-            max_team_size = int(max_team_size_raw)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid maxTeamSize: {exc}") from exc
-
-    # Kotlin 行为：只有 TEAM 类型任务才允许设置 team size 相关字段。
-    if submitter_type != 1 and (min_team_size is not None or max_team_size is not None):
-        raise BadRequestError("minTeamSize and maxTeamSize can only be set for TEAM type tasks.")
-
-    rank_raw = payload.get("rank")
-    rank: int | None = None
-    if rank_raw is not None:
-        try:
-            rank = int(rank_raw)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid rank: {exc}") from exc
-
-    category_id_raw = payload.get("categoryId")
-    category_id: int | None = None
-    if category_id_raw is not None:
-        try:
-            category_id = int(category_id_raw)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid categoryId: {exc}") from exc
-
-    team_locking_policy = payload.get("teamLockingPolicy") or "NO_LOCK"
-    if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
-        raise BadRequestError(f"Invalid teamLockingPolicy: {team_locking_policy}")
-
-    video_url = payload.get("videoUrl") or None
-
-    topics_raw = payload.get("topics") or []
-    topics: list[int] = []
-    if isinstance(topics_raw, list):
-        for topic in topics_raw:
-            try:
-                topics.append(int(topic))
-            except (TypeError, ValueError):
-                # 忽略无法解析的 topicId，避免因为单个坏值整体失败
-                continue
 
     space_repo = SpaceRepository(session=db)
     category_repo = SpaceCategoryRepository(session=db)
@@ -802,7 +909,7 @@ async def _create_task_entity(
     summary="Create Task",
 )
 async def create_task(
-    payload: dict,
+    payload: CreateTaskRequest,
     db=Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
@@ -1031,7 +1138,7 @@ async def confirm_publish_task_from_pdf(
 async def create_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     member: Annotated[int | None, Query(description="Member ID (user or team)")] = None,
-    payload: dict | None = None,
+    payload: TaskParticipantRequest | None = None,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -1043,7 +1150,7 @@ async def create_task_participant(
     - 仅在 Python 侧做人数上限、重复参与与实名的基础校验。
     """
     if payload is None:
-        payload = {}
+        payload = TaskParticipantRequest()
     if member is None:
         member = auth_user.user_id
 
@@ -1076,21 +1183,14 @@ async def create_task_participant(
                     f"(requires rank {task.rank - rank_jump}+)"
                 )
 
-    deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None
-    if deadline_ms is not None:
+    if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC).replace(
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
                 tzinfo=None
             )
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
-
-    email = payload.get("email")
-    phone = payload.get("phone")
-    apply_reason = payload.get("applyReason")
-    personal_advantage = payload.get("personalAdvantage")
-    remark = payload.get("remark")
 
     is_team = task.submitter_type == 1
     # 新建报名默认审批状态：与 Kotlin 一致使用 ApproveType.NONE
@@ -1102,11 +1202,11 @@ async def create_task_participant(
         is_team=is_team,
         approved=approved,
         deadline=deadline_dt,
-        email=email,
-        phone=phone,
-        apply_reason=apply_reason,
-        personal_advantage=personal_advantage,
-        remark=remark,
+        email=payload.email,
+        phone=payload.phone,
+        apply_reason=payload.apply_reason,
+        personal_advantage=payload.personal_advantage,
+        remark=payload.remark,
     )
 
     return {
@@ -1124,14 +1224,14 @@ async def create_task_participant(
 )
 async def join_task_as_user(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
-    payload: dict | None = None,
+    payload: TaskParticipantRequest | None = None,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Allow authenticated user to join a task themselves."""
     if payload is None:
-        payload = {}
+        payload = TaskParticipantRequest()
 
     task_repo = TaskRepository(session=db)
     task = await task_repo.get_by_id(task_id)
@@ -1146,11 +1246,10 @@ async def join_task_as_user(
             "This endpoint is for USER tasks only. Use /participations/team for team tasks."
         )
 
-    deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None
-    if deadline_ms is not None:
+    if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC).replace(
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
                 tzinfo=None
             )
         except (TypeError, ValueError) as exc:
@@ -1162,11 +1261,11 @@ async def join_task_as_user(
         is_team=False,
         approved=2,
         deadline=deadline_dt,
-        email=payload.get("email"),
-        phone=payload.get("phone"),
-        apply_reason=payload.get("applyReason"),
-        personal_advantage=payload.get("personalAdvantage"),
-        remark=payload.get("remark"),
+        email=payload.email,
+        phone=payload.phone,
+        apply_reason=payload.apply_reason,
+        personal_advantage=payload.personal_advantage,
+        remark=payload.remark,
     )
 
     return {
@@ -1184,20 +1283,16 @@ async def join_task_as_user(
 )
 async def join_task_as_team(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
-    payload: dict,
+    payload: JoinTaskAsTeamRequest,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Allow team to join a task."""
-    team_id = payload.get("teamId")
-    if not isinstance(team_id, int) or team_id <= 0:
-        raise BadRequestError("teamId is required")
-
     from app.domain.team.repositories import TeamRepository
 
     team_repo = TeamRepository(session=db)
-    if not await team_repo.is_team_member(team_id, auth_user.user_id):
+    if not await team_repo.is_team_member(payload.team_id, auth_user.user_id):
         raise ForbiddenError("You must be a member of this team to register it for a task")
 
     task_repo = TaskRepository(session=db)
@@ -1213,11 +1308,10 @@ async def join_task_as_team(
             "This endpoint is for TEAM tasks only. Use /participations/user for user tasks."
         )
 
-    deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None
-    if deadline_ms is not None:
+    if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC).replace(
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
                 tzinfo=None
             )
         except (TypeError, ValueError) as exc:
@@ -1225,15 +1319,15 @@ async def join_task_as_team(
 
     membership = await membership_service.create_membership(
         task=task,
-        member_id=team_id,
+        member_id=payload.team_id,
         is_team=True,
         approved=2,
         deadline=deadline_dt,
-        email=payload.get("email"),
-        phone=payload.get("phone"),
-        apply_reason=payload.get("applyReason"),
-        personal_advantage=payload.get("personalAdvantage"),
-        remark=payload.get("remark"),
+        email=payload.email,
+        phone=payload.phone,
+        apply_reason=payload.apply_reason,
+        personal_advantage=payload.personal_advantage,
+        remark=payload.remark,
     )
 
     return {
@@ -1252,7 +1346,7 @@ async def join_task_as_team(
 async def patch_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
-    payload: dict,
+    payload: PatchTaskParticipantRequest,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -1273,35 +1367,27 @@ async def patch_task_participant(
     if membership is None or membership.task_id != task_id:
         raise NotFoundError("Participant not found")
 
-    approved_raw = payload.get("approved")
     approved_value: int | None = None
-    if approved_raw is not None:
-        if not isinstance(approved_raw, str):
-            raise BadRequestError("approved must be a string (APPROVED/DISAPPROVED/NONE)")
-        approved_value = _map_approve_type_to_int(approved_raw)
+    if payload.approved is not None:
+        approved_value = _map_approve_type_to_int(payload.approved)
 
-    deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None
-    if deadline_ms is not None:
+    if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC).replace(
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
                 tzinfo=None
             )
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
-
-    reject_reason = payload.get("rejectReason")
-    email = payload.get("email")
-    phone = payload.get("phone")
 
     updated = await membership_service.update_membership(
         membership=membership,
         task=task,
         approved=approved_value,
         deadline=deadline_dt,
-        reject_reason=reject_reason,
-        email=email,
-        phone=phone,
+        reject_reason=payload.reject_reason,
+        email=payload.email,
+        phone=payload.phone,
     )
 
     return {
@@ -1520,7 +1606,7 @@ async def get_task(
 )
 async def patch_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
-    payload: dict,
+    payload: PatchTaskRequest,
     db=Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
@@ -1543,103 +1629,76 @@ async def patch_task(
         raise ForbiddenError("Only task owner or space admin can update this task")
 
     # 基本字符串字段
-    if "name" in payload and payload["name"] is not None:
-        task.name = str(payload["name"])
-    if "intro" in payload and payload["intro"] is not None:
-        task.intro = str(payload["intro"])
-    if "description" in payload and payload["description"] is not None:
-        task.description = str(payload["description"])
+    if payload.name is not None:
+        task.name = payload.name
+    if payload.intro is not None:
+        task.intro = payload.intro
+    if payload.description is not None:
+        task.description = payload.description
 
-    # 视频链接
-    if "videoUrl" in payload:
-        task.video_url = payload["videoUrl"] if payload["videoUrl"] else None
+    # 视频链接 — use model_fields_set to detect explicit null vs absent
+    if "video_url" in payload.model_fields_set:
+        task.video_url = payload.video_url if payload.video_url else None
 
     # 布尔开关
-    if "resubmittable" in payload and payload["resubmittable"] is not None:
-        task.resubmittable = bool(payload["resubmittable"])
-    if "editable" in payload and payload["editable"] is not None:
-        task.editable = bool(payload["editable"])
-    if "requireRealName" in payload and payload["requireRealName"] is not None:
-        task.require_real_name = bool(payload["requireRealName"])
+    if payload.resubmittable is not None:
+        task.resubmittable = payload.resubmittable
+    if payload.editable is not None:
+        task.editable = payload.editable
+    if payload.require_real_name is not None:
+        task.require_real_name = payload.require_real_name
 
     # deadline / registrationStartAt / participantLimit 及其 hasXxx 标志
-    deadline_ms = payload.get("deadline")
-    has_deadline = payload.get("hasDeadline")
-    if deadline_ms is not None:
+    if payload.deadline is not None:
         try:
-            task.deadline = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC).replace(
-                tzinfo=None
-            )
+            task.deadline = datetime.fromtimestamp(
+                int(payload.deadline) / 1000.0, tz=UTC
+            ).replace(tzinfo=None)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
-    if has_deadline is False:
+    if payload.has_deadline is False:
         task.deadline = None
 
-    registration_start_ms = payload.get("registrationStartAt")
-    has_registration_start = payload.get("hasRegistrationStart")
-    if registration_start_ms is not None:
+    if payload.registration_start_at is not None:
         try:
             task.registration_start_at = datetime.fromtimestamp(
-                int(registration_start_ms) / 1000.0, tz=UTC
+                int(payload.registration_start_at) / 1000.0, tz=UTC
             )
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid registrationStartAt: {exc}") from exc
-    if has_registration_start is False:
+    if payload.has_registration_start is False:
         task.registration_start_at = None
 
-    participant_limit_raw = payload.get("participantLimit")
-    has_participant_limit = payload.get("hasParticipantLimit")
-    if participant_limit_raw is not None:
-        try:
-            task.participant_limit = int(participant_limit_raw)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid participantLimit: {exc}") from exc
-    if has_participant_limit is False:
+    if payload.participant_limit is not None:
+        task.participant_limit = payload.participant_limit
+    if payload.has_participant_limit is False:
         task.participant_limit = None
 
     # 默认截止天数 / 排名
-    if "defaultDeadline" in payload and payload["defaultDeadline"] is not None:
-        try:
-            task.default_deadline = int(payload["defaultDeadline"])
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid defaultDeadline: {exc}") from exc
+    if payload.default_deadline is not None:
+        task.default_deadline = payload.default_deadline
 
-    has_rank = payload.get("hasRank")
-    rank_raw = payload.get("rank")
-    if rank_raw is not None:
-        try:
-            task.rank = int(rank_raw)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid rank: {exc}") from exc
-    if has_rank is False:
+    if payload.rank is not None:
+        task.rank = payload.rank
+    if payload.has_rank is False:
         task.rank = None
 
     # 审批状态与驳回原因 — 需要 space admin 权限，任务创建者不可自审
-    if ("approved" in payload and payload["approved"] is not None) or (
-        "rejectReason" in payload and payload["rejectReason"] is not None
-    ):
+    if payload.approved is not None or payload.reject_reason is not None:
         if not is_space_admin:
             raise ForbiddenError("Only space admins can approve or reject tasks")
-        if "approved" in payload and payload["approved"] is not None:
-            task.approved = _map_approve_type(str(payload["approved"]))
-        if "rejectReason" in payload and payload["rejectReason"] is not None:
-            task.reject_reason = str(payload["rejectReason"])
+        if payload.approved is not None:
+            task.approved = _map_approve_type(payload.approved)
+        if payload.reject_reason is not None:
+            task.reject_reason = payload.reject_reason
 
     # 团队大小限制，仅 TEAM 类型任务允许设置
-    min_team_size_raw = payload.get("minTeamSize")
-    max_team_size_raw = payload.get("maxTeamSize")
     min_team_size: int | None = task.min_team_size
     max_team_size: int | None = task.max_team_size
-    if min_team_size_raw is not None:
-        try:
-            min_team_size = int(min_team_size_raw)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid minTeamSize: {exc}") from exc
-    if max_team_size_raw is not None:
-        try:
-            max_team_size = int(max_team_size_raw)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid maxTeamSize: {exc}") from exc
+    if payload.min_team_size is not None:
+        min_team_size = payload.min_team_size
+    if payload.max_team_size is not None:
+        max_team_size = payload.max_team_size
 
     if task.submitter_type != 1 and (min_team_size is not None or max_team_size is not None):
         raise BadRequestError("minTeamSize and maxTeamSize can only be set for TEAM type tasks.")
@@ -1648,43 +1707,31 @@ async def patch_task(
     task.max_team_size = max_team_size
 
     # teamLockingPolicy
-    if "teamLockingPolicy" in payload and payload["teamLockingPolicy"] is not None:
-        policy = str(payload["teamLockingPolicy"])
-        if policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
-            raise BadRequestError(f"Invalid teamLockingPolicy: {policy}")
-        task.team_locking_policy = policy
+    if payload.team_locking_policy is not None:
+        if payload.team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
+            raise BadRequestError(f"Invalid teamLockingPolicy: {payload.team_locking_policy}")
+        task.team_locking_policy = payload.team_locking_policy
 
     # categoryId 更新：需验证归属 space 且未归档/未删除
-    if "categoryId" in payload and payload["categoryId"] is not None:
-        try:
-            new_category_id = int(payload["categoryId"])
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid categoryId: {exc}") from exc
-
+    if payload.category_id is not None:
         space_repo = SpaceRepository(session=db)
         category_repo = SpaceCategoryRepository(session=db)
         effective_category_id = await _validate_and_get_category_id(
             space_repo=space_repo,
             category_repo=category_repo,
             space_id=task.space_id,
-            category_id=new_category_id,
+            category_id=payload.category_id,
         )
         task.category_id = effective_category_id
 
     # submissionSchema: 覆盖更新（先删后插）。
-    if "submissionSchema" in payload and isinstance(payload["submissionSchema"], list):
+    if payload.submission_schema is not None:
         schema_repo = TaskSubmissionSchemaRepository(session=db)
-        await schema_repo.replace_schema(task.id, payload["submissionSchema"])
+        await schema_repo.replace_schema(task.id, payload.submission_schema)
 
     # 话题列表：简单覆盖语义，先全部软删除，再插入新集合。
-    if "topics" in payload and isinstance(payload["topics"], list):
-        topics_raw = payload["topics"] or []
-        topics: list[int] = []
-        for t in topics_raw:
-            try:
-                topics.append(int(t))
-            except (TypeError, ValueError):
-                continue
+    if payload.topics is not None:
+        topics: list[int] = payload.topics
 
         # 软删除旧关系
         now = datetime.now(UTC)
@@ -1984,7 +2031,7 @@ async def delete_task_participant_by_member(
 async def patch_task_membership_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     member: Annotated[int, Query(description="Member ID (user or team)")],
-    payload: dict,
+    payload: PatchTaskParticipantRequest,
     db=Depends(get_db),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -2008,35 +2055,27 @@ async def patch_task_membership_by_member(
     if membership is None:
         raise NotFoundError("Participant not found")
 
-    approved_raw = payload.get("approved")
     approved_value: int | None = None
-    if approved_raw is not None:
-        if not isinstance(approved_raw, str):
-            raise BadRequestError("approved must be a string (APPROVED/DISAPPROVED/NONE)")
-        approved_value = _map_approve_type_to_int(approved_raw)
+    if payload.approved is not None:
+        approved_value = _map_approve_type_to_int(payload.approved)
 
-    deadline_ms = payload.get("deadline")
     deadline_dt: datetime | None = None
-    if deadline_ms is not None:
+    if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC).replace(
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
                 tzinfo=None
             )
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
-
-    reject_reason = payload.get("rejectReason")
-    email = payload.get("email")
-    phone = payload.get("phone")
 
     await membership_service.update_membership(
         membership=membership,
         task=task,
         approved=approved_value,
         deadline=deadline_dt,
-        reject_reason=reject_reason,
-        email=email,
-        phone=phone,
+        reject_reason=payload.reject_reason,
+        email=payload.email,
+        phone=payload.phone,
     )
 
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
@@ -2428,7 +2467,7 @@ async def post_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
-    payload: dict,
+    payload: CreateSubmissionReviewRequest,
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -2445,18 +2484,11 @@ async def post_task_submission_review(
     if existing.get("reviewed"):
         raise ConflictError("Review already exists for this submission")
 
-    try:
-        accepted = bool(payload["accepted"])
-        score = int(payload["score"])
-        comment = str(payload["comment"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise BadRequestError(f"Invalid review payload: {exc}") from exc
-
     review_dto = await review_service.create_review(
         submission_id=submission_id,
-        accepted=accepted,
-        score=score,
-        comment=comment,
+        accepted=payload.accepted,
+        score=payload.score,
+        comment=payload.comment,
     )
     return {
         "code": 200,
@@ -2498,7 +2530,7 @@ async def patch_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
-    payload: dict,
+    payload: PatchSubmissionReviewRequest,
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -2511,28 +2543,11 @@ async def patch_task_submission_review(
     if task.creator_id != auth_user.user_id:
         raise ForbiddenError("Only task owner can update review")
 
-    accepted = payload.get("accepted")
-    score = payload.get("score")
-    comment = payload.get("comment")
-
-    if accepted is not None and not isinstance(accepted, bool):
-        raise BadRequestError("accepted must be a boolean when provided")
-    score_int: int | None = None
-    if score is not None:
-        try:
-            score_int = int(score)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid score: {exc}") from exc
-
-    comment_str: str | None = None
-    if comment is not None:
-        comment_str = str(comment)
-
     review_dto = await review_service.patch_review(
         submission_id=submission_id,
-        accepted=accepted,
-        score=score_int,
-        comment=comment_str,
+        accepted=payload.accepted,
+        score=payload.score,
+        comment=payload.comment,
     )
     return {
         "code": 200,
@@ -2549,7 +2564,7 @@ async def put_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     submission_id: Annotated[int, Path(ge=1, alias="submissionId")],
-    payload: dict,
+    payload: CreateSubmissionReviewRequest,
     review_service: TaskSubmissionReviewService = Depends(get_task_submission_review_service),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -2562,18 +2577,11 @@ async def put_task_submission_review(
     if task.creator_id != auth_user.user_id:
         raise ForbiddenError("Only task owner can update review")
 
-    try:
-        accepted = bool(payload["accepted"])
-        score = int(payload["score"])
-        comment = str(payload["comment"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise BadRequestError(f"Invalid review payload: {exc}") from exc
-
     review_dto = await review_service.patch_review(
         submission_id=submission_id,
-        accepted=accepted,
-        score=score,
-        comment=comment,
+        accepted=payload.accepted,
+        score=payload.score,
+        comment=payload.comment,
     )
     return {
         "code": 200,
