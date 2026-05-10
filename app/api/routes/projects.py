@@ -2,6 +2,7 @@ import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.checker import require_auth_user
@@ -15,6 +16,42 @@ from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository
 from app.domain.user.models import User, UserProfile
 from app.domain.user.repositories import UserProfileRepository, UserRepository
+
+# ── Request Models ────────────────────────────────────────────────────────────
+
+
+class CreateProjectRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1)
+    description: str = ""
+    color_code: str | None = Field(default=None, alias="colorCode")
+    team_id: int = Field(..., alias="teamId", gt=0)
+    leader_id: int = Field(..., alias="leaderId", gt=0)
+    start_date: int = Field(..., alias="startDate")
+    end_date: int = Field(..., alias="endDate")
+    content: str | None = None
+    parent_id: int | None = Field(default=None, alias="parentId")
+    external_task_id: int | None = Field(default=None, alias="externalTaskId")
+    github_repo: str | None = Field(default=None, alias="githubRepo")
+
+
+class PatchProjectRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = None
+    description: str | None = None
+    color_code: str | None = Field(default=None, alias="colorCode")
+    archived: bool | None = None
+
+
+class AddProjectMemberRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: int = Field(..., alias="userId", gt=0)
+    role: str = "MEMBER"
+    notes: str | None = None
+
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -137,56 +174,27 @@ def _validate_color_code(value: str | None) -> str:
     status_code=status.HTTP_201_CREATED,
 )
 async def create_project(
-    payload: dict,
+    payload: CreateProjectRequest,
     service: ProjectService = Depends(get_project_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
-    name = payload.get("name")
-    description = payload.get("description") or ""
-    color_code = _validate_color_code(payload.get("colorCode"))
-    team_id = payload.get("teamId")
-    leader_id = payload.get("leaderId")
-    start_date = payload.get("startDate")
-    end_date = payload.get("endDate")
-    content = payload.get("content")
-    parent_id = payload.get("parentId")
-    external_task_id = payload.get("externalTaskId")
-    github_repo = payload.get("githubRepo")
-
-    if not isinstance(name, str) or not name.strip():
-        raise BadRequestError("name is required")
-    if not isinstance(team_id, int) or team_id <= 0:
-        raise BadRequestError("teamId is required")
-    # leader_id is a user-typed UID in the create-project dialog, so apply the
-    # same str→int coercion we use for space/team/project member adds.
-    if isinstance(leader_id, bool) or leader_id is None:
-        raise BadRequestError("leaderId is required")
-    try:
-        leader_id = int(leader_id)
-    except (TypeError, ValueError):
-        raise BadRequestError("leaderId must be a positive integer") from None
-    if leader_id <= 0:
-        raise BadRequestError("leaderId must be a positive integer")
-    if not isinstance(start_date, int):
-        raise BadRequestError("startDate is required")
-    if not isinstance(end_date, int):
-        raise BadRequestError("endDate is required")
+    color_code = _validate_color_code(payload.color_code)
 
     project = await service.create_project(
-        name=name.strip(),
-        description=str(description),
+        name=payload.name.strip(),
+        description=payload.description,
         color_code=color_code,
-        team_id=team_id,
-        leader_id=leader_id,
-        start_date=start_date,
-        end_date=end_date,
-        content=content if isinstance(content, str) else None,
-        parent_id=parent_id if isinstance(parent_id, int) else None,
-        external_task_id=external_task_id if isinstance(external_task_id, int) else None,
-        github_repo=github_repo if isinstance(github_repo, str) else None,
+        team_id=payload.team_id,
+        leader_id=payload.leader_id,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        content=payload.content,
+        parent_id=payload.parent_id,
+        external_task_id=payload.external_task_id,
+        github_repo=payload.github_repo,
     )
     return {
         "code": 201,
@@ -223,7 +231,7 @@ async def get_project(
 )
 async def patch_project(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
-    payload: dict,
+    payload: PatchProjectRequest,
     service: ProjectService = Depends(get_project_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db: AsyncSession = Depends(get_db),
@@ -234,26 +242,14 @@ async def patch_project(
     if project is None:
         raise NotFoundError("Project not found")
 
-    name = payload.get("name")
-    description = payload.get("description")
-    color_code = payload.get("colorCode")
-    archived = payload.get("archived")
-
-    if color_code is not None:
-        color_code = _validate_color_code(color_code)
-    if name is not None and (not isinstance(name, str) or not name.strip()):
-        raise BadRequestError("name must be string")
-    if description is not None and not isinstance(description, str):
-        raise BadRequestError("description must be string")
-    if archived is not None and not isinstance(archived, bool):
-        raise BadRequestError("archived must be boolean")
+    color_code = _validate_color_code(payload.color_code) if payload.color_code is not None else None
 
     updated = await service.update_project(
         project,
-        name=name.strip() if isinstance(name, str) and name.strip() else None,
-        description=str(description) if isinstance(description, str) else None,
+        name=payload.name.strip() if payload.name and payload.name.strip() else None,
+        description=payload.description,
         color_code=color_code,
-        archived=archived,
+        archived=payload.archived,
     )
     return {
         "code": 200,
@@ -371,33 +367,18 @@ async def get_project_members(
 )
 async def add_project_member(
     project_id: Annotated[int, Path(ge=1, alias="projectId")],
-    payload: dict,
+    payload: AddProjectMemberRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
 ) -> dict:
     _ = auth_user
     await _get_project_or_404(service, project_id)
-    raw_user_id = payload.get("userId")
-    role = payload.get("role") or "MEMBER"
-    notes = payload.get("notes")
-    # Same-shape coercion as POST /spaces/{id}/managers — frontend
-    # text-fields often submit "5" instead of 5.
-    if isinstance(raw_user_id, bool) or raw_user_id is None:
-        raise BadRequestError("userId is required")
-    try:
-        user_id = int(raw_user_id)
-    except (TypeError, ValueError):
-        raise BadRequestError("userId must be a positive integer") from None
-    if user_id <= 0:
-        raise BadRequestError("userId must be a positive integer")
-    if not isinstance(role, str):
-        raise BadRequestError("role must be string")
 
     membership = await service.add_member(
         project_id=project_id,
-        user_id=user_id,
-        role=role.upper(),
-        notes=notes if isinstance(notes, str) else "",
+        user_id=payload.user_id,
+        role=payload.role.upper(),
+        notes=payload.notes or "",
     )
     return {
         "code": 201,

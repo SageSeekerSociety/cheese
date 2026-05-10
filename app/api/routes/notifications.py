@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
+from pydantic import BaseModel, ConfigDict
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -24,6 +25,28 @@ from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.user.repositories import UserProfileRepository
 from app.domain.user.services import UserService
+
+# ── Request Models ────────────────────────────────────────────────────────────
+
+
+class NotificationUpdateItem(BaseModel):
+    id: int
+    read: bool
+
+
+class BulkUpdateNotificationsRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    updates: list[NotificationUpdateItem] = []
+
+
+class SetCollectiveNotificationStatusRequest(BaseModel):
+    read: bool
+
+
+class UpdateNotificationStatusRequest(BaseModel):
+    read: bool
+
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -197,7 +220,7 @@ async def list_notifications(
     summary="Bulk Update Notification Status",
 )
 async def bulk_update_notifications(
-    payload: dict,
+    payload: BulkUpdateNotificationsRequest,
     service: NotificationQueryService = Depends(get_notification_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
@@ -205,15 +228,7 @@ async def bulk_update_notifications(
 
     Request shape is aligned with NT-API.yml: {updates: [{id, read}, ...]}.
     """
-    updates_raw = payload.get("updates") or []
-    updates: list[tuple[int, bool]] = []
-    for item in updates_raw:
-        try:
-            nid = int(item["id"])
-            read = bool(item["read"])
-        except Exception as exc:
-            raise BadRequestError(f"Invalid update payload: {exc}") from exc
-        updates.append((nid, read))
+    updates: list[tuple[int, bool]] = [(item.id, item.read) for item in payload.updates]
 
     updated_ids = await service.bulk_set_read_status(
         user_id=auth_user.user_id,
@@ -228,7 +243,7 @@ async def bulk_update_notifications(
     summary="Set Collective Notification Status",
 )
 async def set_collective_notification_status(
-    payload: dict,
+    payload: SetCollectiveNotificationStatusRequest,
     service: NotificationQueryService = Depends(get_notification_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
@@ -236,8 +251,7 @@ async def set_collective_notification_status(
 
     Currently only supports setting read=true, consistent with Kotlin implementation.
     """
-    read = payload.get("read")
-    if read is not True:
+    if payload.read is not True:
         raise BadRequestError(
             "This operation only supports marking all notifications as read (read must be true)."
         )
@@ -253,19 +267,15 @@ async def set_collective_notification_status(
 )
 async def update_notification_status(
     notification_id: Annotated[int, Path(ge=1, alias="notificationId")],
-    payload: dict,
+    payload: UpdateNotificationStatusRequest,
     service: NotificationQueryService = Depends(get_notification_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
-    read = payload.get("read")
-    if read is None:
-        raise BadRequestError("'read' field is required")
-
     # Update then refetch for DTO
     affected = await service.set_read_status(
         user_id=auth_user.user_id,
         notification_id=notification_id,
-        desired_read_status=bool(read),
+        desired_read_status=payload.read,
     )
     if affected == 0:
         raise NotFoundError(

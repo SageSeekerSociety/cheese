@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -21,6 +22,30 @@ from app.domain.team.recruitment_repositories import RecruitmentRepository
 from app.domain.team.recruitment_services import RecruitmentService
 from app.domain.team.repositories import TeamRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
+
+# ── Request Models ────────────────────────────────────────────────────────────
+
+
+class CreateRecruitmentPostRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1)
+    contact: str | None = None
+    max_members: int | None = Field(default=None, alias="maxMembers")
+    expires_at: int | None = Field(default=None, alias="expiresAt")
+
+
+class PatchRecruitmentPostRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str | None = None
+    content: str | None = None
+    contact: str | None = None
+    max_members: int | None = Field(default=None, alias="maxMembers")
+    status: str | None = None
+    expires_at: int | None = Field(default=None, alias="expiresAt")
+
 
 router = APIRouter(tags=["Recruitment"])
 
@@ -140,45 +165,38 @@ async def list_recruitment_posts(
 @router.patch("/recruitment/{postId}", summary="Edit Recruitment Post")
 async def edit_recruitment_post(
     post_id: Annotated[int, Path(ge=1, alias="postId")],
-    payload: dict,
+    payload: PatchRecruitmentPostRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: RecruitmentService = Depends(_get_recruitment_service),
     db=Depends(get_db),
 ) -> dict:
-    title = payload.get("title")
-    content = payload.get("content")
-    contact = payload.get("contact", ...)
-    max_members = payload.get("maxMembers", ...)
-    status_val = payload.get("status")
-    expires_at_ms = payload.get("expiresAt", ...)
-
-    if title is not None and (not isinstance(title, str) or not title.strip()):
+    if payload.title is not None and not payload.title.strip():
         raise BadRequestError("title must be a non-empty string")
-    if content is not None and not isinstance(content, str):
-        raise BadRequestError("content must be a string")
-    if status_val is not None:
+    if payload.status is not None:
         valid_statuses = {s.value for s in RecruitmentStatus}
-        if status_val not in valid_statuses:
+        if payload.status not in valid_statuses:
             raise BadRequestError(f"Invalid status. Must be one of {valid_statuses}")
 
     # Convert expiresAt ms timestamp to datetime if provided
     expires_at: datetime | None = ...  # type: ignore[assignment]
-    if expires_at_ms is not ...:
-        if expires_at_ms is None:
+    if "expires_at" in payload.model_fields_set:
+        if payload.expires_at is None:
             expires_at = None
-        elif isinstance(expires_at_ms, (int, float)):
-            expires_at = datetime.fromtimestamp(expires_at_ms / 1000, tz=UTC)
         else:
-            raise BadRequestError("expiresAt must be a unix timestamp in milliseconds")
+            expires_at = datetime.fromtimestamp(payload.expires_at / 1000, tz=UTC)
+
+    # Use ... sentinel for fields not included in request
+    contact = payload.contact if "contact" in payload.model_fields_set else ...
+    max_members = payload.max_members if "max_members" in payload.model_fields_set else ...
 
     post = await service.update_post(
         post_id=post_id,
         actor_user_id=auth_user.user_id,
-        title=title,
-        content=content,
+        title=payload.title,
+        content=payload.content,
         contact=contact,
         max_members=max_members,
-        status=status_val,
+        status=payload.status,
         expires_at=expires_at,
     )
     teams_map, users_map, profiles_map = await _load_maps_for_posts(db, [post])
@@ -221,38 +239,22 @@ team_recruitment_router = APIRouter(prefix="/teams", tags=["Teams", "Recruitment
 )
 async def create_recruitment_post(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    payload: dict,
+    payload: CreateRecruitmentPostRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: RecruitmentService = Depends(_get_recruitment_service),
     db=Depends(get_db),
 ) -> dict:
-    title = payload.get("title")
-    content = payload.get("content")
-    if not isinstance(title, str) or not title.strip():
-        raise BadRequestError("title is required")
-    if not isinstance(content, str) or not content.strip():
-        raise BadRequestError("content is required")
-
-    contact = payload.get("contact")
-    max_members = payload.get("maxMembers")
-    if max_members is not None and not isinstance(max_members, int):
-        raise BadRequestError("maxMembers must be an integer")
-
     expires_at: datetime | None = None
-    expires_at_ms = payload.get("expiresAt")
-    if expires_at_ms is not None:
-        if isinstance(expires_at_ms, (int, float)):
-            expires_at = datetime.fromtimestamp(expires_at_ms / 1000, tz=UTC)
-        else:
-            raise BadRequestError("expiresAt must be a unix timestamp in milliseconds")
+    if payload.expires_at is not None:
+        expires_at = datetime.fromtimestamp(payload.expires_at / 1000, tz=UTC)
 
     post = await service.create_post(
         team_id=team_id,
         actor_user_id=auth_user.user_id,
-        title=title.strip(),
-        content=content,
-        contact=contact,
-        max_members=max_members,
+        title=payload.title.strip(),
+        content=payload.content,
+        contact=payload.contact,
+        max_members=payload.max_members,
         expires_at=expires_at,
     )
     teams_map, users_map, profiles_map = await _load_maps_for_posts(db, [post])

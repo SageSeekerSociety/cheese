@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Header, Path, Query, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +41,122 @@ from app.domain.user.repositories import (
     UserStatisticsRepository,
 )
 from app.domain.user.services import UserAuthService, UserProfileService
+
+# ── Request Models ────────────────────────────────────────────────────────────
+
+
+class SendEmailCodeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    email: str = Field(..., min_length=1)
+    invite_code: str | None = Field(default=None, alias="inviteCode")
+
+
+class RegisterUserRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    username: str = Field(..., min_length=1)
+    nickname: str = Field(..., min_length=1)
+    email: str = Field(..., min_length=1)
+    email_code: str = Field(..., alias="emailCode", min_length=1)
+    password: str | None = None
+    srp_salt: str | None = Field(default=None, alias="srpSalt")
+    srp_verifier: str | None = Field(default=None, alias="srpVerifier")
+    invite_code: str | None = Field(default=None, alias="inviteCode")
+    is_legacy_auth: bool = Field(default=False, alias="isLegacyAuth")
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+    totp_code: str | None = Field(default=None, alias="totpCode")
+
+
+class SrpInitRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    username: str = Field(..., min_length=1)
+
+
+class SrpVerifyRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    username: str = Field(..., min_length=1)
+    client_public_ephemeral: str = Field(..., alias="clientPublicEphemeral")
+    client_proof: str = Field(..., alias="clientProof")
+    totp_code: str | None = Field(default=None, alias="totpCode")
+
+
+class SudoAuthRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    method: str
+    credentials: dict = Field(default_factory=dict)
+
+
+class PutUserIdentityRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    real_name: str = Field(default="", alias="realName")
+    student_id: str = Field(default="", alias="studentId")
+    grade: str = ""
+    major: str = ""
+    class_name: str = Field(default="", alias="className")
+
+
+class PatchUserIdentityRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    real_name: str | None = Field(default=None, alias="realName")
+    student_id: str | None = Field(default=None, alias="studentId")
+    grade: str | None = None
+    major: str | None = None
+    class_name: str | None = Field(default=None, alias="className")
+
+
+class TwoFactorCodeRequest(BaseModel):
+    code: str = Field(..., min_length=1)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+
+
+class ResetPasswordRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    token: str = Field(..., min_length=1)
+    password: str | None = None
+    srp_salt: str | None = Field(default=None, alias="srpSalt")
+    srp_verifier: str | None = Field(default=None, alias="srpVerifier")
+
+
+class PasskeyRegisterVerifyRequest(BaseModel):
+    challenge: str = Field(..., min_length=1)
+    credential: dict
+
+
+class PasskeyAuthenticateVerifyRequest(BaseModel):
+    challenge: str = Field(..., min_length=1)
+    credential: dict
+
+
+class LinkOAuthRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    provider_id: str = Field(..., alias="providerId", min_length=1)
+    provider_user_id: str = Field(..., alias="providerUserId", min_length=1)
+    profile: dict | None = None
+
+
+class CreateInviteCodeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    max_uses: int = Field(default=1, alias="maxUses")
+    note: str | None = None
+
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -770,7 +887,7 @@ async def get_user_answers(
     summary="Send registration email verification code",
 )
 async def send_register_email_code(
-    payload: dict,
+    payload: SendEmailCodeRequest,
     db=Depends(get_db),
 ) -> dict:
     """Send email verification code for registration.
@@ -788,10 +905,8 @@ async def send_register_email_code(
     from app.core.errors import ConflictError
     from app.domain.user.verification_service import EmailVerificationService
 
-    email = payload.get("email")
-    invite_code = payload.get("inviteCode")
-    if not email:
-        raise BadRequestError("email is required")
+    email = payload.email
+    invite_code = payload.invite_code
 
     email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if not re.match(email_regex, email):
@@ -845,7 +960,7 @@ async def get_registration_config() -> dict:
     summary="Register User",
 )
 async def register_user(
-    payload: dict,
+    payload: RegisterUserRequest,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
@@ -863,15 +978,14 @@ async def register_user(
     from app.core.config import settings
     from app.domain.user.verification_service import EmailVerificationService
 
-    username = payload.get("username")
-    nickname = payload.get("nickname")
-    email = payload.get("email")
-    email_code = payload.get("emailCode")
-    password = payload.get("password")
-    srp_salt = payload.get("srpSalt")
-    srp_verifier = payload.get("srpVerifier")
-    invite_code = payload.get("inviteCode")
-    _ = payload.get("isLegacyAuth", False)
+    username = payload.username
+    nickname = payload.nickname
+    email = payload.email
+    email_code = payload.email_code
+    password = payload.password
+    srp_salt = payload.srp_salt
+    srp_verifier = payload.srp_verifier
+    invite_code = payload.invite_code
 
     has_invite_code = bool(invite_code)
     if has_invite_code:
@@ -1155,7 +1269,7 @@ async def get_auth_methods(
     summary="User Login",
 )
 async def user_login(
-    payload: dict,
+    payload: LoginRequest,
     request: Request,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
@@ -1165,11 +1279,9 @@ async def user_login(
     from app.core.config import settings
     from app.domain.user.login_security import LoginRateLimiter, SessionManager, TOTPService
 
-    username = payload.get("username")
-    password = payload.get("password")
-    totp_code = payload.get("totpCode")
-    if not username or not password:
-        raise BadRequestError("username and password are required")
+    username = payload.username
+    password = payload.password
+    totp_code = payload.totp_code
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -1260,7 +1372,7 @@ async def user_login(
     summary="SRP Login Step 1: Initialize",
 )
 async def srp_login_init(
-    payload: dict,
+    payload: SrpInitRequest,
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     """SRP login step 1: return server ephemeral and salt."""
@@ -1268,9 +1380,7 @@ async def srp_login_init(
 
     from app.core.config import settings
 
-    username = payload.get("username")
-    if not username:
-        raise BadRequestError("username is required")
+    username = payload.username
 
     user = await auth_service._user_repo.get_by_username(username)
     if user is None or not user.hashed_password or not user.hashed_password.startswith("SRP:"):
@@ -1305,7 +1415,7 @@ async def srp_login_init(
     summary="SRP Login Step 2: Verify",
 )
 async def srp_login_verify(
-    payload: dict,
+    payload: SrpVerifyRequest,
     response: Response,
     auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
@@ -1317,13 +1427,10 @@ async def srp_login_verify(
     from app.core.config import settings
     from app.domain.user.login_security import LoginRateLimiter, SessionManager, TOTPService
 
-    username = payload.get("username")
-    client_public = payload.get("clientPublicEphemeral")
-    client_proof = payload.get("clientProof")
-    totp_code = payload.get("totpCode")
-
-    if not username or not client_public or not client_proof:
-        raise BadRequestError("username, clientPublicEphemeral, and clientProof are required")
+    username = payload.username
+    client_public = payload.client_public_ephemeral
+    client_proof = payload.client_proof
+    totp_code = payload.totp_code
 
     user = await auth_service._user_repo.get_by_username(username)
     if user is None or not user.hashed_password or not user.hashed_password.startswith("SRP:"):
@@ -1513,7 +1620,7 @@ async def user_logout(
     summary="Verify credentials for privileged operations",
 )
 async def sudo_auth(
-    payload: dict,
+    payload: SudoAuthRequest,
     auth_user: AuthUserInfo = Depends(get_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
@@ -1522,8 +1629,8 @@ async def sudo_auth(
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
-    method = payload.get("method")
-    credentials = payload.get("credentials", {})
+    method = payload.method
+    credentials = payload.credentials
 
     if method == "password":
         password = credentials.get("password")
@@ -1690,26 +1797,19 @@ async def get_user_identity(
 )
 async def put_user_identity(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    payload: dict,
+    payload: PutUserIdentityRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     realname_service: UserRealNameService = Depends(get_user_realname_service),
 ) -> dict:
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can update identity.")
-    identity = {
-        "realName": payload.get("realName") or "",
-        "studentId": payload.get("studentId") or "",
-        "grade": payload.get("grade") or "",
-        "major": payload.get("major") or "",
-        "className": payload.get("className") or "",
-    }
     stored = await realname_service.create_or_update_user_identity(
         user_id=user_id,
-        real_name=identity["realName"],
-        student_id=identity["studentId"],
-        grade=identity["grade"],
-        major=identity["major"],
-        class_name=identity["className"],
+        real_name=payload.real_name,
+        student_id=payload.student_id,
+        grade=payload.grade,
+        major=payload.major,
+        class_name=payload.class_name,
     )
     return {"code": 200, "message": "Success", "data": {"identity": stored}}
 
@@ -1720,7 +1820,7 @@ async def put_user_identity(
 )
 async def patch_user_identity(
     user_id: Annotated[int, Path(ge=1, alias="userId")],
-    payload: dict,
+    payload: PatchUserIdentityRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     realname_service: UserRealNameService = Depends(get_user_realname_service),
 ) -> dict:
@@ -1738,16 +1838,12 @@ async def patch_user_identity(
             "className": "",
         }
 
-    def _merge(key: str) -> str:
-        val = payload.get(key)
-        return val if val is not None else base[key]
-
     merged = {
-        "realName": _merge("realName"),
-        "studentId": _merge("studentId"),
-        "grade": _merge("grade"),
-        "major": _merge("major"),
-        "className": _merge("className"),
+        "realName": payload.real_name if payload.real_name is not None else base["realName"],
+        "studentId": payload.student_id if payload.student_id is not None else base["studentId"],
+        "grade": payload.grade if payload.grade is not None else base["grade"],
+        "major": payload.major if payload.major is not None else base["major"],
+        "className": payload.class_name if payload.class_name is not None else base["className"],
     }
     stored = await realname_service.create_or_update_user_identity(
         user_id=user_id,
@@ -1825,7 +1921,7 @@ async def enable_2fa(
     summary="Verify and complete 2FA setup",
 )
 async def verify_2fa_setup(
-    payload: dict,
+    payload: TwoFactorCodeRequest,
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -1833,9 +1929,7 @@ async def verify_2fa_setup(
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
-    code = payload.get("code")
-    if not code:
-        raise BadRequestError("code is required")
+    code = payload.code
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -1864,7 +1958,7 @@ async def verify_2fa_setup(
     summary="Disable 2FA",
 )
 async def disable_2fa(
-    payload: dict,
+    payload: TwoFactorCodeRequest,
     auth_user: AuthUserInfo = Depends(get_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -1872,9 +1966,7 @@ async def disable_2fa(
     from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
-    code = payload.get("code")
-    if not code:
-        raise BadRequestError("code is required to disable 2FA")
+    code = payload.code
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -2035,7 +2127,7 @@ async def revoke_all_sessions(
     summary="Request password reset",
 )
 async def forgot_password(
-    payload: dict,
+    payload: ForgotPasswordRequest,
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -2044,9 +2136,7 @@ async def forgot_password(
     from app.core.email import get_email_sender
     from app.domain.user.login_security import PasswordResetService
 
-    email = payload.get("email")
-    if not email:
-        raise BadRequestError("email is required")
+    email = payload.email
 
     user = await auth_service.get_user_by_email(email)
     if user is None:
@@ -2088,7 +2178,7 @@ async def forgot_password(
     summary="Reset password with token",
 )
 async def reset_password(
-    payload: dict,
+    payload: ResetPasswordRequest,
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -2096,10 +2186,10 @@ async def reset_password(
     from app.core.config import settings
     from app.domain.user.login_security import PasswordResetService
 
-    token = payload.get("token")
-    new_password = payload.get("password")
-    if not token or not new_password:
-        raise BadRequestError("token and password are required")
+    token = payload.token
+    new_password = payload.password
+    if not new_password:
+        raise BadRequestError("password is required")
 
     if len(new_password) < 6:
         raise BadRequestError("Password must be at least 6 characters")
@@ -2128,7 +2218,7 @@ async def reset_password(
     summary="Request password recovery",
 )
 async def recover_password_request(
-    payload: dict,
+    payload: ForgotPasswordRequest,
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     import re
@@ -2139,9 +2229,7 @@ async def recover_password_request(
     from app.core.email import get_email_sender
     from app.domain.user.login_security import PasswordResetService
 
-    email = payload.get("email")
-    if not email:
-        raise BadRequestError("email is required")
+    email = payload.email
 
     email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if not re.match(email_regex, email):
@@ -2191,7 +2279,7 @@ async def recover_password_request(
     summary="Verify password recovery token",
 )
 async def recover_password_verify(
-    payload: dict,
+    payload: ResetPasswordRequest,
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -2199,13 +2287,10 @@ async def recover_password_verify(
     from app.core.config import settings
     from app.domain.user.login_security import PasswordResetService
 
-    token = payload.get("token")
-    new_password = payload.get("password")
-    srp_salt = payload.get("srpSalt")
-    srp_verifier = payload.get("srpVerifier")
-
-    if not token:
-        raise BadRequestError("token is required")
+    token = payload.token
+    new_password = payload.password
+    srp_salt = payload.srp_salt
+    srp_verifier = payload.srp_verifier
 
     has_password = bool(new_password)
     has_srp = srp_salt and srp_verifier
@@ -2628,7 +2713,7 @@ async def passkey_register_challenge(
     summary="Verify passkey registration",
 )
 async def passkey_register_verify(
-    payload: dict,
+    payload: PasskeyRegisterVerifyRequest,
     auth_user: AuthUserInfo = Depends(get_auth_user),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
@@ -2636,11 +2721,8 @@ async def passkey_register_verify(
 
     from app.core.config import settings
 
-    challenge = payload.get("challenge")
-    credential = payload.get("credential")
-
-    if not challenge or not credential:
-        raise BadRequestError("challenge and credential are required")
+    challenge = payload.challenge
+    credential = payload.credential
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -2705,7 +2787,7 @@ async def passkey_authenticate_challenge(
     summary="Verify passkey authentication",
 )
 async def passkey_authenticate_verify(
-    payload: dict,
+    payload: PasskeyAuthenticateVerifyRequest,
     response: Response,
     passkey_service: PasskeyService = Depends(get_passkey_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
@@ -2715,11 +2797,8 @@ async def passkey_authenticate_verify(
     from app.core.config import settings
     from app.domain.user.login_security import SessionManager
 
-    challenge = payload.get("challenge")
-    credential = payload.get("credential")
-
-    if not challenge or not credential:
-        raise BadRequestError("challenge and credential are required")
+    challenge = payload.challenge
+    credential = payload.credential
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -2956,16 +3035,13 @@ async def handle_oauth_callback(
     summary="Link OAuth account to existing user",
 )
 async def link_oauth_account(
-    payload: dict,
+    payload: LinkOAuthRequest,
     auth_user: AuthUserInfo = Depends(get_auth_user),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> dict:
-    provider_id = payload.get("providerId")
-    provider_user_id = payload.get("providerUserId")
-    raw_profile = payload.get("profile")
-
-    if not provider_id or not provider_user_id:
-        raise BadRequestError("providerId and providerUserId are required")
+    provider_id = payload.provider_id
+    provider_user_id = payload.provider_user_id
+    raw_profile = payload.profile
 
     existing = await oauth_service.get_connection_by_provider(
         provider_id=provider_id,
@@ -3030,7 +3106,7 @@ async def list_invite_codes(
     summary="Create invite code (admin)",
 )
 async def create_invite_code(
-    payload: dict,
+    payload: CreateInviteCodeRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -3038,9 +3114,9 @@ async def create_invite_code(
 
     service = InviteCodeService(session)
     invite = await service.create_code(
-        max_uses=payload.get("maxUses", 1),
+        max_uses=payload.max_uses,
         created_by=auth_user.user_id,
-        note=payload.get("note"),
+        note=payload.note,
     )
     await session.commit()
     return {
