@@ -101,7 +101,14 @@ def _build_membership_service(
 ) -> tuple[TeamMembershipService, AsyncMock, AsyncMock]:
     team_repo = team_repo or _team_repo_mock()
     app_repo = app_repo or _app_repo_mock()
-    session = MagicMock()
+    session = AsyncMock()
+    # _validate_user_can_apply_or_be_invited does
+    #   await self._session.execute(select(User.id).where(...))
+    # The mock must return a result whose scalar_one_or_none() is non-None
+    # (= user exists). Tests that want "user not found" override this.
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = 1
+    session.execute.return_value = mock_result
     svc = TeamMembershipService(session=session, team_repo=team_repo, application_repo=app_repo)
     return svc, team_repo, app_repo
 
