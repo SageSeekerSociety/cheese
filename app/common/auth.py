@@ -9,7 +9,11 @@ from app.core.errors import AuthenticationRequiredError
 
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
+    # Must stay timezone-aware: .timestamp() on a naive datetime uses the
+    # local timezone (TZ=Asia/Shanghai in Docker → 8h offset), which makes
+    # every JWT expire on creation. Keep UTC so .timestamp() returns the
+    # correct Unix epoch seconds regardless of the container's TZ setting.
+    return datetime.now(UTC)
 
 
 def create_access_token(user_id: int) -> str:
