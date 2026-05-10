@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import os
@@ -8,13 +9,13 @@ import tempfile
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import fitz
 import pymupdf4llm
 
 from app.core.config import settings
 from app.core.errors import BadRequestError
 from app.core.storage import generate_storage_key, get_storage_backend
 from app.domain.llm.llm_client import LLMAPIError, LLMClient, LLMConnectionError, LLMTimeoutError
-from app.domain.llm.services import AiAdviceService, QuotaExceededError
 
 
 class TaskPdfDraftService:
@@ -24,11 +25,9 @@ class TaskPdfDraftService:
         self,
         *,
         llm_client: LLMClient | None = None,
-        quota_service: AiAdviceService | None = None,
         timeout_seconds: float | None = None,
     ) -> None:
         self._llm_client = llm_client or LLMClient()
-        self._quota_service = quota_service
         self._timeout_seconds = timeout_seconds or settings.openai_pdf_timeout_seconds
 
     @staticmethod
@@ -124,14 +123,6 @@ class TaskPdfDraftService:
         if not self._llm_client.is_configured:
             raise BadRequestError("LLM is not configured")
 
-        if self._quota_service is not None:
-            has_quota = await self._quota_service.pre_check_and_reserve(
-                user_id=user_id,
-                estimated_tokens=3000,
-            )
-            if not has_quota:
-                raise BadRequestError("AI quota exhausted")
-
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(text=normalized_text, template=template)
 
@@ -163,15 +154,6 @@ class TaskPdfDraftService:
             )
             for candidate in candidates
         ]
-
-        if self._quota_service is not None and response.total_tokens > 0:
-            try:
-                await self._quota_service.consume_tokens(
-                    user_id=user_id,
-                    tokens=response.total_tokens,
-                )
-            except QuotaExceededError as exc:
-                raise BadRequestError(str(exc)) from exc
 
         return payloads, response.total_tokens
 
