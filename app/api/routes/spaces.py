@@ -395,9 +395,7 @@ async def create_space(
             try:
                 classification_topic_ids.append(int(item))
             except (TypeError, ValueError) as exc:
-                raise BadRequestError(
-                    "classificationTopics must contain integers"
-                ) from exc
+                raise BadRequestError("classificationTopics must contain integers") from exc
 
     space = await service.create_space(
         name=name,
@@ -453,9 +451,7 @@ async def patch_space(
             try:
                 classification_topic_ids.append(int(item))
             except (TypeError, ValueError) as exc:
-                raise BadRequestError(
-                    "classificationTopics must contain integers"
-                ) from exc
+                raise BadRequestError("classificationTopics must contain integers") from exc
 
     space = await service.update_space(
         space_id=space_id,

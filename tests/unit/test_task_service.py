@@ -254,9 +254,7 @@ class TestTaskMembershipService:
             )
 
     @pytest.mark.anyio
-    async def test_create_membership_auto_reject_when_full(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    async def test_create_membership_auto_reject_when_full(self, monkeypatch: pytest.MonkeyPatch):
         from app.core.config import settings as _settings
 
         monkeypatch.setattr(_settings, "enforce_task_participant_limit_check", True)

@@ -34,12 +34,8 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_answer_query_log_answer_id", "answer_query_log", ["answer_id"]
-    )
-    op.create_index(
-        "ix_answer_query_log_viewer_id", "answer_query_log", ["viewer_id"]
-    )
+    op.create_index("ix_answer_query_log_answer_id", "answer_query_log", ["answer_id"])
+    op.create_index("ix_answer_query_log_viewer_id", "answer_query_log", ["viewer_id"])
 
 
 def downgrade() -> None:

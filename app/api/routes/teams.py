@@ -407,9 +407,7 @@ async def get_team_members(
     # NT @Auth("team:view:membership") requires MEMBER role or higher; this
     # route used to have no auth at all, so anyone — even anonymous — could
     # enumerate any team's roster.
-    auth_user: AuthUserInfo = require_permission(
-        Action.READ, Resource.TEAM_MEMBERSHIP, "teamId"
-    ),
+    auth_user: AuthUserInfo = require_permission(Action.READ, Resource.TEAM_MEMBERSHIP, "teamId"),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:

@@ -236,10 +236,7 @@ class TaskMembershipService:
         is_approving = previous_approved != 0 and new_approved == 0
         if is_approving:
             # 人数上限检查 — 仅在 enforce_task_participant_limit_check 开启时生效
-            if (
-                settings.enforce_task_participant_limit_check
-                and task.participant_limit is not None
-            ):
+            if settings.enforce_task_participant_limit_check and task.participant_limit is not None:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     raise TaskParticipantsReachedLimitError(task.id, task.participant_limit)  # type: ignore[arg-type]
@@ -327,10 +324,7 @@ class TaskMembershipService:
                 )
 
             # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
-            if (
-                settings.enforce_task_participant_limit_check
-                and task.participant_limit is not None
-            ):
+            if settings.enforce_task_participant_limit_check and task.participant_limit is not None:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(
@@ -457,10 +451,7 @@ class TaskMembershipService:
                 )
 
             # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
-            if (
-                settings.enforce_task_participant_limit_check
-                and task.participant_limit is not None
-            ):
+            if settings.enforce_task_participant_limit_check and task.participant_limit is not None:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(

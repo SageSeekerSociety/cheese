@@ -453,9 +453,7 @@ async def _enrich_task_user_state(
         elif submitter_type == 1:  # TEAM
             approved_team_memberships = [m for m in team_memberships if m.approved == 0]
             submittable = bool(approved_team_memberships)
-            submittable_as_team = [
-                _team_summary(m.member_id) for m in approved_team_memberships
-            ]
+            submittable_as_team = [_team_summary(m.member_id) for m in approved_team_memberships]
             if team_memberships and team_memberships[0].deadline:
                 user_deadline_ms = int(team_memberships[0].deadline.timestamp() * 1000)
 
@@ -1396,9 +1394,7 @@ async def get_task(
         # useTaskParticipation.ts:115 (joinedTeams[0].id / .name).
         team_ids_to_load = [m.member_id for m in team_memberships]
         team_repo = _TeamRepo(session=db)
-        teams_map = (
-            await team_repo.get_by_ids(team_ids_to_load) if team_ids_to_load else {}
-        )
+        teams_map = await team_repo.get_by_ids(team_ids_to_load) if team_ids_to_load else {}
 
         def _team_summary(team_id: int) -> dict:
             team = teams_map.get(team_id)
@@ -1422,9 +1418,7 @@ async def get_task(
         elif task.submitter_type == 1:  # TEAM
             approved_team_memberships = [m for m in team_memberships if m.approved == 0]
             submittable = bool(approved_team_memberships)
-            submittable_as_team = [
-                _team_summary(m.member_id) for m in approved_team_memberships
-            ]
+            submittable_as_team = [_team_summary(m.member_id) for m in approved_team_memberships]
             if team_memberships and team_memberships[0].deadline:
                 user_deadline_ms = int(team_memberships[0].deadline.timestamp() * 1000)
 
