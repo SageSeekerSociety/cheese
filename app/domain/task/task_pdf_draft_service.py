@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 import os
 import pathlib
 import re
@@ -13,7 +15,8 @@ from app.core.config import settings
 from app.core.errors import BadRequestError
 from app.core.storage import generate_storage_key, get_storage_backend
 from app.domain.llm.llm_client import LLMAPIError, LLMClient, LLMConnectionError, LLMTimeoutError
-from app.domain.llm.services import AiAdviceService, QuotaExceededError
+
+logger = logging.getLogger(__name__)
 
 
 class TaskPdfDraftService:
@@ -23,11 +26,9 @@ class TaskPdfDraftService:
         self,
         *,
         llm_client: LLMClient | None = None,
-        quota_service: AiAdviceService | None = None,
         timeout_seconds: float | None = None,
     ) -> None:
         self._llm_client = llm_client or LLMClient()
-        self._quota_service = quota_service
         self._timeout_seconds = timeout_seconds or settings.openai_pdf_timeout_seconds
 
     @staticmethod
@@ -66,6 +67,57 @@ class TaskPdfDraftService:
             raise BadRequestError("No task payload extracted from PDF")
         return payloads[0], token_used
 
+    def _split_pdf_to_pages(
+        self, pdf_bytes: bytes
+    ) -> tuple[list[tuple[str, dict[str, str]]], str]:
+        import fitz
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page_count = doc.page_count
+        doc.close()
+
+        if page_count == 0:
+            raise BadRequestError("PDF has no pages")
+
+        temp_dir = tempfile.mkdtemp(prefix="pdf_extract_")
+        try:
+            tmp_path = os.path.join(temp_dir, "input.pdf")
+            with open(tmp_path, "wb") as f:
+                f.write(pdf_bytes)
+
+            page_data: list[tuple[str, dict[str, str]]] = []
+            for page_num in range(page_count):
+                page_images_dir = pathlib.Path(temp_dir) / f"images_p{page_num}"
+                page_images_dir.mkdir(exist_ok=True)
+
+                markdown_text = pymupdf4llm.to_markdown(
+                    tmp_path,
+                    pages=[page_num],
+                    use_ocr=False,
+                    write_images=True,
+                    image_path=str(page_images_dir),
+                    image_format="png",
+                )
+
+                if not markdown_text or not markdown_text.strip():
+                    raise BadRequestError(
+                        f"Unable to extract readable text from page {page_num + 1}"
+                    )
+
+                image_map: dict[str, str] = {}
+                if page_images_dir.exists():
+                    for img_file in page_images_dir.iterdir():
+                        if img_file.is_file():
+                            image_map[img_file.name] = str(img_file)
+
+                page_data.append((markdown_text, image_map))
+
+            return page_data, temp_dir
+        except BaseException:
+            if os.path.isdir(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
+
     async def generate_task_payloads_from_pdf(
         self,
         *,
@@ -80,30 +132,65 @@ class TaskPdfDraftService:
         if not pdf_bytes:
             raise BadRequestError("Uploaded PDF is empty")
 
-        markdown_text, image_map, temp_dir = self._extract_pdf_markdown_and_images(pdf_bytes)
+        page_data, temp_dir = self._split_pdf_to_pages(pdf_bytes)
         try:
-            payloads, token_used = await self.generate_task_payloads_from_text(
-                text=markdown_text,
-                template=template,
-                space_id=space_id,
-                category_id=category_id,
-                forced_submitter_type=forced_submitter_type,
-                user_id=user_id,
-                default_topic_ids=default_topic_ids,
+            async def process_page(
+                page_num: int, markdown_text: str, image_map: dict[str, str]
+            ) -> tuple[list[dict[str, Any]], int]:
+                payloads, token_used = await self.generate_task_payloads_from_text(
+                    text=markdown_text,
+                    template=template,
+                    space_id=space_id,
+                    category_id=category_id,
+                    forced_submitter_type=forced_submitter_type,
+                    user_id=user_id,
+                    default_topic_ids=default_topic_ids,
+                )
+
+                for payload in payloads:
+                    if payload.get("description") and image_map:
+                        payload["description"] = await self._upload_and_replace_images(
+                            markdown_text=payload["description"],
+                            image_map=image_map,
+                        )
+
+                return payloads, token_used
+
+            results = await asyncio.gather(
+                *[process_page(i, md, im) for i, (md, im) in enumerate(page_data)],
+                return_exceptions=True,
             )
 
-            # Upload extracted images to storage and replace placeholders in descriptions
-            for payload in payloads:
-                if payload.get("description") and image_map:
-                    payload["description"] = await self._upload_and_replace_images(
-                        markdown_text=payload["description"],
-                        image_map=image_map,
+            all_payloads: list[dict[str, Any]] = []
+            total_tokens = 0
+            failed_pages: list[int] = []
+            for i, result in enumerate(results):
+                if isinstance(result, BaseException):
+                    failed_pages.append(i + 1)
+                    logger.warning(
+                        "PDF page %d LLM processing failed: %s", i + 1, result
                     )
+                else:
+                    payloads, tokens = result
+                    all_payloads.extend(payloads)
+                    total_tokens += tokens
 
-            return payloads, token_used
+            if not all_payloads:
+                raise BadRequestError(
+                    f"All {len(page_data)} page(s) failed to process"
+                )
+
+            if failed_pages:
+                logger.warning(
+                    "PDF processing: %d/%d pages succeeded, failed pages: %s",
+                    len(page_data) - len(failed_pages),
+                    len(page_data),
+                    failed_pages,
+                )
+
+            return all_payloads, total_tokens
         finally:
-            # Clean up temp directory
-            if temp_dir and os.path.isdir(temp_dir):
+            if os.path.isdir(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
     async def generate_task_payloads_from_text(
@@ -122,14 +209,6 @@ class TaskPdfDraftService:
             raise BadRequestError("PDF content is empty or unreadable")
         if not self._llm_client.is_configured:
             raise BadRequestError("LLM is not configured")
-
-        if self._quota_service is not None:
-            has_quota = await self._quota_service.pre_check_and_reserve(
-                user_id=user_id,
-                estimated_tokens=3000,
-            )
-            if not has_quota:
-                raise BadRequestError("AI quota exhausted")
 
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(text=normalized_text, template=template)
@@ -163,15 +242,6 @@ class TaskPdfDraftService:
             for candidate in candidates
         ]
 
-        if self._quota_service is not None and response.total_tokens > 0:
-            try:
-                await self._quota_service.consume_tokens(
-                    user_id=user_id,
-                    tokens=response.total_tokens,
-                )
-            except QuotaExceededError as exc:
-                raise BadRequestError(str(exc)) from exc
-
         return payloads, response.total_tokens
 
     async def generate_task_payload_from_text(
@@ -198,63 +268,6 @@ class TaskPdfDraftService:
         if not payloads:
             raise BadRequestError("No task payload extracted from text")
         return payloads[0], token_used
-
-    def _extract_pdf_markdown_and_images(self, pdf_bytes: bytes) -> tuple[str, dict[str, str], str]:
-        """Extract markdown text and images from PDF using pymupdf4llm.
-
-        Returns:
-            markdown_text: Extracted markdown with local image references.
-            image_map: Mapping of image filename -> absolute temp file path.
-            temp_dir: Path to the temp directory (caller must clean up).
-        """
-        if not pdf_bytes:
-            raise BadRequestError("Uploaded PDF is empty")
-
-        temp_dir = ""
-        tmp_path = ""
-        try:
-            temp_dir = tempfile.mkdtemp(prefix="pdf_extract_")
-            images_dir = pathlib.Path(temp_dir) / "images"
-            images_dir.mkdir(exist_ok=True)
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", dir=temp_dir) as tmp:
-                tmp.write(pdf_bytes)
-                tmp_path = tmp.name
-
-            markdown_text = pymupdf4llm.to_markdown(
-                tmp_path,
-                use_ocr=False,
-                write_images=True,
-                image_path=str(images_dir),
-                image_format="png",
-            )
-
-            if not markdown_text or not markdown_text.strip():
-                raise BadRequestError("Unable to extract readable text from PDF")
-
-            # Build image map: filename -> absolute path
-            image_map: dict[str, str] = {}
-            if images_dir.exists():
-                for img_file in images_dir.iterdir():
-                    if img_file.is_file():
-                        image_map[img_file.name] = str(img_file)
-
-            return markdown_text, image_map, temp_dir
-        except BadRequestError:
-            # Clean up on known error
-            if temp_dir and os.path.isdir(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            raise
-        except Exception as exc:  # pragma: no cover
-            if temp_dir and os.path.isdir(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            raise BadRequestError("Failed to parse PDF file") from exc
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
 
     async def _upload_and_replace_images(
         self,
@@ -297,7 +310,7 @@ class TaskPdfDraftService:
 
     def _build_system_prompt(self) -> str:
         return (
-            "你是比赛运营专家。你将收到从 PDF 提取的 Markdown 文本，"
+            "你是比赛运营专家。你将收到从 PDF 单页提取的 Markdown 文本，"
             "文本中可能包含排版错乱、多余换行、标题层级错误等问题，"
             "也可能包含图片占位标记（如 `![描述](images/xxx.png)`）。"
             "你的任务是：\n"
@@ -306,20 +319,19 @@ class TaskPdfDraftService:
             "3. 可以将图片中提取的文本（picture text部分）删除；\n"
             "4. 将修正后的 Markdown 放入 JSON 的 `description` 字段；\n"
             "5. 从内容中提炼出合适的 `name`（赛题名称）和 `intro`（简短介绍）。\n\n"
-            '**输出格式要求**：请将结果包裹在 `{"tasks": [...]}` 中，'
-            "数组里每个元素包含 name、intro、description 三个字段。"
+            "**输出格式要求**：直接输出一个 JSON 对象，包含 name、intro、description 三个字段。"
             "形如 "
-            '{"tasks": [{"name": "...", "intro": "...", "description": "..."}]}。\n\n'
+            '{"name": "...", "intro": "...", "description": "..."}。\n\n'
             "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"
         )
 
     def _build_user_prompt(self, *, text: str, template: dict[str, Any]) -> str:
         clipped = text[:12000]
         return (
-            "下面是从 PDF 中提取的 Markdown 文本（可能包含图片占位标记如 "
+            "下面是从 PDF 单页中提取的 Markdown 文本（可能包含图片占位标记如 "
             "`![描述](images/xxx.png)`，请务必保留这些标记）：\n"
             f"{clipped}\n\n"
-            "请基于以上 PDF 内容生成一个 JSON 对象，"
+            "请基于以上内容生成一个 JSON 对象，"
             "其中 `description` 字段放置修正排版后的完整 Markdown。"
         )
 
@@ -359,18 +371,17 @@ class TaskPdfDraftService:
         return text
 
     def _extract_task_candidates(self, parsed: dict[str, Any]) -> list[dict[str, Any]]:
-        """Extract task objects from LLM response.
-
-        LLM 始终返回 {\"tasks\": [task1, task2, ...]} 格式。
-        """
-        tasks_value = parsed.get("tasks")
-        if isinstance(tasks_value, list):
-            candidates = [item for item in tasks_value if isinstance(item, dict)]
+        if "tasks" in parsed and isinstance(parsed["tasks"], list):
+            candidates = [item for item in parsed["tasks"] if isinstance(item, dict)]
             if candidates:
                 return candidates
+
+        if "name" in parsed or "intro" in parsed or "description" in parsed:
+            return [parsed]
+
         raise BadRequestError(
-            'LLM response must contain a non-empty "tasks" array. '
-            f"Got: {type(tasks_value).__name__ if tasks_value is not None else 'missing'}"
+            "LLM response must contain name/intro/description fields. "
+            f"Got keys: {list(parsed.keys()) if parsed else 'empty'}"
         )
 
     def _normalize_task_payload(
