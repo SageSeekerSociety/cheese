@@ -35,17 +35,6 @@ dependencies = [
     "pytest-xdist>=3.8.0",
 ]
 
-[project.optional-dependencies]
-test = [
-    "pytest>=8.0.0,<9.0.0",
-    "pytest-asyncio>=0.23.0,<1.0.0",
-    "pytest-rerunfailures>=14.0,<15.0",
-    "anyio>=4.0.0,<5.0.0",
-]
-dev = [
-    "ruff>=0.15.0,<0.16.0",
-    "pyright>=1.1.0,<2.0.0",
-]
 
 [build-system]
 requires = ["hatchling"]
@@ -131,7 +120,13 @@ ignore = [
 
 [dependency-groups]
 dev = [
-    "playwright>=1.58.0",
+    "ruff>=0.15.0,<0.16.0",
+    "pyright>=1.1.0,<2.0.0",
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-asyncio>=0.23.0,<1.0.0",
+    "pytest-rerunfailures>=14.0,<15.0",
+    "anyio>=4.0.0,<5.0.0",
     "pytest-cov>=7.0.0",
     "pytest-testmon>=2.2.0",
+    "playwright>=1.58.0",
 ]

@@ -117,7 +117,7 @@ tasks:
   deps:sync:
     desc: Sync Python dependencies
     cmds:
-      - uv sync --extra dev --extra test
+      - uv sync
     sources:
       - pyproject.toml
       - uv.lock

@@ -26,7 +26,7 @@ echo ""
 echo "==> Dependencies"
 if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -qE "pyproject.toml|uv.lock"; then
     echo "  pyproject.toml or uv.lock changed — syncing..."
-    uv sync --extra dev --extra test
+    uv sync
     echo "  OK: dependencies synced."
 else
     echo "  No dependency changes."

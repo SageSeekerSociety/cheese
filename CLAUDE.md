@@ -41,7 +41,7 @@ docker compose down                           # stop infrastructure
 The backend runs locally:
 
 ```bash
-uv sync --extra dev --extra test              # install dependencies (first time / after lock change)
+uv sync                                       # install dependencies (first time / after lock change)
 uv run uvicorn app.main:app --port 8081 --reload  # start dev server
 uv run pytest tests/ -n 8 --testmon -q        # run tests
 ```
