@@ -1,5 +1,32 @@
 # Project Conventions
 
+## Monorepo Structure
+
+```
+cheese-backend-py/               # monorepo root
+├── backend/                     # Python/FastAPI backend
+│   ├── app/                     # source code
+│   ├── tests/                   # unit + integration + contract tests
+│   ├── migrations/              # alembic migrations
+│   ├── srp_rs/                  # Rust extension (SRP auth)
+│   ├── pyproject.toml           # Python dependencies
+│   ├── uv.lock                  # locked dependencies
+│   ├── Dockerfile               # production build
+│   ├── Taskfile.yml             # backend-specific tasks
+│   └── alembic.ini
+├── frontend/                    # Vue 3 / TypeScript frontend
+│   ├── src/                     # source code
+│   ├── package.json             # JS dependencies
+│   ├── pnpm-lock.yaml
+│   ├── Taskfile.yml             # frontend-specific tasks
+│   └── vite.config.ts
+├── docker-compose.yml           # infrastructure (PG, Valkey, ES)
+├── Taskfile.yml                 # root task runner (includes be: + fe:)
+├── CLAUDE.md                    # project conventions (this file)
+├── .claude/                     # AI tooling
+└── .github/workflows/           # CI (path-filtered per project)
+```
+
 ## .claude/ Directory Structure
 
 This directory contains AI-assisted development tooling. Other AIs (or humans) should read it to understand how this project is developed:
@@ -62,10 +89,12 @@ task --list                                   # see all available tasks
 Instead of typing long commands, use Taskfile or the scripts in `.claude/scripts/`:
 
 ```bash
-task check                          # ruff + pyright + pytest (recommended)
-task test                           # incremental tests only
-task lint                           # ruff only
-task db:migrate                     # alembic upgrade head
+task check                          # all checks (backend + frontend)
+task be:check                       # backend checks only (ruff + pyright + pytest)
+task be:test                        # incremental tests only
+task be:lint                        # ruff only
+task be:db:migrate                  # alembic upgrade head
+task fe:check                       # frontend checks (lint + typecheck + build)
 
 # Or use scripts directly:
 bash .claude/scripts/check.sh       # ruff + pyright + pytest, prints "3/3 passed" or failures
@@ -90,7 +119,7 @@ Root-level `Taskfile.yml` provides the unified task runner interface. See `task 
 
 ```
 Route → Service → Repository → Model
-(app/api/routes/) → (app/domain/**/services.py) → (app/domain/**/repositories.py) → (app/domain/**/models.py)
+(backend/app/api/routes/) → (backend/app/domain/**/services.py) → (backend/app/domain/**/repositories.py) → (backend/app/domain/**/models.py)
 ```
 
 - **Routes**: parameter parsing, DI, call service, return response. No business logic.
@@ -124,7 +153,7 @@ The root-level `reference/` directory (gitignored) contains original implementat
 
 - `reference/cheese-backend/` — NestJS/TypeScript (comments, materials, answers, questions)
 - `reference/cheese-backend-nt/` — Kotlin/Spring Boot (teams, tasks, spaces, notifications, auth, AI)
-- `reference/cheese-frontend/` — Vue (API contract expectations)
+- `frontend/` — Vue frontend (now part of the monorepo, was previously reference-only)
 
 This is distinct from `.claude/reference/` which contains project development specs (tracked in git).
 
@@ -134,27 +163,27 @@ This is distinct from `.claude/reference/` which contains project development sp
 - `pytest.mark.anyio` for async tests.
 - `SimpleNamespace` + `AsyncMock`/`MagicMock` for fakes.
 - Test locations:
-  - `tests/unit/` — unit tests (no DB)
-  - `tests/integration/` — DB-backed tests
-  - `tests/contract/` — API contract comparisons
+  - `backend/tests/unit/` — unit tests (no DB)
+  - `backend/tests/integration/` — DB-backed tests
+  - `backend/tests/contract/` — API contract comparisons
 
 ### Running Tests
 
 ```bash
 # Full suite (parallel, ~25s locally):
-task test:full
-# Or: uv run pytest tests/ -n 8 -q
+task be:test:full
+# Or: cd backend && uv run pytest tests/ -n 8 -q
 
 # Incremental (only tests affected by your changes, ~5-10s):
-task test
-# Or: uv run pytest tests/ -n 8 --testmon -q
+task be:test
+# Or: cd backend && uv run pytest tests/ -n 8 --testmon -q
 
 # Only last-failed (TDD loop):
-task test:failed
-# Or: uv run pytest tests/ --lf -n 8 -q
+task be:test:failed
+# Or: cd backend && uv run pytest tests/ --lf -n 8 -q
 
 # Full check (ruff + pyright + pytest):
-task check
+task be:check
 # Or: bash .claude/scripts/check.sh
 ```
 
@@ -176,14 +205,14 @@ If a test fails, fix it — do NOT bypass with `--no-verify`. Run the full suite
 
 - **ruff**: zero errors (`uv run ruff check .`)
 - **pyright**: zero errors in app code (third-party type issues may be warnings)
-- Config in `pyproject.toml` under `[tool.ruff]` and `[tool.pyright]`
+- Config in `backend/pyproject.toml` under `[tool.ruff]` and `[tool.pyright]`
 
 ## Workflow Preferences
 
 - Communicate in Chinese (user preference).
 - Bug auditing: focus on real runtime bugs (crashes, data corruption, security, incorrect behavior). Do not report style issues or theoretical concerns.
 - Commit messages in English, concise, focused on "why".
-- After making changes, always run `task check` to verify.
-- After `git pull`, run `bash .claude/scripts/post-pull.sh` or `task deps:sync && task db:migrate`.
+- After making changes, always run `task be:check` (backend) or `task check` (all) to verify.
+- After `git pull`, run `bash .claude/scripts/post-pull.sh` or `task be:deps:sync && task be:db:migrate`.
 - **CLAUDE.md ↔ .claude/**: these are peer project specifications. When updating conventions, scripts, agents, skills, or reference docs in one, sync the other immediately. See `.claude/reference/sync-rule.md` for the full checklist.
 - **All commits go through PR**: never commit directly to main. Always create a feature branch, commit there, and open a pull request. This ensures code review happens before merge.
