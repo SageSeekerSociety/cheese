@@ -20,8 +20,13 @@ cheese-backend-py/               # monorepo root
 │   ├── pnpm-lock.yaml
 │   ├── Taskfile.yml             # frontend-specific tasks
 │   └── vite.config.ts
+├── e2e/                         # Playwright E2E tests
+│   ├── tests/                   # test specs
+│   ├── playwright.config.ts
+│   ├── package.json
+│   └── Taskfile.yml             # e2e-specific tasks
 ├── docker-compose.yml           # infrastructure (PG, Valkey, ES)
-├── Taskfile.yml                 # root task runner (includes be: + fe:)
+├── Taskfile.yml                 # root task runner (includes be: + fe: + e2e:)
 ├── CLAUDE.md                    # project conventions (this file)
 ├── .claude/                     # AI tooling
 └── .github/workflows/           # CI (path-filtered per project)
