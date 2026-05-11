@@ -1,9 +1,27 @@
+# Python
 *.pyc
 __pycache__/
-uploads/
-.env
+.venv/
 .coverage
-/reference/
-new.md
 .testmondata*
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+
+# Environment
+.env
+
+# Uploads
+uploads/
+
+# Reference implementations (git clones, gitignored)
+/reference/
+
+# Task runner state
 .task/
+
+# Frontend
+node_modules/
+
+# Misc
+new.md
