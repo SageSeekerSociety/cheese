@@ -1,7 +1,5 @@
 version: '3'
 
-dotenv: ['../.env', '.env']
-
 vars:
   PYTEST_WORKERS: 8
 

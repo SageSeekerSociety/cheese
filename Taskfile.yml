@@ -1,17 +1,24 @@
 version: '3'
 
+dotenv: ['.env', 'backend/.env']
+
 includes:
   be:
     taskfile: ./backend/Taskfile.yml
     dir: ./backend
     aliases: [backend]
+  fe:
+    taskfile: ./frontend/Taskfile.yml
+    dir: ./frontend
+    aliases: [frontend]
 
 tasks:
   # ── All-in-one ─────────────────────────────────────────
   check:
-    desc: Run all checks (backend)
+    desc: Run all checks (backend + frontend)
     cmds:
       - task: be:check
+      - task: fe:check
 
   check:full:
     desc: Run all checks with full test suite
@@ -24,6 +31,11 @@ tasks:
     deps: [infra]
     cmds:
       - task: be:dev
+
+  dev:fe:
+    desc: Start frontend dev server
+    cmds:
+      - task: fe:dev
 
   # ── Infrastructure ─────────────────────────────────────
   infra:
