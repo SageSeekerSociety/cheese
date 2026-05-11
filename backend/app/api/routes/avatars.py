@@ -1,5 +1,6 @@
 import hashlib
 import os
+import tempfile
 from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote
@@ -15,7 +16,7 @@ from app.domain.avatars.services import AvatarService
 
 router = APIRouter(prefix="/avatars", tags=["Avatars"])
 
-AVATAR_STORAGE_DIR = "/tmp/cheese_avatars"
+AVATAR_STORAGE_DIR = os.path.join(tempfile.gettempdir(), "cheese_avatars")
 
 
 async def get_avatar_service(db=Depends(get_db)) -> AvatarService:
