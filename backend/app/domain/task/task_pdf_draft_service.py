@@ -253,6 +253,9 @@ class TaskPdfDraftService:
             if tmp_path and os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
+                except PermissionError:
+                    import atexit
+                    atexit.register(lambda p=tmp_path: os.remove(p) if os.path.exists(p) else None)
                 except OSError:
                     pass
 

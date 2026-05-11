@@ -1,6 +1,5 @@
 import hashlib
 import os
-import tempfile
 from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote
@@ -9,6 +8,7 @@ from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
 from app.domain.avatars.repositories import AvatarRepository
@@ -16,7 +16,7 @@ from app.domain.avatars.services import AvatarService
 
 router = APIRouter(prefix="/avatars", tags=["Avatars"])
 
-AVATAR_STORAGE_DIR = os.path.join(tempfile.gettempdir(), "cheese_avatars")
+AVATAR_STORAGE_DIR = os.path.join(os.path.abspath(settings.storage_local_path), "avatars")
 
 
 async def get_avatar_service(db=Depends(get_db)) -> AvatarService:
