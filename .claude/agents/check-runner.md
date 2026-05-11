@@ -13,7 +13,7 @@ Run the project check script:
 bash .claude/scripts/check.sh
 ```
 
-Set Bash timeout to **20 minutes** (1200000ms). Full tests take ~10-12 min.
+Set Bash timeout to **5 minutes** (300000ms). Local checks take ~25s full, ~10s incremental.
 
 When done, report only:
 - PASS or FAIL per step (ruff / pyright / pytest)
