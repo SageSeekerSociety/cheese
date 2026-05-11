@@ -1,0 +1,123 @@
+version: '3'
+
+dotenv: ['.env']
+
+vars:
+  PYTEST_WORKERS: 8
+
+tasks:
+  # ── Development ────────────────────────────────────────
+  dev:
+    desc: Start backend dev server (+ infrastructure)
+    deps: [infra]
+    cmds:
+      - uv run uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
+
+  # ── Code Quality ───────────────────────────────────────
+  lint:
+    desc: Run ruff linter
+    cmds:
+      - uv run ruff check .
+    sources:
+      - app/**/*.py
+      - tests/**/*.py
+      - pyproject.toml
+
+  lint:fix:
+    desc: Run ruff with auto-fix
+    cmds:
+      - uv run ruff check . --fix
+
+  fmt:
+    desc: Format code with ruff
+    cmds:
+      - uv run ruff format .
+
+  typecheck:
+    desc: Run pyright type checker
+    cmds:
+      - uv run pyright
+    sources:
+      - app/**/*.py
+      - pyproject.toml
+
+  # ── Testing ────────────────────────────────────────────
+  test:
+    desc: Run tests (incremental via testmon)
+    cmds:
+      - uv run pytest tests/ -n {{.PYTEST_WORKERS}} --testmon -q --ignore=tests/contract
+
+  test:full:
+    desc: Run full test suite (no testmon)
+    cmds:
+      - uv run pytest tests/ -n {{.PYTEST_WORKERS}} -q --ignore=tests/contract
+
+  test:failed:
+    desc: Re-run only last-failed tests
+    cmds:
+      - uv run pytest tests/ --lf -n {{.PYTEST_WORKERS}} -q
+
+  # ── All-in-one ─────────────────────────────────────────
+  check:
+    desc: Run all checks (ruff + pyright + pytest)
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+
+  check:full:
+    desc: Run all checks with full test suite
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test:full
+
+  # ── Database ───────────────────────────────────────────
+  db:migrate:
+    desc: Run alembic migrations
+    cmds:
+      - uv run alembic upgrade head
+
+  db:revision:
+    desc: Create a new migration (set MSG="description")
+    cmds:
+      - uv run alembic revision --autogenerate -m "{{.MSG}}"
+    requires:
+      vars: [MSG]
+
+  db:downgrade:
+    desc: Downgrade one migration step
+    cmds:
+      - uv run alembic downgrade -1
+
+  # ── Infrastructure ─────────────────────────────────────
+  infra:
+    desc: Start infrastructure services (PG, Valkey, ES)
+    cmds:
+      - docker compose up -d
+    status:
+      - docker compose ps --status running --format '{{`{{.Name}}`}}' | grep -q cheese_py_postgres
+
+  infra:down:
+    desc: Stop infrastructure services
+    cmds:
+      - docker compose down
+
+  infra:logs:
+    desc: Tail infrastructure logs
+    cmds:
+      - docker compose logs -f {{.CLI_ARGS}}
+
+  infra:ps:
+    desc: Show running infrastructure containers
+    cmds:
+      - docker compose ps
+
+  # ── Dependencies ───────────────────────────────────────
+  deps:sync:
+    desc: Sync Python dependencies
+    cmds:
+      - uv sync --extra dev --extra test
+    sources:
+      - pyproject.toml
+      - uv.lock
