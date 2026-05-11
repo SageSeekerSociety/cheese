@@ -67,9 +67,7 @@ class TaskPdfDraftService:
             raise BadRequestError("No task payload extracted from PDF")
         return payloads[0], token_used
 
-    def _split_pdf_to_pages(
-        self, pdf_bytes: bytes
-    ) -> tuple[list[tuple[str, dict[str, str]]], str]:
+    def _split_pdf_to_pages(self, pdf_bytes: bytes) -> tuple[list[tuple[str, dict[str, str]]], str]:
         import fitz
 
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -134,6 +132,7 @@ class TaskPdfDraftService:
 
         page_data, temp_dir = self._split_pdf_to_pages(pdf_bytes)
         try:
+
             async def process_page(
                 page_num: int, markdown_text: str, image_map: dict[str, str]
             ) -> tuple[list[dict[str, Any]], int]:
@@ -167,18 +166,14 @@ class TaskPdfDraftService:
             for i, result in enumerate(results):
                 if isinstance(result, BaseException):
                     failed_pages.append(i + 1)
-                    logger.warning(
-                        "PDF page %d LLM processing failed: %s", i + 1, result
-                    )
+                    logger.warning("PDF page %d LLM processing failed: %s", i + 1, result)
                 else:
                     payloads, tokens = result
                     all_payloads.extend(payloads)
                     total_tokens += tokens
 
             if not all_payloads:
-                raise BadRequestError(
-                    f"All {len(page_data)} page(s) failed to process"
-                )
+                raise BadRequestError(f"All {len(page_data)} page(s) failed to process")
 
             if failed_pages:
                 logger.warning(
