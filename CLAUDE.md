@@ -3,22 +3,31 @@
 ## Monorepo Structure
 
 ```
-cheese-backend-py/
-├── backend/              # Python backend (FastAPI)
-│   ├── app/              # Application code
-│   ├── tests/            # Tests (unit, integration, contract)
-│   ├── migrations/       # Alembic migrations
-│   ├── pyproject.toml    # Python dependencies & tool config
-│   ├── uv.lock           # Locked dependencies
-│   ├── Taskfile.yml      # Backend-specific tasks
-│   └── Dockerfile        # Production image
-├── Taskfile.yml          # Root task runner (includes backend)
-├── docker-compose.yml    # Infrastructure services
-├── .claude/              # AI tooling & scripts
-└── .github/workflows/    # CI pipelines
+cheese-backend-py/               # monorepo root
+├── backend/                     # Python/FastAPI backend
+│   ├── app/                     # source code
+│   ├── tests/                   # unit + integration + contract tests
+│   ├── migrations/              # alembic migrations
+│   ├── pyproject.toml           # Python dependencies
+│   ├── Taskfile.yml             # backend-specific tasks
+│   └── Dockerfile               # production build
+├── frontend/                    # Vue 3 / TypeScript frontend
+│   ├── src/                     # source code
+│   ├── package.json             # JS dependencies
+│   ├── Taskfile.yml             # frontend-specific tasks
+│   └── vite.config.ts
+├── e2e/                         # Playwright E2E tests
+│   ├── tests/                   # test specs
+│   ├── playwright.config.ts
+│   └── Taskfile.yml             # e2e-specific tasks
+├── docker-compose.yml           # infrastructure (PG, Valkey, ES)
+├── Taskfile.yml                 # root task runner (includes be: + fe: + e2e:)
+├── CLAUDE.md                    # project conventions (this file)
+├── .claude/                     # AI tooling
+└── .github/workflows/           # CI (path-filtered per project)
 ```
 
-All backend code lives under `backend/`. The root Taskfile includes `backend/Taskfile.yml` with the `be:` prefix. Infrastructure (Docker Compose, CI, .claude) stays at root.
+Root Taskfile includes sub-Taskfiles with prefixes: `be:` (backend), `fe:` (frontend), `e2e:` (E2E tests).
 
 ## .claude/ Directory Structure
 

@@ -7,12 +7,20 @@ includes:
     taskfile: ./backend/Taskfile.yml
     dir: ./backend
     aliases: [backend]
+  fe:
+    taskfile: ./frontend/Taskfile.yml
+    dir: ./frontend
+    aliases: [frontend]
+  e2e:
+    taskfile: ./e2e/Taskfile.yml
+    dir: ./e2e
 
 tasks:
   check:
-    desc: Run all checks (backend)
+    desc: Run all checks (backend + frontend)
     cmds:
       - task: be:check
+      - task: fe:check
   check:full:
     desc: Run all checks with full test suite
     cmds:
@@ -22,6 +30,10 @@ tasks:
     deps: [infra]
     cmds:
       - task: be:dev
+  dev:fe:
+    desc: Start frontend dev server
+    cmds:
+      - task: fe:dev
   infra:
     desc: Start infrastructure services (PG, Valkey, ES)
     cmds:
