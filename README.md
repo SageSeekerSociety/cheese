@@ -12,8 +12,6 @@ Monorepo for the Cheese community platform — Python/FastAPI backend + Vue 3 fr
 | [Docker](https://docs.docker.com/get-docker/) | Docker Desktop or Docker Engine |
 | [Taskfile](https://taskfile.dev/) | `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/.local/bin` |
 
-**Windows users**: We recommend [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (`wsl --install`) for the best experience. If you prefer not to install WSL, see [Windows without WSL](#windows) below for a Docker-based alternative.
-
 ## Quick Start
 
 ```bash
@@ -90,18 +88,9 @@ Everything runs natively — `uv run` for backend, `pnpm` for frontend, Docker f
 
 ### Windows
 
-**Option 1: WSL2 (recommended, 5 min setup)**
-```powershell
-wsl --install    # reboot, then work inside WSL — same as Linux
-```
+Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (`wsl --install`, reboot), then work inside WSL — same as Linux.
 
-**Option 2: Docker fallback (no WSL)**
-```bash
-task dev:docker   # start infra + backend in Docker
-task dev:fe       # frontend natively (Vite HMR doesn't work well in Docker)
-```
-
-> WSL2 gives a much better experience — native speed, full tool compatibility. Docker fallback works but hot-reload is slower due to volume performance.
+Without WSL, use `task dev:docker` to run the backend in Docker instead. Frontend still runs natively (`task dev:fe`).
 
 ## Production Deployment
 
