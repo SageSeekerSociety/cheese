@@ -15,7 +15,7 @@ services:
       retries: 5
       start_period: 10s
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     networks:
       - cheese_py_network
     volumes:
@@ -36,7 +36,7 @@ services:
       retries: 5
       start_period: 10s
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     networks:
       - cheese_py_network
     volumes:
@@ -47,7 +47,7 @@ services:
     image: valkey/valkey:8.0.2
     container_name: cheese_py_valkey
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     networks:
       - cheese_py_network
     healthcheck:
@@ -61,7 +61,7 @@ services:
     image: valkey/valkey:8.0.2
     container_name: cheese_py_valkey_test
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     networks:
       - cheese_py_network
     healthcheck:
@@ -91,7 +91,7 @@ services:
       retries: 10
       start_period: 20s
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     networks:
       - cheese_py_network
 
@@ -103,7 +103,7 @@ services:
       target: development
     container_name: cheese_py_backend
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     environment:
       - TZ=Asia/Shanghai
       - ENVIRONMENT=development
