@@ -12,7 +12,7 @@ Monorepo for the Cheese community platform — Python/FastAPI backend + Vue 3 fr
 | [Docker](https://docs.docker.com/get-docker/) | Docker Desktop or Docker Engine |
 | [Taskfile](https://taskfile.dev/) | `sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/.local/bin` |
 
-**Windows users**: Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) first (`wsl --install`), then work inside WSL. All instructions below assume a Unix shell.
+**Windows users**: We recommend [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (`wsl --install`) for the best experience. If you prefer not to install WSL, see [Windows without WSL](#windows) below for a Docker-based alternative.
 
 ## Quick Start
 
