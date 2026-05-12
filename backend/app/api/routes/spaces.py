@@ -528,8 +528,10 @@ async def delete_space(
 async def list_space_categories(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     includeArchived: bool = Query(default=False),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
+    _ = auth_user
     cats = await service.list_categories(space_id=space_id, include_archived=includeArchived)
     items = [_category_to_api_model(c) for c in cats]
     return {"code": 200, "message": "OK", "data": {"categories": items}}
@@ -1064,8 +1066,10 @@ async def patch_space_category(
 async def get_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
+    _ = auth_user
     category = await service.get_category_detail(space_id=space_id, category_id=category_id)
     return {
         "code": 200,
@@ -1143,8 +1147,10 @@ async def unarchive_space_category(
 )
 async def list_space_admins(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
+    _ = auth_user
     admins = await service.list_admins(space_id)
     return {
         "code": 200,
