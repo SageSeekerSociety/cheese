@@ -47,7 +47,7 @@ Review changed code against cheese-backend-py project standards.
 
 ```
 Route → Service → Repository → Model
-(app/api/routes/) → (app/domain/**/services.py) → (app/domain/**/repositories.py) → (app/domain/**/models.py)
+(backend/app/api/routes/) → (backend/app/domain/**/services.py) → (backend/app/domain/**/repositories.py) → (backend/app/domain/**/models.py)
 ```
 
 - Routes: only parameter parsing, DI, call service, return response. No business logic.
