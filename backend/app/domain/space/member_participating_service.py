@@ -405,7 +405,8 @@ class SpaceMemberParticipatingService:
     def _to_timestamp_ms(value: datetime | None) -> int | None:
         if value is None:
             return None
-        return int(value.replace(tzinfo=UTC).timestamp() * 1000)
+        aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return int(aware.timestamp() * 1000)
 
     @staticmethod
     def _parse_approved_filter(value: str | None) -> str | None:

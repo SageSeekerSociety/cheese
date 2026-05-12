@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Index, Sequence, String
@@ -77,7 +77,7 @@ class Notification(Base):
     def is_aggregation_active(self, now: datetime | None = None) -> bool:
         from datetime import datetime as _dt
 
-        current = now or _dt.now(tz=self.aggregate_until.tzinfo if self.aggregate_until else None)
+        current = now or _dt.now(tz=UTC)
         return (
             self.is_aggregatable
             and not self.finalized
