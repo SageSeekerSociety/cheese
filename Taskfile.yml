@@ -57,6 +57,14 @@ tasks:
     cmds:
       - task: fe:dev
 
+  dev:docker:
+    desc: Start all services in Docker (Windows without WSL)
+    cmds:
+      - docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+      - echo ""
+      - echo "Backend running at http://localhost:8081"
+      - echo "Run 'task dev:fe' in another terminal for frontend."
+
   check:
     desc: Run all checks (backend + frontend)
     cmds:

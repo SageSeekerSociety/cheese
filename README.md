@@ -87,19 +87,20 @@ task e2e:test:headed         # with visible browser
 
 Everything runs natively — `uv run` for backend, `pnpm` for frontend, Docker for infrastructure only.
 
-### Windows without WSL
+### Windows
 
-Backend runs in Docker, frontend runs natively:
-
-```bash
-# Start infrastructure + backend in Docker
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-
-# Frontend still runs natively (Vite HMR doesn't work well in Docker)
-cd frontend && pnpm dev
+**Option 1: WSL2 (recommended, 5 min setup)**
+```powershell
+wsl --install    # reboot, then work inside WSL — same as Linux
 ```
 
-> **We strongly recommend WSL2 over this approach.** Docker volume performance on Windows causes slow hot-reload. WSL2 takes 5 minutes to install and gives a native Linux experience.
+**Option 2: Docker fallback (no WSL)**
+```bash
+task dev:docker   # start infra + backend in Docker
+task dev:fe       # frontend natively (Vite HMR doesn't work well in Docker)
+```
+
+> WSL2 gives a much better experience — native speed, full tool compatibility. Docker fallback works but hot-reload is slower due to volume performance.
 
 ## Production Deployment
 
