@@ -90,7 +90,20 @@ Everything runs natively — `uv run` for backend, `pnpm` for frontend, Docker f
 
 Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (`wsl --install`, reboot), then work inside WSL — same as Linux.
 
-Without WSL, use `task dev:docker` to run the backend in Docker instead. Frontend still runs natively (`task dev:fe`).
+Without WSL:
+
+```bash
+# First-time: start infrastructure + backend in Docker
+task dev:docker              # PG, Redis, ES + backend on localhost:8081
+
+# Frontend runs natively (install Node + pnpm first)
+cd frontend && pnpm install
+task dev:fe                  # Vite dev server on localhost:5173
+
+# Run backend checks inside the container
+docker compose exec backend sh -c "uv run ruff check . && uv run pyright"
+docker compose exec backend sh -c "uv run pytest tests/ -n 8 -q"
+```
 
 ## Production Deployment
 
