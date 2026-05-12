@@ -128,7 +128,7 @@ def create_app() -> FastAPI:
         from app.domain.search.meilisearch_service import setup_indices
 
         try:
-            setup_indices()
+            await setup_indices()
         except Exception:
             import logging
 

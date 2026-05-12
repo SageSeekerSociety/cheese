@@ -15,7 +15,7 @@ from typing import Any
 _logger = logging.getLogger(__name__)
 
 
-def meilisearch_search_ids(
+async def meilisearch_search_ids(
     index_uid: str,
     query: str,
     *,
@@ -24,14 +24,6 @@ def meilisearch_search_ids(
     filter_expr: str | None = None,
     sort: list[str] | None = None,
 ) -> tuple[list[int], int] | None:
-    """Search Meilisearch and return (hit_ids, estimated_total), or None on
-    fallback.
-
-    Returns None when:
-    - Meilisearch is not configured (MEILISEARCH_URL empty)
-    - The query is empty
-    - The Meilisearch call fails for any reason
-    """
     from app.domain.search.meilisearch_service import get_search_client
 
     client = get_search_client()
@@ -39,7 +31,7 @@ def meilisearch_search_ids(
         return None
 
     try:
-        result: dict[str, Any] = client.search(
+        result: dict[str, Any] = await client.search(
             index_uid,
             query.strip(),
             limit=limit,
@@ -56,7 +48,7 @@ def meilisearch_search_ids(
         return None
 
 
-def index_document(index_uid: str, doc: dict) -> None:
+async def index_document(index_uid: str, doc: dict) -> None:
     """Index a single document (fire-and-forget, best-effort)."""
     from app.domain.search.meilisearch_service import get_search_client
 
@@ -64,6 +56,6 @@ def index_document(index_uid: str, doc: dict) -> None:
     if client is None:
         return
     try:
-        client.add_documents(index_uid, [doc])
+        await client.add_documents(index_uid, [doc])
     except Exception:
         _logger.debug("Failed to index document in %s", index_uid, exc_info=True)

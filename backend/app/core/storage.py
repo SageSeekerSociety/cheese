@@ -1,10 +1,14 @@
 import hashlib
-import shutil
+import io
 import uuid
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
+
+import aiofiles
+import aiofiles.os
 
 from app.core.config import settings
 
@@ -40,20 +44,22 @@ class LocalStorageBackend(StorageBackend):
     async def upload(self, file: BinaryIO, key: str, content_type: str) -> str:
         file_path = self._base_path / key
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "wb") as f:
-            shutil.copyfileobj(file, f)
+        async with aiofiles.open(file_path, "wb") as f:
+            while chunk := file.read(8192):
+                await f.write(chunk)
         return self.get_url(key)
 
     async def download(self, key: str) -> bytes | None:
         file_path = self._base_path / key
         if not file_path.exists():
             return None
-        return file_path.read_bytes()
+        async with aiofiles.open(file_path, "rb") as f:
+            return await f.read()
 
     async def delete(self, key: str) -> bool:
         file_path = self._base_path / key
         if file_path.exists():
-            file_path.unlink()
+            await aiofiles.os.remove(file_path)
             return True
         return False
 
@@ -80,57 +86,55 @@ class S3StorageBackend(StorageBackend):
         self._secret_key = secret_key
         self._region = region
         self._public_url = public_url
-        self._client = None
 
-    def _get_client(self):
-        if self._client is None:
-            import boto3
+    @asynccontextmanager
+    async def _get_client(self):
+        import aioboto3
 
-            self._client = boto3.client(
-                "s3",
-                endpoint_url=self._endpoint_url,
-                aws_access_key_id=self._access_key,
-                aws_secret_access_key=self._secret_key,
-                region_name=self._region,
-            )
-        return self._client
+        session = aioboto3.Session()
+        async with session.client(
+            "s3",
+            endpoint_url=self._endpoint_url,
+            aws_access_key_id=self._access_key,
+            aws_secret_access_key=self._secret_key,
+            region_name=self._region,
+        ) as client:
+            yield client
 
     async def upload(self, file: BinaryIO, key: str, content_type: str) -> str:
-        client = self._get_client()
-        client.upload_fileobj(
-            file,
-            self._bucket,
-            key,
-            ExtraArgs={"ContentType": content_type},
-        )
+        async with self._get_client() as client:
+            await client.upload_fileobj(
+                file,
+                self._bucket,
+                key,
+                ExtraArgs={"ContentType": content_type},
+            )
         return self.get_url(key)
 
     async def download(self, key: str) -> bytes | None:
-        import io
-
-        client = self._get_client()
-        try:
-            buffer = io.BytesIO()
-            client.download_fileobj(self._bucket, key, buffer)
-            return buffer.getvalue()
-        except Exception:
-            return None
+        async with self._get_client() as client:
+            try:
+                buffer = io.BytesIO()
+                await client.download_fileobj(self._bucket, key, buffer)
+                return buffer.getvalue()
+            except Exception:
+                return None
 
     async def delete(self, key: str) -> bool:
-        client = self._get_client()
-        try:
-            client.delete_object(Bucket=self._bucket, Key=key)
-            return True
-        except Exception:
-            return False
+        async with self._get_client() as client:
+            try:
+                await client.delete_object(Bucket=self._bucket, Key=key)
+                return True
+            except Exception:
+                return False
 
     async def exists(self, key: str) -> bool:
-        client = self._get_client()
-        try:
-            client.head_object(Bucket=self._bucket, Key=key)
-            return True
-        except Exception:
-            return False
+        async with self._get_client() as client:
+            try:
+                await client.head_object(Bucket=self._bucket, Key=key)
+                return True
+            except Exception:
+                return False
 
     def get_url(self, key: str) -> str:
         if self._public_url:
@@ -141,7 +145,6 @@ class S3StorageBackend(StorageBackend):
 
 
 def generate_storage_key(filename: str, prefix: str = "uploads") -> str:
-    """Generate a unique storage key for a file."""
     now = datetime.now(UTC)
     date_path = now.strftime("%Y/%m/%d")
     unique_id = uuid.uuid4().hex[:12]
@@ -150,7 +153,6 @@ def generate_storage_key(filename: str, prefix: str = "uploads") -> str:
 
 
 def compute_file_hash(file: BinaryIO) -> str:
-    """Compute MD5 hash of file content."""
     hasher = hashlib.md5()
     for chunk in iter(lambda: file.read(8192), b""):
         hasher.update(chunk)

@@ -31,10 +31,11 @@ dependencies = [
     "srp_rs",
     "greenlet>=3.2.4",
     "pyjwt>=2.10.1",
-    "meilisearch>=0.41.0",
     "pytest-xdist>=3.8.0",
     "aiosmtplib>=5.1.0",
     "aiofiles>=25.1.0",
+    "aioboto3>=15.5.0",
+    "meilisearch-python-sdk>=7.1.4",
 ]
 
 
