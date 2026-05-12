@@ -95,34 +95,6 @@ services:
     networks:
       - cheese_py_network
 
-  # Python backend (this project)
-  cheese_py:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: development
-    container_name: cheese_py_backend
-    ports:
-      - "127.0.0.1:8081:8081"
-    environment:
-      - TZ=Asia/Shanghai
-      - ENVIRONMENT=development
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/cheese
-      - REDIS_URL=redis://valkey:6379/0
-    env_file:
-      - .env
-    volumes:
-      - .:/app
-      - uploads:/app/uploads
-    depends_on:
-      postgres:
-        condition: service_healthy
-      valkey:
-        condition: service_healthy
-    command: ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload"]
-    networks:
-      - cheese_py_network
-
 networks:
   cheese_py_network:
     name: cheese_py_network
@@ -130,4 +102,3 @@ networks:
 volumes:
   postgres_data:
   postgres_data_test:
-  uploads:

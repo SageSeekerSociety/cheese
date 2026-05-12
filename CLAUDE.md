@@ -23,36 +23,57 @@ This directory contains AI-assisted development tooling. Other AIs (or humans) s
 
 - **agents/** — Subagent definitions. `check-runner` runs tests in background while main review proceeds.
 - **skills/** — AI skill definitions. `cheese-py-code-review.md` is the code review skill.
-- **scripts/** — Shell scripts that wrap Docker commands. Use these to save tokens.
+- **scripts/** — Shell scripts for common workflows. Use these to save tokens.
 - **reference/** — Project-specific specs and checklists (tracked in git).
 - **settings.json** — Pre-approved commands to reduce permission prompts.
 
 ## Operating System
 
-This project targets **Linux / macOS**. All Python execution, testing, and tooling run **inside Docker**:
+This project targets **Linux / macOS**. Python runs **directly on the host** via `uv run`. Infrastructure services (PostgreSQL, Valkey, Elasticsearch) run in Docker:
 
 ```bash
-docker compose up -d                          # start all services (DB, Redis, backend)
-docker compose exec cheese_py sh -c "<cmd>"   # run commands inside the container
-docker compose logs cheese_py                 # view backend logs
-docker compose restart cheese_py              # restart backend
+docker compose up -d                          # start infrastructure (DB, Redis, ES)
+docker compose ps                             # check infrastructure status
+docker compose logs -f postgres               # view specific service logs
+docker compose down                           # stop infrastructure
 ```
 
-The Docker container mounts the project directory as a volume — file changes on the host are immediately reflected inside. Code editing can be done on Windows; execution must happen in Docker.
+The backend runs locally:
 
-**Important**: do NOT run `uv sync`, `uv run`, or any Python commands directly on the Windows host. Always use `docker compose exec cheese_py sh -c "cd /app && <command>"`.
+```bash
+uv sync                                       # install dependencies (first time / after lock change)
+uv run uvicorn app.main:app --port 8081 --reload  # start dev server
+uv run pytest tests/ -n 8 --testmon -q        # run tests
+```
+
+Or use Taskfile (recommended):
+
+```bash
+task infra                                    # start infrastructure
+task dev                                      # start backend (starts infra automatically)
+task check                                    # ruff + pyright + pytest
+task --list                                   # see all available tasks
+```
+
+**Important**: Dockerfile is kept for **production builds only**. Do NOT use `docker compose exec` for development.
 
 ## Pre-written Scripts
 
-Instead of typing long Docker commands, use the scripts in `.claude/scripts/`:
+Instead of typing long commands, use Taskfile or the scripts in `.claude/scripts/`:
 
 ```bash
+task check                          # ruff + pyright + pytest (recommended)
+task test                           # incremental tests only
+task lint                           # ruff only
+task db:migrate                     # alembic upgrade head
+
+# Or use scripts directly:
 bash .claude/scripts/check.sh       # ruff + pyright + pytest, prints "3/3 passed" or failures
 bash .claude/scripts/post-pull.sh   # migration check, alembic upgrade, dep sync, health check
 bash .claude/scripts/pre-commit     # install as .git/hooks/pre-commit to block commits on check failure
 ```
 
-Scripts run git commands on the host and Python/DB commands in Docker automatically.
+Root-level `Taskfile.yml` provides the unified task runner interface. See `task --list` for all commands.
 
 ## Python Conventions
 
@@ -121,16 +142,20 @@ This is distinct from `.claude/reference/` which contains project development sp
 
 ```bash
 # Full suite (parallel, ~25s locally):
-uv run pytest tests/ -n 8 -q
+task test:full
+# Or: uv run pytest tests/ -n 8 -q
 
 # Incremental (only tests affected by your changes, ~5-10s):
-uv run pytest tests/ -n 8 --testmon -q
+task test
+# Or: uv run pytest tests/ -n 8 --testmon -q
 
 # Only last-failed (TDD loop):
-uv run pytest tests/ --lf -n 8 -q
+task test:failed
+# Or: uv run pytest tests/ --lf -n 8 -q
 
 # Full check (ruff + pyright + pytest):
-bash .claude/scripts/check.sh
+task check
+# Or: bash .claude/scripts/check.sh
 ```
 
 **Worker count**: `-n 8` is safe for most machines. CI uses `-n auto` (scales to core count). If PG connections exhaust on high-core machines, lower the number.
@@ -158,7 +183,7 @@ If a test fails, fix it — do NOT bypass with `--no-verify`. Run the full suite
 - Communicate in Chinese (user preference).
 - Bug auditing: focus on real runtime bugs (crashes, data corruption, security, incorrect behavior). Do not report style issues or theoretical concerns.
 - Commit messages in English, concise, focused on "why".
-- After making changes, always run `bash .claude/scripts/check.sh` to verify.
-- After `git pull`, run `bash .claude/scripts/post-pull.sh`.
+- After making changes, always run `task check` to verify.
+- After `git pull`, run `bash .claude/scripts/post-pull.sh` or `task deps:sync && task db:migrate`.
 - **CLAUDE.md ↔ .claude/**: these are peer project specifications. When updating conventions, scripts, agents, skills, or reference docs in one, sync the other immediately. See `.claude/reference/sync-rule.md` for the full checklist.
 - **All commits go through PR**: never commit directly to main. Always create a feature branch, commit there, and open a pull request. This ensures code review happens before merge.
