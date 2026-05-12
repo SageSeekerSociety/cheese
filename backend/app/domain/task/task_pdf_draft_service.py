@@ -130,7 +130,7 @@ class TaskPdfDraftService:
         if not pdf_bytes:
             raise BadRequestError("Uploaded PDF is empty")
 
-        page_data, temp_dir = self._split_pdf_to_pages(pdf_bytes)
+        page_data, temp_dir = await asyncio.to_thread(self._split_pdf_to_pages, pdf_bytes)
         try:
 
             async def process_page(

@@ -33,6 +33,8 @@ dependencies = [
     "pyjwt>=2.10.1",
     "meilisearch>=0.41.0",
     "pytest-xdist>=3.8.0",
+    "aiosmtplib>=5.1.0",
+    "aiofiles>=25.1.0",
 ]
 
 

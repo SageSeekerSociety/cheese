@@ -2172,7 +2172,7 @@ async def forgot_password(
         </div>
         """
         body_text = f"Reset your password: {reset_url}\nThis link expires in 30 minutes."
-        sender.send(to=email, subject=subject, body_html=body_html, body_text=body_text)
+        await sender.send(to=email, subject=subject, body_html=body_html, body_text=body_text)
 
         return {
             "code": 200,
@@ -2273,7 +2273,7 @@ async def recover_password_request(
         </div>
         """
         body_text = f"Reset your password: {reset_url}\nThis link expires in 30 minutes."
-        sender.send(to=email, subject=subject, body_html=body_html, body_text=body_text)
+        await sender.send(to=email, subject=subject, body_html=body_html, body_text=body_text)
 
         return {
             "code": 200,
