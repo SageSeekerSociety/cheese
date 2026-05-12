@@ -1937,8 +1937,11 @@ async def delete_task(
     if task is None:
         raise NotFoundError("Task not found")
 
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can delete this task")
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    is_space_admin = await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
+    is_creator = task.creator_id == auth_user.user_id
+    if not is_creator and not is_space_admin:
+        raise ForbiddenError("Only task owner or space admin can delete this task")
 
     now = datetime.now(UTC)
     task.deleted_at = now
@@ -2147,8 +2150,18 @@ async def get_task_participants(
     publicly, leaking participant identities (member ids, contact info) to
     anyone who knew a task id.
     """
-    _ = auth_user
     _ = queryRealNameInfo  # 占位，后续用于控制实名信息联查
+
+    task_repo = TaskRepository(session=db)
+    task = await task_repo.get_by_id(task_id)
+    if task is None:
+        raise NotFoundError("Task not found")
+
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    is_space_admin = await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None
+    is_creator = task.creator_id == auth_user.user_id
+    if not is_creator and not is_space_admin:
+        raise ForbiddenError("Only task owner or space admin can view participants")
 
     approved_value: int | None = None
     if approved is not None:

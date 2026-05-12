@@ -181,6 +181,13 @@ async def create_project(
 ) -> dict:
     if auth_user.user_id == 0:
         raise ForbiddenError("Authentication required")
+
+    # Check team membership
+    team_repo = TeamRepository(session=db)
+    is_member = await team_repo.is_team_member(payload.team_id, auth_user.user_id)
+    if not is_member:
+        raise ForbiddenError("You must be a team member to create a project")
+
     color_code = _validate_color_code(payload.color_code)
 
     project = await service.create_project(
@@ -241,6 +248,8 @@ async def patch_project(
     project = await service.get_project(project_id=project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    if project.leader_id != auth_user.user_id:
+        raise ForbiddenError("Only the project leader can update this project")
 
     color_code = (
         _validate_color_code(payload.color_code) if payload.color_code is not None else None
@@ -275,6 +284,8 @@ async def delete_project(
     project = await service.get_project(project_id=project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    if project.leader_id != auth_user.user_id:
+        raise ForbiddenError("Only the project leader can delete this project")
     await service.soft_delete_project(project)
 
 
@@ -373,8 +384,13 @@ async def add_project_member(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
 ) -> dict:
-    _ = auth_user
-    await _get_project_or_404(service, project_id)
+    project = await service.get_project(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    if project.leader_id != auth_user.user_id:
+        raise ForbiddenError("Only the project leader can add members")
+    if payload.role.upper() == "LEADER":
+        raise BadRequestError("Cannot add a member with role LEADER")
 
     membership = await service.add_member(
         project_id=project_id,
@@ -400,6 +416,9 @@ async def delete_project_member(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: ProjectService = Depends(get_project_service),
 ) -> None:
-    _ = auth_user
-    await _get_project_or_404(service, project_id)
+    project = await service.get_project(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    if project.leader_id != auth_user.user_id:
+        raise ForbiddenError("Only the project leader can remove members")
     await service.remove_member(project_id=project_id, user_id=user_id)
