@@ -17,22 +17,17 @@ Monorepo for the Cheese community platform — Python/FastAPI backend + Vue 3 fr
 ## Quick Start
 
 ```bash
-# 1. Clone and install
+# 1. Clone
 git clone https://github.com/SageSeekerSociety/cheese-backend-py.git
 cd cheese-backend-py
-cd backend && uv sync && cd ..
-cd frontend && pnpm install && cd ..
 
-# 2. Start infrastructure (PostgreSQL, Redis, Elasticsearch)
-task infra
-
-# 3. Configure environment
+# 2. Configure environment
 cp backend/.env.example backend/.env    # edit if needed
 
-# 4. Run database migrations
-task be:db:migrate
+# 3. One-command setup (install deps + start infra + run migrations)
+task setup
 
-# 5. Start development
+# 4. Start development
 task dev        # backend on localhost:8081
 # In another terminal:
 task dev:fe     # frontend on localhost:5173

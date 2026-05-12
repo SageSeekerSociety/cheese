@@ -16,6 +16,15 @@ includes:
     dir: ./e2e
 
 tasks:
+  setup:
+    desc: First-time setup — install all dependencies + start infrastructure + run migrations
+    cmds:
+      - task: be:deps:sync
+      - task: fe:install
+      - task: infra
+      - task: be:db:migrate
+      - echo "Ready! Run 'task dev' to start the backend, 'task dev:fe' for frontend."
+
   check:
     desc: Run all checks (backend + frontend)
     cmds:
