@@ -3,6 +3,9 @@
 # Usage: bash .claude/scripts/post-pull.sh
 set -euo pipefail
 
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT/backend"
+
 echo "=== Post-pull checks ==="
 
 # 1. New migrations

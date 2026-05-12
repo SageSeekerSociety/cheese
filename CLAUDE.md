@@ -1,5 +1,34 @@
 # Project Conventions
 
+## Monorepo Structure
+
+```
+cheese-backend-py/               # monorepo root
+├── backend/                     # Python/FastAPI backend
+│   ├── app/                     # source code
+│   ├── tests/                   # unit + integration + contract tests
+│   ├── migrations/              # alembic migrations
+│   ├── pyproject.toml           # Python dependencies
+│   ├── Taskfile.yml             # backend-specific tasks
+│   └── Dockerfile               # production build
+├── frontend/                    # Vue 3 / TypeScript frontend
+│   ├── src/                     # source code
+│   ├── package.json             # JS dependencies
+│   ├── Taskfile.yml             # frontend-specific tasks
+│   └── vite.config.ts
+├── e2e/                         # Playwright E2E tests
+│   ├── tests/                   # test specs
+│   ├── playwright.config.ts
+│   └── Taskfile.yml             # e2e-specific tasks
+├── docker-compose.yml           # infrastructure (PG, Valkey, ES)
+├── Taskfile.yml                 # root task runner (includes be: + fe: + e2e:)
+├── CLAUDE.md                    # project conventions (this file)
+├── .claude/                     # AI tooling
+└── .github/workflows/           # CI (path-filtered per project)
+```
+
+Root Taskfile includes sub-Taskfiles with prefixes: `be:` (backend), `fe:` (frontend), `e2e:` (E2E tests).
+
 ## .claude/ Directory Structure
 
 This directory contains AI-assisted development tooling. Other AIs (or humans) should read it to understand how this project is developed:
@@ -29,7 +58,7 @@ This directory contains AI-assisted development tooling. Other AIs (or humans) s
 
 ## Operating System
 
-This project targets **Linux / macOS**. Python runs **directly on the host** via `uv run`. Infrastructure services (PostgreSQL, Valkey, Elasticsearch) run in Docker:
+This project targets **Linux / macOS**. Python runs **directly on the host** via `uv run` inside the `backend/` directory. Infrastructure services (PostgreSQL, Valkey, Elasticsearch) run in Docker:
 
 ```bash
 docker compose up -d                          # start infrastructure (DB, Redis, ES)
@@ -41,6 +70,7 @@ docker compose down                           # stop infrastructure
 The backend runs locally:
 
 ```bash
+cd backend
 uv sync                                       # install dependencies (first time / after lock change)
 uv run uvicorn app.main:app --port 8081 --reload  # start dev server
 uv run pytest tests/ -n 8 --testmon -q        # run tests
@@ -53,6 +83,11 @@ task infra                                    # start infrastructure
 task dev                                      # start backend (starts infra automatically)
 task check                                    # ruff + pyright + pytest
 task --list                                   # see all available tasks
+
+# Backend tasks directly:
+task be:test                                  # incremental tests
+task be:lint                                  # ruff only
+task be:db:migrate                            # alembic upgrade head
 ```
 
 **Important**: Dockerfile is kept for **production builds only**. Do NOT use `docker compose exec` for development.
@@ -63,9 +98,9 @@ Instead of typing long commands, use Taskfile or the scripts in `.claude/scripts
 
 ```bash
 task check                          # ruff + pyright + pytest (recommended)
-task test                           # incremental tests only
-task lint                           # ruff only
-task db:migrate                     # alembic upgrade head
+task be:test                        # incremental tests only
+task be:lint                        # ruff only
+task be:db:migrate                  # alembic upgrade head
 
 # Or use scripts directly:
 bash .claude/scripts/check.sh       # ruff + pyright + pytest, prints "3/3 passed" or failures
@@ -73,7 +108,7 @@ bash .claude/scripts/post-pull.sh   # migration check, alembic upgrade, dep sync
 bash .claude/scripts/pre-commit     # install as .git/hooks/pre-commit to block commits on check failure
 ```
 
-Root-level `Taskfile.yml` provides the unified task runner interface. See `task --list` for all commands.
+Root-level `Taskfile.yml` includes `backend/Taskfile.yml` with `be:` prefix. See `task --list` for all commands.
 
 ## Python Conventions
 
@@ -90,7 +125,7 @@ Root-level `Taskfile.yml` provides the unified task runner interface. See `task 
 
 ```
 Route → Service → Repository → Model
-(app/api/routes/) → (app/domain/**/services.py) → (app/domain/**/repositories.py) → (app/domain/**/models.py)
+(backend/app/api/routes/) → (backend/app/domain/**/services.py) → (backend/app/domain/**/repositories.py) → (backend/app/domain/**/models.py)
 ```
 
 - **Routes**: parameter parsing, DI, call service, return response. No business logic.
@@ -134,24 +169,24 @@ This is distinct from `.claude/reference/` which contains project development sp
 - `pytest.mark.anyio` for async tests.
 - `SimpleNamespace` + `AsyncMock`/`MagicMock` for fakes.
 - Test locations:
-  - `tests/unit/` — unit tests (no DB)
-  - `tests/integration/` — DB-backed tests
-  - `tests/contract/` — API contract comparisons
+  - `backend/tests/unit/` — unit tests (no DB)
+  - `backend/tests/integration/` — DB-backed tests
+  - `backend/tests/contract/` — API contract comparisons
 
 ### Running Tests
 
 ```bash
 # Full suite (parallel, ~25s locally):
-task test:full
-# Or: uv run pytest tests/ -n 8 -q
+task be:test:full
+# Or: cd backend && uv run pytest tests/ -n 8 -q
 
 # Incremental (only tests affected by your changes, ~5-10s):
-task test
-# Or: uv run pytest tests/ -n 8 --testmon -q
+task be:test
+# Or: cd backend && uv run pytest tests/ -n 8 --testmon -q
 
 # Only last-failed (TDD loop):
-task test:failed
-# Or: uv run pytest tests/ --lf -n 8 -q
+task be:test:failed
+# Or: cd backend && uv run pytest tests/ --lf -n 8 -q
 
 # Full check (ruff + pyright + pytest):
 task check
@@ -176,7 +211,7 @@ If a test fails, fix it — do NOT bypass with `--no-verify`. Run the full suite
 
 - **ruff**: zero errors (`uv run ruff check .`)
 - **pyright**: zero errors in app code (third-party type issues may be warnings)
-- Config in `pyproject.toml` under `[tool.ruff]` and `[tool.pyright]`
+- Config in `backend/pyproject.toml` under `[tool.ruff]` and `[tool.pyright]`
 
 ## Workflow Preferences
 
@@ -184,6 +219,6 @@ If a test fails, fix it — do NOT bypass with `--no-verify`. Run the full suite
 - Bug auditing: focus on real runtime bugs (crashes, data corruption, security, incorrect behavior). Do not report style issues or theoretical concerns.
 - Commit messages in English, concise, focused on "why".
 - After making changes, always run `task check` to verify.
-- After `git pull`, run `bash .claude/scripts/post-pull.sh` or `task deps:sync && task db:migrate`.
+- After `git pull`, run `bash .claude/scripts/post-pull.sh` or `task be:deps:sync && task be:db:migrate`.
 - **CLAUDE.md ↔ .claude/**: these are peer project specifications. When updating conventions, scripts, agents, skills, or reference docs in one, sync the other immediately. See `.claude/reference/sync-rule.md` for the full checklist.
 - **All commits go through PR**: never commit directly to main. Always create a feature branch, commit there, and open a pull request. This ensures code review happens before merge.
