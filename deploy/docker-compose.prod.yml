@@ -1,0 +1,118 @@
+services:
+  postgres:
+    image: paradedb/paradedb:v0.18.8-pg16
+    command: ["-c", "shared_preload_libraries=pg_cron,pg_search"]
+    container_name: cheese_prod_postgres
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=cheese
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  valkey:
+    image: valkey/valkey:8.0.2
+    container_name: cheese_prod_valkey
+    command: ["valkey-server", "--requirepass", "${REDIS_PASSWORD}"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  elasticsearch:
+    image: elasticsearch:8.18.1
+    container_name: cheese_prod_elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    ports:
+      - "127.0.0.1:9200:9200"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    image: ghcr.io/sageseekersociety/cheese-backend-py:${IMAGE_TAG:-main}
+    container_name: cheese_prod_backend
+    ports:
+      - "127.0.0.1:8081:8081"
+    env_file:
+      - .env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: ghcr.io/sageseekersociety/cheese-backend-py/frontend:${IMAGE_TAG:-main}
+    container_name: cheese_prod_frontend
+    ports:
+      - "127.0.0.1:80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
