@@ -1339,7 +1339,7 @@ async def user_login(
             "REFRESH_TOKEN",
             refresh_token,
             httponly=True,
-        secure=settings.environment not in ("development", "test"),
+            secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/users/auth",
         )
@@ -1347,7 +1347,7 @@ async def user_login(
             "SESSION_ID",
             session_id,
             httponly=True,
-        secure=settings.environment not in ("development", "test"),
+            secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/",
         )
@@ -1514,7 +1514,7 @@ async def srp_login_verify(
             "REFRESH_TOKEN",
             refresh_token,
             httponly=True,
-        secure=settings.environment not in ("development", "test"),
+            secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/users/auth",
         )
@@ -1522,7 +1522,7 @@ async def srp_login_verify(
             "SESSION_ID",
             session_id,
             httponly=True,
-        secure=settings.environment not in ("development", "test"),
+            secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/",
         )
@@ -3004,7 +3004,7 @@ async def handle_oauth_callback(
             "REFRESH_TOKEN",
             refresh_token,
             httponly=True,
-        secure=settings.environment not in ("development", "test"),
+            secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/users/auth",
         )
