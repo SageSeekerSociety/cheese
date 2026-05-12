@@ -93,5 +93,26 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  frontend:
+    image: ghcr.io/sageseekersociety/cheese-backend-py/frontend:${IMAGE_TAG:-main}
+    container_name: cheese_prod_frontend
+    ports:
+      - "127.0.0.1:80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   postgres_data:
