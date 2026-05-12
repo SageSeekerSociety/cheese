@@ -837,9 +837,7 @@ async def _create_task_entity(
     deadline_dt: datetime | None = None
     if deadline_ms is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC).replace(
-                tzinfo=None
-            )
+            deadline_dt = datetime.fromtimestamp(int(deadline_ms) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
@@ -1186,9 +1184,7 @@ async def create_task_participant(
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
-                tzinfo=None
-            )
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
@@ -1249,9 +1245,7 @@ async def join_task_as_user(
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
-                tzinfo=None
-            )
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
@@ -1311,9 +1305,7 @@ async def join_task_as_team(
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
-                tzinfo=None
-            )
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
@@ -1374,9 +1366,7 @@ async def patch_task_participant(
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
-                tzinfo=None
-            )
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
@@ -1651,9 +1641,7 @@ async def patch_task(
     # deadline / registrationStartAt / participantLimit 及其 hasXxx 标志
     if payload.deadline is not None:
         try:
-            task.deadline = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
-                tzinfo=None
-            )
+            task.deadline = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
     if payload.has_deadline is False:
@@ -2065,9 +2053,7 @@ async def patch_task_membership_by_member(
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
         try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC).replace(
-                tzinfo=None
-            )
+            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
