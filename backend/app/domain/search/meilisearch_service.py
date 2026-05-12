@@ -6,7 +6,6 @@ search with CJK tokenization, typo tolerance, and relevance ranking.
 When not configured, callers fall back to PostgreSQL FTS.
 """
 
-from __future__ import annotations
 
 import logging
 from typing import Any
@@ -15,7 +14,7 @@ from app.core.config import settings
 
 _logger = logging.getLogger(__name__)
 
-_client: MeilisearchClient | None = None
+_client: "MeilisearchClient | None" = None
 _initialized = False
 
 

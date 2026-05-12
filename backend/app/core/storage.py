@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import io
 import uuid
@@ -43,28 +44,28 @@ class LocalStorageBackend(StorageBackend):
 
     async def upload(self, file: BinaryIO, key: str, content_type: str) -> str:
         file_path = self._base_path / key
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        await aiofiles.os.makedirs(str(file_path.parent), exist_ok=True)
+        content = await asyncio.to_thread(file.read)
         async with aiofiles.open(file_path, "wb") as f:
-            while chunk := file.read(8192):
-                await f.write(chunk)
+            await f.write(content)
         return self.get_url(key)
 
     async def download(self, key: str) -> bytes | None:
         file_path = self._base_path / key
-        if not file_path.exists():
+        if not await aiofiles.ospath.exists(file_path):
             return None
         async with aiofiles.open(file_path, "rb") as f:
             return await f.read()
 
     async def delete(self, key: str) -> bool:
         file_path = self._base_path / key
-        if file_path.exists():
+        if await aiofiles.ospath.exists(file_path):
             await aiofiles.os.remove(file_path)
             return True
         return False
 
     async def exists(self, key: str) -> bool:
-        return (self._base_path / key).exists()
+        return await aiofiles.ospath.exists(self._base_path / key)
 
     def get_url(self, key: str) -> str:
         return f"{self._base_url}/{key}"
