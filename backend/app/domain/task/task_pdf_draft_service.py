@@ -281,12 +281,15 @@ class TaskPdfDraftService:
         replaced = markdown_text
 
         for filename, local_path in image_map.items():
-            if not os.path.isfile(local_path):
+            if not await asyncio.to_thread(os.path.isfile, local_path):
                 continue
 
             storage_key = generate_storage_key(filename, prefix="task-images")
-            with open(local_path, "rb") as f:
-                storage_url = await storage.upload(f, storage_key, "image/png")
+            content = await asyncio.to_thread(pathlib.Path(local_path).read_bytes)
+
+            import io as _io
+
+            storage_url = await storage.upload(_io.BytesIO(content), storage_key, "image/png")
 
             # Convert relative storage URL to absolute URL pointing to the backend
             # storage_url is like "/uploads/task-images/2026/05/01/abc.png"
