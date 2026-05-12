@@ -28,6 +28,18 @@ def create_access_token(user_id: int) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
+def create_2fa_pending_token(user_id: int) -> str:
+    """Create a short-lived token that can ONLY be used for 2FA verification, not API access."""
+    now = _utcnow()
+    payload = {
+        "sub": str(user_id),
+        "type": "2fa_pending",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=300)).timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+
+
 def create_refresh_token(user_id: int) -> str:
     """Create a longer-lived refresh token for the given user."""
     now = _utcnow()
@@ -71,9 +83,13 @@ async def get_current_user_id(
             raise AuthenticationRequiredError("Invalid token subject") from exc
 
     if x_user_id is not None:
+        from app.core.config import settings
+
+        if settings.environment not in ("development", "test"):
+            raise AuthenticationRequiredError("X-User-Id header is not allowed in production")
         return x_user_id
 
-    raise AuthenticationRequiredError("Authorization header or X-User-Id is required")
+    raise AuthenticationRequiredError("Authorization header is required")
 
 
 async def get_optional_user_id(

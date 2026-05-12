@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.checker import get_auth_user, require_auth_user
+from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
     create_access_token,
@@ -14,6 +14,7 @@ from app.common.auth import (
 )
 from app.common.srp import generate_server_ephemeral as _srp_generate_ephemeral
 from app.common.srp import verify_session as _srp_verify_session
+from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
@@ -1078,6 +1079,7 @@ async def register_user(
         "REFRESH_TOKEN",
         refresh_token,
         httponly=True,
+        secure=settings.environment not in ("development", "test"),
         samesite="lax",
         path="/users/auth",
     )
@@ -1337,6 +1339,7 @@ async def user_login(
             "REFRESH_TOKEN",
             refresh_token,
             httponly=True,
+        secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/users/auth",
         )
@@ -1344,6 +1347,7 @@ async def user_login(
             "SESSION_ID",
             session_id,
             httponly=True,
+        secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/",
         )
@@ -1481,7 +1485,9 @@ async def srp_login_verify(
         totp_service = TOTPService(AsyncRedis.from_url(settings.redis_url, decode_responses=False))
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
         if requires_2fa and not totp_code:
-            temp_token = create_access_token(user.id)
+            from app.common.auth import create_2fa_pending_token
+
+            temp_token = create_2fa_pending_token(user.id)
             return {
                 "code": 200,
                 "message": "2FA required",
@@ -1508,6 +1514,7 @@ async def srp_login_verify(
             "REFRESH_TOKEN",
             refresh_token,
             httponly=True,
+        secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/users/auth",
         )
@@ -1515,6 +1522,7 @@ async def srp_login_verify(
             "SESSION_ID",
             session_id,
             httponly=True,
+        secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/",
         )
@@ -1573,6 +1581,7 @@ async def refresh_access_token(
         "REFRESH_TOKEN",
         new_refresh_token,
         httponly=True,
+        secure=settings.environment not in ("development", "test"),
         samesite="lax",
         path="/users/auth",
     )
@@ -1621,7 +1630,7 @@ async def user_logout(
 )
 async def sudo_auth(
     payload: SudoAuthRequest,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -1886,7 +1895,7 @@ async def get_user_identity_access_logs(
     summary="Start 2FA setup",
 )
 async def enable_2fa(
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -1922,7 +1931,7 @@ async def enable_2fa(
 )
 async def verify_2fa_setup(
     payload: TwoFactorCodeRequest,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -1959,7 +1968,7 @@ async def verify_2fa_setup(
 )
 async def disable_2fa(
     payload: TwoFactorCodeRequest,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -1996,7 +2005,7 @@ async def disable_2fa(
     summary="Get 2FA status",
 )
 async def get_2fa_status(
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -2676,7 +2685,7 @@ async def get_user_2fa_status(
     summary="Generate passkey registration challenge",
 )
 async def passkey_register_challenge(
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
@@ -2714,7 +2723,7 @@ async def passkey_register_challenge(
 )
 async def passkey_register_verify(
     payload: PasskeyRegisterVerifyRequest,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
@@ -2835,6 +2844,7 @@ async def passkey_authenticate_verify(
         "REFRESH_TOKEN",
         refresh_token,
         httponly=True,
+        secure=settings.environment not in ("development", "test"),
         samesite="lax",
         path="/users/auth",
     )
@@ -2842,6 +2852,7 @@ async def passkey_authenticate_verify(
         "SESSION_ID",
         session_id,
         httponly=True,
+        secure=settings.environment not in ("development", "test"),
         samesite="lax",
         path="/",
     )
@@ -2993,6 +3004,7 @@ async def handle_oauth_callback(
             "REFRESH_TOKEN",
             refresh_token,
             httponly=True,
+        secure=settings.environment not in ("development", "test"),
             samesite="lax",
             path="/users/auth",
         )
@@ -3036,7 +3048,7 @@ async def handle_oauth_callback(
 )
 async def link_oauth_account(
     payload: LinkOAuthRequest,
-    auth_user: AuthUserInfo = Depends(get_auth_user),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     oauth_service: OAuthService = Depends(get_oauth_service),
 ) -> dict:
     provider_id = payload.provider_id

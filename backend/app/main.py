@@ -112,6 +112,14 @@ def create_app() -> FastAPI:
     )
 
     @app.on_event("startup")
+    async def _check_security_config() -> None:
+        if settings.environment not in ("development", "test"):
+            if settings.jwt_secret == "dev-secret":
+                raise RuntimeError("FATAL: JWT_SECRET must be changed from default in production")
+            if not settings.realname_encryption_key:
+                raise RuntimeError("FATAL: REALNAME_ENCRYPTION_KEY must be set in production")
+
+    @app.on_event("startup")
     async def _start_notification_jobs() -> None:
         await finalizer.start()
 
