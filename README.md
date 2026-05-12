@@ -105,9 +105,15 @@ docker compose exec backend sh -c "uv run ruff check . && uv run pyright"
 docker compose exec backend sh -c "uv run pytest tests/ -n 8 -q"
 ```
 
-## Production Deployment
+## Deployment
 
-See [`deploy/`](deploy/) for production Docker Compose, environment template, and deploy script. CI/CD pushes images to ghcr.io and deploys via Tailscale SSH.
+```bash
+# When ready to deploy (after merging PRs to main):
+gh release create v2026.05.1 --generate-notes
+# → builds Docker images → reviewer approves → deploys via Tailscale SSH
+```
+
+Release-based deployment with approval gate. See [`deploy/`](deploy/) for production Docker Compose, environment template, and deploy script.
 
 ## Tech Stack
 
