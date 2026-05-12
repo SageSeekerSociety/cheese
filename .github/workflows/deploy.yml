@@ -9,8 +9,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Wait for the build workflow to finish (it triggers on tag push)
-  wait-for-build:
+  # Wait for build + test workflows to finish (they trigger on tag push)
+  wait-for-ci:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for Docker image build
@@ -21,8 +21,16 @@ jobs:
           check-name: 'build-backend'
           wait-interval: 15
 
+      - name: Wait for backend tests
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'test'
+          wait-interval: 15
+
   deploy:
-    needs: wait-for-build
+    needs: wait-for-ci
     runs-on: ubuntu-latest
     environment: production
 
