@@ -43,7 +43,7 @@ tasks:
     cmds:
       - docker compose up -d
     status:
-      - docker compose ps --status running --format '{{`{{.Name}}`}}' | grep -q cheese_py_postgres
+      - docker compose ps --status running postgres --quiet
 
   infra:down:
     desc: Stop infrastructure services
