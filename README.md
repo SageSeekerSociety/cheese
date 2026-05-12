@@ -27,10 +27,8 @@ cp backend/.env.example backend/.env    # edit if needed
 # 3. One-command setup (install deps + start infra + run migrations)
 task setup
 
-# 4. Start development
-task dev        # backend on localhost:8081
-# In another terminal:
-task dev:fe     # frontend on localhost:5173
+# 4. Start development (backend + frontend in parallel)
+task dev        # backend on localhost:8081, frontend on localhost:5173
 ```
 
 Open http://localhost:5173 in your browser.
@@ -57,7 +55,10 @@ cheese-backend-py/
 ## Common Commands
 
 ```bash
-task --list                  # see all available commands
+task                         # show all available commands
+task setup                   # first-time setup (install deps + infra + migrations)
+task dev                     # start backend + frontend in parallel
+task check                   # run all checks (backend + frontend)
 
 # Backend
 task be:check                # ruff + pyright + pytest
@@ -121,6 +122,6 @@ See [`deploy/`](deploy/) for production Docker Compose, environment template, an
 ## Contributing
 
 1. Create a feature branch from `main`
-2. Make changes, run `task be:check` and `task fe:check`
+2. Make changes, run `task check`
 3. Open a PR — Claude will auto-review
 4. All PRs require review before merge; never commit directly to `main`
