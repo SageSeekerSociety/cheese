@@ -217,6 +217,27 @@
     "replyToUserPlaceholder": "回复 {user}...",
     "deleteReplyConfirm": "确定要删除这条回复吗？"
   },
+  "domainGroups": {
+    "title": "域名组管理",
+    "noGroups": "暂无域名组",
+    "createGroup": "创建域名组",
+    "editGroup": "编辑域名组",
+    "deleteGroup": "删除域名组",
+    "groupName": "组名称",
+    "groupDescription": "组描述",
+    "domains": "域名列表",
+    "addDomain": "添加域名",
+    "domainPlaceholder": "例如: example.com",
+    "confirmDelete": "确定要删除域名组 {name} 吗？",
+    "createSuccess": "创建域名组成功",
+    "createFailed": "创建域名组失败",
+    "updateSuccess": "更新域名组成功",
+    "updateFailed": "更新域名组失败",
+    "deleteSuccess": "删除域名组成功",
+    "deleteFailed": "删除域名组失败",
+    "nameRequired": "域名组名称不能为空",
+    "invalidDomain": "请输入有效的域名格式"
+  },
   "index": {
     "searchPlaceholder": "搜索空间",
     "sortOptions": {

@@ -1,4 +1,4 @@
-import type { Space, SpaceCategory, Topic } from '@/types'
+import type { DomainGroup, Space, SpaceCategory, Topic } from '@/types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -8,9 +8,11 @@ import type {
   GetSpacesResponseData,
   PatchSpaceAdminRequestData,
   PatchSpaceCategoryRequestData,
+  PatchSpaceDomainGroupRequestData,
   PatchSpaceRequestData,
   PostSpaceAdminRequestData,
   PostSpaceCategoryRequestData,
+  PostSpaceDomainGroupRequestData,
   PostSpaceRequestData,
   SpaceAnalyticsAlerts,
   SpaceAnalyticsOverview,
@@ -261,5 +263,36 @@ export namespace SpacesApi {
       url: `/spaces/${spaceId}/topics`,
       method: 'GET',
       params: { limit, sort, keyword },
+    })
+
+  // Domain Groups API
+  export const listDomainGroups = (spaceId: number) =>
+    NewApiInstance.request<{ groups: DomainGroup[] }>({
+      url: `/spaces/${spaceId}/domain-groups`,
+      method: 'GET',
+    })
+
+  export const createDomainGroup = (spaceId: number, data: PostSpaceDomainGroupRequestData) =>
+    NewApiInstance.request<{ group: DomainGroup }>({
+      url: `/spaces/${spaceId}/domain-groups`,
+      method: 'POST',
+      data,
+    })
+
+  export const updateDomainGroup = (
+    spaceId: number,
+    groupId: number,
+    data: PatchSpaceDomainGroupRequestData
+  ) =>
+    NewApiInstance.request<{ group: DomainGroup }>({
+      url: `/spaces/${spaceId}/domain-groups/${groupId}`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const deleteDomainGroup = (spaceId: number, groupId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/domain-groups/${groupId}`,
+      method: 'DELETE',
     })
 }

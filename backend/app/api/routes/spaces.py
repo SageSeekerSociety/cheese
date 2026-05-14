@@ -13,11 +13,19 @@ from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.member_participating_service import SpaceMemberParticipatingService
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
-from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, SpaceCategory
+from app.domain.space.models import (
+    Space,
+    SpaceAdminRelation,
+    SpaceAdminRole,
+    SpaceCategory,
+    SpaceDomainGroup,
+)
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
     SpaceClassificationTopicsRepository,
+    SpaceDomainGroupDomainRepository,
+    SpaceDomainGroupRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
@@ -82,6 +90,22 @@ class PatchSpaceCategoryRequest(BaseModel):
     archived_at: int | None = Field(default=None, alias="archivedAt")
 
 
+class CreateSpaceDomainGroupRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1)
+    description: str | None = None
+    domains: list[str] = Field(default_factory=list)
+
+
+class PatchSpaceDomainGroupRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = None
+    description: str | None = None
+    domains: list[str] | None = None
+
+
 class AddSpaceManagerRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -121,6 +145,8 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
     rank_repo = SpaceUserRankRepository(session=db)
     task_repo = TaskRepository(session=db)
     classification_topics_repo = SpaceClassificationTopicsRepository(session=db)
+    domain_group_repo = SpaceDomainGroupRepository(session=db)
+    domain_group_domain_repo = SpaceDomainGroupDomainRepository(session=db)
     return SpaceService(
         repo,
         category_repo,
@@ -128,6 +154,8 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
         rank_repo,
         task_repo,
         classification_topics_repo=classification_topics_repo,
+        domain_group_repo=domain_group_repo,
+        domain_group_domain_repo=domain_group_domain_repo,
     )
 
 
@@ -214,6 +242,20 @@ def _category_to_api_model(cat: SpaceCategory) -> dict:
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "archivedAt": archived_at_ms,
+    }
+
+
+def _domain_group_to_api_model(group: SpaceDomainGroup, domains: list[str]) -> dict:
+    created_at_ms = int(group.created_at.timestamp() * 1000) if group.created_at else 0
+    updated_at_ms = int(group.updated_at.timestamp() * 1000) if group.updated_at else 0
+    return {
+        "id": group.id,
+        "spaceId": group.space_id,
+        "name": group.name,
+        "description": group.description,
+        "domains": domains,
+        "createdAt": created_at_ms,
+        "updatedAt": updated_at_ms,
     }
 
 
@@ -1135,6 +1177,94 @@ async def unarchive_space_category(
         "message": "OK",
         "data": {"category": _category_to_api_model(category)},
     }
+
+
+@router.get(
+    "/{spaceId}/domain-groups",
+    summary="List Space Domain Groups",
+)
+async def list_space_domain_groups(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> dict:
+    groups = await service.list_domain_groups(space_id=space_id, actor_user_id=auth_user.user_id)
+    items = [_domain_group_to_api_model(group, domains) for group, domains in groups]
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"groups": items},
+    }
+
+
+@router.post(
+    "/{spaceId}/domain-groups",
+    summary="Create Space Domain Group",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_space_domain_group(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    payload: CreateSpaceDomainGroupRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> dict:
+    group, domains = await service.create_domain_group(
+        space_id=space_id,
+        name=payload.name,
+        description=payload.description,
+        domains=payload.domains,
+        actor_user_id=auth_user.user_id,
+    )
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {"group": _domain_group_to_api_model(group, domains)},
+    }
+
+
+@router.patch(
+    "/{spaceId}/domain-groups/{groupId}",
+    summary="Update Space Domain Group",
+)
+async def patch_space_domain_group(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    group_id: Annotated[int, Path(ge=1, alias="groupId")],
+    payload: PatchSpaceDomainGroupRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> dict:
+    group, domains = await service.update_domain_group(
+        space_id=space_id,
+        group_id=group_id,
+        name=payload.name,
+        description=payload.description,
+        domains=payload.domains,
+        actor_user_id=auth_user.user_id,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"group": _domain_group_to_api_model(group, domains)},
+    }
+
+
+@router.delete(
+    "/{spaceId}/domain-groups/{groupId}",
+    summary="Delete Space Domain Group",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_space_domain_group(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    group_id: Annotated[int, Path(ge=1, alias="groupId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> None:
+    await service.delete_domain_group(
+        space_id=space_id,
+        group_id=group_id,
+        actor_user_id=auth_user.user_id,
+    )
+    return None
 
 
 @router.get(

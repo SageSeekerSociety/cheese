@@ -35,6 +35,8 @@ export type PostTaskRequestData = {
   maxTeamSize?: number
   participantLimit?: number
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
+  accessControlEnabled?: boolean
+  accessDomainGroupIds?: number[]
 }
 
 export type PatchTaskRequestData = {
@@ -50,6 +52,8 @@ export type PatchTaskRequestData = {
   requireRealName?: boolean
   participantLimit?: number
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
+  accessControlEnabled?: boolean
+  accessDomainGroupIds?: number[]
 }
 
 export type AddTaskParticipantRequestData = {

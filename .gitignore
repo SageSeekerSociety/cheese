@@ -23,5 +23,8 @@ uploads/
 # Frontend
 node_modules/
 
+# Docker Compose override (local development)
+docker-compose.override.yml
+
 # Misc
 new.md

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.llm.models import AIConversation, AIMessage
 from app.domain.task.models import (
     Task,
+    TaskAccessDomain,
     TaskAIAdvice,
     TaskAIAdviceContext,
     TaskMembership,
@@ -16,6 +17,7 @@ from app.domain.task.models import (
     TaskSubmissionSchemaEntry,
     TaskTopicsRelation,
 )
+from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import TeamUserRelation
 from app.domain.topics.models import Topic
 
@@ -42,6 +44,9 @@ class TaskRepository:
         topics: Sequence[int] | None = None,
         joined: bool | None = None,
         current_user_id: int | None = None,
+        viewer_user_id: int | None = None,
+        viewer_email_domain: str | None = None,
+        viewer_is_space_admin: bool = False,
         limit: int,
         offset: int = 0,
         sort_by: str = "updatedAt",
@@ -110,6 +115,13 @@ class TaskRepository:
             else:
                 stmt = stmt.where(~joined_predicate)
 
+        if viewer_user_id is not None and viewer_user_id > 0 and not viewer_is_space_admin:
+            visibility_predicate = TaskVisibilityService.build_visibility_predicate(
+                user_id=viewer_user_id,
+                email_domain=viewer_email_domain,
+            )
+            stmt = stmt.where(visibility_predicate)
+
         # Map sort_by to actual columns; default to updatedAt.
         if sort_by == "createdAt":
             sort_col = Task.created_at
@@ -139,6 +151,9 @@ class TaskRepository:
         topics: Sequence[int] | None = None,
         joined: bool | None = None,
         current_user_id: int | None = None,
+        viewer_user_id: int | None = None,
+        viewer_email_domain: str | None = None,
+        viewer_is_space_admin: bool = False,
     ) -> int:
         """Count tasks matching the same filters as list_tasks (without pagination)."""
         stmt = select(func.count(Task.id)).where(
@@ -195,6 +210,13 @@ class TaskRepository:
             else:
                 stmt = stmt.where(~joined_predicate)
 
+        if viewer_user_id is not None and viewer_user_id > 0 and not viewer_is_space_admin:
+            visibility_predicate = TaskVisibilityService.build_visibility_predicate(
+                user_id=viewer_user_id,
+                email_domain=viewer_email_domain,
+            )
+            stmt = stmt.where(visibility_predicate)
+
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
@@ -219,6 +241,7 @@ class TaskRepository:
         min_team_size: int | None,
         max_team_size: int | None,
         team_locking_policy: str,
+        access_control_enabled: bool = False,
         video_url: str | None = None,
     ) -> Task:
         """Create and persist a new Task row."""
@@ -244,6 +267,7 @@ class TaskRepository:
             max_team_size=max_team_size,
             reject_reason="",
             team_locking_policy=team_locking_policy,
+            access_control_enabled=access_control_enabled,
             video_url=video_url,
             created_at=now,
             updated_at=now,
@@ -981,3 +1005,54 @@ class TaskSubmissionSchemaRepository:
             new_entries.append(row)
         await self._session.flush()
         return new_entries
+
+
+class TaskAccessDomainRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_by_task_id(self, task_id: int) -> list[str]:
+        stmt = (
+            select(TaskAccessDomain.domain)
+            .where(
+                TaskAccessDomain.task_id == task_id,
+                TaskAccessDomain.deleted_at.is_(None),
+            )
+            .order_by(TaskAccessDomain.domain.asc())
+        )
+        result = await self._session.execute(stmt)
+        return [row[0] for row in result.all()]
+
+    async def replace_domains(self, *, task_id: int, domains: Sequence[str]) -> None:
+        now = datetime.now(UTC)
+        stmt: Select[tuple[TaskAccessDomain]] = select(TaskAccessDomain).where(
+            TaskAccessDomain.task_id == task_id,
+            TaskAccessDomain.deleted_at.is_(None),
+        )
+        existing = (await self._session.execute(stmt)).scalars().all()
+        for item in existing:
+            item.deleted_at = now
+            item.updated_at = now
+        for domain in domains:
+            self._session.add(
+                TaskAccessDomain(
+                    task_id=task_id,
+                    domain=domain,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+        await self._session.flush()
+
+    async def soft_delete_by_task(self, *, task_id: int) -> None:
+        now = datetime.now(UTC)
+        stmt: Select[tuple[TaskAccessDomain]] = select(TaskAccessDomain).where(
+            TaskAccessDomain.task_id == task_id,
+            TaskAccessDomain.deleted_at.is_(None),
+        )
+        existing = (await self._session.execute(stmt)).scalars().all()
+        for item in existing:
+            item.deleted_at = now
+            item.updated_at = now
+        await self._session.flush()
