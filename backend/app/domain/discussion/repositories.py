@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.discussion.models import (
@@ -186,32 +186,20 @@ class ReactionTypeRepository:
         result = await self._session.execute(stmt)
         if int(result.scalar_one() or 0) > 0:
             return
-        now = datetime.now(UTC)
         defaults = [
-            ReactionType(
-                code="LIKE",
-                name="Like",
-                description="thumbs up",
-                display_order=0,
-                is_active=True,
-                created_at=now,
-                updated_at=now,
-                deleted_at=None,
-            ),
-            ReactionType(
-                code="CHEERS",
-                name="Cheers",
-                description="celebration",
-                display_order=1,
-                is_active=True,
-                created_at=now,
-                updated_at=now,
-                deleted_at=None,
-            ),
+            ("LIKE", "Like", "thumbs up", 0),
+            ("CHEERS", "Cheers", "celebration", 1),
         ]
-        for rt in defaults:
-            self._session.add(rt)
-        await self._session.flush()
+        for code, name, desc, order in defaults:
+            await self._session.execute(
+                text(
+                    "INSERT INTO reaction_type (code, name, description, "
+                    "display_order, is_active, created_at, updated_at) "
+                    "VALUES (:code, :name, :desc, :ord, TRUE, NOW(), NOW()) "
+                    "ON CONFLICT (code) DO NOTHING"
+                ),
+                {"code": code, "name": name, "desc": desc, "ord": order},
+            )
 
 
 class DiscussionReactionRepository:
