@@ -1,14 +1,24 @@
+# syntax=docker/dockerfile:1
+
 # ---- Base ----
 FROM python:3.11-slim AS base
 
-# Install system dependencies (including Rust toolchain for building srp_rs)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    postgresql-client \
-    build-essential \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# ① 更换 apt 源为清华镜像（Debian 新格式支持 deb822）
+RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources
 
+# ② 使用 BuildKit 缓存挂载，即使本层失败，下载的包也会保留
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        postgresql-client \
+        build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Rust 工具链（如果下载慢可加国内镜像，这里保留原样）
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:$PATH"
 
 # Install uv for fast Python package management
@@ -25,6 +35,7 @@ COPY pyproject.toml uv.lock README.md ./
 COPY srp_rs/ ./srp_rs/
 
 # Install dependencies using uv (includes building srp_rs from source)
+# 如果有额外下载慢的依赖，也可以给 uv 加镜像源：--index-url 或配置 .netrc
 RUN uv sync --frozen --no-dev
 
 # ---- Development ----
