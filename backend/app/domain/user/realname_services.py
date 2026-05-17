@@ -164,7 +164,11 @@ class UserRealNameService:
                 "avatarId": profile.avatar_id,
                 "intro": profile.intro,
             }
-            aware = log.created_at if log.created_at.tzinfo is not None else log.created_at.replace(tzinfo=UTC)
+            aware = (
+                log.created_at
+                if log.created_at.tzinfo is not None
+                else log.created_at.replace(tzinfo=UTC)
+            )
             access_time_ms = int(aware.timestamp() * 1000)
             logs.append(
                 {

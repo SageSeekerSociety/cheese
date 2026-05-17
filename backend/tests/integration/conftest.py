@@ -246,7 +246,7 @@ def db_connection(_portal: "BlockingPortal") -> Generator[AsyncConnection, None,
                     "INSERT INTO reaction_type (id, code, name, description, "
                     "display_order, is_active, created_at, updated_at) "
                     "VALUES (:id, :code, :name, :desc, :ord, TRUE, NOW(), NOW()) "
-                    "ON CONFLICT (id) DO NOTHING"
+                    "ON CONFLICT DO NOTHING"
                 ),
                 {"id": rid, "code": code, "name": name, "desc": desc, "ord": order},
             )

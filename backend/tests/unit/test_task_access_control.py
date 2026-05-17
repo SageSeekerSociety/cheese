@@ -77,21 +77,26 @@ def _create_payload(**overrides):
 def _mock_space_repo(session=None):
     async def get_by_id(space_id):
         return SimpleNamespace(id=space_id, default_category_id=5)
+
     return SimpleNamespace(get_by_id=get_by_id)
 
 
 def _mock_category_repo(session=None):
     async def get_default_category(space_id):
-        return SimpleNamespace(id=5, space_id=space_id, archived_at=None,
-                               created_at=NOW, updated_at=NOW, deleted_at=None)
+        return SimpleNamespace(
+            id=5,
+            space_id=space_id,
+            archived_at=None,
+            created_at=NOW,
+            updated_at=NOW,
+            deleted_at=None,
+        )
 
     async def get_by_id(category_id):
-        return SimpleNamespace(id=category_id, space_id=100, archived_at=None,
-                               deleted_at=None)
+        return SimpleNamespace(id=category_id, space_id=100, archived_at=None, deleted_at=None)
 
     async def get_by_id_and_space(category_id, space_id):
-        return SimpleNamespace(id=category_id, space_id=space_id, archived_at=None,
-                               deleted_at=None)
+        return SimpleNamespace(id=category_id, space_id=space_id, archived_at=None, deleted_at=None)
 
     return SimpleNamespace(
         get_default_category=get_default_category,
@@ -106,6 +111,7 @@ def _mock_task_repo(**kwargs):
             id=42,
             access_control_enabled=ckwargs.get("access_control_enabled", False),
         )
+
     return SimpleNamespace(create_task=create_task, **kwargs)
 
 
@@ -196,11 +202,24 @@ class TestTaskToApiModel:
         task = _make_task()
         result = _task_to_api_model(task)
         required_fields = [
-            "id", "name", "intro", "description", "deadline",
-            "registrationStartAt", "defaultDeadline", "resubmittable",
-            "editable", "approved", "rank", "submitterType",
-            "requireRealName", "participantLimit", "minTeamSize",
-            "maxTeamSize", "teamLockingPolicy", "accessControlEnabled",
+            "id",
+            "name",
+            "intro",
+            "description",
+            "deadline",
+            "registrationStartAt",
+            "defaultDeadline",
+            "resubmittable",
+            "editable",
+            "approved",
+            "rank",
+            "submitterType",
+            "requireRealName",
+            "participantLimit",
+            "minTeamSize",
+            "maxTeamSize",
+            "teamLockingPolicy",
+            "accessControlEnabled",
         ]
         for field in required_fields:
             assert field in result, f"Missing field: {field}"
