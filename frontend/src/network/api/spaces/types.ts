@@ -301,6 +301,19 @@ export type AnalyticsCompletionType =
 export type AnalyticsGroupBy = 'day' | 'week' | 'month'
 export type AnalyticsSortOrder = 'asc' | 'desc'
 
+// Domain Group Types
+export type PostSpaceDomainGroupRequestData = {
+  name: string
+  description?: string | null
+  domains: string[]
+}
+
+export type PatchSpaceDomainGroupRequestData = {
+  name?: string
+  description?: string | null
+  domains?: string[]
+}
+
 // Legacy aliases kept temporarily for generic chart reuse.
 export type AnalyticsStudentStatistics = {
   totalStudents: number

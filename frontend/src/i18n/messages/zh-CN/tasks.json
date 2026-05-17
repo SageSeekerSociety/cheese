@@ -21,7 +21,15 @@
     "teamLockingPolicyNoLockDesc": "参与申请通过后，队伍仍可自由添加或移除成员（变更不影响已记录的参与情况）",
     "teamLockingPolicyLockOnApproval": "审核通过后锁定",
     "teamLockingPolicyLockOnApprovalDesc": "参与申请通过后，队伍成员名单将被完全锁定，无法进行任何成员变更",
-    "teamMemberManagement": "队伍成员管理说明"
+    "teamMemberManagement": "队伍成员管理说明",
+    "accessControl": {
+      "title": "权限设置",
+      "enableAccessRestriction": "启用访问限制",
+      "enableAccessRestrictionHint": "开启后，只有指定域名邮箱的用户才能查看和参与此赛题",
+      "domainGroups": "域名组",
+      "domainGroupsHint": "选择允许访问的域名组，未选择任何域名组时所有用户均可访问",
+      "noDomainGroups": "暂无可用域名组"
+    }
   },
   "detail": {
     "editTask": "编辑赛题",

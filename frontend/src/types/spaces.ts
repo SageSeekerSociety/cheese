@@ -49,3 +49,13 @@ export type SpaceAdmin = {
 }
 
 export type SpaceAdminRoleType = 'OWNER' | 'ADMIN'
+
+export type DomainGroup = {
+  id: number
+  spaceId: number
+  name: string
+  description: string | null
+  domains: string[]
+  createdAt: number
+  updatedAt: number
+}

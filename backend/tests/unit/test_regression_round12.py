@@ -207,7 +207,8 @@ def test_migration_chain_single_head():
     if not migrations_dir.exists():
         pytest.skip("migrations directory not found")
 
-    revisions: dict[str, str | None] = {}
+    revisions: dict[str, str | tuple[str, ...] | None] = {}
+    merge_revisions: set[str] = set()
     for f in sorted(migrations_dir.glob("*.py")):
         spec = importlib.util.spec_from_file_location(f.stem, f)
         if spec and spec.loader:
@@ -217,16 +218,50 @@ def test_migration_chain_single_head():
             except Exception:
                 continue
             rev = getattr(mod, "revision", None)
-            down = getattr(mod, "down_revision", None)
+            down_raw = getattr(mod, "down_revision", None)
             if rev:
-                revisions[rev] = down
+                # Alembic merge migrations use a tuple for down_revision
+                if isinstance(down_raw, tuple):
+                    revisions[rev] = down_raw
+                    merge_revisions.add(rev)
+                else:
+                    revisions[rev] = down_raw
 
-    down_counts: dict[str | None, list[str]] = {}
+    # Build parent → children mapping
+    children_of: dict[str | None, list[str]] = {}
     for rev, down in revisions.items():
-        down_counts.setdefault(down, []).append(rev)
+        if isinstance(down, tuple):
+            for parent_rev in down:
+                children_of.setdefault(parent_rev, []).append(rev)
+        else:
+            children_of.setdefault(down, []).append(rev)
 
-    forks = {down: heads for down, heads in down_counts.items() if len(heads) > 1}
-    assert not forks, f"Migration chain has forks: {forks}"
+    # Compute the "ultimate head" reachable from each revision by
+    # following children until a node with no outgoing children is found.
+    _head_cache: dict[str, str] = {}
+
+    def _reachable_head(rev: str) -> str:
+        if rev in _head_cache:
+            return _head_cache[rev]
+        children = children_of.get(rev, [])
+        if not children:
+            _head_cache[rev] = rev
+            return rev
+        # All children should converge — pick the first child's ultimate head
+        head = _reachable_head(children[0])
+        _head_cache[rev] = head
+        return head
+
+    # A fork is only a problem if not all children eventually reach the same head.
+    unresolved_forks: dict[str | None, list[str]] = {}
+    for down_key, child_list in children_of.items():
+        if len(child_list) <= 1 or down_key is None:
+            continue
+        heads = {_reachable_head(c) for c in child_list}
+        if len(heads) > 1:
+            unresolved_forks[down_key] = child_list
+
+    assert not unresolved_forks, f"Migration chain has unresolved forks: {unresolved_forks}"
 
 
 # ---------------------------------------------------------------------------

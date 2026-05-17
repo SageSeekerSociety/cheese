@@ -182,6 +182,18 @@
           </template>
           <v-list-item-title>{{ t('spaces.detail.manageCategories.title') }}</v-list-item-title>
         </v-list-item>
+
+        <v-list-item
+          rounded="lg"
+          :to="{ name: 'SpacesDetailManageDomainGroups', params: { spaceId: spaceId } }"
+          color="primary"
+          class="sidebar-item"
+        >
+          <template #prepend>
+            <v-icon>mdi-web</v-icon>
+          </template>
+          <v-list-item-title>{{ t('spaces.domainGroups.title') }}</v-list-item-title>
+        </v-list-item>
       </template>
     </v-list>
   </SecondaryNavigation>

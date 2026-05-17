@@ -26,6 +26,7 @@ task_submission_entry_seq = Sequence("task_submission_entry_seq")
 task_submission_review_seq = Sequence("task_submission_review_seq")
 task_ai_advice_context_seq = Sequence("task_ai_advice_context_seq")
 task_submission_schema_seq = Sequence("task_submission_schema_seq")
+task_access_domain_seq = Sequence("task_access_domain_seq")
 
 
 class Task(Base):
@@ -66,6 +67,21 @@ class Task(Base):
         "team_locking_policy", String(50), nullable=False, default="NO_LOCK"
     )
     team_id: Mapped[int | None] = mapped_column("team_id", BigInteger, nullable=True)
+    access_control_enabled: Mapped[bool] = mapped_column(
+        "access_control_enabled", Boolean, nullable=False, default=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TaskAccessDomain(Base):
+    __tablename__ = "task_access_domain"
+
+    id: Mapped[int] = mapped_column(BigInteger, task_access_domain_seq, primary_key=True)
+    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("task.id"), nullable=False)
+    domain: Mapped[str] = mapped_column(String(255), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

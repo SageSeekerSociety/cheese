@@ -47,6 +47,7 @@ from app.domain.task.services import (
 )
 from app.domain.task.task_ai_advice_service import TaskAIAdviceService
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
+from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
 from app.domain.topics.repositories import TopicRepository as GlobalTopicRepository
@@ -192,6 +193,8 @@ class CreateTaskRequest(BaseModel):
     team_locking_policy: str = Field(default="NO_LOCK", alias="teamLockingPolicy")
     video_url: str | None = Field(default=None, alias="videoUrl")
     topics: list[int] = Field(default_factory=list)
+    access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
+    access_domain_group_ids: list[int] = Field(default_factory=list, alias="accessDomainGroupIds")
 
 
 class TaskParticipantRequest(BaseModel):
@@ -258,6 +261,8 @@ class PatchTaskRequest(BaseModel):
     category_id: int | None = Field(default=None, alias="categoryId")
     submission_schema: list[dict] | None = Field(default=None, alias="submissionSchema")
     topics: list[int] | None = None
+    access_control_enabled: bool | None = Field(default=None, alias="accessControlEnabled")
+    access_domain_group_ids: list[int] | None = Field(default=None, alias="accessDomainGroupIds")
 
 
 class CreateSubmissionReviewRequest(BaseModel):
@@ -313,6 +318,7 @@ def _task_to_api_model(task: Task) -> dict:
         "teamLockingPolicy": task.team_locking_policy,
         "rejectReason": task.reject_reason,
         "videoUrl": task.video_url,
+        "accessControlEnabled": task.access_control_enabled,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -731,6 +737,18 @@ def _map_approve_type_to_int(value: str | None) -> int | None:
     return mapping[upper]
 
 
+async def _resolve_user_email_domain(db, user_id: int) -> str | None:
+    user_repo = UserRepository(session=db)
+    user = await user_repo.get_by_id(user_id)
+    if user is None:
+        return None
+    if user.email_domain:
+        return user.email_domain.lower()
+    if user.email and "@" in user.email:
+        return user.email.split("@", 1)[1].lower()
+    return None
+
+
 async def _create_task_entity(
     *,
     payload: dict | CreateTaskRequest,
@@ -758,6 +776,8 @@ async def _create_task_entity(
         team_locking_policy = payload.team_locking_policy
         video_url = payload.video_url or None
         topics = payload.topics
+        access_control_enabled = payload.access_control_enabled
+        access_domain_group_ids = payload.access_domain_group_ids
     else:
         # Dict path — used by PDF-based creation flow
         required_fields = [
@@ -817,6 +837,16 @@ async def _create_task_entity(
 
         team_locking_policy = payload.get("teamLockingPolicy") or "NO_LOCK"
         video_url = payload.get("videoUrl") or None
+
+        access_control_enabled = bool(payload.get("accessControlEnabled", False))
+        access_domain_group_ids_raw = payload.get("accessDomainGroupIds") or []
+        access_domain_group_ids = []
+        if isinstance(access_domain_group_ids_raw, list):
+            for gid in access_domain_group_ids_raw:
+                try:
+                    access_domain_group_ids.append(int(gid))
+                except (TypeError, ValueError):
+                    continue
 
         topics_raw = payload.get("topics") or []
         topics = []
@@ -882,8 +912,27 @@ async def _create_task_entity(
         min_team_size=min_team_size,
         max_team_size=max_team_size,
         team_locking_policy=team_locking_policy,
+        access_control_enabled=access_control_enabled,
         video_url=video_url,
     )
+
+    # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
+    if access_control_enabled and access_domain_group_ids:
+        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
+
+        domain_repo = SpaceDomainGroupDomainRepository(session=db)
+        groups_domains = await domain_repo.list_domains_for_groups(access_domain_group_ids)
+        all_domains: list[str] = []
+        for gid in access_domain_group_ids:
+            all_domains.extend(groups_domains.get(gid, []))
+
+        if all_domains:
+            from app.domain.task.repositories import TaskAccessDomainRepository
+
+            access_domain_repo = TaskAccessDomainRepository(session=db)
+            await access_domain_repo.replace_domains(
+                task_id=task.id, domains=list(dict.fromkeys(all_domains))
+            )
 
     # 简单设置话题关联：先不做复杂校验，仅插入关系行。
     if topics:
@@ -1163,6 +1212,12 @@ async def create_task_participant(
     if task.approved != 0 and task.creator_id != auth_user.user_id:
         raise BadRequestError("Cannot join a task that is not approved")
 
+    # 可见性检查：禁止"看不到但能加入"
+    visibility_service = TaskVisibilityService(session=db)
+    can_view = await visibility_service.can_view_task(task=task, user_id=auth_user.user_id)
+    if not can_view:
+        raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
+
     # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
     # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
     # eligibility service already respects this flag; the join route used to
@@ -1242,6 +1297,12 @@ async def join_task_as_user(
             "This endpoint is for USER tasks only. Use /participations/team for team tasks."
         )
 
+    # 可见性检查：禁止"看不到但能加入"
+    visibility_service = TaskVisibilityService(session=db)
+    can_view = await visibility_service.can_view_task(task=task, user_id=auth_user.user_id)
+    if not can_view:
+        raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
+
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
         try:
@@ -1301,6 +1362,12 @@ async def join_task_as_team(
         raise BadRequestError(
             "This endpoint is for TEAM tasks only. Use /participations/user for user tasks."
         )
+
+    # 可见性检查：禁止"看不到但能加入"
+    visibility_service = TaskVisibilityService(session=db)
+    can_view = await visibility_service.can_view_task(task=task, user_id=auth_user.user_id)
+    if not can_view:
+        raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
@@ -1421,6 +1488,14 @@ async def get_task(
             is_space_admin = relation is not None
         if not is_creator and not is_space_admin:
             raise ForbiddenError("Only space admins or task creator can view unapproved tasks")
+
+    visibility_service = TaskVisibilityService(session=db)
+    can_view = await visibility_service.can_view_task(
+        task=task,
+        user_id=auth_user.user_id,
+    )
+    if not can_view:
+        raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
 
     # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。
     participation: dict
@@ -1700,6 +1775,30 @@ async def patch_task(
             raise BadRequestError(f"Invalid teamLockingPolicy: {payload.team_locking_policy}")
         task.team_locking_policy = payload.team_locking_policy
 
+    # accessControlEnabled + accessDomainGroupIds
+    if payload.access_control_enabled is not None:
+        task.access_control_enabled = payload.access_control_enabled
+
+    if payload.access_domain_group_ids is not None:
+        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
+        from app.domain.task.repositories import TaskAccessDomainRepository
+
+        domain_repo = SpaceDomainGroupDomainRepository(session=db)
+        access_domain_repo = TaskAccessDomainRepository(session=db)
+
+        if task.access_control_enabled and payload.access_domain_group_ids:
+            groups_domains = await domain_repo.list_domains_for_groups(
+                payload.access_domain_group_ids
+            )
+            all_domains: list[str] = []
+            for gid in payload.access_domain_group_ids:
+                all_domains.extend(groups_domains.get(gid, []))
+            await access_domain_repo.replace_domains(
+                task_id=task.id, domains=list(dict.fromkeys(all_domains))
+            )
+        else:
+            await access_domain_repo.replace_domains(task_id=task.id, domains=[])
+
     # categoryId 更新：需验证归属 space 且未归档/未删除
     if payload.category_id is not None:
         space_repo = SpaceRepository(session=db)
@@ -1818,6 +1917,10 @@ async def get_tasks(
         if relation is None:
             raise ForbiddenError("Only space admins can view unapproved tasks")
 
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    is_space_admin = await admin_repo.get_relation(space, auth_user.user_id) is not None
+    viewer_email_domain = await _resolve_user_email_domain(db, auth_user.user_id)
+
     # owner 直接映射到 Task.creator_id。
     owner_id: int | None = owner
 
@@ -1840,6 +1943,9 @@ async def get_tasks(
         topics=topics,
         joined=joined,
         current_user_id=auth_user.user_id,
+        viewer_user_id=auth_user.user_id,
+        viewer_email_domain=viewer_email_domain,
+        viewer_is_space_admin=is_space_admin,
         limit=pageSize,
         offset=offset,
         sort_by=sort_by,
@@ -1884,6 +1990,9 @@ async def get_tasks(
         topics=topics,
         joined=joined,
         current_user_id=auth_user.user_id,
+        viewer_user_id=auth_user.user_id,
+        viewer_email_domain=viewer_email_domain,
+        viewer_is_space_admin=is_space_admin,
     )
     returned = len(items)
     has_more = offset + returned < total

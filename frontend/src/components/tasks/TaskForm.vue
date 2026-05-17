@@ -319,6 +319,96 @@
       </v-card-text>
     </v-card>
 
+    <!-- 权限设置 -->
+    <v-card flat rounded="lg" class="mb-4 form-card">
+      <v-card-item>
+        <template #prepend>
+          <div class="me-3">
+            <v-avatar color="primary-lighten-5" size="48" class="elevation-0">
+              <v-icon color="primary" size="28">mdi-shield-lock-outline</v-icon>
+            </v-avatar>
+          </div>
+        </template>
+        <v-card-title class="text-h5 ps-0">{{ t('tasks.form.accessControl.title') }}</v-card-title>
+      </v-card-item>
+
+      <v-card-text class="pt-2">
+        <v-switch
+          v-model="accessControlEnabled"
+          color="primary"
+          hide-details
+          v-bind="accessControlEnabledProps"
+        >
+          <template #label>
+            <div class="d-flex align-center">
+              <v-icon
+                :icon="accessControlEnabled ? 'mdi-shield-check' : 'mdi-shield-outline'"
+                :color="accessControlEnabled ? 'primary' : 'medium-emphasis'"
+                class="mr-2"
+              ></v-icon>
+              <span>{{ t('tasks.form.accessControl.enableAccessRestriction') }}</span>
+              <v-tooltip location="top">
+                <template #activator="{ props: tooltipProps }">
+                  <v-icon size="small" color="primary" class="ml-2" v-bind="tooltipProps">mdi-information-outline</v-icon>
+                </template>
+                <span>{{ t('tasks.form.accessControl.enableAccessRestrictionHint') }}</span>
+              </v-tooltip>
+            </div>
+          </template>
+        </v-switch>
+
+        <v-row v-if="accessControlEnabled" class="mt-4">
+          <v-col cols="12">
+            <v-select
+              v-if="domainGroupItems.length > 0"
+              v-model="accessDomainGroupIds"
+              :items="domainGroupItems"
+              :label="t('tasks.form.accessControl.domainGroups')"
+              :hint="t('tasks.form.accessControl.domainGroupsHint')"
+              chips
+              multiple
+              persistent-hint
+              v-bind="accessDomainGroupIdsProps"
+              item-title="title"
+              item-value="value"
+            >
+              <template #prepend-inner>
+                <v-icon size="small" color="primary">mdi-domain</v-icon>
+              </template>
+              <template #item="{ item, props: slotProps }">
+                <v-list-item v-bind="slotProps">
+                  <template #prepend>
+                    <v-icon icon="mdi-web" color="primary" class="mr-2"></v-icon>
+                  </template>
+                  <template #subtitle v-if="item.raw">
+                    <span class="text-caption text-medium-emphasis">{{ item.raw.subtitle }}</span>
+                  </template>
+                </v-list-item>
+              </template>
+              <template #chip="{ item, props: chipProps }">
+                <v-chip v-bind="chipProps" color="primary" variant="tonal" size="small">
+                  <template #prepend>
+                    <v-icon start size="x-small">mdi-web</v-icon>
+                  </template>
+                  {{ item.title }}
+                </v-chip>
+              </template>
+            </v-select>
+            <v-alert
+              v-else
+              color="warning"
+              variant="tonal"
+              density="comfortable"
+              border="start"
+              icon="mdi-alert-circle-outline"
+            >
+              {{ t('tasks.form.accessControl.noDomainGroups') }}
+            </v-alert>
+          </v-col>
+        </v-row>
+      </v-card-text>
+    </v-card>
+
     <!-- 赛题详情 -->
     <v-card flat rounded="lg" class="mb-4 form-card">
       <v-card-item>
@@ -546,7 +636,7 @@
 </template>
 
 <script setup lang="ts">
-import type { TaskFormSubmitData, Topic } from '@/types'
+import type { DomainGroup, TaskFormSubmitData, Topic } from '@/types'
 import type { SpaceCategory } from '@/types'
 
 import { computed, ref, toRefs } from 'vue'
@@ -576,6 +666,7 @@ const props = withDefaults(
     classificationTopics: Topic[]
     categories?: SpaceCategory[]
     selectedCategoryId?: number
+    domainGroups?: DomainGroup[]
     descriptionFormat?: 'markdown' | 'tiptap'
     originalDescription?: string
   }>(),
@@ -586,6 +677,7 @@ const props = withDefaults(
     classificationTopics: () => [],
     categories: () => [],
     selectedCategoryId: undefined,
+    domainGroups: () => [],
     descriptionFormat: 'tiptap',
     originalDescription: '',
   }
@@ -623,6 +715,8 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
         requireRealName: z.boolean().optional().default(false),
         participantLimit: z.number().int().min(1).optional().nullable(),
         teamLockingPolicy: z.enum(['NO_LOCK', 'LOCK_ON_APPROVAL']).optional(),
+        accessControlEnabled: z.boolean().optional().default(false),
+        accessDomainGroupIds: z.array(z.number()).optional(),
       })
       .refine((arg) => !arg.maxTeamSize || !arg.minTeamSize || arg.maxTeamSize >= arg.minTeamSize, {
         message: '最大人数不能小于最小人数',
@@ -643,6 +737,8 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
     defaultDeadline: props.initialData?.defaultDeadline ?? 30,
     participantLimit: props.initialData?.participantLimit ?? null,
     teamLockingPolicy: props.initialData?.teamLockingPolicy ?? 'NO_LOCK',
+    accessControlEnabled: props.initialData?.accessControlEnabled ?? false,
+    accessDomainGroupIds: props.initialData?.accessDomainGroupIds ?? [],
   },
 })
 
@@ -659,6 +755,12 @@ const [categoryId, categoryIdProps] = defineField('categoryId', vuetifyConfig)
 const [requireRealName, requireRealNameProps] = defineField('requireRealName', vuetifyConfig)
 const [participantLimit, participantLimitProps] = defineField('participantLimit', vuetifyConfig)
 const [teamLockingPolicy, teamLockingPolicyProps] = defineField('teamLockingPolicy', vuetifyConfig)
+const [accessControlEnabled, accessControlEnabledProps] = defineField('accessControlEnabled', vuetifyConfig)
+const [accessDomainGroupIds, accessDomainGroupIdsProps] = defineField('accessDomainGroupIds', vuetifyConfig)
+
+const domainGroupItems = computed(() =>
+  props.domainGroups?.map((g) => ({ title: g.name, value: g.id, subtitle: g.domains.join(', ') })) ?? []
+)
 
 const description = ref(props.initialData?.description || { type: 'doc', content: [] })
 const videoUrl = ref(props.initialData?.videoUrl || '')
@@ -727,6 +829,8 @@ const submitFormData = (values: any) => {
     maxTeamSize: submitterType.value === 'TEAM' ? maxTeamSize.value : undefined,
     participantLimit: participantLimit.value || undefined,
     teamLockingPolicy: submitterType.value === 'TEAM' ? teamLockingPolicy.value : undefined,
+    accessControlEnabled: accessControlEnabled.value,
+    accessDomainGroupIds: accessControlEnabled.value ? accessDomainGroupIds.value : undefined,
     videoUrl: videoUrl.value || undefined,
   }
   emit('submit', submissionData)
