@@ -78,7 +78,8 @@ class TestBuildVisibilityPredicate:
     def test_public_tasks_always_visible(self):
         """When access control is off, the predicate matches regardless of domains."""
         pred = TaskVisibilityService.build_visibility_predicate(
-            user_id=42, email_domain=None,
+            user_id=42,
+            email_domain=None,
         )
         sql = str(pred)
         assert "task.access_control_enabled" in sql
@@ -86,7 +87,8 @@ class TestBuildVisibilityPredicate:
     def test_creator_clause_present(self):
         """Creator is always in the predicate."""
         pred = TaskVisibilityService.build_visibility_predicate(
-            user_id=42, email_domain=None,
+            user_id=42,
+            email_domain=None,
         )
         sql = str(pred)
         assert "task.creator_id" in sql
@@ -94,7 +96,8 @@ class TestBuildVisibilityPredicate:
     def test_participant_clause_present(self):
         """Participant membership is checked."""
         pred = TaskVisibilityService.build_visibility_predicate(
-            user_id=42, email_domain=None,
+            user_id=42,
+            email_domain=None,
         )
         sql = str(pred)
         assert "task_membership" in sql.lower()
@@ -102,7 +105,8 @@ class TestBuildVisibilityPredicate:
     def test_domain_clause_present_when_email_domain_provided(self):
         """When email_domain is known, a TaskAccessDomain exists clause is added."""
         pred = TaskVisibilityService.build_visibility_predicate(
-            user_id=42, email_domain="cs.edu.cn",
+            user_id=42,
+            email_domain="cs.edu.cn",
         )
         sql = str(pred)
         assert "task_access_domain" in sql.lower()
@@ -110,7 +114,8 @@ class TestBuildVisibilityPredicate:
     def test_domain_clause_absent_when_email_domain_none(self):
         """When email_domain is None, the domain check clause is omitted."""
         pred = TaskVisibilityService.build_visibility_predicate(
-            user_id=42, email_domain=None,
+            user_id=42,
+            email_domain=None,
         )
         sql = str(pred)
         assert "task_access_domain" not in sql.lower()
@@ -155,7 +160,8 @@ class TestCanViewTaskEmailDomain:
         admin_repo.get_relation.return_value = None
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(
-            email="student@physics.edu.cn", email_domain=None,
+            email="student@physics.edu.cn",
+            email_domain=None,
         )
         session = _mock_session({"task_access_domain": 1})  # physics.edu.cn matches
         svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
@@ -180,7 +186,8 @@ class TestCanViewTaskEmailDomain:
         admin_repo.get_relation.return_value = None
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(
-            email="student@foo.com", email_domain="cs.edu.cn",
+            email="student@foo.com",
+            email_domain="cs.edu.cn",
         )
         session = _mock_session({"task_access_domain": 1})  # cs.edu.cn matches
         svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
@@ -396,9 +403,7 @@ class TestDetailAccessNotFound:
 
         with pytest.raises(NotFoundError):
             if not can_view:
-                raise NotFoundError(
-                    "Resource task not found", data={"type": "task", "id": task.id}
-                )
+                raise NotFoundError("Resource task not found", data={"type": "task", "id": task.id})
 
     @pytest.mark.anyio
     async def test_get_task_visible_when_creator(self):
@@ -429,7 +434,8 @@ class TestListFilteringVisibility:
         The predicate must include: creator check, public check, participant check,
         and if email_domain is set, domain check."""
         pred = TaskVisibilityService.build_visibility_predicate(
-            user_id=42, email_domain="cs.edu.cn",
+            user_id=42,
+            email_domain="cs.edu.cn",
         )
         sql = str(pred)
         assert "task.creator_id" in sql
@@ -440,7 +446,8 @@ class TestListFilteringVisibility:
     def test_list_tasks_no_domain_check_when_email_is_none(self):
         """When user has no email domain, the predicate omits the domain clause."""
         pred = TaskVisibilityService.build_visibility_predicate(
-            user_id=42, email_domain=None,
+            user_id=42,
+            email_domain=None,
         )
         sql = str(pred)
         assert "task_access_domain" not in sql.lower()
@@ -451,7 +458,8 @@ class TestListFilteringVisibility:
         """Creator OR public OR participant OR domain-matches-allowed:
         the predicate must combine these with OR, not AND."""
         pred = TaskVisibilityService.build_visibility_predicate(
-            user_id=42, email_domain="cs.edu.cn",
+            user_id=42,
+            email_domain="cs.edu.cn",
         )
         sql = str(pred)
         # SQLAlchemy OR renders as 'OR'
@@ -473,12 +481,14 @@ class TestResolveUserEmailDomain:
 
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(
-            email="a@foo.com", email_domain="bar.edu.cn",
+            email="a@foo.com",
+            email_domain="bar.edu.cn",
         )
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository", return_value=user_repo,
+            "app.api.routes.tasks.UserRepository",
+            return_value=user_repo,
         ):
             result = await _resolve_user_email_domain(mock_db, user_id=42)
 
@@ -491,12 +501,14 @@ class TestResolveUserEmailDomain:
 
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(
-            email="student@physics.edu.cn", email_domain=None,
+            email="student@physics.edu.cn",
+            email_domain=None,
         )
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository", return_value=user_repo,
+            "app.api.routes.tasks.UserRepository",
+            return_value=user_repo,
         ):
             result = await _resolve_user_email_domain(mock_db, user_id=42)
 
@@ -509,12 +521,14 @@ class TestResolveUserEmailDomain:
 
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(
-            email="User@CS.EDU.CN", email_domain=None,
+            email="User@CS.EDU.CN",
+            email_domain=None,
         )
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository", return_value=user_repo,
+            "app.api.routes.tasks.UserRepository",
+            return_value=user_repo,
         ):
             result = await _resolve_user_email_domain(mock_db, user_id=42)
 
@@ -530,7 +544,8 @@ class TestResolveUserEmailDomain:
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository", return_value=user_repo,
+            "app.api.routes.tasks.UserRepository",
+            return_value=user_repo,
         ):
             result = await _resolve_user_email_domain(mock_db, user_id=999)
 
@@ -546,7 +561,8 @@ class TestResolveUserEmailDomain:
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository", return_value=user_repo,
+            "app.api.routes.tasks.UserRepository",
+            return_value=user_repo,
         ):
             result = await _resolve_user_email_domain(mock_db, user_id=42)
 
@@ -562,7 +578,8 @@ class TestResolveUserEmailDomain:
         mock_db = AsyncMock()
 
         with patch(
-            "app.api.routes.tasks.UserRepository", return_value=user_repo,
+            "app.api.routes.tasks.UserRepository",
+            return_value=user_repo,
         ):
             result = await _resolve_user_email_domain(mock_db, user_id=42)
 
