@@ -27,6 +27,8 @@ node_modules/
 
 # Docker Compose override (local development)
 docker-compose.override.yml
+docker-compose.dev.yml
+docker-compose.yml
 
 # Misc
 new.md

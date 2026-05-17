@@ -21,6 +21,7 @@ services:
       - JWT_SECRET=dev-secret
     volumes:
       - ./backend:/app
+      - /app/.venv
     depends_on:
       postgres:
         condition: service_healthy
