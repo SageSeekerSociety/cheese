@@ -142,8 +142,8 @@ class QuestionsService:
                 "title": question.title,
                 "content": question.content,
                 "groupId": question.group_id,
-                "createdAt": int(question.created_at.timestamp()) if question.created_at else 0,
-                "updatedAt": int(question.updated_at.timestamp()) if question.updated_at else 0,
+                "createdAt": int(question.created_at.timestamp() * 1000) if question.created_at else 0,
+                "updatedAt": int(question.updated_at.timestamp() * 1000) if question.updated_at else 0,
             },
         )
         return dto

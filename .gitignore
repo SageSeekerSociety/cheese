@@ -10,6 +10,8 @@ htmlcov/
 
 # Environment
 .env
+.env.prod
+deploy/deploy.log
 
 # Uploads
 uploads/
