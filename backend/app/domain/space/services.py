@@ -3,11 +3,19 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
-from app.domain.space.models import Space, SpaceAdminRelation, SpaceAdminRole, SpaceCategory
+from app.domain.space.models import (
+    Space,
+    SpaceAdminRelation,
+    SpaceAdminRole,
+    SpaceCategory,
+    SpaceDomainGroup,
+)
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
     SpaceClassificationTopicsRepository,
+    SpaceDomainGroupDomainRepository,
+    SpaceDomainGroupRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
@@ -26,6 +34,8 @@ class SpaceService:
         rank_repo: SpaceUserRankRepository | None = None,
         task_repo: "TaskRepository | None" = None,
         classification_topics_repo: SpaceClassificationTopicsRepository | None = None,
+        domain_group_repo: SpaceDomainGroupRepository | None = None,
+        domain_group_domain_repo: SpaceDomainGroupDomainRepository | None = None,
     ) -> None:
         self._repo = repo
         self._category_repo = category_repo
@@ -33,6 +43,8 @@ class SpaceService:
         self._rank_repo = rank_repo
         self._task_repo = task_repo
         self._classification_topics_repo = classification_topics_repo
+        self._domain_group_repo = domain_group_repo
+        self._domain_group_domain_repo = domain_group_domain_repo
 
     # ------------------------------------------------------------------
     # Classification topics
@@ -389,6 +401,107 @@ class SpaceService:
         await self._repo.save(space)
 
     # ------------------------------------------------------------------
+    # Domain groups
+    # ------------------------------------------------------------------
+
+    async def list_domain_groups(
+        self, *, space_id: int, actor_user_id: int | None
+    ) -> list[tuple[SpaceDomainGroup, list[str]]]:
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        group_repo = self._require_domain_group_repo()
+        domain_repo = self._require_domain_group_domain_repo()
+
+        groups = await group_repo.list_groups(space_id)
+        domain_map = await domain_repo.list_domains_for_groups([g.id for g in groups])
+        return [(group, domain_map.get(int(group.id), [])) for group in groups]
+
+    async def create_domain_group(
+        self,
+        *,
+        space_id: int,
+        name: str,
+        description: str | None,
+        domains: list[str],
+        actor_user_id: int | None,
+    ) -> tuple[SpaceDomainGroup, list[str]]:
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        group_repo = self._require_domain_group_repo()
+        domain_repo = self._require_domain_group_domain_repo()
+
+        if not name.strip():
+            raise BadRequestError("Domain group name cannot be empty")
+        normalized_domains = self._normalize_domains(domains)
+        if not normalized_domains:
+            raise BadRequestError("Domain list cannot be empty")
+        if await group_repo.exists_name(space_id=space_id, name=name.strip()):
+            raise BadRequestError("Domain group name already exists")
+
+        group = await group_repo.create_group(
+            space_id=space_id,
+            name=name.strip(),
+            description=description.strip() if isinstance(description, str) else description,
+        )
+        await domain_repo.replace_domains(group_id=group.id, domains=normalized_domains)
+        return group, normalized_domains
+
+    async def update_domain_group(
+        self,
+        *,
+        space_id: int,
+        group_id: int,
+        name: str | None,
+        description: str | None,
+        domains: list[str] | None,
+        actor_user_id: int | None,
+    ) -> tuple[SpaceDomainGroup, list[str]]:
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        group_repo = self._require_domain_group_repo()
+        domain_repo = self._require_domain_group_domain_repo()
+
+        group = await self._get_domain_group(space_id=space_id, group_id=group_id)
+
+        if name is not None:
+            if not name.strip():
+                raise BadRequestError("Domain group name cannot be empty")
+            if name.strip() != group.name and await group_repo.exists_name(
+                space_id=space_id, name=name.strip()
+            ):
+                raise BadRequestError("Domain group name already exists")
+            group.name = name.strip()
+
+        if description is not None:
+            group.description = description.strip()
+
+        if domains is not None:
+            normalized_domains = self._normalize_domains(domains)
+            if not normalized_domains:
+                raise BadRequestError("Domain list cannot be empty")
+            await domain_repo.replace_domains(group_id=group.id, domains=normalized_domains)
+        else:
+            normalized_domains = await domain_repo.list_domains_for_group(group.id)
+
+        group.updated_at = datetime.now(UTC)
+        group = await group_repo.save(group)
+        return group, normalized_domains
+
+    async def delete_domain_group(
+        self,
+        *,
+        space_id: int,
+        group_id: int,
+        actor_user_id: int | None,
+    ) -> None:
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        group_repo = self._require_domain_group_repo()
+        domain_repo = self._require_domain_group_domain_repo()
+
+        group = await self._get_domain_group(space_id=space_id, group_id=group_id)
+        group.deleted_at = datetime.now(UTC)
+        group.updated_at = datetime.now(UTC)
+        await group_repo.save(group)
+        await domain_repo.soft_delete_by_group(group_id=group.id)
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -440,6 +553,16 @@ class SpaceService:
             )
         return category
 
+    async def _get_domain_group(self, *, space_id: int, group_id: int) -> SpaceDomainGroup:
+        group_repo = self._require_domain_group_repo()
+        group = await group_repo.get_by_id(space_id=space_id, group_id=group_id)
+        if group is None:
+            raise NotFoundError(
+                "Space domain group not found",
+                data={"spaceId": space_id, "groupId": group_id},
+            )
+        return group
+
     @staticmethod
     def _validate_strings(**kwargs: str) -> None:
         for key, value in kwargs.items():
@@ -453,3 +576,31 @@ class SpaceService:
         if isinstance(value, list):
             return value
         raise BadRequestError("Expected list value")
+
+    def _require_domain_group_repo(self) -> SpaceDomainGroupRepository:
+        if self._domain_group_repo is None:
+            raise BadRequestError("Domain group repository unavailable")
+        return self._domain_group_repo
+
+    def _require_domain_group_domain_repo(self) -> SpaceDomainGroupDomainRepository:
+        if self._domain_group_domain_repo is None:
+            raise BadRequestError("Domain group repository unavailable")
+        return self._domain_group_domain_repo
+
+    @staticmethod
+    def _normalize_domains(domains: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in domains:
+            if not isinstance(raw, str):
+                raise BadRequestError("Invalid domain entry")
+            value = raw.strip().lower()
+            if not value:
+                continue
+            if "@" in value or " " in value or "." not in value:
+                raise BadRequestError(f"Invalid domain: {raw}")
+            if value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+        return normalized

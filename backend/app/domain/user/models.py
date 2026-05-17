@@ -19,6 +19,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String, nullable=False)
     email: Mapped[str] = mapped_column(String, nullable=False)
+    email_domain: Mapped[str | None] = mapped_column("email_domain", String, nullable=True)
     hashed_password: Mapped[str | None] = mapped_column("hashed_password", String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

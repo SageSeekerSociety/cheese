@@ -24,6 +24,10 @@ ENV PATH="/root/.cargo/bin:$PATH"
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Install Node.js (required by pyright) in a separate layer to keep memory low
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # ---- Dependencies ----

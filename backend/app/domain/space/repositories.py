@@ -10,6 +10,8 @@ from app.domain.space.models import (
     SpaceAdminRole,
     SpaceCategory,
     SpaceClassificationTopicsRelation,
+    SpaceDomainGroup,
+    SpaceDomainGroupDomain,
     SpaceUserRank,
 )
 from app.domain.topics.models import Topic
@@ -347,4 +349,128 @@ class SpaceClassificationTopicsRepository:
                     deleted_at=None,
                 )
             )
+        await self._session.flush()
+
+
+class SpaceDomainGroupRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_groups(self, space_id: int) -> Sequence[SpaceDomainGroup]:
+        stmt: Select[tuple[SpaceDomainGroup]] = (
+            select(SpaceDomainGroup)
+            .where(
+                SpaceDomainGroup.space_id == space_id,
+                SpaceDomainGroup.deleted_at.is_(None),
+            )
+            .order_by(SpaceDomainGroup.created_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_id(self, *, space_id: int, group_id: int) -> SpaceDomainGroup | None:
+        stmt: Select[tuple[SpaceDomainGroup]] = select(SpaceDomainGroup).where(
+            SpaceDomainGroup.id == group_id,
+            SpaceDomainGroup.space_id == space_id,
+            SpaceDomainGroup.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def exists_name(self, *, space_id: int, name: str) -> bool:
+        stmt = select(SpaceDomainGroup.id).where(
+            SpaceDomainGroup.space_id == space_id,
+            SpaceDomainGroup.name == name,
+            SpaceDomainGroup.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def create_group(
+        self, *, space_id: int, name: str, description: str | None
+    ) -> SpaceDomainGroup:
+        now = datetime.now(UTC)
+        group = SpaceDomainGroup(
+            space_id=space_id,
+            name=name,
+            description=description,
+            created_at=now,
+            updated_at=now,
+            deleted_at=None,
+        )
+        self._session.add(group)
+        await self._session.flush()
+        return group
+
+    async def save(self, group: SpaceDomainGroup) -> SpaceDomainGroup:
+        self._session.add(group)
+        await self._session.flush()
+        return group
+
+
+class SpaceDomainGroupDomainRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_domains_for_group(self, group_id: int) -> list[str]:
+        stmt = (
+            select(SpaceDomainGroupDomain.domain)
+            .where(
+                SpaceDomainGroupDomain.group_id == group_id,
+                SpaceDomainGroupDomain.deleted_at.is_(None),
+            )
+            .order_by(SpaceDomainGroupDomain.domain.asc())
+        )
+        result = await self._session.execute(stmt)
+        return [row[0] for row in result.all()]
+
+    async def list_domains_for_groups(self, group_ids: Sequence[int]) -> dict[int, list[str]]:
+        if not group_ids:
+            return {}
+        stmt = (
+            select(SpaceDomainGroupDomain.group_id, SpaceDomainGroupDomain.domain)
+            .where(
+                SpaceDomainGroupDomain.group_id.in_(list(group_ids)),
+                SpaceDomainGroupDomain.deleted_at.is_(None),
+            )
+            .order_by(SpaceDomainGroupDomain.domain.asc())
+        )
+        result = await self._session.execute(stmt)
+        mapping: dict[int, list[str]] = {}
+        for group_id, domain in result.all():
+            mapping.setdefault(int(group_id), []).append(domain)
+        return mapping
+
+    async def replace_domains(self, *, group_id: int, domains: Sequence[str]) -> None:
+        now = datetime.now(UTC)
+        stmt: Select[tuple[SpaceDomainGroupDomain]] = select(SpaceDomainGroupDomain).where(
+            SpaceDomainGroupDomain.group_id == group_id,
+            SpaceDomainGroupDomain.deleted_at.is_(None),
+        )
+        existing = (await self._session.execute(stmt)).scalars().all()
+        for item in existing:
+            item.deleted_at = now
+            item.updated_at = now
+        for domain in domains:
+            self._session.add(
+                SpaceDomainGroupDomain(
+                    group_id=group_id,
+                    domain=domain,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+        await self._session.flush()
+
+    async def soft_delete_by_group(self, *, group_id: int) -> None:
+        now = datetime.now(UTC)
+        stmt: Select[tuple[SpaceDomainGroupDomain]] = select(SpaceDomainGroupDomain).where(
+            SpaceDomainGroupDomain.group_id == group_id,
+            SpaceDomainGroupDomain.deleted_at.is_(None),
+        )
+        existing = (await self._session.execute(stmt)).scalars().all()
+        for item in existing:
+            item.deleted_at = now
+            item.updated_at = now
         await self._session.flush()

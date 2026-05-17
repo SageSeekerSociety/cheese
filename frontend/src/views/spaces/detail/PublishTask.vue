@@ -112,13 +112,14 @@
       :classification-topics="classificationTopics"
       :categories="activeCategories"
       :selected-category-id="preselectedCategoryId"
+      :domain-groups="domainGroups"
       @submit="submitTask"
     />
   </v-sheet>
 </template>
 
 <script setup lang="ts">
-import type { TaskSubmissionSchemaEntry } from '@/types'
+import type { DomainGroup, TaskSubmissionSchemaEntry } from '@/types'
 import type { TaskFormSubmitData } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
@@ -127,6 +128,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
@@ -178,6 +180,7 @@ const pdfTemplateIndex = computed(() => {
 })
 
 const loadedTemplate = ref(false)
+const domainGroups = ref<DomainGroup[]>([])
 
 const initialTaskData = ref({})
 
@@ -220,6 +223,8 @@ const submitTask = async (taskData: TaskFormSubmitData) => {
         space: spaceId,
         requireRealName: taskData.requireRealName || false,
         categoryId: taskData.categoryId,
+        accessControlEnabled: taskData.accessControlEnabled || false,
+        accessDomainGroupIds: taskData.accessControlEnabled ? taskData.accessDomainGroupIds : undefined,
       })
 
       if (!approved) {
@@ -344,6 +349,7 @@ onMounted(async () => {
   await errorHandler.withErrorHandling(
     async () => {
       await spaceStore.fetchCategories()
+      await fetchDomainGroups()
       const templateId = route.query.templateId
       if (templateId && templateId !== 'blank') {
         await loadTemplate(Number(templateId))
@@ -355,6 +361,17 @@ onMounted(async () => {
     }
   )
 })
+
+const fetchDomainGroups = async () => {
+  const spaceId = currentSpaceId.value
+  if (!spaceId) return
+  try {
+    const { data } = await SpacesApi.listDomainGroups(spaceId)
+    domainGroups.value = data.groups
+  } catch (error) {
+    console.error('获取域名组失败:', error)
+  }
+}
 
 /**
  * 根据模板 ID 加载模板数据并填充表单初始值

@@ -11,6 +11,8 @@ space_seq = Sequence("space_seq")
 space_categories_seq = Sequence("space_categories_seq")
 space_user_rank_seq = Sequence("space_user_rank_seq")
 space_admin_relation_seq = Sequence("space_admin_relation_seq")
+space_domain_group_seq = Sequence("space_domain_group_seq")
+space_domain_group_domain_seq = Sequence("space_domain_group_domain_seq")
 
 
 class Space(Base):
@@ -83,6 +85,31 @@ class SpaceAdminRelation(Base):
     space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SpaceDomainGroup(Base):
+    __tablename__ = "space_domain_group"
+
+    id: Mapped[int] = mapped_column(BigInteger, space_domain_group_seq, primary_key=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SpaceDomainGroupDomain(Base):
+    __tablename__ = "space_domain_group_domain"
+
+    id: Mapped[int] = mapped_column(BigInteger, space_domain_group_domain_seq, primary_key=True)
+    group_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    domain: Mapped[str] = mapped_column(String(255), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

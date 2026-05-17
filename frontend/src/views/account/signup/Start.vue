@@ -1,5 +1,24 @@
 <template>
   <div>
+    <!-- 邮箱域名提醒弹窗 -->
+    <v-dialog v-model="showDomainWarning" max-width="440">
+      <v-card>
+        <v-card-item prepend-icon="mdi-email-alert" title="邮箱建议" class="bg-info-container" />
+        <v-card-text class="pt-4">
+          <p class="text-body-1 mb-3">
+            建议使用<strong>企业邮箱</strong>或<strong>学校邮箱</strong>注册。
+          </p>
+          <p class="text-body-2 text-medium-emphasis">
+            部分赛题可能仅对特定域名邮箱开放，使用个人邮箱可能影响您查看或参与这些内容。
+          </p>
+        </v-card-text>
+        <v-card-actions class="justify-end pa-4">
+          <v-btn variant="text" @click="showDomainWarning = false">关闭</v-btn>
+          <v-btn color="primary" variant="flat" @click="onDomainWarningConfirm">不再提醒</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- 标题区域 - 美观大气 -->
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
@@ -124,7 +143,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -189,6 +208,28 @@ const [agree, agreeProps] = defineField('agree', vuetifyConfig)
 
 const signupStore = useSignupStore()
 const router = useRouter()
+
+const DOMAIN_WARNING_KEY = 'cheese:domain_warning_seen'
+const showDomainWarning = ref(false)
+
+function onDomainWarningConfirm() {
+  try {
+    localStorage.setItem(DOMAIN_WARNING_KEY, '1')
+  } catch {
+    // localStorage unavailable
+  }
+  showDomainWarning.value = false
+}
+
+onMounted(() => {
+  try {
+    if (localStorage.getItem(DOMAIN_WARNING_KEY) !== '1') {
+      showDomainWarning.value = true
+    }
+  } catch {
+    // localStorage unavailable, skip
+  }
+})
 
 const submit = handleSubmit(async (value) => {
   try {

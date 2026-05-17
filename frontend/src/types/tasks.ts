@@ -80,6 +80,7 @@ export interface Task {
   minTeamSize?: number
   maxTeamSize?: number
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
+  accessControlEnabled?: boolean
   joined?: boolean
   joinedTeams?: Team[]
   topics?: Topic[]
@@ -172,5 +173,7 @@ export type TaskFormSubmitData = {
   maxTeamSize: number
   participantLimit?: number
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
+  accessControlEnabled?: boolean
+  accessDomainGroupIds?: number[]
   videoUrl?: string
 }

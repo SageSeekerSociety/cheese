@@ -49,6 +49,9 @@ class TaskService:
         topics: Sequence[int] | None = None,
         joined: bool | None = None,
         current_user_id: int | None = None,
+        viewer_user_id: int | None = None,
+        viewer_email_domain: str | None = None,
+        viewer_is_space_admin: bool = False,
         limit: int = 20,
         offset: int = 0,
         sort_by: str = "updatedAt",
@@ -63,6 +66,9 @@ class TaskService:
             topics=topics,
             joined=joined,
             current_user_id=current_user_id,
+            viewer_user_id=viewer_user_id,
+            viewer_email_domain=viewer_email_domain,
+            viewer_is_space_admin=viewer_is_space_admin,
             limit=limit,
             offset=offset,
             sort_by=sort_by,
@@ -80,6 +86,9 @@ class TaskService:
         topics: Sequence[int] | None = None,
         joined: bool | None = None,
         current_user_id: int | None = None,
+        viewer_user_id: int | None = None,
+        viewer_email_domain: str | None = None,
+        viewer_is_space_admin: bool = False,
     ) -> int:
         return await self._repo.count_tasks(
             space_id=space_id,
@@ -90,6 +99,9 @@ class TaskService:
             topics=topics,
             joined=joined,
             current_user_id=current_user_id,
+            viewer_user_id=viewer_user_id,
+            viewer_email_domain=viewer_email_domain,
+            viewer_is_space_admin=viewer_is_space_admin,
         )
 
 

@@ -35,6 +35,8 @@ export type PostTaskRequestData = {
   maxTeamSize?: number
   participantLimit?: number
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
+  accessControlEnabled?: boolean
+  accessDomainGroupIds?: number[]
   videoUrl?: string
 }
 
@@ -101,6 +103,8 @@ export type PatchTaskRequestData = {
   requireRealName?: boolean
   participantLimit?: number
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
+  accessControlEnabled?: boolean
+  accessDomainGroupIds?: number[]
   videoUrl?: string
 }
 
