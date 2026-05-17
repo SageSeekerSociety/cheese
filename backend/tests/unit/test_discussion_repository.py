@@ -267,16 +267,19 @@ class TestReactionTypeRepository:
         repo = ReactionTypeRepository(session)
 
         await repo.ensure_defaults()
-        session.add.assert_not_called()
+        # Only the count query should run, no INSERTs
+        assert session.execute.call_count == 1
 
     @pytest.mark.anyio
     async def test_ensure_defaults_creates(self):
         session = _mock_session()
-        session.execute.return_value = _mock_scalar_one(0)
+        # First call returns count=0, subsequent calls are the INSERT statements
+        session.execute.side_effect = [_mock_scalar_one(0), None, None]
         repo = ReactionTypeRepository(session)
 
         await repo.ensure_defaults()
-        assert session.add.call_count == 2
+        # count query + 2 INSERT ON CONFLICT statements
+        assert session.execute.call_count == 3
 
 
 # ---------------------------------------------------------------------------
