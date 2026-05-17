@@ -98,6 +98,8 @@ services:
     container_name: cheese_prod_frontend
     ports:
       - "127.0.0.1:80:80"
+    env_file:
+      - .env.prod
     depends_on:
       backend:
         condition: service_healthy
