@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Header, Path, Query, Request, Response, status
@@ -1654,7 +1655,9 @@ async def sudo_auth(
 
         import bcrypt
 
-        if not bcrypt.checkpw(password.encode("utf-8"), user.hashed_password.encode("utf-8")):
+        if not await asyncio.to_thread(
+            bcrypt.checkpw, password.encode("utf-8"), user.hashed_password.encode("utf-8")
+        ):
             raise AuthenticationRequiredError("Invalid password")
 
         return {
@@ -2172,7 +2175,7 @@ async def forgot_password(
         </div>
         """
         body_text = f"Reset your password: {reset_url}\nThis link expires in 30 minutes."
-        sender.send(to=email, subject=subject, body_html=body_html, body_text=body_text)
+        await sender.send(to=email, subject=subject, body_html=body_html, body_text=body_text)
 
         return {
             "code": 200,
@@ -2273,7 +2276,7 @@ async def recover_password_request(
         </div>
         """
         body_text = f"Reset your password: {reset_url}\nThis link expires in 30 minutes."
-        sender.send(to=email, subject=subject, body_html=body_html, body_text=body_text)
+        await sender.send(to=email, subject=subject, body_html=body_html, body_text=body_text)
 
         return {
             "code": 200,

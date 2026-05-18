@@ -57,7 +57,7 @@ class QuestionsService:
 
         # Meilisearch-first: if configured, use it for relevance-ranked CJK search.
         ms_sort = [f"{sort_by}:{sort_order}"] if sort_by in {"createdAt", "updatedAt"} else None
-        ms_result = meilisearch_search_ids(
+        ms_result = await meilisearch_search_ids(
             INDEX_QUESTIONS,
             keyword or "",
             limit=page_size,
@@ -135,7 +135,7 @@ class QuestionsService:
         from app.domain.search.meilisearch_service import INDEX_QUESTIONS
         from app.domain.search.search_helper import index_document
 
-        index_document(
+        await index_document(
             INDEX_QUESTIONS,
             {
                 "id": question.id,

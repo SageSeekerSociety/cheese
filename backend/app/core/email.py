@@ -1,8 +1,9 @@
 import logging
-import smtplib
 from collections.abc import Sequence
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+import aiosmtplib
 
 from app.core.config import settings
 
@@ -29,7 +30,7 @@ class EmailSender:
         self._use_ssl = use_ssl if use_ssl is not None else settings.email_smtp_ssl
         self._use_tls = use_tls
 
-    def send(
+    async def send(
         self,
         *,
         to: str | Sequence[str],
@@ -55,18 +56,16 @@ class EmailSender:
         msg.attach(MIMEText(body_html, "html", "utf-8"))
 
         try:
-            if self._use_ssl:
-                with smtplib.SMTP_SSL(self._host, self._port, timeout=30) as server:
-                    if self._username and self._password:
-                        server.login(self._username, self._password)
-                    server.sendmail(self._from_address, recipients, msg.as_string())
-            else:
-                with smtplib.SMTP(self._host, self._port, timeout=30) as server:
-                    if self._use_tls:
-                        server.starttls()
-                    if self._username and self._password:
-                        server.login(self._username, self._password)
-                    server.sendmail(self._from_address, recipients, msg.as_string())
+            await aiosmtplib.send(
+                msg,
+                hostname=self._host,
+                port=self._port,
+                username=self._username if self._username and self._password else None,
+                password=self._password if self._username and self._password else None,
+                use_tls=self._use_ssl or False,
+                start_tls=self._use_tls and not self._use_ssl,
+                timeout=30,
+            )
             logger.debug("Email sent to %s: %s", recipients, subject)
             return True
         except Exception:

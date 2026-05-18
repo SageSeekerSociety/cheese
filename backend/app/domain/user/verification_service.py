@@ -50,7 +50,7 @@ class EmailVerificationService:
             f"Your Cheese verification code is: {code}\nThis code will expire in 10 minutes."
         )
 
-        success = self._sender.send(
+        success = await self._sender.send(
             to=email,
             subject=subject,
             body_html=body_html,

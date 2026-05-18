@@ -184,7 +184,7 @@ const messages = computed(() => {
   return discussionStore.discussionsByChannel[String(currentChannel.value.id)] || []
 })
 
-const newMessage = ref<JSONContent | null>(null)
+const newMessage = ref<JSONContent | undefined>(undefined)
 const selectedFiles = ref<File[]>([])
 const replyingToMessage = ref<any | null>(null)
 const replyingToReply = ref<any | null>(null)
@@ -347,7 +347,7 @@ const sendMessage = async () => {
     await discussionStore.createDiscussion(newMessage.value as JSONContent, currentChannel.value.id)
 
     // 清空输入
-    newMessage.value = null
+    newMessage.value = undefined
     selectedFiles.value = []
     replyingToMessage.value = null
     replyingToReply.value = null
@@ -416,7 +416,7 @@ const sendReply = async () => {
     }
 
     // 清空输入和状态
-    newMessage.value = null
+    newMessage.value = undefined
     selectedFiles.value = []
     replyingToMessage.value = null
     replyingToReply.value = null

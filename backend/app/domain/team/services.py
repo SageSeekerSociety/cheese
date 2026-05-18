@@ -226,7 +226,7 @@ class TeamService:
         if actor_relation is None or actor_relation.role != TeamMemberRole.OWNER:
             raise ForbiddenError("Only team owner can change member roles")
 
-        relation.role = new_role
+        relation.role = new_role  # type: ignore[assignment]
         relation.updated_at = datetime.now(UTC)
         await self._repo._session.flush()
 

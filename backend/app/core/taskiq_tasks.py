@@ -50,7 +50,7 @@ async def send_notification_email_task(
     from app.core.email import get_email_sender
 
     sender = get_email_sender()
-    success = sender.send(
+    success = await sender.send(
         to=recipient_email,
         subject=subject,
         body_html=body_html,
@@ -107,7 +107,7 @@ async def process_email_queue_task() -> dict[str, int]:
                         subject = f"[Cheese] {notification_type}"
                         body_html = f"<p>You have a new notification: {notification_type}</p>"
 
-                        sender.send(
+                        await sender.send(
                             to=email,
                             subject=subject,
                             body_html=body_html,

@@ -45,12 +45,14 @@ class AttachmentService:
         else:
             final_type = detect_attachment_type(content_type).value
 
-        file_content = file.read()
+        import asyncio
+
+        file_content = await asyncio.to_thread(file.read)
         file_size = len(file_content)
         file.seek(0)
 
         storage_key = generate_storage_key(filename, prefix=f"attachments/{final_type}")
-        file_hash = compute_file_hash(file)
+        file_hash = await asyncio.to_thread(compute_file_hash, file)
 
         url = await self._storage.upload(file, storage_key, content_type)
 

@@ -64,9 +64,9 @@ def create_app() -> FastAPI:
     )
 
     # Global error handlers（对齐 Kotlin BaseError / GlobalErrorHandler 结构）
-    app.add_exception_handler(core_errors.BaseError, core_errors.base_error_handler)
-    app.add_exception_handler(StarletteHTTPException, core_errors.http_exception_handler)
-    app.add_exception_handler(RequestValidationError, core_errors.validation_exception_handler)
+    app.add_exception_handler(core_errors.BaseError, core_errors.base_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(StarletteHTTPException, core_errors.http_exception_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, core_errors.validation_exception_handler)  # type: ignore[arg-type]
 
     # Register domain permissions
     register_team_permissions()
@@ -128,7 +128,7 @@ def create_app() -> FastAPI:
         from app.domain.search.meilisearch_service import setup_indices
 
         try:
-            setup_indices()
+            await setup_indices()
         except Exception:
             import logging
 

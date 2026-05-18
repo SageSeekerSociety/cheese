@@ -4,10 +4,14 @@ from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote
 
+import aiofiles
+import aiofiles.os
+import aiofiles.ospath
 from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
 from app.domain.avatars.repositories import AvatarRepository
@@ -15,7 +19,7 @@ from app.domain.avatars.services import AvatarService
 
 router = APIRouter(prefix="/avatars", tags=["Avatars"])
 
-AVATAR_STORAGE_DIR = "/tmp/cheese_avatars"
+AVATAR_STORAGE_DIR = os.path.join(os.path.abspath(settings.storage_local_path), "avatars")
 
 
 async def get_avatar_service(db=Depends(get_db)) -> AvatarService:
@@ -36,14 +40,14 @@ async def create_avatar(
     file_content = await avatar.read()
     file_name = avatar.filename or "avatar"
 
-    os.makedirs(AVATAR_STORAGE_DIR, exist_ok=True)
+    await aiofiles.os.makedirs(AVATAR_STORAGE_DIR, exist_ok=True)
 
     result = await service.create_avatar(url="", name=file_name, avatar_type="upload")
     avatar_id = result["avatarId"]
 
     file_path = os.path.join(AVATAR_STORAGE_DIR, f"{avatar_id}")
-    with open(file_path, "wb") as f:
-        f.write(file_content)
+    async with aiofiles.open(file_path, "wb") as f:
+        await f.write(file_content)
 
     return {"code": 201, "message": "Upload avatar successfully", "data": result}
 
@@ -79,9 +83,9 @@ async def get_default_avatar(
         raise NotFoundError("No default avatar found")
 
     file_path = os.path.join(AVATAR_STORAGE_DIR, f"{avatar.id}")
-    if os.path.exists(file_path):
-        with open(file_path, "rb") as f:
-            content = f.read()
+    if await aiofiles.ospath.exists(file_path):
+        async with aiofiles.open(file_path, "rb") as f:
+            content = await f.read()
     else:
         content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
 
@@ -141,9 +145,9 @@ async def get_avatar_by_id(
         raise NotFoundError("Avatar not found", data={"id": avatar_id})
 
     file_path = os.path.join(AVATAR_STORAGE_DIR, f"{avatar_id}")
-    if os.path.exists(file_path):
-        with open(file_path, "rb") as f:
-            content = f.read()
+    if await aiofiles.ospath.exists(file_path):
+        async with aiofiles.open(file_path, "rb") as f:
+            content = await f.read()
     else:
         content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
 
