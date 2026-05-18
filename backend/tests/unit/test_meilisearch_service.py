@@ -15,7 +15,6 @@ def _reset_singleton(monkeypatch):
 
 
 class TestMeilisearchSearchIds:
-
     @pytest.mark.anyio
     async def test_returns_none_when_client_not_configured(self, monkeypatch):
         monkeypatch.setattr(ms_mod, "get_search_client", lambda: None)
@@ -34,10 +33,12 @@ class TestMeilisearchSearchIds:
     @pytest.mark.anyio
     async def test_returns_ids_and_total_on_success(self, monkeypatch):
         mock_client = MagicMock()
-        mock_client.search = AsyncMock(return_value={
-            "hits": [{"id": 10}, {"id": 20}, {"id": 30}],
-            "estimatedTotalHits": 42,
-        })
+        mock_client.search = AsyncMock(
+            return_value={
+                "hits": [{"id": 10}, {"id": 20}, {"id": 30}],
+                "estimatedTotalHits": 42,
+            }
+        )
         monkeypatch.setattr(ms_mod, "get_search_client", lambda: mock_client)
         from app.domain.search.search_helper import meilisearch_search_ids
 
@@ -82,7 +83,6 @@ class TestMeilisearchSearchIds:
 
 
 class TestIndexDocument:
-
     @pytest.mark.anyio
     async def test_no_op_when_not_configured(self, monkeypatch):
         monkeypatch.setattr(ms_mod, "get_search_client", lambda: None)
