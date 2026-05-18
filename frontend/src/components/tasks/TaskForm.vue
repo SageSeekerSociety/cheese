@@ -762,7 +762,12 @@ const domainGroupItems = computed(() =>
   props.domainGroups?.map((g) => ({ title: g.name, value: g.id, subtitle: g.domains.join(', ') })) ?? []
 )
 
-const description = ref(props.initialData?.description || { type: 'doc', content: [] })
+const createEmptyDescription = () => ({
+  type: 'doc',
+  content: [{ type: 'paragraph' }],
+})
+
+const description = ref(props.initialData?.description || createEmptyDescription())
 const videoUrl = ref(props.initialData?.videoUrl || '')
 
 // Markdown 格式的描述内容

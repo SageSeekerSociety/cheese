@@ -24,6 +24,9 @@ class Space(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enable_rank: Mapped[bool] = mapped_column("enable_rank", Boolean, nullable=False, default=False)
+    visible_task_limit: Mapped[int | None] = mapped_column(
+        "visible_task_limit", Integer, nullable=True
+    )
     # Kotlin Space.defaultCategory -> default_category_id column
     default_category_id: Mapped[int | None] = mapped_column(
         "default_category_id", Integer, nullable=True

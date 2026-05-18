@@ -1,4 +1,5 @@
 import type { AnalyticsApproveType, AnalyticsCompletionType } from '@/network/api/spaces/types'
+import type { SpaceTaskVisibilityStatus } from '@/network/api/spaces/types'
 import type { TaskSubmitterType } from '@/types'
 
 import dayjs from 'dayjs'
@@ -41,6 +42,22 @@ export const approvalColor = (value: AnalyticsApproveType) => {
   if (value === 'APPROVED') return 'success'
   if (value === 'DISAPPROVED') return 'error'
   return 'warning'
+}
+
+export const visibilityStatusText = (value: SpaceTaskVisibilityStatus) => {
+  if (value === 'ENDED') return '已结项'
+  if (value === 'APPROVED_VISIBLE') return '已通过且可见'
+  if (value === 'APPROVED_HIDDEN') return '已通过但隐藏'
+  if (value === 'REJECTED') return '已驳回'
+  return '待审核'
+}
+
+export const visibilityStatusColor = (value: SpaceTaskVisibilityStatus) => {
+  if (value === 'ENDED') return 'secondary'
+  if (value === 'APPROVED_VISIBLE') return 'success'
+  if (value === 'APPROVED_HIDDEN') return 'warning'
+  if (value === 'REJECTED') return 'error'
+  return 'info'
 }
 
 export const completionText = (value: AnalyticsCompletionType) => {

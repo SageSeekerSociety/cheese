@@ -70,6 +70,12 @@ class Task(Base):
     access_control_enabled: Mapped[bool] = mapped_column(
         "access_control_enabled", Boolean, nullable=False, default=False
     )
+    published_at: Mapped[datetime | None] = mapped_column(
+        "published_at", DateTime(timezone=True), nullable=True
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(
+        "ended_at", DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

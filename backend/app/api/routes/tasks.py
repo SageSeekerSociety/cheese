@@ -263,6 +263,8 @@ class PatchTaskRequest(BaseModel):
     topics: list[int] | None = None
     access_control_enabled: bool | None = Field(default=None, alias="accessControlEnabled")
     access_domain_group_ids: list[int] | None = Field(default=None, alias="accessDomainGroupIds")
+    ended_at: int | None = Field(default=None, alias="endedAt")
+    has_ended_at: bool | None = Field(default=None, alias="hasEndedAt")
 
 
 class CreateSubmissionReviewRequest(BaseModel):
@@ -285,6 +287,10 @@ def _task_to_api_model(task: Task) -> dict:
     created_at_ms = int(task.created_at.timestamp() * 1000) if task.created_at is not None else 0
     updated_at_ms = int(task.updated_at.timestamp() * 1000) if task.updated_at is not None else 0
     deadline_ms = int(task.deadline.timestamp() * 1000) if task.deadline is not None else None
+    published_at = getattr(task, "published_at", None)
+    ended_at = getattr(task, "ended_at", None)
+    published_at_ms = int(published_at.timestamp() * 1000) if published_at is not None else None
+    ended_at_ms = int(ended_at.timestamp() * 1000) if ended_at is not None else None
     registration_start_ms = (
         int(task.registration_start_at.timestamp() * 1000)
         if task.registration_start_at is not None
@@ -321,6 +327,8 @@ def _task_to_api_model(task: Task) -> dict:
         "accessControlEnabled": task.access_control_enabled,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
+        "publishedAt": published_at_ms,
+        "endedAt": ended_at_ms,
     }
 
 
@@ -747,6 +755,29 @@ async def _resolve_user_email_domain(db, user_id: int) -> str | None:
     if user.email and "@" in user.email:
         return user.email.split("@", 1)[1].lower()
     return None
+
+
+async def _ensure_task_visible_for_ordinary_user(
+    *,
+    db,
+    task: Task,
+    auth_user: AuthUserInfo,
+) -> None:
+    admin_repo = SpaceAdminRelationRepository(session=db)
+    if await admin_repo.get_relation(task.space_id, auth_user.user_id) is not None:
+        return
+    if task.creator_id == auth_user.user_id:
+        return
+    space_repo = SpaceRepository(session=db)
+    space = await space_repo.get_by_id(task.space_id)
+    if space is None:
+        raise NotFoundError("Resource space not found", data={"type": "space", "id": task.space_id})
+    task_repo = TaskRepository(session=db)
+    if not await task_repo.is_task_visible_for_space_limit(
+        task=task,
+        visible_task_limit=space.visible_task_limit,
+    ):
+        raise NotFoundError("Resource task not found", data={"type": "task", "id": task.id})
 
 
 async def _create_task_entity(
@@ -1211,12 +1242,15 @@ async def create_task_participant(
 
     if task.approved != 0 and task.creator_id != auth_user.user_id:
         raise BadRequestError("Cannot join a task that is not approved")
+    if task.ended_at is not None:
+        raise BadRequestError("Cannot join an ended task")
 
     # 可见性检查：禁止"看不到但能加入"
     visibility_service = TaskVisibilityService(session=db)
     can_view = await visibility_service.can_view_task(task=task, user_id=auth_user.user_id)
     if not can_view:
         raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
+    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
 
     # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
     # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
@@ -1291,6 +1325,8 @@ async def join_task_as_user(
 
     if task.approved != 0:
         raise BadRequestError("Task is not approved for participation")
+    if task.ended_at is not None:
+        raise BadRequestError("Cannot join an ended task")
 
     if task.submitter_type != 0:
         raise BadRequestError(
@@ -1302,6 +1338,7 @@ async def join_task_as_user(
     can_view = await visibility_service.can_view_task(task=task, user_id=auth_user.user_id)
     if not can_view:
         raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
+    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
@@ -1357,6 +1394,8 @@ async def join_task_as_team(
 
     if task.approved != 0:
         raise BadRequestError("Task is not approved for participation")
+    if task.ended_at is not None:
+        raise BadRequestError("Cannot join an ended task")
 
     if task.submitter_type != 1:
         raise BadRequestError(
@@ -1368,6 +1407,7 @@ async def join_task_as_team(
     can_view = await visibility_service.can_view_task(task=task, user_id=auth_user.user_id)
     if not can_view:
         raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
+    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
 
     deadline_dt: datetime | None = None
     if payload.deadline is not None:
@@ -1479,7 +1519,7 @@ async def get_task(
         raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
 
     # 权限检查：未审批任务只有空间管理员或任务创建者可以查看
-    if task.approved == 2:  # NONE = 未审批
+    if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
         is_creator = task.creator_id == auth_user.user_id
         is_space_admin = False
         if not is_creator:
@@ -1496,6 +1536,7 @@ async def get_task(
     )
     if not can_view:
         raise NotFoundError("Resource task not found", data={"type": "task", "id": task_id})
+    await _ensure_task_visible_for_ordinary_user(db=db, task=task, auth_user=auth_user)
 
     # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。
     participation: dict
@@ -1751,9 +1792,34 @@ async def patch_task(
         if not is_space_admin:
             raise ForbiddenError("Only space admins can approve or reject tasks")
         if payload.approved is not None:
-            task.approved = _map_approve_type(payload.approved)
+            next_approved = _map_approve_type(payload.approved)
+            if next_approved == 0 and task.approved != 0:
+                if await task_repo.has_prior_pending_task_for_creator(task):
+                    raise BadRequestError(
+                        "Creator has earlier pending tasks that must be reviewed first"
+                    )
+                if task.published_at is None:
+                    task.published_at = datetime.now(UTC)
+            task.approved = next_approved
         if payload.reject_reason is not None:
             task.reject_reason = payload.reject_reason
+
+    if "ended_at" in payload.model_fields_set or payload.has_ended_at is not None:
+        if not is_creator and not is_space_admin:
+            raise ForbiddenError("Only task owner or space admin can update endedAt")
+        if payload.has_ended_at is False or (
+            "ended_at" in payload.model_fields_set
+            and payload.ended_at is None
+            and payload.has_ended_at is None
+        ):
+            task.ended_at = None
+        elif payload.ended_at is not None:
+            try:
+                task.ended_at = datetime.fromtimestamp(int(payload.ended_at) / 1000.0, tz=UTC)
+            except (TypeError, ValueError) as exc:
+                raise BadRequestError(f"Invalid endedAt: {exc}") from exc
+        elif payload.has_ended_at is True:
+            task.ended_at = datetime.now(UTC)
 
     # 团队大小限制，仅 TEAM 类型任务允许设置
     min_team_size: int | None = task.min_team_size
@@ -1877,8 +1943,10 @@ async def get_tasks(
     topics: list[int] | None = Query(default=None),
     pageStart: str | None = Query(default=None),
     pageSize: int = Query(default=20, ge=1, le=100),
-    sort_by: str = Query(default="updatedAt"),
+    sort_by: str = Query(default="publishedAt"),
     sort_order: str = Query(default="desc"),
+    lifecycle: str | None = Query(default=None),
+    limitedView: bool = Query(default=False),
     querySpace: bool = Query(default=False),
     queryTeam: bool = Query(default=False),
     queryJoinability: bool = Query(default=False),
@@ -1892,10 +1960,12 @@ async def get_tasks(
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     # 解析 sortBy / sortOrder，和 Kotlin 行为保持一致：非法值视为 400。
-    if sort_by not in {"createdAt", "updatedAt", "deadline"}:
+    if sort_by not in {"createdAt", "updatedAt", "deadline", "publishedAt"}:
         raise BadRequestError(f"Invalid sortBy: {sort_by}")
     if sort_order not in {"asc", "desc"}:
         raise BadRequestError(f"Invalid sortOrder: {sort_order}")
+    if lifecycle is not None and lifecycle not in {"ended", "recruiting", "notEnded"}:
+        raise BadRequestError(f"Invalid lifecycle: {lifecycle}")
 
     # 将 approved 字符串映射到数据库中的 SMALLINT（ApproveType ordinal）。
     approved_map = {
@@ -1920,6 +1990,11 @@ async def get_tasks(
     admin_repo = SpaceAdminRelationRepository(session=db)
     is_space_admin = await admin_repo.get_relation(space, auth_user.user_id) is not None
     viewer_email_domain = await _resolve_user_email_domain(db, auth_user.user_id)
+    space_repo = SpaceRepository(session=db)
+    space_entity = await space_repo.get_by_id(space)
+    if space_entity is None:
+        raise NotFoundError("Resource space not found", data={"type": "space", "id": space})
+    apply_space_task_visibility = not is_space_admin or limitedView
 
     # owner 直接映射到 Task.creator_id。
     owner_id: int | None = owner
@@ -1946,6 +2021,9 @@ async def get_tasks(
         viewer_user_id=auth_user.user_id,
         viewer_email_domain=viewer_email_domain,
         viewer_is_space_admin=is_space_admin,
+        apply_space_task_visibility=apply_space_task_visibility,
+        visible_task_limit=space_entity.visible_task_limit,
+        lifecycle=lifecycle,
         limit=pageSize,
         offset=offset,
         sort_by=sort_by,
@@ -1993,6 +2071,9 @@ async def get_tasks(
         viewer_user_id=auth_user.user_id,
         viewer_email_domain=viewer_email_domain,
         viewer_is_space_admin=is_space_admin,
+        apply_space_task_visibility=apply_space_task_visibility,
+        visible_task_limit=space_entity.visible_task_limit,
+        lifecycle=lifecycle,
     )
     returned = len(items)
     has_more = offset + returned < total
@@ -2486,6 +2567,8 @@ async def post_task_submission(
 
     if membership.approved != 0:
         raise ForbiddenError("Participant must be approved before submitting")
+    if task.ended_at is not None:
+        raise BadRequestError("Cannot submit to an ended task")
 
     if membership.is_team:
         is_member = await team_service.is_team_member(membership.member_id, auth_user.user_id)

@@ -160,7 +160,7 @@ export namespace SpacesApi {
       approved: AnalyticsApproveType
       hasPendingParticipantApproval: boolean
       hasPendingReview: boolean
-      sortBy: 'createdAt' | 'participantCount' | 'pendingReviewCount' | 'successRate'
+      sortBy: 'createdAt' | 'publishedAt' | 'participantCount' | 'pendingReviewCount' | 'successRate'
       sortOrder: AnalyticsSortOrder
     }>
   ) =>

@@ -125,12 +125,14 @@ class SpaceService:
         owner_id: int,
         announcements: list,
         task_templates: list,
+        visible_task_limit: int | None = None,
     ) -> Space:
         self._validate_strings(name=name)
         if not isinstance(intro, str) or not isinstance(description, str):
             raise BadRequestError("intro and description must be strings")
         normalized_announcements = self._normalize_json_list(announcements)
         normalized_templates = self._normalize_json_list(task_templates)
+        self._validate_visible_task_limit(visible_task_limit)
 
         space = await self._repo.create_space(
             name=name.strip(),
@@ -140,6 +142,7 @@ class SpaceService:
             enable_rank=enable_rank,
             announcements=normalized_announcements,
             task_templates=normalized_templates,
+            visible_task_limit=visible_task_limit,
         )
 
         # Default category "General"
@@ -174,6 +177,8 @@ class SpaceService:
         announcements: list | None = None,
         task_templates: list | None = None,
         default_category_id: int | None = None,
+        visible_task_limit: int | None = None,
+        set_visible_task_limit: bool = False,
     ) -> Space:
         space = await self._get_space_or_error(space_id)
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
@@ -198,6 +203,9 @@ class SpaceService:
             space.announcements = self._normalize_json_list(announcements)
         if task_templates is not None:
             space.task_templates = self._normalize_json_list(task_templates)
+        if set_visible_task_limit:
+            self._validate_visible_task_limit(visible_task_limit)
+            space.visible_task_limit = visible_task_limit
         if default_category_id is not None:
             category = await self._category_repo.get_by_id(default_category_id)
             if category is None or category.space_id != space_id:
@@ -576,6 +584,13 @@ class SpaceService:
         if isinstance(value, list):
             return value
         raise BadRequestError("Expected list value")
+
+    @staticmethod
+    def _validate_visible_task_limit(value: int | None) -> None:
+        if value is None:
+            return
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise BadRequestError("visibleTaskLimit must be null or a non-negative integer")
 
     def _require_domain_group_repo(self) -> SpaceDomainGroupRepository:
         if self._domain_group_repo is None:

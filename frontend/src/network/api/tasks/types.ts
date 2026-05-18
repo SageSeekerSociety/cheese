@@ -38,6 +38,8 @@ export type PostTaskRequestData = {
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
   videoUrl?: string
+  endedAt?: number | null
+  hasEndedAt?: boolean
 }
 
 /**
@@ -106,6 +108,8 @@ export type PatchTaskRequestData = {
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
   videoUrl?: string
+  endedAt?: number | null
+  hasEndedAt?: boolean
 }
 
 export type AddTaskParticipantRequestData = {

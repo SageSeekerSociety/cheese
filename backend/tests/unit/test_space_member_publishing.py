@@ -31,6 +31,8 @@ def _task(**overrides):
         "space_id": 1,
         "approved": 0,
         "created_at": NOW,
+        "published_at": None,
+        "ended_at": None,
         "deadline": None,
     }
     defaults.update(overrides)
@@ -193,6 +195,7 @@ class TestBuildTaskItem:
         assert result["taskName"] == "Task One"
         assert result["participantCount"] == 0
         assert result["successRate"] == 0.0
+        assert result["visibilityStatus"] == "APPROVED_VISIBLE"
 
     def test_with_approved_members(self):
         svc = self._svc()
@@ -289,6 +292,85 @@ class TestBuildTaskItem:
             reviews_by_submission_id={50: rev},
         )
         assert result["failedParticipantCount"] == 1
+
+
+class TestVisibilityStatus:
+    def _svc(self):
+        return SpaceMemberPublishingService(_mock_session())
+
+    def test_pending_approval(self):
+        task = _task(approved=2)
+        assert (
+            SpaceMemberPublishingService._derive_visibility_status(
+                task=task,
+                is_visible=False,
+            )
+            == "PENDING_APPROVAL"
+        )
+
+    def test_rejected(self):
+        task = _task(approved=1)
+        assert (
+            SpaceMemberPublishingService._derive_visibility_status(
+                task=task,
+                is_visible=False,
+            )
+            == "REJECTED"
+        )
+
+    def test_ended(self):
+        task = _task(ended_at=NOW)
+        assert (
+            SpaceMemberPublishingService._derive_visibility_status(
+                task=task,
+                is_visible=False,
+            )
+            == "ENDED"
+        )
+
+    def test_approved_visible_and_hidden(self):
+        task = _task(approved=0)
+        assert (
+            SpaceMemberPublishingService._derive_visibility_status(
+                task=task,
+                is_visible=True,
+            )
+            == "APPROVED_VISIBLE"
+        )
+        assert (
+            SpaceMemberPublishingService._derive_visibility_status(
+                task=task,
+                is_visible=False,
+            )
+            == "APPROVED_HIDDEN"
+        )
+
+    def test_compute_visible_ids_unlimited(self):
+        t1 = _task(id=1)
+        t2 = _task(id=2)
+        assert SpaceMemberPublishingService._compute_visible_approved_task_ids(
+            tasks=[t1, t2],
+            visible_task_limit=None,
+        ) == {1, 2}
+
+    def test_compute_visible_ids_zero(self):
+        t1 = _task(id=1)
+        assert (
+            SpaceMemberPublishingService._compute_visible_approved_task_ids(
+                tasks=[t1],
+                visible_task_limit=0,
+            )
+            == set()
+        )
+
+    def test_compute_visible_ids_one_per_creator_prefers_earliest_published(self):
+        older = _task(id=1, creator_id=100, published_at=datetime(2025, 1, 1, tzinfo=UTC))
+        newer = _task(id=2, creator_id=100, published_at=datetime(2025, 1, 2, tzinfo=UTC))
+        other = _task(id=3, creator_id=200, published_at=datetime(2025, 1, 1, tzinfo=UTC))
+        assert SpaceMemberPublishingService._compute_visible_approved_task_ids(
+            tasks=[older, newer, other],
+            visible_task_limit=1,
+        ) == {1, 3}
 
 
 # ---------------------------------------------------------------------------

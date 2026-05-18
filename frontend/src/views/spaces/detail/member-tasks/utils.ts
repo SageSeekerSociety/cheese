@@ -10,7 +10,7 @@ export type MemberCompletionFilter =
   | 'SUCCESS'
 export type MemberIdentityFilter = 'ALL' | TaskSubmitterType
 export type MemberSortOrder = 'asc' | 'desc'
-export type MyPublishingSortBy = 'createdAt' | 'participantCount' | 'pendingReviewCount' | 'successRate'
+export type MyPublishingSortBy = 'createdAt' | 'publishedAt' | 'participantCount' | 'pendingReviewCount' | 'successRate'
 export type MyParticipatingSortBy = 'joinedAt' | 'deadline' | 'latestSubmissionAt' | 'completionStatus'
 
 type RawQuery = Record<string, unknown>
@@ -45,6 +45,7 @@ const IDENTITY_VALUES: MemberIdentityFilter[] = ['ALL', 'USER', 'TEAM']
 const SORT_ORDER_VALUES: MemberSortOrder[] = ['asc', 'desc']
 const PUBLISHING_SORT_VALUES: MyPublishingSortBy[] = [
   'createdAt',
+  'publishedAt',
   'participantCount',
   'pendingReviewCount',
   'successRate',
@@ -76,7 +77,7 @@ const asEnum = <T extends string>(value: unknown, allowed: T[]) =>
 
 export const createDefaultPublishingQuery = (): MyPublishingQueryState => ({
   approved: 'ALL',
-  sortBy: 'createdAt',
+  sortBy: 'publishedAt',
   sortOrder: 'desc',
 })
 

@@ -9,6 +9,9 @@
           <v-chip size="small" :color="approvalColor(task.approved)" variant="tonal">
             {{ approvalText(task.approved) }}
           </v-chip>
+          <v-chip size="small" :color="visibilityStatusColor(task.visibilityStatus)" variant="tonal">
+            {{ visibilityStatusText(task.visibilityStatus) }}
+          </v-chip>
           <v-chip v-if="task.pendingParticipantApprovalCount > 0" size="small" color="warning" variant="tonal">
             {{ formatCount(task.pendingParticipantApprovalCount) }} 个待审核报名
           </v-chip>
@@ -18,7 +21,9 @@
         </div>
 
         <div class="member-task-card__meta">
-          <span>发布于 {{ formatDateTime(task.createdAt) }}</span>
+          <span>发布时间 {{ formatDateTime(task.publishedAt) }}</span>
+          <span>创建于 {{ formatDateTime(task.createdAt) }}</span>
+          <span v-if="task.endedAt">结项于 {{ formatDateTime(task.endedAt) }}</span>
           <span>{{ formatDeadline(task.deadline) }}</span>
           <span>最近提交 {{ formatDateTime(task.latestSubmissionAt) }}</span>
         </div>
@@ -54,7 +59,16 @@ import type { SpaceMyPublishedTask } from '@/network/api/spaces/types'
 
 import { computed } from 'vue'
 
-import { approvalColor, approvalText, formatCount, formatDateTime, formatDeadline, formatPercent } from '../helpers'
+import {
+  approvalColor,
+  approvalText,
+  formatCount,
+  formatDateTime,
+  formatDeadline,
+  formatPercent,
+  visibilityStatusColor,
+  visibilityStatusText,
+} from '../helpers'
 
 const props = defineProps<{
   task: SpaceMyPublishedTask

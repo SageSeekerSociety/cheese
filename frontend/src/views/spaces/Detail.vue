@@ -86,6 +86,25 @@
 
                 <v-list-subheader>{{ t('spaces.detail.intro') }}</v-list-subheader>
                 <v-text-field v-model="intro" :counter="255" v-bind="introProps" />
+
+                <template v-if="isCurrentUserAtLeastAdmin">
+                  <v-list-subheader>每个发布者对普通用户可见的未结项已通过赛题数量上限(M)</v-list-subheader>
+                  <v-radio-group v-model="visibleLimitMode" inline hide-details class="mb-2">
+                    <v-radio label="无限制" value="unlimited" />
+                    <v-radio label="限制数量" value="limited" />
+                  </v-radio-group>
+                  <v-text-field
+                    v-model="visibleTaskLimitInput"
+                    type="number"
+                    min="0"
+                    step="1"
+                    label="可见数量上限"
+                    density="compact"
+                    variant="outlined"
+                    :disabled="visibleLimitMode === 'unlimited'"
+                    :error-messages="visibleTaskLimitError"
+                  />
+                </template>
               </v-col>
             </v-row>
           </v-container>
@@ -152,6 +171,9 @@ const { handleSubmit, defineField, handleReset, resetForm } = useForm({
 const [name, nameProps] = defineField('name', vuetifyConfig)
 const [intro, introProps] = defineField('intro', vuetifyConfig)
 const selectedAvatar = ref<File>()
+const visibleLimitMode = ref<'limited' | 'unlimited'>('unlimited')
+const visibleTaskLimitInput = ref<string | number>('0')
+const visibleTaskLimitError = ref('')
 
 // 滑动轮播相关变量
 const activeStartIndex = ref(0)
@@ -250,6 +272,9 @@ const getSpace = async (spaceId: number) => {
   if (space.value?.name) {
     setDynamicTitle(space.value?.name, 'SpacesDetail')
   }
+  visibleLimitMode.value = space.value?.visibleTaskLimit == null ? 'unlimited' : 'limited'
+  visibleTaskLimitInput.value = String(space.value?.visibleTaskLimit ?? 0)
+  visibleTaskLimitError.value = ''
 }
 
 onMounted(async () => {
@@ -273,10 +298,15 @@ const submitUpdate = handleSubmit(async (data) => {
       const { data: avatarData } = await AvatarsApi.createAvatar(selectedAvatar.value)
       avatarId = avatarData.avatarId
     }
+    const visibleTaskLimit = parseVisibleTaskLimit()
+    if (visibleTaskLimit === undefined) {
+      return
+    }
     await SpacesApi.update(space.value.id, {
       name: data.name === space.value.name ? undefined : data.name,
       intro: data.intro,
       avatarId,
+      ...(isCurrentUserAtLeastAdmin.value ? { visibleTaskLimit } : {}),
     })
     closeUpdating()
     toast.success(t('spaces.detail.updateSuccess'))
@@ -286,6 +316,23 @@ const submitUpdate = handleSubmit(async (data) => {
     await getSpace(Number(route.params.spaceId))
   }
 })
+
+const parseVisibleTaskLimit = () => {
+  visibleTaskLimitError.value = ''
+  if (visibleLimitMode.value === 'unlimited') {
+    return null
+  }
+  const raw = String(visibleTaskLimitInput.value).trim()
+  if (!raw) {
+    visibleTaskLimitError.value = '请输入整数 M'
+    return undefined
+  }
+  if (!/^\d+$/.test(raw)) {
+    visibleTaskLimitError.value = '仅允许输入大于等于 0 的整数'
+    return undefined
+  }
+  return Number(raw)
+}
 
 const getAnnouncementPreview = (content: string, length = 120) => {
   // 从HTML内容中提取纯文本预览
