@@ -1655,7 +1655,9 @@ async def sudo_auth(
 
         import bcrypt
 
-        if not await asyncio.to_thread(bcrypt.checkpw, password.encode("utf-8"), user.hashed_password.encode("utf-8")):
+        if not await asyncio.to_thread(
+            bcrypt.checkpw, password.encode("utf-8"), user.hashed_password.encode("utf-8")
+        ):
             raise AuthenticationRequiredError("Invalid password")
 
         return {

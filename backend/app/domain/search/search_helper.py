@@ -7,7 +7,6 @@ order). If not configured or the call fails, returns None so the
 caller falls through to PG FTS.
 """
 
-
 import logging
 from typing import Any
 

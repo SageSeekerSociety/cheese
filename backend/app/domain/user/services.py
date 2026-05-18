@@ -78,7 +78,9 @@ class UserAuthService:
         if user.hashed_password.startswith("SRP:"):
             return None
 
-        if not await asyncio.to_thread(bcrypt.checkpw, password.encode("utf-8"), user.hashed_password.encode("utf-8")):
+        if not await asyncio.to_thread(
+            bcrypt.checkpw, password.encode("utf-8"), user.hashed_password.encode("utf-8")
+        ):
             return None
 
         profile = await self._profile_repo.get_profile_by_user_id(user.id)
@@ -102,7 +104,9 @@ class UserAuthService:
         return await self._user_repo.get_by_email(email)
 
     async def update_password(self, user_id: int, new_password: str) -> None:
-        hashed = (await asyncio.to_thread(bcrypt.hashpw, new_password.encode("utf-8"), bcrypt.gensalt())).decode("utf-8")
+        hashed = (
+            await asyncio.to_thread(bcrypt.hashpw, new_password.encode("utf-8"), bcrypt.gensalt())
+        ).decode("utf-8")
         await self._user_repo.update_password(user_id, hashed)
 
     async def is_username_taken(self, username: str) -> bool:
@@ -131,7 +135,9 @@ class UserAuthService:
         if await self._user_repo.is_email_taken(email):
             raise ValueError("EMAIL_TAKEN")
 
-        hashed = (await asyncio.to_thread(bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt())).decode("utf-8")
+        hashed = (
+            await asyncio.to_thread(bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt())
+        ).decode("utf-8")
         user = await self._user_repo.create_user(
             username=username,
             email=email,

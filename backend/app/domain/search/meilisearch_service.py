@@ -6,7 +6,6 @@ search with CJK tokenization, typo tolerance, and relevance ranking.
 When not configured, callers fall back to PostgreSQL FTS.
 """
 
-
 import logging
 from typing import Any
 
