@@ -37,7 +37,7 @@ export type PostTaskRequestData = {
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
-  videoUrl?: string
+  videoUrl?: string | null
   endedAt?: number | null
   hasEndedAt?: boolean
 }
@@ -107,7 +107,7 @@ export type PatchTaskRequestData = {
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
-  videoUrl?: string
+  videoUrl?: string | null
   endedAt?: number | null
   hasEndedAt?: boolean
 }

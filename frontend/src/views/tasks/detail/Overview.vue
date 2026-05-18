@@ -224,9 +224,14 @@
                 allowfullscreen
                 style="width: 100%; aspect-ratio: 16/9; border-radius: 8px"
               />
-              <div v-else class="d-flex align-center gap-2">
-                <v-icon color="primary">mdi-open-in-new</v-icon>
-                <a :href="sanitizedVideoUrl" target="_blank" rel="noopener">{{ sanitizedVideoUrl }}</a>
+              <div v-else>
+                <v-alert type="warning" variant="tonal" density="compact" class="mb-3">
+                  视频链接错误或暂不支持该平台，仅支持 Bilibili 视频嵌入播放
+                </v-alert>
+                <div class="d-flex align-center gap-2 text-body-2">
+                  <v-icon color="primary" size="small">mdi-open-in-new</v-icon>
+                  <a :href="sanitizedVideoUrl" target="_blank" rel="noopener" class="text-truncate">{{ sanitizedVideoUrl }}</a>
+                </div>
               </div>
             </div>
           </v-card-text>
@@ -469,7 +474,7 @@ const sanitizedVideoUrl = computed(() => {
   if (!url) return null
   try {
     const parsed = new URL(url)
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+    if (parsed.protocol === 'https:') {
       return url
     }
   } catch {
@@ -486,12 +491,6 @@ const videoEmbedUrl = computed(() => {
   const bvMatch = url.match(/bilibili\.com\/video\/(BV[\w]+)/)
   if (bvMatch) {
     return `//player.bilibili.com/player.html?bvid=${bvMatch[1]}&autoplay=0`
-  }
-
-  // YouTube: https://www.youtube.com/watch?v=xxxx or https://youtu.be/xxxx
-  const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/)
-  if (ytMatch) {
-    return `//www.youtube.com/embed/${ytMatch[1]}`
   }
 
   return null

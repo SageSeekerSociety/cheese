@@ -30,5 +30,8 @@ docker-compose.override.yml
 docker-compose.dev.yml
 docker-compose.yml
 
+# Rust
+srp_rs/target/
+
 # Misc
 new.md
