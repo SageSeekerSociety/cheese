@@ -1066,7 +1066,9 @@ class TestEmailVerificationService:
 
     @pytest.fixture
     def sender(self) -> MagicMock:
-        return MagicMock()
+        mock = MagicMock()
+        mock.send = AsyncMock(return_value=True)
+        return mock
 
     @pytest.fixture
     def service(self, redis, sender):
