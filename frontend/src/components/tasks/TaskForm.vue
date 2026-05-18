@@ -463,11 +463,11 @@
       <v-card-text class="pt-2">
         <v-text-field
           v-model="videoUrl"
+          v-bind="videoUrlProps"
           label="视频链接（选填）"
           placeholder="https://..."
-          hint="支持 Bilibili、YouTube 等平台的视频链接"
+          hint="支持 Bilibili 视频链接"
           persistent-hint
-          :rules="videoUrlRules"
         >
           <template #prepend-inner>
             <v-icon size="small" color="primary">mdi-link-variant</v-icon>
@@ -632,6 +632,23 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- 视频链接无法解析确认 -->
+    <v-dialog v-model="videoUrlDialogOpen" max-width="450" persistent>
+      <v-card>
+        <v-card-title class="text-h6">视频链接提示</v-card-title>
+        <v-card-text>
+          <v-alert type="warning" variant="tonal" class="mb-0">
+            无法解析该视频链接，视频链接可能有误。当前仅支持 Bilibili 视频嵌入播放，是否继续保存？
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer></v-spacer>
+          <v-btn variant="text" @click="cancelVideoUrlDialog">取消</v-btn>
+          <v-btn color="primary" variant="flat" @click="confirmVideoUrlDialog">继续保存</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-form>
 </template>
 
@@ -717,6 +734,21 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
         teamLockingPolicy: z.enum(['NO_LOCK', 'LOCK_ON_APPROVAL']).optional(),
         accessControlEnabled: z.boolean().optional().default(false),
         accessDomainGroupIds: z.array(z.number()).optional(),
+        videoUrl: z
+          .string()
+          .optional()
+          .refine(
+            (v) => {
+              if (!v) return true
+              try {
+                const parsed = new URL(v)
+                return parsed.protocol === 'https:'
+              } catch {
+                return false
+              }
+            },
+            { message: '请输入有效的 HTTPS 链接' }
+          ),
       })
       .refine((arg) => !arg.maxTeamSize || !arg.minTeamSize || arg.maxTeamSize >= arg.minTeamSize, {
         message: '最大人数不能小于最小人数',
@@ -739,6 +771,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
     teamLockingPolicy: props.initialData?.teamLockingPolicy ?? 'NO_LOCK',
     accessControlEnabled: props.initialData?.accessControlEnabled ?? false,
     accessDomainGroupIds: props.initialData?.accessDomainGroupIds ?? [],
+    videoUrl: props.initialData?.videoUrl ?? '',
   },
 })
 
@@ -757,6 +790,7 @@ const [participantLimit, participantLimitProps] = defineField('participantLimit'
 const [teamLockingPolicy, teamLockingPolicyProps] = defineField('teamLockingPolicy', vuetifyConfig)
 const [accessControlEnabled, accessControlEnabledProps] = defineField('accessControlEnabled', vuetifyConfig)
 const [accessDomainGroupIds, accessDomainGroupIdsProps] = defineField('accessDomainGroupIds', vuetifyConfig)
+const [videoUrl, videoUrlProps] = defineField('videoUrl', vuetifyConfig)
 
 const domainGroupItems = computed(() =>
   props.domainGroups?.map((g) => ({ title: g.name, value: g.id, subtitle: g.domains.join(', ') })) ?? []
@@ -768,30 +802,27 @@ const createEmptyDescription = () => ({
 })
 
 const description = ref(props.initialData?.description || createEmptyDescription())
-const videoUrl = ref(props.initialData?.videoUrl || '')
-
 // Markdown 格式的描述内容
 const markdownDescription = ref(props.originalDescription || '')
 
-/** videoUrl 输入校验规则：仅允许 http:// 或 https:// 协议，防止 XSS */
-const videoUrlRules = [
-  (v: string) => {
-    if (!v) return true
-    try {
-      const parsed = new URL(v)
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return true
-    } catch {
-      // fall through
-    }
-    return '请输入有效的 HTTP/HTTPS 链接'
-  },
-]
-
 const pendingSubmissionData = ref<{ descriptionText: string | undefined; values: any } | null>(null)
+
+const isBilibiliUrl = (v: string): boolean => {
+  if (!v) return true
+  return /bilibili\.com\/video\/BV[\w]+/.test(v)
+}
 
 const submitForm = handleSubmit((values) => {
   if (requireRealName.value && !wasRealNameEnabled.value) {
     privacyDialogOpen.value = true
+    pendingSubmissionData.value = {
+      descriptionText: descriptionEditor.value?.editor?.getText(),
+      values,
+    }
+    return
+  }
+  if (videoUrl.value && !isBilibiliUrl(videoUrl.value)) {
+    videoUrlDialogOpen.value = true
     pendingSubmissionData.value = {
       descriptionText: descriptionEditor.value?.editor?.getText(),
       values,
@@ -836,7 +867,7 @@ const submitFormData = (values: any) => {
     teamLockingPolicy: submitterType.value === 'TEAM' ? teamLockingPolicy.value : undefined,
     accessControlEnabled: accessControlEnabled.value,
     accessDomainGroupIds: accessControlEnabled.value ? accessDomainGroupIds.value : undefined,
-    videoUrl: videoUrl.value || undefined,
+    videoUrl: videoUrl.value || null,
   }
   emit('submit', submissionData)
 }
@@ -854,6 +885,21 @@ const cancelSubmitWithRealName = () => {
 const confirmSubmitWithRealName = () => {
   wasRealNameEnabled.value = true
   privacyDialogOpen.value = false
+  if (pendingSubmissionData.value) {
+    submitFormData(pendingSubmissionData.value.values)
+    pendingSubmissionData.value = null
+  }
+}
+
+const videoUrlDialogOpen = ref(false)
+
+const cancelVideoUrlDialog = () => {
+  videoUrlDialogOpen.value = false
+  pendingSubmissionData.value = null
+}
+
+const confirmVideoUrlDialog = () => {
+  videoUrlDialogOpen.value = false
   if (pendingSubmissionData.value) {
     submitFormData(pendingSubmissionData.value.values)
     pendingSubmissionData.value = null
