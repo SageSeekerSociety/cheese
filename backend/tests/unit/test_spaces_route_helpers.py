@@ -50,3 +50,24 @@ def test_expect_list_with_unexpected_type_raises():
 
     with pytest.raises(BadRequestError, match="must be a list or a JSON array string"):
         _expect_list(42, "announcements")  # type: ignore[arg-type]
+
+
+def test_create_space_visible_task_limit_accepts_null_and_zero():
+    from app.api.routes.spaces import CreateSpaceRequest
+
+    assert CreateSpaceRequest(name="s", visibleTaskLimit=None).visible_task_limit is None
+    assert CreateSpaceRequest(name="s", visibleTaskLimit=0).visible_task_limit == 0
+
+
+def test_patch_space_visible_task_limit_rejects_negative():
+    from app.api.routes.spaces import PatchSpaceRequest
+
+    with pytest.raises(ValueError):
+        PatchSpaceRequest(visibleTaskLimit=-1)
+
+
+def test_patch_space_visible_task_limit_rejects_string_number():
+    from app.api.routes.spaces import PatchSpaceRequest
+
+    with pytest.raises(ValueError):
+        PatchSpaceRequest(visibleTaskLimit="1")  # type: ignore[arg-type]

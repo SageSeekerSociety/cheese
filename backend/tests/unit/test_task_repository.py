@@ -12,7 +12,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import select
 
+from app.domain.task.models import Task
 from app.domain.task.repositories import (
     AIConversationRepository,
     AIMessageRepository,
@@ -59,6 +61,8 @@ def _task(**overrides):
         "team_locking_policy": "NONE",
         "video_url": None,
         "reject_reason": "",
+        "published_at": None,
+        "ended_at": None,
         "created_at": NOW,
         "updated_at": NOW,
         "deleted_at": None,
@@ -218,6 +222,20 @@ class TestTaskRepository:
         assert list(result) == []
 
     @pytest.mark.anyio
+    async def test_list_tasks_sort_published_at(self):
+        session = _mock_session()
+        session.execute.return_value = _mock_scalars([])
+        repo = TaskRepository(session)
+
+        result = await repo.list_tasks(
+            space_id=100, limit=10, sort_by="publishedAt", sort_order="desc"
+        )
+
+        assert list(result) == []
+        sql = str(session.execute.await_args.args[0])
+        assert "published_at" in sql
+
+    @pytest.mark.anyio
     async def test_list_tasks_with_topics_filter(self):
         session = _mock_session()
         session.execute.return_value = _mock_scalars([])
@@ -286,6 +304,68 @@ class TestTaskRepository:
 
         result = await repo.count_tasks(space_id=100, joined=False, current_user_id=10)
         assert result == 3
+
+    def test_apply_space_task_visibility_unlimited(self):
+        session = _mock_session()
+        repo = TaskRepository(session)
+
+        stmt = repo._apply_space_task_visibility(
+            select(Task),
+            space_id=100,
+            visible_task_limit=None,
+        )
+        sql = str(stmt)
+
+        assert "ended_at IS NOT NULL" in sql
+        assert "approved" in sql
+
+    def test_apply_space_task_visibility_zero(self):
+        session = _mock_session()
+        repo = TaskRepository(session)
+
+        stmt = repo._apply_space_task_visibility(
+            select(Task),
+            space_id=100,
+            visible_task_limit=0,
+        )
+
+        assert "ended_at IS NOT NULL" in str(stmt)
+
+    def test_apply_space_task_visibility_limited_uses_row_number(self):
+        session = _mock_session()
+        repo = TaskRepository(session)
+
+        stmt = repo._apply_space_task_visibility(
+            select(Task),
+            space_id=100,
+            visible_task_limit=1,
+        )
+        sql = str(stmt).lower()
+
+        assert "row_number" in sql
+        assert "partition by task.creator_id" in sql
+        assert "order by coalesce(task.published_at, task.created_at) asc, task.id asc" in sql
+
+    @pytest.mark.anyio
+    async def test_is_task_visible_for_space_limit_hides_later_task(self):
+        session = _mock_session()
+        session.execute.return_value = _mock_scalar_one(1)
+        repo = TaskRepository(session)
+        task = _task(
+            id=2,
+            creator_id=100,
+            approved=0,
+            published_at=datetime(2025, 1, 2, tzinfo=UTC),
+        )
+
+        result = await repo.is_task_visible_for_space_limit(
+            task=task,
+            visible_task_limit=1,
+        )
+
+        assert result is False
+        sql = str(session.execute.await_args.args[0])
+        assert "coalesce(task.published_at, task.created_at) <" in sql
 
     @pytest.mark.anyio
     async def test_create_task(self):

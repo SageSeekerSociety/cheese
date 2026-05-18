@@ -15,7 +15,7 @@ describe('member task query utils', () => {
   it('creates default publishing query', () => {
     expect(createDefaultPublishingQuery()).toEqual({
       approved: 'ALL',
-      sortBy: 'createdAt',
+      sortBy: 'publishedAt',
       sortOrder: 'desc',
     })
   })
@@ -55,6 +55,16 @@ describe('member task query utils', () => {
     })
   })
 
+  it('accepts publishedAt as publishing sort field', () => {
+    const filters = normalizePublishingQuery({ sortBy: 'publishedAt' })
+
+    expect(filters.sortBy).toBe('publishedAt')
+    expect(buildMyPublishingApiParams(filters)).toEqual({
+      sortBy: 'publishedAt',
+      sortOrder: 'desc',
+    })
+  })
+
   it('normalizes participating query and omits ALL filters in api params', () => {
     const filters = normalizeParticipatingQuery({
       approved: 'ALL',
@@ -86,7 +96,7 @@ describe('member task query utils', () => {
         approved: 'DISAPPROVED',
         hasPendingParticipantApproval: true,
         hasPendingReview: undefined,
-        sortBy: 'createdAt',
+        sortBy: 'publishedAt',
         sortOrder: 'desc',
       })
     ).toEqual({

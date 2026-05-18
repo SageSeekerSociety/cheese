@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import cast
 
 from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,9 +48,12 @@ class TaskRepository:
         viewer_user_id: int | None = None,
         viewer_email_domain: str | None = None,
         viewer_is_space_admin: bool = False,
+        apply_space_task_visibility: bool = False,
+        visible_task_limit: int | None = None,
+        lifecycle: str | None = None,
         limit: int,
         offset: int = 0,
-        sort_by: str = "updatedAt",
+        sort_by: str = "publishedAt",
         sort_order: str = "desc",
     ) -> Sequence[Task]:
         """List tasks with basic filtering and offset-based pagination.
@@ -122,9 +126,27 @@ class TaskRepository:
             )
             stmt = stmt.where(visibility_predicate)
 
+        if lifecycle is not None:
+            stmt = cast(
+                Select[tuple[Task]],
+                self._apply_lifecycle_filter(stmt, lifecycle=lifecycle),
+            )
+
+        if apply_space_task_visibility:
+            stmt = cast(
+                Select[tuple[Task]],
+                self._apply_space_task_visibility(
+                    stmt,
+                    space_id=space_id,
+                    visible_task_limit=visible_task_limit,
+                ),
+            )
+
         # Map sort_by to actual columns; default to updatedAt.
         if sort_by == "createdAt":
             sort_col = Task.created_at
+        elif sort_by == "publishedAt":
+            sort_col = func.coalesce(Task.published_at, Task.created_at)
         elif sort_by == "deadline":
             sort_col = Task.deadline
         else:
@@ -154,6 +176,9 @@ class TaskRepository:
         viewer_user_id: int | None = None,
         viewer_email_domain: str | None = None,
         viewer_is_space_admin: bool = False,
+        apply_space_task_visibility: bool = False,
+        visible_task_limit: int | None = None,
+        lifecycle: str | None = None,
     ) -> int:
         """Count tasks matching the same filters as list_tasks (without pagination)."""
         stmt = select(func.count(Task.id)).where(
@@ -217,8 +242,95 @@ class TaskRepository:
             )
             stmt = stmt.where(visibility_predicate)
 
+        if lifecycle is not None:
+            stmt = cast(
+                Select[tuple[int]],
+                self._apply_lifecycle_filter(stmt, lifecycle=lifecycle),
+            )
+
+        if apply_space_task_visibility:
+            stmt = cast(
+                Select[tuple[int]],
+                self._apply_space_task_visibility(
+                    stmt,
+                    space_id=space_id,
+                    visible_task_limit=visible_task_limit,
+                ),
+            )
+
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
+
+    def _apply_lifecycle_filter(
+        self,
+        stmt: Select[tuple[Task]] | Select[tuple[int]],
+        *,
+        lifecycle: str,
+    ) -> Select[tuple[Task]] | Select[tuple[int]]:
+        if lifecycle == "ended":
+            return stmt.where(Task.ended_at.is_not(None))
+        if lifecycle == "notEnded":
+            return stmt.where(Task.ended_at.is_(None))
+        if lifecycle == "recruiting":
+            approved_count = (
+                select(func.count(TaskMembership.id))
+                .where(
+                    TaskMembership.task_id == Task.id,
+                    TaskMembership.deleted_at.is_(None),
+                    TaskMembership.approved == 0,
+                )
+                .correlate(Task)
+                .scalar_subquery()
+            )
+            return stmt.where(
+                Task.ended_at.is_(None),
+                or_(Task.participant_limit.is_(None), approved_count < Task.participant_limit),
+            )
+        return stmt
+
+    def _apply_space_task_visibility(
+        self,
+        stmt: Select[tuple[Task]] | Select[tuple[int]],
+        *,
+        space_id: int,
+        visible_task_limit: int | None,
+    ) -> Select[tuple[Task]] | Select[tuple[int]]:
+        if visible_task_limit is None:
+            return stmt.where(
+                or_(
+                    Task.ended_at.is_not(None),
+                    and_(Task.approved == 0, Task.ended_at.is_(None)),
+                )
+            )
+        if visible_task_limit == 0:
+            return stmt.where(Task.ended_at.is_not(None))
+
+        published_sort = func.coalesce(Task.published_at, Task.created_at)
+        ranked = (
+            select(
+                Task.id.label("task_id"),
+                func.row_number()
+                .over(
+                    partition_by=Task.creator_id,
+                    order_by=(published_sort.asc(), Task.id.asc()),
+                )
+                .label("rn"),
+            )
+            .where(
+                Task.deleted_at.is_(None),
+                Task.space_id == space_id,
+                Task.approved == 0,
+                Task.ended_at.is_(None),
+            )
+            .subquery()
+        )
+        visible_ids = select(ranked.c.task_id).where(ranked.c.rn <= visible_task_limit)
+        return stmt.where(
+            or_(
+                Task.ended_at.is_not(None),
+                Task.id.in_(visible_ids),
+            )
+        )
 
     async def create_task(
         self,
@@ -269,6 +381,8 @@ class TaskRepository:
             team_locking_policy=team_locking_policy,
             access_control_enabled=access_control_enabled,
             video_url=video_url,
+            published_at=None,
+            ended_at=None,
             created_at=now,
             updated_at=now,
             deleted_at=None,
@@ -276,6 +390,54 @@ class TaskRepository:
         self._session.add(task)
         await self._session.flush()
         return task
+
+    async def has_prior_pending_task_for_creator(self, task: Task) -> bool:
+        stmt = select(Task.id).where(
+            Task.deleted_at.is_(None),
+            Task.space_id == task.space_id,
+            Task.creator_id == task.creator_id,
+            Task.id != task.id,
+            Task.approved == 2,
+            or_(
+                Task.created_at < task.created_at,
+                and_(Task.created_at == task.created_at, Task.id < task.id),
+            ),
+        )
+        stmt = stmt.limit(1)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def is_task_visible_for_space_limit(
+        self,
+        *,
+        task: Task,
+        visible_task_limit: int | None,
+    ) -> bool:
+        if task.ended_at is not None:
+            return True
+        if task.approved != 0:
+            return False
+        if visible_task_limit is None:
+            return True
+        if visible_task_limit == 0:
+            return False
+
+        task_sort = task.published_at or task.created_at
+        published_sort = func.coalesce(Task.published_at, Task.created_at)
+        stmt = select(func.count(Task.id)).where(
+            Task.deleted_at.is_(None),
+            Task.space_id == task.space_id,
+            Task.creator_id == task.creator_id,
+            Task.approved == 0,
+            Task.ended_at.is_(None),
+            or_(
+                published_sort < task_sort,
+                and_(published_sort == task_sort, Task.id < task.id),
+            ),
+        )
+        result = await self._session.execute(stmt)
+        earlier_count = int(result.scalar_one() or 0)
+        return earlier_count < visible_task_limit
 
     async def save(self, task: Task) -> Task:
         """Flush changes for an existing task."""

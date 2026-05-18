@@ -52,9 +52,12 @@ class TaskService:
         viewer_user_id: int | None = None,
         viewer_email_domain: str | None = None,
         viewer_is_space_admin: bool = False,
+        apply_space_task_visibility: bool = False,
+        visible_task_limit: int | None = None,
+        lifecycle: str | None = None,
         limit: int = 20,
         offset: int = 0,
-        sort_by: str = "updatedAt",
+        sort_by: str = "publishedAt",
         sort_order: str = "desc",
     ) -> Sequence[Task]:
         return await self._repo.list_tasks(
@@ -69,6 +72,9 @@ class TaskService:
             viewer_user_id=viewer_user_id,
             viewer_email_domain=viewer_email_domain,
             viewer_is_space_admin=viewer_is_space_admin,
+            apply_space_task_visibility=apply_space_task_visibility,
+            visible_task_limit=visible_task_limit,
+            lifecycle=lifecycle,
             limit=limit,
             offset=offset,
             sort_by=sort_by,
@@ -89,6 +95,9 @@ class TaskService:
         viewer_user_id: int | None = None,
         viewer_email_domain: str | None = None,
         viewer_is_space_admin: bool = False,
+        apply_space_task_visibility: bool = False,
+        visible_task_limit: int | None = None,
+        lifecycle: str | None = None,
     ) -> int:
         return await self._repo.count_tasks(
             space_id=space_id,
@@ -102,6 +111,9 @@ class TaskService:
             viewer_user_id=viewer_user_id,
             viewer_email_domain=viewer_email_domain,
             viewer_is_space_admin=viewer_is_space_admin,
+            apply_space_task_visibility=apply_space_task_visibility,
+            visible_task_limit=visible_task_limit,
+            lifecycle=lifecycle,
         )
 
 

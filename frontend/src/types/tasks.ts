@@ -73,6 +73,8 @@ export interface Task {
   submittableAsTeam?: Team[]
   createdAt: number
   updatedAt: number
+  publishedAt?: number | null
+  endedAt?: number | null
   rank: number
   approved: 'APPROVED' | 'DISAPPROVED' | 'NONE'
   rejectReason?: string

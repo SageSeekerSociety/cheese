@@ -10,6 +10,7 @@ export type Space = {
   taskTemplates: string
   classificationTopics: Topic[]
   defaultCategoryId?: number
+  visibleTaskLimit?: number | null
 }
 
 export type SpaceCategory = {

@@ -156,7 +156,7 @@ export namespace TasksApi {
     owner?: number
     pageSize?: number
     pageStart?: string
-    sort_by: 'createdAt' | 'updatedAt' | 'deadline'
+    sort_by: 'createdAt' | 'updatedAt' | 'deadline' | 'publishedAt'
     sort_order: 'asc' | 'desc'
     querySpace?: boolean
     queryJoinability?: boolean
@@ -168,6 +168,8 @@ export namespace TasksApi {
     joined?: boolean
     topics?: number[]
     categoryId?: number
+    lifecycle?: 'ended' | 'recruiting' | 'notEnded'
+    limitedView?: boolean
   }) => {
     const finalParams = new URLSearchParams()
     Object.entries(params).forEach(([key, value]) => {

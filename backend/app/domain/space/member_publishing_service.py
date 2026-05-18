@@ -20,6 +20,7 @@ FAILED_STATUSES = {"FAILED", "REJECTED_RESUBMITTABLE"}
 SUCCESS_STATUSES = {"SUCCESS"}
 MY_PUBLISHING_SORT_FIELDS = {
     "createdAt",
+    "publishedAt",
     "participantCount",
     "pendingReviewCount",
     "successRate",
@@ -33,10 +34,14 @@ class SpaceMemberPublishingService:
         self._category_repo = SpaceCategoryRepository(session=session)
 
     async def get_my_publishing_overview(self, *, space_id: int, user_id: int) -> dict:
-        await self._ensure_space_exists(space_id)
+        space = await self._ensure_space_exists(space_id)
 
         tasks = await self._list_my_publishing_tasks(space_id=space_id, user_id=user_id)
-        task_items = await self._build_my_published_task_items(tasks=tasks, space_id=space_id)
+        task_items = await self._build_my_published_task_items(
+            tasks=tasks,
+            space_id=space_id,
+            visible_task_limit=getattr(space, "visible_task_limit", None),
+        )
 
         return {
             "spaceId": space_id,
@@ -77,10 +82,10 @@ class SpaceMemberPublishingService:
         approved: str | None = None,
         has_pending_participant_approval: bool | None = None,
         has_pending_review: bool | None = None,
-        sort_by: str = "createdAt",
+        sort_by: str = "publishedAt",
         sort_order: str = "desc",
     ) -> list[dict]:
-        await self._ensure_space_exists(space_id)
+        space = await self._ensure_space_exists(space_id)
 
         approved_value = self._parse_approved_filter(approved)
         normalized_sort_by = self._normalize_sort_by(sort_by)
@@ -94,7 +99,11 @@ class SpaceMemberPublishingService:
             category_id=category_id,
             approved_value=approved_value,
         )
-        items = await self._build_my_published_task_items(tasks=tasks, space_id=space_id)
+        items = await self._build_my_published_task_items(
+            tasks=tasks,
+            space_id=space_id,
+            visible_task_limit=getattr(space, "visible_task_limit", None),
+        )
 
         if has_pending_participant_approval is not None:
             items = [
@@ -108,7 +117,13 @@ class SpaceMemberPublishingService:
             ]
 
         reverse = normalized_sort_order == "desc"
-        items.sort(key=lambda item: (item[normalized_sort_by], item["taskId"]), reverse=reverse)
+        items.sort(
+            key=lambda item: (
+                item[normalized_sort_by] if item[normalized_sort_by] is not None else 0,
+                item["taskId"],
+            ),
+            reverse=reverse,
+        )
         return items
 
     async def _ensure_space_exists(self, space_id: int) -> Space:
@@ -153,6 +168,7 @@ class SpaceMemberPublishingService:
         *,
         tasks: list[Task],
         space_id: int,
+        visible_task_limit: int | None,
     ) -> list[dict]:
         if not tasks:
             return []
@@ -173,6 +189,10 @@ class SpaceMemberPublishingService:
                 int(submission.id) for submission in latest_submissions_by_membership_id.values()
             ]
         )
+        visible_task_ids = self._compute_visible_approved_task_ids(
+            tasks=tasks,
+            visible_task_limit=visible_task_limit,
+        )
 
         return [
             self._build_task_item(
@@ -181,6 +201,9 @@ class SpaceMemberPublishingService:
                 memberships=memberships_by_task_id.get(int(task.id), []),
                 latest_submissions_by_membership_id=latest_submissions_by_membership_id,
                 reviews_by_submission_id=reviews_by_submission_id,
+                is_visible=(
+                    int(task.id) in visible_task_ids or getattr(task, "ended_at", None) is not None
+                ),
             )
             for task in tasks
         ]
@@ -267,6 +290,7 @@ class SpaceMemberPublishingService:
         memberships: list[TaskMembership],
         latest_submissions_by_membership_id: dict[int, TaskSubmission],
         reviews_by_submission_id: dict[int, TaskSubmissionReview],
+        is_visible: bool = True,
     ) -> dict:
         participant_count = len(memberships)
         approved_participant_count = 0
@@ -335,7 +359,11 @@ class SpaceMemberPublishingService:
                 "name": category.name if category is not None else "",
             },
             "approved": APPROVED_REVERSE_MAP.get(task.approved, "NONE"),
+            "visibilityStatus": self._derive_visibility_status(task=task, is_visible=is_visible),
+            "isVisible": is_visible,
             "createdAt": self._to_timestamp_ms(task.created_at) or 0,
+            "publishedAt": self._to_timestamp_ms(getattr(task, "published_at", None)),
+            "endedAt": self._to_timestamp_ms(getattr(task, "ended_at", None)),
             "deadline": self._to_timestamp_ms(task.deadline),
             "participantCount": participant_count,
             "approvedParticipantCount": approved_participant_count,
@@ -355,6 +383,47 @@ class SpaceMemberPublishingService:
             return None
         aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
         return int(aware.timestamp() * 1000)
+
+    @staticmethod
+    def _compute_visible_approved_task_ids(
+        *,
+        tasks: list[Task],
+        visible_task_limit: int | None,
+    ) -> set[int]:
+        approved_not_ended = [
+            task
+            for task in tasks
+            if task.approved == APPROVED_MAP["APPROVED"] and getattr(task, "ended_at", None) is None
+        ]
+        if visible_task_limit is None:
+            return {int(task.id) for task in approved_not_ended}
+        if visible_task_limit == 0:
+            return set()
+
+        by_creator: dict[int, list[Task]] = defaultdict(list)
+        for task in approved_not_ended:
+            by_creator[int(task.creator_id)].append(task)
+
+        visible_ids: set[int] = set()
+        for creator_tasks in by_creator.values():
+            creator_tasks.sort(
+                key=lambda task: (
+                    getattr(task, "published_at", None) or task.created_at,
+                    int(task.id),
+                ),
+            )
+            visible_ids.update(int(task.id) for task in creator_tasks[:visible_task_limit])
+        return visible_ids
+
+    @staticmethod
+    def _derive_visibility_status(*, task: Task, is_visible: bool) -> str:
+        if getattr(task, "ended_at", None) is not None:
+            return "ENDED"
+        if task.approved == APPROVED_MAP["NONE"]:
+            return "PENDING_APPROVAL"
+        if task.approved == APPROVED_MAP["DISAPPROVED"]:
+            return "REJECTED"
+        return "APPROVED_VISIBLE" if is_visible else "APPROVED_HIDDEN"
 
     @staticmethod
     def _parse_timestamp_param(value: int | None, field_name: str) -> datetime | None:
@@ -391,6 +460,7 @@ class SpaceMemberPublishingService:
         normalized = sort_by.strip()
         if normalized not in MY_PUBLISHING_SORT_FIELDS:
             raise BadRequestError(
-                "sortBy must be one of createdAt, participantCount, pendingReviewCount, successRate"
+                "sortBy must be one of createdAt, publishedAt, "
+                "participantCount, pendingReviewCount, successRate"
             )
         return normalized

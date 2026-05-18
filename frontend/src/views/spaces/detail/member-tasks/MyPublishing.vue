@@ -222,6 +222,7 @@ const approvedItems = [
 ]
 
 const sortByItems = [
+  { title: '最新发布', value: 'publishedAt' },
   { title: '最新发布', value: 'createdAt' },
   { title: '报名主体数', value: 'participantCount' },
   { title: '待评审数', value: 'pendingReviewCount' },

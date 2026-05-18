@@ -6,6 +6,7 @@ export type PostSpaceRequestData = {
   avatarId?: number
   announcements?: string
   taskTemplates?: string
+  visibleTaskLimit?: number | null
 }
 
 export type PatchSpaceRequestData = {
@@ -16,6 +17,7 @@ export type PatchSpaceRequestData = {
   taskTemplates?: string
   classificationTopics?: number[]
   defaultCategoryId?: number
+  visibleTaskLimit?: number | null
 }
 
 export type PostSpaceAdminRequestData = {
@@ -228,7 +230,11 @@ export type SpaceMyPublishedTask = {
   taskName: string
   category: SpaceMyPublishedTaskCategory
   approved: AnalyticsApproveType
+  visibilityStatus: SpaceTaskVisibilityStatus
+  isVisible: boolean
   createdAt: number
+  publishedAt?: number | null
+  endedAt?: number | null
   deadline?: number | null
   participantCount: number
   approvedParticipantCount: number
@@ -291,6 +297,12 @@ export type SpaceMyParticipations = {
 }
 
 export type AnalyticsApproveType = 'NONE' | 'APPROVED' | 'DISAPPROVED'
+export type SpaceTaskVisibilityStatus =
+  | 'PENDING_APPROVAL'
+  | 'REJECTED'
+  | 'APPROVED_HIDDEN'
+  | 'APPROVED_VISIBLE'
+  | 'ENDED'
 export type AnalyticsRealNameType = 'all' | 'with' | 'without'
 export type AnalyticsCompletionType =
   | 'NOT_SUBMITTED'

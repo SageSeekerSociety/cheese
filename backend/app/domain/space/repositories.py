@@ -54,6 +54,7 @@ class SpaceRepository:
         enable_rank: bool,
         announcements: list,
         task_templates: list,
+        visible_task_limit: int | None = None,
     ) -> Space:
         now = datetime.now(UTC)
         space = Space(
@@ -62,6 +63,7 @@ class SpaceRepository:
             description=description,
             avatar_id=avatar_id,
             enable_rank=enable_rank,
+            visible_task_limit=visible_task_limit,
             announcements=announcements,
             task_templates=task_templates,
             created_at=now,

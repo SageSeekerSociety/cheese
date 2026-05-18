@@ -1,5 +1,6 @@
 from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.domain.space.repositories import SpaceAdminRelationRepository
 from app.domain.task.models import Task, TaskAccessDomain, TaskMembership
@@ -31,7 +32,9 @@ class TaskVisibilityService:
         return await self._is_domain_allowed(task_id=task.id, domain=email_domain)
 
     @staticmethod
-    def build_visibility_predicate(*, user_id: int, email_domain: str | None) -> object:
+    def build_visibility_predicate(
+        *, user_id: int, email_domain: str | None
+    ) -> ColumnElement[bool]:
         participant_exists = exists().where(
             TaskMembership.task_id == Task.id,
             TaskMembership.deleted_at.is_(None),

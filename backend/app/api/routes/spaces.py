@@ -3,7 +3,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -56,6 +56,16 @@ class CreateSpaceRequest(BaseModel):
     announcements: list | str | None = None
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
     classification_topics: list[int] | None = Field(default=None, alias="classificationTopics")
+    visible_task_limit: int | None = Field(default=None, alias="visibleTaskLimit")
+
+    @field_validator("visible_task_limit", mode="before")
+    @classmethod
+    def _validate_visible_task_limit(cls, value: object) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError("visibleTaskLimit must be null or a non-negative integer")
+        return value
 
 
 class PatchSpaceRequest(BaseModel):
@@ -70,6 +80,16 @@ class PatchSpaceRequest(BaseModel):
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
     classification_topics: list[int] | None = Field(default=None, alias="classificationTopics")
     default_category_id: int | None = Field(default=None, alias="defaultCategoryId")
+    visible_task_limit: int | None = Field(default=None, alias="visibleTaskLimit")
+
+    @field_validator("visible_task_limit", mode="before")
+    @classmethod
+    def _validate_visible_task_limit(cls, value: object) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError("visibleTaskLimit must be null or a non-negative integer")
+        return value
 
 
 class CreateSpaceCategoryRequest(BaseModel):
@@ -220,6 +240,7 @@ def _space_to_api_model(space: Space) -> dict:
         "description": space.description,
         "avatarId": space.avatar_id,
         "enableRank": space.enable_rank,
+        "visibleTaskLimit": space.visible_task_limit,
         "defaultCategoryId": space.default_category_id,
         "announcements": json.dumps(space.announcements or []),
         "taskTemplates": json.dumps(space.task_templates or []),
@@ -492,6 +513,7 @@ async def create_space(
         owner_id=auth_user.user_id,
         announcements=announcements,
         task_templates=task_templates,
+        visible_task_limit=payload.visible_task_limit,
     )
     if classification_topic_ids:
         await service.replace_classification_topics(
@@ -538,6 +560,8 @@ async def patch_space(
         announcements=announcements,
         task_templates=task_templates,
         default_category_id=payload.default_category_id,
+        visible_task_limit=payload.visible_task_limit,
+        set_visible_task_limit="visible_task_limit" in payload.model_fields_set,
     )
     if classification_topic_ids is not None:
         await service.replace_classification_topics(
@@ -592,7 +616,7 @@ async def get_space_task_analytics(
     taskApproved: str | None = Query(default=None),
     hasPendingReview: bool | None = Query(default=None),
     hasPendingApproval: bool | None = Query(default=None),
-    sortBy: str = Query(default="createdAt"),
+    sortBy: str = Query(default="publishedAt"),
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
