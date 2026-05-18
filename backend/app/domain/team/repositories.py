@@ -201,7 +201,7 @@ class TeamRepository:
 
     async def soft_delete_member(self, relation: TeamUserRelation) -> None:
         relation.deleted_at = datetime.now(UTC)
-        relation.updated_at = relation.deleted_at
+        relation.updated_at = relation.deleted_at  # type: ignore[assignment]
         await self._session.flush()
 
     async def soft_delete_team(self, team: Team) -> None:

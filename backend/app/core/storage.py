@@ -89,11 +89,11 @@ class S3StorageBackend(StorageBackend):
         self._public_url = public_url
 
     @asynccontextmanager
-    async def _get_client(self):
+    async def _get_client(self):  # type: ignore[override]
         import aioboto3
 
         session = aioboto3.Session()
-        async with session.client(
+        async with session.client(  # type: ignore[attr-defined]
             "s3",
             endpoint_url=self._endpoint_url,
             aws_access_key_id=self._access_key,

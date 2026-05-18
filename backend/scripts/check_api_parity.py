@@ -37,7 +37,7 @@ def collect_app_routes() -> set[tuple[str, str]]:
         for method in methods:
             if method in {"HEAD", "OPTIONS"}:
                 continue
-            entries.add((method, route.path))
+            entries.add((method, route.path))  # type: ignore[union-attr]
     return entries
 
 
