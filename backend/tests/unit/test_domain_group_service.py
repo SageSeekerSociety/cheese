@@ -101,13 +101,23 @@ class TestListDomainGroups:
         assert result == []
 
     @pytest.mark.anyio
-    async def test_raises_when_not_admin(self):
+    async def test_allows_non_admin_to_list(self):
+        """Non-admin users can list domain groups (needed for task publish/edit)."""
         admin_repo = AsyncMock()
-        admin_repo.get_relation.return_value = None
+        admin_repo.get_relation.return_value = None  # not an admin
 
-        svc = _svc(admin_repo=admin_repo)
-        with pytest.raises(ForbiddenError):
-            await svc.list_domain_groups(space_id=100, actor_user_id=42)
+        group_repo = AsyncMock()
+        g = _make_group()
+        group_repo.list_groups.return_value = [g]
+        domain_repo = AsyncMock()
+        domain_repo.list_domains_for_groups.return_value = {1: ["example.com"]}
+
+        svc = _svc(group_repo=group_repo, domain_repo=domain_repo, admin_repo=admin_repo)
+        result = await svc.list_domain_groups(space_id=100, actor_user_id=42)
+
+        assert len(result) == 1
+        assert result[0][0] is g
+        assert result[0][1] == ["example.com"]
 
 
 # ---------------------------------------------------------------------------

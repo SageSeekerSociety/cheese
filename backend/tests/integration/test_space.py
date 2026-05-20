@@ -557,3 +557,231 @@ class TestSpaceAdmins:
         assert resp.status_code == 403, (
             f"Expected 403 after losing ownership, got {resp.status_code}"
         )
+
+
+class TestSpaceDomainGroups:
+    """Integration tests for domain group CRUD + access control.
+
+    Verifies:
+    - Admin can create/list/update/delete domain groups.
+    - Non-admin users CAN list domain groups (needed for task publish/edit).
+    - Non-admin users CANNOT create/update/delete domain groups.
+    """
+
+    @pytest.fixture
+    def setup_space_with_groups(self, user_client: UserCreator, api_client: TestClient) -> dict:
+        """Create a space owned by *owner*, then create 2 domain groups as owner."""
+        owner = user_client.create_user()
+        owner.token = user_client.login(api_client, owner.username, owner.password)
+        suffix = unique_int(10000000, 99999999)
+        resp = api_client.post(
+            "/spaces",
+            json={
+                "name": f"DG Space ({suffix})",
+                "intro": "Domain group test",
+                "description": "Desc",
+                "avatarId": 1,
+            },
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert resp.status_code == 201
+        space_id = resp.json()["data"]["space"]["id"]
+
+        # Create two domain groups
+        g1 = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={"name": "北京大学", "description": "北大邮箱", "domains": ["pku.edu.cn"]},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert g1.status_code == 201
+        g2 = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={"name": "清华大学", "description": None, "domains": ["tsinghua.edu.cn", "mail.tsinghua.edu.cn"]},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert g2.status_code == 201
+
+        return {
+            "owner": owner,
+            "space_id": space_id,
+            "group1_id": g1.json()["data"]["group"]["id"],
+            "group2_id": g2.json()["data"]["group"]["id"],
+        }
+
+    # -- list (read) -----------------------------------------------------------------
+
+    def test_admin_can_list_domain_groups(
+        self, setup_space_with_groups: dict, api_client: TestClient
+    ):
+        owner = setup_space_with_groups["owner"]
+        space_id = setup_space_with_groups["space_id"]
+        resp = api_client.get(
+            f"/spaces/{space_id}/domain-groups",
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert resp.status_code == 200
+        groups = resp.json()["data"]["groups"]
+        assert len(groups) == 2
+        names = {g["name"] for g in groups}
+        assert names == {"北京大学", "清华大学"}
+
+    def test_non_admin_can_list_domain_groups(
+        self, setup_space_with_groups: dict, user_client: UserCreator, api_client: TestClient
+    ):
+        """Regression test: non-admin users must be able to list domain groups
+        so they can select access-control domains when publishing/editing tasks."""
+        space_id = setup_space_with_groups["space_id"]
+        other = user_client.create_user()
+        other.token = user_client.login(api_client, other.username, other.password)
+
+        resp = api_client.get(
+            f"/spaces/{space_id}/domain-groups",
+            headers={"Authorization": f"Bearer {other.token}"},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        groups = resp.json()["data"]["groups"]
+        assert len(groups) == 2
+        # Response should include domain list per group
+        for g in groups:
+            assert "domains" in g
+            assert len(g["domains"]) >= 1
+
+    def test_unauthenticated_cannot_list_domain_groups(
+        self, setup_space_with_groups: dict, api_client: TestClient
+    ):
+        space_id = setup_space_with_groups["space_id"]
+        resp = api_client.get(f"/spaces/{space_id}/domain-groups")
+        assert resp.status_code == 401
+
+    # -- create ---------------------------------------------------------------------
+
+    def test_admin_can_create_domain_group(
+        self, setup_space_with_groups: dict, api_client: TestClient
+    ):
+        owner = setup_space_with_groups["owner"]
+        space_id = setup_space_with_groups["space_id"]
+        resp = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={"name": "人民大学", "domains": ["ruc.edu.cn"]},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert resp.status_code == 201
+        assert resp.json()["data"]["group"]["name"] == "人民大学"
+
+    def test_non_admin_cannot_create_domain_group(
+        self, setup_space_with_groups: dict, user_client: UserCreator, api_client: TestClient
+    ):
+        space_id = setup_space_with_groups["space_id"]
+        other = user_client.create_user()
+        other.token = user_client.login(api_client, other.username, other.password)
+
+        resp = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={"name": "Hacker", "domains": ["evil.com"]},
+            headers={"Authorization": f"Bearer {other.token}"},
+        )
+        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
+
+    # -- update ---------------------------------------------------------------------
+
+    def test_admin_can_update_domain_group(
+        self, setup_space_with_groups: dict, api_client: TestClient
+    ):
+        owner = setup_space_with_groups["owner"]
+        space_id = setup_space_with_groups["space_id"]
+        gid = setup_space_with_groups["group1_id"]
+        resp = api_client.patch(
+            f"/spaces/{space_id}/domain-groups/{gid}",
+            json={"name": "北京大学（已更新）"},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["group"]["name"] == "北京大学（已更新）"
+
+    def test_non_admin_cannot_update_domain_group(
+        self, setup_space_with_groups: dict, user_client: UserCreator, api_client: TestClient
+    ):
+        space_id = setup_space_with_groups["space_id"]
+        gid = setup_space_with_groups["group1_id"]
+        other = user_client.create_user()
+        other.token = user_client.login(api_client, other.username, other.password)
+
+        resp = api_client.patch(
+            f"/spaces/{space_id}/domain-groups/{gid}",
+            json={"name": "Hacked"},
+            headers={"Authorization": f"Bearer {other.token}"},
+        )
+        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
+
+    # -- delete ---------------------------------------------------------------------
+
+    def test_admin_can_delete_domain_group(
+        self, setup_space_with_groups: dict, api_client: TestClient
+    ):
+        owner = setup_space_with_groups["owner"]
+        space_id = setup_space_with_groups["space_id"]
+        gid = setup_space_with_groups["group2_id"]
+        resp = api_client.delete(
+            f"/spaces/{space_id}/domain-groups/{gid}",
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert resp.status_code == 204
+
+        # Verify it's gone
+        list_resp = api_client.get(
+            f"/spaces/{space_id}/domain-groups",
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert len(list_resp.json()["data"]["groups"]) == 1
+
+    def test_non_admin_cannot_delete_domain_group(
+        self, setup_space_with_groups: dict, user_client: UserCreator, api_client: TestClient
+    ):
+        space_id = setup_space_with_groups["space_id"]
+        gid = setup_space_with_groups["group1_id"]
+        other = user_client.create_user()
+        other.token = user_client.login(api_client, other.username, other.password)
+
+        resp = api_client.delete(
+            f"/spaces/{space_id}/domain-groups/{gid}",
+            headers={"Authorization": f"Bearer {other.token}"},
+        )
+        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
+
+    # -- validation ----------------------------------------------------------------
+
+    def test_create_domain_group_rejects_invalid_domain(
+        self, setup_space_with_groups: dict, api_client: TestClient
+    ):
+        owner = setup_space_with_groups["owner"]
+        space_id = setup_space_with_groups["space_id"]
+        resp = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={"name": "Bad", "domains": ["not-a-domain-without-dot"]},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert resp.status_code == 400
+
+    def test_create_domain_group_rejects_empty_name(
+        self, setup_space_with_groups: dict, api_client: TestClient
+    ):
+        owner = setup_space_with_groups["owner"]
+        space_id = setup_space_with_groups["space_id"]
+        resp = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={"name": "   ", "domains": ["example.com"]},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert resp.status_code == 400
+
+    def test_create_domain_group_rejects_empty_domains(
+        self, setup_space_with_groups: dict, api_client: TestClient
+    ):
+        owner = setup_space_with_groups["owner"]
+        space_id = setup_space_with_groups["space_id"]
+        resp = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={"name": "Empty", "domains": []},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert resp.status_code == 400

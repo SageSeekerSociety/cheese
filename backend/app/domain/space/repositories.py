@@ -476,3 +476,23 @@ class SpaceDomainGroupDomainRepository:
             item.deleted_at = now
             item.updated_at = now
         await self._session.flush()
+
+    async def list_group_ids_by_domains(
+        self, *, space_id: int, domains: Sequence[str]
+    ) -> set[int]:
+        """Return domain-group IDs whose stored domains intersect the given set."""
+        if not domains:
+            return set()
+        stmt = (
+            select(SpaceDomainGroupDomain.group_id)
+            .join(SpaceDomainGroup, SpaceDomainGroupDomain.group_id == SpaceDomainGroup.id)
+            .where(
+                SpaceDomainGroup.space_id == space_id,
+                SpaceDomainGroupDomain.domain.in_(list(domains)),
+                SpaceDomainGroupDomain.deleted_at.is_(None),
+                SpaceDomainGroup.deleted_at.is_(None),
+            )
+            .distinct()
+        )
+        result = await self._session.execute(stmt)
+        return {int(row[0]) for row in result.all()}

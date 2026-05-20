@@ -415,7 +415,8 @@ class SpaceService:
     async def list_domain_groups(
         self, *, space_id: int, actor_user_id: int | None
     ) -> list[tuple[SpaceDomainGroup, list[str]]]:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        # Listing is open to all authenticated users so they can select
+        # domain groups when publishing/editing tasks.
         group_repo = self._require_domain_group_repo()
         domain_repo = self._require_domain_group_domain_repo()
 
