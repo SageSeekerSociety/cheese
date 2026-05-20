@@ -726,7 +726,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
         defaultDeadline: z.number().int().default(30),
         rank: z.number().int().min(1).max(3),
         topics: z.array(z.number()).optional(),
-        categoryId: z.number().optional().nullable(),
+        categoryId: z.number().int().min(1, '请选择所属分类'),
         minTeamSize: z.number().int().min(1).optional(),
         maxTeamSize: z.number().int().min(1).optional(),
         requireRealName: z.boolean().optional().default(false),
@@ -764,6 +764,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
       ? new Date(props.initialData.deadline)
       : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
     requireRealName: props.initialData?.requireRealName ?? false,
+    categoryId: props.initialData?.categoryId ?? undefined,
     minTeamSize: props.initialData?.minTeamSize ?? 1,
     maxTeamSize: props.initialData?.maxTeamSize ?? 10,
     defaultDeadline: props.initialData?.defaultDeadline ?? 30,
