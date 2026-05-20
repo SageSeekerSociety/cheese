@@ -3048,3 +3048,321 @@ class TestRegistrationStartTime:
         assert post_user_eligibility.get("eligible") is True, (
             "User should become eligible once registration start is cleared"
         )
+
+
+class TestTaskAccessDomainGroupIntegration:
+    """Integration tests for accessDomainGroupIds in task detail responses."""
+
+    @pytest.fixture
+    def domain_task_setup(self, user_client, api_client: TestClient) -> dict:
+        creator = user_client.create_user()
+        creator.token = user_client.login(api_client, creator.username, creator.password)
+
+        suffix = unique_int(10000000, 99999999)
+        space_resp = api_client.post(
+            "/spaces",
+            json={
+                "name": f"Domain Task Space ({suffix})",
+                "intro": "Domain task test space",
+                "description": "Test description",
+                "avatarId": 1,
+                "announcements": [],
+                "taskTemplates": [],
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert space_resp.status_code == 201, f"Failed to create space: {space_resp.text}"
+        space_data = space_resp.json()["data"]["space"]
+        space_id = space_data["id"]
+        category_id = space_data.get("defaultCategoryId")
+
+        # Create a domain group
+        group_resp = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={
+                "name": f"Domain Group ({suffix})",
+                "description": "Test domain group",
+                "domains": ["example.org", "test.example.org"],
+            },
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert group_resp.status_code == 201, f"Failed to create domain group: {group_resp.text}"
+        group_id = group_resp.json()["data"]["group"]["id"]
+
+        return {
+            "creator": creator,
+            "space_id": space_id,
+            "category_id": category_id,
+            "group_id": group_id,
+            "suffix": suffix,
+        }
+
+    def test_task_detail_includes_access_domain_group_ids(
+        self, api_client: TestClient, domain_task_setup: dict
+    ) -> None:
+        creator = domain_task_setup["creator"]
+        space_id = domain_task_setup["space_id"]
+        category_id = domain_task_setup["category_id"]
+        group_id = domain_task_setup["group_id"]
+        suffix = domain_task_setup["suffix"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
+
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Domain Task ({suffix})",
+                "intro": "Task with domain groups",
+                "description": '{"type":"doc","content":[]}',
+                "space": space_id,
+                "categoryId": category_id,
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+                "deadline": deadline_ms,
+                "accessControlEnabled": True,
+                "accessDomainGroupIds": [group_id],
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
+        assert get_resp.status_code == 200, f"Failed to get task: {get_resp.text}"
+        task = get_resp.json()["data"]["task"]
+
+        assert task.get("accessControlEnabled") is True
+        assert task.get("accessDomainGroupIds") == [group_id]
+
+    def test_task_detail_without_access_control_has_empty_group_ids(
+        self, api_client: TestClient, domain_task_setup: dict
+    ) -> None:
+        creator = domain_task_setup["creator"]
+        space_id = domain_task_setup["space_id"]
+        category_id = domain_task_setup["category_id"]
+        suffix = domain_task_setup["suffix"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
+
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"No Access Ctrl ({suffix})",
+                "intro": "Task without access control",
+                "description": '{"type":"doc","content":[]}',
+                "space": space_id,
+                "categoryId": category_id,
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+                "deadline": deadline_ms,
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
+        assert get_resp.status_code == 200, f"Failed to get task: {get_resp.text}"
+        task = get_resp.json()["data"]["task"]
+
+        assert task.get("accessControlEnabled") is False
+        assert task.get("accessDomainGroupIds") == []
+
+    def test_task_detail_with_multiple_domain_groups(
+        self, api_client: TestClient, domain_task_setup: dict
+    ) -> None:
+        creator = domain_task_setup["creator"]
+        space_id = domain_task_setup["space_id"]
+        category_id = domain_task_setup["category_id"]
+        suffix = domain_task_setup["suffix"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        # Create a second domain group
+        group2_resp = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={
+                "name": f"Second Group ({suffix})",
+                "description": "Another test group",
+                "domains": ["another.example.org"],
+            },
+            headers=headers,
+        )
+        assert group2_resp.status_code == 201, f"Failed to create 2nd domain group: {group2_resp.text}"
+        group2_id = group2_resp.json()["data"]["group"]["id"]
+
+        group1_id = domain_task_setup["group_id"]
+
+        deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
+
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Multi Domain Task ({suffix})",
+                "intro": "Task with multiple domain groups",
+                "description": '{"type":"doc","content":[]}',
+                "space": space_id,
+                "categoryId": category_id,
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+                "deadline": deadline_ms,
+                "accessControlEnabled": True,
+                "accessDomainGroupIds": [group1_id, group2_id],
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
+        assert get_resp.status_code == 200, f"Failed to get task: {get_resp.text}"
+        task = get_resp.json()["data"]["task"]
+
+        assert task.get("accessControlEnabled") is True
+        group_ids = task.get("accessDomainGroupIds", [])
+        assert sorted(group_ids) == sorted([group1_id, group2_id])
+
+    def test_patch_task_returns_access_domain_group_ids(
+        self, api_client: TestClient, domain_task_setup: dict
+    ) -> None:
+        creator = domain_task_setup["creator"]
+        space_id = domain_task_setup["space_id"]
+        category_id = domain_task_setup["category_id"]
+        group_id = domain_task_setup["group_id"]
+        suffix = domain_task_setup["suffix"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
+
+        # Create task WITHOUT access control
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Patch Domain Task ({suffix})",
+                "intro": "Task for patch test",
+                "description": '{"type":"doc","content":[]}',
+                "space": space_id,
+                "categoryId": category_id,
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+                "deadline": deadline_ms,
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        # Patch: enable access control with domain group
+        patch_resp = api_client.patch(
+            f"/tasks/{task_id}",
+            json={
+                "accessControlEnabled": True,
+                "accessDomainGroupIds": [group_id],
+            },
+            headers=headers,
+        )
+        assert patch_resp.status_code == 200, f"Failed to patch task: {patch_resp.text}"
+        patched_task = patch_resp.json()["data"]["task"]
+
+        assert patched_task.get("accessControlEnabled") is True
+        assert patched_task.get("accessDomainGroupIds") == [group_id]
+
+    def test_patch_task_disabling_access_control_clears_group_ids(
+        self, api_client: TestClient, domain_task_setup: dict
+    ) -> None:
+        creator = domain_task_setup["creator"]
+        space_id = domain_task_setup["space_id"]
+        category_id = domain_task_setup["category_id"]
+        group_id = domain_task_setup["group_id"]
+        suffix = domain_task_setup["suffix"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
+
+        # Create task WITH access control
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Disable AC Task ({suffix})",
+                "intro": "Task for disable access control test",
+                "description": '{"type":"doc","content":[]}',
+                "space": space_id,
+                "categoryId": category_id,
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+                "deadline": deadline_ms,
+                "accessControlEnabled": True,
+                "accessDomainGroupIds": [group_id],
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        # Patch: disable access control
+        patch_resp = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"accessControlEnabled": False},
+            headers=headers,
+        )
+        assert patch_resp.status_code == 200, f"Failed to patch task: {patch_resp.text}"
+        patched_task = patch_resp.json()["data"]["task"]
+
+        assert patched_task.get("accessControlEnabled") is False
+        assert patched_task.get("accessDomainGroupIds") == []
+
+    def test_task_list_includes_access_domain_group_ids(
+        self, api_client: TestClient, domain_task_setup: dict
+    ) -> None:
+        creator = domain_task_setup["creator"]
+        space_id = domain_task_setup["space_id"]
+        category_id = domain_task_setup["category_id"]
+        group_id = domain_task_setup["group_id"]
+        suffix = domain_task_setup["suffix"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
+
+        # Create task with access control
+        api_client.post(
+            "/tasks",
+            json={
+                "name": f"List Test ({suffix})",
+                "intro": "List test",
+                "description": '{"type":"doc","content":[]}',
+                "space": space_id,
+                "categoryId": category_id,
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+                "deadline": deadline_ms,
+                "accessControlEnabled": True,
+                "accessDomainGroupIds": [group_id],
+            },
+            headers=headers,
+        )
+
+        # List tasks for the space
+        list_resp = api_client.get(
+            f"/tasks?space={space_id}",
+            headers=headers,
+        )
+        assert list_resp.status_code == 200, f"Failed to list tasks: {list_resp.text}"
+        tasks = list_resp.json()["data"]["tasks"]
+
+        domain_task = next((t for t in tasks if str(suffix) in str(t.get("name", ""))), None)
+        assert domain_task is not None, "Task not found in list response"
+        assert domain_task.get("accessControlEnabled") is True
+        assert domain_task.get("accessDomainGroupIds") == [group_id]
