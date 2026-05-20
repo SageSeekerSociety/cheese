@@ -119,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import type { DomainGroup, TaskSubmissionSchemaEntry } from '@/types'
+import type { TaskSubmissionSchemaEntry } from '@/types'
 import type { TaskFormSubmitData } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
@@ -128,7 +128,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
-import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
@@ -140,7 +139,7 @@ const route = useRoute()
 const { t } = useI18n()
 
 const spaceStore = useSpaceStore()
-const { currentSpaceId, templates, classificationTopics, categories } = storeToRefs(spaceStore)
+const { currentSpaceId, templates, classificationTopics, categories, domainGroups } = storeToRefs(spaceStore)
 const pdfFile = ref<File | File[] | null>(null)
 const pdfPreviewLoading = ref(false)
 const pdfConfirmLoading = ref(false)
@@ -180,7 +179,6 @@ const pdfTemplateIndex = computed(() => {
 })
 
 const loadedTemplate = ref(false)
-const domainGroups = ref<DomainGroup[]>([])
 
 const initialTaskData = ref({})
 
@@ -363,14 +361,8 @@ onMounted(async () => {
 })
 
 const fetchDomainGroups = async () => {
-  const spaceId = currentSpaceId.value
-  if (!spaceId) return
-  try {
-    const { data } = await SpacesApi.listDomainGroups(spaceId)
-    domainGroups.value = data.groups
-  } catch (error) {
-    console.error('获取域名组失败:', error)
-  }
+  if (!currentSpaceId.value) return
+  await spaceStore.fetchDomainGroups()
 }
 
 /**

@@ -407,3 +407,232 @@ describe('domainGroupItems transformation', () => {
     expect(toSelectItems(groups)).toEqual([{ title: '空组', value: 1, subtitle: '' }])
   })
 })
+
+// ---------------------------------------------------------------------------
+// Tests: Store-based fetchDomainGroups (mirrors updated ManageDomainGroups.vue)
+// ---------------------------------------------------------------------------
+
+interface StoreState {
+  domainGroups: ApiDomainGroup[]
+  fetchCalled: boolean
+}
+
+/** Simulates the new fetchDomainGroups that delegates to spaceStore */
+async function fetchThroughStore(
+  store: StoreState,
+  apiResponse: ListResponse | null,
+  shouldThrow: boolean,
+): Promise<StoreState> {
+  if (shouldThrow) {
+    // Simulated API error — store should keep existing data
+    return store
+  }
+
+  // Simulates: store.fetchDomainGroups()
+  store.fetchCalled = true
+  if (apiResponse?.data?.groups) {
+    store.domainGroups = apiResponse.data.groups
+  } else {
+    store.domainGroups = []
+  }
+  return store
+}
+
+/** Simulates the CRUD → refresh pattern:
+ *  1. API call (create/update/delete)
+ *  2. await fetchDomainGroups() (which calls store.fetchDomainGroups())
+ */
+async function crudAndRefresh(
+  apiSucceeds: boolean,
+  freshApiResponse: ListResponse,
+): Promise<{ storeUpdated: boolean; finalGroups: ApiDomainGroup[] }> {
+  const store: StoreState = {
+    domainGroups: [makeGroup({ id: 1, name: 'Old' })],
+    fetchCalled: false,
+  }
+
+  if (!apiSucceeds) {
+    // API error — fetch is NOT called, store retains old data
+    return { storeUpdated: false, finalGroups: store.domainGroups }
+  }
+
+  // After successful CRUD, fetchDomainGroups() is called
+  // → delegates to store.fetchDomainGroups()
+  await fetchThroughStore(store, freshApiResponse, false)
+
+  return { storeUpdated: true, finalGroups: store.domainGroups }
+}
+
+function makeGroup(overrides: Partial<ApiDomainGroup> = {}): ApiDomainGroup {
+  return {
+    id: 1,
+    spaceId: 10,
+    name: 'Group',
+    description: null,
+    domains: ['example.com'],
+    createdAt: 0,
+    updatedAt: 0,
+    ...overrides,
+  }
+}
+
+describe('store-based fetchDomainGroups (ManageDomainGroups → store integration)', () => {
+  it('after create, store is refreshed with updated groups', async () => {
+    const { storeUpdated, finalGroups } = await crudAndRefresh(true, {
+      data: {
+        groups: [
+          makeGroup({ id: 1, name: 'Old' }),
+          makeGroup({ id: 2, name: 'New' }),
+        ],
+      },
+    })
+
+    expect(storeUpdated).toBe(true)
+    expect(finalGroups).toHaveLength(2)
+    expect(finalGroups[1].name).toBe('New')
+  })
+
+  it('after update, store reflects the modified group', async () => {
+    const { storeUpdated, finalGroups } = await crudAndRefresh(true, {
+      data: {
+        groups: [makeGroup({ id: 1, name: 'Updated Name' })],
+      },
+    })
+
+    expect(storeUpdated).toBe(true)
+    expect(finalGroups).toHaveLength(1)
+    expect(finalGroups[0].name).toBe('Updated Name')
+  })
+
+  it('after delete, store reflects removal', async () => {
+    const { storeUpdated, finalGroups } = await crudAndRefresh(true, {
+      data: { groups: [] },
+    })
+
+    expect(storeUpdated).toBe(true)
+    expect(finalGroups).toEqual([])
+  })
+
+  it('when CRUD API fails, store is NOT refreshed (retains old data)', async () => {
+    const { storeUpdated, finalGroups } = await crudAndRefresh(false, {
+      data: { groups: [] },
+    })
+
+    expect(storeUpdated).toBe(false)
+    // Old data preserved
+    expect(finalGroups).toHaveLength(1)
+    expect(finalGroups[0].name).toBe('Old')
+  })
+
+  it('fetchThroughStore handles null groups (→ empty)', async () => {
+    const store: StoreState = { domainGroups: [makeGroup()], fetchCalled: false }
+
+    await fetchThroughStore(store, { data: { groups: null as unknown as ApiDomainGroup[] } }, false)
+
+    expect(store.fetchCalled).toBe(true)
+    expect(store.domainGroups).toEqual([])
+  })
+
+  it('fetchThroughStore preserves old data on error', async () => {
+    const store: StoreState = {
+      domainGroups: [makeGroup({ id: 1, name: 'Preserved' })],
+      fetchCalled: false,
+    }
+
+    await fetchThroughStore(store, null, true)
+
+    expect(store.fetchCalled).toBe(false)
+    expect(store.domainGroups).toHaveLength(1)
+    expect(store.domainGroups[0].name).toBe('Preserved')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: Page refresh — explicit spaceId passed from route
+// ---------------------------------------------------------------------------
+
+/** Mirrors the updated ManageDomainGroups.vue fetchDomainGroups():
+ *    await spaceStore.fetchDomainGroups(spaceId)
+ *  where spaceId comes from route.params.spaceId.
+ */
+async function fetchDomainGroupsWithExplicitSpaceId(
+  spaceId: number,
+  storeState: { currentSpaceId: number | null; domainGroups: ApiDomainGroup[] },
+  apiFn: (id: number) => Promise<ListResponse>,
+): Promise<{ apiCalledWith: number | null; domainGroups: ApiDomainGroup[] }> {
+  let apiCalledWith: number | null = null
+
+  const id = spaceId ?? storeState.currentSpaceId
+  if (!id) return { apiCalledWith: null, domainGroups: storeState.domainGroups }
+
+  try {
+    const { data } = await apiFn(id)
+    apiCalledWith = id
+    storeState.domainGroups = data.groups ?? []
+  } catch {
+    // preserve existing
+  }
+
+  return { apiCalledWith, domainGroups: storeState.domainGroups }
+}
+
+describe('page refresh: fetchDomainGroups with explicit spaceId from route', () => {
+  it('fetches with route spaceId when store currentSpaceId is still null', async () => {
+    const storeState = { currentSpaceId: null, domainGroups: [] as ApiDomainGroup[] }
+    let calledWithId: number | null = null
+    const apiFn = async (id: number) => {
+      calledWithId = id
+      return { data: { groups: [makeGroup({ id: 1, name: 'CS' })] } }
+    }
+
+    const result = await fetchDomainGroupsWithExplicitSpaceId(42, storeState, apiFn)
+
+    expect(calledWithId).toBe(42)
+    expect(result.apiCalledWith).toBe(42)
+    expect(result.domainGroups).toHaveLength(1)
+    expect(result.domainGroups[0].name).toBe('CS')
+  })
+
+  it('uses route spaceId even when store has a different currentSpaceId', async () => {
+    const storeState = { currentSpaceId: 10, domainGroups: [] as ApiDomainGroup[] }
+    let calledWithId: number | null = null
+    const apiFn = async (id: number) => {
+      calledWithId = id
+      return { data: { groups: [makeGroup({ id: 2, spaceId: 99 })] } }
+    }
+
+    const result = await fetchDomainGroupsWithExplicitSpaceId(99, storeState, apiFn)
+
+    expect(calledWithId).toBe(99)
+    expect(result.domainGroups[0].spaceId).toBe(99)
+  })
+
+  it('replaces stale data from previous space with fresh data', async () => {
+    const storeState = {
+      currentSpaceId: 10,
+      domainGroups: [makeGroup({ id: 1, name: 'Old Space Group' })],
+    }
+    const apiFn = async (_id: number) => ({
+      data: { groups: [makeGroup({ id: 2, name: 'New Space Group', spaceId: 42 })] },
+    })
+
+    const result = await fetchDomainGroupsWithExplicitSpaceId(42, storeState, apiFn)
+
+    expect(result.domainGroups).toHaveLength(1)
+    expect(result.domainGroups[0].name).toBe('New Space Group')
+  })
+
+  it('returns empty when route spaceId is 0', async () => {
+    const storeState = { currentSpaceId: null, domainGroups: [] as ApiDomainGroup[] }
+    let apiCalled = false
+    const apiFn = async () => {
+      apiCalled = true
+      return { data: { groups: [] } }
+    }
+
+    const result = await fetchDomainGroupsWithExplicitSpaceId(0, storeState, apiFn)
+
+    expect(apiCalled).toBe(false)
+    expect(result.apiCalledWith).toBeNull()
+  })
+})

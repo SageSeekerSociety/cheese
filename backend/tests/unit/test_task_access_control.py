@@ -272,13 +272,13 @@ class TestCreateTaskEntityDomainResolution:
                 return_value=_mock_task_repo(),
             ),
             patch(
-                "app.domain.space.repositories.SpaceDomainGroupDomainRepository",
+                "app.api.routes.tasks.SpaceDomainGroupDomainRepository",
                 return_value=SimpleNamespace(
                     list_domains_for_groups=_list_domains_for_groups,
                 ),
             ),
             patch(
-                "app.domain.task.repositories.TaskAccessDomainRepository",
+                "app.api.routes.tasks.TaskAccessDomainRepository",
                 return_value=SimpleNamespace(
                     replace_domains=_replace_domains,
                 ),
@@ -333,7 +333,7 @@ class TestCreateTaskEntityDomainResolution:
                 return_value=_mock_task_repo(),
             ),
             patch(
-                "app.domain.task.repositories.TaskAccessDomainRepository",
+                "app.api.routes.tasks.TaskAccessDomainRepository",
                 return_value=SimpleNamespace(replace_domains=_replace_domains),
             ),
         ):
@@ -345,3 +345,274 @@ class TestCreateTaskEntityDomainResolution:
 
         assert task.access_control_enabled is False
         assert len(replace_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# SpaceDomainGroupDomainRepository.list_group_ids_by_domains
+# ---------------------------------------------------------------------------
+
+
+class TestListGroupIdsByDomains:
+    @pytest.mark.anyio
+    async def test_returns_group_ids_for_matching_domains(self):
+        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = [(1,), (3,)]
+        mock_session.execute.return_value = mock_result
+
+        repo = SpaceDomainGroupDomainRepository(session=mock_session)
+        result = await repo.list_group_ids_by_domains(
+            space_id=100, domains=["cs.edu.cn", "math.edu.cn"]
+        )
+
+        assert result == {1, 3}
+
+    @pytest.mark.anyio
+    async def test_returns_empty_set_for_empty_domains(self):
+        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
+
+        mock_session = AsyncMock()
+        repo = SpaceDomainGroupDomainRepository(session=mock_session)
+        result = await repo.list_group_ids_by_domains(space_id=100, domains=[])
+
+        assert result == set()
+        mock_session.execute.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_returns_empty_set_when_no_domains_match(self):
+        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        mock_session.execute.return_value = mock_result
+
+        repo = SpaceDomainGroupDomainRepository(session=mock_session)
+        result = await repo.list_group_ids_by_domains(space_id=100, domains=["nonexistent.edu.cn"])
+
+        assert result == set()
+
+    @pytest.mark.anyio
+    async def test_deduplicates_duplicate_group_ids(self):
+        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = [(1,), (1,), (2,)]
+        mock_session.execute.return_value = mock_result
+
+        repo = SpaceDomainGroupDomainRepository(session=mock_session)
+        result = await repo.list_group_ids_by_domains(
+            space_id=100, domains=["a.edu.cn", "b.edu.cn"]
+        )
+
+        assert result == {1, 2}
+
+
+# ---------------------------------------------------------------------------
+# _enrich_task_models — accessDomainGroupIds enrichment
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichTaskModelsAccessDomainGroups:
+    @pytest.mark.anyio
+    async def test_enriches_task_with_access_domain_group_ids(self):
+        from app.api.routes.tasks import _enrich_task_models
+
+        mock_db = AsyncMock()
+        task_model = {
+            "id": 42,
+            "name": "Test",
+            "accessControlEnabled": True,
+            "space": {"id": 100},
+            "categoryId": 5,
+            "creator": {"id": 10},
+        }
+
+        # Mock the domain resolution
+        async def _list_by_task_id(task_id):
+            return ["cs.edu.cn", "math.edu.cn"]
+
+        async def _list_group_ids_by_domains(*, space_id, domains):
+            return {1, 3}
+
+        with (
+            patch(
+                "app.api.routes.tasks.TaskAccessDomainRepository",
+                return_value=SimpleNamespace(list_by_task_id=_list_by_task_id),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceDomainGroupDomainRepository",
+                return_value=SimpleNamespace(list_group_ids_by_domains=_list_group_ids_by_domains),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceCategoryRepository",
+                return_value=SimpleNamespace(
+                    list_categories_for_space=AsyncMock(return_value=[]),
+                ),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceAdminRelationRepository",
+                return_value=SimpleNamespace(list_admins=AsyncMock(return_value=[])),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceRepository",
+                return_value=SimpleNamespace(
+                    get_by_id=AsyncMock(return_value=SimpleNamespace(name="Space")),
+                ),
+            ),
+            patch(
+                "app.api.routes.tasks.UserRepository",
+                return_value=SimpleNamespace(get_by_ids=AsyncMock(return_value={})),
+            ),
+            patch(
+                "app.api.routes.tasks.UserProfileRepository",
+                return_value=SimpleNamespace(get_profiles_by_user_ids=AsyncMock(return_value={})),
+            ),
+            patch(
+                "app.api.routes.tasks.TaskMembershipRepository",
+                return_value=SimpleNamespace(
+                    list_memberships_for_space=AsyncMock(return_value=[]),
+                ),
+            ),
+        ):
+            result = await _enrich_task_models(mock_db, [task_model], space_id=100)
+
+        assert len(result) == 1
+        assert result[0]["accessDomainGroupIds"] == [1, 3]
+
+    @pytest.mark.anyio
+    async def test_skips_enrichment_when_access_control_disabled(self):
+        from app.api.routes.tasks import _enrich_task_models
+
+        mock_db = AsyncMock()
+        task_model = {
+            "id": 42,
+            "name": "Test",
+            "accessControlEnabled": False,
+            "space": {"id": 100},
+            "categoryId": 5,
+            "creator": {"id": 10},
+        }
+
+        access_domain_called = False
+
+        async def _list_by_task_id(task_id):
+            nonlocal access_domain_called
+            access_domain_called = True
+            return []
+
+        with (
+            patch(
+                "app.api.routes.tasks.TaskAccessDomainRepository",
+                return_value=SimpleNamespace(list_by_task_id=_list_by_task_id),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceDomainGroupDomainRepository",
+                return_value=SimpleNamespace(
+                    list_group_ids_by_domains=AsyncMock(return_value=set()),
+                ),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceCategoryRepository",
+                return_value=SimpleNamespace(
+                    list_categories_for_space=AsyncMock(return_value=[]),
+                ),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceAdminRelationRepository",
+                return_value=SimpleNamespace(list_admins=AsyncMock(return_value=[])),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceRepository",
+                return_value=SimpleNamespace(
+                    get_by_id=AsyncMock(return_value=SimpleNamespace(name="Space")),
+                ),
+            ),
+            patch(
+                "app.api.routes.tasks.UserRepository",
+                return_value=SimpleNamespace(get_by_ids=AsyncMock(return_value={})),
+            ),
+            patch(
+                "app.api.routes.tasks.UserProfileRepository",
+                return_value=SimpleNamespace(get_profiles_by_user_ids=AsyncMock(return_value={})),
+            ),
+            patch(
+                "app.api.routes.tasks.TaskMembershipRepository",
+                return_value=SimpleNamespace(
+                    list_memberships_for_space=AsyncMock(return_value=[]),
+                ),
+            ),
+        ):
+            result = await _enrich_task_models(mock_db, [task_model], space_id=100)
+
+        assert not access_domain_called
+        assert result[0].get("accessDomainGroupIds") == []
+
+    @pytest.mark.anyio
+    async def test_returns_empty_when_no_domains_stored(self):
+        from app.api.routes.tasks import _enrich_task_models
+
+        mock_db = AsyncMock()
+        task_model = {
+            "id": 42,
+            "name": "Test",
+            "accessControlEnabled": True,
+            "space": {"id": 100},
+            "categoryId": 5,
+            "creator": {"id": 10},
+        }
+
+        async def _list_by_task_id(task_id):
+            return []
+
+        with (
+            patch(
+                "app.api.routes.tasks.TaskAccessDomainRepository",
+                return_value=SimpleNamespace(list_by_task_id=_list_by_task_id),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceDomainGroupDomainRepository",
+                return_value=SimpleNamespace(
+                    list_group_ids_by_domains=AsyncMock(return_value=set()),
+                ),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceCategoryRepository",
+                return_value=SimpleNamespace(
+                    list_categories_for_space=AsyncMock(return_value=[]),
+                ),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceAdminRelationRepository",
+                return_value=SimpleNamespace(list_admins=AsyncMock(return_value=[])),
+            ),
+            patch(
+                "app.api.routes.tasks.SpaceRepository",
+                return_value=SimpleNamespace(
+                    get_by_id=AsyncMock(return_value=SimpleNamespace(name="Space")),
+                ),
+            ),
+            patch(
+                "app.api.routes.tasks.UserRepository",
+                return_value=SimpleNamespace(get_by_ids=AsyncMock(return_value={})),
+            ),
+            patch(
+                "app.api.routes.tasks.UserProfileRepository",
+                return_value=SimpleNamespace(get_profiles_by_user_ids=AsyncMock(return_value={})),
+            ),
+            patch(
+                "app.api.routes.tasks.TaskMembershipRepository",
+                return_value=SimpleNamespace(
+                    list_memberships_for_space=AsyncMock(return_value=[]),
+                ),
+            ),
+        ):
+            result = await _enrich_task_models(mock_db, [task_model], space_id=100)
+
+        assert result[0].get("accessDomainGroupIds") == []

@@ -242,3 +242,112 @@ describe('TaskForm submit data access control logic', () => {
     expect(data).toHaveProperty('accessDomainGroupIds')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Tests: Form initial values from props.initialData
+// ---------------------------------------------------------------------------
+
+interface TaskFormInitialData {
+  name?: string
+  submitterType?: string
+  rank?: number
+  defaultDeadline?: number
+  registrationStartAt?: number | null
+  deadline?: number
+  resubmittable?: boolean
+  editable?: boolean
+  description?: string
+  requireRealName?: boolean
+  minTeamSize?: number | null
+  maxTeamSize?: number | null
+  participantLimit?: number | null
+  teamLockingPolicy?: string | null
+  categoryId?: number | null
+  accessControlEnabled?: boolean
+  accessDomainGroupIds?: number[]
+  videoUrl?: string
+}
+
+/** Mirrors initialValues construction in TaskForm.vue */
+function buildInitialValues(initialData?: TaskFormInitialData): Record<string, unknown> {
+  return {
+    name: initialData?.name ?? '',
+    submitterType: initialData?.submitterType ?? 'USER',
+    rank: initialData?.rank ?? 1,
+    registrationStartAt: initialData?.registrationStartAt
+      ? new Date(initialData.registrationStartAt).toISOString()
+      : null,
+    deadline: initialData?.deadline
+      ? new Date(initialData.deadline).toISOString().slice(0, 10)
+      : '',
+    defaultDeadline: initialData?.defaultDeadline ?? 30,
+    topics: [] as number[],
+    categoryId: initialData?.categoryId ?? null,
+    minTeamSize: initialData?.minTeamSize ?? 1,
+    maxTeamSize: initialData?.maxTeamSize ?? 10,
+    requireRealName: initialData?.requireRealName ?? false,
+    participantLimit: initialData?.participantLimit ?? null,
+    teamLockingPolicy: initialData?.teamLockingPolicy ?? 'NO_LOCK',
+    accessControlEnabled: initialData?.accessControlEnabled ?? false,
+    accessDomainGroupIds: initialData?.accessDomainGroupIds ?? [],
+    videoUrl: initialData?.videoUrl ?? '',
+  }
+}
+
+describe('TaskForm initialValues from initialData (access control)', () => {
+  it('reads accessControlEnabled from initialData', () => {
+    const values = buildInitialValues({
+      name: 'Edit Task',
+      accessControlEnabled: true,
+      accessDomainGroupIds: [1, 5],
+    })
+    expect(values.accessControlEnabled).toBe(true)
+  })
+
+  it('reads accessDomainGroupIds from initialData', () => {
+    const values = buildInitialValues({
+      name: 'Edit Task',
+      accessControlEnabled: true,
+      accessDomainGroupIds: [1, 5],
+    })
+    expect(values.accessDomainGroupIds).toEqual([1, 5])
+  })
+
+  it('defaults accessControlEnabled to false when not in initialData', () => {
+    const values = buildInitialValues({ name: 'Task' })
+    expect(values.accessControlEnabled).toBe(false)
+  })
+
+  it('defaults accessDomainGroupIds to empty array when not in initialData', () => {
+    const values = buildInitialValues({ name: 'Task', accessControlEnabled: true })
+    expect(values.accessDomainGroupIds).toEqual([])
+  })
+
+  it('handles accessControlEnabled: false with non-empty groups', () => {
+    const values = buildInitialValues({
+      name: 'Task',
+      accessControlEnabled: false,
+      accessDomainGroupIds: [1, 2, 3],
+    })
+    expect(values.accessControlEnabled).toBe(false)
+    expect(values.accessDomainGroupIds).toEqual([1, 2, 3])
+  })
+
+  it('handles empty accessDomainGroupIds array', () => {
+    const values = buildInitialValues({
+      name: 'Task',
+      accessControlEnabled: true,
+      accessDomainGroupIds: [],
+    })
+    expect(values.accessControlEnabled).toBe(true)
+    expect(values.accessDomainGroupIds).toEqual([])
+  })
+
+  it('defaults all fields when initialData is undefined', () => {
+    const values = buildInitialValues()
+    expect(values.accessControlEnabled).toBe(false)
+    expect(values.accessDomainGroupIds).toEqual([])
+    expect(values.name).toBe('')
+    expect(values.submitterType).toBe('USER')
+  })
+})

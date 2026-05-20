@@ -83,6 +83,7 @@ export interface Task {
   maxTeamSize?: number
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
   accessControlEnabled?: boolean
+  accessDomainGroupIds?: number[]
   joined?: boolean
   joinedTeams?: Team[]
   topics?: Topic[]

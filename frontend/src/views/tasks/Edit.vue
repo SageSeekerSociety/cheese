@@ -14,6 +14,7 @@
         :submit-button-text="'保存更改'"
         is-editing
         :classification-topics="taskData.space?.classificationTopics || []"
+        :domain-groups="domainGroups"
         :description-format="editTaskData.descriptionFormat"
         :original-description="editTaskData.originalDescription"
         @submit="handleSubmitEdit"
@@ -48,12 +49,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 
 import { LoadingErrorContainer } from './components'
 import { useTaskData, useTaskManagement } from './composables'
 
 import TaskForm from '@/components/tasks/TaskForm.vue'
 import { TasksApi } from '@/network/api/tasks'
+import { useSpaceStore } from '@/stores/space'
 
 // Router
 const router = useRouter()
@@ -66,6 +69,9 @@ const { taskData, editTaskData, loading, error, loadTaskData } = taskDataModule
 
 const taskManagementModule = useTaskManagement(taskDataModule)
 const { submitEditTask } = taskManagementModule
+
+const spaceStore = useSpaceStore()
+const { domainGroups } = storeToRefs(spaceStore)
 
 // 状态
 const isResubmitting = ref(false)
@@ -115,8 +121,12 @@ const navigateToDetail = () => {
   router.push({ name: 'TasksDetail', params: { taskId: taskId } })
 }
 
-onMounted(() => {
-  loadTaskData()
+onMounted(async () => {
+  await loadTaskData()
+  if (taskData.value?.space?.id) {
+    spaceStore.currentSpaceId = taskData.value.space.id
+    await spaceStore.fetchDomainGroups()
+  }
 })
 </script>
 

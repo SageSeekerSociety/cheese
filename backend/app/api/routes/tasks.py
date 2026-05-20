@@ -22,6 +22,7 @@ from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
+    SpaceDomainGroupDomainRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
@@ -29,6 +30,7 @@ from app.domain.task.models import Task, TaskMembership, TaskTopicsRelation
 from app.domain.task.repositories import (
     AIConversationRepository,
     AIMessageRepository,
+    TaskAccessDomainRepository,
     TaskAIAdviceContextRepository,
     TaskAIAdviceRepository,
     TaskMembershipRepository,
@@ -464,6 +466,20 @@ async def _enrich_task_models(
             "name": resolved_category_name or "Uncategorized",
         }
         task_model["categoryId"] = category_id
+
+    # Resolve accessDomainGroupIds from stored TaskAccessDomain rows.
+    access_domain_repo = TaskAccessDomainRepository(session=db)
+    domain_group_domain_repo = SpaceDomainGroupDomainRepository(session=db)
+    for task_model in task_models:
+        task_model.setdefault("accessDomainGroupIds", [])
+        if not task_model.get("accessControlEnabled"):
+            continue
+        domains = await access_domain_repo.list_by_task_id(task_model["id"])
+        if domains:
+            group_ids = await domain_group_domain_repo.list_group_ids_by_domains(
+                space_id=space_id, domains=domains
+            )
+            task_model["accessDomainGroupIds"] = sorted(group_ids)
 
     return task_models
 
@@ -949,8 +965,6 @@ async def _create_task_entity(
 
     # Resolve domain group IDs to actual domains and persist TaskAccessDomain records
     if access_control_enabled and access_domain_group_ids:
-        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
-
         domain_repo = SpaceDomainGroupDomainRepository(session=db)
         groups_domains = await domain_repo.list_domains_for_groups(access_domain_group_ids)
         all_domains: list[str] = []
@@ -958,8 +972,6 @@ async def _create_task_entity(
             all_domains.extend(groups_domains.get(gid, []))
 
         if all_domains:
-            from app.domain.task.repositories import TaskAccessDomainRepository
-
             access_domain_repo = TaskAccessDomainRepository(session=db)
             await access_domain_repo.replace_domains(
                 task_id=task.id, domains=list(dict.fromkeys(all_domains))
@@ -1846,9 +1858,6 @@ async def patch_task(
         task.access_control_enabled = payload.access_control_enabled
 
     if payload.access_domain_group_ids is not None:
-        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
-        from app.domain.task.repositories import TaskAccessDomainRepository
-
         domain_repo = SpaceDomainGroupDomainRepository(session=db)
         access_domain_repo = TaskAccessDomainRepository(session=db)
 
@@ -1920,6 +1929,7 @@ async def patch_task(
     ]
     task_response = _task_to_api_model(task)
     task_response["submissionSchema"] = submission_schema
+    task_response = (await _enrich_task_models(db, [task_response], space_id=task.space_id))[0]
 
     return {
         "code": 200,
