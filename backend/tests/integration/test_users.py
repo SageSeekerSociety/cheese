@@ -216,6 +216,8 @@ class TestUserLoginLogic:
         assert response.status_code in (200, 201)
         data = response.json()
         assert "accessToken" in data.get("data", data)
+        assert "REFRESH_TOKEN=" in response.headers.get("set-cookie", "")
+        assert "Path=/" in response.headers.get("set-cookie", "")
 
     def test_login_srp_init(self):
         response = self.client.post(
@@ -278,6 +280,16 @@ class TestUserLoginLogic:
                 cookies=cookies,
             )
             assert response.status_code in (200, 201, 401)
+            if response.status_code in (200, 201):
+                assert "Path=/" in response.headers.get("set-cookie", "")
+
+    def test_logout_without_refresh_cookie_is_idempotent(self):
+        response = self.client.post("/users/auth/logout")
+        assert response.status_code in (200, 201)
+        set_cookie = response.headers.get("set-cookie", "")
+        assert "REFRESH_TOKEN=" in set_cookie
+        assert "Max-Age=0" in set_cookie
+        assert "Path=/" in set_cookie
 
 
 class TestCurrentUserInfo:
