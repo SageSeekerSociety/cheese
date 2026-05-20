@@ -39,9 +39,14 @@ export function useUserMenu() {
 
   // 退出登录
   const onLogout = async () => {
-    await UserApi.logout()
-    AccountService.logout()
-    router.push('/')
+    try {
+      await UserApi.logout()
+    } catch (error) {
+      console.warn('Logout request failed; clearing local session anyway:', error)
+    } finally {
+      AccountService.logout()
+      router.push('/')
+    }
   }
 
   // 当菜单打开时获取 AI 配额
