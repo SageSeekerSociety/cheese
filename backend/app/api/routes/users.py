@@ -896,8 +896,7 @@ async def send_register_email_code(
 
     Uses Redis for code storage (10 min TTL) and sends via configured SMTP.
     Falls back to success response if email not configured (for dev).
-    When inviteCode is provided, any email domain is accepted;
-    otherwise only educational email addresses are allowed.
+    Any valid email address is accepted.
     """
     import re
 
@@ -908,18 +907,10 @@ async def send_register_email_code(
     from app.domain.user.verification_service import EmailVerificationService
 
     email = payload.email
-    invite_code = payload.invite_code
 
     email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if not re.match(email_regex, email):
         raise UnprocessableEntityError("Invalid email address format")
-
-    # With a valid invite code, any email domain is allowed;
-    # without one, only educational institutions.
-    if not invite_code:
-        allowed_suffixes = (".ruc.edu.cn", ".edu.cn", ".edu")
-        if not any(email.endswith(suffix) for suffix in allowed_suffixes):
-            raise UnprocessableEntityError("Email must be from an educational institution")
 
     user_repo = UserRepository(session=db)
     if await user_repo.is_email_taken(email):
@@ -952,7 +943,6 @@ async def get_registration_config() -> dict:
         "message": "Success",
         "data": {
             "requireInviteCode": settings.require_invite_code,
-            "inviteCodeBypassesEmail": False,
         },
     }
 
@@ -2246,10 +2236,6 @@ async def recover_password_request(
     email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if not re.match(email_regex, email):
         raise UnprocessableEntityError("Invalid email address format")
-
-    allowed_suffixes = (".ruc.edu.cn", ".edu.cn", ".edu")
-    if not any(email.endswith(suffix) for suffix in allowed_suffixes):
-        raise UnprocessableEntityError("Email must be from an educational institution")
 
     user = await auth_service.get_user_by_email(email)
     if user is None:
