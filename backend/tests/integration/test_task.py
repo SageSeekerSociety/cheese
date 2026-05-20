@@ -3193,7 +3193,9 @@ class TestTaskAccessDomainGroupIntegration:
             },
             headers=headers,
         )
-        assert group2_resp.status_code == 201, f"Failed to create 2nd domain group: {group2_resp.text}"
+        assert group2_resp.status_code == 201, (
+            f"Failed to create 2nd domain group: {group2_resp.text}"
+        )
         group2_id = group2_resp.json()["data"]["group"]["id"]
 
         group1_id = domain_task_setup["group_id"]

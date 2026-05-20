@@ -392,9 +392,7 @@ class TestListGroupIdsByDomains:
         mock_session.execute.return_value = mock_result
 
         repo = SpaceDomainGroupDomainRepository(session=mock_session)
-        result = await repo.list_group_ids_by_domains(
-            space_id=100, domains=["nonexistent.edu.cn"]
-        )
+        result = await repo.list_group_ids_by_domains(space_id=100, domains=["nonexistent.edu.cn"])
 
         assert result == set()
 
@@ -450,9 +448,7 @@ class TestEnrichTaskModelsAccessDomainGroups:
             ),
             patch(
                 "app.api.routes.tasks.SpaceDomainGroupDomainRepository",
-                return_value=SimpleNamespace(
-                    list_group_ids_by_domains=_list_group_ids_by_domains
-                ),
+                return_value=SimpleNamespace(list_group_ids_by_domains=_list_group_ids_by_domains),
             ),
             patch(
                 "app.api.routes.tasks.SpaceCategoryRepository",
@@ -476,9 +472,7 @@ class TestEnrichTaskModelsAccessDomainGroups:
             ),
             patch(
                 "app.api.routes.tasks.UserProfileRepository",
-                return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={})
-                ),
+                return_value=SimpleNamespace(get_profiles_by_user_ids=AsyncMock(return_value={})),
             ),
             patch(
                 "app.api.routes.tasks.TaskMembershipRepository",
@@ -546,9 +540,7 @@ class TestEnrichTaskModelsAccessDomainGroups:
             ),
             patch(
                 "app.api.routes.tasks.UserProfileRepository",
-                return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={})
-                ),
+                return_value=SimpleNamespace(get_profiles_by_user_ids=AsyncMock(return_value={})),
             ),
             patch(
                 "app.api.routes.tasks.TaskMembershipRepository",
@@ -612,9 +604,7 @@ class TestEnrichTaskModelsAccessDomainGroups:
             ),
             patch(
                 "app.api.routes.tasks.UserProfileRepository",
-                return_value=SimpleNamespace(
-                    get_profiles_by_user_ids=AsyncMock(return_value={})
-                ),
+                return_value=SimpleNamespace(get_profiles_by_user_ids=AsyncMock(return_value={})),
             ),
             patch(
                 "app.api.routes.tasks.TaskMembershipRepository",

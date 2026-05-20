@@ -596,7 +596,11 @@ class TestSpaceDomainGroups:
         assert g1.status_code == 201
         g2 = api_client.post(
             f"/spaces/{space_id}/domain-groups",
-            json={"name": "清华大学", "description": None, "domains": ["tsinghua.edu.cn", "mail.tsinghua.edu.cn"]},
+            json={
+                "name": "清华大学",
+                "description": None,
+                "domains": ["tsinghua.edu.cn", "mail.tsinghua.edu.cn"],
+            },
             headers={"Authorization": f"Bearer {owner.token}"},
         )
         assert g2.status_code == 201
