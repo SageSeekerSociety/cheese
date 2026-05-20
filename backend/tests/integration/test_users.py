@@ -30,14 +30,12 @@ class TestUserRegisterLogic:
         )
         assert response.status_code == 422
 
-    def test_verify_email_non_educational_suffix_accepted(self):
-        """Non-educational email addresses should now be accepted."""
-        email = f"test-{unique_int(100000, 999999)}@126.com"
+    def test_verify_email_invalid_email_suffix(self):
         response = self.client.post(
             "/users/verify/email",
-            json={"email": email},
+            json={"email": "test@126.com"},
         )
-        assert response.status_code in (201, 200)
+        assert response.status_code == 422
 
     def test_verify_email_success(self):
         email = f"test-{unique_int(100000, 999999)}@ruc.edu.cn"
@@ -66,24 +64,6 @@ class TestUserRegisterLogic:
 
     def test_register_user_legacy_auth(self):
         email = f"test-{unique_int(100000, 999999)}@ruc.edu.cn"
-        username = f"TestUser-{unique_int(100000, 999999)}"
-        self.client.post("/users/verify/email", json={"email": email})
-        response = self.client.post(
-            "/users",
-            json={
-                "username": username,
-                "nickname": "test_user",
-                "password": "abc123456!!!",
-                "email": email,
-                "emailCode": "123456",
-                "isLegacyAuth": True,
-            },
-        )
-        assert response.status_code in (201, 422)
-
-    def test_register_with_non_educational_email(self):
-        """Full registration flow should succeed with non-edu email (e.g., @gmail.com)."""
-        email = f"test-{unique_int(100000, 999999)}@gmail.com"
         username = f"TestUser-{unique_int(100000, 999999)}"
         self.client.post("/users/verify/email", json={"email": email})
         response = self.client.post(
@@ -338,13 +318,12 @@ class TestPasswordResetLogic:
         )
         assert response.status_code == 422
 
-    def test_password_reset_request_non_educational_suffix_accepted(self):
-        """Non-educational email addresses should now be accepted for password reset."""
+    def test_password_reset_request_invalid_suffix(self):
         response = self.client.post(
             "/users/recover/password/request",
             json={"email": "test@test.com"},
         )
-        assert response.status_code in (201, 200)
+        assert response.status_code == 422
 
     def test_password_reset_request_non_existent_email(self):
         response = self.client.post(
