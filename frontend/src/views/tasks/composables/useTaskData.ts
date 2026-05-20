@@ -122,6 +122,8 @@ export function useTaskData() {
       participantLimit: taskData.value.participantLimit,
       teamLockingPolicy: taskData.value.teamLockingPolicy,
       categoryId: taskData.value.category?.id,
+      accessControlEnabled: taskData.value.accessControlEnabled,
+      accessDomainGroupIds: taskData.value.accessDomainGroupIds ?? [],
       videoUrl: taskData.value.videoUrl || '',
     }
   })

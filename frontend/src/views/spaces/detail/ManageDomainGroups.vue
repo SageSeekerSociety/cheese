@@ -107,11 +107,13 @@ import { useRoute } from 'vue-router'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
+import { storeToRefs } from 'pinia'
 
 import { vuetifyConfig } from '@/utils/form'
 
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'
+import { useSpaceStore } from '@/stores/space'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -119,7 +121,9 @@ const { confirm } = useDialog()
 
 const spaceId = Number(route.params.spaceId)
 
-const domainGroups = ref<DomainGroup[]>([])
+const spaceStore = useSpaceStore()
+const { domainGroups } = storeToRefs(spaceStore)
+
 const loading = ref(false)
 const dialogOpen = ref(false)
 const editingGroup = ref<DomainGroup | null>(null)
@@ -167,8 +171,7 @@ function removeDomain(index: number) {
 async function fetchDomainGroups() {
   loading.value = true
   try {
-    const { data } = await SpacesApi.listDomainGroups(spaceId)
-    domainGroups.value = data.groups ?? []
+    await spaceStore.fetchDomainGroups(spaceId)
   } catch {
     // handled silently
   } finally {

@@ -1,4 +1,4 @@
-import type { Space, SpaceAdminRoleType, SpaceAnnouncement, SpaceCategory, SpaceTaskTemplate, Topic } from '@/types'
+import type { DomainGroup, Space, SpaceAdminRoleType, SpaceAnnouncement, SpaceCategory, SpaceTaskTemplate, Topic } from '@/types'
 
 import { computed, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
@@ -12,6 +12,7 @@ export const useSpaceStore = defineStore('space', () => {
   const currentSpaceId = ref<number | null>(null)
   const categories = ref<SpaceCategory[]>([])
   const loadingCategories = ref(false)
+  const domainGroups = ref<DomainGroup[]>([])
 
   const isEditingProfile = ref<boolean>(false)
   const isManagingAdmins = ref<boolean>(false)
@@ -160,6 +161,18 @@ export const useSpaceStore = defineStore('space', () => {
   const deleteClassificationTopic = async (topicId: number) => {
     const updatedTopicIds = classificationTopics.value.map((topic) => topic.id).filter((id) => id !== topicId)
     await updateClassificationTopics(updatedTopicIds)
+  }
+
+  // Domain groups
+  const fetchDomainGroups = async (spaceId?: number) => {
+    const id = spaceId ?? currentSpaceId.value
+    if (!id) return
+    try {
+      const { data } = await SpacesApi.listDomainGroups(id)
+      domainGroups.value = data.groups ?? []
+    } catch (error) {
+      console.error('获取域名组失败:', error)
+    }
   }
 
   // Categories related methods
@@ -316,6 +329,8 @@ export const useSpaceStore = defineStore('space', () => {
     classificationTopics,
     categories,
     loadingCategories,
+    domainGroups,
+    fetchDomainGroups,
     isEditingProfile,
     isManagingAdmins,
     fetchSpace,
