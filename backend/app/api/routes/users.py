@@ -1,7 +1,7 @@
 import asyncio
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Header, Path, Query, Request, Response, status
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1072,7 +1072,7 @@ async def register_user(
         httponly=True,
         secure=settings.environment not in ("development", "test"),
         samesite="lax",
-        path="/users/auth",
+        path="/",
     )
 
     user_dto = await auth_service.build_user_dto(
@@ -1332,7 +1332,7 @@ async def user_login(
             httponly=True,
             secure=settings.environment not in ("development", "test"),
             samesite="lax",
-            path="/users/auth",
+            path="/",
         )
         response.set_cookie(
             "SESSION_ID",
@@ -1507,7 +1507,7 @@ async def srp_login_verify(
             httponly=True,
             secure=settings.environment not in ("development", "test"),
             samesite="lax",
-            path="/users/auth",
+            path="/",
         )
         response.set_cookie(
             "SESSION_ID",
@@ -1574,7 +1574,7 @@ async def refresh_access_token(
         httponly=True,
         secure=settings.environment not in ("development", "test"),
         samesite="lax",
-        path="/users/auth",
+        path="/",
     )
 
     user_dto = await auth_service.build_user_dto(
@@ -1598,13 +1598,13 @@ async def refresh_access_token(
 )
 async def user_logout(
     response: Response,
-    cookie_header: Annotated[str | None, Header(alias="cookie")] = None,
 ) -> dict:
-    # Stateless JWT flow: we simply clear the refresh token cookie.
-    if cookie_header is None:
-        raise AuthenticationRequiredError("Refresh token cookie is missing")
-
-    # Clear cookie on client; access tokens will naturally expire.
+    # Logout is idempotent: even if the refresh cookie is missing or expired,
+    # the client should receive cookie-clearing headers and a success response.
+    response.delete_cookie(
+        "REFRESH_TOKEN",
+        path="/",
+    )
     response.delete_cookie(
         "REFRESH_TOKEN",
         path="/users/auth",
@@ -2835,7 +2835,7 @@ async def passkey_authenticate_verify(
         httponly=True,
         secure=settings.environment not in ("development", "test"),
         samesite="lax",
-        path="/users/auth",
+        path="/",
     )
     response.set_cookie(
         "SESSION_ID",
@@ -2995,7 +2995,7 @@ async def handle_oauth_callback(
             httponly=True,
             secure=settings.environment not in ("development", "test"),
             samesite="lax",
-            path="/users/auth",
+            path="/",
         )
 
         user_dto = await auth_service.build_user_dto(
