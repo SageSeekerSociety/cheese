@@ -171,6 +171,7 @@ class ConfirmTaskPublishFromPdfRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     drafts: list[dict]
+    task_options: dict = Field(alias="taskOptions")
 
 
 class CreateTaskRequest(BaseModel):
@@ -197,6 +198,41 @@ class CreateTaskRequest(BaseModel):
     topics: list[int] = Field(default_factory=list)
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(default_factory=list, alias="accessDomainGroupIds")
+
+
+PDF_DRAFT_CONTENT_FIELDS = {"name", "intro", "description"}
+
+
+def _apply_pdf_task_options(
+    *,
+    draft: dict,
+    task_options: dict,
+) -> dict:
+    if not isinstance(draft, dict):
+        raise BadRequestError("Each draft must be an object")
+    if not isinstance(task_options, dict):
+        raise BadRequestError("taskOptions must be an object")
+
+    missing_content_fields = [
+        field
+        for field in PDF_DRAFT_CONTENT_FIELDS
+        if field not in draft or str(draft.get(field) or "").strip() == ""
+    ]
+    if missing_content_fields:
+        raise BadRequestError(
+            f"Draft missing required content fields: {', '.join(sorted(missing_content_fields))}"
+        )
+
+    merged = dict(task_options)
+    for field in PDF_DRAFT_CONTENT_FIELDS:
+        merged[field] = draft[field]
+
+    if "space" not in merged and "space" in draft:
+        merged["space"] = draft["space"]
+    if "categoryId" not in merged and "categoryId" in draft:
+        merged["categoryId"] = draft["categoryId"]
+
+    return merged
 
 
 class TaskParticipantRequest(BaseModel):
@@ -1028,83 +1064,6 @@ async def create_task(
 
 
 @router.post(
-    "/publish/from-pdf",
-    summary="Create Task From PDF",
-)
-async def create_task_from_pdf(
-    space_id: Annotated[int, Form(alias="spaceId")],
-    pdf_file: Annotated[UploadFile, File(alias="file")],
-    db=Depends(get_db),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    draft_service: TaskPdfDraftService = Depends(get_task_pdf_draft_service),
-    category_id: Annotated[int | None, Form(alias="categoryId")] = None,
-    template_index: Annotated[int, Form(alias="templateIndex")] = 0,
-    forced_submitter_type: Annotated[str | None, Form(alias="submitterType")] = None,
-) -> dict:
-    filename = (pdf_file.filename or "").lower()
-    content_type = (pdf_file.content_type or "").lower()
-    if not filename.endswith(".pdf") and "pdf" not in content_type:
-        raise BadRequestError("Only PDF file is supported")
-
-    pdf_bytes = await pdf_file.read()
-    if not pdf_bytes:
-        raise BadRequestError("Uploaded PDF is empty")
-    if len(pdf_bytes) > 15 * 1024 * 1024:
-        raise BadRequestError("PDF file is too large (max 15MB)")
-
-    space_repo = SpaceRepository(session=db)
-    space = await space_repo.get_by_id(space_id)
-    if space is None:
-        raise NotFoundError("Space not found")
-
-    resolved_category_id = category_id
-    if resolved_category_id is None:
-        category_repo = SpaceCategoryRepository(session=db)
-        categories = await category_repo.list_categories_for_space(space_id, include_archived=False)
-        for category in categories:
-            if category.name.strip().lower() == "general":
-                resolved_category_id = category.id
-                break
-
-    default_topic_ids: list[int] = []
-    global_topic_repo = GlobalTopicRepository(session=db)
-    default_topic = await global_topic_repo.get_by_name("计算机系统")
-    if default_topic is not None:
-        default_topic_ids.append(default_topic.id)
-
-    template = draft_service.pick_template(space.task_templates or [], template_index)
-    payload, token_used = await draft_service.generate_task_payload_from_pdf(
-        pdf_bytes=pdf_bytes,
-        template=template,
-        space_id=space_id,
-        category_id=resolved_category_id,
-        forced_submitter_type=forced_submitter_type,
-        user_id=auth_user.user_id,
-        default_topic_ids=default_topic_ids,
-    )
-
-    task = await _create_task_entity(
-        payload=payload,
-        db=db,
-        creator_user_id=auth_user.user_id,
-    )
-
-    task_model = _task_to_api_model(task)
-    task_model = (await _enrich_task_models(db, [task_model], space_id=space_id))[0]
-
-    return {
-        "code": 200,
-        "message": "Task created from PDF successfully.",
-        "data": {
-            "task": task_model,
-            "draft": payload,
-            "templateUsed": template,
-            "tokenUsed": token_used,
-        },
-    }
-
-
-@router.post(
     "/publish/from-pdf/preview",
     summary="Preview Task Drafts From PDF",
 )
@@ -1185,6 +1144,7 @@ async def confirm_publish_task_from_pdf(
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     drafts = payload.drafts
+    task_options = payload.task_options
     if not drafts:
         raise BadRequestError("drafts is required")
     if len(drafts) > 20:
@@ -1193,17 +1153,16 @@ async def confirm_publish_task_from_pdf(
     created_tasks: list[Task] = []
     space_id: int | None = None
     for draft in drafts:
-        if not isinstance(draft, dict):
-            raise BadRequestError("Each draft must be an object")
+        task_payload = _apply_pdf_task_options(draft=draft, task_options=task_options)
         created = await _create_task_entity(
-            payload=draft,
+            payload=task_payload,
             db=db,
             creator_user_id=auth_user.user_id,
         )
         created_tasks.append(created)
-        if space_id is None and "space" in draft:
+        if space_id is None and "space" in task_payload:
             try:
-                space_id = int(draft["space"])
+                space_id = int(task_payload["space"])
             except (TypeError, ValueError):
                 pass
 

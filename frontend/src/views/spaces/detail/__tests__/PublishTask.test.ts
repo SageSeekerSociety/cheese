@@ -1,8 +1,7 @@
-/** Unit tests for PublishTask access control API parameter mapping.
+/** Unit tests for PublishTask API parameter mapping.
  *
  * PublishTask.vue receives TaskFormSubmitData from TaskForm and maps it
- * to TasksApi.create() params. These tests validate the access control
- * parameter mapping logic.
+ * to TasksApi.create() params or PDF confirm options.
  */
 import { describe, expect, it } from 'vitest'
 
@@ -29,6 +28,19 @@ function buildApiParams(
     accessDomainGroupIds: taskData.accessControlEnabled
       ? taskData.accessDomainGroupIds
       : undefined,
+  }
+}
+
+function buildPdfConfirmOptions(
+  taskData: TaskFormSubmitData,
+  spaceId: number,
+  submissionSchema: Array<{ prompt: string; type: 'FILE' | 'TEXT' }>,
+) {
+  return {
+    ...buildApiParams(taskData, spaceId, submissionSchema),
+    name: taskData.name || 'PDF 批量发布参数',
+    intro: '',
+    description: '',
   }
 }
 
@@ -165,6 +177,22 @@ describe('PublishTask API parameter mapping', () => {
 
       expect(params.submitterType).toBe('TEAM')
       // spread forwards all taskData fields to the API params
+    })
+  })
+
+  describe('pdf confirm options', () => {
+    it('keeps task form parameters while blanking content fields for PDF confirm', () => {
+      const taskData = makeTaskFormData({
+        name: 'Will be replaced',
+        intro: 'Will be replaced',
+        description: 'Will be replaced',
+      })
+      const params = buildPdfConfirmOptions(taskData, 42, DEFAULT_SCHEMA)
+
+      expect(params.name).toBe('Will be replaced')
+      expect(params.intro).toBe('')
+      expect(params.description).toBe('')
+      expect(params.space).toBe(42)
     })
   })
 })

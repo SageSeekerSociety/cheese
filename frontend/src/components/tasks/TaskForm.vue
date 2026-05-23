@@ -16,7 +16,13 @@
       <v-card-text class="pt-2">
         <v-row dense>
           <v-col cols="12">
-            <v-text-field v-model="name" :label="t('tasks.form.taskName')" required v-bind="nameProps"></v-text-field>
+            <v-text-field
+              v-if="!parametersOnly"
+              v-model="name"
+              :label="t('tasks.form.taskName')"
+              required
+              v-bind="nameProps"
+            ></v-text-field>
           </v-col>
 
           <v-col cols="12" md="6">
@@ -410,7 +416,7 @@
     </v-card>
 
     <!-- 赛题详情 -->
-    <v-card flat rounded="lg" class="mb-4 form-card">
+    <v-card v-if="!parametersOnly" flat rounded="lg" class="mb-4 form-card">
       <v-card-item>
         <template #prepend>
           <div class="me-3">
@@ -448,7 +454,7 @@
     </v-card>
 
     <!-- 视频链接 -->
-    <v-card flat rounded="lg" class="mb-4 form-card">
+    <v-card v-if="!parametersOnly" flat rounded="lg" class="mb-4 form-card">
       <v-card-item>
         <template #prepend>
           <div class="me-3">
@@ -656,7 +662,7 @@
 import type { DomainGroup, TaskFormSubmitData, Topic } from '@/types'
 import type { SpaceCategory } from '@/types'
 
-import { computed, ref, toRefs } from 'vue'
+import { computed, ref, toRefs, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VDateInput } from 'vuetify/labs/VDateInput'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -686,6 +692,7 @@ const props = withDefaults(
     domainGroups?: DomainGroup[]
     descriptionFormat?: 'markdown' | 'tiptap'
     originalDescription?: string
+    parametersOnly?: boolean
   }>(),
   {
     initialData: null,
@@ -697,6 +704,7 @@ const props = withDefaults(
     domainGroups: () => [],
     descriptionFormat: 'tiptap',
     originalDescription: '',
+    parametersOnly: false,
   }
 )
 
@@ -757,6 +765,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
   ),
   initialValues: {
     ...(props.initialData ?? {}),
+    name: props.initialData?.name ?? (props.parametersOnly ? 'PDF 批量发布参数' : ''),
     registrationStartAt: props.initialData?.registrationStartAt
       ? new Date(props.initialData.registrationStartAt)
       : null,
@@ -764,7 +773,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
       ? new Date(props.initialData.deadline)
       : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
     requireRealName: props.initialData?.requireRealName ?? false,
-    categoryId: props.initialData?.categoryId ?? undefined,
+    categoryId: props.initialData?.categoryId ?? props.selectedCategoryId ?? undefined,
     minTeamSize: props.initialData?.minTeamSize ?? 1,
     maxTeamSize: props.initialData?.maxTeamSize ?? 10,
     defaultDeadline: props.initialData?.defaultDeadline ?? 30,
@@ -842,7 +851,10 @@ const submitFormData = (values: any) => {
   // 根据原始格式决定保存的描述内容
   let savedDescription: string
   let introText: string
-  if (props.descriptionFormat === 'markdown') {
+  if (props.parametersOnly) {
+    savedDescription = ''
+    introText = ''
+  } else if (props.descriptionFormat === 'markdown') {
     // 如果原始是 markdown 格式，保存纯文本内容
     savedDescription = markdownDescription.value || ''
     introText = markdownDescription.value || ''
@@ -909,6 +921,16 @@ const confirmVideoUrlDialog = () => {
 
 // 初始化wasRealNameEnabled
 wasRealNameEnabled.value = !!props.initialData?.requireRealName
+
+watch(
+  () => props.initialData?.name,
+  (value) => {
+    if (props.parametersOnly && value && value !== name.value) {
+      name.value = value
+    }
+  },
+  { immediate: true }
+)
 
 const handleCancel = () => {
   emit('cancel')

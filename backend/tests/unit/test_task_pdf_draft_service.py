@@ -22,7 +22,7 @@ class _FakeLLMClient:
 
 
 @pytest.mark.anyio
-async def test_generate_payload_from_text_merges_template_and_llm_result() -> None:
+async def test_generate_payload_from_text_only_builds_content_draft() -> None:
     llm = _FakeLLMClient(
         '{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}'
     )
@@ -39,18 +39,20 @@ async def test_generate_payload_from_text_merges_template_and_llm_result() -> No
 
     assert tokens == 1200
     assert payload["name"] == "AI 赛题"
+    assert payload["intro"] == "简述"
+    assert payload["description"] == "详细说明"
     assert payload["space"] == 7
     assert payload["categoryId"] == 9
-    assert payload["submitterType"] == "TEAM"
-    assert payload["editable"] is True
-    assert payload["resubmittable"] is True
-    assert payload["defaultDeadline"] == 365
-    assert payload["minTeamSize"] == 1
-    assert payload["maxTeamSize"] == 3
+    assert "submitterType" not in payload
+    assert "editable" not in payload
+    assert "resubmittable" not in payload
+    assert "defaultDeadline" not in payload
+    assert "minTeamSize" not in payload
+    assert "maxTeamSize" not in payload
 
 
 @pytest.mark.anyio
-async def test_generate_payload_from_text_respects_forced_submitter_type() -> None:
+async def test_generate_payload_from_text_ignores_publish_parameters() -> None:
     llm = _FakeLLMClient(
         '{"name":"比赛","intro":"介绍","description":"详情","submitterType":"USER"}'
     )
@@ -65,7 +67,12 @@ async def test_generate_payload_from_text_respects_forced_submitter_type() -> No
         user_id=2,
     )
 
-    assert payload["submitterType"] == "TEAM"
+    assert payload == {
+        "name": "比赛",
+        "intro": "介绍",
+        "description": "详情",
+        "space": 1,
+    }
 
 
 @pytest.mark.anyio

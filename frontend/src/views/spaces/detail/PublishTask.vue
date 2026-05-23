@@ -8,7 +8,7 @@
           </v-avatar>
         </template>
         <v-card-title class="text-h6 ps-0">PDF 快速发布</v-card-title>
-        <v-card-subtitle class="ps-0">上传赛题 PDF 后，系统会自动解析并按当前空白模板生成赛题</v-card-subtitle>
+        <v-card-subtitle class="ps-0">上传赛题 PDF 后，系统会解析赛题内容；发布参数请在下方表单统一填写</v-card-subtitle>
       </v-card-item>
 
       <v-card-text class="pt-2">
@@ -61,7 +61,7 @@
         </template>
         <v-card-title class="text-h6 ps-0">解析预览结果</v-card-title>
         <v-card-subtitle class="ps-0">
-          共识别 {{ pdfDrafts.length }} 个赛题草稿，可批量确认发布。
+          共识别 {{ pdfDrafts.length }} 个赛题草稿，提交下方表单后会批量应用发布参数。
           <span v-if="pdfTokenUsed !== null">本次约消耗 {{ pdfTokenUsed }} tokens</span>
         </v-card-subtitle>
       </v-card-item>
@@ -72,19 +72,14 @@
             <v-expansion-panel-title>
               <div class="d-flex align-center justify-space-between w-100 pr-2">
                 <div class="text-subtitle-2">{{ index + 1 }}. {{ draft.name || '未命名赛题' }}</div>
-                <v-chip size="x-small" color="primary" variant="tonal">{{ draft.submitterType || 'TEAM' }}</v-chip>
+                <v-chip size="x-small" color="primary" variant="tonal">PDF 草稿</v-chip>
               </div>
             </v-expansion-panel-title>
             <v-expansion-panel-text>
               <div class="text-body-2 mb-2"><strong>简介：</strong>{{ draft.intro || '-' }}</div>
-              <div class="text-body-2 mb-2"><strong>难度：</strong>{{ draft.rank || 3 }}</div>
-              <div class="text-body-2 mb-2"><strong>分类ID：</strong>{{ draft.categoryId ?? '-' }}</div>
-              <div class="text-body-2 mb-2"><strong>话题ID：</strong>{{ (draft.topics || []).join(', ') || '-' }}</div>
-              <div class="text-body-2 mb-2">
-                <strong>报名开始：</strong>{{ formatTimestamp(draft.registrationStartAt) }}
+              <div class="text-body-2 pdf-description-preview">
+                <strong>内容预览：</strong>{{ previewDescription(draft.description) }}
               </div>
-              <div class="text-body-2 mb-2"><strong>截止时间：</strong>{{ formatTimestamp(draft.deadline) }}</div>
-              <div class="text-body-2"><strong>默认完成期限：</strong>{{ draft.defaultDeadline || 365 }} 天</div>
             </v-expansion-panel-text>
           </v-expansion-panel>
         </v-expansion-panels>
@@ -92,15 +87,10 @@
 
       <v-card-actions class="px-4 pb-4 pt-0 d-flex justify-end">
         <v-btn variant="text" :disabled="pdfConfirmLoading" @click="clearPdfDrafts">清空预览</v-btn>
-        <v-btn
-          color="success"
-          :loading="pdfConfirmLoading"
-          :disabled="pdfConfirmLoading"
-          @click="confirmPublishFromPdf"
-        >
+        <v-chip color="success" variant="tonal" label>
           <v-icon start>mdi-check-circle-outline</v-icon>
-          确认批量发布
-        </v-btn>
+          下方发布按钮将批量发布
+        </v-chip>
       </v-card-actions>
     </v-card>
 
@@ -113,6 +103,7 @@
       :categories="activeCategories"
       :selected-category-id="preselectedCategoryId"
       :domain-groups="domainGroups"
+      :parameters-only="pdfDrafts.length > 0"
       @submit="submitTask"
     />
   </v-sheet>
@@ -209,6 +200,10 @@ const submitTask = async (taskData: TaskFormSubmitData) => {
     return
   }
 
+  if (pdfDrafts.value.length > 0) {
+    return (await confirmPublishFromPdf(taskData, spaceId)) ?? false
+  }
+
   const result = await errorHandler.withErrorHandling(
     async () => {
       const {
@@ -277,10 +272,14 @@ const previewFromPdf = async () => {
       toast.error('未识别到可发布的赛题草稿')
       pdfDrafts.value = []
       pdfTokenUsed.value = data.tokenUsed ?? null
+      initialTaskData.value = {}
       return
     }
 
     pdfDrafts.value = data.drafts
+    initialTaskData.value = {
+      name: data.drafts[0]?.name || 'PDF 批量发布参数',
+    }
     pdfTokenUsed.value = data.tokenUsed ?? null
     toast.success(`解析完成，共识别 ${data.drafts.length} 个赛题草稿`)
   } catch (error) {
@@ -295,29 +294,27 @@ const previewFromPdf = async () => {
  * 确认并批量发布 PDF 解析出的赛题草稿
  * 调用 confirmFromPdf API，成功后跳转到「我发布的」页面
  */
-const confirmPublishFromPdf = async () => {
-  const spaceId = currentSpaceId.value
-  if (!spaceId) {
-    toast.error(t('spaces.detail.publishTask.spaceIdNotFound'))
-    return
-  }
+const confirmPublishFromPdf = async (taskData: TaskFormSubmitData, spaceId: number) => {
   if (pdfDrafts.value.length === 0) {
     toast.error('没有可发布的草稿，请先解析预览')
-    return
+    return false
   }
 
   pdfConfirmLoading.value = true
   try {
     const { data } = await TasksApi.confirmFromPdf({
-      drafts: pdfDrafts.value as any,
+      drafts: pdfDrafts.value,
+      taskOptions: buildTaskOptions(taskData, spaceId),
     })
     toast.success(`已发布 ${data.count || data.tasks.length} 个赛题`)
     pdfDrafts.value = []
     pdfTokenUsed.value = null
     router.replace({ name: 'SpacesDetailMyPublishing', params: { spaceId } })
+    return true
   } catch (error) {
     console.error('PDF 批量发布失败:', error)
     toast.error('PDF 批量发布失败')
+    return false
   } finally {
     pdfConfirmLoading.value = false
   }
@@ -327,21 +324,28 @@ const confirmPublishFromPdf = async () => {
 const clearPdfDrafts = () => {
   pdfDrafts.value = []
   pdfTokenUsed.value = null
+  initialTaskData.value = {}
 }
 
-/**
- * 格式化时间戳为本地化日期时间字符串
- * @param value - 时间戳数值或字符串
- * @returns 格式化后的日期时间字符串，无效值返回 '-'
- */
-const formatTimestamp = (value: number | string | null | undefined) => {
+/** 生成 PDF 草稿内容预览文本。 */
+const previewDescription = (value: unknown) => {
   if (!value) return '-'
-  const numeric = Number(value)
-  if (!Number.isFinite(numeric)) return '-'
-  const date = new Date(numeric)
-  if (Number.isNaN(date.getTime())) return '-'
-  return date.toLocaleString('zh-CN', { hour12: false })
+  const text = String(value).replace(/\s+/g, ' ').trim()
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text || '-'
 }
+
+const buildTaskOptions = (taskData: TaskFormSubmitData, spaceId: number) => ({
+  ...taskData,
+  submissionSchema: taskSubmissionSchema.value,
+  space: spaceId,
+  name: taskData.name || 'PDF 批量发布参数',
+  intro: '',
+  description: '',
+  requireRealName: taskData.requireRealName || false,
+  categoryId: taskData.categoryId,
+  accessControlEnabled: taskData.accessControlEnabled || false,
+  accessDomainGroupIds: taskData.accessControlEnabled ? taskData.accessDomainGroupIds : undefined,
+})
 
 onMounted(async () => {
   await errorHandler.withErrorHandling(
