@@ -10,7 +10,6 @@ import type {
   ConversationGroupSummary,
   CreateTaskAIAdviceConversationRequest,
   CreateTaskFromPdfRequestData,
-  CreateTaskFromPdfResponseData,
   PatchTaskParticipantRequestData,
   PatchTaskRequestData,
   PatchTaskSubmissionReviewRequestData,
@@ -58,31 +57,6 @@ export namespace TasksApi {
 
     return NewApiInstance.request<PreviewTaskFromPdfResponseData>({
       url: '/tasks/publish/from-pdf/preview',
-      method: 'POST',
-      data: formData,
-      timeout: PDF_TIMEOUT_MS,
-    })
-  }
-
-  /**
-   * 上传 PDF 并直接创建赛题（跳过预览步骤）
-   * @param data - 包含空间ID、PDF文件、模板参数等的请求数据
-   * @returns 创建成功的赛题对象
-   */
-  export const createFromPdf = (data: CreateTaskFromPdfRequestData) => {
-    const formData = new FormData()
-    formData.append('spaceId', data.spaceId.toString())
-    formData.append('file', data.file)
-    formData.append('templateIndex', (data.templateIndex ?? -1).toString())
-    if (data.categoryId !== undefined && data.categoryId !== null) {
-      formData.append('categoryId', data.categoryId.toString())
-    }
-    if (data.submitterType) {
-      formData.append('submitterType', data.submitterType)
-    }
-
-    return NewApiInstance.request<CreateTaskFromPdfResponseData>({
-      url: '/tasks/publish/from-pdf',
       method: 'POST',
       data: formData,
       timeout: PDF_TIMEOUT_MS,

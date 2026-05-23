@@ -6,7 +6,6 @@ import pathlib
 import re
 import shutil
 import tempfile
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pymupdf4llm
@@ -392,12 +391,12 @@ class TaskPdfDraftService:
         category_id: int | None,
         default_topic_ids: list[int] | None,
     ) -> dict[str, Any]:
-        """Build the final task payload.
+        """Build the final task draft payload.
 
         Only name, intro, description come from the AI result (with optional
-        template fallback).  All other fields are filled by the system with
-        fixed defaults — the AI is not asked for them and they are never read
-        from llm_result.
+        template fallback). Publishing parameters are intentionally not filled
+        here; the PDF flow applies the regular task form values when drafts are
+        confirmed.
         """
         # --- Core fields: AI output, with template as fallback ---
         template_defaults = self._extract_template_defaults(template)
@@ -414,39 +413,15 @@ class TaskPdfDraftService:
         if not description:
             raise BadRequestError("LLM output missing required field: description")
 
-        # --- System-filled fields ---
-        now = datetime.now(UTC)
-        submitter_type = (
-            forced_submitter_type if forced_submitter_type in {"USER", "TEAM"} else "TEAM"
-        )
-
         payload: dict[str, Any] = {
             "name": name,
             "intro": intro,
             "description": description,
-            "submitterType": submitter_type,
-            "resubmittable": True,
-            "editable": True,
-            "defaultDeadline": 365,
-            "teamLockingPolicy": "LOCK_ON_APPROVAL",
-            "topics": default_topic_ids or [],
             "space": space_id,
-            "rank": 3,
-            "requireRealName": True,
-            "minTeamSize": 1,
-            "maxTeamSize": 3,
-            "registrationStartAt": int(now.timestamp() * 1000),
-            "deadline": int((now + timedelta(days=7)).timestamp() * 1000),
-            "participantLimit": None,
         }
 
         if category_id is not None:
             payload["categoryId"] = category_id
-
-        if submitter_type != "TEAM":
-            payload.pop("minTeamSize", None)
-            payload.pop("maxTeamSize", None)
-            payload.pop("teamLockingPolicy", None)
 
         return payload
 

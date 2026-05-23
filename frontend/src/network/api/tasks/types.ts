@@ -60,11 +60,6 @@ export type CreateTaskFromPdfRequestData = {
   maxTasks?: number
 }
 
-/** PDF 直接创建赛题的响应数据 */
-export type CreateTaskFromPdfResponseData = {
-  task: Task
-}
-
 /**
  * PDF 解析预览的响应数据
  * @property drafts - 解析出的赛题草稿列表
@@ -72,14 +67,23 @@ export type CreateTaskFromPdfResponseData = {
  * @property tokenUsed - 本次解析消耗的 token 数量
  */
 export type PreviewTaskFromPdfResponseData = {
-  drafts: PostTaskRequestData[]
+  drafts: PdfTaskDraftData[]
   templateUsed: Record<string, any>
   tokenUsed: number
 }
 
 /** 确认发布 PDF 解析草稿的请求数据 */
 export type ConfirmTaskFromPdfRequestData = {
-  drafts: PostTaskRequestData[]
+  drafts: PdfTaskDraftData[]
+  taskOptions: PostTaskRequestData
+}
+
+export type PdfTaskDraftData = {
+  name: string
+  intro: string
+  description: string
+  space: number
+  categoryId?: number
 }
 
 /**
