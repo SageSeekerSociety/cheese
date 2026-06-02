@@ -1949,6 +1949,10 @@ async def get_tasks(
             raise BadRequestError(f"Invalid approved value: {approved}")
         approved_value = approved_map[upper]
 
+    if approved_value == 2 and sort_by == "publishedAt" and sort_order == "desc":
+        sort_by = "createdAt"
+        sort_order = "asc"
+
     # 权限检查：查询未审批任务需要是空间管理员
     if approved_value == 2:  # NONE = 未审批
         admin_repo = SpaceAdminRelationRepository(session=db)

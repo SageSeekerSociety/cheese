@@ -150,7 +150,7 @@
 <script setup lang="ts">
 import type { Task } from '@/types'
 
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { defineAsyncComponent, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
@@ -184,7 +184,6 @@ const {
   data: tasks,
   refresh,
   loadMore,
-  reset,
   hasMore,
   refreshing,
   loadingMore,
@@ -196,7 +195,7 @@ const {
     space: currentSpaceId.value,
     pageStart: pageStart,
     sort_by: 'createdAt',
-    sort_order: 'desc',
+    sort_order: 'asc',
     approved: 'NONE',
     queryTopics: true,
     querySpace: true,
@@ -234,7 +233,7 @@ const rejectTask = async (taskId: number) => {
     }
     await TasksApi.update(taskId, { approved: 'DISAPPROVED', rejectReason })
     toast.success(t('spaces.detail.auditTasks.operationSuccess'))
-  } catch (error) {
+  } catch {
     if (error instanceof CancelError) {
       return
     }

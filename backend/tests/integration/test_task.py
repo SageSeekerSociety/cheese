@@ -704,6 +704,27 @@ class TestTaskEnumeration:
         created_times = [t["createdAt"] for t in tasks]
         assert created_times == sorted(created_times)
 
+    def test_enumerate_pending_tasks_defaults_to_created_at_asc(
+        self, api_client: TestClient, multi_task_setup: dict
+    ) -> None:
+        creator = multi_task_setup["creator"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        list_resp = api_client.get(
+            "/tasks",
+            params={
+                "space": multi_task_setup["space_id"],
+                "approved": "NONE",
+            },
+            headers=headers,
+        )
+        assert list_resp.status_code == 200
+        tasks = list_resp.json()["data"]["tasks"]
+        assert len(tasks) == 5
+        created_times = [t["createdAt"] for t in tasks]
+        assert created_times == sorted(created_times)
+        assert [t["id"] for t in tasks] == multi_task_setup["task_ids"]
+
     def test_enumerate_tasks_sort_by_deadline_desc(
         self, api_client: TestClient, multi_task_setup: dict
     ) -> None:
