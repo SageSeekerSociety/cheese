@@ -1,6 +1,6 @@
 <template>
   <v-sheet flat rounded="lg">
-    <v-card class="ma-4 mb-4" rounded="lg" variant="outlined">
+    <v-card flat rounded="lg" class="ma-4 mb-4 form-card">
       <v-card-item>
         <template #prepend>
           <v-avatar color="primary-lighten-5" size="44" class="elevation-0">
@@ -52,7 +52,7 @@
       </v-card-actions>
     </v-card>
 
-    <v-card v-if="pdfDrafts.length > 0" class="ma-4 mb-4" rounded="lg" variant="outlined">
+    <v-card v-if="pdfDrafts.length > 0" flat rounded="lg" class="ma-4 mb-4 form-card">
       <v-card-item>
         <template #prepend>
           <v-avatar color="success-lighten-5" size="44" class="elevation-0">
@@ -389,3 +389,17 @@ const loadTemplate = async (templateId: number) => {
   }
 }
 </script>
+
+<style scoped>
+.form-card {
+  border: 1px solid rgba(var(--v-border-color), 0.12);
+  background-color: rgb(var(--v-theme-surface));
+  transition: all 0.2s ease;
+}
+
+.form-card:hover {
+  border-color: rgba(var(--v-theme-primary), 0.15);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(var(--v-theme-primary), 0.05);
+}
+</style>
