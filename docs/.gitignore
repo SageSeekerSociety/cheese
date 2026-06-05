@@ -1,0 +1,9 @@
+# Competition application package: contains real-name forms and IDs — never commit
+京东杯/
+# Living docs in Feishu (see README.md); local copies are sync mirrors
+vision.md
+feedback.md
+# Build artifacts
+scripts/node_modules/
+*.pptx
+.DS_Store
