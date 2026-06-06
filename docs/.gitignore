@@ -1,6 +1,6 @@
-# Competition application package: contains real-name forms and IDs — never commit
+# Application materials live in Feishu Drive only — never commit if re-downloaded
 京东杯/
-# Living docs in Feishu (see README.md); local copies are sync mirrors
+# Canonical in Feishu wiki — fetched working copies must never be committed
 vision.md
 feedback.md
 # Build artifacts

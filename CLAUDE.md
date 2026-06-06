@@ -114,6 +114,6 @@ The root-level `reference/` directory (gitignored) contains original implementat
 
 ## Documentation Map
 
-Engineering docs live in `docs/` (git). Product-direction docs (vision, feedback) are canonical in the **team Feishu wiki** — `docs/vision.md` and `docs/feedback.md` are gitignored local mirrors (links in `docs/README.md`). Real-name application materials live only in a restricted Feishu Drive folder, never in git.
+Engineering docs live in `docs/` (git). Product-direction docs (vision, feedback) are canonical in the **team Feishu wiki** — no local copies are kept (staleness risk) — links in `docs/README.md`, fetch on demand via the lark skills. Real-name application materials live only in a restricted Feishu Drive folder, never in git.
 
 To find or edit Feishu content, use the lark skills (`.claude/skills/lark-*`) and search at need (`lark-cli docs +search`) — do not maintain a static doc inventory here.

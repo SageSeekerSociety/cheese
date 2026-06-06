@@ -8,4 +8,4 @@
 | `talk.md` / `slides.md` | 2026-04-22 大训汇报；pptx 由 `scripts/make-pptx.mjs` 生成 |
 
 约定：产品/方向类文档住飞书（多人评论）；改代码时需要同步改的文档住 repo。
-飞书文档本地同步：`lark-cli --profile cheese markdown +fetch / +patch`（vision.md、feedback.md 的本地副本即镜像，已 gitignore）。
+飞书文档不留本地副本（防陈旧）；需要时 `lark-cli markdown +fetch` 拉临时工作副本，改完 `+patch` 推回，副本勿提交（已 gitignore 兜底）。
