@@ -3,7 +3,4 @@
 # Canonical in Feishu wiki — fetched working copies must never be committed
 vision.md
 feedback.md
-# Build artifacts
-scripts/node_modules/
-*.pptx
 .DS_Store
