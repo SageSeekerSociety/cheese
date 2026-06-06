@@ -44,3 +44,7 @@ e2e/node_modules/
 
 tmp/
 e2e/tmp/
+
+# Misc
+new.md
+.DS_Store
