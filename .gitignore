@@ -48,3 +48,5 @@ e2e/tmp/
 # Misc
 new.md
 .DS_Store
+# Cloned reference repos (like /reference/)
+/awesome-agent-skills/
