@@ -50,3 +50,6 @@ new.md
 .DS_Store
 # Cloned reference repos (like /reference/)
 /awesome-agent-skills/
+
+# Scratch / working dir (never commit; may hold sensitive material)
+tmp/
