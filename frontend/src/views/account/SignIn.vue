@@ -331,6 +331,7 @@ const getProviderIcon = (providerId: string) => {
   const iconMap: Record<string, string> = {
     github: 'mdi-github',
     google: 'mdi-google',
+    ruc: 'mdi-school',
     microsoft: 'mdi-microsoft',
     qq: 'mdi-qqchat',
     wechat: 'mdi-wechat',
