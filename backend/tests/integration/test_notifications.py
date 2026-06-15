@@ -79,13 +79,34 @@ def test_list_newest_first_and_filters(client):
     # Newest first.
     assert [n["title"] for n in body["data"]] == ["第三条", "第二条", "第一条"]
 
-    # Filter by target_handle.
+    # Filter by target_handle: alice sees her own AND broadcasts (第一条 has no
+    # target_handle), but not bob's (第二条).
     r = client.get(
         f"/api/projects/{pid}/notifications", params={"target_handle": "alice"}
     )
     body = r.json()["data"]
-    assert body["total"] == 1
-    assert body["data"][0]["title"] == "第三条"
+    assert body["total"] == 2
+    assert [n["title"] for n in body["data"]] == ["第三条", "第一条"]
+
+
+def test_broadcast_visible_to_everyone(client):
+    # A broadcast (no target_handle) reaches every user's list (spec §8.5).
+    pid = _create_project(client)
+    _post_notif(client, pid, level="strong", kind="change_alert", title="全体注意")
+    _post_notif(
+        client,
+        pid,
+        level="light",
+        kind="change_alert",
+        title="给bob",
+        target_handle="bob",
+    )
+    r = client.get(
+        f"/api/projects/{pid}/notifications", params={"target_handle": "alice"}
+    )
+    titles = [n["title"] for n in r.json()["data"]["data"]]
+    assert "全体注意" in titles  # broadcast reaches alice
+    assert "给bob" not in titles  # bob's private one does not
 
 
 def test_list_unread_only(client):

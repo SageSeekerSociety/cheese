@@ -51,7 +51,12 @@ class NotificationRepository:
     ) -> list[Notification]:
         stmt = select(Notification).where(Notification.project_id == project_id)
         if target_handle is not None:
-            stmt = stmt.where(Notification.target_handle == target_handle)
+            # A user sees notifications addressed to them AND broadcasts
+            # (target_handle IS NULL), which are meant for everyone.
+            stmt = stmt.where(
+                (Notification.target_handle == target_handle)
+                | (Notification.target_handle.is_(None))
+            )
         if unread_only:
             stmt = stmt.where(Notification.read_at.is_(None))
         stmt = stmt.order_by(Notification.created_at.desc())
@@ -75,7 +80,10 @@ class NotificationRepository:
             )
         )
         if target_handle is not None:
-            stmt = stmt.where(Notification.target_handle == target_handle)
+            stmt = stmt.where(
+                (Notification.target_handle == target_handle)
+                | (Notification.target_handle.is_(None))
+            )
         stmt = stmt.order_by(Notification.created_at.desc())
         return list((await self._session.scalars(stmt)).all())
 

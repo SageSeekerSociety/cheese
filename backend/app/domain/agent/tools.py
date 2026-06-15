@@ -161,14 +161,25 @@ def build_cheese_server(
         {"reviewer_handle": str, "routing_reason": str},
     )
     async def request_accept(args: dict[str, Any]) -> dict[str, Any]:
+        reviewer = args["reviewer_handle"]
         async with session_factory() as s:
             await AcceptCardRepository(s).add(
                 topic_id=topic_id,
-                reviewer_handle=args["reviewer_handle"],
+                reviewer_handle=reviewer,
                 routing_reason=args.get("routing_reason", ""),
             )
+            # Also notify the reviewer so it lands in their 收件箱 (等你处理的事).
+            await NotificationRepository(s).add(
+                project_id=project_id,
+                level=NotifLevel.strong,
+                kind=NotifKind.accept_request,
+                title="等你验收",
+                body=args.get("routing_reason", ""),
+                target_handle=reviewer,
+                topic_id=topic_id,
+            )
             await s.commit()
-            return _text(f"已把验收卡递给 {args['reviewer_handle']}。")
+            return _text(f"已把验收卡递给 {reviewer}。")
 
     @tool(
         "return_conclusion",
