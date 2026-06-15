@@ -1,0 +1,34 @@
+# ---- OS ----
+.DS_Store
+
+# ---- Secrets / env ----
+.env
+.env.local
+*.env.local
+
+# ---- Logs & scratch (project-local, not versioned) ----
+*.log
+tmp_*.log
+tmp_review/
+tmp_backend.log
+tmp_frontend.log
+
+# ---- Tooling / local agent config ----
+.claude/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+
+# ---- Agent-backed project repos (runtime git workspaces) ----
+.workspaces/
+
+# ---- Node ----
+node_modules/
+dist/
+dist-ssr/

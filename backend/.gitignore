@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+
+# Environment / secrets
+.env
+
+# Agent workspaces (git-backed project repos)
+.workspaces/
+
+# Test / tool caches
+.pytest_cache/
+.ruff_cache/
+.pyright/

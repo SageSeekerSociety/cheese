@@ -1,0 +1,85 @@
+"""Notification data access."""
+
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.notification.models import Notification, NotifKind, NotifLevel
+
+
+class NotificationRepository:
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def add(
+        self,
+        *,
+        project_id: uuid.UUID,
+        level: NotifLevel,
+        kind: NotifKind,
+        title: str,
+        body: str = "",
+        target_handle: str | None = None,
+        topic_id: uuid.UUID | None = None,
+        payload: dict | None = None,
+    ) -> Notification:
+        notification = Notification(
+            project_id=project_id,
+            level=level,
+            kind=kind,
+            title=title,
+            body=body,
+            target_handle=target_handle,
+            topic_id=topic_id,
+            payload=payload if payload is not None else {},
+        )
+        self._session.add(notification)
+        await self._session.flush()
+        await self._session.refresh(notification)
+        return notification
+
+    async def get(self, notification_id: uuid.UUID) -> Notification | None:
+        return await self._session.get(Notification, notification_id)
+
+    async def list_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        target_handle: str | None = None,
+        unread_only: bool = False,
+    ) -> list[Notification]:
+        stmt = select(Notification).where(Notification.project_id == project_id)
+        if target_handle is not None:
+            stmt = stmt.where(Notification.target_handle == target_handle)
+        if unread_only:
+            stmt = stmt.where(Notification.read_at.is_(None))
+        stmt = stmt.order_by(Notification.created_at.desc())
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_inbox(
+        self,
+        project_id: uuid.UUID,
+        *,
+        target_handle: str | None = None,
+    ) -> list[Notification]:
+        """等你处理的事 (spec G2): unread decision/accept requests, newest-first."""
+        stmt = (
+            select(Notification)
+            .where(Notification.project_id == project_id)
+            .where(Notification.read_at.is_(None))
+            .where(
+                Notification.kind.in_(
+                    [NotifKind.decision_request, NotifKind.accept_request]
+                )
+            )
+        )
+        if target_handle is not None:
+            stmt = stmt.where(Notification.target_handle == target_handle)
+        stmt = stmt.order_by(Notification.created_at.desc())
+        return list((await self._session.scalars(stmt)).all())
+
+    async def save(self, notification: Notification) -> Notification:
+        await self._session.flush()
+        await self._session.refresh(notification)
+        return notification

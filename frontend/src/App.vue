@@ -1,0 +1,474 @@
+<script setup lang="ts">
+import { computed, onMounted, provide, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { NOTIF_KIND, label } from './labels'
+import {
+  getNotifications,
+  ingestActivity,
+  listProjects,
+  markNotificationRead,
+  sendNotificationFeedback,
+} from './api'
+import type { Notification, Project } from './types'
+import CheeseAvatar from './components/CheeseAvatar.vue'
+
+const ME = 'user-1'
+
+const route = useRoute()
+const router = useRouter()
+
+const projects = ref<Project[]>([])
+
+// The project currently in context, taken from the route param when present.
+const currentProjectId = computed<string | null>(() => {
+  const p = route.params.projectId
+  return typeof p === 'string' && p ? p : null
+})
+
+onMounted(async () => {
+  try {
+    const payload = await listProjects()
+    projects.value = payload.data
+  } catch {
+    // Non-fatal; the picker just stays empty.
+  }
+})
+
+function onPickProject(id: string | null) {
+  if (!id) return
+  // Stay on the same kind of page (工作台 vs 总览) when switching projects.
+  const name = route.name === 'overview' ? 'overview' : 'workspace-project'
+  router.push({ name, params: { projectId: id } })
+}
+
+// Which top-level nav tab is active.
+const activeTab = computed<string>(() => {
+  if (route.name === 'overview') return 'overview'
+  if (route.name === 'calendar') return 'calendar'
+  if (route.name === 'spaces' || route.name === 'space-board') return 'spaces'
+  return 'workspace'
+})
+
+function goWorkspace() {
+  if (currentProjectId.value) {
+    router.push({
+      name: 'workspace-project',
+      params: { projectId: currentProjectId.value },
+    })
+  } else {
+    router.push({ name: 'workspace' })
+  }
+}
+function goOverview() {
+  if (currentProjectId.value) {
+    router.push({ name: 'overview', params: { projectId: currentProjectId.value } })
+  }
+}
+function goSpaces() {
+  router.push({ name: 'spaces' })
+}
+function goCalendar() {
+  if (currentProjectId.value) {
+    router.push({ name: 'calendar', params: { projectId: currentProjectId.value } })
+  }
+}
+
+// ---- 通知中心 (G2/G3): app-bar bell + menu ----
+const notifMenu = ref(false)
+const notifications = ref<Notification[]>([])
+const notifLoading = ref(false)
+const unreadCount = computed<number>(
+  () => notifications.value.filter((n) => n.read_at === null).length,
+)
+
+async function loadNotifications() {
+  if (!currentProjectId.value) {
+    notifications.value = []
+    return
+  }
+  notifLoading.value = true
+  try {
+    const payload = await getNotifications(currentProjectId.value, ME)
+    notifications.value = payload.data
+  } catch {
+    // Non-fatal; the bell just shows nothing.
+  } finally {
+    notifLoading.value = false
+  }
+}
+
+async function onMarkNotifRead(n: Notification) {
+  try {
+    const updated = await markNotificationRead(n.id)
+    n.read_at = updated.read_at
+  } catch {
+    // ignore
+  }
+}
+
+async function onNotifFeedback(n: Notification, feedback: 'up' | 'down') {
+  try {
+    const updated = await sendNotificationFeedback(n.id, feedback)
+    n.feedback = updated.feedback
+  } catch {
+    // ignore
+  }
+}
+
+// Refresh notifications when the project changes or the menu opens.
+watch(currentProjectId, () => loadNotifications())
+watch(notifMenu, (open) => {
+  if (open) loadNotifications()
+})
+
+// ---- 记一笔 / 导入 (E1/E3): app-bar dialog ----
+const noteDialog = ref(false)
+const noteText = ref('')
+const noteSubmitting = ref(false)
+const toast = ref<string | null>(null)
+const toastVisible = computed<boolean>({
+  get: () => toast.value !== null,
+  set: (v) => {
+    if (!v) toast.value = null
+  },
+})
+
+async function submitNote() {
+  const pid = currentProjectId.value
+  const text = noteText.value.trim()
+  if (!pid || !text) return
+  noteSubmitting.value = true
+  try {
+    await ingestActivity(pid, text, ME)
+    noteDialog.value = false
+    noteText.value = ''
+    toast.value = '芝士已整理成活动话题'
+    // Nudge the workspace to refresh its topic tree so the new [活动] topic shows.
+    activityBump.value += 1
+  } catch (e) {
+    toast.value = e instanceof Error ? e.message : '记一笔失败'
+  } finally {
+    noteSubmitting.value = false
+  }
+}
+
+// Bumped after 记一笔 so the workspace can pick up the new topic. Provided to
+// WorkspaceView (which injects + watches it) so it re-fetches topics without a
+// full remount (chat/doc state stays intact).
+const activityBump = ref(0)
+provide('activityBump', activityBump)
+</script>
+
+<template>
+  <v-app>
+    <v-app-bar flat density="compact" color="surface" border="b" class="top-nav">
+      <!-- Brand — the brand mark keeps amber on the word; mark is ink. -->
+      <div class="d-flex align-center ga-2 ps-4 pe-2">
+        <CheeseAvatar :size="26" />
+        <span class="brand-word">知是</span>
+        <span class="brand-tag d-none d-sm-inline">CheeseX</span>
+      </div>
+
+      <!-- Nav tabs: active = --ink + 2px amber underline; inactive = --muted -->
+      <v-tabs
+        :model-value="activeTab"
+        color="primary"
+        density="compact"
+        class="ms-5 nav-tabs"
+        slider-color="primary"
+      >
+        <v-tab value="workspace" @click="goWorkspace">工作台</v-tab>
+        <v-tab
+          value="overview"
+          :disabled="!currentProjectId"
+          @click="goOverview"
+        >
+          项目总览
+        </v-tab>
+        <v-tab
+          value="calendar"
+          :disabled="!currentProjectId"
+          @click="goCalendar"
+        >
+          日历
+        </v-tab>
+        <v-tab value="spaces" @click="goSpaces">机构看板</v-tab>
+      </v-tabs>
+
+      <v-spacer />
+
+      <!-- Project picker -->
+      <v-select
+        :model-value="currentProjectId"
+        :items="projects"
+        item-title="name"
+        item-value="id"
+        placeholder="选择项目…"
+        density="compact"
+        variant="outlined"
+        hide-details
+        prepend-inner-icon="mdi-folder-outline"
+        class="project-picker me-3"
+        style="max-width: 220px"
+        @update:model-value="onPickProject"
+      />
+
+      <!-- 记一笔 / 导入 (E1/E3) -->
+      <v-btn
+        variant="text"
+        size="small"
+        prepend-icon="mdi-pencil-plus"
+        class="me-1"
+        :disabled="!currentProjectId"
+        @click="noteDialog = true"
+      >
+        记一笔
+      </v-btn>
+
+      <!-- 通知中心 (G2/G3): bell + unread badge -->
+      <v-menu
+        v-model="notifMenu"
+        :close-on-content-click="false"
+        location="bottom end"
+        offset="8"
+      >
+        <template #activator="{ props: menuProps }">
+          <v-btn
+            icon
+            variant="text"
+            size="small"
+            class="me-2"
+            :disabled="!currentProjectId"
+            v-bind="menuProps"
+          >
+            <v-badge
+              :model-value="unreadCount > 0"
+              :content="unreadCount"
+              color="error"
+            >
+              <v-icon>mdi-bell-outline</v-icon>
+            </v-badge>
+          </v-btn>
+        </template>
+
+        <v-card width="380" max-height="520" class="d-flex flex-column">
+          <v-toolbar density="comfortable" flat color="surface" border="b">
+            <v-toolbar-title class="t-title">
+              <v-icon size="17" class="me-1 c-faint">mdi-bell-outline</v-icon>
+              通知
+            </v-toolbar-title>
+            <span v-if="unreadCount" class="chip-neutral me-3">
+              {{ unreadCount }} 未读
+            </span>
+          </v-toolbar>
+
+          <div class="overflow-y-auto">
+            <div
+              v-if="notifLoading"
+              class="d-flex justify-center py-6"
+            >
+              <v-progress-circular indeterminate color="primary" size="24" />
+            </div>
+            <div
+              v-else-if="notifications.length === 0"
+              class="text-center text-medium-emphasis py-8"
+            >
+              暂无通知
+            </div>
+            <div v-else class="pa-2 d-flex flex-column ga-2">
+              <div
+                v-for="n in notifications"
+                :key="n.id"
+                class="notif-item"
+                :class="{ 'notif-read': n.read_at !== null }"
+              >
+                <div class="d-flex align-center ga-2 mb-1">
+                  <span class="chip-neutral">{{ label(NOTIF_KIND, n.kind) }}</span>
+                  <span class="t-title">{{ n.title }}</span>
+                </div>
+                <div v-if="n.body" class="t-body c-muted mb-2">
+                  {{ n.body }}
+                </div>
+                <div class="d-flex align-center ga-1">
+                  <v-btn
+                    :icon="n.feedback === 'up' ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
+                    size="x-small"
+                    variant="text"
+                    :color="n.feedback === 'up' ? 'primary' : undefined"
+                    @click="onNotifFeedback(n, 'up')"
+                  />
+                  <v-btn
+                    :icon="n.feedback === 'down' ? 'mdi-thumb-down' : 'mdi-thumb-down-outline'"
+                    size="x-small"
+                    variant="text"
+                    :color="n.feedback === 'down' ? 'primary' : undefined"
+                    @click="onNotifFeedback(n, 'down')"
+                  />
+                  <v-spacer />
+                  <v-btn
+                    v-if="n.read_at === null"
+                    size="x-small"
+                    variant="text"
+                    @click="onMarkNotifRead(n)"
+                  >
+                    标记已读
+                  </v-btn>
+                  <span v-else class="d-inline-flex align-center ga-1 c-faint" style="font-size: 12px">
+                    <span class="status-dot status-dot--ok" />已读
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </v-card>
+      </v-menu>
+
+      <!-- User chip — neutral (--fill), not amber. -->
+      <div class="user-chip me-4">
+        <div class="user-chip__avatar">U</div>
+        <span class="user-chip__name">user-1</span>
+      </div>
+    </v-app-bar>
+
+    <!-- 记一笔 / 导入 (E1/E3): 芝士 digests raw input into an [活动] topic. -->
+    <v-dialog v-model="noteDialog" max-width="560">
+      <v-card rounded="lg">
+        <v-card-title class="d-flex align-center ga-2 t-title pt-4">
+          <v-icon size="19" class="c-muted">mdi-pencil-plus</v-icon>
+          记一笔
+        </v-card-title>
+        <v-card-text>
+          <v-textarea
+            v-model="noteText"
+            variant="outlined"
+            rows="6"
+            auto-grow
+            hide-details
+            placeholder="说一句今天做了什么，或粘贴会议纪要/聊天记录"
+            :disabled="noteSubmitting"
+          />
+          <div class="t-meta mt-2" style="line-height: 1.5">
+            芝士会把它整理成一个结构化的活动话题（可能需要几秒）。
+          </div>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn
+            variant="text"
+            class="c-muted"
+            :disabled="noteSubmitting"
+            @click="noteDialog = false"
+          >
+            取消
+          </v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="noteSubmitting"
+            :disabled="!noteText.trim()"
+            @click="submitNote"
+          >
+            交给芝士
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-snackbar v-model="toastVisible" timeout="3500" location="bottom">
+      {{ toast }}
+    </v-snackbar>
+
+    <v-main class="app-main">
+      <router-view />
+    </v-main>
+  </v-app>
+</template>
+
+<style scoped>
+/* Brand mark — the one place the amber word is allowed. */
+.brand-word {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--accent);
+}
+.brand-tag {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--faint);
+}
+
+/* Top nav — neutral surface, hairline bottom border. */
+.top-nav {
+  border-bottom: 1px solid var(--line);
+}
+/* Tabs: inactive --muted, active --ink; the 2px amber slider is the only accent.
+   Disable the default ripple-tint so amber doesn't bleed onto the label bg. */
+.nav-tabs :deep(.v-tab) {
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  min-width: 0;
+}
+.nav-tabs :deep(.v-tab.v-tab--selected) {
+  color: var(--ink);
+  font-weight: 600;
+}
+.nav-tabs :deep(.v-tab .v-btn__overlay) {
+  opacity: 0 !important;
+}
+
+/* User chip — neutral. */
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 10px 0 6px;
+  background: var(--fill);
+  border-radius: 8px;
+}
+.user-chip__avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--fill-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.user-chip__name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* Notification item — flat inset, no card chrome. */
+.notif-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--fill);
+}
+.notif-read {
+  opacity: 0.55;
+}
+
+/* v-main fills the viewport below the app bar; pages own their own scroll. */
+.app-main {
+  height: 100vh;
+}
+:deep(.v-main__wrap),
+:deep(.v-main) {
+  min-height: 0;
+}
+.project-picker :deep(.v-field) {
+  font-size: 0.85rem;
+}
+</style>

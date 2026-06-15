@@ -1,0 +1,160 @@
+"""End-to-end Phase 0 flow over HTTP + WebSocket (with the stub agent)."""
+
+import asyncio
+
+from app.domain.memory.models import MemoryScope
+from app.domain.memory.store import DbMemoryStore
+
+
+def _create_project_and_topic(client) -> tuple[str, str]:
+    pr = client.post("/api/projects", json={"name": "Demo"})
+    assert pr.status_code == 200
+    project_id = pr.json()["data"]["id"]
+
+    tr = client.post(
+        "/api/topics", json={"project_id": project_id, "title": "第一个话题"}
+    )
+    assert tr.status_code == 200
+    topic_id = tr.json()["data"]["id"]
+    return project_id, topic_id
+
+
+def test_health(client):
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["data"]["status"] == "healthy"
+
+
+def test_create_and_list_project(client):
+    client.post("/api/projects", json={"name": "P1"})
+    r = client.get("/api/projects")
+    body = r.json()
+    assert body["code"] == 200
+    assert body["data"]["total"] == 1
+    assert body["data"]["data"][0]["name"] == "P1"
+
+
+def test_create_topic_requires_existing_project(client):
+    r = client.post(
+        "/api/topics",
+        json={
+            "project_id": "00000000-0000-0000-0000-000000000000",
+            "title": "x",
+        },
+    )
+    assert r.status_code == 404
+
+
+def test_blocks_empty_then_populated_after_chat(client):
+    _, topic_id = _create_project_and_topic(client)
+
+    r = client.get(f"/api/topics/{topic_id}/blocks")
+    assert r.json()["data"]["total"] == 0
+
+    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "你好芝士",
+                "author": "user-1",
+                "summon": True,
+            }
+        )
+        frames = _drain_until_done(ws)
+
+    types = [f["type"] for f in frames]
+    assert types == ["user_block", "delta", "delta", "assistant_block", "done"]
+
+    deltas = "".join(f["text"] for f in frames if f["type"] == "delta")
+    assert deltas == "Hello world"
+
+    assistant = next(f for f in frames if f["type"] == "assistant_block")["block"]
+    assert assistant["content"] == "Hello world"
+    assert assistant["author_type"] == "ai"
+
+    user = next(f for f in frames if f["type"] == "user_block")["block"]
+    assert user["content"] == "你好芝士"
+    assert user["author_type"] == "human"
+
+    # Persisted: two blocks now exist in timeline order.
+    r = client.get(f"/api/topics/{topic_id}/blocks")
+    blocks = r.json()["data"]["data"]
+    assert [b["author_type"] for b in blocks] == ["human", "ai"]
+
+
+def test_session_id_persisted_for_resume(client):
+    _, topic_id = _create_project_and_topic(client)
+    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+        ws.send_json(
+            {"type": "message", "content": "hi", "author": "user-1", "summon": True}
+        )
+        _drain_until_done(ws)
+
+    # Second turn should resume with the captured session id.
+    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+        ws.send_json(
+            {"type": "message", "content": "again", "author": "user-1", "summon": True}
+        )
+        _drain_until_done(ws)
+
+
+def test_memory_injected_into_system_prompt(client, stub_agent):
+    project_id, topic_id = _create_project_and_topic(client)
+
+    # Seed a project memory fact.
+    async def _seed() -> None:
+        async with client.test_factory() as session:
+            await DbMemoryStore(session).remember(
+                MemoryScope.project, project_id, "项目用 FastAPI 写后端"
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "技术栈是什么",
+                "author": "u",
+                "summon": True,
+            }
+        )
+        _drain_until_done(ws)
+
+    assert stub_agent.last_system_prompt is not None
+    assert "项目用 FastAPI 写后端" in stub_agent.last_system_prompt
+
+
+def test_empty_content_rejected(client):
+    _, topic_id = _create_project_and_topic(client)
+    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+        ws.send_json({"type": "message", "content": "   ", "author": "u"})
+        frame = ws.receive_json()
+        assert frame["type"] == "error"
+
+
+def test_message_without_summon_does_not_invoke_cheese(client):
+    """Default human-to-human: posting without @芝士 stays quiet (spec C3)."""
+    _, topic_id = _create_project_and_topic(client)
+    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+        ws.send_json(
+            {"type": "message", "content": "队友我们今晚开会", "author": "user-1"}
+        )
+        frames = _drain_until_done(ws)
+
+    types = [f["type"] for f in frames]
+    assert types == ["user_block", "done"]  # no delta / assistant_block
+
+    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    assert [b["author_type"] for b in blocks] == ["human"]  # only the human msg
+
+
+def _drain_until_done(ws) -> list[dict]:
+    frames: list[dict] = []
+    while True:
+        frame = ws.receive_json()
+        frames.append(frame)
+        if frame["type"] in ("done", "error"):
+            break
+    return frames
