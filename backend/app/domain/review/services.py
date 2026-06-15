@@ -46,7 +46,15 @@ class AcceptService:
         reviewer_handle: str,
         routing_reason: str = "",
     ) -> AcceptCard:
-        await self._topic_or_404(topic_id)
+        topic = await self._topic_or_404(topic_id)
+        # 采纳是一次性交付 (spec §6.3): a frozen topic can't be re-submitted.
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("话题已归档，不能再递验收卡")
+        # One reviewer at a time, not a broadcast (spec §4.4): if a card is
+        # already pending, re-route it (改验收人) instead of stacking a new one.
+        existing = await self._repo.list_for_topic(topic_id)
+        if any(c.status == AcceptStatus.pending for c in existing):
+            raise ValidationError("已有待处理的验收卡，请改验收人而不是再递一张")
         return await self._repo.add(
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
@@ -73,9 +81,13 @@ class AcceptService:
             tmpl = await templates.get(task.template_id)
             if tmpl is not None:
                 conditions.extend(tmpl.conditions or [])
+        # A condition applies only when its required_topic is non-empty AND
+        # matches this topic. An empty required_topic must NOT match every topic
+        # (that would force mentor review on the whole project).
         needs_mentor = any(
             c.get("reviewer_role") == "mentor"
-            and (c.get("required_topic") or "") in topic.title
+            and (c.get("required_topic") or "").strip()
+            and c["required_topic"].strip() in topic.title
             for c in conditions
         )
         if not needs_mentor:
@@ -108,6 +120,9 @@ class AcceptService:
             raise ValidationError("验收卡已处理，不能重复验收")
 
         topic = await self._topic_or_404(card.topic_id)
+        # 采纳一次性 (spec §6.3): can't re-accept an already-archived topic.
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("话题已归档，不能重复采纳")
         project = await self._projects.get(topic.project_id)
         # Hard rule (spec §4.4): in collaborative mode AI cannot accept its
         # own work — a human must. Autonomous mode allows it.
@@ -159,12 +174,25 @@ class AcceptService:
         if card.status != AcceptStatus.accepted:
             raise ValidationError("只有已验收的卡才能撤销")
 
+        # Only the person who accepted it, or the project owner/lead, may revoke
+        # — not any arbitrary handle.
+        topic = await self._topic_or_404(card.topic_id)
+        project = await self._projects.get(topic.project_id)
+        allowed = {card.decided_by}
+        if project is not None and project.owner_handle:
+            allowed.add(project.owner_handle)
+        members = await MemberRepository(self._session).list_for_project(
+            topic.project_id
+        )
+        allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
+        if decided_by not in allowed:
+            raise ValidationError("只有原采纳人或项目组长能撤销采纳")
+
         card.status = AcceptStatus.revoked
         card.decided_by = decided_by
         card.decided_at = datetime.now(UTC)
 
         # Un-archive the topic: back to active, clear accept/archive markers.
-        topic = await self._topic_or_404(card.topic_id)
         topic.status = TopicStatus.active
         topic.accepted_by = None
         topic.accepted_at = None

@@ -46,7 +46,10 @@ def test_create_card_404_for_missing_topic(client):
 def test_list_cards_newest_first(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    _make_card(client, tid, "alice")
+    first = _make_card(client, tid, "alice")
+    # One pending card per topic (not a broadcast): reject the first before a
+    # second can be filed.
+    client.post(f"/api/accept-cards/{first}/reject", json={"decided_by": "alice"})
     second = _make_card(client, tid, "bob")
 
     r = client.get(f"/api/topics/{tid}/accept-card")
@@ -171,6 +174,47 @@ def test_revoke_non_accepted_card_422(client):
     # Pending card cannot be revoked.
     r = client.post(f"/api/accept-cards/{cid}/revoke", json={"decided_by": "alice"})
     assert r.status_code == 422
+
+
+def test_only_one_pending_card_per_topic(client):
+    # 不是广播 (spec §4.4): a second pending card on the same topic is rejected.
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    _make_card(client, tid, "alice")
+    r = client.post(
+        f"/api/topics/{tid}/accept-card",
+        json={"reviewer_handle": "bob", "routing_reason": "x"},
+    )
+    assert r.status_code == 422
+
+
+def test_no_new_card_on_archived_topic(client):
+    # 采纳一次性 (spec §6.3): after accept the topic is frozen — no new card.
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/topics/{tid}/accept-card",
+        json={"reviewer_handle": "bob", "routing_reason": "x"},
+    )
+    assert r.status_code == 422
+
+
+def test_revoke_requires_authority(client):
+    # Only the accepter (or owner/lead) can revoke — not any handle.
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+
+    r = client.post(f"/api/accept-cards/{cid}/revoke", json={"decided_by": "stranger"})
+    assert r.status_code == 422
+    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+
+    r = client.post(f"/api/accept-cards/{cid}/revoke", json={"decided_by": "alice"})
+    assert r.status_code == 200
+    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_revoke_404_for_missing_card(client):

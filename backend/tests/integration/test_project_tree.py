@@ -94,6 +94,31 @@ def test_upgrade_block_to_topic(client):
     assert r2.json()["data"]["id"] == new_topic["id"]
 
 
+def test_archived_topic_is_frozen(client):
+    # 归档后工作面冻结 (spec §6.3): no split, no doc edit on an archived topic.
+    p = _project(client)
+    topic = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "交付物"}
+    ).json()["data"]
+    card = client.post(
+        f"/api/topics/{topic['id']}/accept-card",
+        json={"reviewer_handle": "alice"},
+    ).json()["data"]
+    client.post(f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    got = client.get(f"/api/topics/{topic['id']}").json()["data"]
+    assert got["status"] == "archived"
+
+    # Splitting a frozen topic is rejected.
+    r = client.post(f"/api/topics/{topic['id']}/split", json={"title": "续作"})
+    assert r.status_code == 422
+    # Editing the frozen topic's doc is rejected.
+    r = client.put(
+        f"/api/topics/{topic['id']}/doc",
+        json={"content": "改一下", "author": "alice"},
+    )
+    assert r.status_code == 422
+
+
 def test_split_and_return_conclusion(client):
     p = _project(client)
     topic = client.post(

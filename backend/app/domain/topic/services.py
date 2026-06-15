@@ -13,7 +13,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import Topic, TopicKind
+from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 
 CHEESE_AUTHOR = "cheese"
@@ -153,6 +153,10 @@ class TopicService:
     ) -> Topic:
         """从上往下拆解 (eval A2): split a todo into a sub-topic under a topic."""
         parent = await self.get_or_404(parent_topic_id)
+        # 归档后工作面冻结 (spec §6.3): no new sub-topics under a frozen topic —
+        # follow-up work starts a new topic from the conclusion (升级), not here.
+        if parent.status == TopicStatus.archived:
+            raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
         new_topic = await self._repo.add(
             project_id=parent.project_id,
             title=title,
@@ -175,6 +179,9 @@ class TopicService:
         '编辑了文档' event into the conversation. The agent reads the latest doc
         on its next turn, so the edit acts as an instruction."""
         topic = await self.get_or_404(topic_id)
+        # 归档后文档定格 (spec §6.3): a frozen topic's doc is read-only.
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("话题已归档，文档已定格，不能再编辑")
         docs = await self._blocks.list_docs_for_topic(topic_id)
         if docs:
             doc = await self._blocks.update_content(docs[0], content)
