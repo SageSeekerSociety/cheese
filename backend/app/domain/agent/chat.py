@@ -192,6 +192,24 @@ class ChatService:
             )
             user_payload = _block_payload(BlockOut.model_validate(user_block))
 
+            # Speaker-labelled prompt covering every human message since 芝士's
+            # last reply — so messages posted without @芝士 are still seen on the
+            # next summon (spec §7.1 所有消息 AI 都会收到), each tagged with who
+            # said it so 芝士 can tell people apart in a group topic (§8.4).
+            history = await blocks.list_for_topic(topic_id)
+            last_ai = -1
+            for i, b in enumerate(history):
+                if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
+                    last_ai = i
+            pending = [
+                b
+                for b in history[last_ai + 1 :]
+                if b.kind == BlockKind.message and b.author_type == AuthorType.human
+            ]
+            prompt_text = (
+                "\n".join(f"[{b.author}]: {b.content}" for b in pending) or content
+            )
+
             is_private = topic.is_private
             private_owner = topic.private_owner
             if is_private and private_owner:
@@ -247,7 +265,7 @@ class ChatService:
         tool_events: list[tuple[str, dict]] = []
         usage = None
         async for event in self._agent.stream_reply(
-            prompt=content,
+            prompt=prompt_text,
             system_prompt=system_prompt,
             cwd=cwd,
             resume_session_id=resume_session_id,

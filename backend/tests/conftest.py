@@ -36,6 +36,7 @@ class StubAgent(AgentService):
         super().__init__(model="stub")
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
+        self.last_prompt: str | None = None
 
     async def stream_reply(
         self,
@@ -49,6 +50,7 @@ class StubAgent(AgentService):
     ):
         self.last_system_prompt = system_prompt
         self.last_resume_session_id = resume_session_id
+        self.last_prompt = prompt
         yield AgentDelta(text="Hello ")
         yield AgentDelta(text="world")
         yield AgentResult(

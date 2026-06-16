@@ -150,6 +150,43 @@ def test_message_without_summon_does_not_invoke_cheese(client):
     assert [b["author_type"] for b in blocks] == ["human"]  # only the human msg
 
 
+def test_unsummoned_messages_reach_next_summon_with_labels(stub_agent, client):
+    # spec §7.1: messages posted without @芝士 are still seen on the next summon,
+    # each tagged with who said it (§8.4 multi-person disambiguation).
+    _, topic_id = _create_project_and_topic(client)
+    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "先随便说一句",
+                "author": "alice",
+                "summon": False,
+            }
+        )
+        quiet = _drain_until_done(ws)
+        assert [f["type"] for f in quiet] == ["user_block", "done"]  # 芝士 quiet
+
+        ws.send_json(
+            {"type": "message", "content": "再补一句", "author": "bob", "summon": False}
+        )
+        _drain_until_done(ws)
+
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "芝士看看",
+                "author": "alice",
+                "summon": True,
+            }
+        )
+        _drain_until_done(ws)
+
+    prompt = stub_agent.last_prompt or ""
+    assert "[alice]: 先随便说一句" in prompt
+    assert "[bob]: 再补一句" in prompt
+    assert "[alice]: 芝士看看" in prompt
+
+
 def _drain_until_done(ws) -> list[dict]:
     frames: list[dict] = []
     while True:
