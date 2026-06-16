@@ -1,6 +1,12 @@
 """Integration tests for the milestone + calendar domain (spec §7.2)."""
 
+from datetime import UTC, datetime, timedelta
+
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat()
 
 
 def _create_project(client, name: str = "Demo") -> str:
@@ -13,6 +19,31 @@ def _add_milestone(client, project_id: str, **body) -> dict:
     r = client.post(f"/api/projects/{project_id}/milestones", json=body)
     assert r.status_code == 200, r.text
     return r.json()["data"]
+
+
+def test_overdue_milestone_becomes_missed_and_leaves_calendar(client):
+    # spec §7.2: an overdue milestone is 'missed', not 'upcoming/临近'.
+    pid = _create_project(client)
+    now = datetime.now(UTC)
+    past = _add_milestone(
+        client, pid, title="已逾期", due_date=_iso(now - timedelta(days=3))
+    )
+    future = _add_milestone(
+        client, pid, title="未来", due_date=_iso(now + timedelta(days=5))
+    )
+
+    # Calendar (countdown) only shows the genuinely future one.
+    cal = client.get(f"/api/projects/{pid}/calendar").json()["data"]["data"]
+    titles = [m["title"] for m in cal]
+    assert titles == ["未来"]
+    assert cal[0]["id"] == future["id"]
+
+    # The full list shows the overdue one flipped to missed.
+    allm = client.get(f"/api/projects/{pid}/milestones").json()["data"]["data"]
+    by_title = {m["title"]: m for m in allm}
+    assert by_title["已逾期"]["status"] == "missed"
+    assert by_title["未来"]["status"] == "upcoming"
+    assert past["status"] == "upcoming"  # was upcoming at creation
 
 
 def test_create_milestone(client):

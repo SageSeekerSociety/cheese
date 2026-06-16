@@ -1,8 +1,9 @@
 """Milestone data access."""
 
 import uuid
+from datetime import UTC, datetime
 
-from sqlalchemy import func, nulls_last, select
+from sqlalchemy import func, nulls_last, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.milestone.models import Milestone, MilestoneStatus
@@ -11,6 +12,24 @@ from app.domain.milestone.models import Milestone, MilestoneStatus
 class MilestoneRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
+
+    async def mark_overdue(self, project_id: uuid.UUID) -> int:
+        """Lazily flip past-due upcoming milestones to missed (spec §7.2): an
+        overdue milestone is 'missed', not 'upcoming'. Called on read so the
+        calendar / countdown never treats a past date as 临近."""
+        stmt = (
+            update(Milestone)
+            .where(
+                Milestone.project_id == project_id,
+                Milestone.status == MilestoneStatus.upcoming,
+                Milestone.due_date.is_not(None),
+                Milestone.due_date < datetime.now(UTC),
+            )
+            .values(status=MilestoneStatus.missed)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self._session.execute(stmt)
+        return result.rowcount or 0
 
     async def add(
         self,
@@ -40,6 +59,7 @@ class MilestoneRepository:
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[Milestone]:
         """All milestones, ordered by due_date ascending with nulls last."""
+        await self.mark_overdue(project_id)
         stmt = (
             select(Milestone)
             .where(Milestone.project_id == project_id)
@@ -48,7 +68,11 @@ class MilestoneRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def list_calendar(self, project_id: uuid.UUID) -> list[Milestone]:
-        """Upcoming milestones that have a due_date, ascending (countdown view)."""
+        """Upcoming milestones that have a due_date, ascending (countdown view).
+
+        Overdue ones are flipped to missed first, so this only returns genuinely
+        future milestones (next_milestone / 临近 never shows a past date)."""
+        await self.mark_overdue(project_id)
         stmt = (
             select(Milestone)
             .where(
