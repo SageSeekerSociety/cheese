@@ -126,13 +126,15 @@ def build_cheese_server(
         "notify",
         "给某个人发一条通知。level=silent/light/strong（按打扰程度），"
         "kind=change_alert(变更提醒)/decision_request(决策请求)。"
-        "决策请求要让人能拍板。",
+        "决策请求要让人能拍板：用 options 传可选项（用 | 分隔，"
+        "如『按时间切分|随机切分』），对方点一下就能定。",
         {
             "title": str,
             "body": str,
             "level": str,
             "kind": str,
             "target_handle": str,
+            "options": str,
         },
     )
     async def notify(args: dict[str, Any]) -> dict[str, Any]:
@@ -148,6 +150,14 @@ def build_cheese_server(
                 return _text(
                     f"已达该话题的 {level.value} 通知限流，本次未发送（避免打扰）。"
                 )
+            # Decision options (拍板候选): "A|B|C" → payload so the UI can render
+            # one-click choices.
+            raw_opts = (args.get("options") or "").strip()
+            payload = None
+            if raw_opts:
+                opts = [o.strip() for o in raw_opts.split("|") if o.strip()]
+                if opts:
+                    payload = {"options": opts}
             await repo.add(
                 project_id=project_id,
                 level=level,
@@ -156,6 +166,7 @@ def build_cheese_server(
                 body=args.get("body", ""),
                 target_handle=args.get("target_handle") or None,
                 topic_id=topic_id,
+                payload=payload,
             )
             await s.commit()
             return _text(f"已发送通知给 {args.get('target_handle') or '所有人'}。")

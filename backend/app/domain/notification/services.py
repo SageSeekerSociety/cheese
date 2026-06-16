@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.repositories import BlockRepository
 from app.domain.notification.models import Notification, NotifKind, NotifLevel
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
@@ -15,6 +17,7 @@ _VALID_FEEDBACK = {"up", "down"}
 
 class NotificationService:
     def __init__(self, session: AsyncSession):
+        self._session = session
         self._repo = NotificationRepository(session)
         self._projects = ProjectRepository(session)
 
@@ -74,6 +77,34 @@ class NotificationService:
         notification = await self.get_or_404(notification_id)
         notification.read_at = datetime.now(UTC)
         return await self._repo.save(notification)
+
+    async def resolve(
+        self, notification_id: uuid.UUID, *, chosen: str, decided_by: str = "user-1"
+    ) -> Notification:
+        """拍板 (spec G2): record the chosen option on a decision request and drop
+        the decision into the topic so 芝士 picks it up on its next turn."""
+        n = await self.get_or_404(notification_id)
+        if n.kind != NotifKind.decision_request:
+            raise ValidationError("只有决策请求可以拍板")
+        payload = dict(n.payload or {})
+        options = payload.get("options") or []
+        if options and chosen not in options:
+            raise ValidationError("所选项不在候选项中")
+        now = datetime.now(UTC)
+        n.resolved_at = now
+        n.read_at = n.read_at or now
+        payload["resolved_choice"] = chosen
+        n.payload = payload
+        if n.topic_id is not None:
+            await BlockRepository(self._session).add(
+                project_id=n.project_id,
+                topic_id=n.topic_id,
+                author=decided_by,
+                author_type=AuthorType.human,
+                content=f"【决策】关于「{n.title}」：选择「{chosen}」。",
+                kind=BlockKind.message,
+            )
+        return await self._repo.save(n)
 
     async def set_feedback(
         self, notification_id: uuid.UUID, feedback: str

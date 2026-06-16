@@ -408,6 +408,17 @@ export function sendNotificationFeedback(
   )
 }
 
+// 拍板 (spec G2): resolve a decision request by choosing one of its options.
+export function resolveNotification(
+  notificationId: string,
+  chosen: string,
+): Promise<Notification> {
+  return request<Notification>(
+    `/notifications/${encodeURIComponent(notificationId)}/resolve`,
+    { method: 'POST', body: JSON.stringify({ chosen }) },
+  )
+}
+
 // ---- 记一笔 / 导入 (E1/E3) ----
 
 // Ingest raw offline input; 芝士 digests it into a structured [活动] topic.

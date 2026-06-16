@@ -61,5 +61,10 @@ class Notification(UuidPk, Timestamps, Base):
     read_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # A decision request stays in the inbox until it's resolved (拍板), not just
+    # read. The chosen option is stored in payload["resolved_choice"].
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # 👍/👎 feedback on proactive messages (spec G3): null / "up" / "down".
     feedback: Mapped[str | None] = mapped_column(String(8), nullable=True)

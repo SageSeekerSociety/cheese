@@ -22,6 +22,11 @@ class FeedbackIn(BaseModel):
     feedback: str
 
 
+class ResolveIn(BaseModel):
+    chosen: str
+    decided_by: str = "user-1"
+
+
 class NotificationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -35,5 +40,6 @@ class NotificationOut(BaseModel):
     body: str
     payload: dict
     read_at: datetime | None
+    resolved_at: datetime | None = None
     feedback: str | None
     created_at: datetime

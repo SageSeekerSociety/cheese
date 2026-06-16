@@ -7,6 +7,7 @@ import {
   ingestActivity,
   listProjects,
   markNotificationRead,
+  resolveNotification,
   sendNotificationFeedback,
 } from './api'
 import type { Notification, Project } from './types'
@@ -117,6 +118,25 @@ async function onNotifFeedback(n: Notification, feedback: 'up' | 'down') {
     n.feedback = updated.feedback
   } catch {
     // ignore
+  }
+}
+
+// 决策选项 (spec G2): a decision request carries options the user can pick.
+function notifOptions(n: Notification): string[] {
+  const opts = (n.payload as { options?: unknown })?.options
+  return Array.isArray(opts) ? (opts as string[]) : []
+}
+function notifChoice(n: Notification): string | null {
+  const c = (n.payload as { resolved_choice?: unknown })?.resolved_choice
+  return typeof c === 'string' ? c : null
+}
+async function onResolveNotif(n: Notification, chosen: string) {
+  try {
+    const updated = await resolveNotification(n.id, chosen)
+    n.payload = updated.payload
+    n.read_at = updated.read_at
+  } catch {
+    // ignore — the menu stays open for a retry
   }
 }
 
@@ -301,6 +321,29 @@ provide('activityBump', activityBump)
                 </div>
                 <div v-if="n.body" class="t-body c-muted mb-2">
                   {{ n.body }}
+                </div>
+                <!-- 拍板 (spec G2): pick an option to resolve a decision request -->
+                <div
+                  v-if="notifOptions(n).length"
+                  class="d-flex flex-wrap ga-1 mb-2"
+                >
+                  <template v-if="notifChoice(n)">
+                    <span class="t-meta">
+                      已选择：<strong style="color: var(--ink)">{{ notifChoice(n) }}</strong>
+                    </span>
+                  </template>
+                  <template v-else>
+                    <v-btn
+                      v-for="opt in notifOptions(n)"
+                      :key="opt"
+                      size="x-small"
+                      variant="outlined"
+                      class="btn-secondary"
+                      @click="onResolveNotif(n, opt)"
+                    >
+                      {{ opt }}
+                    </v-btn>
+                  </template>
                 </div>
                 <div class="d-flex align-center ga-1">
                   <v-btn

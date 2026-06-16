@@ -8,8 +8,17 @@ fully self-governing.
 
 import enum
 import uuid
+from datetime import datetime
 
-from sqlalchemy import JSON, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -49,6 +58,10 @@ class Project(UuidPk, Timestamps, Base):
     summary: Mapped[str] = mapped_column(Text, default="", server_default="")
     # Free-form policy: branch protection approvals, notify level, etc.
     settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    # When the 本体 last ran a heartbeat — used to schedule ≤1 patrol/day/project.
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ProjectTaskLink(UuidPk, Timestamps, Base):

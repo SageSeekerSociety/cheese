@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.notification.models import Notification, NotifKind, NotifLevel
@@ -94,14 +94,21 @@ class NotificationRepository:
         *,
         target_handle: str | None = None,
     ) -> list[Notification]:
-        """等你处理的事 (spec G2): unread decision/accept requests, newest-first."""
+        """等你处理的事 (spec G2): decision requests until 拍板 (resolved), and
+        accept requests until read, newest-first."""
         stmt = (
             select(Notification)
             .where(Notification.project_id == project_id)
-            .where(Notification.read_at.is_(None))
             .where(
-                Notification.kind.in_(
-                    [NotifKind.decision_request, NotifKind.accept_request]
+                or_(
+                    and_(
+                        Notification.kind == NotifKind.decision_request,
+                        Notification.resolved_at.is_(None),
+                    ),
+                    and_(
+                        Notification.kind == NotifKind.accept_request,
+                        Notification.read_at.is_(None),
+                    ),
                 )
             )
         )

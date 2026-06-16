@@ -203,10 +203,58 @@ def test_inbox_only_unread_decision_and_accept(client):
     assert body["total"] == 1
     assert body["data"][0]["title"] == "拍板"
 
-    # Once read, it leaves the inbox.
+    # A decision request stays in the inbox after merely being read — it leaves
+    # only once 拍板 (resolved).
     client.post(f"/api/notifications/{decision['id']}/read")
     r = client.get(f"/api/projects/{pid}/inbox", params={"target_handle": "alice"})
+    assert r.json()["data"]["total"] == 1
+
+    client.post(
+        f"/api/notifications/{decision['id']}/resolve", json={"chosen": "随便"}
+    )
+    r = client.get(f"/api/projects/{pid}/inbox", params={"target_handle": "alice"})
     assert r.json()["data"]["total"] == 0
+
+
+def test_resolve_records_choice_and_posts_block(client):
+    pid = _create_project(client)
+    topic = client.post(
+        "/api/topics", json={"project_id": pid, "title": "切分方案"}
+    ).json()["data"]["id"]
+    # A decision request with options, scoped to a topic.
+    n = _post_notif(
+        client,
+        pid,
+        level="strong",
+        kind="decision_request",
+        title="评测集怎么切分",
+        target_handle="user-1",
+        topic_id=topic,
+        payload={"options": ["按时间切分", "随机切分"]},
+    )
+    r = client.post(
+        f"/api/notifications/{n['id']}/resolve", json={"chosen": "按时间切分"}
+    )
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["resolved_at"] is not None
+    assert data["payload"]["resolved_choice"] == "按时间切分"
+    # The decision is dropped into the topic so 芝士 sees it next turn.
+    blocks = client.get(f"/api/topics/{topic}/blocks").json()["data"]["data"]
+    assert any("按时间切分" in b["content"] for b in blocks)
+    # An option not in the list is rejected.
+    n2 = _post_notif(
+        client,
+        pid,
+        level="strong",
+        kind="decision_request",
+        title="再来一个",
+        payload={"options": ["A", "B"]},
+    )
+    bad = client.post(
+        f"/api/notifications/{n2['id']}/resolve", json={"chosen": "C"}
+    )
+    assert bad.status_code == 422
 
 
 def test_mark_read_sets_timestamp(client):

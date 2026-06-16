@@ -16,6 +16,7 @@ from app.domain.notification.schemas import (
     FeedbackIn,
     NotificationCreate,
     NotificationOut,
+    ResolveIn,
 )
 from app.domain.notification.services import NotificationService
 
@@ -82,5 +83,16 @@ async def set_notification_feedback(
 ) -> dict:
     notification = await NotificationService(db).set_feedback(
         notification_id, body.feedback
+    )
+    return ok(_dump(notification))
+
+
+@router.post("/api/notifications/{notification_id}/resolve")
+async def resolve_notification(
+    notification_id: uuid.UUID, body: ResolveIn, db: DbSession
+) -> dict:
+    """拍板 a decision request (spec G2)."""
+    notification = await NotificationService(db).resolve(
+        notification_id, chosen=body.chosen, decided_by=body.decided_by
     )
     return ok(_dump(notification))
