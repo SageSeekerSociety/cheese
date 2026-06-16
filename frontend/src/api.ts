@@ -305,6 +305,18 @@ export function rejectCard(
   )
 }
 
+// 撤回采纳 (spec §6.3: 采纳可撤销). Revoke an accepted card → un-archives the
+// topic. Only the accepter / owner / lead may revoke (enforced server-side).
+export function revokeCard(
+  cardId: string,
+  decidedBy: string,
+): Promise<AcceptCard> {
+  return request<AcceptCard>(
+    `/accept-cards/${encodeURIComponent(cardId)}/revoke`,
+    { method: 'POST', body: JSON.stringify({ decided_by: decidedBy }) },
+  )
+}
+
 // 改验收人 (spec §4.4: 任何成员都可以改推荐/加人). Reassign a pending card to
 // another reviewer. The backend reuses the create schema, so we pass an empty
 // routing_reason to keep the recommendation neutral on a manual reassign.

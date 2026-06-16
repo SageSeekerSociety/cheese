@@ -16,6 +16,7 @@ import {
   listTopics,
   reassignCard,
   rejectCard,
+  revokeCard,
   splitTopic,
   upgradeBlock,
 } from '../api'
@@ -226,6 +227,10 @@ const showRejectInput = ref(false)
 const pendingCard = computed<AcceptCard | null>(
   () => acceptCards.value.find((c) => c.status === 'pending') ?? null,
 )
+// The accepted card on an archived topic — its presence lets us offer 撤回采纳.
+const acceptedCard = computed<AcceptCard | null>(
+  () => acceptCards.value.find((c) => c.status === 'accepted') ?? null,
+)
 
 // ---- 改验收人 (spec §4.4): project members for the reassign menu ----
 const projectMembers = ref<ProjectMemberRow[]>([])
@@ -294,6 +299,20 @@ async function onAcceptCard() {
     await Promise.all([loadAcceptCard(), refreshSelectedTopic()])
   } catch (e) {
     reportError(e, '采纳失败')
+  } finally {
+    acceptBusy.value = false
+  }
+}
+
+async function onRevokeCard() {
+  const card = acceptedCard.value
+  if (!card) return
+  acceptBusy.value = true
+  try {
+    await revokeCard(card.id, AUTHOR)
+    await Promise.all([loadAcceptCard(), refreshSelectedTopic()])
+  } catch (e) {
+    reportError(e, '撤回采纳失败')
   } finally {
     acceptBusy.value = false
   }
@@ -518,8 +537,15 @@ onMounted(async () => {
           @upgrade-message="handleUpgradeMessage"
         >
           <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
-          <template v-if="selectedTopic && pendingCard" #timeline-end>
-            <v-card variant="outlined" class="merge-box mt-2">
+          <template
+            v-if="
+              selectedTopic &&
+              (pendingCard ||
+                (selectedTopic.status === 'archived' && acceptedCard))
+            "
+            #timeline-end
+          >
+            <v-card v-if="pendingCard" variant="outlined" class="merge-box mt-2">
               <div class="merge-box__bar" />
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
@@ -613,6 +639,34 @@ onMounted(async () => {
                     确认退回
                   </v-btn>
                 </div>
+              </div>
+            </v-card>
+
+            <!-- Archived (accepted) topic: 采纳可撤销 (spec §6.3). -->
+            <v-card
+              v-else-if="acceptedCard"
+              variant="outlined"
+              class="merge-box mt-2"
+            >
+              <div class="merge-box__bar" />
+              <div class="pa-3">
+                <div class="d-flex align-center ga-2 mb-1">
+                  <v-icon color="success" size="19">mdi-check-circle-outline</v-icon>
+                  <span class="t-title">已采纳并归档</span>
+                </div>
+                <div class="text-body-2 c-muted mb-3">
+                  由 <strong>@{{ acceptedCard.decided_by }}</strong> 采纳。采纳可撤销。
+                </div>
+                <v-btn
+                  variant="outlined"
+                  class="btn-secondary"
+                  :loading="acceptBusy"
+                  :disabled="acceptBusy"
+                  prepend-icon="mdi-undo"
+                  @click="onRevokeCard"
+                >
+                  撤回采纳
+                </v-btn>
               </div>
             </v-card>
           </template>

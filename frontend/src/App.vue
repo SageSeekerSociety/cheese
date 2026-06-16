@@ -77,8 +77,13 @@ function goCalendar() {
 const notifMenu = ref(false)
 const notifications = ref<Notification[]>([])
 const notifLoading = ref(false)
+// silent notifications are recorded but never interrupt — keep them out of the
+// bell list and the unread badge (spec §8.5 分级打扰).
+const visibleNotifs = computed<Notification[]>(() =>
+  notifications.value.filter((n) => n.level !== 'silent'),
+)
 const unreadCount = computed<number>(
-  () => notifications.value.filter((n) => n.read_at === null).length,
+  () => visibleNotifs.value.filter((n) => n.read_at === null).length,
 )
 
 async function loadNotifications() {
@@ -270,21 +275,29 @@ provide('activityBump', activityBump)
               <v-progress-circular indeterminate color="primary" size="24" />
             </div>
             <div
-              v-else-if="notifications.length === 0"
+              v-else-if="visibleNotifs.length === 0"
               class="text-center text-medium-emphasis py-8"
             >
               暂无通知
             </div>
             <div v-else class="pa-2 d-flex flex-column ga-2">
               <div
-                v-for="n in notifications"
+                v-for="n in visibleNotifs"
                 :key="n.id"
                 class="notif-item"
-                :class="{ 'notif-read': n.read_at !== null }"
+                :class="{
+                  'notif-read': n.read_at !== null,
+                  'notif-strong': n.level === 'strong',
+                }"
               >
                 <div class="d-flex align-center ga-2 mb-1">
                   <span class="chip-neutral">{{ label(NOTIF_KIND, n.kind) }}</span>
                   <span class="t-title">{{ n.title }}</span>
+                  <span
+                    v-if="n.target_handle"
+                    class="t-meta"
+                    style="font-family: var(--font-mono)"
+                  >@{{ n.target_handle }}</span>
                 </div>
                 <div v-if="n.body" class="t-body c-muted mb-2">
                   {{ n.body }}
@@ -455,6 +468,12 @@ provide('activityBump', activityBump)
   padding: 10px 12px;
   border-radius: 8px;
   background: var(--fill);
+  border-left: 2px solid transparent;
+}
+/* strong = needs attention: a quiet amber accent (light/silent stay neutral). */
+.notif-strong {
+  border-left-color: var(--accent);
+  background: var(--surface);
 }
 .notif-read {
   opacity: 0.55;
