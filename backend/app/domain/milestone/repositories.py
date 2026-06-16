@@ -29,7 +29,8 @@ class MilestoneRepository:
             .execution_options(synchronize_session="fetch")
         )
         result = await self._session.execute(stmt)
-        return result.rowcount or 0
+        # rowcount lives on the runtime CursorResult; typed as Result[Any].
+        return int(getattr(result, "rowcount", 0) or 0)
 
     async def add(
         self,
