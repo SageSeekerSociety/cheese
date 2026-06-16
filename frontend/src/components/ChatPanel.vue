@@ -223,20 +223,36 @@ function send(content: string, summon: boolean): boolean {
 
 defineExpose({ send, connected })
 
+// The conversation stream shows messages + lightweight system lines only.
+// doc/decision blocks are document state (they live in the doc panel), and AI
+// tool/巡检 events belong in 现场 — neither belongs in the group chat (spec §7.1).
+const visible = computed<Block[]>(() =>
+  messages.value.filter(
+    (m) =>
+      m.kind === 'message' ||
+      (m.kind === 'event' && m.author_type === 'system'),
+  ),
+)
+
 // ---- Feishu group-chat helpers (Fix 2) ----
 function displayName(m: Block): string {
   return m.author_type === 'ai' ? '芝士' : m.author
 }
 function fmtTime(iso: string): string {
-  // Feishu shows HH:mm next to the name on the first of a run.
-  return iso.slice(11, 16)
+  // Local HH:mm next to the name on the first of a run (not raw UTC).
+  return new Date(iso).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 // Group consecutive messages from the same author into runs: only the first of
 // a run shows the avatar + name + time; the rest indent under the text column.
+// An event block always breaks a run so the next message keeps its header.
 function isRunStart(i: number): boolean {
   if (i === 0) return true
-  const prev = messages.value[i - 1]
-  const cur = messages.value[i]
+  const prev = visible.value[i - 1]
+  const cur = visible.value[i]
+  if (prev.kind === 'event' || cur.kind === 'event') return true
   return prev.author !== cur.author || prev.author_type !== cur.author_type
 }
 
@@ -345,7 +361,7 @@ onBeforeUnmount(closeSocket)
           加载历史…
         </div>
 
-        <template v-for="(m, i) in messages" :key="m.id">
+        <template v-for="(m, i) in visible" :key="m.id">
           <!-- system / event blocks: centered, gray, small (Feishu 系统提示) -->
           <div v-if="m.kind === 'event'" class="im-event text-caption">
             <span>{{ m.content }}</span>

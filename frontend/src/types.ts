@@ -21,7 +21,7 @@ export interface Topic {
   created_at: string
 }
 
-export type AuthorType = 'human' | 'ai'
+export type AuthorType = 'human' | 'ai' | 'system'
 
 export interface Block {
   id: string
@@ -30,6 +30,12 @@ export interface Block {
   author_type: AuthorType
   author: string
   content: string
+  // 双树 + 引用 (spec §5): conversation tree, document tree, citations, and the
+  // live link an upgraded block points to.
+  reply_to?: string | null
+  struct_parent?: string | null
+  refs?: string[]
+  upgraded_to_topic_id?: string | null
   created_at: string
 }
 

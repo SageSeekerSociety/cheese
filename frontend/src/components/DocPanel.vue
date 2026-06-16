@@ -179,6 +179,14 @@ function authorLabel(b: Block): string {
   return b.author_type === 'ai' ? '芝士' : b.author
 }
 
+function fmtTime(iso: string): string {
+  // Local HH:mm, not raw UTC slice.
+  return new Date(iso).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 // 施工现场 tool-event lines: backend stores "verb\npreview"; legacy rows are
 // "🔧 toolname". Split into the action verb and an optional argument preview.
 const LEGACY_VERB: Record<string, string> = {
@@ -527,7 +535,7 @@ onBeforeUnmount(() => {
                       ⎿ {{ eventArg(b.content) }}
                     </div>
                   </div>
-                  <span class="site-act__time">{{ b.created_at.slice(11, 16) }}</span>
+                  <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
                 </div>
                 <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
                 <div v-else class="site-msg">
@@ -535,7 +543,7 @@ onBeforeUnmount(() => {
                   <div class="site-msg__main">
                     <div class="site-msg__meta">
                       <span class="site-msg__name">{{ authorLabel(b) }}</span>
-                      <span class="t-meta">{{ b.created_at.slice(11, 16) }}</span>
+                      <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
                     </div>
                     <div class="md-content text-body-2" v-html="renderMarkdown(b.content)" />
                   </div>
