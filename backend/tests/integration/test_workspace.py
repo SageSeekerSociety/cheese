@@ -24,3 +24,28 @@ def test_write_file_then_browse_and_diff(client):
 
     diff = client.get(f"/api/projects/{pid}/git/diff").json()["data"]["diff"]
     assert "print('hi')" in diff
+
+
+def test_topic_branch_isolated_then_merged(client):
+    # spec §6.3: a topic's writes live on its own branch; 采纳 = merge to base.
+    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    pid = uuid.UUID(pr["id"])
+    tid = uuid.uuid4()
+
+    ws.write_file(pid, path="feat.txt", content="branch work\n", topic_id=tid)
+    # The change is on the topic branch vs the base (not yet merged).
+    assert "branch work" in ws.topic_diff(pid, tid)
+
+    res = ws.merge_topic(pid, tid)
+    assert res["merged"] is True
+
+    # The base branch now contains the file.
+    assert any(f["path"] == "feat.txt" for f in ws.list_files(pid))
+
+
+def test_git_diff_rejects_option_injection(client):
+    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    pid = uuid.UUID(pr["id"])
+    ws.write_file(pid, path="a.txt", content="x\n")
+    r = client.get(f"/api/projects/{pid}/git/diff", params={"ref": "--help"})
+    assert r.status_code == 422

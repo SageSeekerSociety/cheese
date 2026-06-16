@@ -38,7 +38,13 @@ async def git_log(project_id: uuid.UUID, db: DbSession) -> dict:
 
 @router.get("/{project_id}/git/diff")
 async def git_diff(
-    project_id: uuid.UUID, db: DbSession, ref: str | None = None
+    project_id: uuid.UUID,
+    db: DbSession,
+    ref: str | None = None,
+    topic: uuid.UUID | None = None,
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
+    # A topic shows its branch's full diff vs the base (what 采纳 would merge).
+    if topic is not None:
+        return ok({"diff": ws.topic_diff(project_id, topic)})
     return ok({"diff": ws.git_diff(project_id, ref)})

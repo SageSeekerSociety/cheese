@@ -13,9 +13,16 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.errors import ValidationError
 
+DEFAULT_BRANCH = "main"
+
 
 def _repo(project_id: uuid.UUID) -> Path:
     return (Path(settings.workspace_root) / str(project_id)).resolve()
+
+
+def branch_for_topic(topic_id: uuid.UUID) -> str:
+    """话题 = git 分支 (spec §6.3). Deterministic from the topic id."""
+    return f"topic/{topic_id.hex[:8]}"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -35,10 +42,49 @@ def ensure_repo(project_id: uuid.UUID) -> Path:
     repo = _repo(project_id)
     repo.mkdir(parents=True, exist_ok=True)
     if not (repo / ".git").exists():
-        _git(repo, "init", "-q")
+        _git(repo, "init", "-q", "-b", DEFAULT_BRANCH)
         _git(repo, "config", "user.email", "cheese@zhishi.local")
         _git(repo, "config", "user.name", "芝士")
     return repo
+
+
+def _has_commit(repo: Path) -> bool:
+    return bool(_git(repo, "rev-list", "-n", "1", "--all").strip())
+
+
+def _ensure_base_commit(repo: Path) -> None:
+    # Branches need a base commit to fork from.
+    if not _has_commit(repo):
+        _git(
+            repo,
+            "-c",
+            "user.name=芝士",
+            "-c",
+            "user.email=cheese@zhishi.local",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "init",
+        )
+
+
+def _branch_exists(repo: Path, branch: str) -> bool:
+    return bool(_git(repo, "branch", "--list", branch).strip())
+
+
+def _base_branch(repo: Path) -> str:
+    if _branch_exists(repo, DEFAULT_BRANCH):
+        return DEFAULT_BRANCH
+    return _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() or DEFAULT_BRANCH
+
+
+def _checkout_topic_branch(repo: Path, branch: str) -> None:
+    _ensure_base_commit(repo)
+    if _branch_exists(repo, branch):
+        _git(repo, "checkout", "-q", branch)
+    else:
+        _git(repo, "checkout", "-q", "-b", branch)
 
 
 def _safe_path(repo: Path, rel: str) -> Path:
@@ -51,9 +97,18 @@ def _safe_path(repo: Path, rel: str) -> Path:
 
 
 def write_file(
-    project_id: uuid.UUID, *, path: str, content: str, author: str = "芝士"
+    project_id: uuid.UUID,
+    *,
+    path: str,
+    content: str,
+    author: str = "芝士",
+    topic_id: uuid.UUID | None = None,
 ) -> dict:
     repo = ensure_repo(project_id)
+    # 话题 = 分支 (spec §6.3): a topic's writes land on its own branch, so work
+    # is isolated until 采纳 merges it. Project-level (no topic) writes go to main.
+    if topic_id is not None:
+        _checkout_topic_branch(repo, branch_for_topic(topic_id))
     target = _safe_path(repo, path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
@@ -111,8 +166,55 @@ def git_diff(project_id: uuid.UUID, ref: str | None = None) -> str:
     repo = ensure_repo(project_id)
     # Default: the last commit's diff; falls back to working-tree diff.
     if ref:
-        return _git(repo, "show", ref, "--", ".")
+        # Reject option-injection (e.g. ref='--help'); refs never start with '-'.
+        if ref.startswith("-"):
+            raise ValidationError("invalid ref")
+        return _git(repo, "show", "--end-of-options", ref, "--", ".")
     has_commit = _git(repo, "rev-list", "-n", "1", "--all").strip()
     if has_commit:
         return _git(repo, "show", "HEAD")
     return _git(repo, "diff")
+
+
+def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
+    """Full diff of a topic's branch vs the base (what 采纳 would merge)."""
+    repo = ensure_repo(project_id)
+    branch = branch_for_topic(topic_id)
+    if not _branch_exists(repo, branch):
+        return ""
+    base = _base_branch(repo)
+    return _git(repo, "diff", f"{base}...{branch}")
+
+
+def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
+    """采纳 = merge (spec §6.3): merge the topic's branch into the base branch.
+    Best-effort — on conflict it aborts and reports, never half-merges."""
+    repo = ensure_repo(project_id)
+    branch = branch_for_topic(topic_id)
+    if not _branch_exists(repo, branch):
+        return {"merged": False, "reason": "no topic branch"}
+    base = _base_branch(repo)
+    if branch == base:
+        return {"merged": False, "reason": "topic is the base branch"}
+    _git(repo, "checkout", "-q", base)
+    try:
+        _git(
+            repo,
+            "-c",
+            "user.name=芝士",
+            "-c",
+            "user.email=cheese@zhishi.local",
+            "merge",
+            "--no-ff",
+            "-q",
+            "-m",
+            f"采纳 {branch} → {base}",
+            branch,
+        )
+    except ValidationError as exc:
+        try:
+            _git(repo, "merge", "--abort")
+        except ValidationError:
+            pass
+        return {"merged": False, "reason": str(exc)}
+    return {"merged": True, "branch": branch, "into": base}

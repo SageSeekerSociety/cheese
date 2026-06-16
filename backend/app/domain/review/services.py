@@ -141,7 +141,16 @@ class AcceptService:
         card.decided_by = decided_by
         card.decided_at = now
 
-        # 采纳即归档/merge (spec §6.3).
+        # 采纳 = merge (spec §6.3): merge the topic's branch into the base. Best
+        # effort — a git conflict / missing branch must not block the archival.
+        from app.domain.workspace import service as ws
+
+        try:
+            ws.merge_topic(topic.project_id, topic.id)
+        except Exception:  # noqa: BLE001 — git is a side channel, never fatal here
+            pass
+
+        # 采纳即归档 (spec §6.3).
         topic.status = TopicStatus.archived
         topic.accepted_by = decided_by
         topic.accepted_at = now

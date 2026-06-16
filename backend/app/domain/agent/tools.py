@@ -236,10 +236,21 @@ def build_cheese_server(
         {"path": str, "content": str},
     )
     async def write_file(args: dict[str, Any]) -> dict[str, Any]:
+        from app.domain.topic.models import TopicStatus
         from app.domain.workspace import service as ws
 
+        # 归档后工作面冻结 (spec §6.3): a frozen topic accepts no new writes.
+        async with session_factory() as s:
+            topic = await TopicService(s).get_or_404(topic_id)
+            if topic.status == TopicStatus.archived:
+                return _text("话题已归档，工作面已冻结，无法再写文件。")
         try:
-            res = ws.write_file(project_id, path=args["path"], content=args["content"])
+            res = ws.write_file(
+                project_id,
+                path=args["path"],
+                content=args["content"],
+                topic_id=topic_id,
+            )
         except Exception as exc:
             return _text(f"写文件失败：{exc}")
         return _text(f"已写入 {res['path']}（{res['bytes']} 字节）并提交版本。")
