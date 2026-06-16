@@ -9,10 +9,13 @@ truth.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.domain.block.models import AuthorType, Block
 from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.repositories import NotificationRepository
@@ -44,6 +47,21 @@ class DashboardService:
         for t in topics:
             by_status[t.status.value] += 1
         upcoming = await self._milestones.list_calendar(project_id)
+        # 活跃度 (spec §7.2): last activity + the human/AI contribution mix.
+        last_activity = await self._s.scalar(
+            select(func.max(Block.created_at)).where(Block.project_id == project_id)
+        )
+        mix = {"human": 0, "ai": 0}
+        mix_rows = (
+            await self._s.execute(
+                select(Block.author_type, func.count())
+                .where(Block.project_id == project_id)
+                .group_by(Block.author_type)
+            )
+        ).all()
+        for author_type, count in mix_rows:
+            if author_type.value in mix:
+                mix[author_type.value] += count
         return {
             "project_id": str(project.id),
             "name": project.name,
@@ -52,6 +70,10 @@ class DashboardService:
             "summary": project.summary,
             "topic_count": len(topics),
             "topics_by_status": by_status,
+            "last_activity_at": (
+                last_activity.isoformat() if last_activity else None
+            ),
+            "contributions": mix,
             "upcoming_milestones": [
                 {
                     "title": m.title,
@@ -108,11 +130,47 @@ class DashboardService:
             for t in topics
             if t.created_by == user_handle
         ]
+        # 在忙哪些话题 (spec §7.2): active topics the member has contributed to.
+        worked_topic_ids = set(
+            (
+                await self._s.execute(
+                    select(Block.topic_id)
+                    .where(
+                        Block.project_id == project_id,
+                        Block.author == user_handle,
+                    )
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        topics_active = [
+            {"id": str(t.id), "title": t.title, "status": t.status.value}
+            for t in topics
+            if t.status == TopicStatus.active and t.id in worked_topic_ids
+        ]
+        # 本周贡献 (spec §7.2/§10.1): human-authored blocks in the last 7 days.
+        week_ago = datetime.now(UTC) - timedelta(days=7)
+        weekly = (
+            await self._s.scalar(
+                select(func.count())
+                .select_from(Block)
+                .where(
+                    Block.project_id == project_id,
+                    Block.author == user_handle,
+                    Block.author_type == AuthorType.human,
+                    Block.created_at >= week_ago,
+                )
+            )
+        ) or 0
         inbox = await self._notifs.list_inbox(project_id, target_handle=user_handle)
         return {
             "handle": user_handle,
             "role": member.role.value if member else None,
             "topics_started": started,
+            "topics_active": topics_active,
+            "weekly_contributions": int(weekly),
             "waiting_on_you": [
                 {"id": str(n.id), "title": n.title, "kind": n.kind.value} for n in inbox
             ],
@@ -122,9 +180,6 @@ class DashboardService:
         """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
         they are, what they're on across projects, and 芝士's understanding of
         them (个人记忆, §8.4). This is the "项目过程即简历" view."""
-        from sqlalchemy import func, select
-
-        from app.domain.block.models import Block
         from app.domain.memory.models import MemoryScope
         from app.domain.memory.store import DbMemoryStore
         from app.domain.project.models import Project, ProjectMember
@@ -150,14 +205,22 @@ class DashboardService:
                     .where(
                         Topic.project_id == project.id,
                         Topic.created_by == handle,
+                        # Don't count the private 1:1 chat as a started topic.
+                        Topic.is_private.is_(False),
                     )
                 )
             ) or 0
+            # Contributions = the member's own (human) blocks — not the system
+            # lifecycle/event blocks that happen to carry their handle.
             blocks = (
                 await self._s.scalar(
                     select(func.count())
                     .select_from(Block)
-                    .where(Block.project_id == project.id, Block.author == handle)
+                    .where(
+                        Block.project_id == project.id,
+                        Block.author == handle,
+                        Block.author_type == AuthorType.human,
+                    )
                 )
             ) or 0
             projects.append(
@@ -186,10 +249,6 @@ class DashboardService:
         contribution graph + the trust signal that 人 directed the AI."""
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
-        from sqlalchemy import func, select
-
-        from app.domain.block.models import Block
-
         rows = (
             await self._s.execute(
                 select(Block.author_type, Block.author, func.count())
@@ -201,7 +260,9 @@ class DashboardService:
         by_author: dict[str, int] = {}
         for author_type, author, count in rows:
             by_type[author_type.value] = by_type.get(author_type.value, 0) + count
-            by_author[author] = by_author.get(author, 0) + count
+            # by_author = real contributors; system lifecycle blocks don't count.
+            if author_type != AuthorType.system:
+                by_author[author] = by_author.get(author, 0) + count
         return {"by_author_type": by_type, "by_author": by_author}
 
     async def space_board(self, space_id: uuid.UUID) -> dict:

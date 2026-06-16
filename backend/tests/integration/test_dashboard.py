@@ -1,5 +1,58 @@
 """Aggregation endpoints — project overview + Space board (evals F3/G2)."""
 
+import asyncio
+import uuid
+
+from app.domain.block.models import AuthorType, Block, BlockKind
+
+
+def _seed_block(client, project_id, topic_id, author, author_type, kind):
+    async def _seed():
+        async with client.test_factory() as s:
+            s.add(
+                Block(
+                    project_id=uuid.UUID(project_id),
+                    topic_id=uuid.UUID(topic_id),
+                    kind=kind,
+                    author_type=author_type,
+                    author=author,
+                    content="x",
+                    refs=[],
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_seed())
+
+
+def test_contributions_exclude_system_blocks(client):
+    # spec §10.1: by_author counts real contributors, not system lifecycle blocks.
+    p = client.post(
+        "/api/projects", json={"name": "P", "owner_handle": "user-1"}
+    ).json()["data"]
+    pid, root = p["id"], p["root_topic_id"]
+    _seed_block(client, pid, root, "user-1", AuthorType.human, BlockKind.message)
+    _seed_block(client, pid, root, "user-1", AuthorType.system, BlockKind.event)
+
+    c = client.get(f"/api/projects/{pid}/contributions").json()["data"]
+    assert c["by_author"].get("user-1") == 1  # the system block is not counted
+    assert c["by_author_type"]["system"] >= 1
+
+
+def test_member_summary_has_active_and_weekly(client):
+    p = client.post(
+        "/api/projects", json={"name": "P", "owner_handle": "user-1"}
+    ).json()["data"]
+    pid, root = p["id"], p["root_topic_id"]
+    client.post(f"/api/projects/{pid}/members", json={"user_handle": "user-1"})
+    _seed_block(client, pid, root, "user-1", AuthorType.human, BlockKind.message)
+
+    s = client.get(f"/api/projects/{pid}/members/user-1/summary").json()["data"]
+    assert "topics_active" in s and "weekly_contributions" in s
+    assert s["weekly_contributions"] == 1
+    # root topic is active and user-1 contributed → it shows under 在忙的话题.
+    assert any(t["id"] == root for t in s["topics_active"])
+
 
 def test_project_overview(client):
     p = client.post(
