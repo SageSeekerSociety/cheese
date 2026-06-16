@@ -12,16 +12,22 @@ import {
 } from '../api'
 import type { Block, Topic } from '../types'
 
-// 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集 open as full-width pages,
-// independent of any topic. One view, switched on the route name.
-const props = defineProps<{ projectId: string }>()
+// 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集. Shown either as a standalone
+// route or embedded inside the 工作台 (keeping the left rail) — `kind`/`embedded`
+// override the route when embedded.
+type Kind = 'charter' | 'decisions' | 'weeklies'
+const props = defineProps<{
+  projectId: string
+  kind?: Kind
+  embedded?: boolean
+}>()
 const route = useRoute()
 
 const AUTHOR = 'user-1'
 
-// Which document this page is showing, derived from the route name.
-type Kind = 'charter' | 'decisions' | 'weeklies'
+// Which document to show: an explicit prop (embedded) wins over the route name.
 const kind = computed<Kind>(() => {
+  if (props.kind) return props.kind
   if (route.name === 'project-decisions') return 'decisions'
   if (route.name === 'project-weeklies') return 'weeklies'
   return 'charter'
@@ -145,8 +151,9 @@ onMounted(load)
 <template>
   <div class="docs-page fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 920px">
-      <!-- Header -->
+      <!-- Header (the back link is redundant when embedded — the rail is there) -->
       <v-btn
+        v-if="!props.embedded"
         :to="workspaceTo"
         variant="text"
         size="small"

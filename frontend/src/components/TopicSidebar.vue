@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRoute } from 'vue-router'
 import type { Project, Topic } from '../types'
 import CheeseAvatar from './CheeseAvatar.vue'
-
-const route = useRoute()
 
 const props = defineProps<{
   projects: Project[]
@@ -14,6 +11,9 @@ const props = defineProps<{
   loadingTopics: boolean
   // True when the 私聊 (1:1 with 芝士) entry is the active main view.
   privateActive: boolean
+  // Which 项目文档 is open in the main area ('charter'|'decisions'|'weeklies'),
+  // or null when none — so the rail can show it active.
+  activeDocs?: string | null
   // Drawer width (px), made resizable by the parent.
   width?: number
 }>()
@@ -26,6 +26,8 @@ const emit = defineEmits<{
   (e: 'split-topic', payload: { topicId: string; title: string }): void
   // Open the 1:1 private chat with 芝士 in the main area (飞书私聊 conversation).
   (e: 'select-private'): void
+  // Open a 项目文档 (章程/决策记录/周报集) in the main area, keeping the rail.
+  (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies'): void
   // Live drawer width while dragging the right edge.
   (e: 'update:width', w: number): void
 }>()
@@ -142,20 +144,12 @@ function onSplit(t: Topic) {
   emit('split-topic', { topicId: t.id, title: title.trim() })
 }
 
-// 项目文档 (spec §7.1): 章程 / 决策记录 / 周报集 open as their own full-width
-// pages, independent of any topic. Build a :to per route name (inert if no
-// project is selected).
-function docTo(name: string) {
-  return props.selectedProjectId
-    ? { name, params: { projectId: props.selectedProjectId } }
-    : null
-}
-const charterTo = computed(() => docTo('project-charter'))
-const decisionsTo = computed(() => docTo('project-decisions'))
-const weekliesTo = computed(() => docTo('project-weeklies'))
-const onCharter = computed(() => route.name === 'project-charter')
-const onDecisions = computed(() => route.name === 'project-decisions')
-const onWeeklies = computed(() => route.name === 'project-weeklies')
+// 项目文档 (spec §7.1): 章程 / 决策记录 / 周报集 open INSIDE the 工作台 (keeping
+// the left rail), via the docs mode — not a separate full-screen route. Active
+// state comes from the parent's current docs kind.
+const onCharter = computed(() => props.activeDocs === 'charter')
+const onDecisions = computed(() => props.activeDocs === 'decisions')
+const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 </script>
 
 <template>
@@ -277,33 +271,33 @@ const onWeeklies = computed(() => route.name === 'project-weeklies')
           <v-list density="compact" nav class="py-0">
             <v-list-item
               :active="onCharter"
-              :disabled="!charterTo"
+              :disabled="!selectedProjectId"
               rounded="lg"
               class="nav-row"
               :class="{ 'is-active': onCharter }"
               prepend-icon="mdi-file-document-outline"
               title="章程"
-              :to="charterTo ?? undefined"
+              @click="emit('select-docs', 'charter')"
             />
             <v-list-item
               :active="onDecisions"
-              :disabled="!decisionsTo"
+              :disabled="!selectedProjectId"
               rounded="lg"
               class="nav-row"
               :class="{ 'is-active': onDecisions }"
               prepend-icon="mdi-clipboard-text-clock-outline"
               title="决策记录"
-              :to="decisionsTo ?? undefined"
+              @click="emit('select-docs', 'decisions')"
             />
             <v-list-item
               :active="onWeeklies"
-              :disabled="!weekliesTo"
+              :disabled="!selectedProjectId"
               rounded="lg"
               class="nav-row"
               :class="{ 'is-active': onWeeklies }"
               prepend-icon="mdi-calendar-week-outline"
               title="周报集"
-              :to="weekliesTo ?? undefined"
+              @click="emit('select-docs', 'weeklies')"
             />
           </v-list>
 

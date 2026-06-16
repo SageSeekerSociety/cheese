@@ -3,6 +3,7 @@ import { computed, inject, onMounted, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '../components/ChatPanel.vue'
 import DocPanel from '../components/DocPanel.vue'
+import ProjectDocsView from './ProjectDocsView.vue'
 import TopicSidebar from '../components/TopicSidebar.vue'
 import {
   acceptCard,
@@ -90,7 +91,14 @@ const selectedTopic = computed<Topic | null>(
 // The main area shows either a work topic ('topic') or the private chat
 // ('private'). 飞书 convention: a conversation in the left list opens as a
 // normal chat in the main area — no document, no PR header, no accept box.
-const mode = ref<'topic' | 'private'>('topic')
+const mode = ref<'topic' | 'private' | 'docs'>('topic')
+// 项目文档 shown in the main area (keeping the rail) instead of a separate page.
+const docKind = ref<'charter' | 'decisions' | 'weeklies'>('charter')
+function selectDocs(kind: 'charter' | 'decisions' | 'weeklies') {
+  if (!selectedProjectId.value) return
+  mode.value = 'docs'
+  docKind.value = kind
+}
 const privateTopic = ref<Topic | null>(null)
 const privateLoading = ref(false)
 const privateError = ref<string | null>(null)
@@ -476,9 +484,11 @@ onMounted(async () => {
       :selected-topic-id="selectedTopicId"
       :loading-topics="loadingTopics"
       :private-active="mode === 'private'"
+      :active-docs="mode === 'docs' ? docKind : null"
       @select-project="selectProject"
       @select-topic="selectTopic"
       @select-private="selectPrivate"
+      @select-docs="selectDocs"
       @create-project="handleCreateProject"
       @create-topic="handleCreateTopic"
       @split-topic="handleSplitTopic"
@@ -519,6 +529,16 @@ onMounted(async () => {
         @open-topic="selectTopic"
       />
     </div>
+
+    <!-- 项目文档 (章程/决策记录/周报集) in the main area, keeping the rail. -->
+    <ProjectDocsView
+      v-else-if="mode === 'docs' && selectedProjectId"
+      class="flex-grow-1"
+      style="min-width: 0"
+      :project-id="selectedProjectId"
+      :kind="docKind"
+      embedded
+    />
 
     <!-- Work topic: panes (chat | doc) above a spanning composer. -->
     <div
