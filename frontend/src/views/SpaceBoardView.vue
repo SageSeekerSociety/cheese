@@ -21,9 +21,27 @@ function activeCount(team: SpaceTeam): number {
   return byStatus.active ?? 0
 }
 
-// A team is "stale" when it has topics but none active (nothing moving).
+// Days since the team's last activity (block); null when never active.
+function daysSinceActive(team: SpaceTeam): number | null {
+  if (!team.last_activity_at) return null
+  const ms = Date.now() - new Date(team.last_activity_at).getTime()
+  return Math.floor(ms / 86_400_000)
+}
+
+function activityLabel(team: SpaceTeam): string {
+  const d = daysSinceActive(team)
+  if (d === null) return '无活动'
+  if (d <= 0) return '今天'
+  if (d === 1) return '昨天'
+  return `${d} 天前`
+}
+
+// 停滞 = no activity for over a week (time-based, spec §7.2), not just "no
+// active topics".
+const STALE_DAYS = 7
 function isStale(team: SpaceTeam): boolean {
-  return team.topic_count > 0 && activeCount(team) === 0
+  const d = daysSinceActive(team)
+  return d === null ? team.topic_count > 0 : d > STALE_DAYS
 }
 
 const headers = [
@@ -32,6 +50,7 @@ const headers = [
   { title: 'AI 模式', key: 'ai_mode' },
   { title: '话题数', key: 'topic_count', align: 'end' as const },
   { title: '活跃', key: 'active', align: 'end' as const },
+  { title: '最近活动', key: 'last_active' },
   { title: '下个里程碑', key: 'next_milestone' },
   { title: '状态', key: 'state' },
   { title: '', key: 'data-table-expand' },
@@ -106,6 +125,11 @@ onMounted(load)
             </template>
             <template #item.active="{ item }">
               <span class="board-num">{{ activeCount(item) }}</span>
+            </template>
+            <template #item.last_active="{ item }">
+              <span class="t-meta" :class="{ 'c-faint': isStale(item) }">
+                {{ activityLabel(item) }}
+              </span>
             </template>
             <template #item.next_milestone="{ item }">
               <template v-if="item.next_milestone">

@@ -150,6 +150,8 @@ export interface SpaceTeam {
   topics_by_status: Record<string, number>
   next_milestone: Milestone | null
   upcoming_milestones: Milestone[]
+  last_activity_at?: string | null
+  contributions?: { human: number; ai: number }
   [key: string]: unknown
 }
 
@@ -174,6 +176,8 @@ export interface MemberSummary {
   handle: string
   role: string
   topics_started: MemberTopic[]
+  topics_active?: MemberTopic[]
+  weekly_contributions?: number
   waiting_on_you: TopicRef[]
   [key: string]: unknown
 }

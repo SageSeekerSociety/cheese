@@ -226,8 +226,52 @@ onMounted(load)
         <!-- Per-project context: TA 发起的话题 / 等 TA 处理的事 (still relevant
              when arriving from a project; from the member-summary endpoint). -->
         <template v-if="member">
-          <div class="t-eyebrow mb-2">本项目中</div>
+          <div class="d-flex align-center ga-2 mb-2">
+            <div class="t-eyebrow">本项目中</div>
+            <v-spacer />
+            <span v-if="member.weekly_contributions !== undefined" class="t-meta">
+              本周贡献
+              <strong style="font-family: var(--font-mono); color: var(--ink)">{{
+                member.weekly_contributions
+              }}</strong>
+              条
+            </span>
+          </div>
           <v-row>
+            <!-- 在忙哪些话题 (spec §7.2): active topics TA is contributing to. -->
+            <v-col cols="12" md="6">
+              <v-card height="100%">
+                <v-card-title class="d-flex align-center ga-2 t-title pt-4">
+                  <v-icon size="19" class="c-faint">mdi-progress-wrench</v-icon>
+                  在忙的话题
+                  <span v-if="(member.topics_active ?? []).length" class="chip-neutral">
+                    {{ (member.topics_active ?? []).length }}
+                  </span>
+                </v-card-title>
+                <v-card-text>
+                  <div
+                    v-if="(member.topics_active ?? []).length === 0"
+                    class="c-faint t-body"
+                  >
+                    当前没有在忙的话题
+                  </div>
+                  <v-list v-else density="comfortable" class="py-0">
+                    <v-list-item
+                      v-for="t in member.topics_active ?? []"
+                      :key="t.id"
+                      class="px-0"
+                      @click="openTopic(t.id)"
+                    >
+                      <v-list-item-title>{{ t.title }}</v-list-item-title>
+                      <template #append>
+                        <span class="status-dot status-dot--ok" />
+                      </template>
+                    </v-list-item>
+                  </v-list>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
             <v-col cols="12" md="6">
               <v-card height="100%">
                 <v-card-title class="d-flex align-center ga-2 t-title pt-4">
