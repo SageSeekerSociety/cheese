@@ -43,6 +43,20 @@ def test_topic_branch_isolated_then_merged(client):
     assert any(f["path"] == "feat.txt" for f in ws.list_files(pid))
 
 
+def test_project_write_goes_to_base_not_topic_branch(client):
+    # Project-level writes land on base; a topic's file stays on its branch until
+    # merged (no cross-contamination).
+    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    pid = uuid.UUID(pr["id"])
+    tid = uuid.uuid4()
+    ws.write_file(pid, path="topic_only.txt", content="t\n", topic_id=tid)
+    ws.write_file(pid, path="project_wide.txt", content="p\n")  # no topic → base
+
+    names = {f["path"] for f in ws.list_files(pid)}  # working tree is now base
+    assert "project_wide.txt" in names
+    assert "topic_only.txt" not in names  # still isolated on the topic branch
+
+
 def test_git_diff_rejects_option_injection(client):
     pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
     pid = uuid.UUID(pr["id"])

@@ -24,7 +24,6 @@ from app.domain.memory.store import DbMemoryStore
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotifKind, NotifLevel
 from app.domain.notification.repositories import NotificationRepository
-from app.domain.review.repositories import AcceptCardRepository
 from app.domain.topic.services import TopicService
 
 SERVER_NAME = "cheese"
@@ -145,8 +144,13 @@ def build_cheese_server(
             return _text("level/kind 取值无效。")
         async with session_factory() as s:
             repo = NotificationRepository(s)
-            # 分级限流 (spec §8.5): don't spam — drop over-quota notifications.
-            if await repo.over_quota(topic_id, level):
+            # 分级限流 (spec §8.5): throttle spammy alerts, but NEVER drop a
+            # decision request — a 拍板 the user must make can't be silently lost.
+            throttleable = kind not in (
+                NotifKind.decision_request,
+                NotifKind.accept_request,
+            )
+            if throttleable and await repo.over_quota(topic_id, level):
                 return _text(
                     f"已达该话题的 {level.value} 通知限流，本次未发送（避免打扰）。"
                 )
@@ -178,13 +182,21 @@ def build_cheese_server(
         {"reviewer_handle": str, "routing_reason": str},
     )
     async def request_accept(args: dict[str, Any]) -> dict[str, Any]:
+        from app.core.errors import ValidationError
+        from app.domain.review.services import AcceptService
+
         reviewer = args["reviewer_handle"]
         async with session_factory() as s:
-            await AcceptCardRepository(s).add(
-                topic_id=topic_id,
-                reviewer_handle=reviewer,
-                routing_reason=args.get("routing_reason", ""),
-            )
+            # Go through the service so the same guards apply as a human filing a
+            # card (one pending per topic, not on an archived topic).
+            try:
+                await AcceptService(s).create_card(
+                    topic_id=topic_id,
+                    reviewer_handle=reviewer,
+                    routing_reason=args.get("routing_reason", ""),
+                )
+            except ValidationError as exc:
+                return _text(f"递验收卡失败：{exc}")
             # Also notify the reviewer so it lands in their 收件箱 (等你处理的事).
             await NotificationRepository(s).add(
                 project_id=project_id,

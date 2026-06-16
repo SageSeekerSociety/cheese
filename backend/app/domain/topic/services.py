@@ -131,12 +131,27 @@ class TopicService:
         parent = await self._repo.get(block.topic_id)
         if parent is None:
             raise NotFoundError("Parent topic not found")
+        # 归档后工作面冻结 (spec §6.3) — consistent with split/edit_doc.
+        if parent.status == TopicStatus.archived:
+            raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
+
+        # 私聊不是话题树的父节点 (spec §1): upgrading a block out of a private
+        # chat lands a real topic under the project root, not under the chat
+        # (which list_for_project hides → would be an invisible orphan).
+        parent_id = parent.id
+        kind = _child_kind(parent)
+        if parent.is_private:
+            project = await self._projects.get(block.project_id)
+            root_id = project.root_topic_id if project else None
+            if root_id is not None:
+                parent_id = root_id
+                kind = TopicKind.topic
 
         new_topic = await self._repo.add(
             project_id=block.project_id,
             title=_title_from(block.content),
-            parent_id=parent.id,
-            kind=_child_kind(parent),
+            parent_id=parent_id,
+            kind=kind,
             created_by=created_by,
             upgraded_from_block_id=block.id,
         )

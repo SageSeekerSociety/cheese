@@ -84,7 +84,14 @@ def _checkout_topic_branch(repo: Path, branch: str) -> None:
     if _branch_exists(repo, branch):
         _git(repo, "checkout", "-q", branch)
     else:
-        _git(repo, "checkout", "-q", "-b", branch)
+        # Always fork a fresh topic branch from the base, so it carries only the
+        # base — not whatever other topic happened to be checked out last.
+        _git(repo, "checkout", "-q", "-b", branch, _base_branch(repo))
+
+
+def _checkout_base(repo: Path) -> None:
+    _ensure_base_commit(repo)
+    _git(repo, "checkout", "-q", _base_branch(repo))
 
 
 def _safe_path(repo: Path, rel: str) -> Path:
@@ -106,9 +113,12 @@ def write_file(
 ) -> dict:
     repo = ensure_repo(project_id)
     # 话题 = 分支 (spec §6.3): a topic's writes land on its own branch, so work
-    # is isolated until 采纳 merges it. Project-level (no topic) writes go to main.
+    # is isolated until 采纳 merges it. Project-level (no topic) writes go to the
+    # base branch — never to whatever topic branch was checked out last.
     if topic_id is not None:
         _checkout_topic_branch(repo, branch_for_topic(topic_id))
+    elif _has_commit(repo):
+        _checkout_base(repo)
     target = _safe_path(repo, path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")

@@ -156,6 +156,38 @@ def test_archived_topic_is_frozen(client):
     assert r.status_code == 422
 
 
+def test_upgrade_on_archived_topic_rejected(client):
+    # Consistent with split/edit_doc: a frozen topic accepts no new work (§6.3).
+    p = _project(client)
+    topic = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "交付"}
+    ).json()["data"]
+    block_id = _insert_block(client, p["id"], topic["id"], "某条结论")
+    card = client.post(
+        f"/api/topics/{topic['id']}/accept-card", json={"reviewer_handle": "alice"}
+    ).json()["data"]
+    client.post(f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    r = client.post(f"/api/blocks/{block_id}/upgrade", json={"created_by": "alice"})
+    assert r.status_code == 422
+
+
+def test_upgrade_from_private_chat_lands_under_root(client):
+    # 私聊不是话题树父节点 (spec §1): upgrading a private-chat block makes a topic
+    # under the project root, not an invisible orphan under the chat.
+    p = _project(client, owner_handle="user-1")
+    priv = client.get(
+        f"/api/projects/{p['id']}/private-chat", params={"user_handle": "user-1"}
+    ).json()["data"]
+    block_id = _insert_block(
+        client, p["id"], priv["id"], "我们其实该单独做个数据清洗模块"
+    )
+    topic = client.post(
+        f"/api/blocks/{block_id}/upgrade", json={"created_by": "user-1"}
+    ).json()["data"]
+    assert topic["parent_id"] == p["root_topic_id"]
+    assert topic["kind"] == "topic"
+
+
 def test_split_and_return_conclusion(client):
     p = _project(client)
     topic = client.post(
