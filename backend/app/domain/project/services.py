@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.project.models import AiMode, Project, ProjectTaskLink
 from app.domain.project.repositories import ProjectRepository
-from app.domain.task.repositories import TaskRepository
+from app.domain.task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 
@@ -17,6 +17,7 @@ class ProjectService:
         self._repo = ProjectRepository(session)
         self._topics = TopicRepository(session)
         self._tasks = TaskRepository(session)
+        self._templates = TaskTemplateRepository(session)
 
     async def create(
         self,
@@ -55,12 +56,27 @@ class ProjectService:
         self, *, project_id: uuid.UUID, task_id: uuid.UUID
     ) -> ProjectTaskLink:
         """Link a project to a task = accept the Template's protocol (§4.2)."""
-        await self.get_or_404(project_id)
-        if await self._tasks.get(task_id) is None:
+        project = await self.get_or_404(project_id)
+        task = await self._tasks.get(task_id)
+        if task is None:
             raise NotFoundError("Task not found")
         if await self._repo.get_link(project_id=project_id, task_id=task_id):
             raise ValidationError("Project already linked to this task")
+        # Inherit the Template's default expert role if the project has none yet
+        # (§4.2: accepting the protocol也继承默认配置).
+        if not project.expert_role:
+            tmpl = await self._templates.get(task.template_id)
+            if tmpl is not None and tmpl.default_role:
+                project.expert_role = tmpl.default_role
         return await self._repo.link_task(project_id=project_id, task_id=task_id)
+
+    async def unlink_task(
+        self, *, project_id: uuid.UUID, task_id: uuid.UUID
+    ) -> None:
+        """退出/断开 Task 协议 (§4): remove the project↔task link."""
+        await self.get_or_404(project_id)
+        if not await self._repo.unlink_task(project_id=project_id, task_id=task_id):
+            raise NotFoundError("Project is not linked to this task")
 
     async def list_links(
         self, project_id: uuid.UUID

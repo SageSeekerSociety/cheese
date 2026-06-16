@@ -65,6 +65,15 @@ async def list_linked_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(page(items, total))
 
 
+@router.delete("/{project_id}/tasks/{task_id}")
+async def unlink_task(
+    project_id: uuid.UUID, task_id: uuid.UUID, db: DbSession
+) -> dict:
+    """退出 Task 协议 (§4): break the project↔task link."""
+    await ProjectService(db).unlink_task(project_id=project_id, task_id=task_id)
+    return ok({"unlinked": True})
+
+
 @router.get("/{project_id}/decisions")
 async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
     """决策记录 (spec §7.1): project-wide decision blocks, each traceable to its

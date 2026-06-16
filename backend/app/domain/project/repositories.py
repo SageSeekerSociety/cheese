@@ -64,6 +64,16 @@ class ProjectRepository:
         await self._session.refresh(link)
         return link
 
+    async def unlink_task(
+        self, *, project_id: uuid.UUID, task_id: uuid.UUID
+    ) -> bool:
+        link = await self.get_link(project_id=project_id, task_id=task_id)
+        if link is None:
+            return False
+        await self._session.delete(link)
+        await self._session.flush()
+        return True
+
     async def get_link(
         self, *, project_id: uuid.UUID, task_id: uuid.UUID
     ) -> ProjectTaskLink | None:

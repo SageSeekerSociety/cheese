@@ -44,6 +44,43 @@ def test_link_task_and_duplicate(client):
     assert links["total"] == 1
 
 
+def test_unlink_task(client):
+    # 退出 Task 协议 (§4): a project can break its link to a task.
+    p = _project(client)
+    space = client.post("/api/spaces", json={"name": "S"}).json()["data"]
+    tmpl = client.post(
+        f"/api/spaces/{space['id']}/templates", json={"name": "T"}
+    ).json()["data"]
+    task = client.post(
+        f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
+    ).json()["data"]
+    client.post(f"/api/projects/{p['id']}/tasks", json={"task_id": task["id"]})
+
+    r = client.delete(f"/api/projects/{p['id']}/tasks/{task['id']}")
+    assert r.status_code == 200
+    assert client.get(f"/api/projects/{p['id']}/tasks").json()["data"]["total"] == 0
+    # Unlinking again is a 404 (nothing to remove).
+    r = client.delete(f"/api/projects/{p['id']}/tasks/{task['id']}")
+    assert r.status_code == 404
+
+
+def test_link_task_inherits_template_default_role(client):
+    p = _project(client)  # no expert_role
+    assert p.get("expert_role") in (None, "")
+    space = client.post("/api/spaces", json={"name": "S"}).json()["data"]
+    tmpl = client.post(
+        f"/api/spaces/{space['id']}/templates",
+        json={"name": "T", "default_role": "academic-research"},
+    ).json()["data"]
+    task = client.post(
+        f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
+    ).json()["data"]
+    client.post(f"/api/projects/{p['id']}/tasks", json={"task_id": task["id"]})
+
+    fresh = client.get(f"/api/projects/{p['id']}").json()["data"]
+    assert fresh["expert_role"] == "academic-research"
+
+
 def _insert_block(client, project_id, topic_id, content) -> str:
     holder: dict[str, str] = {}
 
