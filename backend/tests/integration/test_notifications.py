@@ -1,5 +1,11 @@
 """Notification domain over HTTP — spec §8.5/8.6, evals G2/G3."""
 
+import asyncio
+import uuid
+
+from app.domain.notification.models import NotifKind, NotifLevel
+from app.domain.notification.repositories import NotificationRepository
+
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 
 
@@ -13,6 +19,44 @@ def _post_notif(client, project_id: str, **body) -> dict:
     r = client.post(f"/api/projects/{project_id}/notifications", json=body)
     assert r.status_code == 200, r.text
     return r.json()["data"]
+
+
+def test_notification_quota_per_topic(client):
+    # spec §8.5: ≤2 light/day and ≤1 strong/week per topic; silent uncapped.
+    pid = _create_project(client)
+    tid = client.post(
+        "/api/topics", json={"project_id": pid, "title": "T"}
+    ).json()["data"]["id"]
+    p, t = uuid.UUID(pid), uuid.UUID(tid)
+
+    async def run():
+        async with client.test_factory() as s:
+            repo = NotificationRepository(s)
+
+            async def add(level):
+                await repo.add(
+                    project_id=p,
+                    level=level,
+                    kind=NotifKind.heartbeat,
+                    title="x",
+                    topic_id=t,
+                )
+                await s.commit()
+
+            assert await repo.over_quota(t, NotifLevel.light) is False
+            await add(NotifLevel.light)
+            await add(NotifLevel.light)
+            assert await repo.over_quota(t, NotifLevel.light) is True
+
+            assert await repo.over_quota(t, NotifLevel.strong) is False
+            await add(NotifLevel.strong)
+            assert await repo.over_quota(t, NotifLevel.strong) is True
+
+            # silent and non-topic notifications are never throttled.
+            assert await repo.over_quota(t, NotifLevel.silent) is False
+            assert await repo.over_quota(None, NotifLevel.light) is False
+
+    asyncio.run(run())
 
 
 def test_create_notification(client):

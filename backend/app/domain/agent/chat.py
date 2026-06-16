@@ -12,6 +12,7 @@ never hold a transaction open across the model round-trip.
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -407,9 +408,20 @@ class ChatService:
         }
 
     async def run_heartbeat(self, *, project_id: uuid.UUID) -> dict:
-        """定期巡检 (eval G1): 芝士 (本体) inspects the project against topic
-        状态 + 里程碑, then sends graded notifications via the notify tool. Its
-        reasoning is logged as a block in the root topic (施工现场 "为什么催")."""
+        """定期巡检 (eval G1): runs the heartbeat under the root topic's serial
+        lock, so a 本体 patrol never races a user's turn on the same topic."""
+        async with self._sessions() as session:
+            project = await ProjectRepository(session).get(project_id)
+            if project is None or project.root_topic_id is None:
+                raise NotFoundError("Project has no root topic")
+            root_topic_id = project.root_topic_id
+        async with self._lock_for(root_topic_id):
+            return await self._run_heartbeat_locked(project_id=project_id)
+
+    async def _run_heartbeat_locked(self, *, project_id: uuid.UUID) -> dict:
+        """芝士 (本体) inspects the project against topic 状态 + 里程碑, then sends
+        graded notifications via the notify tool. Its reasoning is logged as a
+        block in the root topic (施工现场 "为什么催")."""
         # --- gather context from the project ---
         async with self._sessions() as session:
             projects = ProjectRepository(session)
@@ -431,11 +443,22 @@ class ChatService:
             for t in all_topics
             if t.kind != TopicKind.root
         )
+        today = datetime.now(UTC).date()
+
+        def _days_left(m) -> str:
+            if not m.due_date:
+                return "未定"
+            d = (m.due_date.date() - today).days
+            return f"{m.due_date.date().isoformat()}（剩 {d} 天）" if d >= 0 else (
+                f"{m.due_date.date().isoformat()}（已逾期 {-d} 天）"
+            )
+
         milestone_lines = "\n".join(
-            f"- {m.title} 截止 {m.due_date.isoformat() if m.due_date else '未定'}"
-            for m in upcoming
+            f"- {m.title} 截止 {_days_left(m)}" for m in upcoming
         )
+        # Anchor the patrol in time so 芝士 can reason about 临近/拖延 (spec §7.2).
         context = (
+            f"## 今天\n{today.isoformat()}\n\n"
             f"## 项目话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{milestone_lines or '（暂无）'}"
         )

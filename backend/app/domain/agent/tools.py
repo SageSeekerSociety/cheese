@@ -142,7 +142,13 @@ def build_cheese_server(
         except ValueError:
             return _text("level/kind 取值无效。")
         async with session_factory() as s:
-            await NotificationRepository(s).add(
+            repo = NotificationRepository(s)
+            # 分级限流 (spec §8.5): don't spam — drop over-quota notifications.
+            if await repo.over_quota(topic_id, level):
+                return _text(
+                    f"已达该话题的 {level.value} 通知限流，本次未发送（避免打扰）。"
+                )
+            await repo.add(
                 project_id=project_id,
                 level=level,
                 kind=kind,

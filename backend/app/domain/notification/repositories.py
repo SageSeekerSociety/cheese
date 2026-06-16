@@ -1,16 +1,42 @@
 """Notification data access."""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.notification.models import Notification, NotifKind, NotifLevel
+
+# 分级限流 (spec §8.5): per topic, at most 2 light/day and 1 strong/week.
+_QUOTA = {
+    NotifLevel.light: (timedelta(days=1), 2),
+    NotifLevel.strong: (timedelta(days=7), 1),
+}
 
 
 class NotificationRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
+
+    async def over_quota(
+        self, topic_id: uuid.UUID | None, level: NotifLevel
+    ) -> bool:
+        """True when this topic already hit its quota for this level in the
+        window (silent is never throttled; non-topic notifications either)."""
+        if topic_id is None or level not in _QUOTA:
+            return False
+        window, cap = _QUOTA[level]
+        count = await self._session.scalar(
+            select(func.count())
+            .select_from(Notification)
+            .where(
+                Notification.topic_id == topic_id,
+                Notification.level == level,
+                Notification.created_at >= datetime.now(UTC) - window,
+            )
+        )
+        return (count or 0) >= cap
 
     async def add(
         self,
