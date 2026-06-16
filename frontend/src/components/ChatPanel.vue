@@ -57,6 +57,8 @@ const emit = defineEmits<{
   (e: 'turn-done'): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
+  // Open the topic an upgraded block points to (the 活引用 back-link).
+  (e: 'open-topic', topicId: string): void
 }>()
 
 const AUTHOR = 'user-1'
@@ -394,6 +396,16 @@ onBeforeUnmount(closeSocket)
                 v-html="renderMarkdown(m.content)"
               />
               <div v-else class="im-text" v-html="renderPlain(m.content)" />
+              <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
+              <button
+                v-if="m.upgraded_to_topic_id"
+                type="button"
+                class="im-upgraded"
+                @click="emit('open-topic', m.upgraded_to_topic_id)"
+              >
+                <v-icon size="13">mdi-arrow-top-right</v-icon>
+                已升级为话题，点击查看
+              </button>
             </div>
 
             <!-- hover action bar, top-right of the row (Feishu). Only the action
@@ -634,6 +646,24 @@ onBeforeUnmount(closeSocket)
   line-height: 1.62;
   color: var(--text);
   word-break: break-word;
+}
+/* Live link from an upgraded block to its new topic. */
+.im-upgraded {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--accent-ink);
+  background: var(--fill);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.im-upgraded:hover {
+  background: var(--surface);
+  border-color: var(--accent);
 }
 /* @mention: neutral inset, ink text — not amber. */
 .im-text :deep(.mention) {

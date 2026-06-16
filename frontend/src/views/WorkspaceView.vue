@@ -516,6 +516,7 @@ onMounted(async () => {
         @turn-done="handleTurnDone"
         @tool-used="handleToolUsed"
         @upgrade-message="handleUpgradeMessage"
+        @open-topic="selectTopic"
       />
     </div>
 
@@ -535,6 +536,7 @@ onMounted(async () => {
           @turn-done="handleTurnDone"
           @tool-used="handleToolUsed"
           @upgrade-message="handleUpgradeMessage"
+        @open-topic="selectTopic"
         >
           <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
           <template
