@@ -11,6 +11,7 @@ from app.domain.oauth.services import (
     OAuthProviderConfig,
     OAuthService,
     OAuthUserInfo,
+    RucProvider,
 )
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -44,6 +45,20 @@ def _google_config():
         token_url="https://oauth2.googleapis.com/token",
         redirect_url="https://example.com/callback/google",
         scope=["openid", "email", "profile"],
+    )
+
+
+def _ruc_config():
+    return OAuthProviderConfig(
+        id="ruc",
+        name="数智人大",
+        client_id="ruc-client-id",
+        client_secret="ruc-secret",
+        authorization_url="https://v.ruc.edu.cn/oauth2/authorize",
+        token_url="https://v.ruc.edu.cn/oauth2/token",
+        redirect_url="https://example.com/callback/ruc",
+        scope=["userinfo", "profile"],
+        user_info_url="https://v.ruc.edu.cn/apis/oauth2/v1/profile",
     )
 
 
@@ -442,6 +457,20 @@ class TestOAuthServiceInitialize:
         assert "google" in svc._providers
         assert isinstance(svc._providers["google"], GoogleProvider)
 
+    def test_initialize_with_ruc_provider(self):
+        svc, _repo = _make_service()
+        with patch("app.domain.oauth.services.settings") as mock_settings:
+            mock_settings.oauth_enabled_providers = "ruc"
+            mock_settings.oauth_ruc_client_id = "ruc-cid"
+            mock_settings.oauth_ruc_client_secret = "ruc-sec"
+            mock_settings.oauth_ruc_redirect_url = "https://example.com/callback/ruc"
+            mock_settings.oauth_ruc_authorization_url = "https://v.ruc.edu.cn/oauth2/authorize"
+            mock_settings.oauth_ruc_token_url = "https://v.ruc.edu.cn/oauth2/token"
+            mock_settings.oauth_ruc_user_info_url = "https://v.ruc.edu.cn/apis/oauth2/v1/profile"
+            svc._initialize()
+        assert "ruc" in svc._providers
+        assert isinstance(svc._providers["ruc"], RucProvider)
+
     def test_initialize_with_multiple_providers(self):
         svc, _repo = _make_service()
         with patch("app.domain.oauth.services.settings") as mock_settings:
@@ -519,6 +548,21 @@ class TestGetProviderConfig:
         assert config.id == "google"
         assert config.name == "Google"
         assert "openid" in config.scope
+
+    def test_ruc_config(self):
+        svc, _repo = _make_service()
+        with patch("app.domain.oauth.services.settings") as mock_settings:
+            mock_settings.oauth_ruc_client_id = "cid"
+            mock_settings.oauth_ruc_client_secret = "csec"
+            mock_settings.oauth_ruc_redirect_url = "https://redirect.com"
+            mock_settings.oauth_ruc_authorization_url = "https://v.ruc.edu.cn/oauth2/authorize"
+            mock_settings.oauth_ruc_token_url = "https://v.ruc.edu.cn/oauth2/token"
+            mock_settings.oauth_ruc_user_info_url = "https://v.ruc.edu.cn/apis/oauth2/v1/profile"
+            config = svc._get_provider_config("ruc")
+        assert config is not None
+        assert config.id == "ruc"
+        assert config.name == "数智人大"
+        assert config.scope == ["userinfo", "profile"]
 
     def test_unknown_provider_returns_none(self):
         svc, _repo = _make_service()

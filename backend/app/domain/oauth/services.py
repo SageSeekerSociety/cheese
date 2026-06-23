@@ -1,3 +1,4 @@
+import base64
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -156,9 +157,91 @@ class GoogleProvider(OAuthProvider):
             )
 
 
+class RucProvider(OAuthProvider):
+    def get_authorization_url(self, state: str | None = None) -> str:
+        params = {
+            "client_id": self.config.client_id,
+            "redirect_uri": self.config.redirect_url,
+            "scope": " ".join(self.config.scope),
+            "response_type": "code",
+            "school_code": settings.oauth_ruc_school_code,
+            "theme": settings.oauth_ruc_theme,
+        }
+        if state:
+            params["state"] = state
+        return f"{self.config.authorization_url}?{urlencode(params)}"
+
+    async def exchange_code(self, code: str) -> dict[str, Any]:
+        basic = base64.b64encode(
+            f"{self.config.client_id}:{self.config.client_secret}".encode("utf-8")
+        ).decode("ascii")
+        data = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self.config.redirect_url,
+            "school_code": settings.oauth_ruc_school_code,
+            "theme": settings.oauth_ruc_theme,
+        }
+        headers = {
+            "Authorization": f"Basic {basic}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(self.config.token_url, data=data, headers=headers)
+            if resp.status_code in (404, 405):
+                resp = await client.get(
+                    self.config.token_url,
+                    params=data,
+                    headers={"Authorization": f"Basic {basic}"},
+                )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_user_info(self, access_token: str) -> OAuthUserInfo:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                self.config.user_info_url or settings.oauth_ruc_user_info_url,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        profiles = data.get("profiles") if isinstance(data.get("profiles"), list) else []
+        linked_accounts = (
+            data.get("linkedaccounts") if isinstance(data.get("linkedaccounts"), list) else []
+        )
+        first_profile = profiles[0] if profiles else {}
+        first_linked = linked_accounts[0] if linked_accounts else {}
+        provider_user_id = (
+            data.get("uid")
+            or data.get("id")
+            or first_profile.get("stno")
+            or first_profile.get("sid")
+            or first_linked.get("username")
+        )
+        if not provider_user_id:
+            raise BadRequestError("RUC user info response does not include a stable user id")
+
+        username = (
+            first_profile.get("stno")
+            or first_profile.get("sid")
+            or first_linked.get("username")
+            or data.get("username")
+            or data.get("preferred_username")
+        )
+        return OAuthUserInfo(
+            id=str(provider_user_id),
+            email=data.get("email"),
+            name=data.get("name") or data.get("realname") or data.get("nickname"),
+            username=str(username) if username else None,
+            preferred_username=str(username) if username else None,
+        )
+
+
 PROVIDER_CLASSES = {
     "github": GitHubProvider,
     "google": GoogleProvider,
+    "ruc": RucProvider,
 }
 
 
@@ -216,6 +299,18 @@ class OAuthService:
                 token_url="https://oauth2.googleapis.com/token",
                 redirect_url=redirect_url,
                 scope=["openid", "email", "profile"],
+            )
+        elif provider_id == "ruc":
+            return OAuthProviderConfig(
+                id=provider_id,
+                name="数智人大",
+                client_id=client_id,
+                client_secret=client_secret,
+                authorization_url=settings.oauth_ruc_authorization_url,
+                token_url=settings.oauth_ruc_token_url,
+                redirect_url=redirect_url,
+                scope=["userinfo", "profile"],
+                user_info_url=settings.oauth_ruc_user_info_url,
             )
 
         return None
@@ -290,6 +385,7 @@ class OAuthService:
         provider_names = {
             "github": "GitHub",
             "google": "Google",
+            "ruc": "数智人大",
         }
         return [
             {

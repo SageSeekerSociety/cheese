@@ -1,7 +1,9 @@
 import asyncio
 from typing import Annotated
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2929,28 +2931,21 @@ async def get_oauth_providers(
 async def get_oauth_login_url(
     provider_id: Annotated[str, Path(alias="providerId")],
     redirect: str | None = Query(default=None),
+    state: str | None = Query(default=None),
     oauth_service: OAuthService = Depends(get_oauth_service),
-) -> dict:
+) -> RedirectResponse:
     import secrets
 
-    state = secrets.token_urlsafe(32)
+    state_token = state or secrets.token_urlsafe(32)
 
-    if redirect:
-        await oauth_service.store_oauth_state(state, {"redirect": redirect})
+    await oauth_service.store_oauth_state(state_token, {"redirect": redirect})
 
     try:
-        auth_url = oauth_service.generate_authorization_url(provider_id, state)
+        auth_url = oauth_service.generate_authorization_url(provider_id, state_token)
     except NotFoundError:
         raise NotFoundError(f"OAuth provider '{provider_id}' not found or not enabled") from None
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "authorizationUrl": auth_url,
-            "state": state,
-        },
-    }
+    return RedirectResponse(auth_url, status_code=status.HTTP_302_FOUND)
 
 
 @router.get(
@@ -2961,12 +2956,12 @@ async def handle_oauth_callback(
     provider_id: Annotated[str, Path(alias="providerId")],
     code: str = Query(...),
     state: str | None = Query(default=None),
-    response: Response = None,
     oauth_service: OAuthService = Depends(get_oauth_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
-) -> dict:
+) -> RedirectResponse:
     state_data = (await oauth_service.get_oauth_state(state)) if state else None
     redirect_url = state_data.get("redirect") if state_data else None
+    frontend_base = settings.frontend_url.rstrip("/")
 
     try:
         access_token, user_info = await oauth_service.handle_callback(
@@ -2984,12 +2979,24 @@ async def handle_oauth_callback(
 
     if existing:
         user_id = existing["userId"]
-        user, profile = await auth_service.get_user_with_profile(user_id)
+        user, _profile = await auth_service.get_user_with_profile(user_id)
 
         access_token_jwt = create_access_token(user_id)
         refresh_token = create_refresh_token(user_id)
 
-        response.set_cookie(
+        success_params = {
+            "token": access_token_jwt,
+            "provider": provider_id,
+        }
+        if user.email:
+            success_params["email"] = user.email
+        if redirect_url:
+            success_params["redirect"] = redirect_url
+        redirect_response = RedirectResponse(
+            f"{frontend_base}/account/oauth/success?{urlencode(success_params)}",
+            status_code=status.HTTP_302_FOUND,
+        )
+        redirect_response.set_cookie(
             "REFRESH_TOKEN",
             refresh_token,
             httponly=True,
@@ -2997,38 +3004,58 @@ async def handle_oauth_callback(
             samesite="lax",
             path="/",
         )
-
-        user_dto = await auth_service.build_user_dto(
-            user=user,
-            profile=profile,
-            viewer_id=user_id,
-        )
-        return {
-            "code": 200,
-            "message": "Login successfully.",
-            "data": {
-                "user": user_dto,
-                "accessToken": access_token_jwt,
-                "isNewUser": False,
-                "redirectUrl": redirect_url,
-            },
-        }
+        return redirect_response
     else:
-        return {
-            "code": 200,
-            "message": "OAuth user info retrieved. Link to existing account or register.",
-            "data": {
+        import secrets
+
+        state_token = secrets.token_urlsafe(32)
+        suggested_username = (
+            user_info.preferred_username
+            or user_info.username
+            or (user_info.email.split("@")[0] if user_info.email else "")
+        )
+        suggested_nickname = user_info.name or suggested_username or "RUC User"
+        await oauth_service.store_oauth_state(
+            state_token,
+            {
+                "providerId": provider_id,
+                "providerUserId": user_info.id,
                 "userInfo": {
-                    "providerId": provider_id,
-                    "providerUserId": user_info.id,
+                    "id": user_info.id,
                     "email": user_info.email,
-                    "name": user_info.name,
-                    "username": user_info.username,
+                    "name": user_info.name or suggested_nickname,
+                    "preferredUsername": suggested_username,
                 },
-                "isNewUser": True,
+                "suggestedUsername": suggested_username,
+                "suggestedNickname": suggested_nickname,
+                "emailConflict": bool(
+                    user_info.email and await auth_service.is_email_taken(user_info.email)
+                ),
                 "redirectUrl": redirect_url,
             },
-        }
+        )
+        return RedirectResponse(
+            f"{frontend_base}/account/oauth/complete?stateToken={state_token}",
+            status_code=status.HTTP_302_FOUND,
+        )
+
+
+@router.get(
+    "/auth/oauth/state",
+    summary="Get pending OAuth state",
+)
+async def get_oauth_state(
+    token: str = Query(...),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> dict:
+    state_data = await oauth_service.get_oauth_state(token)
+    if not state_data:
+        raise NotFoundError("OAuth state not found or expired")
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": state_data,
+    }
 
 
 @router.post(

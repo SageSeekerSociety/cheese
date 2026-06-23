@@ -68,6 +68,7 @@ const getProviderName = (providerId: string) => {
   const nameMap: Record<string, string> = {
     github: 'GitHub',
     google: 'Google',
+    ruc: '数智人大',
     microsoft: 'Microsoft',
     qq: 'QQ',
     wechat: '微信',

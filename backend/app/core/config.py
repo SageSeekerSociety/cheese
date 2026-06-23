@@ -116,6 +116,23 @@ class Settings(BaseSettings):
     oauth_google_client_id: str = Field(default="", alias="OAUTH_GOOGLE_CLIENT_ID")
     oauth_google_client_secret: str = Field(default="", alias="OAUTH_GOOGLE_CLIENT_SECRET")
     oauth_google_redirect_url: str = Field(default="", alias="OAUTH_GOOGLE_REDIRECT_URL")
+    oauth_ruc_client_id: str = Field(default="", alias="OAUTH_RUC_CLIENT_ID")
+    oauth_ruc_client_secret: str = Field(default="", alias="OAUTH_RUC_CLIENT_SECRET")
+    oauth_ruc_redirect_url: str = Field(default="", alias="OAUTH_RUC_REDIRECT_URL")
+    oauth_ruc_authorization_url: str = Field(
+        default="https://v.ruc.edu.cn/oauth2/authorize",
+        alias="OAUTH_RUC_AUTHORIZATION_URL",
+    )
+    oauth_ruc_token_url: str = Field(
+        default="https://v.ruc.edu.cn/oauth2/token",
+        alias="OAUTH_RUC_TOKEN_URL",
+    )
+    oauth_ruc_user_info_url: str = Field(
+        default="https://v.ruc.edu.cn/apis/oauth2/v1/profile",
+        alias="OAUTH_RUC_USER_INFO_URL",
+    )
+    oauth_ruc_school_code: str = Field(default="ruc", alias="OAUTH_RUC_SCHOOL_CODE")
+    oauth_ruc_theme: str = Field(default="schools", alias="OAUTH_RUC_THEME")
 
 
 @lru_cache(maxsize=1)
