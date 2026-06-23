@@ -44,11 +44,16 @@ setup_logging()
 
 
 def create_app() -> FastAPI:
+    # Expose API docs / OpenAPI schema only in development & test. In other
+    # environments openapi_url=None also disables /docs and /redoc (both depend
+    # on the schema), avoiding leaking the API surface in production.
+    docs_enabled = settings.environment in ("development", "test")
     app = FastAPI(
         title="Cheese Backend (Python)",
         version="0.1.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
 
     # Middleware
