@@ -733,7 +733,7 @@ onMounted(async () => {
               title="@芝士 — 让芝士回复（默认不 @）"
               @click="summon = !summon"
             >
-              <v-icon size="13">{{ summon ? 'mdi-creation' : 'mdi-at' }}</v-icon>
+              <v-icon v-if="summon" size="13">mdi-creation</v-icon>
               @芝士
             </button>
             <v-spacer />
