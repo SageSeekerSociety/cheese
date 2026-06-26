@@ -228,13 +228,28 @@ defineExpose({ send, connected })
 // The conversation stream shows messages + lightweight system lines only.
 // doc/decision blocks are document state (they live in the doc panel), and AI
 // tool/巡检 events belong in 现场 — neither belongs in the group chat (spec §7.1).
-const visible = computed<Block[]>(() =>
-  messages.value.filter(
-    (m) =>
-      m.kind === 'message' ||
-      (m.kind === 'event' && m.author_type === 'system'),
-  ),
-)
+const visible = computed<Block[]>(() => {
+  const out: Block[] = []
+  for (const m of messages.value) {
+    if (m.kind === 'message') {
+      out.push(m)
+    } else if (m.kind === 'event' && m.author_type === 'system') {
+      // Collapse a run of identical system lines (e.g. repeated 编辑了文档) so
+      // a burst of edits shows as one line, not a wall.
+      const prev = out[out.length - 1]
+      if (
+        prev &&
+        prev.kind === 'event' &&
+        prev.author_type === 'system' &&
+        prev.content === m.content
+      ) {
+        continue
+      }
+      out.push(m)
+    }
+  }
+  return out
+})
 
 // ---- Feishu group-chat helpers (Fix 2) ----
 function displayName(m: Block): string {

@@ -86,6 +86,10 @@ class NotificationService:
         n = await self.get_or_404(notification_id)
         if n.kind != NotifKind.decision_request:
             raise ValidationError("只有决策请求可以拍板")
+        # Idempotent: a decision is resolved once. Re-resolving must not post a
+        # second 【决策】block into the topic.
+        if n.resolved_at is not None:
+            return n
         payload = dict(n.payload or {})
         options = payload.get("options") or []
         if options and chosen not in options:
