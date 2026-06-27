@@ -360,3 +360,37 @@ def exec_in_sandbox(
         "stdout": result.stdout[:8000],
         "stderr": result.stderr[:4000],
     }
+
+
+def container_name(topic_id: uuid.UUID) -> str:
+    """Deterministic name of a topic's long-lived sandbox container."""
+    return f"cheesex-sbx-{topic_id.hex[:12]}"
+
+
+def stop_topic_container(topic_id: uuid.UUID) -> None:
+    """Remove a topic's sandbox container (e.g. when the topic is merged/archived
+    or its worktree is recreated). Best-effort: a missing container is fine."""
+    if not sandbox_available():
+        return
+    subprocess.run(
+        ["docker", "rm", "-f", container_name(topic_id)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def reap_sandbox_containers() -> int:
+    """Remove all CheeseX sandbox containers (label cheesex-sandbox=1). Called at
+    startup: containers from a previous run hold stale mounts, so we drop them and
+    let each topic recreate its own on the next turn. Returns how many were removed."""
+    if not sandbox_available():
+        return 0
+    listed = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", "label=cheesex-sandbox=1"],
+        capture_output=True,
+        text=True,
+    )
+    ids = [c for c in listed.stdout.split() if c]
+    if ids:
+        subprocess.run(["docker", "rm", "-f", *ids], capture_output=True, text=True)
+    return len(ids)

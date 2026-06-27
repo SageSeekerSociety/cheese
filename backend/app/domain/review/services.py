@@ -150,6 +150,13 @@ class AcceptService:
         except Exception:  # noqa: BLE001 — git is a side channel, never fatal here
             pass
 
+        # Topic is done → free its long-lived sandbox container (it would be
+        # recreated on demand if the archived topic is ever resumed).
+        try:
+            ws.stop_topic_container(topic.id)
+        except Exception:  # noqa: BLE001 — best effort, never fatal
+            pass
+
         # 采纳即归档 (spec §6.3).
         topic.status = TopicStatus.archived
         topic.accepted_by = decided_by

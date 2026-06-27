@@ -33,6 +33,16 @@ async def lifespan(_: FastAPI):
     from app.api.deps import get_chat_service
     from app.domain.scheduler.service import SchedulerRunner, SchedulerService
 
+    # Per-topic sandbox containers are long-lived but their mounts are tied to a
+    # specific process's worktree paths; drop any left over from a previous run so
+    # each topic recreates a fresh one on its next turn.
+    if settings.agent_sandbox_enabled:
+        from app.domain.workspace import service as ws
+
+        reaped = ws.reap_sandbox_containers()
+        if reaped:
+            print(f"[sandbox] reaped {reaped} stale container(s) at startup")
+
     scheduler = SchedulerService(chat_service=get_chat_service())
     runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
     runner.start()

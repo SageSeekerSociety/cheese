@@ -277,6 +277,7 @@ class ChatService:
                 "allowed_tools": ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
                 "env": {
                     "SBX_IMAGE": settings.sandbox_image,
+                    "SBX_CONTAINER": ws.container_name(topic_id),
                     "SBX_WORKTREE": str(worktree),
                     "SBX_SESSION": str(sess),
                     "CHEESE_API": settings.sandbox_api_base,
