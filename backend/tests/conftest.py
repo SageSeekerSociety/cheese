@@ -46,8 +46,9 @@ class StubAgent(AgentService):
         system_prompt,
         cwd,
         resume_session_id,
-        mcp_servers=None,
+        sandbox=None,
         allowed_tools=None,
+        **_,
     ):
         self.last_system_prompt = system_prompt
         self.last_resume_session_id = resume_session_id

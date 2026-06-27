@@ -28,7 +28,6 @@ from app.domain.agent.service import (
     AgentToolUse,
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_skills
-from app.domain.agent.tools import build_cheese_server, tool_names
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -217,30 +216,16 @@ class ChatService:
         memory_scope: str | None = None,
         owner: str | None = None,
     ) -> tuple[dict, str]:
-        """Pick how 芝士 acts on the platform this turn: the per-topic sandbox
-        (native tools + `cheese` CLI) when Docker is available, else the in-process
-        MCP fallback (tests / no-docker). Returns (stream_kwargs, cwd)."""
+        """Build how 芝士 acts on the platform this turn: the per-topic sandbox
+        (native tools + `cheese` CLI, spec §9.1). When no Docker is present (tests
+        / degraded), it runs the model with no platform tools. Returns
+        (stream_kwargs, cwd)."""
         if self._sandbox_enabled and ws.sandbox_available():
             sandbox, cwd = self._sandbox_kwargs(
                 project_id, topic_id, memory_scope=memory_scope, owner=owner
             )
             return {"sandbox": sandbox}, cwd
-        if memory_scope == "personal" and owner:
-            server = build_cheese_server(
-                session_factory=self._sessions,
-                project_id=project_id,
-                topic_id=topic_id,
-                memory_scope=MemoryScope.user,
-                memory_scope_id=owner,
-            )
-        else:
-            server = build_cheese_server(
-                session_factory=self._sessions,
-                project_id=project_id,
-                topic_id=topic_id,
-            )
-        mcp = {"mcp_servers": {"cheese": server}, "allowed_tools": tool_names()}
-        return mcp, default_cwd
+        return {}, default_cwd
 
     async def _converse_impl(
         self,

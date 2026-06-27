@@ -117,18 +117,16 @@ class AgentService:
         system_prompt: str,
         cwd: str,
         resume_session_id: str | None,
-        mcp_servers: dict[str, Any] | None = None,
-        allowed_tools: list[str] | None = None,
         sandbox: dict[str, Any] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Yield AgentDelta chunks (and AgentToolUse events) live, then a final
         AgentResult.
 
-        Two modes:
         - sandbox given: run `claude` INSIDE a per-topic container via the cli_path
           shim, with NATIVE tools (Bash/Read/Write/Edit jailed by the container)
           and platform actions via the in-container `cheese` CLI (spec §9.1).
-        - otherwise: in-process MCP platform tools, host built-ins disallowed.
+        - otherwise (no Docker / tests): plain model turn with built-ins disallowed
+          and no platform tools.
         """
         if sandbox:
             options = ClaudeAgentOptions(
@@ -155,9 +153,8 @@ class AgentService:
                 resume=resume_session_id,
                 include_partial_messages=True,
                 permission_mode="bypassPermissions",
-                allowed_tools=allowed_tools or [],
-                disallowed_tools=_BUILTIN_TOOLS,  # only platform tools (spec §9.1)
-                mcp_servers=mcp_servers or {},
+                allowed_tools=[],
+                disallowed_tools=_BUILTIN_TOOLS,
                 setting_sources=[],  # isolate from the host's ~/.claude settings
                 env=self._env,
             )
