@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     # Working directory for the agent's git-backed workspace (one repo per project).
     workspace_root: str = "./.workspaces"
 
+    # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
+    # When on, the interactive turn runs `claude` INSIDE a per-topic Docker
+    # container (native Bash/Read/Write jailed there) via the cli_path shim, and
+    # platform actions go through the `cheese` CLI → REST. Requires Docker.
+    agent_sandbox_enabled: bool = False
+    sandbox_image: str = "cheesex-agent-sandbox:latest"
+    sandbox_shim: str = "./sandbox/claude-sbx"
+    # Base URL the in-container `cheese` CLI calls back to (host → backend).
+    sandbox_api_base: str = "http://host.docker.internal:8099/api"
+
     def agent_env(self) -> dict[str, str]:
         """Env vars passed to the SDK/CLI to select the model provider."""
         env: dict[str, str] = {}

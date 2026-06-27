@@ -261,6 +261,62 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     return {"merged": True, "branch": branch, "into": base}
 
 
+def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
+    """Host path of a topic's git worktree (created on demand), world-writable so
+    the sandbox container's non-root `node` user can write into the mount."""
+    wt = _ensure_worktree(project_id, branch_for_topic(topic_id))
+    import os
+
+    os.chmod(wt, 0o777)
+    return wt
+
+
+_SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
+
+
+def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
+    """Persistent per-topic ~/.claude (mounted into the ephemeral container) so
+    the agent session / --resume survives across turns. Also seeds the `cheese`
+    skill here (= ~/.claude/skills, the user source) — one mount holds both the
+    session and the skill, with no host settings leaking in."""
+    import os
+    import shutil
+
+    d = (
+        Path(settings.workspace_root) / ".sessions" / str(project_id) / topic_id.hex[:8]
+    ).resolve()
+    d.mkdir(parents=True, exist_ok=True)
+    skills_dst = d / "skills"
+    if _SKILL_SRC.is_dir():
+        shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
+    for root, _dirs, files in os.walk(d):
+        os.chmod(root, 0o777)
+        for f in files:
+            os.chmod(os.path.join(root, f), 0o666)
+    return d
+
+
+def snapshot_worktree(
+    project_id: uuid.UUID, topic_id: uuid.UUID, message: str = "芝士 edits"
+) -> None:
+    """Commit whatever the agent changed in the topic's worktree this turn, so
+    native Bash/Write edits become version history (no manual commit needed)."""
+    wt = _ensure_worktree(project_id, branch_for_topic(topic_id))
+    _git(wt, "add", "-A")
+    if _git(wt, "status", "--porcelain").strip():
+        _git(
+            wt,
+            "-c",
+            "user.name=芝士",
+            "-c",
+            "user.email=cheese@zhishi.local",
+            "commit",
+            "-q",
+            "-m",
+            message,
+        )
+
+
 def sandbox_available() -> bool:
     return shutil.which("docker") is not None
 

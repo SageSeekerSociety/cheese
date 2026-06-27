@@ -119,28 +119,48 @@ class AgentService:
         resume_session_id: str | None,
         mcp_servers: dict[str, Any] | None = None,
         allowed_tools: list[str] | None = None,
+        sandbox: dict[str, Any] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Yield AgentDelta chunks (and AgentToolUse events) live, then a final
         AgentResult.
 
-        The AgentResult always comes last and carries the full text and the
-        session id (for resume). If the model produced no streaming deltas we
-        still emit the final text from the AssistantMessage. When mcp_servers +
-        allowed_tools are given, 芝士 can call platform tools (spec §9.1).
+        Two modes:
+        - sandbox given: run `claude` INSIDE a per-topic container via the cli_path
+          shim, with NATIVE tools (Bash/Read/Write/Edit jailed by the container)
+          and platform actions via the in-container `cheese` CLI (spec §9.1).
+        - otherwise: in-process MCP platform tools, host built-ins disallowed.
         """
-        options = ClaudeAgentOptions(
-            model=self._model,
-            system_prompt=system_prompt,
-            cwd=cwd,
-            resume=resume_session_id,
-            include_partial_messages=True,
-            permission_mode="bypassPermissions",
-            allowed_tools=allowed_tools or [],
-            disallowed_tools=_BUILTIN_TOOLS,  # only platform tools (spec §9.1)
-            mcp_servers=mcp_servers or {},
-            setting_sources=[],  # isolate from the host's ~/.claude settings
-            env=self._env,
-        )
+        if sandbox:
+            options = ClaudeAgentOptions(
+                model=self._model,
+                system_prompt=system_prompt,
+                cwd=cwd,
+                resume=resume_session_id,
+                include_partial_messages=True,
+                permission_mode="bypassPermissions",
+                allowed_tools=sandbox["allowed_tools"],
+                cli_path=sandbox["cli_path"],
+                # The cheese skill lives in the mounted ~/.claude/skills (=user
+                # source). "user" reads only the isolated per-topic session dir
+                # in the container, so no host settings leak in.
+                setting_sources=["user"],
+                skills=["cheese"],
+                env={**self._env, **sandbox["env"]},
+            )
+        else:
+            options = ClaudeAgentOptions(
+                model=self._model,
+                system_prompt=system_prompt,
+                cwd=cwd,
+                resume=resume_session_id,
+                include_partial_messages=True,
+                permission_mode="bypassPermissions",
+                allowed_tools=allowed_tools or [],
+                disallowed_tools=_BUILTIN_TOOLS,  # only platform tools (spec §9.1)
+                mcp_servers=mcp_servers or {},
+                setting_sources=[],  # isolate from the host's ~/.claude settings
+                env=self._env,
+            )
 
         final_text = ""
         session_id = resume_session_id

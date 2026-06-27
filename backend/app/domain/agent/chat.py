@@ -17,6 +17,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.domain.agent.roles import role_description
 from app.domain.agent.service import (
@@ -37,6 +38,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.repositories import UsageRepository
+from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["conversation-style", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "conversation-style"]
@@ -71,6 +73,15 @@ _TOOL_ARG = {
 }
 
 
+# Native tools (sandbox mode) → 现场 labels.
+_TOOL_VERB.update(
+    {"Bash": "执行命令", "Write": "写文件", "Edit": "改文件", "Read": "读文件"}
+)
+_TOOL_ARG.update(
+    {"Bash": "command", "Write": "file_path", "Edit": "file_path", "Read": "file_path"}
+)
+
+
 def _format_tool_event(name: str, args: dict) -> str:
     verb = _TOOL_VERB.get(name, name)
     key = _TOOL_ARG.get(name)
@@ -78,6 +89,8 @@ def _format_tool_event(name: str, args: dict) -> str:
     if key and isinstance(args, dict) and args.get(key) is not None:
         preview = " ".join(str(args[key]).split())[:120]
     return f"{verb}\n{preview}" if preview else verb
+
+
 
 
 def _build_system_prompt(
@@ -245,22 +258,51 @@ class ChatService:
         final_text = ""
         new_session_id = resume_session_id
 
-        # Give 芝士 its platform tools (spec §9.1). In a private chat, `remember`
-        # writes the owner's personal memory (cross-project, spec §8.4).
-        if is_private and private_owner:
-            server = build_cheese_server(
-                session_factory=self._sessions,
-                project_id=project_id,
-                topic_id=topic_id,
-                memory_scope=MemoryScope.user,
-                memory_scope_id=private_owner,
-            )
+        # Sandbox mode (spec §9.1): run claude INSIDE a per-topic container with
+        # native tools + the `cheese` CLI for platform actions. Private chats stay
+        # on the in-process MCP path (remember → user-scoped memory).
+        use_sandbox = (
+            settings.agent_sandbox_enabled
+            and ws.sandbox_available()
+            and not is_private
+        )
+        stream_kwargs: dict = {}
+        if use_sandbox:
+            worktree = ws.topic_worktree(project_id, topic_id)
+            sess = ws.session_dir(project_id, topic_id)
+            cwd = str(worktree)
+            stream_kwargs["sandbox"] = {
+                "cli_path": str(Path(settings.sandbox_shim).resolve()),
+                "allowed_tools": ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
+                "env": {
+                    "SBX_IMAGE": settings.sandbox_image,
+                    "SBX_WORKTREE": str(worktree),
+                    "SBX_SESSION": str(sess),
+                    "CHEESE_API": settings.sandbox_api_base,
+                    "CHEESE_PROJECT": str(project_id),
+                    "CHEESE_TOPIC": str(topic_id),
+                    "CHEESE_AUTHOR": CHEESE_AUTHOR,
+                },
+            }
         else:
-            server = build_cheese_server(
-                session_factory=self._sessions,
-                project_id=project_id,
-                topic_id=topic_id,
-            )
+            # Give 芝士 its platform tools via in-process MCP. In a private chat,
+            # `remember` writes the owner's personal memory (spec §8.4).
+            if is_private and private_owner:
+                server = build_cheese_server(
+                    session_factory=self._sessions,
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    memory_scope=MemoryScope.user,
+                    memory_scope_id=private_owner,
+                )
+            else:
+                server = build_cheese_server(
+                    session_factory=self._sessions,
+                    project_id=project_id,
+                    topic_id=topic_id,
+                )
+            stream_kwargs["mcp_servers"] = {"cheese": server}
+            stream_kwargs["allowed_tools"] = tool_names()
 
         tool_events: list[tuple[str, dict]] = []
         usage = None
@@ -269,8 +311,7 @@ class ChatService:
             system_prompt=system_prompt,
             cwd=cwd,
             resume_session_id=resume_session_id,
-            mcp_servers={"cheese": server},
-            allowed_tools=tool_names(),
+            **stream_kwargs,
         ):
             if isinstance(event, AgentDelta):
                 yield {"type": "delta", "text": event.text}
@@ -322,6 +363,14 @@ class ChatService:
             if topic is not None and new_session_id:
                 await topics.set_session_id(topic, new_session_id)
             await session.commit()
+
+        # Snapshot whatever the agent changed in its worktree this turn (native
+        # edits → version history). Best-effort; never fail the turn on git.
+        if use_sandbox:
+            try:
+                ws.snapshot_worktree(project_id, topic_id)
+            except Exception:  # noqa: BLE001
+                pass
 
         yield {"type": "assistant_block", "block": assistant_payload}
         yield {"type": "done"}
