@@ -33,6 +33,7 @@ class NotifKind(enum.StrEnum):
     decision_request = "decision_request"  # 决策请求 (带选项)
     accept_request = "accept_request"  # 验收卡 (点名)
     heartbeat = "heartbeat"  # 巡检催办
+    mention = "mention"  # @点名 (强提醒)
 
 
 class Notification(UuidPk, Timestamps, Base):

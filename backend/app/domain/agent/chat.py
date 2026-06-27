@@ -10,6 +10,7 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
+import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -34,6 +35,8 @@ from app.domain.block.schemas import BlockOut
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import DbMemoryStore
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.notification.models import NotifKind, NotifLevel
+from app.domain.notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
@@ -149,12 +152,21 @@ def _build_system_prompt(
     doc: str | None,
     memories: list[str],
     role: str | None = None,
+    roster: list[dict] | None = None,
 ) -> str:
     parts = [base]
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if skills:
         parts.append(skills)
+    if roster:
+        lines = "\n".join(
+            f"- @{m['name']}（handle={m['handle']}，{m['role']}）" for m in roster
+        )
+        parts.append(
+            "## 项目成员（点名某人去做事时，在消息里用 @名字 点他——他会收到强提醒。"
+            "别只在文字里提名字而不 @）\n" + lines
+        )
     if doc:
         parts.append(
             "## 当前话题的活文档（这是最新状态；用户可能编辑了它，"
@@ -164,6 +176,19 @@ def _build_system_prompt(
         facts = "\n".join(f"- {m}" for m in memories)
         parts.append(f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}")
     return "\n\n".join(parts)
+
+
+def _mention_handles(text: str, roster: list[dict]) -> list[str]:
+    """Resolve @<token> mentions in a message to member handles (matched by name
+    or handle). Deterministic lookup against the roster — not output parsing."""
+    if not text or not roster:
+        return []
+    tokens = set(re.findall(r"@([一-龥\w-]+)", text))
+    found: list[str] = []
+    for m in roster:
+        if (m["name"] in tokens or m["handle"] in tokens) and m["handle"] not in found:
+            found.append(m["handle"])
+    return found
 
 
 def _block_payload(block_out: BlockOut) -> dict:
@@ -281,6 +306,29 @@ class ChatService:
             return {"sandbox": sandbox}, cwd
         return {}, default_cwd
 
+    async def _notify_mentions(
+        self, session, topic, author: str, text: str, roster: list[dict]
+    ) -> list[str]:
+        """@<name> in a message → a strong notification to each mentioned teammate
+        (spec §7: @人 = strong). Returns the mentioned handles (for block.refs)."""
+        handles = _mention_handles(text, roster)
+        targets = [h for h in handles if h not in (author, CHEESE_AUTHOR)]
+        if targets:
+            notifs = NotificationService(session)
+            preview = " ".join(text.split())[:200]
+            who = "芝士" if author == CHEESE_AUTHOR else author
+            for h in targets:
+                await notifs.create(
+                    project_id=topic.project_id,
+                    level=NotifLevel.strong,
+                    kind=NotifKind.mention,
+                    title=f"{who} 在「{topic.title}」@了你",
+                    body=preview,
+                    target_handle=h,
+                    topic_id=topic.id,
+                )
+        return handles
+
     async def _converse_impl(
         self,
         *,
@@ -346,11 +394,25 @@ class ChatService:
                 )
                 docs = await blocks.list_docs_for_topic(topic.id)
                 doc_text = docs[0].content if docs else None
-            project = await ProjectRepository(session).get(topic.project_id)
+            projects_repo = ProjectRepository(session)
+            project = await projects_repo.get(topic.project_id)
             role = role_description(project.expert_role if project else None)
+            # Roster so 芝士 can @ real teammates (not just name them in prose).
+            roster = (
+                []
+                if is_private
+                else await projects_repo.list_members(topic.project_id)
+            )
             project_id = topic.project_id
             resume_session_id = topic.session_id
             user_block_id = user_block.id
+            # Resolve @mentions in the human message → strong notify the mentioned.
+            mentioned = await self._notify_mentions(
+                session, topic, author, content, roster
+            )
+            if mentioned:
+                user_block.refs = [f"user:{h}" for h in mentioned]
+                user_payload = _block_payload(BlockOut.model_validate(user_block))
             await session.commit()
 
         yield {"type": "user_block", "block": user_payload}
@@ -363,7 +425,7 @@ class ChatService:
         # --- streaming: no DB transaction held open ---
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
         system_prompt = _build_system_prompt(
-            self._base_prompt, skills, doc_text, memories, role
+            self._base_prompt, skills, doc_text, memories, role, roster
         )
         cwd = self._workspace_for(project_id)
         final_text = ""
@@ -448,9 +510,16 @@ class ChatService:
                 kind=BlockKind.message,
                 reply_to=user_block_id,
             )
+            topic = await topics.get(topic_id)
+            # @mentions in 芝士's reply → strong notify the named teammates.
+            if topic is not None:
+                mentioned = await self._notify_mentions(
+                    session, topic, CHEESE_AUTHOR, final_text, roster
+                )
+                if mentioned:
+                    assistant_block.refs = [f"user:{h}" for h in mentioned]
             assistant_payload = _block_payload(BlockOut.model_validate(assistant_block))
 
-            topic = await topics.get(topic_id)
             if topic is not None and new_session_id:
                 await topics.set_session_id(topic, new_session_id)
             await session.commit()

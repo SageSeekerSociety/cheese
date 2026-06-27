@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.project.models import (
     AiMode,
     Project,
+    ProjectMember,
     ProjectTaskLink,
 )
+from app.domain.user.models import User
 
 
 class ProjectRepository:
@@ -86,6 +88,20 @@ class ProjectRepository:
     async def list_links(self, project_id: uuid.UUID) -> list[ProjectTaskLink]:
         stmt = select(ProjectTaskLink).where(ProjectTaskLink.project_id == project_id)
         return list((await self._session.scalars(stmt)).all())
+
+    async def list_members(self, project_id: uuid.UUID) -> list[dict]:
+        """Project roster: each member's handle, display name, and role — used to
+        inject 芝士's teammate context and to resolve @mentions to a handle."""
+        stmt = (
+            select(ProjectMember.user_handle, ProjectMember.role, User.name)
+            .join(User, User.handle == ProjectMember.user_handle, isouter=True)
+            .where(ProjectMember.project_id == project_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            {"handle": h, "role": str(role), "name": name or h}
+            for (h, role, name) in rows
+        ]
 
     async def list_projects_for_task(self, task_id: uuid.UUID) -> list[ProjectTaskLink]:
         stmt = select(ProjectTaskLink).where(ProjectTaskLink.task_id == task_id)
