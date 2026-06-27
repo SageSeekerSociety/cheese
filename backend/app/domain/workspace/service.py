@@ -79,19 +79,35 @@ def _base_branch(repo: Path) -> str:
     return _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() or DEFAULT_BRANCH
 
 
-def _checkout_topic_branch(repo: Path, branch: str) -> None:
-    _ensure_base_commit(repo)
-    if _branch_exists(repo, branch):
-        _git(repo, "checkout", "-q", branch)
+def _worktree_path(project_id: uuid.UUID, branch: str) -> Path:
+    safe = branch.replace("/", "_")
+    return (
+        Path(settings.workspace_root) / ".worktrees" / str(project_id) / safe
+    ).resolve()
+
+
+def _ensure_worktree(project_id: uuid.UUID, branch: str) -> Path:
+    """每话题一个独立 git worktree（沙箱地基）：分身在自己的工作目录里干活，
+    并行话题互不覆盖。共享同一个 .git，按需创建。"""
+    main = ensure_repo(project_id)
+    _ensure_base_commit(main)  # a worktree needs a base commit to fork from
+    wt = _worktree_path(project_id, branch)
+    if (wt / ".git").exists():  # already a registered worktree (.git is a file)
+        return wt
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    if _branch_exists(main, branch):
+        _git(main, "worktree", "add", "-q", str(wt), branch)
     else:
-        # Always fork a fresh topic branch from the base, so it carries only the
-        # base — not whatever other topic happened to be checked out last.
-        _git(repo, "checkout", "-q", "-b", branch, _base_branch(repo))
+        _git(main, "worktree", "add", "-q", "-b", branch, str(wt), _base_branch(main))
+    return wt
 
 
-def _checkout_base(repo: Path) -> None:
-    _ensure_base_commit(repo)
-    _git(repo, "checkout", "-q", _base_branch(repo))
+def _tree(project_id: uuid.UUID, topic_id: uuid.UUID | None) -> Path:
+    """The working dir for an operation: the topic's worktree, or the base repo
+    for project-level (no topic)."""
+    if topic_id is None:
+        return ensure_repo(project_id)
+    return _ensure_worktree(project_id, branch_for_topic(topic_id))
 
 
 def _safe_path(repo: Path, rel: str) -> Path:
@@ -111,23 +127,18 @@ def write_file(
     author: str = "芝士",
     topic_id: uuid.UUID | None = None,
 ) -> dict:
-    repo = ensure_repo(project_id)
-    # 话题 = 分支 (spec §6.3): a topic's writes land on its own branch, so work
-    # is isolated until 采纳 merges it. Project-level (no topic) writes go to the
-    # base branch — never to whatever topic branch was checked out last.
-    if topic_id is not None:
-        _checkout_topic_branch(repo, branch_for_topic(topic_id))
-    elif _has_commit(repo):
-        _checkout_base(repo)
-    target = _safe_path(repo, path)
+    # 话题 = 分支 = 独立 worktree (spec §6.3): a topic's writes land in its own
+    # working dir on its own branch; project-level writes go to the base repo.
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
-    _git(repo, "add", str(target.relative_to(repo)))
+    _git(tree, "add", str(target.relative_to(tree)))
     # Commit only if there's a staged change.
-    status = _git(repo, "status", "--porcelain")
+    status = _git(tree, "status", "--porcelain")
     if status.strip():
         _git(
-            repo,
+            tree,
             "-c",
             f"user.name={author}",
             "commit",
@@ -138,23 +149,40 @@ def write_file(
     return {"path": path, "bytes": len(content.encode("utf-8"))}
 
 
-def list_files(project_id: uuid.UUID) -> list[dict]:
-    repo = ensure_repo(project_id)
+def list_files(
+    project_id: uuid.UUID, topic_id: uuid.UUID | None = None
+) -> list[dict]:
+    tree = _tree(project_id, topic_id)
     files: list[dict] = []
-    for p in sorted(repo.rglob("*")):
+    for p in sorted(tree.rglob("*")):
         if ".git" in p.parts or p.is_dir():
             continue
-        rel = p.relative_to(repo)
+        rel = p.relative_to(tree)
         files.append({"path": str(rel), "bytes": p.stat().st_size})
     return files
 
 
-def read_file(project_id: uuid.UUID, path: str) -> str:
-    repo = ensure_repo(project_id)
-    target = _safe_path(repo, path)
+def read_file(
+    project_id: uuid.UUID, path: str, topic_id: uuid.UUID | None = None
+) -> str:
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
     if not target.is_file():
         raise ValidationError("file not found")
     return target.read_text(encoding="utf-8", errors="replace")
+
+
+def grep(
+    project_id: uuid.UUID, pattern: str, topic_id: uuid.UUID | None = None
+) -> str:
+    """Search tracked files in the topic's worktree (read-only). Empty on no
+    match. git grep is jailed to the tree, so it can't read outside the repo."""
+    tree = _tree(project_id, topic_id)
+    try:
+        out = _git(tree, "grep", "-n", "-I", "--no-color", "-e", pattern)
+    except ValidationError:
+        return ""  # git grep exits non-zero when nothing matches
+    return out[:8000]
 
 
 def git_log(project_id: uuid.UUID, limit: int = 50) -> list[dict]:

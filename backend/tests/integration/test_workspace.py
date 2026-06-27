@@ -2,6 +2,9 @@
 
 import uuid
 
+import pytest
+
+from app.core.errors import ValidationError
 from app.domain.workspace import service as ws
 
 
@@ -55,6 +58,26 @@ def test_project_write_goes_to_base_not_topic_branch(client):
     names = {f["path"] for f in ws.list_files(pid)}  # working tree is now base
     assert "project_wide.txt" in names
     assert "topic_only.txt" not in names  # still isolated on the topic branch
+
+
+def test_topic_worktree_read_and_grep(client):
+    # Read-only tools see a topic's own worktree (the 沙箱 working dir).
+    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    pid = uuid.UUID(pr["id"])
+    tid = uuid.uuid4()
+    ws.write_file(
+        pid,
+        path="rec/cf.py",
+        content="def recall_at_10():\n    return 0.18\n",
+        topic_id=tid,
+    )
+    # read back from the topic worktree
+    assert "recall_at_10" in ws.read_file(pid, "rec/cf.py", topic_id=tid)
+    # grep finds it in the worktree
+    assert "rec/cf.py" in ws.grep(pid, "recall_at_10", topic_id=tid)
+    # the file does not exist on the base tree (isolation)
+    with pytest.raises(ValidationError):
+        ws.read_file(pid, "rec/cf.py")  # base tree → not found
 
 
 def test_git_diff_rejects_option_injection(client):

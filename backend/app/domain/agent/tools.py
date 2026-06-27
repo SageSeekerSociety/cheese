@@ -39,6 +39,9 @@ _TOOL_NAMES = [
     "pin_milestone",
     "write_file",
     "record_decision",
+    "read_file",
+    "list_files",
+    "grep",
 ]
 
 
@@ -298,6 +301,45 @@ def build_cheese_server(
             await s.commit()
             return _text("已记入决策记录。")
 
+    # ---- Read-only tools (scoped to this topic's worktree / 沙箱) ----
+    @tool(
+        "read_file",
+        "读取项目仓库里一个文件的内容（看自己或别人写的代码/产物）。传入相对路径。",
+        {"path": str},
+    )
+    async def read_file(args: dict[str, Any]) -> dict[str, Any]:
+        from app.domain.workspace import service as ws
+
+        try:
+            content = ws.read_file(project_id, args["path"], topic_id=topic_id)
+        except Exception as exc:
+            return _text(f"读文件失败：{exc}")
+        return _text(content[:20000])
+
+    @tool(
+        "list_files",
+        "列出当前话题工作区里的所有文件（看仓库里有什么）。",
+        {},
+    )
+    async def list_files(_args: dict[str, Any]) -> dict[str, Any]:
+        from app.domain.workspace import service as ws
+
+        files = ws.list_files(project_id, topic_id=topic_id)
+        if not files:
+            return _text("工作区暂无文件。")
+        return _text("\n".join(f"{f['path']}（{f['bytes']} 字节）" for f in files))
+
+    @tool(
+        "grep",
+        "在当前话题工作区里按内容搜索（正则），返回匹配的文件:行号:内容。",
+        {"pattern": str},
+    )
+    async def grep(args: dict[str, Any]) -> dict[str, Any]:
+        from app.domain.workspace import service as ws
+
+        out = ws.grep(project_id, args["pattern"], topic_id=topic_id)
+        return _text(out or "无匹配。")
+
     server = create_sdk_mcp_server(
         name=SERVER_NAME,
         tools=[
@@ -309,6 +351,9 @@ def build_cheese_server(
             return_conclusion,
             pin_milestone,
             write_file,
+            read_file,
+            list_files,
+            grep,
             record_decision,
         ],
     )
