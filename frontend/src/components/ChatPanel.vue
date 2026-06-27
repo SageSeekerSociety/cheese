@@ -1,3 +1,12 @@
+<script lang="ts">
+// Per-topic scroll position, kept at module scope so it survives this component
+// unmounting (e.g. navigating to another view) and remounting — come back to a
+// topic and you land where you left off, not yanked to the bottom.
+const scrollMemory = new Map<string, number>()
+// How close to the bottom still counts as "at the bottom" (px).
+const BOTTOM_THRESHOLD = 80
+</script>
+
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { marked } from 'marked'
@@ -94,10 +103,50 @@ function toolLabel(name: string): string {
 let socket: WebSocket | null = null
 const scrollRef = ref<HTMLElement | null>(null)
 
+// Whether the user is parked at (or near) the bottom — drives whether incoming
+// messages auto-follow or leave the user's scroll position alone.
+const atBottom = ref(true)
+
+function isAtBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD
+}
+
 function scrollToBottom() {
   nextTick(() => {
     const el = scrollRef.value
-    if (el) el.scrollTop = el.scrollHeight
+    if (el) {
+      el.scrollTop = el.scrollHeight
+      atBottom.value = true
+    }
+  })
+}
+
+// Auto-follow new messages only when the user hasn't scrolled up.
+function autoScroll() {
+  if (atBottom.value) scrollToBottom()
+}
+
+// Save the current scroll position for the active topic (called on scroll).
+function rememberScroll() {
+  const el = scrollRef.value
+  if (!el || !props.topic) return
+  scrollMemory.set(props.topic.id, el.scrollTop)
+  atBottom.value = isAtBottom(el)
+}
+
+// Restore a topic's saved scroll position, or land at the bottom if none.
+function restoreScroll(topicId: string) {
+  nextTick(() => {
+    const el = scrollRef.value
+    if (!el) return
+    const saved = scrollMemory.get(topicId)
+    if (saved !== undefined) {
+      el.scrollTop = saved
+      atBottom.value = isAtBottom(el)
+    } else {
+      el.scrollTop = el.scrollHeight
+      atBottom.value = true
+    }
   })
 }
 
@@ -144,24 +193,24 @@ function handleFrame(frame: WsServerFrame) {
   switch (frame.type) {
     case 'user_block':
       messages.value.push(frame.block)
-      scrollToBottom()
+      autoScroll()
       break
     case 'delta':
       streaming.value = (streaming.value ?? '') + frame.text
-      scrollToBottom()
+      autoScroll()
       break
     case 'tool': {
       toolActions.value.push(toolLabel(frame.name))
       // Emit the short tool name (e.g. update_doc, create_subtopic) so the
       // parent can refresh the relevant panel immediately.
       emit('tool-used', frame.name.replace(/^mcp__cheese__/, ''))
-      scrollToBottom()
+      autoScroll()
       break
     }
     case 'assistant_block':
       messages.value.push(frame.block)
       streaming.value = null
-      scrollToBottom()
+      autoScroll()
       break
     case 'error':
       errorMsg.value = frame.message
@@ -172,7 +221,7 @@ function handleFrame(frame: WsServerFrame) {
       streaming.value = null
       awaitingReply.value = false
       emit('turn-done')
-      scrollToBottom()
+      autoScroll()
       break
   }
 }
@@ -190,7 +239,7 @@ async function loadTopic(topic: Topic) {
     // Only apply if still the active topic (avoid race on fast switching).
     if (props.topic?.id !== topic.id) return
     messages.value = payload.data
-    scrollToBottom()
+    restoreScroll(topic.id)
     openSocket(topic.id)
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
@@ -307,7 +356,9 @@ function onComposerKey(e: KeyboardEvent) {
 
 watch(
   () => props.topic,
-  (t) => {
+  (t, oldT) => {
+    // Save where we were in the topic we're leaving, so coming back restores it.
+    if (oldT && scrollRef.value) scrollMemory.set(oldT.id, scrollRef.value.scrollTop)
     if (t) loadTopic(t)
     else {
       messages.value = []
@@ -317,7 +368,10 @@ watch(
   { immediate: true },
 )
 
-onBeforeUnmount(closeSocket)
+onBeforeUnmount(() => {
+  rememberScroll() // persist position across an unmount (e.g. leaving the view)
+  closeSocket()
+})
 </script>
 
 <template>
@@ -373,7 +427,12 @@ onBeforeUnmount(closeSocket)
 
       <!-- Message stream — Feishu group chat: left-aligned rows, grouped runs,
            per-row hover action bar, centered system/event lines. -->
-      <div ref="scrollRef" class="messages flex-grow-1 overflow-y-auto py-2">
+      <div
+        ref="scrollRef"
+        class="messages flex-grow-1 overflow-y-auto py-2"
+        data-testid="chat-scroll"
+        @scroll="rememberScroll"
+      >
         <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">
           加载历史…
         </div>
