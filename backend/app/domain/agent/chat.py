@@ -128,11 +128,13 @@ class ChatService:
         agent: AgentService,
         base_system_prompt: str,
         workspace_root: str,
+        sandbox_enabled: bool = False,
     ):
         self._sessions = session_factory
         self._agent = agent
         self._base_prompt = base_system_prompt
         self._workspace_root = workspace_root
+        self._sandbox_enabled = sandbox_enabled
         # Load the conversation skills once (spec §8.3 product "soul").
         self._skills = load_skills(DEFAULT_CHAT_SKILLS)
         # Per-topic serial queue (spec §9.1): one agent turn per topic at a
@@ -262,9 +264,7 @@ class ChatService:
         # native tools + the `cheese` CLI for platform actions. Private chats stay
         # on the in-process MCP path (remember → user-scoped memory).
         use_sandbox = (
-            settings.agent_sandbox_enabled
-            and ws.sandbox_available()
-            and not is_private
+            self._sandbox_enabled and ws.sandbox_available() and not is_private
         )
         stream_kwargs: dict = {}
         if use_sandbox:

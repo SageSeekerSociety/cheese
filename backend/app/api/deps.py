@@ -22,6 +22,7 @@ def get_chat_service() -> ChatService:
         agent=agent,
         base_system_prompt=settings.agent_system_prompt,
         workspace_root=settings.workspace_root,
+        sandbox_enabled=settings.agent_sandbox_enabled,
     )
 
 
