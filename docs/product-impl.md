@@ -88,13 +88,13 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 #### 3.1.1 双实时：活消息(working log) + 活文档  🟡 目标
 
-模型同 Claude Code 的 `@claude` **交互模式**（prior art）：@ 后**立刻**冒一条"芝士在看…"的占位消息，它是一条**活消息**——维护一个 **todo 勾选清单** + "此刻在做什么" + 流式答案，**原地不断更新同一条**（不是刷一堆新消息），做完去掉 spinner、留一句小结。
+@ 后**立刻**冒一条"芝士在看…"的占位消息，它是一条**活消息**——维护一个 **todo 勾选清单** + "此刻在做什么" + 流式答案，**原地不断更新同一条**（不是刷一堆新消息），做完去掉 spinner、留一句小结。
 
-- **消息 = 过程(working log)**：todo/状态/流式答案，讲"怎么做"。todo 直接复用 Claude Code 自带的 **`TodoWrite`** 原生工具（沙箱里芝士已能用）——平台捕获其事件渲染成活清单，机制与 Claude Code 同源。
+- **消息 = 过程(working log)**：todo/状态/流式答案，讲"怎么做"。todo 复用 Claude Code 的结构化 **Task 工具**（`TaskCreate`/`TaskUpdate`/`TaskGet`/`TaskList`，v2.1.142 起取代 `TodoWrite`，三态 pending/in_progress/completed；沙箱里芝士原生可用）——平台捕获其事件渲染成活清单，机制同源。
 - **文档 = 状态**：结论/产物进活文档（§3.4，`cheese doc set`），讲"结果是什么"，回合中途即可增量更新、面板实时渲染。
 - **分工纪律**：todo/状态留在消息、结论进文档，**不重复**；消息收尾只给一句小结 + 指向文档，不堆全文（避开 Claude Code `track_progress` 结束塞大段 final summary 的"吵"问题）。这正是 §2.2「对话是过程、文档是状态」的双实时落地。
-- **现状**：✅ 流式 token（`delta` 累积成一条预览→定稿）+ 现场工具事件 + 活文档读写/工具事件刷新面板；🟡 待做：@ 秒回占位消息、把进行中消息结构化成 todo+状态(捕获 `TodoWrite`)、文档回合中途增量刷新。
-- **参考**：Claude Code GitHub Action 交互模式用单条 tracking comment + `- [ ]/- [x]` 清单 + `update_claude_comment` 原地更新（[docs](https://code.claude.com/docs/en/github-actions)、[anthropics/claude-code-action](https://github.com/anthropics/claude-code-action)）。
+- **现状**：✅ 流式 token（`delta` 累积成一条预览→定稿）+ 现场工具事件 + 活文档读写/工具事件刷新面板；🟡 待做：@ 秒回占位消息、把进行中消息结构化成 todo+状态(捕获 Task 工具事件)、文档回合中途增量刷新。
+- **参考 / prior art**：①范式——Anthropic **Claude Tag**（2026-06，常驻 Slack 的 AI 队友：@Claude、一频道一共享实例多人接力、拆 stages、ambient 盯/催、自排任务跨小时·天、审计日志），与本平台的 @芝士/话题/巡检/分身/现场高度同构，CheeseX 可定位为「Claude Tag for 学生项目制学习，但以文档为中心、git 原生、采纳=merge」（[anthropic.com](https://www.anthropic.com/news/introducing-claude-tag)）。②活消息机制——Claude Code 交互模式单条 tracking comment + `- [ ]/- [x]` 清单原地更新 + Task 工具（[github-actions](https://code.claude.com/docs/en/github-actions)、[todo-tracking](https://docs.claude.com/en/docs/agent-sdk/todo-tracking)）。
 
 ### 3.2 芝士（Agent）  ✅ 链路 / 🟡 部分能力
 
