@@ -91,6 +91,56 @@ def _format_tool_event(name: str, args: dict) -> str:
     return f"{verb}\n{preview}" if preview else verb
 
 
+# Claude Code's structured Task tools → a live working-log todo (§3.1.1). These
+# are the *process* (rendered as a checklist in the in-progress message), so they
+# are streamed live but NOT persisted as 现场 events.
+_TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}
+
+
+def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
+    """Fold a TaskCreate/TaskUpdate event into the todo list. Returns whether the
+    list changed (ids are assigned by creation order, matching the model)."""
+    if name == "TaskCreate":
+        todo.append(
+            {
+                "id": str(len(todo) + 1),
+                "subject": str(args.get("subject", "")).strip() or "（任务）",
+                "status": "pending",
+            }
+        )
+        return True
+    if name == "TaskUpdate":
+        tid = str(args.get("taskId", ""))
+        status = str(args.get("status", "")) or "pending"
+        for item in todo:
+            if item["id"] == tid:
+                item["status"] = status
+                return True
+    return False
+
+
+# A platform-mutating `cheese <sub>` command → which UI panel should refresh live
+# (the doc/decisions/topics/... — restores mid-turn refresh now cheese runs as Bash).
+_CHEESE_RESOURCE = {
+    "doc": "doc",
+    "decision": "decision",
+    "split": "topics",
+    "conclude": "topics",
+    "milestone": "milestone",
+    "accept-request": "accept",
+    "notify": "notify",
+}
+
+
+def _cheese_resource(command: str) -> str | None:
+    """Resource hint for a Bash `cheese <sub>` command, else None."""
+    parts = command.split()
+    for i, tok in enumerate(parts):
+        if tok.endswith("cheese") and i + 1 < len(parts):
+            return _CHEESE_RESOURCE.get(parts[i + 1])
+    return None
+
+
 
 
 def _build_system_prompt(
@@ -202,7 +252,11 @@ class ChatService:
             env["CHEESE_OWNER"] = owner
         sandbox = {
             "cli_path": str(Path(settings.sandbox_shim).resolve()),
-            "allowed_tools": ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
+            # Native tools + the Task tools (live working-log todo, §3.1.1).
+            "allowed_tools": [
+                "Bash", "Read", "Write", "Edit", "Grep", "Glob",
+                "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+            ],
             "env": env,
         }
         return sandbox, str(worktree)
@@ -329,6 +383,7 @@ class ChatService:
         use_sandbox = "sandbox" in stream_kwargs
 
         tool_events: list[tuple[str, dict]] = []
+        todo: list[dict] = []
         usage = None
         async for event in self._agent.stream_reply(
             prompt=prompt_text,
@@ -341,8 +396,20 @@ class ChatService:
                 yield {"type": "delta", "text": event.text}
             elif isinstance(event, AgentToolUse):
                 name = event.name.replace("mcp__cheese__", "")
-                tool_events.append((name, event.input or {}))
-                yield {"type": "tool", "name": event.name, "input": event.input}
+                args = event.input or {}
+                # Task tools → live working-log todo (process, not 现场).
+                if name in _TASK_TOOLS:
+                    if _apply_task_event(todo, name, args):
+                        yield {"type": "todo", "items": [dict(t) for t in todo]}
+                    continue
+                tool_events.append((name, args))
+                yield {"type": "tool", "name": event.name, "input": args}
+                # cheese <sub> ran as Bash → tell the UI which panel changed, so it
+                # refreshes mid-turn (doc/decisions/...), non-disruptively.
+                if name == "Bash":
+                    resource = _cheese_resource(str(args.get("command", "")))
+                    if resource:
+                        yield {"type": "state", "resource": resource}
             elif isinstance(event, AgentResult):
                 final_text = event.text
                 new_session_id = event.session_id

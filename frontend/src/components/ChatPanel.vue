@@ -12,7 +12,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { chatWsUrl, listBlocks } from '../api'
-import type { Block, Topic, WsClientMessage, WsServerFrame } from '../types'
+import type { Block, TodoItem, Topic, WsClientMessage, WsServerFrame } from '../types'
 import CheeseAvatar from './CheeseAvatar.vue'
 
 // Render 芝士's markdown replies to safe HTML (spec §3: AI 必须说人话, 可读).
@@ -63,6 +63,9 @@ const props = withDefaults(
 // (carries the short tool name); `turn-done` fires when a turn completes.
 const emit = defineEmits<{
   (e: 'tool-used', name: string): void
+  // A cheese command changed a platform resource (doc/decision/topics/...) —
+  // the parent refreshes that panel live, mid-turn.
+  (e: 'state-changed', resource: string): void
   (e: 'turn-done'): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
@@ -85,6 +88,8 @@ const awaitingReply = ref(false)
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
 const toolActions = ref<string[]>([])
+// Live working-log todo (芝士's Task tools) for the in-progress turn (§3.1.1).
+const todoItems = ref<TodoItem[]>([])
 
 const TOOL_LABELS: Record<string, string> = {
   create_subtopic: '拆出子话题',
@@ -98,6 +103,10 @@ const TOOL_LABELS: Record<string, string> = {
 function toolLabel(name: string): string {
   const short = name.replace(/^mcp__cheese__/, '')
   return TOOL_LABELS[short] ?? short
+}
+
+function todoMark(status: string): string {
+  return status === 'completed' ? '✓' : status === 'in_progress' ? '◐' : '○'
 }
 
 let socket: WebSocket | null = null
@@ -207,9 +216,19 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     }
+    case 'todo':
+      // Live working-log checklist (process), updated in place.
+      todoItems.value = frame.items
+      autoScroll()
+      break
+    case 'state':
+      // cheese changed a platform resource → parent refreshes that panel live.
+      emit('state-changed', frame.resource)
+      break
     case 'assistant_block':
       messages.value.push(frame.block)
       streaming.value = null
+      todoItems.value = [] // working-log done; the final message is the summary
       autoScroll()
       break
     case 'error':
@@ -231,6 +250,7 @@ async function loadTopic(topic: Topic) {
   streaming.value = null
   awaitingReply.value = false
   toolActions.value = []
+  todoItems.value = []
   messages.value = []
   loadingHistory.value = true
   closeSocket()
@@ -262,12 +282,15 @@ function send(content: string, summon: boolean): boolean {
     summon,
   }
   socket.send(JSON.stringify(msg))
-  // Only show the "awaiting reply" affordances when 芝士 was summoned.
+  // Only show the "awaiting reply" affordances when 芝士 was summoned. Setting
+  // streaming='' immediately renders the 芝士 bubble + "正在看…" placeholder —
+  // an instant ack (秒回) even before the model's first token / cold start.
   if (summon) {
     awaitingReply.value = true
     streaming.value = ''
   }
   toolActions.value = []
+  todoItems.value = []
   scrollToBottom()
   return true
 }
@@ -515,8 +538,27 @@ onBeforeUnmount(() => {
             <div class="im-meta">
               <span class="im-name">芝士</span>
             </div>
+
+            <!-- Live working-log checklist (芝士's tasks this turn, §3.1.1) -->
+            <ul v-if="todoItems.length" class="todo-list">
+              <li
+                v-for="t in todoItems"
+                :key="t.id"
+                class="todo-item"
+                :class="'todo-' + t.status"
+              >
+                <span class="todo-mark">{{ todoMark(t.status) }}</span>
+                <span class="todo-text">{{ t.subject }}</span>
+              </li>
+            </ul>
+
             <div class="im-text">
-              <span class="md-content" v-html="renderMarkdown(streaming || '')" />
+              <!-- Instant ack before the first token / during cold start -->
+              <span
+                v-if="awaitingReply && !streaming"
+                class="text-medium-emphasis"
+              >芝士 正在看…</span>
+              <span v-else class="md-content" v-html="renderMarkdown(streaming || '')" />
               <span v-if="awaitingReply" class="caret" />
             </div>
           </div>
@@ -589,6 +631,41 @@ onBeforeUnmount(() => {
 <style scoped>
 .chat {
   background: var(--surface);
+}
+/* Live working-log checklist (§3.1.1) — process, sits above the streaming text. */
+.todo-list {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--v-theme-primary, #6750a4);
+  background: rgba(103, 80, 164, 0.05);
+  border-radius: 4px;
+}
+.todo-item {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.todo-mark {
+  width: 1em;
+  flex: none;
+  text-align: center;
+}
+.todo-pending {
+  color: var(--text-muted, #888);
+}
+.todo-in_progress {
+  color: var(--v-theme-primary, #6750a4);
+  font-weight: 600;
+}
+.todo-completed {
+  color: var(--text-muted, #999);
+}
+.todo-completed .todo-text {
+  text-decoration: line-through;
+  opacity: 0.7;
 }
 .messages {
   background: var(--surface);

@@ -52,11 +52,21 @@ export interface ListPayload<T> {
   total: number
 }
 
+// A live working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a
+// real-time checklist in the in-progress message — process, not state).
+export interface TodoItem {
+  id: string
+  subject: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
 // WebSocket server -> client frames.
 export type WsServerFrame =
   | { type: 'user_block'; block: Block }
   | { type: 'delta'; text: string }
   | { type: 'tool'; name: string; input: Record<string, unknown> }
+  | { type: 'todo'; items: TodoItem[] }
+  | { type: 'state'; resource: string }
   | { type: 'assistant_block'; block: Block }
   | { type: 'error'; message: string }
   | { type: 'done' }

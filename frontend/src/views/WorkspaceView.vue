@@ -360,6 +360,14 @@ function handleTurnDone() {
   refreshTopics()
 }
 
+// A `cheese <sub>` command changed a platform resource mid-turn (it runs as Bash,
+// so we can't key off a tool name) — refresh the affected panel live (§3.1.1).
+function handleStateChanged(resource: string) {
+  if (resource === 'topics') refreshTopics()
+  else if (resource === 'accept') loadAcceptCard()
+  else activityTick.value += 1 // doc / decision / milestone / notify → reload
+}
+
 function handleToolUsed(name: string) {
   worklog.value.push(TOOL_LABELS[name] ?? name)
   if (name === 'update_doc') {
@@ -525,6 +533,7 @@ onMounted(async () => {
         :show-composer="true"
         @turn-done="handleTurnDone"
         @tool-used="handleToolUsed"
+        @state-changed="handleStateChanged"
         @upgrade-message="handleUpgradeMessage"
         @open-topic="selectTopic"
       />
