@@ -86,6 +86,16 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
   帧：`user_block` → `delta`*（流式 token）→ `tool`*（工具调用：原生 Bash/Write/Edit/Read + cheese Skill）→ `assistant_block` → `done`（或 `error`）。
   编排：`ChatService.converse`（`backend/app/domain/agent/chat.py`）：tx1 存用户块+拼带标签的上下文+加载记忆 → 流式（不持事务）→ tx2 存 🔧 事件块 + 芝士消息 + token 用量。每话题一把 `asyncio.Lock` 串行。
 
+#### 3.1.1 双实时：活消息(working log) + 活文档  🟡 目标
+
+模型同 Claude Code 的 `@claude` **交互模式**（prior art）：@ 后**立刻**冒一条"芝士在看…"的占位消息，它是一条**活消息**——维护一个 **todo 勾选清单** + "此刻在做什么" + 流式答案，**原地不断更新同一条**（不是刷一堆新消息），做完去掉 spinner、留一句小结。
+
+- **消息 = 过程(working log)**：todo/状态/流式答案，讲"怎么做"。todo 直接复用 Claude Code 自带的 **`TodoWrite`** 原生工具（沙箱里芝士已能用）——平台捕获其事件渲染成活清单，机制与 Claude Code 同源。
+- **文档 = 状态**：结论/产物进活文档（§3.4，`cheese doc set`），讲"结果是什么"，回合中途即可增量更新、面板实时渲染。
+- **分工纪律**：todo/状态留在消息、结论进文档，**不重复**；消息收尾只给一句小结 + 指向文档，不堆全文（避开 Claude Code `track_progress` 结束塞大段 final summary 的"吵"问题）。这正是 §2.2「对话是过程、文档是状态」的双实时落地。
+- **现状**：✅ 流式 token（`delta` 累积成一条预览→定稿）+ 现场工具事件 + 活文档读写/工具事件刷新面板；🟡 待做：@ 秒回占位消息、把进行中消息结构化成 todo+状态(捕获 `TodoWrite`)、文档回合中途增量刷新。
+- **参考**：Claude Code GitHub Action 交互模式用单条 tracking comment + `- [ ]/- [x]` 清单 + `update_claude_comment` 原地更新（[docs](https://code.claude.com/docs/en/github-actions)、[anthropics/claude-code-action](https://github.com/anthropics/claude-code-action)）。
+
 ### 3.2 芝士（Agent）  ✅ 链路 / 🟡 部分能力
 
 - **是什么**：`claude-agent-sdk` 拉起 `claude` CLI，路由到 GLM（`AgentService`，`backend/app/domain/agent/service.py`）。流式 `include_partial_messages`，`resume` 续会话。
