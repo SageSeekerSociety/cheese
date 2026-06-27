@@ -1,9 +1,9 @@
 """Project workspace — a git repo per project (spec §6.3: 所有产出都是 git).
 
-芝士 authors files through the structured `write_file` tool (not raw Bash, spec
-§9.1), and every write is a git commit, so files have version history and diffs
-(Phase 4 执行面板: Git/文件). Running code still needs a real sandbox (PVE, §9.1);
-this implements the platform/version-control layer that works without it.
+每个 project = 一个 git 仓,主仓用 Jujutsu (jj) colocate(`.git` + `.jj` 并存),
+每个话题 = 一个 jj workspace(取代 git worktree)。这样沙箱容器里的原生
+Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照常工作:
+话题分支用 jj bookmark 导出成 git branch,采纳/diff 仍走 git(colocation)。
 """
 
 import shutil
@@ -41,6 +41,29 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout
 
 
+def _jj(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["jj", "--no-pager", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise ValidationError(f"jj {args[0]} failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+def _ensure_jj(repo: Path) -> None:
+    """Colocate a jj repo onto the git repo (idempotent). jj then auto-snapshots
+    the working copy, while git refs stay live for merge/diff."""
+    if (repo / ".jj").exists():
+        return
+    _jj(repo, "git", "init", "--colocate")
+    _jj(repo, "config", "set", "--repo", "user.name", "芝士")
+    _jj(repo, "config", "set", "--repo", "user.email", "cheese@zhishi.local")
+
+
 def ensure_repo(project_id: uuid.UUID) -> Path:
     repo = _repo(project_id)
     repo.mkdir(parents=True, exist_ok=True)
@@ -48,11 +71,21 @@ def ensure_repo(project_id: uuid.UUID) -> Path:
         _git(repo, "init", "-q", "-b", DEFAULT_BRANCH)
         _git(repo, "config", "user.email", "cheese@zhishi.local")
         _git(repo, "config", "user.name", "芝士")
+    _ensure_base_commit(repo)  # main must have a real commit before jj colocates
+    _ensure_jj(repo)
     return repo
 
 
 def _has_commit(repo: Path) -> bool:
-    return bool(_git(repo, "rev-list", "-n", "1", "--all").strip())
+    # HEAD specifically (not --all): after jj colocate there are jj refs, so
+    # `rev-list --all` would falsely report a base commit while main is unborn.
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
 
 
 def _ensure_base_commit(repo: Path) -> None:
@@ -90,18 +123,25 @@ def _worktree_path(project_id: uuid.UUID, branch: str) -> Path:
 
 
 def _ensure_worktree(project_id: uuid.UUID, branch: str) -> Path:
-    """每话题一个独立 git worktree（沙箱地基）：分身在自己的工作目录里干活，
-    并行话题互不覆盖。共享同一个 .git，按需创建。"""
+    """每话题一个独立 jj workspace（沙箱地基）：分身在自己的工作目录里干活，
+    jj 自动快照其改动；并行话题互不覆盖。导出一个同名 git 分支供采纳/diff。"""
     main = ensure_repo(project_id)
-    _ensure_base_commit(main)  # a worktree needs a base commit to fork from
+    _ensure_base_commit(main)  # a workspace needs a base commit to fork from
     wt = _worktree_path(project_id, branch)
-    if (wt / ".git").exists():  # already a registered worktree (.git is a file)
+    if (wt / ".jj").exists():  # already a jj workspace
         return wt
+    # Migrate a stale git worktree left by the pre-jj design.
+    if wt.exists():
+        try:
+            _git(main, "worktree", "remove", "--force", str(wt))
+        except ValidationError:
+            pass
+        shutil.rmtree(wt, ignore_errors=True)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    if _branch_exists(main, branch):
-        _git(main, "worktree", "add", "-q", str(wt), branch)
-    else:
-        _git(main, "worktree", "add", "-q", "-b", branch, str(wt), _base_branch(main))
+    _jj(main, "workspace", "add", "--name", branch.replace("/", "_"), str(wt))
+    # Export a git branch (= jj bookmark) for this topic so merge/diff use git.
+    _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
+    _jj(wt, "git", "export")
     return wt
 
 
@@ -122,43 +162,13 @@ def _safe_path(repo: Path, rel: str) -> Path:
     return target
 
 
-def write_file(
-    project_id: uuid.UUID,
-    *,
-    path: str,
-    content: str,
-    author: str = "芝士",
-    topic_id: uuid.UUID | None = None,
-) -> dict:
-    # 话题 = 分支 = 独立 worktree (spec §6.3): a topic's writes land in its own
-    # working dir on its own branch; project-level writes go to the base repo.
-    tree = _tree(project_id, topic_id)
-    target = _safe_path(tree, path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    _git(tree, "add", str(target.relative_to(tree)))
-    # Commit only if there's a staged change.
-    status = _git(tree, "status", "--porcelain")
-    if status.strip():
-        _git(
-            tree,
-            "-c",
-            f"user.name={author}",
-            "commit",
-            "-q",
-            "-m",
-            f"{path}: update via 芝士",
-        )
-    return {"path": path, "bytes": len(content.encode("utf-8"))}
-
-
 def list_files(
     project_id: uuid.UUID, topic_id: uuid.UUID | None = None
 ) -> list[dict]:
     tree = _tree(project_id, topic_id)
     files: list[dict] = []
     for p in sorted(tree.rglob("*")):
-        if ".git" in p.parts or p.is_dir():
+        if ".git" in p.parts or ".jj" in p.parts or p.is_dir():
             continue
         rel = p.relative_to(tree)
         files.append({"path": str(rel), "bytes": p.stat().st_size})
@@ -173,19 +183,6 @@ def read_file(
     if not target.is_file():
         raise ValidationError("file not found")
     return target.read_text(encoding="utf-8", errors="replace")
-
-
-def grep(
-    project_id: uuid.UUID, pattern: str, topic_id: uuid.UUID | None = None
-) -> str:
-    """Search tracked files in the topic's worktree (read-only). Empty on no
-    match. git grep is jailed to the tree, so it can't read outside the repo."""
-    tree = _tree(project_id, topic_id)
-    try:
-        out = _git(tree, "grep", "-n", "-I", "--no-color", "-e", pattern)
-    except ValidationError:
-        return ""  # git grep exits non-zero when nothing matches
-    return out[:8000]
 
 
 def git_log(project_id: uuid.UUID, limit: int = 50) -> list[dict]:
@@ -299,22 +296,18 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
 def snapshot_worktree(
     project_id: uuid.UUID, topic_id: uuid.UUID, message: str = "芝士 edits"
 ) -> None:
-    """Commit whatever the agent changed in the topic's worktree this turn, so
-    native Bash/Write edits become version history (no manual commit needed)."""
-    wt = _ensure_worktree(project_id, branch_for_topic(topic_id))
-    _git(wt, "add", "-A")
-    if _git(wt, "status", "--porcelain").strip():
-        _git(
-            wt,
-            "-c",
-            "user.name=芝士",
-            "-c",
-            "user.email=cheese@zhishi.local",
-            "commit",
-            "-q",
-            "-m",
-            message,
-        )
+    """Snapshot whatever the agent changed in the topic's workspace this turn as a
+    jj commit, so native Bash/Write/Edit edits become version history (no manual
+    commit needed). The topic's git branch (bookmark) is moved to the new commit
+    so 采纳/diff still work via git."""
+    branch = branch_for_topic(topic_id)
+    wt = _ensure_worktree(project_id, branch)
+    if not _jj(wt, "diff", "-s").strip():
+        return  # nothing changed this turn
+    _jj(wt, "commit", "-m", message)
+    # The just-committed work is @- (jj commit started a fresh empty @).
+    _jj(wt, "bookmark", "set", branch, "-r", "@-", "--allow-backwards")
+    _jj(wt, "git", "export")
 
 
 def sandbox_available() -> bool:

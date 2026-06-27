@@ -1,4 +1,9 @@
-"""Project git workspace — files / git log / diff (Phase 4)."""
+"""Project workspace — jj-backed per-topic workspaces + git merge/diff (Phase 4).
+
+Files are authored by the sandbox's native tools (Bash/Write/Edit) inside the
+topic's jj workspace; the platform snapshots them with ``snapshot_worktree``.
+These tests simulate that by writing into the workspace dir then snapshotting.
+"""
 
 import uuid
 
@@ -8,85 +13,82 @@ from app.core.errors import ValidationError
 from app.domain.workspace import service as ws
 
 
-def test_write_file_then_browse_and_diff(client):
-    pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+def _mkproject(client) -> uuid.UUID:
+    resp = client.post("/api/projects", json={"name": "P"}).json()
+    return uuid.UUID(resp["data"]["id"])
 
-    # 芝士 would call write_file via its tool; exercise the same service path.
-    ws.write_file(uuid.UUID(pid), path="src/app.py", content="print('hi')\n")
 
-    files = client.get(f"/api/projects/{pid}/files").json()["data"]["data"]
+def _native_edit(
+    pid: uuid.UUID, topic_id: uuid.UUID, path: str, content: str
+) -> None:
+    """Simulate a sandbox turn: native tools write a file into the topic's jj
+    workspace, then the platform snapshots it (as converse does after a turn)."""
+    wt = ws.topic_worktree(pid, topic_id)
+    target = wt / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    ws.snapshot_worktree(pid, topic_id)
+
+
+def test_native_edit_versioned_and_browsable(client):
+    pid = _mkproject(client)
+    tid = uuid.uuid4()
+    _native_edit(pid, tid, "src/app.py", "print('hi')\n")
+
+    # Listed + readable from the topic's own workspace.
+    files = ws.list_files(pid, topic_id=tid)
     assert any(f["path"] == "src/app.py" for f in files)
-
-    content = client.get(f"/api/projects/{pid}/file?path=src/app.py").json()["data"][
-        "content"
-    ]
-    assert "print('hi')" in content
-
-    log = client.get(f"/api/projects/{pid}/git/log").json()["data"]["data"]
-    assert len(log) >= 1
-
-    diff = client.get(f"/api/projects/{pid}/git/diff").json()["data"]["diff"]
-    assert "print('hi')" in diff
+    assert "print('hi')" in ws.read_file(pid, "src/app.py", topic_id=tid)
+    # The snapshot is on the topic branch vs the base.
+    assert "print('hi')" in ws.topic_diff(pid, tid)
 
 
 def test_topic_branch_isolated_then_merged(client):
     # spec §6.3: a topic's writes live on its own branch; 采纳 = merge to base.
-    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    pid = uuid.UUID(pr["id"])
+    pid = _mkproject(client)
     tid = uuid.uuid4()
+    _native_edit(pid, tid, "feat.txt", "branch work\n")
 
-    ws.write_file(pid, path="feat.txt", content="branch work\n", topic_id=tid)
-    # The change is on the topic branch vs the base (not yet merged).
+    # Not on the base until merged.
+    assert "feat.txt" not in {f["path"] for f in ws.list_files(pid)}
     assert "branch work" in ws.topic_diff(pid, tid)
 
-    res = ws.merge_topic(pid, tid)
-    assert res["merged"] is True
+    assert ws.merge_topic(pid, tid)["merged"] is True
+    # The base branch now contains the file (browsable via the API).
+    files = client.get(f"/api/projects/{pid}/files").json()["data"]["data"]
+    assert any(f["path"] == "feat.txt" for f in files)
+    log = client.get(f"/api/projects/{pid}/git/log").json()["data"]["data"]
+    assert len(log) >= 1
 
-    # The base branch now contains the file.
-    assert any(f["path"] == "feat.txt" for f in ws.list_files(pid))
+
+def test_parallel_topics_isolated(client):
+    # Two topics edit in their own workspaces without overwriting each other.
+    pid = _mkproject(client)
+    t1, t2 = uuid.uuid4(), uuid.uuid4()
+    _native_edit(pid, t1, "a.txt", "from t1\n")
+    _native_edit(pid, t2, "b.txt", "from t2\n")
+
+    n1 = {f["path"] for f in ws.list_files(pid, topic_id=t1)}
+    n2 = {f["path"] for f in ws.list_files(pid, topic_id=t2)}
+    assert "a.txt" in n1 and "b.txt" not in n1
+    assert "b.txt" in n2 and "a.txt" not in n2
 
 
-def test_project_write_goes_to_base_not_topic_branch(client):
-    # Project-level writes land on base; a topic's file stays on its branch until
-    # merged (no cross-contamination).
-    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    pid = uuid.UUID(pr["id"])
+def test_read_missing_file_raises(client):
+    pid = _mkproject(client)
     tid = uuid.uuid4()
-    ws.write_file(pid, path="topic_only.txt", content="t\n", topic_id=tid)
-    ws.write_file(pid, path="project_wide.txt", content="p\n")  # no topic → base
-
-    names = {f["path"] for f in ws.list_files(pid)}  # working tree is now base
-    assert "project_wide.txt" in names
-    assert "topic_only.txt" not in names  # still isolated on the topic branch
-
-
-def test_topic_worktree_read_and_grep(client):
-    # Read-only tools see a topic's own worktree (the 沙箱 working dir).
-    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    pid = uuid.UUID(pr["id"])
-    tid = uuid.uuid4()
-    ws.write_file(
-        pid,
-        path="rec/cf.py",
-        content="def recall_at_10():\n    return 0.18\n",
-        topic_id=tid,
-    )
-    # read back from the topic worktree
+    _native_edit(pid, tid, "rec/cf.py", "def recall_at_10():\n    return 0.18\n")
     assert "recall_at_10" in ws.read_file(pid, "rec/cf.py", topic_id=tid)
-    # grep finds it in the worktree
-    assert "rec/cf.py" in ws.grep(pid, "recall_at_10", topic_id=tid)
-    # the file does not exist on the base tree (isolation)
     with pytest.raises(ValidationError):
-        ws.read_file(pid, "rec/cf.py")  # base tree → not found
+        ws.read_file(pid, "rec/cf.py")  # base tree → not found (isolation)
 
 
 def test_exec_in_sandbox_runs_code_and_blocks_network(client):
     if not ws.sandbox_available():
         pytest.skip("docker not available")
-    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    pid = uuid.UUID(pr["id"])
+    pid = _mkproject(client)
     tid = uuid.uuid4()
-    ws.write_file(pid, path="m.py", content="print('hi from sandbox')\n", topic_id=tid)
+    _native_edit(pid, tid, "m.py", "print('hi from sandbox')\n")
 
     res = ws.exec_in_sandbox(pid, "python m.py", topic_id=tid)
     assert res["exit_code"] == 0
@@ -102,8 +104,6 @@ def test_exec_in_sandbox_runs_code_and_blocks_network(client):
 
 
 def test_git_diff_rejects_option_injection(client):
-    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    pid = uuid.UUID(pr["id"])
-    ws.write_file(pid, path="a.txt", content="x\n")
+    pid = _mkproject(client)
     r = client.get(f"/api/projects/{pid}/git/diff", params={"ref": "--help"})
     assert r.status_code == 422
