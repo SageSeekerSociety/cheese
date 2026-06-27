@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     sandbox_shim: str = "./sandbox/claude-sbx"
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
     sandbox_api_base: str = "http://host.docker.internal:8099/api"
+    # Shared secret the sandbox `cheese` CLI sends (X-Cheese-Token) so the
+    # cheese write-API isn't open on the bind address. Empty → generated per
+    # process (fine for a single worker; pin it for multi-worker deployments).
+    sandbox_token: str = ""
 
     def agent_env(self) -> dict[str, str]:
         """Env vars passed to the SDK/CLI to select the model provider."""

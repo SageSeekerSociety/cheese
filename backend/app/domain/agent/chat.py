@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.errors import NotFoundError
+from app.core.sandbox_auth import SANDBOX_TOKEN
 from app.domain.agent.roles import role_description
 from app.domain.agent.service import (
     AgentDelta,
@@ -282,6 +283,7 @@ class ChatService:
                     "CHEESE_PROJECT": str(project_id),
                     "CHEESE_TOPIC": str(topic_id),
                     "CHEESE_AUTHOR": CHEESE_AUTHOR,
+                    "CHEESE_TOKEN": SANDBOX_TOKEN,
                 },
             }
         else:

@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401  (registers all tables on Base.metadata)
 from app.api.deps import get_chat_service
 from app.core.db import Base, get_db
+from app.core.sandbox_auth import SANDBOX_TOKEN
 from app.domain.agent.chat import ChatService
 from app.domain.agent.service import (
     AgentDelta,
@@ -105,6 +106,10 @@ def client(stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
     app.dependency_overrides[get_chat_service] = override_get_chat_service
 
     with TestClient(app) as c:
+        # The cheese write-API is token-gated (app.main.cheese_token_gate); send
+        # the secret on every test request so contract tests exercising those
+        # endpoints (doc/split/decision/...) aren't rejected with 401.
+        c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
         # Expose the factory so tests can seed data (e.g. memory entries).
         c.test_factory = test_factory  # type: ignore[attr-defined]
         yield c

@@ -33,6 +33,7 @@ API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099/api").rstri
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
+TOKEN = os.environ.get("CHEESE_TOKEN", "")
 
 
 def _call(method: str, path: str, body: dict | None = None) -> dict:
@@ -40,6 +41,8 @@ def _call(method: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Content-Type", "application/json")
+    if TOKEN:
+        req.add_header("X-Cheese-Token", TOKEN)
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.load(r)

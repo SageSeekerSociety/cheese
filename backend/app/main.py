@@ -11,14 +11,19 @@ this file.
 
 import importlib
 import pkgutil
+import re
+import secrets
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 import app.api.routes as routes_pkg
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
+from app.core.sandbox_auth import SANDBOX_TOKEN
 
 
 @asynccontextmanager
@@ -68,6 +73,37 @@ app.add_middleware(
 )
 
 register_exception_handlers(app)
+
+
+# The `cheese` CLI (running inside the sandbox container) reaches the backend
+# over the network, so its write-surface must not be open like the browser API.
+# These paths are cheese-only writes (the frontend only reads them); gate them
+# on the shared token. See app/core/sandbox_auth.py.
+_CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
+    ("PUT", re.compile(r"^/api/topics/[^/]+/doc$")),
+    ("POST", re.compile(r"^/api/topics/[^/]+/split$")),
+    ("POST", re.compile(r"^/api/topics/[^/]+/decision$")),
+    ("POST", re.compile(r"^/api/topics/[^/]+/return-conclusion$")),
+    ("POST", re.compile(r"^/api/topics/[^/]+/accept-card$")),
+    ("POST", re.compile(r"^/api/projects/[^/]+/memory$")),
+    ("POST", re.compile(r"^/api/projects/[^/]+/notifications$")),
+    ("POST", re.compile(r"^/api/projects/[^/]+/milestones$")),
+]
+
+
+@app.middleware("http")
+async def cheese_token_gate(request: Request, call_next: Callable):  # type: ignore[type-arg]
+    method, path = request.method, request.url.path
+    if any(method == m and rx.match(path) for m, rx in _CHEESE_WRITE_PATHS):
+        token = request.headers.get("x-cheese-token") or ""
+        if not secrets.compare_digest(token, SANDBOX_TOKEN):
+            return JSONResponse(
+                {"code": 401, "message": "invalid sandbox token", "data": None},
+                status_code=401,
+            )
+    return await call_next(request)
+
+
 loaded_routers = _discover_routers(app)
 
 
