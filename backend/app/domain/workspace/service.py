@@ -6,6 +6,7 @@
 this implements the platform/version-control layer that works without it.
 """
 
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -14,6 +15,8 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 
 DEFAULT_BRANCH = "main"
+# 沙箱镜像：芝士分身在容器里跑代码/测试，碰不到宿主机 (spec §9.1).
+SANDBOX_IMAGE = "python:3.12-slim"
 
 
 def _repo(project_id: uuid.UUID) -> Path:
@@ -256,3 +259,48 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
             pass
         return {"merged": False, "reason": str(exc)}
     return {"merged": True, "branch": branch, "into": base}
+
+
+def sandbox_available() -> bool:
+    return shutil.which("docker") is not None
+
+
+def exec_in_sandbox(
+    project_id: uuid.UUID,
+    command: str,
+    *,
+    topic_id: uuid.UUID | None = None,
+    timeout: int = 30,
+) -> dict:
+    """Run a shell command in an isolated container with the topic's worktree
+    mounted at /work (沙箱, spec §9.1): --network none, mem/cpu caps, ephemeral
+    (--rm). 芝士 can run code/tests without touching the host."""
+    tree = _tree(project_id, topic_id)
+    if not sandbox_available():
+        return {
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": "sandbox 不可用：未找到 docker（需要 Docker 在运行）",
+        }
+    try:
+        result = subprocess.run(
+            [
+                "docker", "run", "--rm",
+                "--network", "none",
+                "--memory", "512m", "--cpus", "1",
+                "--pids-limit", "256",
+                "-v", f"{tree}:/work", "-w", "/work",
+                SANDBOX_IMAGE,
+                "sh", "-lc", command,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"exit_code": 124, "stdout": "", "stderr": f"执行超时（>{timeout}s）"}
+    return {
+        "exit_code": result.returncode,
+        "stdout": result.stdout[:8000],
+        "stderr": result.stderr[:4000],
+    }

@@ -80,6 +80,27 @@ def test_topic_worktree_read_and_grep(client):
         ws.read_file(pid, "rec/cf.py")  # base tree → not found
 
 
+def test_exec_in_sandbox_runs_code_and_blocks_network(client):
+    if not ws.sandbox_available():
+        pytest.skip("docker not available")
+    pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    pid = uuid.UUID(pr["id"])
+    tid = uuid.uuid4()
+    ws.write_file(pid, path="m.py", content="print('hi from sandbox')\n", topic_id=tid)
+
+    res = ws.exec_in_sandbox(pid, "python m.py", topic_id=tid)
+    assert res["exit_code"] == 0
+    assert "hi from sandbox" in res["stdout"]
+
+    # --network none → outbound network is blocked (isolation).
+    net = ws.exec_in_sandbox(
+        pid,
+        "python -c \"import urllib.request as u; u.urlopen('http://example.com',timeout=3)\"",
+        topic_id=tid,
+    )
+    assert net["exit_code"] != 0
+
+
 def test_git_diff_rejects_option_injection(client):
     pr = client.post("/api/projects", json={"name": "P"}).json()["data"]
     pid = uuid.UUID(pr["id"])

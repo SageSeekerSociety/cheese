@@ -42,6 +42,7 @@ _TOOL_NAMES = [
     "read_file",
     "list_files",
     "grep",
+    "exec",
 ]
 
 
@@ -340,6 +341,26 @@ def build_cheese_server(
         out = ws.grep(project_id, args["pattern"], topic_id=topic_id)
         return _text(out or "无匹配。")
 
+    @tool(
+        "exec",
+        "在当前话题的隔离沙箱容器里执行 shell 命令（跑代码/脚本/测试）。"
+        "工作区已挂在里面，无外网、碰不到你的电脑。传入命令，返回退出码 + 输出。",
+        {"command": str},
+    )
+    async def exec_cmd(args: dict[str, Any]) -> dict[str, Any]:
+        from app.domain.topic.models import TopicStatus
+        from app.domain.workspace import service as ws
+
+        async with session_factory() as s:
+            topic = await TopicService(s).get_or_404(topic_id)
+            if topic.status == TopicStatus.archived:
+                return _text("话题已归档，工作面已冻结，不能执行。")
+        res = ws.exec_in_sandbox(project_id, args["command"], topic_id=topic_id)
+        out = f"exit={res['exit_code']}\n--- stdout ---\n{res['stdout']}"
+        if res["stderr"].strip():
+            out += f"\n--- stderr ---\n{res['stderr']}"
+        return _text(out)
+
     server = create_sdk_mcp_server(
         name=SERVER_NAME,
         tools=[
@@ -354,6 +375,7 @@ def build_cheese_server(
             read_file,
             list_files,
             grep,
+            exec_cmd,
             record_decision,
         ],
     )
