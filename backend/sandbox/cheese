@@ -34,6 +34,9 @@ PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
 TOKEN = os.environ.get("CHEESE_TOKEN", "")
+# In a private chat, `remember` writes the owner's personal memory (跟着人走).
+MEMORY_SCOPE = os.environ.get("CHEESE_MEMORY_SCOPE", "project")
+OWNER = os.environ.get("CHEESE_OWNER", "")
 
 
 def _call(method: str, path: str, body: dict | None = None) -> dict:
@@ -122,8 +125,15 @@ def main() -> None:
         print("已记入决策记录。")
     elif a.cmd == "remember":
         proj = _need("CHEESE_PROJECT", PROJECT)
-        _call("POST", f"/projects/{proj}/memory", {"content": a.fact})
-        print("已记入项目记忆。")
+        body = {"content": a.fact}
+        if MEMORY_SCOPE == "personal" and OWNER:
+            body["scope"] = "user"
+            body["owner"] = OWNER
+            _call("POST", f"/projects/{proj}/memory", body)
+            print("已记入个人记忆。")
+        else:
+            _call("POST", f"/projects/{proj}/memory", body)
+            print("已记入项目记忆。")
     elif a.cmd == "notify":
         proj = _need("CHEESE_PROJECT", PROJECT)
         payload = {}

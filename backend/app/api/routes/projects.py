@@ -89,7 +89,9 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
 
 @router.post("/{project_id}/memory")
 async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """记入项目记忆 (spec §8.4) — used by the `cheese remember` CLI."""
+    """记入记忆 — used by the `cheese remember` CLI. Defaults to project memory
+    (spec §8.4); with scope="user"+owner it writes that member's personal memory
+    (private chat, spec §8.4 个人记忆跟着人走)."""
     from app.domain.memory.models import MemoryScope
     from app.domain.memory.store import DbMemoryStore
 
@@ -97,7 +99,13 @@ async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError("content 不能为空")
-    await DbMemoryStore(db).remember(MemoryScope.project, str(project_id), content)
+    if (body.get("scope") or "project") == "user":
+        owner = (body.get("owner") or "").strip()
+        if not owner:
+            raise ValidationError("owner 不能为空（个人记忆需要 owner）")
+        await DbMemoryStore(db).remember(MemoryScope.user, owner, content)
+    else:
+        await DbMemoryStore(db).remember(MemoryScope.project, str(project_id), content)
     return ok({"remembered": True})
 
 

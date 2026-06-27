@@ -173,6 +173,75 @@ class ChatService:
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
+    def _sandbox_kwargs(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        *,
+        memory_scope: str | None = None,
+        owner: str | None = None,
+    ) -> tuple[dict, str]:
+        """Build the per-topic sandbox config (container + worktree + session +
+        cheese env) for a turn, plus the cwd. Used by every agent path so 芝士
+        always acts through native tools + the `cheese` CLI (spec §9.1)."""
+        worktree = ws.topic_worktree(project_id, topic_id)
+        sess = ws.session_dir(project_id, topic_id)
+        env = {
+            "SBX_IMAGE": settings.sandbox_image,
+            "SBX_CONTAINER": ws.container_name(topic_id),
+            "SBX_WORKTREE": str(worktree),
+            "SBX_SESSION": str(sess),
+            "CHEESE_API": settings.sandbox_api_base,
+            "CHEESE_PROJECT": str(project_id),
+            "CHEESE_TOPIC": str(topic_id),
+            "CHEESE_AUTHOR": CHEESE_AUTHOR,
+            "CHEESE_TOKEN": SANDBOX_TOKEN,
+        }
+        if memory_scope:
+            env["CHEESE_MEMORY_SCOPE"] = memory_scope
+        if owner:
+            env["CHEESE_OWNER"] = owner
+        sandbox = {
+            "cli_path": str(Path(settings.sandbox_shim).resolve()),
+            "allowed_tools": ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
+            "env": env,
+        }
+        return sandbox, str(worktree)
+
+    def _platform_kwargs(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        *,
+        default_cwd: str,
+        memory_scope: str | None = None,
+        owner: str | None = None,
+    ) -> tuple[dict, str]:
+        """Pick how 芝士 acts on the platform this turn: the per-topic sandbox
+        (native tools + `cheese` CLI) when Docker is available, else the in-process
+        MCP fallback (tests / no-docker). Returns (stream_kwargs, cwd)."""
+        if self._sandbox_enabled and ws.sandbox_available():
+            sandbox, cwd = self._sandbox_kwargs(
+                project_id, topic_id, memory_scope=memory_scope, owner=owner
+            )
+            return {"sandbox": sandbox}, cwd
+        if memory_scope == "personal" and owner:
+            server = build_cheese_server(
+                session_factory=self._sessions,
+                project_id=project_id,
+                topic_id=topic_id,
+                memory_scope=MemoryScope.user,
+                memory_scope_id=owner,
+            )
+        else:
+            server = build_cheese_server(
+                session_factory=self._sessions,
+                project_id=project_id,
+                topic_id=topic_id,
+            )
+        mcp = {"mcp_servers": {"cheese": server}, "allowed_tools": tool_names()}
+        return mcp, default_cwd
+
     async def _converse_impl(
         self,
         *,
@@ -262,50 +331,17 @@ class ChatService:
         new_session_id = resume_session_id
 
         # Sandbox mode (spec §9.1): run claude INSIDE a per-topic container with
-        # native tools + the `cheese` CLI for platform actions. Private chats stay
-        # on the in-process MCP path (remember → user-scoped memory).
-        use_sandbox = (
-            self._sandbox_enabled and ws.sandbox_available() and not is_private
+        # native tools + the `cheese` CLI for platform actions. In a private chat,
+        # `cheese remember` targets the owner's personal memory (spec §8.4). The
+        # in-process MCP path is the fallback when no Docker is present (tests).
+        stream_kwargs, cwd = self._platform_kwargs(
+            project_id,
+            topic_id,
+            default_cwd=cwd,
+            memory_scope="personal" if is_private else None,
+            owner=private_owner if is_private else None,
         )
-        stream_kwargs: dict = {}
-        if use_sandbox:
-            worktree = ws.topic_worktree(project_id, topic_id)
-            sess = ws.session_dir(project_id, topic_id)
-            cwd = str(worktree)
-            stream_kwargs["sandbox"] = {
-                "cli_path": str(Path(settings.sandbox_shim).resolve()),
-                "allowed_tools": ["Bash", "Read", "Write", "Edit", "Grep", "Glob"],
-                "env": {
-                    "SBX_IMAGE": settings.sandbox_image,
-                    "SBX_CONTAINER": ws.container_name(topic_id),
-                    "SBX_WORKTREE": str(worktree),
-                    "SBX_SESSION": str(sess),
-                    "CHEESE_API": settings.sandbox_api_base,
-                    "CHEESE_PROJECT": str(project_id),
-                    "CHEESE_TOPIC": str(topic_id),
-                    "CHEESE_AUTHOR": CHEESE_AUTHOR,
-                    "CHEESE_TOKEN": SANDBOX_TOKEN,
-                },
-            }
-        else:
-            # Give 芝士 its platform tools via in-process MCP. In a private chat,
-            # `remember` writes the owner's personal memory (spec §8.4).
-            if is_private and private_owner:
-                server = build_cheese_server(
-                    session_factory=self._sessions,
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    memory_scope=MemoryScope.user,
-                    memory_scope_id=private_owner,
-                )
-            else:
-                server = build_cheese_server(
-                    session_factory=self._sessions,
-                    project_id=project_id,
-                    topic_id=topic_id,
-                )
-            stream_kwargs["mcp_servers"] = {"cheese": server}
-            stream_kwargs["allowed_tools"] = tool_names()
+        use_sandbox = "sandbox" in stream_kwargs
 
         tool_events: list[tuple[str, dict]] = []
         usage = None
@@ -425,17 +461,14 @@ class ChatService:
         system_prompt = _build_system_prompt(
             self._base_prompt, load_skills(ACTIVITY_SKILLS), None, memories
         )
-        cwd = self._workspace_for(project_id)
         prompt = (
             "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
-            "用 update_doc 写下 做了什么/定了什么/谁负责/下一步；"
-            "如果这是个关键节点就用 pin_milestone 钉成里程碑；"
-            "需要分派的待办用 notify 通知到人。\n\n---\n" + text
+            "用 cheese 把 做了什么/定了什么/谁负责/下一步 设为本话题活文档；"
+            "如果这是个关键节点就用 cheese 钉成里程碑；"
+            "需要分派的待办用 cheese 通知到人。\n\n---\n" + text
         )
-        server = build_cheese_server(
-            session_factory=self._sessions,
-            project_id=project_id,
-            topic_id=topic_id,
+        stream_kwargs, cwd = self._platform_kwargs(
+            project_id, topic_id, default_cwd=self._workspace_for(project_id)
         )
         final_text = ""
         new_session_id = None
@@ -445,8 +478,7 @@ class ChatService:
             system_prompt=system_prompt,
             cwd=cwd,
             resume_session_id=None,
-            mcp_servers={"cheese": server},
-            allowed_tools=tool_names(),
+            **stream_kwargs,
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -539,23 +571,20 @@ class ChatService:
         prompt = (
             "现在做一次定期巡检。下面是项目当前状态。请：先在回复里写下你的巡检"
             "判断和理由（决策日志：看了什么、该催谁/该拆什么/有什么风险），"
-            "然后只对真正需要的事用 notify 工具发分级通知（level=silent/light/"
+            "然后只对真正需要的事用 cheese 发分级通知（level=silent/light/"
             "strong，kind=heartbeat），别骚扰。\n\n" + context
         )
-        server = build_cheese_server(
-            session_factory=self._sessions,
-            project_id=project_id,
-            topic_id=root_topic_id,
+        stream_kwargs, cwd = self._platform_kwargs(
+            project_id, root_topic_id, default_cwd=self._workspace_for(project_id)
         )
         final_text = ""
         tools_used: list[str] = []
         async for event in self._agent.stream_reply(
             prompt=prompt,
             system_prompt=system_prompt,
-            cwd=self._workspace_for(project_id),
+            cwd=cwd,
             resume_session_id=None,
-            mcp_servers={"cheese": server},
-            allowed_tools=tool_names(),
+            **stream_kwargs,
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -620,12 +649,22 @@ class ChatService:
             "这个团队在做什么、到哪了、下一步和风险。说人话、不堆术语、不要列工具调用，"
             "直接给总结正文。\n\n" + context
         )
+        # Pure text generation (no platform actions) — but still runs in the
+        # root-topic sandbox so there's a single execution path (tools go unused).
+        default_cwd = self._workspace_for(project_id)
+        if project.root_topic_id is not None:
+            stream_kwargs, cwd = self._platform_kwargs(
+                project_id, project.root_topic_id, default_cwd=default_cwd
+            )
+        else:
+            stream_kwargs, cwd = {}, default_cwd
         final_text = ""
         async for event in self._agent.stream_reply(
             prompt=prompt,
             system_prompt=system_prompt,
-            cwd=self._workspace_for(project_id),
+            cwd=cwd,
             resume_session_id=None,
+            **stream_kwargs,
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text
