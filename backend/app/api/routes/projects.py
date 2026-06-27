@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.core.errors import ValidationError
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -84,6 +85,20 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
     )
     items = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
     return ok(page(items, len(items)))
+
+
+@router.post("/{project_id}/memory")
+async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """记入项目记忆 (spec §8.4) — used by the `cheese remember` CLI."""
+    from app.domain.memory.models import MemoryScope
+    from app.domain.memory.store import DbMemoryStore
+
+    await ProjectService(db).get_or_404(project_id)
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise ValidationError("content 不能为空")
+    await DbMemoryStore(db).remember(MemoryScope.project, str(project_id), content)
+    return ok({"remembered": True})
 
 
 @router.get("/{project_id}/private-chat")

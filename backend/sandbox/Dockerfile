@@ -16,3 +16,8 @@ RUN curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj
 RUN npm install -g @anthropic-ai/claude-code && claude --version
 
 WORKDIR /work
+
+# Platform CLI (芝士 calls this for platform actions; files/code use native tools)
+COPY cheese /usr/local/bin/cheese
+RUN chmod +x /usr/local/bin/cheese && mkdir -p /work && chown -R node:node /work
+USER node

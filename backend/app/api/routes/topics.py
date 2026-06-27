@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.core.errors import ValidationError
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -118,6 +119,25 @@ async def edit_topic_doc(topic_id: uuid.UUID, body: DocEditIn, db: DbSession) ->
         topic_id=topic_id, content=body.content, author=body.author
     )
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
+
+
+@router.post("/{topic_id}/decision")
+async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """记录关键决策到决策记录 (spec §7.1) — used by the `cheese decision` CLI."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    decision = (body.get("decision") or "").strip()
+    if not decision:
+        raise ValidationError("decision 不能为空")
+    block = await BlockRepository(db).add(
+        project_id=topic.project_id,
+        topic_id=topic_id,
+        author="cheese",
+        author_type=AuthorType.ai,
+        content=decision,
+        kind=BlockKind.decision,
+        refs=[str(topic_id)],
+    )
+    return ok(BlockOut.model_validate(block).model_dump(mode="json"))
 
 
 @router.post("/{topic_id}/split")
