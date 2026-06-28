@@ -306,6 +306,25 @@ class ChatService:
             return {"sandbox": sandbox}, cwd
         return {}, default_cwd
 
+    async def _stream_with_retry(self, **kwargs):
+        """Run a streaming turn, retrying transient agent failures with backoff —
+        but ONLY before any output is produced (cold-start / SDK exit-1 races). If
+        it fails mid-stream, re-raise so the partial turn surfaces rather than
+        replaying. Backoff: 0.5s → 1s → 2s, up to 3 attempts."""
+        delay = 0.5
+        for attempt in range(3):
+            produced = False
+            try:
+                async for event in self._agent.stream_reply(**kwargs):
+                    produced = True
+                    yield event
+                return
+            except Exception:  # noqa: BLE001 — transient sandbox/model errors
+                if produced or attempt == 2:
+                    raise
+                await asyncio.sleep(delay)
+                delay *= 2
+
     async def _notify_mentions(
         self, session, topic, author: str, text: str, roster: list[dict]
     ) -> list[str]:
@@ -447,7 +466,7 @@ class ChatService:
         tool_events: list[tuple[str, dict]] = []
         todo: list[dict] = []
         usage = None
-        async for event in self._agent.stream_reply(
+        async for event in self._stream_with_retry(
             prompt=prompt_text,
             system_prompt=system_prompt,
             cwd=cwd,
@@ -511,13 +530,12 @@ class ChatService:
                 reply_to=user_block_id,
             )
             topic = await topics.get(topic_id)
-            # @mentions in 芝士's reply → strong notify the named teammates.
-            if topic is not None:
-                mentioned = await self._notify_mentions(
-                    session, topic, CHEESE_AUTHOR, final_text, roster
-                )
-                if mentioned:
-                    assistant_block.refs = [f"user:{h}" for h in mentioned]
+            # 芝士 notifies people via `cheese mention` (which gives it a
+            # success/not-found receipt); here we only record refs so the inline
+            # @chips in its reply stay clickable. No notify (avoids double-send).
+            mentioned = _mention_handles(final_text, roster)
+            if mentioned:
+                assistant_block.refs = [f"user:{h}" for h in mentioned]
             assistant_payload = _block_payload(BlockOut.model_validate(assistant_block))
 
             if topic is not None and new_session_id:

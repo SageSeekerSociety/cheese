@@ -103,6 +103,12 @@ def main() -> None:
     pm.add_argument("title")
     pm.add_argument("--due", default=None, help="ISO 日期,如 2026-06-20")
 
+    sub.add_parser("members", help="列出项目成员(名字+handle+角色)")
+
+    pmention = sub.add_parser("mention", help="@点名某人(带回执)")
+    pmention.add_argument("name", help="成员名字或 handle")
+    pmention.add_argument("reason", nargs="?", default="", help="提醒事由")
+
     a = p.parse_args()
 
     if a.cmd == "doc" and a.doccmd == "set":
@@ -161,6 +167,25 @@ def main() -> None:
             body["due_date"] = a.due if "T" in a.due else f"{a.due}T00:00:00Z"
         _call("POST", f"/projects/{proj}/milestones", body)
         print(f"已钉里程碑：{a.title}")
+    elif a.cmd == "members":
+        proj = _need("CHEESE_PROJECT", PROJECT)
+        d = _call("GET", f"/projects/{proj}/members").get("data", {})
+        rows = d.get("data", d) if isinstance(d, dict) else d
+        for m in rows:
+            print(f"- {m.get('name')}（handle={m.get('user_handle')}，{m.get('role')}）")
+    elif a.cmd == "mention":
+        proj = _need("CHEESE_PROJECT", PROJECT)
+        r = _call(
+            "POST",
+            f"/projects/{proj}/mention",
+            {"name": a.name, "reason": a.reason, "topic_id": TOPIC or None},
+        ).get("data", {})
+        if r.get("ok"):
+            print(f"已 @ 并强提醒 {r['name']}（{r['handle']}）。")
+        else:
+            cands = "、".join(f"{c['name']}({c['handle']})" for c in r.get("candidates", []))
+            print(f"[cheese] 没找到成员“{a.name}”。现有成员：{cands}", file=sys.stderr)
+            sys.exit(1)
 
 
 if __name__ == "__main__":
