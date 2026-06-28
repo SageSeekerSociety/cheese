@@ -174,20 +174,18 @@ def _build_system_prompt(
     if skills:
         parts.append(skills)
     if topics:
-        lines = "\n".join(f"- {t['title']} → 写 `<#{t['id']}>`" for t in topics)
+        lines = "\n".join(f"- {t['title']}" for t in topics)
         parts.append(
-            "## 项目话题（交叉引用某个话题/它的文档时，在消息里写 `<#话题id>`——"
-            "会渲染成可点的「#标题」链接）\n" + lines
+            "## 项目话题（交叉引用某个话题/它的文档时，在标题前加 @，如 "
+            "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n" + lines
         )
     if roster:
-        lines = "\n".join(
-            f"- {m['name']}（{m['role']}）→ 写 `<@{m['handle']}>`" for m in roster
-        )
+        lines = "\n".join(f"- {m['name']}（{m['role']}）" for m in roster)
         parts.append(
             "## 项目成员 & 怎么点名\n"
-            "要真正通知某人去做事，在消息里写他的提及 token **`<@handle>`**"
-            "（见下表）——平台会渲染成「@名字」并给他强提醒。直接写名字（如“张衡”）"
-            "只是普通文字，不会通知。token 里的 handle 必须用下表里的准确值。\n" + lines
+            "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
+            "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
+            "只写名字而不加 @ 只是普通文字，不会通知。\n" + lines
         )
     if doc:
         parts.append(
@@ -212,6 +210,21 @@ _TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
 def _topic_refs(text: str) -> list[str]:
     """`<#topicId>` reference tokens in a message → topic refs (for linkage)."""
     return [f"topic:{tid}" for tid in dict.fromkeys(_TOPIC_REF_RE.findall(text or ""))]
+
+
+def _expand_mention_names(
+    text: str, roster: list[dict], topics: list[dict] | None = None
+) -> str:
+    """Canonicalize a friendly "@名字 / @话题名" into the structured token
+    (<@handle> / <#id>) — deterministic exact-match against the roster/topics,
+    longest first. So 芝士 just prefixing @ works; tokens already present are
+    untouched (they don't match the @name patterns)."""
+    subs = [(f"@{m['name']}", f"<@{m['handle']}>") for m in roster]
+    subs += [(f"@{t['title']}", f"<#{t['id']}>") for t in (topics or [])]
+    subs.sort(key=lambda s: len(s[0]), reverse=True)
+    for pat, tok in subs:
+        text = text.replace(pat, tok)
+    return text
 
 
 def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[str]]:
@@ -545,6 +558,10 @@ class ChatService:
                 final_text = event.text
                 new_session_id = event.session_id
                 usage = event.usage
+
+        # Canonicalize friendly "@名字 / @话题名" → tokens so they render as chips
+        # and notify, even when 芝士 didn't emit the exact <@handle> form.
+        final_text = _expand_mention_names(final_text, roster, topic_refs)
 
         # --- tx2: persist tool events (施工现场) + assistant block + usage ---
         async with self._sessions() as session:
