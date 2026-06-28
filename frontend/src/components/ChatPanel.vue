@@ -19,8 +19,10 @@ import CheeseAvatar from './CheeseAvatar.vue'
 // @mentions get a highlighted chip span — like Feishu group chat. Run after
 // markdown so we only touch text nodes' rendered output.
 function highlightMentions(html: string): string {
+  // A mention token must start with a letter/Chinese/underscore — so "@10" or
+  // "@10:00" (numbers, times) are NOT styled as clickable mentions.
   return html.replace(
-    /(^|[\s(（])@([一-龥\w-]+)/g,
+    /(^|[\s(（])@([一-龥a-zA-Z_][一-龥\w-]*)/g,
     '$1<span class="mention">@$2</span>',
   )
 }

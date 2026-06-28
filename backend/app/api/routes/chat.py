@@ -9,6 +9,7 @@ Protocol (matches the frontend contract):
            {"type":"done"}
 """
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -19,6 +20,16 @@ from app.core.errors import AppError
 from app.domain.agent.chat import ChatService
 
 router = APIRouter(tags=["chat"])
+logger = logging.getLogger("cheesex.chat")
+
+
+async def _safe_send(websocket: WebSocket, frame: dict) -> None:
+    """Send a frame, tolerating an already-closed socket (client navigated away
+    mid-turn) so error handling never raises a second exception."""
+    try:
+        await websocket.send_json(frame)
+    except (RuntimeError, WebSocketDisconnect):
+        pass
 
 
 @router.websocket("/api/topics/{topic_id}/chat")
@@ -54,10 +65,19 @@ async def chat(
                 ):
                     await websocket.send_json(frame)
             except AppError as exc:
-                await websocket.send_json({"type": "error", "message": exc.message})
-            except Exception as exc:  # surface agent/runtime failures (spec H4)
-                await websocket.send_json(
-                    {"type": "error", "message": f"agent error: {exc}"}
+                await _safe_send(websocket, {"type": "error", "message": exc.message})
+            except Exception:  # surface agent/runtime failures (spec H4)
+                # Log the real cause (it's otherwise lost) and tell the user
+                # plainly — a turn may die on a transient sandbox/model error, but
+                # whatever 芝士 already committed (e.g. the doc) is saved.
+                logger.exception("chat turn failed for topic %s", topic_id)
+                await _safe_send(
+                    websocket,
+                    {
+                        "type": "error",
+                        "message": "芝士这轮中断了（偶发的沙箱/模型错误）。"
+                        "它已完成的改动已保存，再 @ 它一次就会接着来。",
+                    },
                 )
     except WebSocketDisconnect:
         return
