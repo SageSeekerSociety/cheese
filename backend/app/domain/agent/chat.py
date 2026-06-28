@@ -186,6 +186,14 @@ def _build_system_prompt(
 _MENTION_RE = re.compile(r"<@([\w-]+)>")
 
 
+_TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
+
+
+def _topic_refs(text: str) -> list[str]:
+    """`<#topicId>` reference tokens in a message → topic refs (for linkage)."""
+    return [f"topic:{tid}" for tid in dict.fromkeys(_TOPIC_REF_RE.findall(text or ""))]
+
+
 def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[str]]:
     """Resolve <@handle> mention tokens against the roster. Returns
     (resolved_handles, unresolved_handles); unresolved = a token whose handle is
@@ -439,8 +447,9 @@ class ChatService:
             resolved, _unresolved = await self._notify_mentions(
                 session, topic, author, content, roster
             )
-            if resolved:
-                user_block.refs = [f"user:{h}" for h in resolved]
+            refs = [f"user:{h}" for h in resolved] + _topic_refs(content)
+            if refs:
+                user_block.refs = refs
                 user_payload = _block_payload(BlockOut.model_validate(user_block))
             await session.commit()
 
@@ -547,8 +556,9 @@ class ChatService:
                 resolved, unresolved = await self._notify_mentions(
                     session, topic, CHEESE_AUTHOR, final_text, roster
                 )
-                if resolved:
-                    assistant_block.refs = [f"user:{h}" for h in resolved]
+                refs = [f"user:{h}" for h in resolved] + _topic_refs(final_text)
+                if refs:
+                    assistant_block.refs = refs
                 for bad in unresolved:
                     await blocks.add(
                         project_id=project_id,

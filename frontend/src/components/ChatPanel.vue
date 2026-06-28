@@ -23,36 +23,43 @@ import type {
 import CheeseAvatar from './CheeseAvatar.vue'
 
 // Render 芝士's markdown replies to safe HTML (spec §3: AI 必须说人话, 可读).
-// Mentions are an encoded token `<@handle>` (not guessed-from-prose): both 芝士
-// and the composer emit it, the platform stores it, and here we render it as a
-// chip showing the member's name. handle→name is filled from the roster prop.
+// References are encoded tokens (not guessed-from-prose): `<@handle>` for a
+// teammate, `<#topicId>` for a topic/its doc. Both 芝士 and the composer emit
+// them; here we render each as a clickable chip showing the name/title. The
+// handle→name and id→title maps are filled from the roster / topics props.
 const mentionNames: Record<string, string> = {}
-const MENTION_TOKEN = /<@([\w-]+)>/g
+const topicTitles: Record<string, string> = {}
+// kind ('@' person | '#' topic) + id; id covers handles (user-1) and uuids.
+const TOKEN_RE = /<([@#])([\w-]+)>/g
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function mentionChip(handle: string): string {
-  const name = mentionNames[handle] || handle
-  return `<span class="mention" data-handle="${handle}">@${escapeHtml(name)}</span>`
+function tokenChip(kind: string, id: string): string {
+  if (kind === '@') {
+    const name = mentionNames[id] || id
+    return `<span class="mention" data-handle="${id}">@${escapeHtml(name)}</span>`
+  }
+  const title = topicTitles[id] || '话题'
+  return `<span class="mention topic-ref" data-topic="${id}">#${escapeHtml(title)}</span>`
 }
 
 function renderMarkdown(text: string): string {
   // Expand tokens to chip spans BEFORE markdown (marked passes inline HTML
   // through; doing it here avoids markdown mangling the angle brackets).
-  const withChips = text.replace(MENTION_TOKEN, (_m, h) => mentionChip(h))
+  const withChips = text.replace(TOKEN_RE, (_m, k, id) => tokenChip(k, id))
   return DOMPurify.sanitize(marked.parse(withChips, { async: false }) as string)
 }
 
-// Plain (non-markdown) human text → expand mention tokens to chips, escape the
+// Plain (non-markdown) human text → expand reference tokens to chips, escape the
 // rest, keep newlines.
 function renderPlain(text: string): string {
   let out = ''
   let last = 0
-  for (const m of text.matchAll(MENTION_TOKEN)) {
+  for (const m of text.matchAll(TOKEN_RE)) {
     out += escapeHtml(text.slice(last, m.index))
-    out += mentionChip(m[1])
+    out += tokenChip(m[1], m[2])
     last = m.index + m[0].length
   }
   out += escapeHtml(text.slice(last))
@@ -75,8 +82,16 @@ const props = withDefaults(
     prHeader?: boolean
     // Project roster (handle→name) so <@handle> mention tokens render as chips.
     members?: ProjectMemberRow[]
+    // Project topics (id→title) so <#topicId> reference tokens render as chips.
+    topicList?: Topic[]
   }>(),
-  { defaultSummon: false, showComposer: false, prHeader: false, members: () => [] },
+  {
+    defaultSummon: false,
+    showComposer: false,
+    prHeader: false,
+    members: () => [],
+    topicList: () => [],
+  },
 )
 
 // Surface AI activity so the parent can refresh the living doc / topic list
@@ -108,6 +123,14 @@ watch(
   (m) => {
     for (const k of Object.keys(mentionNames)) delete mentionNames[k]
     for (const row of m) mentionNames[row.user_handle] = row.name || row.user_handle
+  },
+  { immediate: true, deep: true },
+)
+watch(
+  () => props.topicList,
+  (ts) => {
+    for (const k of Object.keys(topicTitles)) delete topicTitles[k]
+    for (const t of ts) topicTitles[t.id] = t.title
   },
   { immediate: true, deep: true },
 )
@@ -160,10 +183,10 @@ function todoMark(status: string): string {
 // @mention chips are rendered via v-html; delegate clicks so the parent can
 // resolve the name (person → member page, topic/doc → open it).
 function onMessagesClick(e: MouseEvent) {
-  const el = (e.target as HTMLElement | null)?.closest('.mention')
+  const el = (e.target as HTMLElement | null)?.closest('.mention') as HTMLElement | null
   if (!el) return
-  const handle = (el as HTMLElement).dataset.handle
-  if (handle) emit('mention-click', handle)
+  if (el.dataset.handle) emit('mention-click', el.dataset.handle)
+  else if (el.dataset.topic) emit('open-topic', el.dataset.topic)
 }
 
 let socket: WebSocket | null = null

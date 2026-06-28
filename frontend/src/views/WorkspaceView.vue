@@ -425,18 +425,19 @@ function handleMentionClick(handle: string) {
   }
 }
 
-// Human composer: turn a friendly "@名字" into the canonical <@handle> token at
-// send time (longest names first so substrings don't mis-match), so a person the
-// user @s actually gets notified — same encoding 芝士 uses.
+// Human composer: turn a friendly "@名字 / @话题名" into the canonical token
+// (<@handle> for a teammate, <#topicId> for a topic) at send time — longest
+// patterns first so substrings don't mis-match — same encoding 芝士 uses.
 function expandMentions(text: string): string {
-  const rows = [...projectMembers.value].sort(
-    (a, b) => (b.name || '').length - (a.name || '').length,
-  )
+  const subs: { pat: string; token: string }[] = [
+    ...projectMembers.value.map((m) => ({
+      pat: `@${m.name || m.user_handle}`,
+      token: `<@${m.user_handle}>`,
+    })),
+    ...topics.value.map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
+  ].sort((a, b) => b.pat.length - a.pat.length)
   let out = text
-  for (const m of rows) {
-    const name = m.name || m.user_handle
-    out = out.split(`@${name}`).join(`<@${m.user_handle}>`)
-  }
+  for (const s of subs) out = out.split(s.pat).join(s.token)
   return out
 }
 
@@ -603,6 +604,7 @@ onMounted(async () => {
         :pr-header="false"
         :default-summon="true"
         :members="projectMembers"
+        :topic-list="topics"
         :show-composer="true"
         @turn-done="handleTurnDone"
         @tool-used="handleToolUsed"
@@ -638,10 +640,14 @@ onMounted(async () => {
           :topic="selectedTopic"
           :pr-header="!!selectedTopic && selectedTopic.kind !== 'root'"
           :members="projectMembers"
+          :topic-list="topics"
           @turn-done="handleTurnDone"
           @tool-used="handleToolUsed"
+          @state-changed="handleStateChanged"
+          @mention-click="handleMentionClick"
+          @open-resource="handleOpenResource"
           @upgrade-message="handleUpgradeMessage"
-        @open-topic="selectTopic"
+          @open-topic="selectTopic"
         >
           <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
           <template
