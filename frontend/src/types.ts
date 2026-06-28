@@ -67,6 +67,7 @@ export type WsServerFrame =
   | { type: 'tool'; name: string; input: Record<string, unknown> }
   | { type: 'todo'; items: TodoItem[] }
   | { type: 'state'; resource: string }
+  | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
   | { type: 'error'; message: string }
   | { type: 'done' }

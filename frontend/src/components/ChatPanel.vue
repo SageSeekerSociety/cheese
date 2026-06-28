@@ -147,9 +147,8 @@ const awaitingReply = ref(false)
 const toolActions = ref<string[]>([])
 // Live working-log todo (芝士's Task tools) for the in-progress turn (§3.1.1).
 const todoItems = ref<TodoItem[]>([])
-// Action cards for this turn: 芝士's cheese actions (decision/doc/...) rendered as
-// clickable affordances instead of plain prose (§3.1.1 控件).
-const turnActions = ref<string[]>([])
+// Action cards: 芝士's cheese actions (decision/doc/...) are persisted as system
+// event blocks tagged refs=["action:<resource>"] and rendered as clickable cards.
 const ACTION_META: Record<string, { verb: string; btn: string }> = {
   doc: { verb: '更新了活文档', btn: '看活文档' },
   decision: { verb: '记录了一条决策', btn: '查看决策记录' },
@@ -175,6 +174,13 @@ function toolLabel(name: string): string {
 
 function todoMark(status: string): string {
   return status === 'completed' ? '✓' : status === 'in_progress' ? '◐' : '○'
+}
+
+// A system event block tagged refs=["action:<resource>"] is a clickable action
+// card (decision/doc/...); returns the resource, or null for a plain event line.
+function actionResource(b: Block): string | null {
+  const r = (b.refs || []).find((x) => x.startsWith('action:'))
+  return r ? r.slice('action:'.length) : null
 }
 
 // @mention chips are rendered via v-html; delegate clicks so the parent can
@@ -299,11 +305,13 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'state':
-      // cheese changed a platform resource → parent refreshes that panel live...
+      // cheese changed a platform resource → parent refreshes that panel live.
+      // The clickable record of the action is a persisted event_block (below).
       emit('state-changed', frame.resource)
-      // ...and we show a clickable action card (not 芝士's prose).
-      if (ACTION_META[frame.resource] && !turnActions.value.includes(frame.resource))
-        turnActions.value.push(frame.resource)
+      break
+    case 'event_block':
+      // A persisted, clickable action card (decision/doc/...) for this turn.
+      messages.value.push(frame.block)
       autoScroll()
       break
     case 'assistant_block':
@@ -332,7 +340,6 @@ async function loadTopic(topic: Topic) {
   awaitingReply.value = false
   toolActions.value = []
   todoItems.value = []
-  turnActions.value = []
   messages.value = []
   loadingHistory.value = true
   closeSocket()
@@ -373,7 +380,6 @@ function send(content: string, summon: boolean): boolean {
   }
   toolActions.value = []
   todoItems.value = []
-  turnActions.value = []
   scrollToBottom()
   return true
 }
@@ -545,8 +551,21 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-for="(m, i) in visible" :key="m.id">
+          <!-- action card: 芝士's cheese action this turn, a clickable link -->
+          <div v-if="m.kind === 'event' && actionResource(m)" class="action-card">
+            <span class="action-verb">芝士 {{ m.content }}</span>
+            <v-btn
+              v-if="ACTION_META[actionResource(m)!]?.btn"
+              size="x-small"
+              variant="tonal"
+              color="primary"
+              @click="emit('open-resource', actionResource(m)!)"
+            >
+              {{ ACTION_META[actionResource(m)!].btn }}
+            </v-btn>
+          </div>
           <!-- system / event blocks: centered, gray, small (Feishu 系统提示) -->
-          <div v-if="m.kind === 'event'" class="im-event text-caption">
+          <div v-else-if="m.kind === 'event'" class="im-event text-caption">
             <span>{{ m.content }}</span>
           </div>
 
@@ -646,25 +665,6 @@ onBeforeUnmount(() => {
               <span v-if="awaitingReply" class="caret" />
             </div>
           </div>
-        </div>
-
-        <!-- Action cards — 芝士's cheese actions this turn, as clickable
-             affordances instead of typed prose (§3.1.1 控件) -->
-        <div
-          v-for="r in turnActions"
-          :key="'act-' + r"
-          class="action-card"
-        >
-          <span class="action-verb">芝士 {{ ACTION_META[r].verb }}</span>
-          <v-btn
-            v-if="ACTION_META[r].btn"
-            size="x-small"
-            variant="tonal"
-            color="primary"
-            @click="emit('open-resource', r)"
-          >
-            {{ ACTION_META[r].btn }}
-          </v-btn>
         </div>
 
         <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->

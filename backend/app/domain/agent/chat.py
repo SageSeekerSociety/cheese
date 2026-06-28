@@ -135,6 +135,19 @@ _CHEESE_RESOURCE = {
 }
 
 
+# Persistent, clickable action cards (§3.1.1 控件): each cheese action 芝士 takes
+# is recorded as a system event block (shown in the conversation) tagged
+# refs=["action:<resource>"], which the UI renders as a card linking to it.
+_ACTION_LABEL = {
+    "decision": "📌 记录了一条决策",
+    "doc": "📄 更新了活文档",
+    "topics": "🌿 更新了子话题",
+    "milestone": "📌 钉了一个里程碑",
+    "accept": "✅ 递出了验收卡",
+    "notify": "🔔 发了一条通知",
+}
+
+
 def _cheese_resource(command: str) -> str | None:
     """Resource hint for a Bash `cheese <sub>` command, else None."""
     parts = command.split()
@@ -499,6 +512,7 @@ class ChatService:
 
         tool_events: list[tuple[str, dict]] = []
         todo: list[dict] = []
+        actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None
         async for event in self._stream_with_retry(
             prompt=prompt_text,
@@ -525,6 +539,8 @@ class ChatService:
                     resource = _cheese_resource(str(args.get("command", "")))
                     if resource:
                         yield {"type": "state", "resource": resource}
+                        if resource in _ACTION_LABEL and resource not in actions:
+                            actions.append(resource)
             elif isinstance(event, AgentResult):
                 final_text = event.text
                 new_session_id = event.session_id
@@ -585,6 +601,21 @@ class ChatService:
                     )
             assistant_payload = _block_payload(BlockOut.model_validate(assistant_block))
 
+            # Persistent, clickable action cards for the cheese actions this turn
+            # (system events show in the conversation; refs tag the resource).
+            action_payloads = []
+            for resource in actions:
+                blk = await blocks.add(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    author=CHEESE_AUTHOR,
+                    author_type=AuthorType.system,
+                    content=_ACTION_LABEL[resource],
+                    kind=BlockKind.event,
+                    refs=[f"action:{resource}"],
+                )
+                action_payloads.append(_block_payload(BlockOut.model_validate(blk)))
+
             if topic is not None and new_session_id:
                 await topics.set_session_id(topic, new_session_id)
             await session.commit()
@@ -598,6 +629,8 @@ class ChatService:
                 pass
 
         yield {"type": "assistant_block", "block": assistant_payload}
+        for payload in action_payloads:
+            yield {"type": "event_block", "block": payload}
         yield {"type": "done"}
 
     async def ingest_activity(
