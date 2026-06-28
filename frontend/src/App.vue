@@ -140,6 +140,24 @@ async function onResolveNotif(n: Notification, chosen: string) {
   }
 }
 
+// Real action button label for a notification (the platform renders this — 芝士
+// should NOT type fake "[看活文档]/[采纳]" into the body).
+function notifActionLabel(n: Notification): string | null {
+  if (!n.topic_id) return null
+  if (n.kind === 'accept_request') return '去验收'
+  return '打开话题'
+}
+function openNotifTopic(n: Notification) {
+  if (!n.topic_id) return
+  notifMenu.value = false
+  router.push({
+    name: 'workspace-project',
+    params: { projectId: n.project_id },
+    query: { topic: n.topic_id },
+  })
+  if (n.read_at === null) onMarkNotifRead(n)
+}
+
 // Refresh notifications when the project changes or the menu opens.
 watch(currentProjectId, () => loadNotifications())
 watch(notifMenu, (open) => {
@@ -344,6 +362,17 @@ provide('activityBump', activityBump)
                       {{ opt }}
                     </v-btn>
                   </template>
+                </div>
+                <!-- Real action (platform-rendered, not 芝士's typed text) -->
+                <div v-if="notifActionLabel(n)" class="mb-2">
+                  <v-btn
+                    size="x-small"
+                    variant="flat"
+                    color="primary"
+                    @click="openNotifTopic(n)"
+                  >
+                    {{ notifActionLabel(n) }}
+                  </v-btn>
                 </div>
                 <div class="d-flex align-center ga-1">
                   <v-btn
