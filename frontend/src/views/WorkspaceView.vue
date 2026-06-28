@@ -160,7 +160,40 @@ function sendDraft() {
   if (ok) draft.value = ''
 }
 
+// @-autocomplete: the @token currently being typed at the end of the draft, and
+// the matching teammates / topics it can be completed to (§3.1.1 人也能 @).
+const mentionQuery = computed(() => {
+  const m = draft.value.match(/@([^\s@]*)$/)
+  return m ? m[1] : null
+})
+const mentionMatches = computed(() => {
+  const q = mentionQuery.value
+  if (q === null) return []
+  const items = [
+    ...projectMembers.value.map((m) => ({
+      label: m.name || m.user_handle,
+      kind: '成员',
+    })),
+    ...topics.value
+      .filter((t) => t.kind !== 'root')
+      .map((t) => ({ label: t.title, kind: '话题' })),
+  ]
+  const ql = q.toLowerCase()
+  return items
+    .filter((i) => i.label.toLowerCase().includes(ql))
+    .slice(0, 6)
+})
+function pickMention(label: string) {
+  draft.value = draft.value.replace(/@([^\s@]*)$/, `@${label} `)
+}
+
 function onComposerKey(e: KeyboardEvent) {
+  // While the @-menu is open, Enter picks the first match instead of sending.
+  if (e.key === 'Enter' && !e.shiftKey && mentionMatches.value.length) {
+    e.preventDefault()
+    pickMention(mentionMatches.value[0].label)
+    return
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     sendDraft()
@@ -780,6 +813,20 @@ onMounted(async () => {
             </button>
             <v-spacer />
           </div>
+          <!-- @-autocomplete: pick a teammate / topic while typing @ -->
+          <div v-if="mentionMatches.length" class="mention-menu">
+            <button
+              v-for="(mm, i) in mentionMatches"
+              :key="mm.kind + mm.label"
+              type="button"
+              class="mention-menu-item"
+              @click="pickMention(mm.label)"
+            >
+              <span class="mention-menu-kind">{{ mm.kind }}</span>
+              <span>@{{ mm.label }}</span>
+              <span v-if="i === 0" class="mention-menu-hint">Enter</span>
+            </button>
+          </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
               v-model="draft"
@@ -854,6 +901,41 @@ onMounted(async () => {
 }
 .composer {
   background: var(--surface);
+}
+/* @-autocomplete dropdown (§3.1.1) */
+.mention-menu {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 6px;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+.mention-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  text-align: left;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.mention-menu-item:hover {
+  background: var(--fill, #f5f5f5);
+}
+.mention-menu-kind {
+  font-size: 0.7rem;
+  color: var(--text-muted, #888);
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.mention-menu-hint {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-muted, #aaa);
 }
 .composer-input :deep(textarea) {
   font-size: 14px;
