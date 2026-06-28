@@ -153,12 +153,19 @@ def _build_system_prompt(
     memories: list[str],
     role: str | None = None,
     roster: list[dict] | None = None,
+    topics: list[dict] | None = None,
 ) -> str:
     parts = [base]
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if skills:
         parts.append(skills)
+    if topics:
+        lines = "\n".join(f"- {t['title']} → 写 `<#{t['id']}>`" for t in topics)
+        parts.append(
+            "## 项目话题（交叉引用某个话题/它的文档时，在消息里写 `<#话题id>`——"
+            "会渲染成可点的「#标题」链接）\n" + lines
+        )
     if roster:
         lines = "\n".join(
             f"- {m['name']}（{m['role']}）→ 写 `<@{m['handle']}>`" for m in roster
@@ -440,6 +447,14 @@ class ChatService:
                 if is_private
                 else await projects_repo.list_members(topic.project_id)
             )
+            # Topic list so 芝士 can cross-reference topics with <#id> tokens.
+            topic_refs = []
+            if not is_private:
+                topic_refs = [
+                    {"id": str(t.id), "title": t.title}
+                    for t in await topics.list_for_project(topic.project_id)
+                    if t.id != topic.id and t.kind != TopicKind.root
+                ]
             project_id = topic.project_id
             resume_session_id = topic.session_id
             user_block_id = user_block.id
@@ -463,7 +478,7 @@ class ChatService:
         # --- streaming: no DB transaction held open ---
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
         system_prompt = _build_system_prompt(
-            self._base_prompt, skills, doc_text, memories, role, roster
+            self._base_prompt, skills, doc_text, memories, role, roster, topic_refs
         )
         cwd = self._workspace_for(project_id)
         final_text = ""

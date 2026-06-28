@@ -29,8 +29,6 @@ import CheeseAvatar from './CheeseAvatar.vue'
 // handle→name and id→title maps are filled from the roster / topics props.
 const mentionNames: Record<string, string> = {}
 const topicTitles: Record<string, string> = {}
-// kind ('@' person | '#' topic) + id; id covers handles (user-1) and uuids.
-const TOKEN_RE = /<([@#])([\w-]+)>/g
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -45,25 +43,24 @@ function tokenChip(kind: string, id: string): string {
   return `<span class="mention topic-ref" data-topic="${id}">#${escapeHtml(title)}</span>`
 }
 
-function renderMarkdown(text: string): string {
-  // Expand tokens to chip spans BEFORE markdown (marked passes inline HTML
-  // through; doing it here avoids markdown mangling the angle brackets).
-  const withChips = text.replace(TOKEN_RE, (_m, k, id) => tokenChip(k, id))
-  return DOMPurify.sanitize(marked.parse(withChips, { async: false }) as string)
+// Expand reference tokens to chip spans AFTER escaping/markdown: marked (and our
+// escape) turn "<@h>" into "&lt;@h&gt;", so we match that escaped form and swap in
+// the chip HTML — injecting raw <span> *before* marked would get re-escaped.
+const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;/g
+
+function highlightTokens(html: string): string {
+  return html.replace(ESCAPED_TOKEN, (_m, k, id) => tokenChip(k, id))
 }
 
-// Plain (non-markdown) human text → expand reference tokens to chips, escape the
-// rest, keep newlines.
+function renderMarkdown(text: string): string {
+  return DOMPurify.sanitize(
+    highlightTokens(marked.parse(text, { async: false }) as string),
+  )
+}
+
+// Plain (non-markdown) human text → escape, expand reference tokens, keep newlines.
 function renderPlain(text: string): string {
-  let out = ''
-  let last = 0
-  for (const m of text.matchAll(TOKEN_RE)) {
-    out += escapeHtml(text.slice(last, m.index))
-    out += tokenChip(m[1], m[2])
-    last = m.index + m[0].length
-  }
-  out += escapeHtml(text.slice(last))
-  return DOMPurify.sanitize(out)
+  return DOMPurify.sanitize(highlightTokens(escapeHtml(text)))
 }
 
 const props = withDefaults(
