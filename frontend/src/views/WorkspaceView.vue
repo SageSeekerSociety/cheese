@@ -368,6 +368,23 @@ function handleStateChanged(resource: string) {
   else activityTick.value += 1 // doc / decision / milestone / notify → reload
 }
 
+// A clicked @mention chip → resolve the name: a teammate opens their member page;
+// a topic/doc name opens that topic (§3.1.1 @-references are clickable).
+function handleMentionClick(name: string) {
+  const m = projectMembers.value.find(
+    (x) => x.name === name || x.user_handle === name,
+  )
+  if (m && selectedProjectId.value) {
+    router.push({
+      name: 'member',
+      params: { projectId: selectedProjectId.value, handle: m.user_handle },
+    })
+    return
+  }
+  const t = topics.value.find((x) => x.title === name || x.title.includes(name))
+  if (t) selectTopic(t.id)
+}
+
 function handleToolUsed(name: string) {
   worklog.value.push(TOOL_LABELS[name] ?? name)
   if (name === 'update_doc') {
@@ -534,6 +551,7 @@ onMounted(async () => {
         @turn-done="handleTurnDone"
         @tool-used="handleToolUsed"
         @state-changed="handleStateChanged"
+        @mention-click="handleMentionClick"
         @upgrade-message="handleUpgradeMessage"
         @open-topic="selectTopic"
       />

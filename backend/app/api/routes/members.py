@@ -30,8 +30,19 @@ async def add_member(project_id: uuid.UUID, body: MemberCreate, db: DbSession) -
 
 @router.get("/api/projects/{project_id}/members")
 async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
+    from app.domain.project.repositories import ProjectRepository
+
     members, total = await MemberService(db).list_for_project(project_id)
-    items = [MemberOut.model_validate(m).model_dump(mode="json") for m in members]
+    # Attach display names (User.name) so the UI can resolve @名字 → handle.
+    names = {
+        m["handle"]: m["name"]
+        for m in await ProjectRepository(db).list_members(project_id)
+    }
+    items = []
+    for m in members:
+        d = MemberOut.model_validate(m).model_dump(mode="json")
+        d["name"] = names.get(m.user_handle, m.user_handle)
+        items.append(d)
     return ok(page(items, total))
 
 

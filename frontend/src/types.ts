@@ -99,10 +99,11 @@ export interface ProjectMember {
   role: string
 }
 
-// GET /api/projects/{id}/members → {data:[{user_handle, role}], total}
+// GET /api/projects/{id}/members → {data:[{user_handle, role, name}], total}
 export interface ProjectMemberRow {
   user_handle: string
   role: string
+  name?: string
   [key: string]: unknown
 }
 

@@ -71,6 +71,9 @@ const emit = defineEmits<{
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
   (e: 'open-topic', topicId: string): void
+  // A clicked @mention chip (resolved by the parent: person → member page,
+  // topic/doc → open that topic).
+  (e: 'mention-click', name: string): void
 }>()
 
 const AUTHOR = 'user-1'
@@ -107,6 +110,15 @@ function toolLabel(name: string): string {
 
 function todoMark(status: string): string {
   return status === 'completed' ? '✓' : status === 'in_progress' ? '◐' : '○'
+}
+
+// @mention chips are rendered via v-html; delegate clicks so the parent can
+// resolve the name (person → member page, topic/doc → open it).
+function onMessagesClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement | null)?.closest('.mention')
+  if (!el) return
+  const name = (el.textContent || '').replace(/^@/, '').trim()
+  if (name) emit('mention-click', name)
 }
 
 let socket: WebSocket | null = null
@@ -455,6 +467,7 @@ onBeforeUnmount(() => {
         class="messages flex-grow-1 overflow-y-auto py-2"
         data-testid="chat-scroll"
         @scroll="rememberScroll"
+        @click="onMessagesClick"
       >
         <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">
           加载历史…
@@ -818,11 +831,15 @@ onBeforeUnmount(() => {
 }
 /* @mention: neutral inset, ink text — not amber. */
 .im-text :deep(.mention) {
-  color: var(--ink);
+  color: var(--v-theme-primary, #6750a4);
   background: var(--fill);
   border-radius: 4px;
   padding: 0 3px;
   font-weight: 500;
+  cursor: pointer;
+}
+.im-text :deep(.mention:hover) {
+  text-decoration: underline;
 }
 
 /* per-row hover action bar (Feishu), floats at the row's top-right */
