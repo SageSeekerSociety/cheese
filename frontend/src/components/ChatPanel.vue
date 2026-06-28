@@ -74,6 +74,8 @@ const emit = defineEmits<{
   // A clicked @mention chip (resolved by the parent: person → member page,
   // topic/doc → open that topic).
   (e: 'mention-click', name: string): void
+  // An action card's button (decision → decisions page, milestone → calendar…).
+  (e: 'open-resource', resource: string): void
 }>()
 
 const AUTHOR = 'user-1'
@@ -93,6 +95,17 @@ const awaitingReply = ref(false)
 const toolActions = ref<string[]>([])
 // Live working-log todo (芝士's Task tools) for the in-progress turn (§3.1.1).
 const todoItems = ref<TodoItem[]>([])
+// Action cards for this turn: 芝士's cheese actions (decision/doc/...) rendered as
+// clickable affordances instead of plain prose (§3.1.1 控件).
+const turnActions = ref<string[]>([])
+const ACTION_META: Record<string, { verb: string; btn: string }> = {
+  doc: { verb: '更新了活文档', btn: '看活文档' },
+  decision: { verb: '记录了一条决策', btn: '查看决策记录' },
+  topics: { verb: '更新了子话题', btn: '' },
+  milestone: { verb: '钉了一个里程碑', btn: '看日历' },
+  accept: { verb: '递出了验收卡', btn: '去验收' },
+  notify: { verb: '发了通知', btn: '' },
+}
 
 const TOOL_LABELS: Record<string, string> = {
   create_subtopic: '拆出子话题',
@@ -234,8 +247,12 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'state':
-      // cheese changed a platform resource → parent refreshes that panel live.
+      // cheese changed a platform resource → parent refreshes that panel live...
       emit('state-changed', frame.resource)
+      // ...and we show a clickable action card (not 芝士's prose).
+      if (ACTION_META[frame.resource] && !turnActions.value.includes(frame.resource))
+        turnActions.value.push(frame.resource)
+      autoScroll()
       break
     case 'assistant_block':
       messages.value.push(frame.block)
@@ -263,6 +280,7 @@ async function loadTopic(topic: Topic) {
   awaitingReply.value = false
   toolActions.value = []
   todoItems.value = []
+  turnActions.value = []
   messages.value = []
   loadingHistory.value = true
   closeSocket()
@@ -303,6 +321,7 @@ function send(content: string, summon: boolean): boolean {
   }
   toolActions.value = []
   todoItems.value = []
+  turnActions.value = []
   scrollToBottom()
   return true
 }
@@ -577,6 +596,25 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <!-- Action cards — 芝士's cheese actions this turn, as clickable
+             affordances instead of typed prose (§3.1.1 控件) -->
+        <div
+          v-for="r in turnActions"
+          :key="'act-' + r"
+          class="action-card"
+        >
+          <span class="action-verb">芝士 {{ ACTION_META[r].verb }}</span>
+          <v-btn
+            v-if="ACTION_META[r].btn"
+            size="x-small"
+            variant="tonal"
+            color="primary"
+            @click="emit('open-resource', r)"
+          >
+            {{ ACTION_META[r].btn }}
+          </v-btn>
+        </div>
+
         <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
         <div class="px-4">
           <slot name="timeline-end" />
@@ -644,6 +682,21 @@ onBeforeUnmount(() => {
 <style scoped>
 .chat {
   background: var(--surface);
+}
+/* Action cards (§3.1.1 控件) — 芝士's cheese actions as clickable affordances. */
+.action-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 16px 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+.action-verb {
+  color: var(--text-muted, #666);
 }
 /* Live working-log checklist (§3.1.1) — process, sits above the streaming text. */
 .todo-list {

@@ -368,6 +368,20 @@ function handleStateChanged(resource: string) {
   else activityTick.value += 1 // doc / decision / milestone / notify → reload
 }
 
+// An action card's button → open the relevant view (§3.1.1 控件).
+function handleOpenResource(resource: string) {
+  const pid = selectedProjectId.value
+  if (!pid) return
+  if (resource === 'decision') {
+    router.push({ name: 'project-decisions', params: { projectId: pid } })
+  } else if (resource === 'milestone') {
+    router.push({ name: 'calendar', params: { projectId: pid } })
+  } else if (resource === 'accept') {
+    loadAcceptCard()
+  }
+  // doc / topics: the doc & topic panels are already in view next to the chat.
+}
+
 // A clicked @mention chip → resolve the name: a teammate opens their member page;
 // a topic/doc name opens that topic (§3.1.1 @-references are clickable).
 function handleMentionClick(name: string) {
@@ -552,6 +566,7 @@ onMounted(async () => {
         @tool-used="handleToolUsed"
         @state-changed="handleStateChanged"
         @mention-click="handleMentionClick"
+        @open-resource="handleOpenResource"
         @upgrade-message="handleUpgradeMessage"
         @open-topic="selectTopic"
       />
