@@ -161,11 +161,13 @@ def _build_system_prompt(
         parts.append(skills)
     if roster:
         lines = "\n".join(
-            f"- @{m['name']}（handle={m['handle']}，{m['role']}）" for m in roster
+            f"- {m['name']}（{m['role']}）→ 写 `<@{m['handle']}>`" for m in roster
         )
         parts.append(
-            "## 项目成员（点名某人去做事时，在消息里用 @名字 点他——他会收到强提醒。"
-            "别只在文字里提名字而不 @）\n" + lines
+            "## 项目成员 & 怎么点名\n"
+            "要真正通知某人去做事，在消息里写他的提及 token **`<@handle>`**"
+            "（见下表）——平台会渲染成「@名字」并给他强提醒。直接写名字（如“张衡”）"
+            "只是普通文字，不会通知。token 里的 handle 必须用下表里的准确值。\n" + lines
         )
     if doc:
         parts.append(
@@ -178,17 +180,24 @@ def _build_system_prompt(
     return "\n\n".join(parts)
 
 
-def _mention_handles(text: str, roster: list[dict]) -> list[str]:
-    """Resolve @<token> mentions in a message to member handles (matched by name
-    or handle). Deterministic lookup against the roster — not output parsing."""
-    if not text or not roster:
-        return []
-    tokens = set(re.findall(r"@([一-龥\w-]+)", text))
-    found: list[str] = []
-    for m in roster:
-        if (m["name"] in tokens or m["handle"] in tokens) and m["handle"] not in found:
-            found.append(m["handle"])
-    return found
+# Mentions are an ENCODED token, not guessed-from-prose: 芝士 (and the composer)
+# emit `<@handle>`, which the platform resolves deterministically and the UI
+# renders as a chip showing the member's name. A literal "@name" is just text.
+_MENTION_RE = re.compile(r"<@([\w-]+)>")
+
+
+def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[str]]:
+    """Resolve <@handle> mention tokens against the roster. Returns
+    (resolved_handles, unresolved_handles); unresolved = a token whose handle is
+    not a member (a hallucinated handle → the platform flags it)."""
+    resolved: list[str] = []
+    unresolved: list[str] = []
+    if not text:
+        return resolved, unresolved
+    handles = {m["handle"] for m in roster}
+    for h in dict.fromkeys(_MENTION_RE.findall(text)):
+        (resolved if h in handles else unresolved).append(h)
+    return resolved, unresolved
 
 
 def _block_payload(block_out: BlockOut) -> dict:
@@ -327,11 +336,12 @@ class ChatService:
 
     async def _notify_mentions(
         self, session, topic, author: str, text: str, roster: list[dict]
-    ) -> list[str]:
-        """@<name> in a message → a strong notification to each mentioned teammate
-        (spec §7: @人 = strong). Returns the mentioned handles (for block.refs)."""
-        handles = _mention_handles(text, roster)
-        targets = [h for h in handles if h not in (author, CHEESE_AUTHOR)]
+    ) -> tuple[list[str], list[str]]:
+        """@<name> in a message → a strong notification to each matched teammate
+        (spec §7: @人 = strong). Returns (resolved_handles, unresolved_names) so the
+        caller can set refs and flag the wrong ones."""
+        resolved, unresolved = _resolve_mentions(text, roster)
+        targets = [h for h in resolved if h not in (author, CHEESE_AUTHOR)]
         if targets:
             notifs = NotificationService(session)
             preview = " ".join(text.split())[:200]
@@ -346,7 +356,7 @@ class ChatService:
                     target_handle=h,
                     topic_id=topic.id,
                 )
-        return handles
+        return resolved, unresolved
 
     async def _converse_impl(
         self,
@@ -425,12 +435,12 @@ class ChatService:
             project_id = topic.project_id
             resume_session_id = topic.session_id
             user_block_id = user_block.id
-            # Resolve @mentions in the human message → strong notify the mentioned.
-            mentioned = await self._notify_mentions(
+            # Resolve <@handle> mentions in the human message → strong notify them.
+            resolved, _unresolved = await self._notify_mentions(
                 session, topic, author, content, roster
             )
-            if mentioned:
-                user_block.refs = [f"user:{h}" for h in mentioned]
+            if resolved:
+                user_block.refs = [f"user:{h}" for h in resolved]
                 user_payload = _block_payload(BlockOut.model_validate(user_block))
             await session.commit()
 
@@ -530,12 +540,24 @@ class ChatService:
                 reply_to=user_block_id,
             )
             topic = await topics.get(topic_id)
-            # 芝士 notifies people via `cheese mention` (which gives it a
-            # success/not-found receipt); here we only record refs so the inline
-            # @chips in its reply stay clickable. No notify (avoids double-send).
-            mentioned = _mention_handles(final_text, roster)
-            if mentioned:
-                assistant_block.refs = [f"user:{h}" for h in mentioned]
+            # <@handle> mentions in 芝士's reply → strong notify (the token is the
+            # single source of truth: what's shown = who's notified). Hallucinated
+            # handles get flagged in 现场 so a wrong @ never silently no-ops.
+            if topic is not None:
+                resolved, unresolved = await self._notify_mentions(
+                    session, topic, CHEESE_AUTHOR, final_text, roster
+                )
+                if resolved:
+                    assistant_block.refs = [f"user:{h}" for h in resolved]
+                for bad in unresolved:
+                    await blocks.add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        author=CHEESE_AUTHOR,
+                        author_type=AuthorType.ai,
+                        content=f"⚠️ @了 <@{bad}>，但项目里没有这个成员，没能通知到",
+                        kind=BlockKind.event,
+                    )
             assistant_payload = _block_payload(BlockOut.model_validate(assistant_block))
 
             if topic is not None and new_session_id:

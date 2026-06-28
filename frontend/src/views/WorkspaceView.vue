@@ -156,7 +156,7 @@ const TOOL_LABELS: Record<string, string> = {
 }
 
 function sendDraft() {
-  const ok = chatRef.value?.send(draft.value, summon.value)
+  const ok = chatRef.value?.send(expandMentions(draft.value), summon.value)
   if (ok) draft.value = ''
 }
 
@@ -415,21 +415,29 @@ function handleOpenResource(resource: string) {
   // doc / topics: the doc & topic panels are already in view next to the chat.
 }
 
-// A clicked @mention chip → resolve the name: a teammate opens their member page;
-// a topic/doc name opens that topic (§3.1.1 @-references are clickable).
-function handleMentionClick(name: string) {
-  const m = projectMembers.value.find(
-    (x) => x.name === name || x.user_handle === name,
-  )
-  if (m && selectedProjectId.value) {
+// A clicked <@handle> mention chip → open that teammate's member page.
+function handleMentionClick(handle: string) {
+  if (selectedProjectId.value) {
     router.push({
       name: 'member',
-      params: { projectId: selectedProjectId.value, handle: m.user_handle },
+      params: { projectId: selectedProjectId.value, handle },
     })
-    return
   }
-  const t = topics.value.find((x) => x.title === name || x.title.includes(name))
-  if (t) selectTopic(t.id)
+}
+
+// Human composer: turn a friendly "@名字" into the canonical <@handle> token at
+// send time (longest names first so substrings don't mis-match), so a person the
+// user @s actually gets notified — same encoding 芝士 uses.
+function expandMentions(text: string): string {
+  const rows = [...projectMembers.value].sort(
+    (a, b) => (b.name || '').length - (a.name || '').length,
+  )
+  let out = text
+  for (const m of rows) {
+    const name = m.name || m.user_handle
+    out = out.split(`@${name}`).join(`<@${m.user_handle}>`)
+  }
+  return out
 }
 
 function handleToolUsed(name: string) {
@@ -594,6 +602,7 @@ onMounted(async () => {
         :topic="privateTopic"
         :pr-header="false"
         :default-summon="true"
+        :members="projectMembers"
         :show-composer="true"
         @turn-done="handleTurnDone"
         @tool-used="handleToolUsed"
@@ -628,6 +637,7 @@ onMounted(async () => {
           :style="{ flex: `0 0 ${chatPct}%` }"
           :topic="selectedTopic"
           :pr-header="!!selectedTopic && selectedTopic.kind !== 'root'"
+          :members="projectMembers"
           @turn-done="handleTurnDone"
           @tool-used="handleToolUsed"
           @upgrade-message="handleUpgradeMessage"

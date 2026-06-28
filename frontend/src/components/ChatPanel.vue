@@ -12,34 +12,51 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { chatWsUrl, listBlocks } from '../api'
-import type { Block, TodoItem, Topic, WsClientMessage, WsServerFrame } from '../types'
+import type {
+  Block,
+  ProjectMemberRow,
+  TodoItem,
+  Topic,
+  WsClientMessage,
+  WsServerFrame,
+} from '../types'
 import CheeseAvatar from './CheeseAvatar.vue'
 
 // Render 芝士's markdown replies to safe HTML (spec §3: AI 必须说人话, 可读).
-// @mentions get a highlighted chip span — like Feishu group chat. Run after
-// markdown so we only touch text nodes' rendered output.
-function highlightMentions(html: string): string {
-  // A mention token must start with a letter/Chinese/underscore — so "@10" or
-  // "@10:00" (numbers, times) are NOT styled as clickable mentions.
-  return html.replace(
-    /(^|[\s(（])@([一-龥a-zA-Z_][一-龥\w-]*)/g,
-    '$1<span class="mention">@$2</span>',
-  )
+// Mentions are an encoded token `<@handle>` (not guessed-from-prose): both 芝士
+// and the composer emit it, the platform stores it, and here we render it as a
+// chip showing the member's name. handle→name is filled from the roster prop.
+const mentionNames: Record<string, string> = {}
+const MENTION_TOKEN = /<@([\w-]+)>/g
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function mentionChip(handle: string): string {
+  const name = mentionNames[handle] || handle
+  return `<span class="mention" data-handle="${handle}">@${escapeHtml(name)}</span>`
 }
 
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(
-    highlightMentions(marked.parse(text, { async: false }) as string),
-  )
+  // Expand tokens to chip spans BEFORE markdown (marked passes inline HTML
+  // through; doing it here avoids markdown mangling the angle brackets).
+  const withChips = text.replace(MENTION_TOKEN, (_m, h) => mentionChip(h))
+  return DOMPurify.sanitize(marked.parse(withChips, { async: false }) as string)
 }
 
-// Plain (non-markdown) human text → escape, highlight @mentions, keep newlines.
+// Plain (non-markdown) human text → expand mention tokens to chips, escape the
+// rest, keep newlines.
 function renderPlain(text: string): string {
-  const esc = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  return DOMPurify.sanitize(highlightMentions(esc))
+  let out = ''
+  let last = 0
+  for (const m of text.matchAll(MENTION_TOKEN)) {
+    out += escapeHtml(text.slice(last, m.index))
+    out += mentionChip(m[1])
+    last = m.index + m[0].length
+  }
+  out += escapeHtml(text.slice(last))
+  return DOMPurify.sanitize(out)
 }
 
 const props = withDefaults(
@@ -56,8 +73,10 @@ const props = withDefaults(
     // PRs — the root topic (本体) and the 1:1 private chat are NOT, so they use
     // the plain chat header instead.
     prHeader?: boolean
+    // Project roster (handle→name) so <@handle> mention tokens render as chips.
+    members?: ProjectMemberRow[]
   }>(),
-  { defaultSummon: false, showComposer: false, prHeader: false },
+  { defaultSummon: false, showComposer: false, prHeader: false, members: () => [] },
 )
 
 // Surface AI activity so the parent can refresh the living doc / topic list
@@ -81,6 +100,17 @@ const emit = defineEmits<{
 }>()
 
 const AUTHOR = 'user-1'
+
+// Keep the module-level handle→name map in sync with the roster prop, so
+// <@handle> tokens render with the member's display name.
+watch(
+  () => props.members,
+  (m) => {
+    for (const k of Object.keys(mentionNames)) delete mentionNames[k]
+    for (const row of m) mentionNames[row.user_handle] = row.name || row.user_handle
+  },
+  { immediate: true, deep: true },
+)
 
 const messages = ref<Block[]>([])
 const loadingHistory = ref(false)
@@ -132,8 +162,8 @@ function todoMark(status: string): string {
 function onMessagesClick(e: MouseEvent) {
   const el = (e.target as HTMLElement | null)?.closest('.mention')
   if (!el) return
-  const name = (el.textContent || '').replace(/^@/, '').trim()
-  if (name) emit('mention-click', name)
+  const handle = (el as HTMLElement).dataset.handle
+  if (handle) emit('mention-click', handle)
 }
 
 let socket: WebSocket | null = null

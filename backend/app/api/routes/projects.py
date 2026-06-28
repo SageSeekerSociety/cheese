@@ -109,42 +109,6 @@ async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     return ok({"remembered": True})
 
 
-@router.post("/{project_id}/mention")
-async def mention_member(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """@点名某人(带回执)— used by `cheese mention`. Resolves a name/handle against
-    the roster: on a match, sends a strong notification and returns the resolved
-    member; on no match, returns the candidate list so 芝士 can self-correct."""
-    import uuid as _uuid
-
-    from app.domain.notification.models import NotifKind, NotifLevel
-    from app.domain.notification.services import NotificationService
-    from app.domain.project.repositories import ProjectRepository
-
-    await ProjectService(db).get_or_404(project_id)
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise ValidationError("name 不能为空")
-    roster = await ProjectRepository(db).list_members(project_id)
-    match = next(
-        (m for m in roster if m["name"] == name or m["handle"] == name), None
-    )
-    if match is None:
-        candidates = [{"handle": m["handle"], "name": m["name"]} for m in roster]
-        return ok({"ok": False, "reason": "no_match", "candidates": candidates})
-    topic_raw = body.get("topic_id")
-    topic_id = _uuid.UUID(topic_raw) if topic_raw else None
-    await NotificationService(db).create(
-        project_id=project_id,
-        level=NotifLevel.strong,
-        kind=NotifKind.mention,
-        title=f"芝士 @了你：{name}",
-        body=(body.get("reason") or "")[:200],
-        target_handle=match["handle"],
-        topic_id=topic_id,
-    )
-    return ok({"ok": True, "handle": match["handle"], "name": match["name"]})
-
-
 @router.get("/{project_id}/private-chat")
 async def get_private_chat(
     project_id: uuid.UUID, user_handle: str, db: DbSession

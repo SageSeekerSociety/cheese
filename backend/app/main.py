@@ -96,7 +96,6 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/api/topics/[^/]+/return-conclusion$")),
     ("POST", re.compile(r"^/api/topics/[^/]+/accept-card$")),
     ("POST", re.compile(r"^/api/projects/[^/]+/memory$")),
-    ("POST", re.compile(r"^/api/projects/[^/]+/mention$")),
     ("POST", re.compile(r"^/api/projects/[^/]+/notifications$")),
     ("POST", re.compile(r"^/api/projects/[^/]+/milestones$")),
 ]
