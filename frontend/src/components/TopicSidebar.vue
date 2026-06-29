@@ -157,23 +157,8 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
     <!-- Drag handle on the right edge to resize the rail. -->
     <div class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
     <div class="d-flex flex-column fill-height">
-      <!-- Project picker header -->
-      <div class="pa-3 pb-2">
-        <v-select
-          :model-value="selectedProjectId"
-          :items="projects"
-          item-title="name"
-          item-value="id"
-          placeholder="选择项目…"
-          density="compact"
-          variant="outlined"
-          hide-details
-          prepend-inner-icon="mdi-folder-outline"
-          @update:model-value="emit('select-project', $event)"
-        />
-      </div>
-
-      <v-divider />
+      <!-- (Project switching lives in the global top-bar picker — no duplicate
+           here.) The rail is the current project's topic tree + 新建项目. -->
 
       <!-- Scrollable lists -->
       <div class="flex-grow-1 overflow-y-auto">
