@@ -245,20 +245,24 @@ export function getGitDiff(projectId: string): Promise<{ diff: string }> {
 // 文件: list workspace files; read one file's content.
 export function listFiles(
   projectId: string,
+  topicId?: string | null,
 ): Promise<ListPayload<WorkspaceFile>> {
+  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
   return request<ListPayload<WorkspaceFile>>(
-    `/projects/${encodeURIComponent(projectId)}/files`,
+    `/projects/${encodeURIComponent(projectId)}/files${t}`,
   )
 }
 
 export function readFile(
   projectId: string,
   path: string,
+  topicId?: string | null,
 ): Promise<FileContent> {
+  const t = topicId ? `&topic=${encodeURIComponent(topicId)}` : ''
   return request<FileContent>(
     `/projects/${encodeURIComponent(projectId)}/file?path=${encodeURIComponent(
       path,
-    )}`,
+    )}${t}`,
   )
 }
 

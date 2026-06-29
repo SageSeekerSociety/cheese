@@ -129,7 +129,7 @@ async function loadTool(key: string) {
       gitCommits.value = log.data
       gitDiff.value = diff.diff
     } else if (key === 'files') {
-      files.value = (await listFiles(pid)).data
+      files.value = (await listFiles(pid, tid)).data
       openFile.value = null
     } else if (key === 'resources') {
       const [tu, pu] = await Promise.all([
@@ -140,11 +140,11 @@ async function loadTool(key: string) {
       topicUsage.value = tu
       projectUsage.value = pu
     } else if (key === 'preview') {
-      const list = (await listFiles(pid)).data
+      const list = (await listFiles(pid, tid)).data
       if (props.topic?.id !== tid) return
       files.value = list
       const html = list.find((f) => f.path.toLowerCase().endsWith('.html'))
-      previewFile.value = html ? await readFile(pid, html.path) : null
+      previewFile.value = html ? await readFile(pid, html.path, tid) : null
     }
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '加载失败'
@@ -158,7 +158,7 @@ async function selectFile(path: string) {
   if (!pid) return
   toolError.value = null
   try {
-    openFile.value = await readFile(pid, path)
+    openFile.value = await readFile(pid, path, props.topic?.id)
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '读取文件失败'
   }

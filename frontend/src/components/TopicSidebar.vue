@@ -50,6 +50,16 @@ function startResize(e: MouseEvent) {
 
 const newProjectName = ref('')
 
+// Project switcher dropdown — anchored to the 本体 bar so it aligns (same left
+// edge + width) instead of floating offset.
+const bentaiBar = ref<HTMLElement | null>(null)
+const switcherOpen = ref(false)
+const switcherWidth = ref(248)
+function toggleSwitcher() {
+  if (bentaiBar.value) switcherWidth.value = bentaiBar.value.offsetWidth
+  switcherOpen.value = !switcherOpen.value
+}
+
 function submitProject() {
   const name = newProjectName.value.trim()
   if (!name) return
@@ -169,6 +179,7 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
       <!-- 本体 = 项目 = 根话题: one flush header that opens the 本体 (root topic)
            on click, and switches projects via the caret menu. -->
       <div
+        ref="bentaiBar"
         class="bentai-bar"
         :class="{ 'is-active': !!rootTopic && rootTopic.id === selectedTopicId }"
       >
@@ -181,18 +192,21 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
           <span class="bentai-bar__name">{{ currentProjectName }}</span>
           <span class="chip-neutral">本体</span>
         </button>
-        <v-menu offset="8" location="bottom end">
-          <template #activator="{ props: mp }">
-            <v-btn
-              v-bind="mp"
-              icon="mdi-unfold-more-horizontal"
-              size="x-small"
-              variant="text"
-              title="切换项目"
-              @click.stop
-            />
-          </template>
-          <div class="proj-switcher">
+        <v-btn
+          icon="mdi-unfold-more-horizontal"
+          size="x-small"
+          variant="text"
+          title="切换项目"
+          @click.stop="toggleSwitcher"
+        />
+        <!-- Dropdown anchored to the 本体 bar: same left edge + width. -->
+        <v-menu
+          v-model="switcherOpen"
+          :activator="bentaiBar"
+          location="bottom start"
+          :offset="6"
+        >
+          <div class="proj-switcher" :style="{ width: switcherWidth + 'px' }">
             <div class="proj-switcher__head">切换项目</div>
             <button
               v-for="p in projects"
