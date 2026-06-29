@@ -50,14 +50,13 @@ function startResize(e: MouseEvent) {
 
 const newProjectName = ref('')
 
-// Project switcher dropdown — anchored to the 本体 bar so it aligns (same left
-// edge + width) instead of floating offset.
-const bentaiBar = ref<HTMLElement | null>(null)
+// Project switcher dropdown. Only the caret opens it (the #activator); clicking
+// the bar opens 本体. Width is captured from the 本体 box so they line up.
+const bentaiMain = ref<HTMLElement | null>(null)
 const switcherOpen = ref(false)
 const switcherWidth = ref(248)
-function toggleSwitcher() {
-  if (bentaiBar.value) switcherWidth.value = bentaiBar.value.offsetWidth
-  switcherOpen.value = !switcherOpen.value
+function captureSwitcherWidth() {
+  if (bentaiMain.value) switcherWidth.value = bentaiMain.value.offsetWidth
 }
 
 function submitProject() {
@@ -183,7 +182,7 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
         :class="{ 'is-active': !!rootTopic && rootTopic.id === selectedTopicId }"
       >
         <button
-          ref="bentaiBar"
+          ref="bentaiMain"
           type="button"
           class="bentai-bar__main"
           @click="rootTopic && emit('select-topic', rootTopic.id)"
@@ -192,20 +191,18 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
           <span class="bentai-bar__name">{{ currentProjectName }}</span>
           <span class="chip-neutral">本体</span>
         </button>
-        <v-btn
-          icon="mdi-unfold-more-horizontal"
-          size="x-small"
-          variant="text"
-          title="切换项目"
-          @click.stop="toggleSwitcher"
-        />
-        <!-- Dropdown anchored to the 本体 bar: same left edge + width. -->
-        <v-menu
-          v-model="switcherOpen"
-          :activator="bentaiBar"
-          location="bottom start"
-          :offset="6"
-        >
+        <!-- ONLY the caret opens the switcher (clicking the bar opens 本体). -->
+        <v-menu v-model="switcherOpen" location="bottom end" :offset="6">
+          <template #activator="{ props: mp }">
+            <v-btn
+              v-bind="mp"
+              icon="mdi-unfold-more-horizontal"
+              size="x-small"
+              variant="text"
+              title="切换项目"
+              @click.stop="captureSwitcherWidth"
+            />
+          </template>
           <div class="proj-switcher" :style="{ width: switcherWidth + 'px' }">
             <div class="proj-switcher__head">切换项目</div>
             <button
