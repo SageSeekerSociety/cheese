@@ -49,7 +49,6 @@ function startResize(e: MouseEvent) {
 }
 
 const newProjectName = ref('')
-const newTopicTitle = ref('')
 
 function submitProject() {
   const name = newProjectName.value.trim()
@@ -58,11 +57,9 @@ function submitProject() {
   newProjectName.value = ''
 }
 
-function submitTopic() {
-  const title = newTopicTitle.value.trim()
-  if (!title) return
-  emit('create-topic', title)
-  newTopicTitle.value = ''
+function promptNewTopic() {
+  const title = window.prompt('新建话题，标题：')
+  if (title && title.trim()) emit('create-topic', title.trim())
 }
 
 // ----- Topic tree -----
@@ -169,47 +166,55 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
     <!-- Drag handle on the right edge to resize the rail. -->
     <div class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
     <div class="d-flex flex-column fill-height">
-      <!-- 本体 = 项目 = 根话题: the rail header is one entry that opens the 本体
-           (root topic) on click, and switches projects via the caret menu. -->
-      <div class="pa-2 pb-1">
-        <v-list density="compact" nav class="py-0">
-          <v-list-item
-            :active="!!rootTopic && rootTopic.id === selectedTopicId"
-            @click="rootTopic && emit('select-topic', rootTopic.id)"
-          >
-            <template #prepend>
-              <v-icon size="18">mdi-hexagon-outline</v-icon>
-            </template>
-            <v-list-item-title class="d-flex align-center ga-2">
-              <span class="t-title text-truncate">{{ currentProjectName }}</span>
-              <span class="chip-neutral">本体</span>
-            </v-list-item-title>
-            <template #append>
-              <v-menu>
-                <template #activator="{ props: mp }">
-                  <v-btn
-                    v-bind="mp"
-                    icon="mdi-unfold-more-horizontal"
-                    size="x-small"
-                    variant="text"
-                    title="切换项目"
-                    @click.stop
-                  />
-                </template>
-                <v-list density="compact">
-                  <v-list-item
-                    v-for="p in projects"
-                    :key="p.id"
-                    :active="p.id === selectedProjectId"
-                    @click="emit('select-project', p.id)"
-                  >
-                    <v-list-item-title>{{ p.name }}</v-list-item-title>
-                  </v-list-item>
-                </v-list>
-              </v-menu>
-            </template>
-          </v-list-item>
-        </v-list>
+      <!-- 本体 = 项目 = 根话题: one flush header that opens the 本体 (root topic)
+           on click, and switches projects via the caret menu. -->
+      <div
+        class="bentai-bar"
+        :class="{ 'is-active': !!rootTopic && rootTopic.id === selectedTopicId }"
+      >
+        <button
+          type="button"
+          class="bentai-bar__main"
+          @click="rootTopic && emit('select-topic', rootTopic.id)"
+        >
+          <v-icon size="18" class="bentai-bar__icon">mdi-hexagon-outline</v-icon>
+          <span class="bentai-bar__name">{{ currentProjectName }}</span>
+          <span class="chip-neutral">本体</span>
+        </button>
+        <v-menu offset="8" location="bottom end">
+          <template #activator="{ props: mp }">
+            <v-btn
+              v-bind="mp"
+              icon="mdi-unfold-more-horizontal"
+              size="x-small"
+              variant="text"
+              title="切换项目"
+              @click.stop
+            />
+          </template>
+          <div class="proj-switcher">
+            <div class="proj-switcher__head">切换项目</div>
+            <button
+              v-for="p in projects"
+              :key="p.id"
+              type="button"
+              class="proj-switcher__row"
+              :class="{ 'is-active': p.id === selectedProjectId }"
+              @click="emit('select-project', p.id)"
+            >
+              <v-icon size="17" class="proj-switcher__icon"
+                >mdi-hexagon-outline</v-icon
+              >
+              <span class="proj-switcher__name">{{ p.name }}</span>
+              <v-icon
+                v-if="p.id === selectedProjectId"
+                size="15"
+                class="proj-switcher__check"
+                >mdi-check</v-icon
+              >
+            </button>
+          </div>
+        </v-menu>
       </div>
 
       <v-divider />
@@ -220,7 +225,17 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
           <div class="t-body c-muted pa-4">先选择一个项目</div>
         </template>
         <template v-else>
-          <div class="t-eyebrow side-subhead">话题</div>
+          <div class="t-eyebrow side-subhead side-subhead--row">
+            <span>话题</span>
+            <v-btn
+              icon="mdi-plus"
+              size="x-small"
+              variant="text"
+              density="comfortable"
+              title="新建话题"
+              @click="promptNewTopic"
+            />
+          </div>
 
           <div v-if="loadingTopics" class="px-4 py-2">
             <v-progress-circular
@@ -288,20 +303,6 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
               暂无话题
             </v-list-item>
           </v-list>
-
-          <!-- New topic -->
-          <div class="px-3 pb-2 pt-1">
-            <v-text-field
-              v-model="newTopicTitle"
-              placeholder="新建话题…"
-              density="compact"
-              variant="outlined"
-              hide-details
-              append-inner-icon="mdi-plus"
-              @click:append-inner="submitTopic"
-              @keydown.enter="submitTopic"
-            />
-          </div>
 
           <v-divider class="mx-3 my-1" />
 
@@ -403,6 +404,56 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 .side-subhead {
   padding: 14px 16px 4px;
 }
+.side-subhead--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-block: 6px 4px;
+  padding-inline-end: 8px;
+}
+
+/* 本体 = 项目 header row: flush-left (the topic tree's parent, not deeper). */
+.bentai-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 6px 6px 10px;
+}
+.bentai-bar__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.bentai-bar__main:hover {
+  background: var(--fill);
+}
+.bentai-bar.is-active .bentai-bar__main {
+  background: var(--fill);
+}
+.bentai-bar__icon {
+  flex: none;
+  color: var(--muted);
+}
+.bentai-bar.is-active .bentai-bar__icon {
+  color: var(--accent);
+}
+.bentai-bar__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* Topic / nav rows: title ink, quiet by default. */
 .topic-row :deep(.v-list-item-title),
@@ -464,5 +515,64 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 .topic-row .split-btn:focus-visible {
   opacity: 1;
   color: var(--muted);
+}
+</style>
+
+<!-- Non-scoped: the project switcher renders in a teleported v-menu overlay,
+     so scoped styles wouldn't reach it. Tokens are global (:root). -->
+<style>
+.proj-switcher {
+  min-width: 248px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(20, 22, 26, 0.14);
+}
+.proj-switcher__head {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 6px 10px 4px;
+}
+.proj-switcher__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.12s ease;
+}
+.proj-switcher__row:hover {
+  background: var(--fill);
+}
+.proj-switcher__row.is-active {
+  background: var(--accent-wash);
+}
+.proj-switcher__icon {
+  flex: none;
+  color: var(--muted);
+}
+.proj-switcher__row.is-active .proj-switcher__icon {
+  color: var(--accent);
+}
+.proj-switcher__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proj-switcher__check {
+  flex: none;
+  color: var(--accent);
 }
 </style>
