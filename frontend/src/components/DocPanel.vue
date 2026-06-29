@@ -70,6 +70,30 @@ watch(pinned, (v) => localStorage.setItem('cheesex.toolPinned', v ? '1' : '0'))
 function togglePin() {
   pinned.value = !pinned.value
 }
+
+// Resizable width for the pinned tool drawer (现场/文件/Git…), persisted.
+const toolWidth = ref<number>(
+  Number(localStorage.getItem('cheesex.toolWidth')) || 340,
+)
+watch(toolWidth, (w) => localStorage.setItem('cheesex.toolWidth', String(w)))
+function startToolResize(e: MouseEvent) {
+  e.preventDefault()
+  const panel = (e.currentTarget as HTMLElement).parentElement
+  const right = panel ? panel.getBoundingClientRect().right : window.innerWidth
+  const move = (ev: MouseEvent) => {
+    toolWidth.value = Math.min(760, Math.max(260, right - ev.clientX))
+  }
+  const stop = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', stop)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', stop)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
 function closeTool() {
   drawerOpen.value = false
   openTool.value = null
@@ -484,7 +508,15 @@ onBeforeUnmount(() => {
           v-if="drawerOpen"
           class="tool-panel"
           :class="pinned ? 'tool-panel--pinned' : 'tool-panel--float'"
+          :style="pinned ? { flex: `0 0 ${toolWidth}px` } : undefined"
         >
+          <!-- Drag the left edge to resize the pinned drawer (width persisted). -->
+          <div
+            v-if="pinned"
+            class="tool-resizer"
+            title="拖动调整宽度"
+            @mousedown="startToolResize"
+          />
           <div class="tool-panel__head">
             <span class="tool-panel__title">{{ activeToolLabel() }}</span>
             <v-spacer />
@@ -790,6 +822,29 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 0 0 340px;
   border-left: 1px solid var(--line);
+}
+/* Left-edge drag handle for the pinned tool drawer. */
+.tool-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 11px;
+  cursor: col-resize;
+  z-index: 7;
+}
+.tool-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.tool-resizer:hover::after {
+  background: var(--accent);
 }
 .tool-panel__head {
   display: flex;

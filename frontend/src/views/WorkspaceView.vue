@@ -908,24 +908,12 @@ onMounted(async () => {
 }
 /* Draggable splitter between chat and doc (replaces the static divider). */
 .pane-resizer {
-  flex: 0 0 11px;
+  flex: 0 0 5px;
   cursor: col-resize;
-  position: relative;
-  background: transparent;
-}
-/* Thin visible line centered in the wider (grabbable) hit area. */
-.pane-resizer::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 2px;
   background: var(--line);
   transition: background 0.12s ease;
 }
-.pane-resizer:hover::after {
+.pane-resizer:hover {
   background: var(--accent);
 }
 .composer {
