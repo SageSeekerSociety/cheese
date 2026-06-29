@@ -305,22 +305,20 @@ async def main() -> None:
         )
         await wait_ai_turn(root_id, "本体开工")
 
-        # ---- 4. Work topic「搭建推荐算法原型」 ----
-        _log("creating work topic「搭建推荐算法原型」…")
-        topic_input = page.get_by_placeholder("新建话题")
-        await topic_input.wait_for(state="visible", timeout=10000)
-        await topic_input.fill("搭建推荐算法原型")
-        await topic_input.press("Enter")
+        # ---- 4. Work topic (created untitled via the + button) ----
+        # Titles are AI-generated now: + creates a "新话题" and 芝士 names it via
+        # `cheese title` on its first turn. We no longer pre-set the title.
+        _log("creating work topic via + (untitled; 芝士 will name it)…")
+        await page.get_by_title("新建话题").first.click()
         await page.wait_for_timeout(2500)
         topics = api_get(f"/api/topics?project_id={project_id}")["data"]
         work_id = next(
             t["id"]
             for t in topics
-            if t["kind"] == "topic" and t["title"] == "搭建推荐算法原型"
+            if t["kind"] == "topic" and t["title"] == "新话题"
         )
-        _log(f"work topic: {work_id}")
-        # Ensure the new topic is the selected one in the UI.
-        await page.get_by_text("搭建推荐算法原型").first.click()
+        _log(f"work topic: {work_id} (untitled, awaiting 芝士 title)")
+        # handleCreateTopic already selected the new topic in the UI.
         await page.wait_for_timeout(800)
 
         # 4a. a human-only message (no @芝士) so the 群聊 has a real human turn
