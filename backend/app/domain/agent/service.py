@@ -25,6 +25,13 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
+from app.domain.agent.skills import load_cheese_cli_rules
+
+# The cheese CLI rules, injected into every sandbox turn's system prompt (the
+# cheese Agent Skill is lazy-loaded and weak models don't self-load it). Read
+# once at import; editing SKILL.md takes effect on the next backend restart.
+_CHEESE_RULES = load_cheese_cli_rules()
+
 
 @dataclass
 class AgentDelta:
@@ -129,14 +136,24 @@ class AgentService:
           and no platform tools.
         """
         if sandbox:
+            # cheese CLI rules go straight into the system prompt: Agent Skills only
+            # preload name+description, and weak gateway models don't reliably do the
+            # self-directed read that loads the body — but cheese is needed every turn
+            # (see load_cheese_cli_rules). We keep the skill enabled too (capable
+            # models can still self-load it), which is why "Skill" must be in the
+            # explicit allowed_tools — when you pass allowed_tools yourself, the SDK
+            # does NOT auto-add Skill, so omitting it silently blocks skill invocation.
+            sandbox_prompt = system_prompt
+            if _CHEESE_RULES:
+                sandbox_prompt = f"{system_prompt}\n\n{_CHEESE_RULES}"
             options = ClaudeAgentOptions(
                 model=self._model,
-                system_prompt=system_prompt,
+                system_prompt=sandbox_prompt,
                 cwd=cwd,
                 resume=resume_session_id,
                 include_partial_messages=True,
                 permission_mode="bypassPermissions",
-                allowed_tools=sandbox["allowed_tools"],
+                allowed_tools=[*sandbox["allowed_tools"], "Skill"],
                 cli_path=sandbox["cli_path"],
                 # The cheese skill lives in the mounted ~/.claude/skills (=user
                 # source). "user" reads only the isolated per-topic session dir

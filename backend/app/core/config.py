@@ -19,13 +19,15 @@ class Settings(BaseSettings):
     # through the Anthropic-compatible gateway (spec §9: 不绑定模型). For Zhipu
     # GLM: base_url=https://open.bigmodel.cn/api/anthropic, token=ZHIPU_API_KEY.
     # Swapping to LiteLLM / Anthropic later is just env, no code change.
-    agent_model: str = "glm-4.6"
+    agent_model: str = "glm-5.2"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # Model aliases the CLI may resolve internally; map them to the provider.
+    # Subagents (the Task/Agent tool) resolve via sonnet/opus → keep them on the
+    # main model so 分身 don't silently run an older/weaker model.
     agent_haiku_model: str | None = "glm-4.5-air"
-    agent_sonnet_model: str | None = "glm-4.6"
-    agent_opus_model: str | None = "glm-4.6"
+    agent_sonnet_model: str | None = "glm-5.2"
+    agent_opus_model: str | None = "glm-5.2"
     agent_system_prompt: str = (
         "你是「芝士」，知是平台里的 AI 队友。你贯穿一个项目的全过程，"
         "了解项目的话题、决策和进展。回答要说人话，让零基础的同学也能看懂，"
