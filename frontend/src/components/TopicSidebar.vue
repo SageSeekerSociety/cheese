@@ -120,23 +120,35 @@ const tree = computed<TreeRow[]>(() => {
     for (const child of childrenOf.get(t.id) ?? []) visit(child, depth + 1)
   }
 
-  // Roots first: the root topic (本体) before other top-level topics. A
-  // top-level topic is one whose parent_id is null or points outside the list.
+  // The root topic (本体) is the rail header, not a list row — show its children
+  // (work topics) at depth 0, then any other top-level topics.
   const idSet = new Set(all.map((t) => t.id))
   const roots = all.filter((t) => !t.parent_id || !idSet.has(t.parent_id))
-  roots.sort((a, b) => {
-    const ar = inferKind(a) === 'root' ? 0 : 1
-    const br = inferKind(b) === 'root' ? 0 : 1
-    if (ar !== br) return ar - br
-    return a.created_at.localeCompare(b.created_at)
-  })
-  for (const r of roots) visit(r, 0)
+  const rootTopicNode = roots.find((t) => inferKind(t) === 'root')
+  if (rootTopicNode) {
+    seen.add(rootTopicNode.id)
+    for (const child of childrenOf.get(rootTopicNode.id) ?? []) visit(child, 0)
+  }
+  for (const r of roots) {
+    if (inferKind(r) !== 'root') visit(r, 0)
+  }
 
   // Safety: append any orphans not reached (cycles / dangling parents).
   for (const t of all) if (!seen.has(t.id)) rows.push({ topic: t, depth: 0 })
 
   return rows
 })
+
+// The root topic (本体) — represented by the rail header (a selector + a click
+// target), not a list row. And the current project's display name.
+const rootTopic = computed<Topic | null>(
+  () => props.topics.find((t) => inferKind(t) === 'root') ?? null,
+)
+const currentProjectName = computed<string>(
+  () =>
+    props.projects.find((p) => p.id === props.selectedProjectId)?.name ??
+    '选择项目',
+)
 
 function onSplit(t: Topic) {
   const title = window.prompt(`在「${t.title}」下新建子话题，标题：`)
@@ -157,8 +169,50 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
     <!-- Drag handle on the right edge to resize the rail. -->
     <div class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
     <div class="d-flex flex-column fill-height">
-      <!-- (Project switching lives in the global top-bar picker — no duplicate
-           here.) The rail is the current project's topic tree + 新建项目. -->
+      <!-- 本体 = 项目 = 根话题: the rail header is one entry that opens the 本体
+           (root topic) on click, and switches projects via the caret menu. -->
+      <div class="pa-2 pb-1">
+        <v-list density="compact" nav class="py-0">
+          <v-list-item
+            :active="!!rootTopic && rootTopic.id === selectedTopicId"
+            @click="rootTopic && emit('select-topic', rootTopic.id)"
+          >
+            <template #prepend>
+              <v-icon size="18">mdi-hexagon-outline</v-icon>
+            </template>
+            <v-list-item-title class="d-flex align-center ga-2">
+              <span class="t-title text-truncate">{{ currentProjectName }}</span>
+              <span class="chip-neutral">本体</span>
+            </v-list-item-title>
+            <template #append>
+              <v-menu>
+                <template #activator="{ props: mp }">
+                  <v-btn
+                    v-bind="mp"
+                    icon="mdi-unfold-more-horizontal"
+                    size="x-small"
+                    variant="text"
+                    title="切换项目"
+                    @click.stop
+                  />
+                </template>
+                <v-list density="compact">
+                  <v-list-item
+                    v-for="p in projects"
+                    :key="p.id"
+                    :active="p.id === selectedProjectId"
+                    @click="emit('select-project', p.id)"
+                  >
+                    <v-list-item-title>{{ p.name }}</v-list-item-title>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+            </template>
+          </v-list-item>
+        </v-list>
+      </div>
+
+      <v-divider />
 
       <!-- Scrollable lists -->
       <div class="flex-grow-1 overflow-y-auto">

@@ -250,8 +250,10 @@ provide('activityBump', activityBump)
 
       <v-spacer />
 
-      <!-- Project picker -->
+      <!-- Project picker — only where there's no rail (workspace switches the
+           project from the rail's 本体 header instead). -->
       <v-select
+        v-if="activeTab !== 'workspace'"
         :model-value="currentProjectId"
         :items="projects"
         item-title="name"
