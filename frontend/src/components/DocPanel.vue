@@ -71,9 +71,11 @@ function togglePin() {
   pinned.value = !pinned.value
 }
 
-// Resizable width for the pinned tool drawer (现场/文件/Git…), persisted.
+// One width for the tool drawer, shared by both float and pinned modes so
+// toggling 钉住 never changes the drawer's width (it just docks in place).
+// Persisted. Default 380 = the drawer's long-standing floating width.
 const toolWidth = ref<number>(
-  Number(localStorage.getItem('cheesex.toolWidth')) || 340,
+  Number(localStorage.getItem('cheesex.toolWidth')) || 380,
 )
 watch(toolWidth, (w) => localStorage.setItem('cheesex.toolWidth', String(w)))
 function startToolResize(e: MouseEvent) {
@@ -508,7 +510,7 @@ onBeforeUnmount(() => {
           v-if="drawerOpen"
           class="tool-panel"
           :class="pinned ? 'tool-panel--pinned' : 'tool-panel--float'"
-          :style="pinned ? { flex: `0 0 ${toolWidth}px` } : undefined"
+          :style="pinned ? { flex: `0 0 ${toolWidth}px` } : { width: `${toolWidth}px` }"
         >
           <!-- Drag the left edge to resize the pinned drawer (width persisted). -->
           <div
@@ -811,16 +813,15 @@ onBeforeUnmount(() => {
 .tool-panel--float {
   position: absolute;
   inset: 0 0 0 auto;
-  width: 380px;
+  /* width set inline (= toolWidth, shared with pinned) so pinning is seamless */
   max-width: 86%;
   border-left: 1px solid var(--line);
   box-shadow: -10px 0 28px rgba(16, 18, 22, 0.08);
   z-index: 6;
 }
-/* Pinned (钉住): in-flow column — the doc shrinks to make room. */
+/* Pinned (钉住): in-flow column at the same width — the doc shrinks to make room. */
 .tool-panel--pinned {
   position: relative;
-  flex: 0 0 340px;
   border-left: 1px solid var(--line);
 }
 /* Left-edge drag handle for the pinned tool drawer. */
