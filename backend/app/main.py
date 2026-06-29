@@ -93,6 +93,7 @@ register_exception_handlers(app)
 # panel saves, the sidebar splits), so they stay open like the rest of the app.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/api/topics/[^/]+/decision$")),
+    ("POST", re.compile(r"^/api/topics/[^/]+/title$")),
     ("POST", re.compile(r"^/api/topics/[^/]+/return-conclusion$")),
     ("POST", re.compile(r"^/api/topics/[^/]+/accept-card$")),
     ("POST", re.compile(r"^/api/projects/[^/]+/memory$")),

@@ -467,7 +467,8 @@ async function handleCreateTopic(title: string) {
   const projectId = selectedProjectId.value
   if (!projectId) return
   try {
-    const topic = await createTopic(projectId, title)
+    // Untitled by default — the title is derived from the first message.
+    const topic = await createTopic(projectId, title.trim() || '新话题')
     topics.value.push(topic)
     selectedTopicId.value = topic.id
   } catch (e) {

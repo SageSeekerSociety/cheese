@@ -167,12 +167,20 @@ def _build_system_prompt(
     role: str | None = None,
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
+    untitled: bool = False,
 ) -> str:
     parts = [base]
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if skills:
         parts.append(skills)
+    if untitled:
+        parts.append(
+            "## 第一步：先给本话题起名\n"
+            "本话题还叫「新话题」（未命名）。**在做用户要求的事之前，第一步先**根据"
+            "用户的需求执行 `cheese title \"<标题>\"` 起个 ≤12 字简短标题，再继续。"
+            "（只起一次，定了别反复改。）"
+        )
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         parts.append(
@@ -205,6 +213,11 @@ _MENTION_RE = re.compile(r"<@([\w-]+)>")
 
 
 _TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
+
+# A topic created from the rail's + has no human-typed title ("新话题"); 芝士 names
+# it via `cheese title` (titles are AI-generated, never deterministically derived
+# from human input or the agent's output — see CLAUDE.md).
+PLACEHOLDER_TITLE = "新话题"
 
 
 def _topic_refs(text: str) -> list[str]:
@@ -483,6 +496,7 @@ class ChatService:
                 ]
             project_id = topic.project_id
             resume_session_id = topic.session_id
+            untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             user_block_id = user_block.id
             # Resolve <@handle> mentions in the human message → strong notify them.
             resolved, _unresolved = await self._notify_mentions(
@@ -504,7 +518,14 @@ class ChatService:
         # --- streaming: no DB transaction held open ---
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
         system_prompt = _build_system_prompt(
-            self._base_prompt, skills, doc_text, memories, role, roster, topic_refs
+            self._base_prompt,
+            skills,
+            doc_text,
+            memories,
+            role,
+            roster,
+            topic_refs,
+            untitled,
         )
         cwd = self._workspace_for(project_id)
         final_text = ""

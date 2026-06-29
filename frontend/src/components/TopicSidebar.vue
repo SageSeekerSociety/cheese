@@ -66,9 +66,10 @@ function submitProject() {
   newProjectName.value = ''
 }
 
-function promptNewTopic() {
-  const title = window.prompt('新建话题，标题：')
-  if (title && title.trim()) emit('create-topic', title.trim())
+// New topic: don't ask the human for a title — create an untitled one and open
+// it; the title is derived from the first message (and 芝士 can refine it).
+function newTopic() {
+  emit('create-topic', '')
 }
 
 // ----- Topic tree -----
@@ -241,10 +242,10 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
             <v-btn
               icon="mdi-plus"
               size="x-small"
-              variant="text"
-              density="comfortable"
+              variant="tonal"
+              color="primary"
               title="新建话题"
-              @click="promptNewTopic"
+              @click="newTopic"
             />
           </div>
 

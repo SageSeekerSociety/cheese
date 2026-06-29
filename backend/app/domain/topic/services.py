@@ -17,12 +17,10 @@ from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 
 CHEESE_AUTHOR = "cheese"
-_TITLE_MAX = 60
-
-
-def _title_from(text: str) -> str:
-    flat = " ".join(text.split())
-    return flat[:_TITLE_MAX] if flat else "新话题"
+# Titles are AI-generated (the agent names a topic via `cheese title`), never
+# deterministically derived from text — see CLAUDE.md. An upgraded block starts
+# untitled and 芝士 names it on its first turn (same as a + new topic).
+PLACEHOLDER_TITLE = "新话题"
 
 
 def _child_kind(parent: Topic) -> TopicKind:
@@ -149,7 +147,7 @@ class TopicService:
 
         new_topic = await self._repo.add(
             project_id=block.project_id,
-            title=_title_from(block.content),
+            title=PLACEHOLDER_TITLE,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,

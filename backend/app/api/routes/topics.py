@@ -140,6 +140,19 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
     return ok(BlockOut.model_validate(block).model_dump(mode="json"))
 
 
+@router.post("/{topic_id}/title")
+async def set_title(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """给话题起/改标题 — used by `cheese title`. Titles are AI-generated (the agent
+    names an untitled topic from the task), never deterministically derived."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise ValidationError("title 不能为空")
+    topic.title = title[:80]
+    await db.flush()
+    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
 @router.post("/{topic_id}/split")
 async def split_topic(topic_id: uuid.UUID, body: SplitIn, db: DbSession) -> dict:
     """从上往下拆解：split a todo into a sub-topic (eval A2)."""

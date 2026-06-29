@@ -81,6 +81,9 @@ def main() -> None:
     pdec = sub.add_parser("decision", help="记录一条决策")
     pdec.add_argument("text")
 
+    ptitle = sub.add_parser("title", help="给本话题起/改标题")
+    ptitle.add_argument("text")
+
     prem = sub.add_parser("remember", help="记入项目记忆")
     prem.add_argument("fact")
 
@@ -125,6 +128,10 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/decision", {"decision": a.text})
         print("已记入决策记录。")
+    elif a.cmd == "title":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        _call("POST", f"/topics/{topic}/title", {"title": a.text})
+        print(f"话题标题已设为：{a.text}")
     elif a.cmd == "remember":
         proj = _need("CHEESE_PROJECT", PROJECT)
         body = {"content": a.fact}
