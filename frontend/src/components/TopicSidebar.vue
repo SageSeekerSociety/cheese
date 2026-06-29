@@ -179,11 +179,11 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
       <!-- 本体 = 项目 = 根话题: one flush header that opens the 本体 (root topic)
            on click, and switches projects via the caret menu. -->
       <div
-        ref="bentaiBar"
         class="bentai-bar"
         :class="{ 'is-active': !!rootTopic && rootTopic.id === selectedTopicId }"
       >
         <button
+          ref="bentaiBar"
           type="button"
           class="bentai-bar__main"
           @click="rootTopic && emit('select-topic', rootTopic.id)"
