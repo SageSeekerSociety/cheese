@@ -47,7 +47,7 @@ watch([railWidth, chatPct], () => {
   )
 })
 function onRailWidth(w: number) {
-  railWidth.value = clampNum(w, 220, 460)
+  railWidth.value = clampNum(w, 190, 480)
 }
 // Drag the chat|doc splitter: set chat's width as a % of the panes row.
 function startPaneDrag(e: MouseEvent) {
@@ -907,12 +907,24 @@ onMounted(async () => {
 }
 /* Draggable splitter between chat and doc (replaces the static divider). */
 .pane-resizer {
-  flex: 0 0 5px;
+  flex: 0 0 11px;
   cursor: col-resize;
+  position: relative;
+  background: transparent;
+}
+/* Thin visible line centered in the wider (grabbable) hit area. */
+.pane-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
   background: var(--line);
   transition: background 0.12s ease;
 }
-.pane-resizer:hover {
+.pane-resizer:hover::after {
   background: var(--accent);
 }
 .composer {

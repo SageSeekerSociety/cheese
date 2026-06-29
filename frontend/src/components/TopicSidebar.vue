@@ -405,14 +405,24 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 .rail-resizer {
   position: absolute;
   top: 0;
-  right: 0;
+  right: -3px;
   bottom: 0;
-  width: 5px;
+  width: 11px;
   cursor: col-resize;
-  z-index: 3;
+  z-index: 4;
+}
+/* A thin visible handle centered in the wider (grabbable) hit area. */
+.rail-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 3px;
+  width: 2px;
+  background: transparent;
   transition: background 0.12s ease;
 }
-.rail-resizer:hover {
+.rail-resizer:hover::after {
   background: var(--accent);
 }
 .side-subhead {

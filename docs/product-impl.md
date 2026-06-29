@@ -163,7 +163,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **行为**：芝士在话题的隔离工作区里用**原生工具**写产物、跑代码/测试（真执行，在容器里）。改动由平台**自动快照**成版本历史（无需手动提交）。**话题=分支=jj workspace=容器=session**，并行话题互不污染。**采纳=merge**（§3.5）。Git/文件/diff 面板可看。
 - **VCS = Jujutsu (jj) colocate**：每个项目主仓 `jj git init --colocate`（`.git` + `.jj` 并存，git 照常可用），每话题一个 `jj workspace`（取代 git worktree）。回合末 `snapshot_worktree` 把原生编辑做成一次 `jj commit`，话题分支用 jj bookmark 导出成 git branch，所以**采纳/diff 仍走 git**（colocation）。`backend/app/domain/workspace/service.py`。
 - **沙箱执行**：每话题一个常驻 Docker 容器（§3.2），`--memory/--cpus/--pids-limit` 限额；agent 的原生 Bash 在容器里跑，碰不到宿主机。`exec_in_sandbox` 另提供 `--network none` 的一次性执行（强隔离场景）。
-- **实现**：接口 `GET /api/projects/{id}/{files|file|git/log|git/diff}`（`git/diff?topic=` 看话题分支 diff，拒 ref 选项注入）。
+- **文件面板（重点：看代码 / 轻量改代码）**：用户很看重**在平台里直接看代码、并能少量改代码**——文档面板的「文件」标签列出**当前话题工作区**的文件树，点开看内容(代码高亮)，未来支持就地小改并自动快照。所以：文件接口必须带 `?topic=`(读话题 worktree,不是空的 base 仓);芝士产物必须写进工作区(`./`)而非 `/tmp`,否则文件面板看不到、也不进版本库。`GET /api/projects/{id}/{files|file}?topic=` · `DocPanel` 文件标签。
+- **实现**：接口 `GET /api/projects/{id}/{files|file|git/log|git/diff}`（`files|file|git/diff` 带 `?topic=` 看话题工作区/分支；`git/diff` 拒 ref 选项注入）。
 
 ### 3.11 Space / Task Template / Task  ✅ 协议侧 / 🟡 资源侧
 
