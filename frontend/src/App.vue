@@ -26,14 +26,24 @@ const currentProjectId = computed<string | null>(() => {
   return typeof p === 'string' && p ? p : null
 })
 
-onMounted(async () => {
+async function loadProjects() {
   try {
-    const payload = await listProjects()
-    projects.value = payload.data
+    projects.value = (await listProjects()).data
   } catch {
     // Non-fatal; the picker just stays empty.
   }
-})
+}
+onMounted(loadProjects)
+
+// If the routed project isn't in the list (created after load / stale tab),
+// refetch — otherwise the picker shows the raw id instead of the name.
+watch(
+  currentProjectId,
+  (id) => {
+    if (id && !projects.value.some((p) => p.id === id)) loadProjects()
+  },
+  { immediate: true },
+)
 
 function onPickProject(id: string | null) {
   if (!id) return

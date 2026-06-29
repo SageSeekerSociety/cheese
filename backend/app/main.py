@@ -89,9 +89,9 @@ register_exception_handlers(app)
 # over the network, so its write-surface must not be open like the browser API.
 # These paths are cheese-only writes (the frontend only reads them); gate them
 # on the shared token. See app/core/sandbox_auth.py.
+# Only paths that ONLY the cheese CLI writes. doc/split are dual-use (the doc
+# panel saves, the sidebar splits), so they stay open like the rest of the app.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
-    ("PUT", re.compile(r"^/api/topics/[^/]+/doc$")),
-    ("POST", re.compile(r"^/api/topics/[^/]+/split$")),
     ("POST", re.compile(r"^/api/topics/[^/]+/decision$")),
     ("POST", re.compile(r"^/api/topics/[^/]+/return-conclusion$")),
     ("POST", re.compile(r"^/api/topics/[^/]+/accept-card$")),
