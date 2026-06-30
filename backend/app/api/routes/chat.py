@@ -57,25 +57,30 @@ async def chat(
                 continue
 
             try:
+                # A turn's work (doc edits, decisions, the AI's reply) is real and
+                # persisted regardless of who is watching, so a client disconnect
+                # must NOT cancel it. We keep draining converse to completion (so
+                # it commits) and merely stop pushing frames to a dead socket —
+                # sending to a closed socket is the only thing that would crash.
+                # The user sees the result (persisted blocks) on reconnect.
+                live = True
                 async for frame in chat_service.converse(
                     topic_id=topic_id,
                     author=author,
                     content=content,
                     summon=summon,
                 ):
+                    if not live:
+                        continue
                     try:
                         await websocket.send_json(frame)
                     except (WebSocketDisconnect, RuntimeError):
-                        # Client went away mid-turn (navigated off / timed out).
-                        # A disconnect is normal, not a failure: stop the turn
-                        # cleanly. Returning closes the converse generator, which
-                        # cancels the agent stream (frees the topic lock and stops
-                        # burning model tokens on a turn no one is listening to).
                         logger.info(
-                            "client disconnected mid-turn for topic %s; aborting",
+                            "client disconnected mid-turn for topic %s; "
+                            "finishing the turn in the background",
                             topic_id,
                         )
-                        return
+                        live = False
             except AppError as exc:
                 await _safe_send(websocket, {"type": "error", "message": exc.message})
             except Exception:  # surface agent/runtime failures (spec H4)
