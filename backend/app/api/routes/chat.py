@@ -47,8 +47,10 @@ async def chat(
                 await websocket.send_json(frame)
 
     async def relay() -> None:
-        # Subscribe BEFORE the first submit so no frame is missed (R10).
-        async with broker.subscribe(channel) as queue:
+        # Subscribe BEFORE the first submit so no frame is missed (R10). replay=True
+        # catches up the in-progress turn on a mid-turn (re)connect (R3); between
+        # turns the buffer is empty, so a fresh connection replays nothing.
+        async with broker.subscribe(channel, replay=True) as queue:
             while True:
                 await send(await queue.get())
 

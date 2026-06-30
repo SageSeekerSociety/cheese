@@ -28,20 +28,39 @@ Frame = dict
 
 
 class InProcessBroker:
-    """Fan-out pub/sub for one process. Each subscriber gets every frame
-    published to its channel from the moment it subscribes (no backlog yet —
-    reconnect-mid-turn replay is the R3 upgrade)."""
+    """Fan-out pub/sub for one process, with a per-channel replay buffer of the
+    IN-PROGRESS turn's ephemeral frames (R3). A connection that subscribes mid-turn
+    gets those frames immediately (catch-up), then the live continuation — so a
+    reconnect (after `GET /blocks` for persisted history) is seamless. The buffer
+    is dropped when the turn ends (done/error), since its result is now persisted
+    as blocks; between turns the buffer is empty, so a fresh submit replays nothing.
+    """
 
-    def __init__(self) -> None:
+    def __init__(self, replay_size: int = 512) -> None:
         self._subs: dict[str, set[asyncio.Queue[Frame]]] = {}
+        self._buffer: dict[str, list[Frame]] = {}
+        self._replay_size = replay_size
 
     async def publish(self, channel: str, frame: Frame) -> None:
+        buf = self._buffer.setdefault(channel, [])
+        buf.append(frame)
+        if frame.get("type") in ("done", "error"):
+            # Turn finished — its output is persisted as blocks now; drop the
+            # in-progress buffer so a later subscriber doesn't replay a dead turn.
+            self._buffer.pop(channel, None)
+        elif len(buf) > self._replay_size:
+            del buf[: len(buf) - self._replay_size]
         for q in list(self._subs.get(channel, ())):
             q.put_nowait(frame)
 
     @contextlib.asynccontextmanager
-    async def subscribe(self, channel: str) -> AsyncIterator[asyncio.Queue[Frame]]:
+    async def subscribe(
+        self, channel: str, *, replay: bool = False
+    ) -> AsyncIterator[asyncio.Queue[Frame]]:
         q: asyncio.Queue[Frame] = asyncio.Queue()
+        if replay:
+            for frame in self._buffer.get(channel, ()):
+                q.put_nowait(frame)
         self._subs.setdefault(channel, set()).add(q)
         try:
             yield q

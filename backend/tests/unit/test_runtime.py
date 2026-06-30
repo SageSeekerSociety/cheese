@@ -35,6 +35,30 @@ async def test_broker_fans_out_then_stops_on_unsubscribe():
 
 
 @pytest.mark.anyio
+async def test_replay_catches_up_a_mid_turn_subscriber():
+    # R3: a connection that subscribes mid-turn gets the in-progress frames.
+    broker = InProcessBroker()
+    await broker.publish("c", {"type": "user_block"})
+    await broker.publish("c", {"type": "delta", "text": "a"})
+    async with broker.subscribe("c", replay=True) as q:  # joins mid-turn
+        await broker.publish("c", {"type": "delta", "text": "b"})
+        got = [q.get_nowait()["type"] for _ in range(3)]
+    assert got == ["user_block", "delta", "delta"]  # 2 replayed + 1 live
+
+
+@pytest.mark.anyio
+async def test_buffer_drops_after_turn_so_fresh_subscriber_replays_nothing():
+    # Between turns the buffer is empty (the result is persisted as blocks), so a
+    # subscriber that connects to start a new turn doesn't replay the dead one.
+    broker = InProcessBroker()
+    await broker.publish("c", {"type": "user_block"})
+    await broker.publish("c", {"type": "done"})
+    async with broker.subscribe("c", replay=True) as q:
+        assert q.empty()
+    assert broker._buffer == {}
+
+
+@pytest.mark.anyio
 async def test_runner_publishes_turn_frames_to_subscribers():
     broker = InProcessBroker()
     runner = TurnRunner(broker)
