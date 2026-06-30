@@ -44,9 +44,14 @@ const props = withDefaults(
     activityTick: number
     // 施工现场: this topic's AI tool-action log, shown in the 现场 drawer.
     worklog?: string[]
+    // 专注模式 (spec §7.1): the doc spans the whole workspace (chat hidden).
+    focus?: boolean
   }>(),
-  { worklog: () => [] },
+  { worklog: () => [], focus: false },
 )
+
+// 专注模式 toggle is owned by the parent (it hides the chat pane); we just ask.
+const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
 
 // ---- 按需打开的工具 (spec §7.1): slide-out tool drawer ----
 interface ToolDef {
@@ -447,6 +452,16 @@ onBeforeUnmount(() => {
         </v-btn>
 
         <v-divider vertical class="mx-1" />
+
+        <!-- 专注模式: 文档占满工作区，隐藏对话栏 (spec §7.1) -->
+        <v-btn
+          :icon="props.focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
+          size="small"
+          variant="text"
+          :class="props.focus ? 'tool-btn--active' : 'c-muted'"
+          :title="props.focus ? '退出专注' : '专注模式（文档全幅）'"
+          @click="emit('toggle-focus')"
+        />
 
         <!-- 右上角工具图标: 按需打开工具，从右侧滑出 (spec §7.1) -->
         <v-btn

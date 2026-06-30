@@ -39,6 +39,9 @@ try {
 } catch {
   // ignore malformed stored layout
 }
+// 专注模式 (spec §7.1): hide the chat column so the document spans the whole
+// workspace. Session-only (intentionally not persisted — it's a transient mode).
+const focusMode = ref(false)
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 watch([railWidth, chatPct], () => {
   localStorage.setItem(
@@ -636,6 +639,7 @@ onMounted(async () => {
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0">
         <ChatPanel
           ref="chatRef"
+          v-show="!focusMode"
           class="col col-chat"
           :style="{ flex: `0 0 ${chatPct}%` }"
           :topic="selectedTopic"
@@ -786,7 +790,7 @@ onMounted(async () => {
           </template>
         </ChatPanel>
         <div
-          v-if="selectedTopic"
+          v-if="selectedTopic && !focusMode"
           class="pane-resizer"
           title="拖动调整宽度（双击复位）"
           @mousedown.prevent="startPaneDrag"
@@ -799,6 +803,8 @@ onMounted(async () => {
           :topic="selectedTopic"
           :activity-tick="activityTick"
           :worklog="worklog"
+          :focus="focusMode"
+          @toggle-focus="focusMode = !focusMode"
         />
       </div>
 
