@@ -63,7 +63,19 @@ async def chat(
                     content=content,
                     summon=summon,
                 ):
-                    await websocket.send_json(frame)
+                    try:
+                        await websocket.send_json(frame)
+                    except (WebSocketDisconnect, RuntimeError):
+                        # Client went away mid-turn (navigated off / timed out).
+                        # A disconnect is normal, not a failure: stop the turn
+                        # cleanly. Returning closes the converse generator, which
+                        # cancels the agent stream (frees the topic lock and stops
+                        # burning model tokens on a turn no one is listening to).
+                        logger.info(
+                            "client disconnected mid-turn for topic %s; aborting",
+                            topic_id,
+                        )
+                        return
             except AppError as exc:
                 await _safe_send(websocket, {"type": "error", "message": exc.message})
             except Exception:  # surface agent/runtime failures (spec H4)
