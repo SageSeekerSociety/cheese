@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     agent_haiku_model: str | None = "glm-4.5-air"
     agent_sonnet_model: str | None = "glm-5.2"
     agent_opus_model: str | None = "glm-5.2"
+    # ExecutionProfile "claude-opus" (tier=testing): native Claude for the team's
+    # own dogfooding. Only selectable when claude_auth_token is set (an Anthropic
+    # API key). base_url unset → Anthropic's default endpoint. Not the multi-user
+    # product path — that defaults to the pool (see app/domain/agent/profiles.py).
+    claude_model: str = "claude-opus-4-8"
+    claude_base_url: str | None = None
+    claude_auth_token: str | None = None
+    # Owner handles allowed to select tier=testing profiles (dogfooding only —
+    # see profiles.py / review Finding 7). Comma-separated in env.
+    dogfood_owner_handles: list[str] = []
     agent_system_prompt: str = (
         "你是「芝士」，知是平台里的 AI 队友。你贯穿一个项目的全过程，"
         "了解项目的话题、决策和进展。回答要说人话，让零基础的同学也能看懂，"

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.sandbox_auth import SANDBOX_TOKEN
+from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import role_description
 from app.domain.agent.service import (
     AgentDelta,
@@ -267,12 +268,16 @@ class ChatService:
         base_system_prompt: str,
         workspace_root: str,
         sandbox_enabled: bool = False,
+        profiles: ProfileRegistry | None = None,
     ):
         self._sessions = session_factory
         self._agent = agent
         self._base_prompt = base_system_prompt
         self._workspace_root = workspace_root
         self._sandbox_enabled = sandbox_enabled
+        # Per-project ExecutionProfile (model + provider). None → always the
+        # agent's built-in default (tests / single-profile deploys).
+        self._profiles = profiles
         # Load the conversation skills once (spec §8.3 product "soul").
         self._skills = load_skills(DEFAULT_CHAT_SKILLS)
         # Per-topic serial queue (spec §9.1): one agent turn per topic at a
@@ -368,6 +373,20 @@ class ChatService:
             )
             return {"sandbox": sandbox}, cwd
         return {}, default_cwd
+
+    async def _model_kwargs(self, project_id: uuid.UUID) -> dict:
+        """Resolve this project's ExecutionProfile → model+env overrides for the
+        agent call (design §2). Empty when no registry is configured (the agent
+        uses its built-in default)."""
+        if self._profiles is None:
+            return {}
+        async with self._sessions() as session:
+            project = await ProjectRepository(session).get(project_id)
+        profile = self._profiles.resolve(
+            project.settings if project else None,
+            project.owner_handle if project else None,
+        )
+        return {"model": profile.model, "env": profile.full_env()}
 
     async def _stream_with_retry(self, **kwargs):
         """Run a streaming turn, retrying transient agent failures with backoff —
@@ -543,6 +562,7 @@ class ChatService:
             owner=private_owner if is_private else None,
         )
         use_sandbox = "sandbox" in stream_kwargs
+        model_kwargs = await self._model_kwargs(project_id)
 
         tool_events: list[tuple[str, dict]] = []
         todo: list[dict] = []
@@ -554,6 +574,7 @@ class ChatService:
             cwd=cwd,
             resume_session_id=resume_session_id,
             **stream_kwargs,
+            **model_kwargs,
         ):
             if isinstance(event, AgentDelta):
                 yield {"type": "delta", "text": event.text}
@@ -736,6 +757,7 @@ class ChatService:
             cwd=cwd,
             resume_session_id=None,
             **stream_kwargs,
+            **(await self._model_kwargs(project_id)),
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -842,6 +864,7 @@ class ChatService:
             cwd=cwd,
             resume_session_id=None,
             **stream_kwargs,
+            **(await self._model_kwargs(project_id)),
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -922,6 +945,7 @@ class ChatService:
             cwd=cwd,
             resume_session_id=None,
             **stream_kwargs,
+            **(await self._model_kwargs(project_id)),
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text

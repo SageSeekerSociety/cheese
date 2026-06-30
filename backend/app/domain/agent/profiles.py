@@ -1,0 +1,148 @@
+"""ExecutionProfile: per-project model + auth (design 2026-07-01 §2).
+
+A profile decides which model an agent turn runs on and which provider
+credentials it uses. Projects pick a profile (stored in `project.settings`);
+an unset / unavailable profile falls back to the platform default ("our AI
+pool"). The `claude-opus` profile is tagged `testing` — it exists for the team's
+own dogfooding (a personal seat is ToS-compliant); the multi-user product path
+defaults to the pool.
+
+Compute (which node runs the sandbox) is a separate axis — see ComputeProvider.
+This module only resolves model + provider env.
+"""
+
+from dataclasses import dataclass
+
+# Profile tiers (governs availability / who may select it).
+TIER_DEFAULT = "default"  # the platform pool — the safe default for everyone
+TIER_TESTING = "testing"  # dogfooding only (e.g. native Claude on a personal seat)
+TIER_BYO = "byo"  # project brings its own credentials
+
+
+@dataclass(frozen=True)
+class AgentProfile:
+    name: str
+    label: str
+    tier: str
+    model: str
+    base_url: str | None
+    auth_token: str | None
+    haiku_model: str | None = None
+
+    @property
+    def available(self) -> bool:
+        """A profile is selectable only if it has provider credentials."""
+        return bool(self.auth_token)
+
+    def full_env(self) -> dict[str, str]:
+        """Provider env for the `claude` CLI/SDK. Replaces (not merges) the
+        default provider env so a Claude profile never inherits the GLM gateway's
+        base_url or model aliases."""
+        env: dict[str, str] = {}
+        if self.base_url:
+            env["ANTHROPIC_BASE_URL"] = self.base_url
+        if self.auth_token:
+            env["ANTHROPIC_AUTH_TOKEN"] = self.auth_token
+        if self.haiku_model:
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = self.haiku_model
+        # Subagents resolve via the sonnet/opus aliases — pin them to this
+        # profile's model so 分身 never silently run a different provider.
+        env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = self.model
+        env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = self.model
+        return env
+
+
+@dataclass(frozen=True)
+class ProfileView:
+    """Safe, credential-free view of a profile (for API listings)."""
+
+    name: str
+    label: str
+    tier: str
+    model: str
+    available: bool
+
+
+class ProfileRegistry:
+    """The set of execution profiles + per-project resolution."""
+
+    def __init__(
+        self,
+        profiles: list[AgentProfile],
+        default_name: str,
+        dogfood_owners: frozenset[str] = frozenset(),
+    ):
+        self._profiles = {p.name: p for p in profiles}
+        if default_name not in self._profiles:
+            raise ValueError(f"default profile {default_name!r} not registered")
+        self._default_name = default_name
+        # Owners (handles) allowed to run tier=testing profiles. A testing profile
+        # (e.g. native Claude on a personal seat) is only ToS-compliant for the
+        # team's own dogfooding — never for a real multi-user project's members
+        # (review Finding 7). Resolution hard-rejects it otherwise.
+        self._dogfood_owners = dogfood_owners
+
+    def default(self) -> AgentProfile:
+        return self._profiles[self._default_name]
+
+    def get(self, name: str | None) -> AgentProfile | None:
+        return self._profiles.get(name) if name else None
+
+    def _allowed(self, profile: AgentProfile, owner_handle: str | None) -> bool:
+        if not profile.available:
+            return False
+        if profile.tier == TIER_TESTING:
+            return owner_handle is not None and owner_handle in self._dogfood_owners
+        return True
+
+    def resolve(
+        self, project_settings: dict | None, owner_handle: str | None = None
+    ) -> AgentProfile:
+        """Pick the project's profile, falling back to the default pool when it is
+        unset, unknown, missing credentials, or not permitted for this owner
+        (e.g. a testing profile on a non-dogfood project) — never a dead/illegal
+        one."""
+        name = (project_settings or {}).get("execution_profile")
+        chosen = self.get(name)
+        if chosen is None or not self._allowed(chosen, owner_handle):
+            return self.default()
+        return chosen
+
+    def selectable(self, owner_handle: str | None = None) -> list[ProfileView]:
+        """Profiles this owner may choose (available + permitted), default first."""
+        views = [
+            ProfileView(p.name, p.label, p.tier, p.model, p.available)
+            for p in self._profiles.values()
+            if self._allowed(p, owner_handle)
+        ]
+        views.sort(key=lambda v: (v.name != self._default_name, v.name))
+        return views
+
+
+def build_registry(settings) -> ProfileRegistry:  # type: ignore[no-untyped-def]
+    """Construct the registry from app settings. The default profile is the
+    configured pool (GLM today); the testing profile is native Claude, available
+    only when its credentials are present."""
+    default = AgentProfile(
+        name="default",
+        label="知是 AI Pool（默认）",
+        tier=TIER_DEFAULT,
+        model=settings.agent_model,
+        base_url=settings.anthropic_base_url,
+        auth_token=settings.anthropic_auth_token,
+        haiku_model=settings.agent_haiku_model,
+    )
+    claude = AgentProfile(
+        name="claude-opus",
+        label="Claude Opus（测试·仅 dogfooding）",
+        tier=TIER_TESTING,
+        model=settings.claude_model,
+        base_url=settings.claude_base_url,
+        auth_token=settings.claude_auth_token,
+        haiku_model=settings.claude_model,
+    )
+    return ProfileRegistry(
+        [default, claude],
+        default_name="default",
+        dogfood_owners=frozenset(settings.dogfood_owner_handles),
+    )

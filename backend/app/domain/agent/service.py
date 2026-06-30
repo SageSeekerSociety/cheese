@@ -125,6 +125,8 @@ class AgentService:
         cwd: str,
         resume_session_id: str | None,
         sandbox: dict[str, Any] | None = None,
+        model: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Yield AgentDelta chunks (and AgentToolUse events) live, then a final
         AgentResult.
@@ -134,7 +136,12 @@ class AgentService:
           and platform actions via the in-container `cheese` CLI (spec §9.1).
         - otherwise (no Docker / tests): plain model turn with built-ins disallowed
           and no platform tools.
+
+        `model`/`env` override this turn's provider (per-project ExecutionProfile,
+        design §2); they default to the service's own model/env.
         """
+        eff_model = model or self._model
+        eff_env = env if env is not None else self._env
         if sandbox:
             # cheese CLI rules go straight into the system prompt: Agent Skills only
             # preload name+description, and weak gateway models don't reliably do the
@@ -147,7 +154,7 @@ class AgentService:
             if _CHEESE_RULES:
                 sandbox_prompt = f"{system_prompt}\n\n{_CHEESE_RULES}"
             options = ClaudeAgentOptions(
-                model=self._model,
+                model=eff_model,
                 system_prompt=sandbox_prompt,
                 cwd=cwd,
                 resume=resume_session_id,
@@ -160,11 +167,11 @@ class AgentService:
                 # in the container, so no host settings leak in.
                 setting_sources=["user"],
                 skills=["cheese"],
-                env={**self._env, **sandbox["env"]},
+                env={**eff_env, **sandbox["env"]},
             )
         else:
             options = ClaudeAgentOptions(
-                model=self._model,
+                model=eff_model,
                 system_prompt=system_prompt,
                 cwd=cwd,
                 resume=resume_session_id,
@@ -173,12 +180,12 @@ class AgentService:
                 allowed_tools=[],
                 disallowed_tools=_BUILTIN_TOOLS,
                 setting_sources=[],  # isolate from the host's ~/.claude settings
-                env=self._env,
+                env=eff_env,
             )
 
         final_text = ""
         session_id = resume_session_id
-        usage = AgentUsage(model=self._model)
+        usage = AgentUsage(model=eff_model)
 
         async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)

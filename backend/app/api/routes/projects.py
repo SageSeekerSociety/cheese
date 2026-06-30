@@ -1,17 +1,21 @@
 """Project routes."""
 
 import uuid
+from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_profile_registry
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import ValidationError
+from app.core.errors import NotFoundError, ValidationError
+from app.domain.agent.profiles import ProfileRegistry
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.project.repositories import ProjectRepository
 from app.domain.project.schemas import (
     ProjectCreate,
     ProjectOut,
@@ -25,6 +29,7 @@ from app.domain.topic.services import TopicService
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
 @router.post("")
@@ -118,3 +123,39 @@ async def get_private_chat(
         project_id=project_id, user_handle=user_handle
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
+# --- ExecutionProfile (design §2): which model/provider this project runs on ---
+
+
+@router.get("/{project_id}/execution-profiles")
+async def list_execution_profiles(
+    project_id: uuid.UUID, db: DbSession, registry: Registry
+) -> dict:
+    """Profiles this project may select (credentialed + permitted for its owner),
+    plus the current selection. Default = our AI pool."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    current = (project.settings or {}).get("execution_profile") or "default"
+    profiles = [asdict(v) for v in registry.selectable(project.owner_handle)]
+    return ok({"current": current, "profiles": profiles})
+
+
+@router.put("/{project_id}/execution-profile")
+async def set_execution_profile(
+    project_id: uuid.UUID, body: dict, db: DbSession, registry: Registry
+) -> dict:
+    """Set the project's execution profile. Only a profile that's selectable for
+    this owner is accepted (a testing-tier profile on a non-dogfood project is
+    rejected — review Finding 7)."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    name = (body.get("profile") or "").strip() or "default"
+    allowed = {v.name for v in registry.selectable(project.owner_handle)}
+    if name not in allowed:
+        raise ValidationError(f"执行档案 {name!r} 对本项目不可用")
+    project.settings = {**(project.settings or {}), "execution_profile": name}
+    await db.flush()
+    return ok({"current": name})
