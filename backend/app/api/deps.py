@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory, get_db
 from app.domain.agent.chat import ChatService
 from app.domain.agent.profiles import ProfileRegistry, build_registry
+from app.domain.agent.runtime import InProcessBroker, TurnRunner
 from app.domain.agent.service import AgentService
 from app.domain.scheduler.service import SchedulerService
 
@@ -17,6 +18,8 @@ __all__ = [
     "get_chat_service",
     "get_scheduler_service",
     "get_profile_registry",
+    "get_broker",
+    "get_turn_runner",
 ]
 
 
@@ -42,3 +45,13 @@ def get_scheduler_service(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> SchedulerService:
     return SchedulerService(chat_service=chat)
+
+
+@lru_cache
+def get_broker() -> InProcessBroker:
+    return InProcessBroker()
+
+
+@lru_cache
+def get_turn_runner() -> TurnRunner:
+    return TurnRunner(get_broker())

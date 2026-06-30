@@ -1,35 +1,30 @@
 """Chat WebSocket route.
 
-Protocol (matches the frontend contract):
-  client → {"type":"message","content": str, "author": str}
-  server → {"type":"user_block","block": Block}
-           {"type":"delta","text": str}          (token streaming)
-           {"type":"assistant_block","block": Block}
-           {"type":"error","message": str}
-           {"type":"done"}
+The WS is a SUBSCRIBER, not the turn's owner (design §4 / v2 R1). A client
+message is `submit`ted to the TurnRunner, which runs the turn as a background job
+and publishes its frames to the Broker; this connection relays whatever frames
+land on the topic channel. So a disconnect only drops the subscription — the turn
+keeps running and persisting (invariant 2: the job doesn't depend on who watches),
+and multiple connections to the same topic all see the live stream.
+
+Protocol (unchanged frontend contract):
+  client → {"type":"message","content": str, "author": str, "summon": bool}
+  server → user_block / delta / tool / todo / state / event_block /
+           assistant_block / error / done
 """
 
-import logging
+import asyncio
+import contextlib
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from app.api.deps import get_chat_service
-from app.core.errors import AppError
+from app.api.deps import get_broker, get_chat_service, get_turn_runner
 from app.domain.agent.chat import ChatService
+from app.domain.agent.runtime import InProcessBroker, TurnRunner
 
 router = APIRouter(tags=["chat"])
-logger = logging.getLogger("cheesex.chat")
-
-
-async def _safe_send(websocket: WebSocket, frame: dict) -> None:
-    """Send a frame, tolerating an already-closed socket (client navigated away
-    mid-turn) so error handling never raises a second exception."""
-    try:
-        await websocket.send_json(frame)
-    except (RuntimeError, WebSocketDisconnect):
-        pass
 
 
 @router.websocket("/api/topics/{topic_id}/chat")
@@ -37,64 +32,48 @@ async def chat(
     websocket: WebSocket,
     topic_id: uuid.UUID,
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    broker: Annotated[InProcessBroker, Depends(get_broker)],
 ) -> None:
     await websocket.accept()
+    channel = str(topic_id)
+    # One lock so the relay task and the receive loop never send concurrently
+    # (Starlette WebSockets are not safe for concurrent sends).
+    send_lock = asyncio.Lock()
+
+    async def send(frame: dict) -> None:
+        async with send_lock:
+            with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+                await websocket.send_json(frame)
+
+    async def relay() -> None:
+        # Subscribe BEFORE the first submit so no frame is missed (R10).
+        async with broker.subscribe(channel) as queue:
+            while True:
+                await send(await queue.get())
+
+    relay_task = asyncio.create_task(relay())
     try:
         while True:
             payload = await websocket.receive_json()
             if payload.get("type") != "message":
-                await websocket.send_json(
-                    {"type": "error", "message": "unsupported message type"}
-                )
+                await send({"type": "error", "message": "unsupported message type"})
                 continue
-
             content = (payload.get("content") or "").strip()
             author = payload.get("author") or "anonymous"
             # @芝士 toggle: summon the AI, or just post (spec C3, default post).
             summon = bool(payload.get("summon", False))
             if not content:
-                await websocket.send_json({"type": "error", "message": "empty content"})
+                await send({"type": "error", "message": "empty content"})
                 continue
-
-            try:
-                # A turn's work (doc edits, decisions, the AI's reply) is real and
-                # persisted regardless of who is watching, so a client disconnect
-                # must NOT cancel it. We keep draining converse to completion (so
-                # it commits) and merely stop pushing frames to a dead socket —
-                # sending to a closed socket is the only thing that would crash.
-                # The user sees the result (persisted blocks) on reconnect.
-                live = True
-                async for frame in chat_service.converse(
-                    topic_id=topic_id,
-                    author=author,
-                    content=content,
-                    summon=summon,
-                ):
-                    if not live:
-                        continue
-                    try:
-                        await websocket.send_json(frame)
-                    except (WebSocketDisconnect, RuntimeError):
-                        logger.info(
-                            "client disconnected mid-turn for topic %s; "
-                            "finishing the turn in the background",
-                            topic_id,
-                        )
-                        live = False
-            except AppError as exc:
-                await _safe_send(websocket, {"type": "error", "message": exc.message})
-            except Exception:  # surface agent/runtime failures (spec H4)
-                # Log the real cause (it's otherwise lost) and tell the user
-                # plainly — a turn may die on a transient sandbox/model error, but
-                # whatever 芝士 already committed (e.g. the doc) is saved.
-                logger.exception("chat turn failed for topic %s", topic_id)
-                await _safe_send(
-                    websocket,
-                    {
-                        "type": "error",
-                        "message": "芝士这轮中断了（偶发的沙箱/模型错误）。"
-                        "它已完成的改动已保存，再 @ 它一次就会接着来。",
-                    },
-                )
+            # Fire-and-forget: the turn runs in the background and streams back
+            # over the broker; this loop stays free to accept more messages.
+            runner.submit(
+                chat_service, topic_id, author=author, content=content, summon=summon
+            )
     except WebSocketDisconnect:
-        return
+        pass
+    finally:
+        relay_task.cancel()
+        with contextlib.suppress(BaseException):
+            await relay_task
