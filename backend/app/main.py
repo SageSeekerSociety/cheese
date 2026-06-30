@@ -12,7 +12,6 @@ this file.
 import importlib
 import pkgutil
 import re
-import secrets
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -23,7 +22,7 @@ from fastapi.responses import JSONResponse
 import app.api.routes as routes_pkg
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
-from app.core.sandbox_auth import SANDBOX_TOKEN
+from app.core.sandbox_auth import is_valid_cheese_token
 
 
 @asynccontextmanager
@@ -87,31 +86,41 @@ register_exception_handlers(app)
 
 # The `cheese` CLI (running inside the sandbox container) reaches the backend
 # over the network, so its write-surface must not be open like the browser API.
-# These paths are cheese-only writes (the frontend only reads them); gate them
-# on the shared token. See app/core/sandbox_auth.py.
-# Only paths that ONLY the cheese CLI writes. doc/split are dual-use (the doc
-# panel saves, the sidebar splits), so they stay open like the rest of the app.
+# These paths are cheese-only writes (the frontend only reads them); the gate
+# verifies a per-turn token scoped to the URL's project/topic (review R5).
+# doc/split are dual-use (the doc panel saves, the sidebar splits) so they stay
+# open like the rest of the app — closing those needs browser user-auth first.
+# Each pattern captures the scoping id as group "topic" or "project".
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
-    ("POST", re.compile(r"^/api/topics/[^/]+/decision$")),
-    ("POST", re.compile(r"^/api/topics/[^/]+/title$")),
-    ("POST", re.compile(r"^/api/topics/[^/]+/return-conclusion$")),
-    ("POST", re.compile(r"^/api/topics/[^/]+/accept-card$")),
-    ("POST", re.compile(r"^/api/projects/[^/]+/memory$")),
-    ("POST", re.compile(r"^/api/projects/[^/]+/notifications$")),
-    ("POST", re.compile(r"^/api/projects/[^/]+/milestones$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/decision$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/title$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/return-conclusion$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/accept-card$")),
+    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),
+    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/notifications$")),
+    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/milestones$")),
 ]
 
 
 @app.middleware("http")
 async def cheese_token_gate(request: Request, call_next: Callable):  # type: ignore[type-arg]
     method, path = request.method, request.url.path
-    if any(method == m and rx.match(path) for m, rx in _CHEESE_WRITE_PATHS):
+    for m, rx in _CHEESE_WRITE_PATHS:
+        if method != m:
+            continue
+        match = rx.match(path)
+        if match is None:
+            continue
+        ids = match.groupdict()
         token = request.headers.get("x-cheese-token") or ""
-        if not secrets.compare_digest(token, SANDBOX_TOKEN):
+        if not is_valid_cheese_token(
+            token, project_id=ids.get("project"), topic_id=ids.get("topic")
+        ):
             return JSONResponse(
                 {"code": 401, "message": "invalid sandbox token", "data": None},
                 status_code=401,
             )
+        break
     return await call_next(request)
 
 

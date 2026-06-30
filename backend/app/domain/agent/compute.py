@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.core.config import settings
-from app.core.sandbox_auth import SANDBOX_TOKEN
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.service import AgentEvent, AgentService
 from app.domain.workspace import service as ws
 
@@ -107,7 +107,11 @@ class LocalDockerProvider:
             "CHEESE_PROJECT": str(project_id),
             "CHEESE_TOPIC": str(topic_id),
             "CHEESE_AUTHOR": _CHEESE_AUTHOR,
-            "CHEESE_TOKEN": SANDBOX_TOKEN,
+            # Per-turn token scoped to THIS project+topic (review R5): a container
+            # for one project/topic can't write another's cheese endpoints.
+            "CHEESE_TOKEN": mint_scoped_token(
+                project_id=str(project_id), topic_id=str(topic_id)
+            ),
         }
         if memory_scope:
             env["CHEESE_MEMORY_SCOPE"] = memory_scope
