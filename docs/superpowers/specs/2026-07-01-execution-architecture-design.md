@@ -118,3 +118,64 @@ Broker (Protocol):
 - 与现有红线（平台只认结构化、cheese 写路径闸门、jj/git 采纳）是否冲突？
 - 默认实现是否真"行为不变"、有回滚路径？
 ```
+
+---
+
+# v2 修订（吸收对抗审查的 12 条发现）
+
+审查证明 v1 蓝图有真洞，尤其"明天=填实现、不重构"对其中三项**不成立**。以下逐条修订，作为权威版本（与上文冲突处以本节为准）。
+
+## R1（BLOCKER）单写者不是 broker 问题，是 lease 问题 —— 锁/队列/broker 必须一起下进程
+v1 把"多实例"只挂在 broker 上，错了。`asyncio.Lock` 是进程内的；两个后端副本各自有一把锁 → 同一话题 split-brain（两个 `docker exec` 抢同一 `cheesex-sbx-<topic>` 容器 + 同一 `/work` + 同一 `~/.claude` session，`claude --resume` 互踩 → session 损坏、产物重复）。
+**定稿：** 单写者用**持久 lease**（PG advisory lock / `topic_turn` 行 `FOR UPDATE` / Valkey `SET NX PX`），在 `TurnRunner.submit` 获取、由执行节点持有、带续租 + 到期自动释放（崩溃自愈）。**lease + 持久队列 + 跨进程 broker 是一个耦合变更，不是三个独立"换实现"。** §6 表 TurnRunner 行的"之后"补：`distributed turn lease + 持久队列`。`_topic_locks` dict 同时改为带淘汰（今天的小泄漏，也是"从没按非进程内设计"的信号）。
+
+## R2（BLOCKER）ComputeProvider 的接缝画在了 SDK 之下，必须上移成"turn 执行器"
+真执行路径是 `AgentService.stream_reply` 在**后端进程**里构造 `ClaudeSDKClient` 并把 `cli_path` 当**本地子进程**拉起。`exec(argv)`/`cli_path` 根本不在 turn 路径上。要做远端节点，返回不同 `cli_path` 没用——整个 `ClaudeSDKClient` + 子进程 + `AgentEvent` 翻译都得搬到节点、把事件流经 RPC 回传。
+**定稿：接口改为 turn 执行器**：
+```
+ComputeProvider:
+  async def run_turn(env_spec, prompt, system_prompt, resume_session_id,
+                     callback) -> AsyncIterator[AgentEvent]   # 同 AgentService 的事件并集
+  async def materialize(env_spec) -> Handle   # 起/复用沙箱 + 工作区就位
+  async def checkpoint(handle) / fetch_refs(handle) / get_diff(handle)  # 工作区 git 生命周期
+  async def teardown(handle);  def capacity() -> Capacity;  caps: Caps
+```
+`LocalDockerProvider` = 今天的进程内 SDK + 本地 docker exec；`RemoteCheesedProvider` = 把请求发给 cheesed 节点、解 RPC 事件流。`cli_path`/`exec` 降级为 LocalDocker 的内部细节。**这是 re-plumb 最热路径，不是填空——诚实写明。**
+
+## R3（SERIOUS）重连不无缝：整轮产物在 tx2 收尾前只活在瞬时流里
+现状：流式中只发 `delta/tool/state/todo`；**所有持久 block（现场事件、assistant、行动卡、usage、`set_session_id`）都在流结束后的 tx2 才落**。`InProcessBroker` 无 backlog，订阅者只收订阅之后的帧。→ 手机中途打开/掉线重连，`GET /blocks` 只看到用户块，turn 看着像卡住直到最后一坨蹦出来；missed 的 delta 永久丢失。
+**定稿：** (i) **增量落库**——assistant 块先建、delta/event 边流边 append；(ii) 给每轮一个 **`turn_id` + 单调 sequence**，帧与块都带，broker 配每轮 replay buffer；重连按"blocks + 自 cursor 起的瞬时 backlog"补齐。今天 block/frame **都没有 turn_id/sequence**，连瞬时流与最终块的排序/去重都未定义——本次必须把 cursor 定义进协议。
+
+## R4（SERIOUS）崩溃恢复不安全：cheese 副作用各自独立提交，tx2 整体丢 → 补跑双重执行
+`cheese doc/decision/notify/split/milestone` 是**流式中各自提交的独立 REST**；assistant/现场/usage/session_id 在 tx2。崩在中间 → 决策/通知/子话题留下了、session_id 丢了、没有叙述块；"补跑"会再发一遍 → 重复决策/双通知/重复子话题。**无任何幂等键。**
+**定稿：** (i) 每个 cheese 写带 **per-turn 幂等键(`turn_id`)**，闸门/处理器去重；(ii) `session_id` 在**首个 AssistantMessage 即落**，不等 tx2；(iii) 恢复语义写死：turn 由 `turn_id` 标识，重放幂等，"补跑"=续同一 `turn_id` 而非新轮；默认补跑 vs 中断二选一并写明部分副作用如何对账。
+
+## R5（SERIOUS）cheese token 全局无作用域 + 闸门漏 /doc /split；信任边界当前是空话
+两点：(1) `SANDBOX_TOKEN` 是单一全局值，端点的 project/topic 取自 **URL 而非 token**——A 项目容器能拿同一 token 写 B 项目。(2) `_CHEESE_WRITE_PATHS` **没盖 `PUT /doc` 和 `POST /split`**。
+**重要纠正（实现细节，审查未及）：** `/doc`、`/split` 是**双写**（前端人工存文档/拆话题也走它，且前端无 token），当前单机可信 MVP 里**整个浏览器 API 本就无鉴权**，所以这俩开放是与现状一致、**非新增可利用漏洞**；naive 加闸门会**直接 break 人工存文档/拆话题**。
+**定稿：** 信任边界与"浏览器无鉴权"一起做——(i) **用户鉴权**上线后，浏览器写带用户身份；(ii) cheese 写改 **per-turn token 绑定 {project,topic,turn_id}**，闸门校验 URL 的 project/topic 与 token 声明**一致**（不只 `compare_digest` 全局值）；(iii) 闸门改**默认拒绝**（前缀白名单，新端点默认关），双写路径按"来源"区分（用户 token vs turn token）。
+
+## R6（SERIOUS）模型凭据明文进沙箱，agent 有 Bash + bypassPermissions 能直接 `env` 偷
+`ANTHROPIC_AUTH_TOKEN` 经 `docker exec -e` 进容器，agent `env|grep ANTHROPIC` 就能读。默认池=所有租户共享一把网关 token 可被任意 agent 读；testing Opus=真 Anthropic key 暴露给被沙箱的模型代码；远端/赛题节点=**节点运营方直接收割**你的凭据。
+**定稿：** 池凭据**永不进入不可信环境**。模型调用经**后端侧网关**：按 {project,turn} 签发短时、限频的临时 token 并计量；容器只拿这个一次性 token（或后端直接代理模型 API，节点永不持凭据）。`RemoteCheesed`/`Competition` 必须如此。
+
+## R7（SERIOUS）合规：testing/BYO 无强制；per-project ≠ per-seat
+v1 只有标签没有强制。**已在本轮实现**：`resolve_profile` 对 `tier=testing` 硬性要求 owner ∈ dogfood 白名单，否则回落默认 + 可审计（见 `profiles.py`、`test_profiles.py`）。
+**补定稿：** BYO 合规在**座位**层定义——订阅凭据只能背书归属于**该个人**的轮；**多用户/共享项目的 BYO 必须是 API key（商用条款），不能是个人订阅**。§2 写明此区分。凭据加密要写清方案（信封加密/KMS、主密钥位置、轮换）——"加密存"但密钥贴着密文=自欺。
+
+## R8（SERIOUS）无每轮墙钟超时/取消 → 卡死的轮永久占锁，话题死锁
+`stream_reply` 无超时；`_stream_with_retry` 只在产出前重试；WS 路由已改"drain 到完成、断开不取消"。卡在流中（网关 stall / 容器内死循环）→ 永不完成、tx2 永不跑、话题锁永久持有 → 该话题后续全部阻塞，无 kill 开关。
+**定稿：** runner 强制**每轮墙钟预算 + 每 Bash 预算**；超时取消 SDK client、`docker kill` exec、释放 lease、写一条"interrupted"块。R1 的 lease 到期保证死节点不永久占话题。
+
+## R9（SERIOUS）Provider 契约缺回调通道/工作区同步/结构化 caps/容量/回收
+v1 的 `ensure/exec/cli_path/teardown/available/caps` 撑不起远端：cheese 硬编码 `host.docker.internal`（NAT 后不可达，且无处取回调 URL+scoped token）；`ws.snapshot_worktree` 在**本地**跑（远端话题路径不存在，采纳/diff/预览全废）；`{gpu:bool}` 表达不了 A100×2；`available()->bool` 给不出实时负载/空位（排队/"看排队情况"无数据源）；`teardown` **无人调用**（容器 `sleep infinity` 永驻、无 idle 挂起/归档回收/孤儿 GC/重连对账 → 每个碰过的话题=永久泄漏一个容器）。
+**定稿：** 契约补：每轮 `callback_endpoint + scoped_token` 签发；显式工作区生命周期 `materialize/checkpoint/fetch_refs/get_diff/teardown`（采纳/diff 与位置无关）；结构化 `caps`（gpu 型号/数量/显存、arch、镜像）+ 实时 `capacity()`；**对账循环 + 孤儿 GC + idle 挂起/归档回收**。在这些方法存在前，"所有产出都是 git→远端前提"只是断言、无机制。
+
+## R10–R12（MINOR）
+- **R10**：WS 必须**先订阅再 submit**（或 broker 从 `turn_id` 创建即缓冲），否则 submit 与 subscribe 之间的首帧/快轮整轮丢——并入 R3 cursor。
+- **R11**：`InProcessBroker` 跨不了进程，"WS 降为订阅者"今天**只单副本成立**。诚实结论：单机默认在这些接缝上成立，但**多实例需要一组耦合的新不变量**（单写 lease + 持久队列 + 跨进程 broker + cursor 回放 + 远端 SDK 搬迁 + 工作区同步），不是各自独立"换实现"。§6/§7 表已据此修正措辞。
+- **R12**：`pending` 历史窗口要**按 `turn_id` 限定**，否则排队的第二轮会重复处理第一轮的用户消息；并写明用户块在 submit 时还是 turn 时落库。
+
+## 修订后的"一次性"判断（诚实）
+审查证明：**整套分布式执行面不可能一轮实装到无懈可击**——R1/R2 要改契约、R3/R4 要 turn_id+幂等贯穿、R5/R6 要重做信任与凭据。硬塞一轮反而造出它要避免的洞。
+**所以正确的"搞顺"是：架构（本文档 v2）已自洽且经对抗审查；地基里能独立交付的先落地（ExecutionProfile + 合规护栏 ✅ 已做、已测）；其余按 §7 顺序、每步带 turn_id/lease/cursor 的正确语义增量实装、每步可上线可回滚。** future-proof 体现在**契约对了**（v2 的 run_turn/lease/cursor/scoped-token），远端/GPU/cheesed 是按已定契约填空。
