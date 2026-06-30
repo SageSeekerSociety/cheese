@@ -808,6 +808,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   background: var(--surface);
   min-height: 0;
+  /* Hold the panel at its set width: without this a flex item defaults to
+     min-width:auto and wide, non-wrapping file content (white-space:pre) would
+     stretch the drawer past toolWidth. min-width:0 lets inner overflow-x scroll. */
+  min-width: 0;
 }
 /* Floating (quick peek): overlays the right of the doc with a soft shadow. */
 .tool-panel--float {
@@ -863,6 +867,9 @@ onBeforeUnmount(() => {
 .tool-content {
   flex: 1 1 auto;
   overflow-y: auto;
+  /* Constrain width so a wide code file scrolls inside .code-pre instead of
+     widening the whole drawer (pairs with .tool-panel min-width:0). */
+  min-width: 0;
 }
 
 /* 施工现场 timeline: 芝士 speaks (avatar + text), tools render as Claude-Code
