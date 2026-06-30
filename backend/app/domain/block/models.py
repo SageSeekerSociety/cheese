@@ -13,7 +13,7 @@ both trees at once. Phase 0 stores the structure; richer views come later.
 import enum
 import uuid
 
-from sqlalchemy import JSON, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, Enum, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -23,6 +23,12 @@ from app.domain.common import Timestamps, UuidPk
 class BlockKind(enum.StrEnum):
     message = "message"
     doc = "doc"
+    # B1: a structured node inside the living doc's block tree (heading/paragraph/
+    # list/code/quote). The `doc` block stays the canonical markdown; doc_node
+    # blocks are its struct_parent children, carrying stable ids for downstream
+    # anchoring (cross-view highlight, comments, live refs). Excluded from the
+    # conversation timeline.
+    doc_node = "doc_node"
     decision = "decision"
     attachment = "attachment"
     event = "event"
@@ -64,6 +70,10 @@ class Block(UuidPk, Timestamps, Base):
     struct_parent: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("blocks.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # B1 doc-as-block-tree: structural node type (heading/paragraph/list/code/
+    # quote) and sibling order under struct_parent. Only set on kind=doc nodes.
+    node_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    struct_order: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Citations: which decisions / PRs / files this block leans on.
     refs: Mapped[list[str]] = mapped_column(JSON, default=list)
 

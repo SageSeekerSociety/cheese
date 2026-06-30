@@ -96,10 +96,11 @@ async def list_topic_children(topic_id: uuid.UUID, db: DbSession) -> dict:
 
 @router.get("/{topic_id}/docs")
 async def list_topic_docs(topic_id: uuid.UUID, db: DbSession) -> dict:
-    """Document-tree view of a topic (doc blocks), spec §5."""
+    """Document-tree view of a topic: the living doc's structured node tree
+    (B1, spec §5) in document order."""
     await TopicService(db).get_or_404(topic_id)
-    docs = await BlockRepository(db).list_docs_for_topic(topic_id)
-    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in docs]
+    nodes = await BlockRepository(db).list_doc_nodes(topic_id)
+    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in nodes]
     return ok(page(items, len(items)))
 
 

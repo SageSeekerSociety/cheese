@@ -27,14 +27,17 @@ def test_doc_absent_then_created_and_updated(client):
     got = client.get(f"/api/topics/{tid}/doc").json()["data"]
     assert got["id"] == doc["id"]
 
-    # Editing again updates the SAME doc (no duplicate doc blocks).
+    # Editing again updates the SAME canonical doc (no duplicate doc root).
     client.put(
         f"/api/topics/{tid}/doc",
         json={"content": "## 目标\n改成做问答系统", "author": "user-1"},
     )
-    docs = client.get(f"/api/topics/{tid}/docs").json()["data"]
-    assert docs["total"] == 1
-    assert "问答系统" in docs["data"][0]["content"]
+    updated = client.get(f"/api/topics/{tid}/doc").json()["data"]
+    assert updated["id"] == doc["id"]
+    assert "问答系统" in updated["content"]
+    # GET /docs is now the structured node tree (B1): heading + paragraph.
+    nodes = client.get(f"/api/topics/{tid}/docs").json()["data"]["data"]
+    assert [n["node_type"] for n in nodes] == ["heading", "paragraph"]
 
 
 def test_doc_edit_emits_conversation_event(client):

@@ -5,11 +5,13 @@
 sub-topic's conclusion flows back to its parent (结论回流).
 """
 
+import difflib
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.repositories import ProjectRepository
@@ -182,8 +184,7 @@ class TopicService:
 
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
         await self.get_or_404(topic_id)
-        docs = await self._blocks.list_docs_for_topic(topic_id)
-        return docs[0] if docs else None
+        return await self._blocks.doc_root(topic_id)
 
     async def edit_doc(
         self, *, topic_id: uuid.UUID, content: str, author: str
@@ -195,9 +196,9 @@ class TopicService:
         # 归档后文档定格 (spec §6.3): a frozen topic's doc is read-only.
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，文档已定格，不能再编辑")
-        docs = await self._blocks.list_docs_for_topic(topic_id)
-        if docs:
-            doc = await self._blocks.update_content(docs[0], content)
+        doc = await self._blocks.doc_root(topic_id)
+        if doc is not None:
+            doc = await self._blocks.update_content(doc, content)
         else:
             doc = await self._blocks.add(
                 project_id=topic.project_id,
@@ -207,6 +208,9 @@ class TopicService:
                 content=content,
                 kind=BlockKind.doc,
             )
+        # B1: also sync the structured node tree (struct_parent children) so the
+        # doc's blocks get stable ids for cross-view highlight / comments later.
+        await self._sync_doc_nodes(doc, content)
         # Append-only conversation event (spec H1): the doc edit is visible.
         await self._blocks.add(
             project_id=topic.project_id,
@@ -218,6 +222,48 @@ class TopicService:
             refs=[str(doc.id)],
         )
         return doc
+
+    async def _sync_doc_nodes(self, root: Block, content: str) -> None:
+        """Reconcile the living doc's node tree (B1) with `content` via a
+        block-level diff so unchanged nodes keep their ids (anchors survive an
+        edit). Re-setting the same markdown is a no-op."""
+        new_nodes = markdown_to_nodes(content)
+        existing = await self._blocks.list_doc_nodes(root.topic_id)
+        matcher = difflib.SequenceMatcher(
+            a=[b.content for b in existing],
+            b=[n.content for n in new_nodes],
+            autojunk=False,
+        )
+        # Reuse existing block ids wherever content is unchanged (equal runs).
+        reuse: dict[int, Block] = {}
+        for tag, i1, i2, j1, _j2 in matcher.get_opcodes():
+            if tag == "equal":
+                for off in range(i2 - i1):
+                    reuse[j1 + off] = existing[i1 + off]
+        kept_ids = {b.id for b in reuse.values()}
+        for b in existing:
+            if b.id not in kept_ids:
+                await self._blocks.delete(b)
+        for idx, node in enumerate(new_nodes):
+            order = float(idx)
+            block = reuse.get(idx)
+            if block is not None:
+                if block.struct_order != order or block.node_type != node.node_type:
+                    await self._blocks.update_node(
+                        block, node_type=node.node_type, struct_order=order
+                    )
+            else:
+                await self._blocks.add(
+                    project_id=root.project_id,
+                    topic_id=root.topic_id,
+                    author=root.author,
+                    author_type=root.author_type,
+                    content=node.content,
+                    kind=BlockKind.doc_node,
+                    struct_parent=root.id,
+                    node_type=node.node_type,
+                    struct_order=order,
+                )
 
     async def return_conclusion(
         self, *, subtopic_id: uuid.UUID, conclusion: str

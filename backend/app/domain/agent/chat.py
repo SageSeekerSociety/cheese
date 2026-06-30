@@ -475,8 +475,8 @@ class ChatService:
                 memories = await memory.recall(
                     MemoryScope.project, str(topic.project_id)
                 )
-                docs = await blocks.list_docs_for_topic(topic.id)
-                doc_text = docs[0].content if docs else None
+                doc_root = await blocks.doc_root(topic.id)
+                doc_text = doc_root.content if doc_root else None
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
             role = role_description(project.expert_role if project else None)
