@@ -14,13 +14,11 @@ import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.core.config import settings
 from app.core.errors import NotFoundError
-from app.core.sandbox_auth import SANDBOX_TOKEN
+from app.domain.agent.compute import ComputePool
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import role_description
 from app.domain.agent.service import (
@@ -42,7 +40,6 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.repositories import UsageRepository
-from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["conversation-style", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "conversation-style"]
@@ -271,10 +268,15 @@ class ChatService:
         profiles: ProfileRegistry | None = None,
     ):
         self._sessions = session_factory
-        self._agent = agent
         self._base_prompt = base_system_prompt
-        self._workspace_root = workspace_root
-        self._sandbox_enabled = sandbox_enabled
+        # Compute side of the two-pool model: a provider owns sandbox creation +
+        # turn execution + workspace checkpointing (design §3/v3, review R2). The
+        # turn path talks to the pool, never to a sandbox dict.
+        self._compute = ComputePool.local(
+            agent=agent,
+            workspace_root=workspace_root,
+            sandbox_enabled=sandbox_enabled,
+        )
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -310,70 +312,6 @@ class ChatService:
             ):
                 yield frame
 
-    def _workspace_for(self, project_id: uuid.UUID) -> str:
-        path = Path(self._workspace_root) / str(project_id)
-        path.mkdir(parents=True, exist_ok=True)
-        return str(path)
-
-    def _sandbox_kwargs(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        *,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-    ) -> tuple[dict, str]:
-        """Build the per-topic sandbox config (container + worktree + session +
-        cheese env) for a turn, plus the cwd. Used by every agent path so 芝士
-        always acts through native tools + the `cheese` CLI (spec §9.1)."""
-        worktree = ws.topic_worktree(project_id, topic_id)
-        sess = ws.session_dir(project_id, topic_id)
-        env = {
-            "SBX_IMAGE": settings.sandbox_image,
-            "SBX_CONTAINER": ws.container_name(topic_id),
-            "SBX_WORKTREE": str(worktree),
-            "SBX_SESSION": str(sess),
-            "CHEESE_API": settings.sandbox_api_base,
-            "CHEESE_PROJECT": str(project_id),
-            "CHEESE_TOPIC": str(topic_id),
-            "CHEESE_AUTHOR": CHEESE_AUTHOR,
-            "CHEESE_TOKEN": SANDBOX_TOKEN,
-        }
-        if memory_scope:
-            env["CHEESE_MEMORY_SCOPE"] = memory_scope
-        if owner:
-            env["CHEESE_OWNER"] = owner
-        sandbox = {
-            "cli_path": str(Path(settings.sandbox_shim).resolve()),
-            # Native tools + the Task tools (live working-log todo, §3.1.1).
-            "allowed_tools": [
-                "Bash", "Read", "Write", "Edit", "Grep", "Glob",
-                "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
-            ],
-            "env": env,
-        }
-        return sandbox, str(worktree)
-
-    def _platform_kwargs(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        *,
-        default_cwd: str,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-    ) -> tuple[dict, str]:
-        """Build how 芝士 acts on the platform this turn: the per-topic sandbox
-        (native tools + `cheese` CLI, spec §9.1). When no Docker is present (tests
-        / degraded), it runs the model with no platform tools. Returns
-        (stream_kwargs, cwd)."""
-        if self._sandbox_enabled and ws.sandbox_available():
-            sandbox, cwd = self._sandbox_kwargs(
-                project_id, topic_id, memory_scope=memory_scope, owner=owner
-            )
-            return {"sandbox": sandbox}, cwd
-        return {}, default_cwd
-
     async def _model_kwargs(self, project_id: uuid.UUID) -> dict:
         """Resolve this project's ExecutionProfile → model+env overrides for the
         agent call (design §2). Empty when no registry is configured (the agent
@@ -388,16 +326,16 @@ class ChatService:
         )
         return {"model": profile.model, "env": profile.full_env()}
 
-    async def _stream_with_retry(self, **kwargs):
-        """Run a streaming turn, retrying transient agent failures with backoff —
-        but ONLY before any output is produced (cold-start / SDK exit-1 races). If
-        it fails mid-stream, re-raise so the partial turn surfaces rather than
-        replaying. Backoff: 0.5s → 1s → 2s, up to 3 attempts."""
+    async def _stream_with_retry(self, provider, **kwargs):
+        """Run a streaming turn via the compute provider, retrying transient
+        failures with backoff — but ONLY before any output is produced (cold-start
+        / SDK exit-1 races). If it fails mid-stream, re-raise so the partial turn
+        surfaces rather than replaying. Backoff: 0.5s → 1s → 2s, up to 3 attempts."""
         delay = 0.5
         for attempt in range(3):
             produced = False
             try:
-                async for event in self._agent.stream_reply(**kwargs):
+                async for event in provider.run_turn(**kwargs):
                     produced = True
                     yield event
                 return
@@ -546,22 +484,13 @@ class ChatService:
             topic_refs,
             untitled,
         )
-        cwd = self._workspace_for(project_id)
         final_text = ""
         new_session_id = resume_session_id
 
-        # Sandbox mode (spec §9.1): run claude INSIDE a per-topic container with
-        # native tools + the `cheese` CLI for platform actions. In a private chat,
-        # `cheese remember` targets the owner's personal memory (spec §8.4). The
-        # in-process MCP path is the fallback when no Docker is present (tests).
-        stream_kwargs, cwd = self._platform_kwargs(
-            project_id,
-            topic_id,
-            default_cwd=cwd,
-            memory_scope="personal" if is_private else None,
-            owner=private_owner if is_private else None,
-        )
-        use_sandbox = "sandbox" in stream_kwargs
+        # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
+        # In a private chat, `cheese remember` targets the owner's personal memory
+        # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
+        provider = self._compute.select()
         model_kwargs = await self._model_kwargs(project_id)
 
         tool_events: list[tuple[str, dict]] = []
@@ -569,11 +498,14 @@ class ChatService:
         actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None
         async for event in self._stream_with_retry(
+            provider,
+            project_id=project_id,
+            topic_id=topic_id,
             prompt=prompt_text,
             system_prompt=system_prompt,
-            cwd=cwd,
             resume_session_id=resume_session_id,
-            **stream_kwargs,
+            memory_scope="personal" if is_private else None,
+            owner=private_owner if is_private else None,
             **model_kwargs,
         ):
             if isinstance(event, AgentDelta):
@@ -680,12 +612,9 @@ class ChatService:
             await session.commit()
 
         # Snapshot whatever the agent changed in its worktree this turn (native
-        # edits → version history). Best-effort; never fail the turn on git.
-        if use_sandbox:
-            try:
-                ws.snapshot_worktree(project_id, topic_id)
-            except Exception:  # noqa: BLE001
-                pass
+        # edits → version history). The provider owns this workspace lifecycle
+        # step (R2/R9); it's best-effort and never fails the turn.
+        provider.checkpoint(project_id, topic_id)
 
         yield {"type": "assistant_block", "block": assistant_payload}
         for payload in action_payloads:
@@ -745,18 +674,16 @@ class ChatService:
             "如果这是个关键节点就用 cheese 钉成里程碑；"
             "需要分派的待办用 cheese 通知到人。\n\n---\n" + text
         )
-        stream_kwargs, cwd = self._platform_kwargs(
-            project_id, topic_id, default_cwd=self._workspace_for(project_id)
-        )
+        provider = self._compute.select()
         final_text = ""
         new_session_id = None
         tools_used: list[str] = []
-        async for event in self._agent.stream_reply(
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
             prompt=prompt,
             system_prompt=system_prompt,
-            cwd=cwd,
             resume_session_id=None,
-            **stream_kwargs,
             **(await self._model_kwargs(project_id)),
         ):
             if isinstance(event, AgentToolUse):
@@ -853,17 +780,15 @@ class ChatService:
             "然后只对真正需要的事用 cheese 发分级通知（level=silent/light/"
             "strong，kind=heartbeat），别骚扰。\n\n" + context
         )
-        stream_kwargs, cwd = self._platform_kwargs(
-            project_id, root_topic_id, default_cwd=self._workspace_for(project_id)
-        )
+        provider = self._compute.select()
         final_text = ""
         tools_used: list[str] = []
-        async for event in self._agent.stream_reply(
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=root_topic_id,
             prompt=prompt,
             system_prompt=system_prompt,
-            cwd=cwd,
             resume_session_id=None,
-            **stream_kwargs,
             **(await self._model_kwargs(project_id)),
         ):
             if isinstance(event, AgentToolUse):
@@ -929,22 +854,17 @@ class ChatService:
             "这个团队在做什么、到哪了、下一步和风险。说人话、不堆术语、不要列工具调用，"
             "直接给总结正文。\n\n" + context
         )
-        # Pure text generation (no platform actions) — but still runs in the
-        # root-topic sandbox so there's a single execution path (tools go unused).
-        default_cwd = self._workspace_for(project_id)
-        if project.root_topic_id is not None:
-            stream_kwargs, cwd = self._platform_kwargs(
-                project_id, project.root_topic_id, default_cwd=default_cwd
-            )
-        else:
-            stream_kwargs, cwd = {}, default_cwd
+        # Pure text generation (no platform actions) — still runs through the
+        # provider (root-topic sandbox when present) for a single execution path;
+        # topic_id None (no root topic) degrades to a plain model turn.
+        provider = self._compute.select()
         final_text = ""
-        async for event in self._agent.stream_reply(
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=project.root_topic_id,
             prompt=prompt,
             system_prompt=system_prompt,
-            cwd=cwd,
             resume_session_id=None,
-            **stream_kwargs,
             **(await self._model_kwargs(project_id)),
         ):
             if isinstance(event, AgentResult):
