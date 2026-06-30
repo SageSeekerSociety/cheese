@@ -26,4 +26,6 @@ class BlockOut(BaseModel):
     struct_order: float | None = None
     refs: list[str] = []
     upgraded_to_topic_id: uuid.UUID | None = None
+    # The agent turn that produced this block (R4): groups a turn's blocks.
+    turn_id: uuid.UUID | None = None
     created_at: datetime

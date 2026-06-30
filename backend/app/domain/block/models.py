@@ -74,6 +74,11 @@ class Block(UuidPk, Timestamps, Base):
     # quote) and sibling order under struct_parent. Only set on kind=doc nodes.
     node_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     struct_order: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # The agent turn that produced this block (review R4): groups a turn's blocks
+    # for traceability / recovery / the collaboration-trajectory dataset. Null for
+    # human-authored or pre-R4 blocks.
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     # Citations: which decisions / PRs / files this block leans on.
     refs: Mapped[list[str]] = mapped_column(JSON, default=list)
 

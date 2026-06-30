@@ -129,7 +129,11 @@ class TurnRunner:
             # and the in-container claude process is torn down.
             async with asyncio.timeout(self._timeout):
                 async for frame in chat_service.converse(
-                    topic_id=topic_id, author=author, content=content, summon=summon
+                    topic_id=topic_id,
+                    author=author,
+                    content=content,
+                    summon=summon,
+                    turn_id=turn_id,
                 ):
                     await self._broker.publish(channel, frame)
         except TimeoutError:

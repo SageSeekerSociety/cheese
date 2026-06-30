@@ -26,6 +26,7 @@ class BlockRepository:
         refs: list[str] | None = None,
         node_type: str | None = None,
         struct_order: float | None = None,
+        turn_id: uuid.UUID | None = None,
     ) -> Block:
         block = Block(
             project_id=project_id,
@@ -39,6 +40,7 @@ class BlockRepository:
             refs=refs or [],
             node_type=node_type,
             struct_order=struct_order,
+            turn_id=turn_id,
         )
         self._session.add(block)
         await self._session.flush()

@@ -304,11 +304,18 @@ class ChatService:
         author: str,
         content: str,
         summon: bool = True,
+        turn_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
-        """Serialize per topic, then run the turn (spec §9.1 串行队列)."""
+        """Serialize per topic, then run the turn (spec §9.1 串行队列). turn_id
+        groups this turn's blocks (R4); generated if a caller didn't supply one."""
+        turn_id = turn_id or uuid.uuid4()
         async with self._lock_for(topic_id):
             async for frame in self._converse_impl(
-                topic_id=topic_id, author=author, content=content, summon=summon
+                topic_id=topic_id,
+                author=author,
+                content=content,
+                summon=summon,
+                turn_id=turn_id,
             ):
                 yield frame
 
@@ -376,6 +383,7 @@ class ChatService:
         author: str,
         content: str,
         summon: bool = True,
+        turn_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Run one chat turn, yielding WS frames as JSON-ready dicts.
 
@@ -401,6 +409,7 @@ class ChatService:
                 author_type=AuthorType.human,
                 content=content,
                 kind=BlockKind.message,
+                turn_id=turn_id,
             )
             user_payload = _block_payload(BlockOut.model_validate(user_block))
 
@@ -550,6 +559,7 @@ class ChatService:
                     author_type=AuthorType.ai,
                     content=_format_tool_event(name, tool_input),
                     kind=BlockKind.event,
+                    turn_id=turn_id,
                 )
             if usage is not None:
                 await UsageRepository(session).add(
@@ -569,6 +579,7 @@ class ChatService:
                 content=final_text,
                 kind=BlockKind.message,
                 reply_to=user_block_id,
+                turn_id=turn_id,
             )
             topic = await topics.get(topic_id)
             # <@handle> mentions in 芝士's reply → strong notify (the token is the
@@ -589,6 +600,7 @@ class ChatService:
                         author_type=AuthorType.ai,
                         content=f"⚠️ @了 <@{bad}>，但项目里没有这个成员，没能通知到",
                         kind=BlockKind.event,
+                        turn_id=turn_id,
                     )
             assistant_payload = _block_payload(BlockOut.model_validate(assistant_block))
 
@@ -604,6 +616,7 @@ class ChatService:
                     content=_ACTION_LABEL[resource],
                     kind=BlockKind.event,
                     refs=[f"action:{resource}"],
+                    turn_id=turn_id,
                 )
                 action_payloads.append(_block_payload(BlockOut.model_validate(blk)))
 
