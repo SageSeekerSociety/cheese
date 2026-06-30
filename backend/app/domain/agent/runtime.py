@@ -61,8 +61,11 @@ class TurnRunner:
     connection), so the ChatService is passed per-submit rather than held — that
     keeps it resolved through FastAPI's dependency overrides (e.g. tests)."""
 
-    def __init__(self, broker: InProcessBroker) -> None:
+    def __init__(
+        self, broker: InProcessBroker, *, turn_timeout_s: float = 900.0
+    ) -> None:
         self._broker = broker
+        self._timeout = turn_timeout_s
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
 
@@ -101,10 +104,28 @@ class TurnRunner:
     ) -> None:
         channel = str(topic_id)
         try:
-            async for frame in chat_service.converse(
-                topic_id=topic_id, author=author, content=content, summon=summon
-            ):
-                await self._broker.publish(channel, frame)
+            # Wall-clock ceiling (R8): a wedged turn must not hold the topic lock
+            # forever. On timeout the async-for exits, closing the converse
+            # generator → its `async with` blocks unwind → the topic lock releases
+            # and the in-container claude process is torn down.
+            async with asyncio.timeout(self._timeout):
+                async for frame in chat_service.converse(
+                    topic_id=topic_id, author=author, content=content, summon=summon
+                ):
+                    await self._broker.publish(channel, frame)
+        except TimeoutError:
+            logger.warning(
+                "turn %s timed out (>%ss) for topic %s; interrupted",
+                turn_id, self._timeout, topic_id,
+            )
+            await self._broker.publish(
+                channel,
+                {
+                    "type": "error",
+                    "message": "芝士这轮超时被中断了（可能卡在某步）。"
+                    "已完成的改动已保存，再 @ 它一次就会接着来。",
+                },
+            )
         except AppError as exc:
             await self._broker.publish(
                 channel, {"type": "error", "message": exc.message}

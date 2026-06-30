@@ -69,6 +69,37 @@ async def test_turn_runs_to_completion_without_a_subscriber():
 
 
 @pytest.mark.anyio
+async def test_wedged_turn_times_out_and_is_cancelled():
+    # R8: a turn that never finishes must not hold on forever. With a tiny budget
+    # it is interrupted (error frame) and the converse generator is cancelled.
+    broker = InProcessBroker()
+    runner = TurnRunner(broker, turn_timeout_s=0.05)
+    cancelled = asyncio.Event()
+
+    class _Hang:
+        async def converse(self, **_):
+            yield {"type": "user_block"}
+            try:
+                await asyncio.sleep(10)  # wedge
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            yield {"type": "done"}  # pragma: no cover
+
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(_Hang(), topic, author="u", content="hi", summon=True)
+        kinds = []
+        for _ in range(3):
+            f = await asyncio.wait_for(q.get(), 1)
+            kinds.append(f["type"])
+            if f["type"] == "error":
+                break
+    assert kinds == ["user_block", "error"]
+    await asyncio.wait_for(cancelled.wait(), 1)  # the wedged turn was cancelled
+
+
+@pytest.mark.anyio
 async def test_runner_publishes_friendly_error_on_failure():
     broker = InProcessBroker()
     runner = TurnRunner(broker)

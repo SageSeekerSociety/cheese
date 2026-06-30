@@ -54,4 +54,4 @@ def get_broker() -> InProcessBroker:
 
 @lru_cache
 def get_turn_runner() -> TurnRunner:
-    return TurnRunner(get_broker())
+    return TurnRunner(get_broker(), turn_timeout_s=settings.agent_turn_timeout_s)

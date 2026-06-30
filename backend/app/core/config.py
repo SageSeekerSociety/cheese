@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     )
     # Working directory for the agent's git-backed workspace (one repo per project).
     workspace_root: str = "./.workspaces"
+    # Per-turn wall-clock ceiling (review R8): a wedged turn must not hold the
+    # topic lock forever. A safety net well above any real turn (coding turns run
+    # minutes), not a normal-case limit — on timeout the turn is cancelled, which
+    # releases the lock and tears down the in-container claude process.
+    agent_turn_timeout_s: float = 900.0
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # When on, the interactive turn runs `claude` INSIDE a per-topic Docker
