@@ -179,3 +179,49 @@ v1 的 `ensure/exec/cli_path/teardown/available/caps` 撑不起远端：cheese �
 ## 修订后的"一次性"判断（诚实）
 审查证明：**整套分布式执行面不可能一轮实装到无懈可击**——R1/R2 要改契约、R3/R4 要 turn_id+幂等贯穿、R5/R6 要重做信任与凭据。硬塞一轮反而造出它要避免的洞。
 **所以正确的"搞顺"是：架构（本文档 v2）已自洽且经对抗审查；地基里能独立交付的先落地（ExecutionProfile + 合规护栏 ✅ 已做、已测）；其余按 §7 顺序、每步带 turn_id/lease/cursor 的正确语义增量实装、每步可上线可回滚。** future-proof 体现在**契约对了**（v2 的 run_turn/lease/cursor/scoped-token），远端/GPU/cheesed 是按已定契约填空。
+
+---
+
+# v3 修订（AI 与 compute = 两个对称的 Pool）
+
+andyl 定调：**AI 和 compute 各自抽成一种"池"，同一套形状**。把 §2（ExecutionProfile）和 §3（ComputeProvider）统一到一个通用 `ResourcePool` 抽象，两边是它的两个实例。这让"默认我们的、可选 BYO/外部、按项目配、配额、计费、三级可见"这套东西**只写一次**，AI 和 compute 复用；将来第三种可池化资源（如存储/密钥）也照搬。
+
+## 通用抽象：ResourcePool[Provider]
+```
+ResourcePool[P]:                      # P = AIProvider | ComputeProvider
+  providers: dict[name, P]            # default(我们的) + byo/external/self-hosted/competition
+  default_name: str
+  select(project, owner) -> P         # 解析 + 合规护栏（未配/无凭据/越权 → 回落 default）
+  scheduler: 配额/并发/排队（按项目额度）
+  meter(usage) -> 计费                 # 我们的池收钱；BYO 计到项目自己的账
+  visibility: 话题 / 项目 / 机构 三级看板
+```
+不变量（两池共享）：①未配→默认我们的池；②default 永远可用、绝不回落到死档；③tier=testing/byo 有合规护栏；④用量计量 + 三级可见。
+
+## 实例一：AIPool（= 现在的 ProfileRegistry，已建）
+- `P = AIProvider`：model + provider 鉴权（base_url/token）+ tier。
+- `select` = `ProfileRegistry.resolve`（**已实现**，含 dogfood 合规护栏）。
+- default = 知是网关池(GLM)；`claude-opus`=testing；byo=项目自带 key（per-seat 合规：订阅仅个人、多用户项目须 API key）。
+- 计费：默认池按 token 计到知是；byo 计到项目。
+> 即：`profiles.py` 就是 AIPool 的首个落地，只是名字叫 ProfileRegistry——v3 起对齐命名/语义为 AIPool。
+
+## 实例二：ComputePool（待建，按 v2 的 run_turn 契约）
+- `P = ComputeProvider`：`run_turn(...)->事件流` + 工作区生命周期 + caps + capacity（见 v2 R2/R9）。
+- `select`/`scheduler` = `pick_provider`：按 env_spec 的 caps（GPU 等）匹配 + 项目额度限并发 + 超额排队。
+- default = `LocalDockerProvider`(收编现状)；之后 Remote/SelfHosted/Gpu/Competition。
+- 计费：默认池按 compute-time/GPU-hours 计到知是（**这是知是作为算力平台的主营收入**）；BYO/赛题算力计到对方/不计。
+
+## ExecutionProfile = 两池各选一 + 配额
+```
+ExecutionProfile(project):
+  ai      = AIPool.select(project)        # 用谁的模型/鉴权
+  compute = ComputePool.select(project)   # 派到哪种算力（含 GPU/赛题）
+  quota   = {ai_tokens, compute_time/gpu_hours, 并发}
+```
+两轴**正交**：可以"我们的模型 + 赛题的 GPU"，也可以"项目自带 Claude key + 我们的池"。项目级配置就是各池里各选一个 + 配额；默认两边都指我们的池。
+
+## 对落地的影响（顺序不变，命名对齐）
+1. 把 `ProfileRegistry` 视作 `AIPool`（已建，含合规护栏 + API + 测试）。
+2. 建 `ComputePool` + `LocalDockerProvider`（v2 的 run_turn 接缝）——与 AIPool **对称**：providers 注册表 + select + 默认实现 + 测试。
+3. 两池接进 `ExecutionProfile`（项目各选一）+ 计量计费 + 三级看板。
+4. 远端 compute provider / 多 AI provider 按已定接口填空。
