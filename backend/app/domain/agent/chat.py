@@ -515,6 +515,7 @@ class ChatService:
             resume_session_id=resume_session_id,
             memory_scope="personal" if is_private else None,
             owner=private_owner if is_private else None,
+            turn_id=turn_id,
             **model_kwargs,
         ):
             if isinstance(event, AgentDelta):

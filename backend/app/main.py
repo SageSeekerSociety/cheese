@@ -23,6 +23,7 @@ import app.api.routes as routes_pkg
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.sandbox_auth import is_valid_cheese_token
+from app.core.turn_context import current_turn_id, parse_turn_id
 
 
 @asynccontextmanager
@@ -121,7 +122,12 @@ async def cheese_token_gate(request: Request, call_next: Callable):  # type: ign
                 status_code=401,
             )
         break
-    return await call_next(request)
+    # Stash the cheese turn id so blocks written by this request inherit it (R4).
+    ctx = current_turn_id.set(parse_turn_id(request.headers.get("x-cheese-turn")))
+    try:
+        return await call_next(request)
+    finally:
+        current_turn_id.reset(ctx)
 
 
 loaded_routers = _discover_routers(app)

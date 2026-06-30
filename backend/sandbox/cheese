@@ -34,6 +34,9 @@ PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
 TOKEN = os.environ.get("CHEESE_TOKEN", "")
+# The agent turn this CLI call belongs to — sent back so the blocks it creates
+# share the turn's id (R4).
+TURN = os.environ.get("CHEESE_TURN", "")
 # In a private chat, `remember` writes the owner's personal memory (跟着人走).
 MEMORY_SCOPE = os.environ.get("CHEESE_MEMORY_SCOPE", "project")
 OWNER = os.environ.get("CHEESE_OWNER", "")
@@ -46,6 +49,8 @@ def _call(method: str, path: str, body: dict | None = None) -> dict:
     req.add_header("Content-Type", "application/json")
     if TOKEN:
         req.add_header("X-Cheese-Token", TOKEN)
+    if TURN:
+        req.add_header("X-Cheese-Turn", TURN)
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.load(r)

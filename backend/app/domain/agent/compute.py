@@ -56,6 +56,7 @@ class ComputeProvider(Protocol):
         env: dict[str, str] | None = None,
         memory_scope: str | None = None,
         owner: str | None = None,
+        turn_id: uuid.UUID | None = None,
     ) -> AsyncIterator[AgentEvent]: ...
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None: ...
@@ -95,6 +96,7 @@ class LocalDockerProvider:
         *,
         memory_scope: str | None,
         owner: str | None,
+        turn_id: uuid.UUID | None,
     ) -> tuple[dict, str]:
         """Per-topic sandbox (container + worktree + session + cheese env) + cwd."""
         worktree = ws.topic_worktree(project_id, topic_id)
@@ -117,6 +119,10 @@ class LocalDockerProvider:
             env["CHEESE_MEMORY_SCOPE"] = memory_scope
         if owner:
             env["CHEESE_OWNER"] = owner
+        if turn_id:
+            # cheese sends this back as X-Cheese-Turn so its blocks share the
+            # turn's id (R4).
+            env["CHEESE_TURN"] = str(turn_id)
         sandbox = {
             "cli_path": str(Path(settings.sandbox_shim).resolve()),
             "allowed_tools": _SANDBOX_TOOLS,
@@ -136,11 +142,16 @@ class LocalDockerProvider:
         env: dict[str, str] | None = None,
         memory_scope: str | None = None,
         owner: str | None = None,
+        turn_id: uuid.UUID | None = None,
     ) -> AsyncIterator[AgentEvent]:
         # topic_id None (e.g. a project with no root topic) → no per-topic sandbox.
         if self.sandboxed() and topic_id is not None:
             sandbox, cwd = self._sandbox_config(
-                project_id, topic_id, memory_scope=memory_scope, owner=owner
+                project_id,
+                topic_id,
+                memory_scope=memory_scope,
+                owner=owner,
+                turn_id=turn_id,
             )
         else:
             sandbox, cwd = None, self._workspace_for(project_id)

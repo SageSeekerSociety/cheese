@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.turn_context import current_turn_id
 from app.domain.block.models import AuthorType, Block, BlockKind
 
 
@@ -28,6 +29,10 @@ class BlockRepository:
         struct_order: float | None = None,
         turn_id: uuid.UUID | None = None,
     ) -> Block:
+        # Cheese-side handlers don't pass turn_id explicitly; fall back to the
+        # ambient turn id set from the X-Cheese-Turn header (R4).
+        if turn_id is None:
+            turn_id = current_turn_id.get()
         block = Block(
             project_id=project_id,
             topic_id=topic_id,
