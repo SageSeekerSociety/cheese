@@ -282,13 +282,6 @@ provide('activityBump', activityBump)
         >
           日历
         </v-tab>
-        <v-tab
-          value="settings"
-          :disabled="!currentProjectId"
-          @click="goSettings"
-        >
-          设置
-        </v-tab>
         <v-tab value="spaces" @click="goSpaces">机构看板</v-tab>
         <v-tab value="market" @click="goMarket">市场</v-tab>
       </v-tabs>
@@ -312,6 +305,20 @@ provide('activityBump', activityBump)
         style="max-width: 220px"
         @update:model-value="onPickProject"
       />
+
+      <!-- 项目设置 (资源池): a gear, not a primary tab — it's project config. -->
+      <v-btn
+        icon
+        variant="text"
+        size="small"
+        class="me-1"
+        :disabled="!currentProjectId"
+        :color="activeTab === 'settings' ? 'primary' : undefined"
+        title="项目设置（资源池）"
+        @click="goSettings"
+      >
+        <v-icon>mdi-cog-outline</v-icon>
+      </v-btn>
 
       <!-- 记一笔 / 导入 (E1/E3) -->
       <v-btn

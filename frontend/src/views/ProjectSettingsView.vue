@@ -78,6 +78,13 @@ async function pickCompute(id: string) {
   }
 }
 
+// Back to wherever you came from (the workspace, via the gear), with an overview
+// fallback for a deep link — same pattern as the member page.
+function goBack() {
+  if (window.history.state?.back != null) router.back()
+  else router.push({ name: 'overview', params: { projectId: props.projectId } })
+}
+
 onMounted(load)
 watch(() => props.projectId, load)
 </script>
@@ -91,7 +98,7 @@ watch(() => props.projectId, load)
           size="small"
           prepend-icon="mdi-arrow-left"
           class="px-1"
-          @click="router.push({ name: 'overview', params: { projectId } })"
+          @click="goBack"
         >
           返回
         </v-btn>
@@ -215,6 +222,25 @@ watch(() => props.projectId, load)
 .settings-page {
   background: var(--canvas);
 }
+/* Section rhythm (the ln-* classes are scoped to OverviewView, so style them
+   here). Flat sections: a title, then the pool rows are the cards. */
+.ln-section {
+  margin-bottom: 26px;
+}
+.ln-section-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.ln-section-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.ln-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .pool-row {
   width: 100%;
   display: flex;
@@ -225,7 +251,6 @@ watch(() => props.projectId, load)
   border: 1px solid rgba(var(--v-border-color), 0.55);
   border-radius: 10px;
   background: var(--surface);
-  margin-bottom: 8px;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
