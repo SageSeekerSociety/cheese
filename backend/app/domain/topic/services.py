@@ -14,6 +14,8 @@ from app.core.errors import NotFoundError, ValidationError
 from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.notification.models import NotifKind, NotifLevel
+from app.domain.notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicRepository
@@ -44,6 +46,7 @@ def _opening_text(title: str, *, from_discussion: bool) -> str:
 
 class TopicService:
     def __init__(self, session: AsyncSession):
+        self._session = session
         self._repo = TopicRepository(session)
         self._projects = ProjectRepository(session)
         self._blocks = BlockRepository(session)
@@ -268,12 +271,18 @@ class TopicService:
     async def return_conclusion(
         self, *, subtopic_id: uuid.UUID, conclusion: str
     ) -> Block:
-        """结论回流 (spec §6.1): a sub-topic's conclusion flows back to its
-        parent as a new block referencing the sub-topic."""
+        """结论回流 (spec §6.1 / eval C4): a sub-topic's (分身) conclusion flows
+        back to its parent (本体) three ways — a referencing message in the
+        conversation, woven into the parent's living doc (so 分身 stay consistent
+        via the doc, spec §8.4), and a change-alert so the coordinator is notified.
+        """
         sub = await self.get_or_404(subtopic_id)
         if sub.parent_id is None:
             raise ValidationError("Topic has no parent to return a conclusion to")
-        return await self._blocks.add(
+        parent = await self._repo.get(sub.parent_id)
+
+        # 1) Conversation: a message in the parent referencing the sub-topic.
+        block = await self._blocks.add(
             project_id=sub.project_id,
             topic_id=sub.parent_id,
             author=CHEESE_AUTHOR,
@@ -282,3 +291,24 @@ class TopicService:
             kind=BlockKind.message,
             refs=[str(sub.id)],
         )
+
+        # 2) Living doc: append the conclusion as a section (unless frozen, §6.3).
+        if parent is not None and parent.status != TopicStatus.archived:
+            root = await self._blocks.doc_root(sub.parent_id)
+            section = f"## 子话题结论：{sub.title}\n{conclusion}"
+            existing = root.content.strip() if root and root.content else ""
+            new_content = f"{existing}\n\n{section}" if existing else section
+            await self.edit_doc(
+                topic_id=sub.parent_id, content=new_content, author=CHEESE_AUTHOR
+            )
+
+        # 3) Notify 本体 (the coordinator) that the 分身 finished.
+        await NotificationService(self._session).create(
+            project_id=sub.project_id,
+            level=NotifLevel.light,
+            kind=NotifKind.change_alert,
+            title=f"子话题「{sub.title}」已完成",
+            body=conclusion[:200],
+            topic_id=sub.parent_id,
+        )
+        return block
