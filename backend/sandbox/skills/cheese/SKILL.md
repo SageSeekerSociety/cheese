@@ -57,5 +57,8 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 | `cheese conclude "<结论>"` | 子话题做完,把结论回流父话题 |
 | `cheese milestone "<标题>" [--due 2026-06-20]` | 把关键节点钉成里程碑 |
 | `cheese members` | 列出项目成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |
+| `cheese artifact <文件> [--as html\|svg]` | 把工作区里的产物设为**当前预览**,渲染进右侧预览窗口 |
+
+**做出可以"看"的产物就点名它。** 当你产出了一个网页、可视化、SVG 图等能直接展示给用户的东西(如 `Write ./report.html` 后),用 `cheese artifact report.html` 把它设为当前预览——用户在右侧「预览」里就能看到实时画面。**别指望平台去猜该显示哪个文件——你显式指定。** 每次调用都会把预览指向最新那个。
 
 不确定参数就先 `cheese --help`。**不要用别的方式改平台状态**(只有 `cheese` 会被平台记录、可追溯)。

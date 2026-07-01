@@ -185,6 +185,17 @@ def read_file(
     return target.read_text(encoding="utf-8", errors="replace")
 
 
+def write_file(
+    project_id: uuid.UUID, path: str, content: str, topic_id: uuid.UUID | None = None
+) -> None:
+    """Write a file in the topic's worktree (人改文件即指令 — the agent reads the
+    latest on its next turn, like 改文档即指令). _safe_path guards traversal + .git."""
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+
 def git_log(project_id: uuid.UUID, limit: int = 50) -> list[dict]:
     repo = ensure_repo(project_id)
     # A fresh repo has no commits yet — `git log` would exit non-zero. Return an

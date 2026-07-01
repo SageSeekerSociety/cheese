@@ -9,6 +9,7 @@ import { Markdown } from '@tiptap/markdown'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import CheeseAvatar from './CheeseAvatar.vue'
+import CodeEditor from './CodeEditor.vue'
 import {
   addComment,
   getComments,
@@ -16,12 +17,14 @@ import {
   getDocNodes,
   getGitDiff,
   getGitLog,
+  getPreview,
   getProjectUsage,
   getTopicUsage,
   getTranscript,
   listFiles,
   putDoc,
   readFile,
+  writeFile,
   upgradeBlock,
 } from '../api'
 import type {
@@ -399,15 +402,24 @@ const transcript = ref<Block[]>([])
 // Git: commit log + working-tree diff.
 const gitCommits = ref<GitCommit[]>([])
 const gitDiff = ref<string>('')
-// 文件: file list + the file the user opened.
+// 文件: a two-pane browser — the file list stays visible on the left, the opened
+// file loads into a code editor on the right (editable; save = 人改文件即指令).
 const files = ref<WorkspaceFile[]>([])
-const openFile = ref<FileContent | null>(null)
+const openPath = ref<string | null>(null)
+const fileDraft = ref<string>('')
+const fileSaved = ref<string>('') // last loaded/saved content, for the dirty flag
+const fileSaving = ref(false)
+const fileListOpen = ref(true) // the ☰ toggle hides the list for a wider editor
+const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
 // 资源: usage for this topic vs the whole project.
 const topicUsage = ref<UsageStats | null>(null)
 const projectUsage = ref<UsageStats | null>(null)
 
-// 预览: first *.html in the file list, rendered in an iframe.
+// 预览 (spec §9.1): the artifact 芝士 pointed at (cheese artifact) — its file,
+// mimeType, and whether it was AI-designated (vs. the first-*.html fallback).
 const previewFile = ref<FileContent | null>(null)
+const previewMime = ref<string>('text/html')
+const previewNamed = ref(false)
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -441,7 +453,11 @@ async function loadTool(key: string) {
       gitDiff.value = diff.diff
     } else if (key === 'files') {
       files.value = (await listFiles(pid, tid)).data
-      openFile.value = null
+      // Keep the open file if it still exists; otherwise open the first file.
+      if (!openPath.value || !files.value.some((f) => f.path === openPath.value)) {
+        openPath.value = null
+        if (files.value.length) await selectFile(files.value[0].path)
+      }
     } else if (key === 'resources') {
       const [tu, pu] = await Promise.all([
         getTopicUsage(tid),
@@ -451,11 +467,23 @@ async function loadTool(key: string) {
       topicUsage.value = tu
       projectUsage.value = pu
     } else if (key === 'preview') {
-      const list = (await listFiles(pid, tid)).data
+      // 芝士 points at the current preview via `cheese artifact` (render-by-type,
+      // spec §9.1). Fall back to the first *.html only when it hasn't named one.
+      const art = await getPreview(tid).catch(() => null)
       if (props.topic?.id !== tid) return
-      files.value = list
-      const html = list.find((f) => f.path.toLowerCase().endsWith('.html'))
-      previewFile.value = html ? await readFile(pid, html.path, tid) : null
+      if (art) {
+        previewNamed.value = true
+        previewMime.value = art.mime || 'text/html'
+        previewFile.value = await readFile(pid, art.path, tid).catch(() => null)
+      } else {
+        const list = (await listFiles(pid, tid)).data
+        if (props.topic?.id !== tid) return
+        files.value = list
+        const html = list.find((f) => f.path.toLowerCase().endsWith('.html'))
+        previewNamed.value = false
+        previewMime.value = 'text/html'
+        previewFile.value = html ? await readFile(pid, html.path, tid) : null
+      }
     } else if (key === 'comments') {
       await loadComments(tid)
       if (props.topic?.id !== tid) return
@@ -472,9 +500,27 @@ async function selectFile(path: string) {
   if (!pid) return
   toolError.value = null
   try {
-    openFile.value = await readFile(pid, path, props.topic?.id)
+    const f = await readFile(pid, path, props.topic?.id)
+    openPath.value = path
+    fileDraft.value = f.content
+    fileSaved.value = f.content
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '读取文件失败'
+  }
+}
+
+async function saveFile() {
+  const pid = projectId.value
+  if (!pid || !openPath.value || !fileDirty.value || fileSaving.value) return
+  fileSaving.value = true
+  toolError.value = null
+  try {
+    await writeFile(pid, openPath.value, fileDraft.value, props.topic?.id)
+    fileSaved.value = fileDraft.value
+  } catch (e) {
+    toolError.value = e instanceof Error ? e.message : '保存失败'
+  } finally {
+    fileSaving.value = false
   }
 }
 
@@ -1037,52 +1083,75 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
-          <!-- 文件: file list → click to read a file -->
+          <!-- 文件: two-pane — the list stays on the left, the opened file loads
+               into a code editor on the right (editable; 保存 = 人改文件即指令). -->
           <template v-else-if="openTool === 'files'">
-            <div class="pa-3">
-              <template v-if="openFile">
+            <div class="file-tool">
+              <div class="file-bar">
                 <v-btn
+                  icon
                   size="x-small"
                   variant="text"
-                  prepend-icon="mdi-arrow-left"
-                  class="mb-2"
-                  @click="openFile = null"
+                  :color="fileListOpen ? 'primary' : undefined"
+                  title="文件列表"
+                  @click="fileListOpen = !fileListOpen"
                 >
-                  返回文件列表
+                  <v-icon size="18">mdi-format-list-bulleted</v-icon>
                 </v-btn>
-                <div class="text-body-2 font-weight-medium mb-2">
-                  {{ openFile.path }}
-                </div>
-                <pre class="code-pre">{{ openFile.content }}</pre>
-              </template>
-              <template v-else>
-                <div
-                  v-if="files.length === 0"
-                  class="text-center text-medium-emphasis py-6"
+                <span class="file-bar__path" :title="openPath || ''">
+                  {{ openPath || '未打开文件' }}
+                </span>
+                <span v-if="fileDirty" class="file-bar__dot" title="未保存" />
+                <v-spacer />
+                <v-btn
+                  size="x-small"
+                  variant="flat"
+                  color="primary"
+                  :loading="fileSaving"
+                  :disabled="!fileDirty"
+                  @click="saveFile"
                 >
-                  暂无文件
-                </div>
-                <v-list v-else density="compact" class="py-0">
-                  <v-list-item
+                  保存
+                </v-btn>
+              </div>
+              <div class="file-body">
+                <div v-if="fileListOpen" class="file-list">
+                  <div
+                    v-if="files.length === 0"
+                    class="text-center c-faint py-6"
+                    style="font-size: 0.8rem"
+                  >
+                    暂无文件
+                  </div>
+                  <button
                     v-for="f in files"
                     :key="f.path"
-                    class="px-0"
+                    type="button"
+                    class="file-item"
+                    :class="{ 'file-item--active': openPath === f.path }"
+                    :title="`${f.path} · ${fmtBytes(f.bytes)}`"
                     @click="selectFile(f.path)"
                   >
-                    <template #prepend>
-                      <v-icon size="16" class="me-1">mdi-file-outline</v-icon>
-                    </template>
-                    <v-list-item-title class="text-body-2">
-                      {{ f.path }}
-                    </v-list-item-title>
-                    <template #append>
-                      <span class="text-caption text-medium-emphasis">
-                        {{ fmtBytes(f.bytes) }}
-                      </span>
-                    </template>
-                  </v-list-item>
-                </v-list>
-              </template>
+                    <v-icon size="13" class="me-1 c-muted">mdi-file-outline</v-icon>
+                    <span class="file-item__name">{{ f.path }}</span>
+                  </button>
+                </div>
+                <div class="file-editor">
+                  <CodeEditor
+                    v-if="openPath"
+                    v-model="fileDraft"
+                    :filename="openPath"
+                    @save="saveFile"
+                  />
+                  <div
+                    v-else
+                    class="d-flex align-center justify-center fill-height c-faint"
+                    style="font-size: 0.85rem"
+                  >
+                    选择左侧文件查看 / 编辑
+                  </div>
+                </div>
+              </div>
             </div>
           </template>
 
@@ -1209,11 +1278,22 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
-          <!-- 预览: render the first *.html product in an iframe -->
+          <!-- 预览 (spec §9.1): the artifact 芝士 pointed at (cheese artifact),
+               rendered by its mimeType. Falls back to the first *.html. -->
           <template v-else-if="openTool === 'preview'">
             <div v-if="previewFile" class="preview-wrap">
-              <div class="text-caption text-medium-emphasis px-3 pt-2">
-                {{ previewFile.path }}
+              <div class="preview-bar text-caption px-3 pt-2">
+                <span class="text-medium-emphasis">{{ previewFile.path }}</span>
+                <v-chip
+                  v-if="previewNamed"
+                  size="x-small"
+                  color="primary"
+                  variant="tonal"
+                  class="ms-2"
+                >芝士指定</v-chip>
+                <v-chip size="x-small" variant="outlined" class="ms-1">
+                  {{ previewMime }}
+                </v-chip>
               </div>
               <iframe
                 class="preview-frame"
@@ -1224,6 +1304,7 @@ onBeforeUnmount(() => {
             <div v-else class="text-center text-medium-emphasis py-8">
               <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
               <div>暂无可预览的产物</div>
+              <div class="text-caption mt-1">芝士做出网页/图表后会指定预览</div>
             </div>
           </template>
           </div>
@@ -1598,6 +1679,82 @@ onBeforeUnmount(() => {
   white-space: pre;
   margin: 0;
 }
+
+/* 文件 two-pane browser + editor. Fills the drawer height so the editor scrolls
+   internally instead of growing the drawer. */
+.file-tool {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.file-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.5);
+  flex: 0 0 auto;
+}
+.file-bar__path {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+.file-bar__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+.file-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.file-list {
+  flex: 0 0 148px;
+  overflow-y: auto;
+  border-right: 1px solid rgba(var(--v-border-color), 0.5);
+  padding: 4px;
+}
+.file-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text);
+}
+.file-item:hover {
+  background: var(--fill);
+}
+.file-item--active {
+  background: rgba(var(--v-theme-primary), 0.1);
+  color: rgb(var(--v-theme-primary));
+}
+.file-item__name {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
 .usage-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -1619,6 +1776,15 @@ onBeforeUnmount(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+.preview-bar {
+  display: flex;
+  align-items: center;
+}
+.preview-bar > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .preview-frame {
   flex: 1 1 auto;

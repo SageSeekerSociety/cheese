@@ -35,6 +35,11 @@ class BlockKind(enum.StrEnum):
     decision = "decision"
     attachment = "attachment"
     event = "event"
+    # A renderable product 芝士 explicitly points at (spec §9.1): content = the
+    # worktree-relative file path, mime_type = how to render it (text/html,
+    # image/svg+xml). The latest artifact of a topic is its "current preview";
+    # created via `cheese artifact`. Never inferred from prose — the AI names it.
+    artifact = "artifact"
 
 
 class AuthorType(enum.StrEnum):
@@ -82,6 +87,11 @@ class Block(UuidPk, Timestamps, Base):
     # comment still anchors to its paragraph via reply_to; this preserves the quoted
     # span for display. Only set on kind=comment blocks.
     anchor_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Render-by-type (spec §9.1): the mimeType of an artifact block — the host
+    # picks a renderer from this, never from parsing the AI's text. Only set on
+    # kind=artifact blocks (e.g. text/html, image/svg+xml).
+    mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # The agent turn that produced this block (review R4): groups a turn's blocks
     # for traceability / recovery / the collaboration-trajectory dataset. Null for

@@ -218,6 +218,63 @@ async def return_conclusion(
     return ok(BlockOut.model_validate(block).model_dump(mode="json"))
 
 
+# 芝士 → UI rendering (spec §9.1): an artifact is a file the AI explicitly points
+# at + how to render it. The type comes from the tool call, never from parsing
+# prose. MVP renders html/svg in the preview window; more types are additive.
+_ARTIFACT_MIME = {
+    "html": "text/html",
+    "svg": "image/svg+xml",
+}
+
+
+def _clean_artifact_path(raw: str) -> str:
+    """A workspace-relative pointer — reject absolute paths, traversal, and .git.
+    The file itself is read later via the guarded workspace reader."""
+    path = (raw or "").strip()
+    if not path:
+        raise ValidationError("path 不能为空")
+    parts = path.split("/")
+    if path.startswith("/") or ".." in parts or ".git" in parts:
+        raise ValidationError("path 必须是工作区相对路径")
+    return path
+
+
+@router.post("/{topic_id}/artifact")
+async def set_artifact(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """芝士 marks a worktree file as a renderable artifact (spec §9.1) — used by
+    `cheese artifact`. With no anchor it becomes the topic's current preview."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    path = _clean_artifact_path(body.get("path") or "")
+    as_ = (body.get("as") or "html").strip().lower()
+    mime = _ARTIFACT_MIME.get(as_)
+    if mime is None:
+        allowed = "、".join(_ARTIFACT_MIME)
+        raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
+    block = await BlockRepository(db).add(
+        project_id=topic.project_id,
+        topic_id=topic_id,
+        author="cheese",
+        author_type=AuthorType.ai,
+        content=path,
+        kind=BlockKind.artifact,
+        mime_type=mime,
+        refs=[path],
+    )
+    return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+
+
+@router.get("/{topic_id}/preview")
+async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """The topic's current preview (spec §7.1): the artifact 芝士 last pointed at,
+    as {path, mime}. Null when none is set — the client may fall back to scanning
+    the worktree. Content is fetched separately via the guarded file reader."""
+    await TopicService(db).get_or_404(topic_id)
+    art = await BlockRepository(db).latest_artifact(topic_id)
+    if art is None:
+        return ok(None)
+    return ok({"path": art.content, "mime": art.mime_type})
+
+
 # Block upgrade lives here (it produces a topic). Separate router prefix.
 block_router = APIRouter(prefix="/api/blocks", tags=["topics"])
 

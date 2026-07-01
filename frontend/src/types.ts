@@ -37,6 +37,8 @@ export interface Block {
   node_type?: string | null
   struct_order?: number | null
   anchor_quote?: string | null
+  // Render-by-type: mimeType of an artifact block (set on kind=artifact).
+  mime_type?: string | null
   turn_id?: string | null
   refs?: string[]
   upgraded_to_topic_id?: string | null
@@ -242,6 +244,13 @@ export interface WorkspaceFile {
 export interface FileContent {
   path: string
   content: string
+}
+
+// GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
+// topic's current preview. Null when 芝士 hasn't set one.
+export interface PreviewInfo {
+  path: string
+  mime: string | null
 }
 
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).

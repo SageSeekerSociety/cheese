@@ -29,6 +29,7 @@ class BlockRepository:
         struct_order: float | None = None,
         turn_id: uuid.UUID | None = None,
         anchor_quote: str | None = None,
+        mime_type: str | None = None,
     ) -> Block:
         # Cheese-side handlers don't pass turn_id explicitly; fall back to the
         # ambient turn id set from the X-Cheese-Turn header (R4).
@@ -48,6 +49,7 @@ class BlockRepository:
             struct_order=struct_order,
             turn_id=turn_id,
             anchor_quote=anchor_quote,
+            mime_type=mime_type,
         )
         self._session.add(block)
         await self._session.flush()
@@ -98,8 +100,9 @@ class BlockRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    # Document-view kinds — never part of the conversation timeline.
-    _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment)
+    # Document-view / render-only kinds — never part of the conversation timeline.
+    # Artifacts are preview pointers surfaced in the preview window, not chat.
+    _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment, BlockKind.artifact)
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[Block]:
         """Timeline view: blocks of a topic, oldest first (spec §5).
@@ -139,6 +142,18 @@ class BlockRepository:
             .order_by(Block.created_at)
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def latest_artifact(self, topic_id: uuid.UUID) -> Block | None:
+        """The topic's current preview (spec §9.1): the most recent artifact block
+        芝士 pointed at. Newest wins — re-running `cheese artifact` repoints it."""
+        stmt = (
+            select(Block)
+            .where(
+                Block.topic_id == topic_id, Block.kind == BlockKind.artifact
+            )
+            .order_by(Block.created_at.desc())
+        )
+        return (await self._session.scalars(stmt)).first()
 
     async def list_by_kind_for_project(
         self, project_id: uuid.UUID, kind: BlockKind

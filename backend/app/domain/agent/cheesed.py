@@ -153,6 +153,20 @@ async def read_file(project_id: str, topic_id: str, path: str) -> dict:
     return {"data": target.read_text(encoding="utf-8", errors="replace")}
 
 
+@app.put("/file/{project_id}/{topic_id}")
+async def write_file(project_id: str, topic_id: str, body: dict) -> dict:
+    """Write one node-local worktree file (human edit, proxied from the backend).
+    Path is confined to the worktree."""
+    tree = (Path(_WORKSPACE) / project_id / topic_id).resolve()
+    path = (body.get("path") or "").strip()
+    target = (tree / path).resolve()
+    if not path or not str(target).startswith(str(tree)) or ".git" in target.parts:
+        return {"ok": False}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body.get("content") or "", encoding="utf-8")
+    return {"ok": True}
+
+
 @app.post("/checkpoint/{project_id}/{topic_id}")
 async def checkpoint(project_id: str, topic_id: str) -> dict:
     """Commit the agent's edits this turn on the node, so /git/log + /git/diff

@@ -26,6 +26,8 @@ class BlockOut(BaseModel):
     struct_order: float | None = None
     # B4 段落评论: the quoted text a comment was selected on (set on comment blocks).
     anchor_quote: str | None = None
+    # Render-by-type: mimeType of an artifact block (set on artifact blocks).
+    mime_type: str | None = None
     refs: list[str] = []
     upgraded_to_topic_id: uuid.UUID | None = None
     # The agent turn that produced this block (R4): groups a turn's blocks.

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.errors import ValidationError
 from app.domain.project.services import ProjectService
 from app.domain.workspace import service as ws
 
@@ -50,6 +51,29 @@ async def read_file(
     else:
         content = ws.read_file(project_id, path, topic_id=topic)
     return ok({"path": path, "content": content})
+
+
+@router.put("/{project_id}/file")
+async def write_file(
+    project_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    topic: uuid.UUID | None = None,
+) -> dict:
+    """Save an edited workspace file (人改文件即指令). Writes to the topic's
+    worktree, or proxies to the cheesed node when compute runs remotely."""
+    await ProjectService(db).get_or_404(project_id)
+    path = (body.get("path") or "").strip()
+    content = body.get("content") or ""
+    if not path:
+        raise ValidationError("path is required")
+    if _remote() and topic is not None:
+        url = f"{settings.cheesed_url.rstrip('/')}/file/{project_id}/{topic}"
+        async with httpx.AsyncClient(timeout=15) as client:
+            await client.put(url, json={"path": path, "content": content})
+    else:
+        ws.write_file(project_id, path, content, topic_id=topic)
+    return ok({"path": path})
 
 
 @router.get("/{project_id}/git/log")

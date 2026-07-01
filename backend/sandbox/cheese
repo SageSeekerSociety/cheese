@@ -18,6 +18,8 @@
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
   cheese milestone "中期汇报" --due 2026-06-20
+  cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
+  cheese artifact chart.svg --as svg        # SVG 同理
 """
 
 from __future__ import annotations
@@ -113,6 +115,11 @@ def main() -> None:
 
     sub.add_parser("members", help="列出项目成员(名字+handle+角色)")
 
+    part = sub.add_parser("artifact", help="把工作区文件设为可渲染产物(当前预览)")
+    part.add_argument("path", help="工作区相对路径,如 report.html")
+    part.add_argument("--as", dest="as_", default="html", choices=["html", "svg"],
+                      help="渲染类型(默认 html)")
+
     a = p.parse_args()
 
     if a.cmd == "doc" and a.doccmd == "set":
@@ -182,6 +189,10 @@ def main() -> None:
         for m in rows:
             h = m.get("user_handle")
             print(f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{h}> 点名 ta")
+    elif a.cmd == "artifact":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        _call("POST", f"/topics/{topic}/artifact", {"path": a.path, "as": a.as_})
+        print(f"已把 {a.path} 设为当前预览（{a.as_}）。")
 
 
 if __name__ == "__main__":

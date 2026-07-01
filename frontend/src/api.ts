@@ -15,6 +15,7 @@ import type {
   MemberSummary,
   MilestoneFull,
   Notification,
+  PreviewInfo,
   Project,
   ProjectMemberRow,
   ProjectOverview,
@@ -334,6 +335,29 @@ export function readFile(
     `/projects/${encodeURIComponent(projectId)}/file?path=${encodeURIComponent(
       path,
     )}${t}`,
+  )
+}
+
+// Save an edited workspace file (人改文件即指令). The agent reads the latest on
+// its next turn, like 改文档即指令.
+export function writeFile(
+  projectId: string,
+  path: string,
+  content: string,
+  topicId?: string | null,
+): Promise<{ path: string }> {
+  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+  return request(`/projects/${encodeURIComponent(projectId)}/file${t}`, {
+    method: 'PUT',
+    body: JSON.stringify({ path, content }),
+  })
+}
+
+// 预览 (spec §9.1): the artifact 芝士 pointed at as the topic's current preview,
+// or null if none is set. Content is fetched separately via readFile.
+export function getPreview(topicId: string): Promise<PreviewInfo | null> {
+  return request<PreviewInfo | null>(
+    `/topics/${encodeURIComponent(topicId)}/preview`,
   )
 }
 
