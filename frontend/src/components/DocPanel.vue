@@ -72,6 +72,24 @@ const emit = defineEmits<{
 // node-rendered editor (follow-up).
 const pulsing = ref(false)
 
+// A top-level editor block that carries no server node: tiptap keeps a trailing
+// empty paragraph after block content (e.g. a list or heading) so you can click
+// below it to type. The server's node list has no such node, so we ignore it when
+// aligning.
+function isFillerBlock(el: HTMLElement): boolean {
+  return el.tagName === 'P' && el.textContent?.trim() === ''
+}
+
+// The rendered top-level blocks that correspond to server nodes — the raw
+// ProseMirror children minus any trailing filler paragraph(s) tiptap appends.
+function contentBlocks(): HTMLElement[] {
+  const els = Array.from(
+    document.querySelectorAll('.doc-editor .ProseMirror > *'),
+  ) as HTMLElement[]
+  while (els.length && isFillerBlock(els[els.length - 1])) els.pop()
+  return els
+}
+
 // Align the doc-node tree (GET /docs) with the rendered ProseMirror blocks. Both
 // derive from the same doc in the same order, so a positional zip connects each
 // node (id, turn_id) to its DOM element. We must NOT tag those elements:
@@ -91,9 +109,7 @@ async function alignedDocBlocks(): Promise<{ node: Block; el: HTMLElement }[]> {
   }
   for (let attempt = 0; attempt < 20; attempt++) {
     await nextTick()
-    const els = Array.from(
-      document.querySelectorAll('.doc-editor .ProseMirror > *'),
-    ) as HTMLElement[]
+    const els = contentBlocks()
     if (els.length === nodes.length) {
       return nodes.map((node, i) => ({ node, el: els[i] }))
     }
@@ -220,7 +236,11 @@ async function splitNodeToSubtopic() {
   splitBusy.value = true
   try {
     const nodes = (await getDocNodes(tid)).data
-    if (index >= nodes.length || nodes.length !== ed.state.doc.childCount) {
+    // Compare against the content blocks (raw PM children minus tiptap's trailing
+    // filler paragraph). hoverPos's child index counts from the top, so it lines
+    // up with the server nodes for every real block; hovering the filler gives
+    // index === nodes.length, which the `index >= nodes.length` check rejects.
+    if (index >= nodes.length || nodes.length !== contentBlocks().length) {
       errorMsg.value = '文档结构已变化，请重试'
       return
     }

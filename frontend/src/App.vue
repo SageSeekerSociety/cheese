@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { NOTIF_KIND, label } from './labels'
 import {
   getNotifications,
@@ -14,6 +16,13 @@ import type { Notification, Project } from './types'
 import CheeseAvatar from './components/CheeseAvatar.vue'
 
 const ME = 'user-1'
+
+// Notification bodies are AI/human-authored markdown (e.g. a 子话题 conclusion
+// with bullets/bold flowing back via C4), so render them as markdown like the
+// chat and doc do — not raw text.
+function renderMarkdown(text: string): string {
+  return DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -349,9 +358,11 @@ provide('activityBump', activityBump)
                     style="font-family: var(--font-mono)"
                   >@{{ n.target_handle }}</span>
                 </div>
-                <div v-if="n.body" class="t-body c-muted mb-2">
-                  {{ n.body }}
-                </div>
+                <div
+                  v-if="n.body"
+                  class="t-body md-content c-muted mb-2"
+                  v-html="renderMarkdown(n.body)"
+                />
                 <!-- 拍板 (spec G2): pick an option to resolve a decision request -->
                 <div
                   v-if="notifOptions(n).length"
@@ -561,6 +572,36 @@ provide('activityBump', activityBump)
 }
 .notif-read {
   opacity: 0.55;
+}
+/* Markdown body in a notification: compact margins so it reads as one tidy
+   block inside the menu, not a full document. */
+.t-body.md-content :deep(p) {
+  margin: 0 0 0.35em;
+}
+.t-body.md-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+.t-body.md-content :deep(ul),
+.t-body.md-content :deep(ol) {
+  margin: 0.2em 0;
+  padding-left: 1.2em;
+}
+.t-body.md-content :deep(li) {
+  margin: 0.1em 0;
+}
+.t-body.md-content :deep(code) {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--fill);
+  padding: 0 3px;
+  border-radius: 3px;
+}
+.t-body.md-content :deep(h1),
+.t-body.md-content :deep(h2),
+.t-body.md-content :deep(h3) {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 0.3em 0 0.15em;
 }
 
 /* v-main fills the viewport below the app bar; pages own their own scroll. */
