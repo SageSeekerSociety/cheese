@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import type { Node as PMNode } from '@tiptap/pm/model'
@@ -54,6 +54,24 @@ const props = withDefaults(
 
 // 专注模式 toggle is owned by the parent (it hides the chat pane); we just ask.
 const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
+
+// B1 Phase 2 (cross-view link, panel-level): when a chat action that changed the
+// doc is clicked, flash the document + scroll it into view — connecting the
+// process (conversation) to the state (doc). Paragraph-level anchoring needs the
+// node-rendered editor (follow-up).
+const pulsing = ref(false)
+async function pulse() {
+  document
+    .querySelector('.doc-body')
+    ?.scrollTo({ top: 0, behavior: 'smooth' })
+  pulsing.value = false
+  await nextTick()
+  pulsing.value = true
+  window.setTimeout(() => {
+    pulsing.value = false
+  }, 1200)
+}
+defineExpose({ pulse })
 
 // ---- 按需打开的工具 (spec §7.1): slide-out tool drawer ----
 interface ToolDef {
@@ -509,7 +527,7 @@ onBeforeUnmount(() => {
         :class="{ readonly: !editable }"
         @focusout="onBlur"
       >
-        <div class="doc-page">
+        <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
           <!-- Large document title (Feishu Docs), = the topic title -->
           <h1 class="doc-page__title">{{ topic.title }}</h1>
           <div class="doc-editor-wrap">
@@ -867,6 +885,20 @@ onBeforeUnmount(() => {
   color: rgba(var(--v-theme-on-surface), 0.4);
   pointer-events: none;
   margin: 0;
+}
+/* B1 Phase 2: a brief highlight when a chat action points at the doc. */
+.doc-pulse {
+  animation: docPulse 1.2s ease-out;
+}
+@keyframes docPulse {
+  0% {
+    box-shadow: 0 0 0 3px var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    background: transparent;
+  }
 }
 /* Stage holds the editor and, when pinned, the docked tool panel beside it. */
 .doc-stage {

@@ -42,6 +42,7 @@ try {
 // 专注模式 (spec §7.1): hide the chat column so the document spans the whole
 // workspace. Session-only (intentionally not persisted — it's a transient mode).
 const focusMode = ref(false)
+const docRef = ref<{ pulse: () => void } | null>(null)
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 watch([railWidth, chatPct], () => {
   localStorage.setItem(
@@ -414,8 +415,12 @@ function handleOpenResource(resource: string) {
     router.push({ name: 'calendar', params: { projectId: pid } })
   } else if (resource === 'accept') {
     loadAcceptCard()
+  } else if (resource === 'doc') {
+    // B1 Phase 2: flash the living doc so the chat action links to the state.
+    focusMode.value = false
+    docRef.value?.pulse()
   }
-  // doc / topics: the doc & topic panels are already in view next to the chat.
+  // topics: the topic panel is already in view next to the chat.
 }
 
 // A clicked <@handle> mention chip → open that teammate's member page.
@@ -797,6 +802,7 @@ onMounted(async () => {
           @dblclick="chatPct = 50"
         />
         <DocPanel
+          ref="docRef"
           v-if="selectedTopic"
           class="col col-doc"
           :style="{ flex: '1 1 0', minWidth: 0 }"
