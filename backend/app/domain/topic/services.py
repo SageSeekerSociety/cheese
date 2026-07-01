@@ -11,6 +11,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.core.text import markdown_preview
 from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -308,7 +309,7 @@ class TopicService:
             level=NotifLevel.light,
             kind=NotifKind.change_alert,
             title=f"子话题「{sub.title}」已完成",
-            body=conclusion[:200],
+            body=markdown_preview(conclusion, 200),
             topic_id=sub.parent_id,
         )
         return block

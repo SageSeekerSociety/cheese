@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.errors import NotFoundError
+from app.core.text import markdown_preview
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import role_description
@@ -376,7 +377,7 @@ class ChatService:
         targets = [h for h in resolved if h not in (author, CHEESE_AUTHOR)]
         if targets:
             notifs = NotificationService(session)
-            preview = " ".join(text.split())[:200]
+            preview = markdown_preview(text, 200)
             who = "芝士" if author == CHEESE_AUTHOR else author
             for h in targets:
                 await notifs.create(

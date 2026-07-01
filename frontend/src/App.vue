@@ -19,9 +19,24 @@ const ME = 'user-1'
 
 // Notification bodies are AI/human-authored markdown (e.g. a 子话题 conclusion
 // with bullets/bold flowing back via C4), so render them as markdown like the
-// chat and doc do — not raw text.
+// chat and doc do — not raw text. Reference tokens (<@handle>, <#topicId>) render
+// as chips instead of leaking as literal angle-bracket text.
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+// marked escapes "<@h>" to "&lt;@h&gt;"; match that form and swap in a chip.
+const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;/g
+function highlightTokens(html: string): string {
+  return html.replace(ESCAPED_TOKEN, (_m, kind, id) =>
+    kind === '@'
+      ? `<span class="mention" data-handle="${escapeHtml(id)}">@${escapeHtml(id)}</span>`
+      : `<span class="mention topic-ref" data-topic="${escapeHtml(id)}">#话题</span>`,
+  )
+}
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
+  return DOMPurify.sanitize(
+    highlightTokens(marked.parse(text, { async: false }) as string),
+  )
 }
 
 const route = useRoute()
@@ -602,6 +617,21 @@ provide('activityBump', activityBump)
   font-size: 1em;
   font-weight: 600;
   margin: 0.3em 0 0.15em;
+}
+.t-body.md-content :deep(blockquote) {
+  margin: 0.25em 0;
+  padding-left: 8px;
+  border-left: 2px solid rgba(var(--v-border-color), 0.5);
+  color: var(--muted);
+}
+/* Reference chips (<@handle> / <#topicId>) in a notification body. */
+.t-body.md-content :deep(.mention) {
+  padding: 0 4px;
+  border-radius: 4px;
+  font-weight: 500;
+  color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.1);
+  white-space: nowrap;
 }
 
 /* v-main fills the viewport below the app bar; pages own their own scroll. */
