@@ -1755,7 +1755,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--surface);
 }
 .file-icon-btn--on :deep(.v-icon) {
   color: rgb(var(--v-theme-primary));
