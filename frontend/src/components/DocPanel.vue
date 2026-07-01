@@ -1092,7 +1092,8 @@ onBeforeUnmount(() => {
                   icon
                   size="x-small"
                   variant="text"
-                  :color="fileListOpen ? 'primary' : undefined"
+                  class="file-icon-btn"
+                  :class="{ 'file-icon-btn--on': fileListOpen }"
                   title="文件列表"
                   @click="fileListOpen = !fileListOpen"
                 >
@@ -1680,36 +1681,40 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
-/* 文件 two-pane browser + editor. Fills the drawer height so the editor scrolls
-   internally instead of growing the drawer. */
+/* 文件: an embedded VS Code-style pane — dark editor + explorer. Fills the drawer
+   height so the editor scrolls internally instead of growing the drawer. */
 .file-tool {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  background: #1e1e1e;
+  color: #cccccc;
 }
 .file-bar {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
-  border-bottom: 1px solid rgba(var(--v-border-color), 0.5);
+  padding: 5px 8px;
+  background: #252526;
+  border-bottom: 1px solid #1a1a1a;
+  color: #cccccc; /* the ☰ toggle inherits this when inactive */
   flex: 0 0 auto;
 }
 .file-bar__path {
   font-family: var(--font-mono);
   font-size: 0.76rem;
-  color: var(--muted);
+  color: #c9c9c9;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 55%;
+  max-width: 52%;
 }
 .file-bar__dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent);
+  background: #e2c08d; /* VS Code "modified" amber */
   flex: 0 0 auto;
 }
 .file-body {
@@ -1718,29 +1723,29 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .file-list {
-  flex: 0 0 148px;
+  flex: 0 0 150px;
   overflow-y: auto;
-  border-right: 1px solid rgba(var(--v-border-color), 0.5);
-  padding: 4px;
+  background: #252526;
+  border-right: 1px solid #1a1a1a;
+  padding: 4px 0;
 }
 .file-item {
   display: flex;
   align-items: center;
   width: 100%;
   text-align: left;
-  padding: 4px 6px;
-  border-radius: 6px;
+  padding: 3px 8px 3px 12px;
   border: none;
   background: transparent;
   cursor: pointer;
-  color: var(--text);
+  color: #cccccc;
 }
 .file-item:hover {
-  background: var(--fill);
+  background: #2a2d2e;
 }
 .file-item--active {
-  background: rgba(var(--v-theme-primary), 0.1);
-  color: rgb(var(--v-theme-primary));
+  background: #37373d;
+  color: #ffffff;
 }
 .file-item__name {
   font-family: var(--font-mono);
@@ -1754,6 +1759,26 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  background: #1e1e1e;
+}
+.file-editor .c-faint {
+  color: #7a7a7a;
+}
+.file-list .c-faint {
+  color: #7a7a7a;
+}
+/* Light icons on the dark file bar / explorer. */
+.file-icon-btn :deep(.v-icon) {
+  color: #b3b3b3;
+}
+.file-icon-btn--on :deep(.v-icon) {
+  color: #ffffff;
+}
+.file-item :deep(.v-icon) {
+  color: #8a8a8a;
+}
+.file-item--active :deep(.v-icon) {
+  color: #ffffff;
 }
 .usage-grid {
   display: grid;
