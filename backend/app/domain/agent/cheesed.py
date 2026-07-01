@@ -26,7 +26,11 @@ from app.domain.agent.service import AgentService, event_to_dict
 
 _IMAGE = os.environ.get("CHEESED_IMAGE", "cheesex-agent-sandbox:latest")
 _SHIM = str(Path(os.environ.get("CHEESED_SHIM", "./sandbox/claude-sbx")).resolve())
-_WORKSPACE = os.environ.get("CHEESED_WORKSPACE", "./.cheesed-workspaces")
+# Absolute: SBX_WORKTREE is a docker bind-mount source — a relative path makes
+# docker mount the wrong thing (the agent's writes then nest oddly).
+_WORKSPACE = str(
+    Path(os.environ.get("CHEESED_WORKSPACE", "./.cheesed-workspaces")).resolve()
+)
 
 _SANDBOX_TOOLS = [
     "Bash", "Read", "Write", "Edit", "Grep", "Glob",
@@ -100,6 +104,29 @@ async def run_turn(req: RunTurn) -> StreamingResponse:
             yield json.dumps(event_to_dict(event)) + "\n"
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
+@app.get("/files/{project_id}/{topic_id}")
+async def list_files(project_id: str, topic_id: str) -> dict:
+    """List the topic's node-local worktree files (R9 workspace read-back)."""
+    tree = Path(_WORKSPACE) / project_id / topic_id
+    files = []
+    if tree.is_dir():
+        for p in sorted(tree.rglob("*")):
+            if p.is_dir() or ".git" in p.parts or ".jj" in p.parts:
+                continue
+            files.append({"path": str(p.relative_to(tree)), "bytes": p.stat().st_size})
+    return {"data": files}
+
+
+@app.get("/file/{project_id}/{topic_id}")
+async def read_file(project_id: str, topic_id: str, path: str) -> dict:
+    """Read one node-local worktree file. Path is confined to the worktree."""
+    tree = (Path(_WORKSPACE) / project_id / topic_id).resolve()
+    target = (tree / path).resolve()
+    if not str(target).startswith(str(tree)) or not target.is_file():
+        return {"data": None}
+    return {"data": target.read_text(encoding="utf-8", errors="replace")}
 
 
 @app.post("/teardown/{topic_id}")
