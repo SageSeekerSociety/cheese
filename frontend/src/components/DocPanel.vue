@@ -62,15 +62,15 @@ const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
 // node-rendered editor (follow-up).
 const pulsing = ref(false)
 
-// Locate the editor blocks a turn produced, on demand. The node tree (GET /docs)
-// and the rendered ProseMirror blocks are in the same order (both derive from the
-// same doc), so a positional map connects turn_id → DOM element. We must NOT tag
-// those elements: ProseMirror's contentDOM is editable and guarded by a
-// MutationObserver that reverts any foreign attribute/class we add on the next
-// microtask. So instead we read positions here and highlight via an overlay that
-// lives outside the editable region (see highlightTurn). Retries a few frames
-// because tiptap commits its DOM asynchronously after setEditorMarkdown.
-async function blocksForTurn(turnId: string): Promise<HTMLElement[]> {
+// Align the doc-node tree (GET /docs) with the rendered ProseMirror blocks. Both
+// derive from the same doc in the same order, so a positional zip connects each
+// node (id, turn_id) to its DOM element. We must NOT tag those elements:
+// ProseMirror's contentDOM is editable and guarded by a MutationObserver that
+// reverts any foreign attribute/class we add on the next microtask — so callers
+// read positions from here and highlight via an overlay outside the editable
+// region instead. Retries a few frames because tiptap commits its DOM
+// asynchronously after setEditorMarkdown. Returns [] if the shapes never converge.
+async function alignedDocBlocks(): Promise<{ node: Block; el: HTMLElement }[]> {
   const tid = props.topic?.id
   if (!tid) return []
   let nodes: Block[]
@@ -81,37 +81,34 @@ async function blocksForTurn(turnId: string): Promise<HTMLElement[]> {
   }
   for (let attempt = 0; attempt < 20; attempt++) {
     await nextTick()
-    const blocks = Array.from(
+    const els = Array.from(
       document.querySelectorAll('.doc-editor .ProseMirror > *'),
     ) as HTMLElement[]
-    if (blocks.length === nodes.length) {
-      return blocks.filter((_, i) => nodes[i].turn_id === turnId)
+    if (els.length === nodes.length) {
+      return nodes.map((node, i) => ({ node, el: els[i] }))
     }
     await new Promise((r) => window.setTimeout(r, 100))
   }
   return []
 }
 
-// B1 Phase 2: highlight the exact paragraphs a turn produced. We draw transient
-// overlay rectangles positioned over the target blocks rather than styling the
-// blocks themselves — ProseMirror owns and defends its editable DOM, so any class
-// we add there is reverted instantly. Overlays live in `.doc-editor-wrap`
-// (position: relative) and never touch the editor. Falls back to a whole-doc
-// pulse when the turn's blocks can't be located.
-async function highlightTurn(turnId: string) {
-  const hit = await blocksForTurn(turnId)
+// Flash a set of editor blocks. We draw transient overlay rectangles positioned
+// over the targets rather than styling the blocks — ProseMirror owns and defends
+// its editable DOM, so any class we add there is reverted instantly. Overlays live
+// in `.doc-editor-wrap` (position: relative) and never touch the editor.
+async function flashBlocks(els: HTMLElement[]) {
   const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
-  if (hit.length === 0 || !wrap) {
+  if (els.length === 0 || !wrap) {
     pulse()
     return
   }
-  hit[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
-  // Position overlays relative to the wrap after the smooth-scroll settles enough
-  // to be visible; getBoundingClientRect is read once, so the flash is anchored to
-  // where the block is now (fine for a 1.4s cue).
+  els[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // Read positions after the smooth-scroll settles enough to be visible;
+  // getBoundingClientRect is read once, so the flash is anchored to where the
+  // block is now (fine for a ~1.5s cue).
   await nextTick()
   const wrapRect = wrap.getBoundingClientRect()
-  for (const el of hit) {
+  for (const el of els) {
     const r = el.getBoundingClientRect()
     const ov = document.createElement('div')
     ov.className = 'node-flash-overlay'
@@ -122,6 +119,19 @@ async function highlightTurn(turnId: string) {
     wrap.appendChild(ov)
     window.setTimeout(() => ov.remove(), 1500)
   }
+}
+
+// B1 Phase 2: highlight the exact paragraphs a turn produced. Falls back to a
+// whole-doc pulse (via flashBlocks) when the turn's blocks can't be located.
+async function highlightTurn(turnId: string) {
+  const aligned = await alignedDocBlocks()
+  await flashBlocks(aligned.filter((a) => a.node.turn_id === turnId).map((a) => a.el))
+}
+
+// B4: highlight the single paragraph a comment is anchored to (by doc-node id).
+async function highlightNode(nodeId: string) {
+  const aligned = await alignedDocBlocks()
+  await flashBlocks(aligned.filter((a) => a.node.id === nodeId).map((a) => a.el))
 }
 
 async function pulse() {
@@ -197,18 +207,45 @@ const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
 const toolLoading = ref(false)
 const toolError = ref<string | null>(null)
 
-// 评论 (B4): inline comments anchored to doc nodes.
+// 评论 (B4): inline comments anchored to doc nodes. anchorNodes lists the doc's
+// paragraphs so a comment can target one (reply_to = node id); the empty pick
+// means a whole-doc comment.
 const comments = ref<Block[]>([])
+const anchorNodes = ref<Block[]>([])
+const anchorId = ref<string | null>(null)
 const newComment = ref('')
 const commentBusy = ref(false)
+
+// A short label for a doc node, used in the anchor picker and comment chips. The
+// node's own content is either AI- or human-authored text; we only ever truncate
+// it for display (never to derive semantics), which is allowed.
+function nodeLabel(content: string): string {
+  const t = content.replace(/^#+\s*/, '').trim()
+  return t.length > 22 ? t.slice(0, 22) + '…' : t || '(空段落)'
+}
+const anchorOptions = computed(() => [
+  { id: null as string | null, label: '整篇文档' },
+  ...anchorNodes.value.map((n) => ({ id: n.id, label: nodeLabel(n.content) })),
+])
+// The paragraph a comment points at (or null for a whole-doc comment).
+function commentAnchor(c: Block): Block | null {
+  return c.reply_to ? anchorNodes.value.find((n) => n.id === c.reply_to) ?? null : null
+}
+
+async function loadComments(tid: string) {
+  const [cs, ns] = await Promise.all([getComments(tid), getDocNodes(tid)])
+  comments.value = cs.data
+  anchorNodes.value = ns.data
+}
+
 async function submitComment() {
   const tid = props.topic?.id
   const text = newComment.value.trim()
   if (!tid || !text) return
   commentBusy.value = true
   try {
-    await addComment(tid, text, AUTHOR)
-    comments.value = (await getComments(tid)).data
+    await addComment(tid, text, AUTHOR, anchorId.value ?? undefined)
+    await loadComments(tid)
     newComment.value = ''
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '评论失败'
@@ -280,7 +317,8 @@ async function loadTool(key: string) {
       const html = list.find((f) => f.path.toLowerCase().endsWith('.html'))
       previewFile.value = html ? await readFile(pid, html.path, tid) : null
     } else if (key === 'comments') {
-      comments.value = (await getComments(tid)).data
+      await loadComments(tid)
+      if (props.topic?.id !== tid) return
     }
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '加载失败'
@@ -799,8 +837,31 @@ onBeforeUnmount(() => {
               </div>
               <div v-for="c in comments" :key="c.id" class="comment-item mb-3">
                 <div class="text-caption c-muted mb-1">{{ c.author }}</div>
+                <!-- anchor chip: which paragraph this comment is on. Click to
+                     scroll + flash it in the doc (B4). -->
+                <button
+                  v-if="commentAnchor(c)"
+                  type="button"
+                  class="comment-anchor mb-1"
+                  @click="highlightNode(c.reply_to!)"
+                >
+                  <span class="mdi mdi-link-variant" />
+                  {{ nodeLabel(commentAnchor(c)!.content) }}
+                </button>
                 <div class="text-body-2">{{ c.content }}</div>
               </div>
+              <!-- anchor picker: target a specific paragraph, or the whole doc -->
+              <v-select
+                v-model="anchorId"
+                :items="anchorOptions"
+                item-title="label"
+                item-value="id"
+                label="评论对象"
+                variant="outlined"
+                density="compact"
+                hide-details
+                class="mt-2"
+              />
               <v-textarea
                 v-model="newComment"
                 placeholder="写条评论…"
@@ -972,6 +1033,30 @@ onBeforeUnmount(() => {
     box-shadow: 0 0 0 1px transparent;
   }
 }
+/* B4: a comment's anchor chip — click to flash the paragraph it targets. */
+.comment-anchor {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.09);
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s;
+}
+.comment-anchor:hover {
+  background: rgba(var(--v-theme-primary), 0.18);
+}
+.comment-item {
+  border-left: 2px solid rgba(var(--v-border-color), 0.4);
+  padding-left: 10px;
+}
+
 /* B1 Phase 2: a brief highlight when a chat action points at the doc. */
 .doc-pulse {
   animation: docPulse 1.2s ease-out;
