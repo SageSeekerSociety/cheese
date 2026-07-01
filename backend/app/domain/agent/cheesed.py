@@ -16,6 +16,7 @@ Run: uvicorn app.domain.agent.cheesed:app --port 8100
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -23,6 +24,28 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.domain.agent.service import AgentService, event_to_dict
+
+
+def _git(cwd: Path, *args: str) -> str:
+    """Run git in the node worktree; empty string on failure (best-effort)."""
+    try:
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+
+
+def _ensure_repo(worktree: Path) -> None:
+    """Make the node worktree a git repo with a baseline commit, so a turn's
+    edits are diffable (mirrors the backend's local worktree, R9)."""
+    if (worktree / ".git").exists():
+        return
+    _git(worktree, "init", "-q")
+    _git(worktree, "config", "user.email", "cheese@zhishi.local")
+    _git(worktree, "config", "user.name", "芝士")
+    _git(worktree, "commit", "-q", "--allow-empty", "-m", "baseline")
 
 _IMAGE = os.environ.get("CHEESED_IMAGE", "cheesex-agent-sandbox:latest")
 _SHIM = str(Path(os.environ.get("CHEESED_SHIM", "./sandbox/claude-sbx")).resolve())
@@ -65,6 +88,7 @@ async def health() -> dict:
 async def run_turn(req: RunTurn) -> StreamingResponse:
     node_ws = Path(_WORKSPACE) / req.project_id / req.topic_id
     node_ws.mkdir(parents=True, exist_ok=True)
+    _ensure_repo(node_ws)
     session_dir = Path(_WORKSPACE) / req.project_id / f"{req.topic_id}.session"
     session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -127,6 +151,45 @@ async def read_file(project_id: str, topic_id: str, path: str) -> dict:
     if not str(target).startswith(str(tree)) or not target.is_file():
         return {"data": None}
     return {"data": target.read_text(encoding="utf-8", errors="replace")}
+
+
+@app.post("/checkpoint/{project_id}/{topic_id}")
+async def checkpoint(project_id: str, topic_id: str) -> dict:
+    """Commit the agent's edits this turn on the node, so /git/log + /git/diff
+    show history (R9). Best-effort."""
+    tree = Path(_WORKSPACE) / project_id / topic_id
+    if tree.is_dir():
+        _ensure_repo(tree)
+        _git(tree, "add", "-A")
+        _git(tree, "commit", "-q", "-m", "turn")
+    return {"ok": True}
+
+
+@app.get("/git/log/{project_id}/{topic_id}")
+async def git_log(project_id: str, topic_id: str, limit: int = 50) -> dict:
+    tree = Path(_WORKSPACE) / project_id / topic_id
+    rows = []
+    if tree.is_dir() and _git(tree, "rev-list", "-n", "1", "--all").strip():
+        out = _git(tree, "log", f"-{limit}", "--pretty=format:%h\t%an\t%s")
+        for line in out.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) == 3:
+                rows.append(
+                    {"hash": parts[0], "author": parts[1], "message": parts[2]}
+                )
+    return {"data": rows}
+
+
+@app.get("/git/diff/{project_id}/{topic_id}")
+async def git_diff(project_id: str, topic_id: str) -> dict:
+    tree = Path(_WORKSPACE) / project_id / topic_id
+    diff = ""
+    if tree.is_dir():
+        if _git(tree, "rev-list", "-n", "1", "--all").strip():
+            diff = _git(tree, "show", "HEAD")
+        else:
+            diff = _git(tree, "diff")
+    return {"data": diff}
 
 
 @app.post("/teardown/{topic_id}")

@@ -240,9 +240,14 @@ class RemoteCheesedProvider:
                         yield event_from_dict(json.loads(line))
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        # The worktree lives on the node; syncing its git refs back (materialize/
-        # fetch_refs) is the R9 workspace-lifecycle follow-up.
-        return
+        # Commit the turn's edits ON THE NODE so /git/log + /git/diff have history.
+        # Best-effort; never fail the turn (runs after streaming, not in the path).
+        try:
+            httpx.post(
+                f"{self._url}/checkpoint/{project_id}/{topic_id}", timeout=15
+            )
+        except httpx.HTTPError:
+            pass
 
 
 class ComputePool:
