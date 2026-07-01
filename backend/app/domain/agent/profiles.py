@@ -28,11 +28,15 @@ class AgentProfile:
     base_url: str | None
     auth_token: str | None
     haiku_model: str | None = None
+    # Subscription OAuth token (from `claude setup-token`). When set, the CLI runs
+    # on the subscription seat instead of an API key — see config.claude_oauth_token.
+    oauth_token: str | None = None
 
     @property
     def available(self) -> bool:
-        """A profile is selectable only if it has provider credentials."""
-        return bool(self.auth_token)
+        """A profile is selectable only if it has provider credentials — either an
+        API auth token or a subscription OAuth token."""
+        return bool(self.auth_token or self.oauth_token)
 
     def full_env(self) -> dict[str, str]:
         """Provider env for the `claude` CLI/SDK. Replaces (not merges) the
@@ -41,7 +45,11 @@ class AgentProfile:
         env: dict[str, str] = {}
         if self.base_url:
             env["ANTHROPIC_BASE_URL"] = self.base_url
-        if self.auth_token:
+        if self.oauth_token:
+            # Subscription (走订阅): OAuth token drives auth; do NOT also set an
+            # ANTHROPIC_AUTH_TOKEN (that would switch the CLI to API-key mode).
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = self.oauth_token
+        elif self.auth_token:
             env["ANTHROPIC_AUTH_TOKEN"] = self.auth_token
         if self.haiku_model:
             env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = self.haiku_model
@@ -147,6 +155,7 @@ def build_registry(settings) -> ProfileRegistry:  # type: ignore[no-untyped-def]
         base_url=settings.claude_base_url,
         auth_token=settings.claude_auth_token,
         haiku_model=settings.claude_model,
+        oauth_token=settings.claude_oauth_token,
     )
     return ProfileRegistry(
         [default, claude],

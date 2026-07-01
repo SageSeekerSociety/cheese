@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     claude_model: str = "claude-opus-4-8"
     claude_base_url: str | None = None
     claude_auth_token: str | None = None
+    # Subscription auth (走订阅): a long-lived OAuth token from `claude setup-token`
+    # (a personal Max/Pro seat — ToS-compliant for dogfooding). Preferred over an
+    # API key; when set, the sandbox `claude` runs on the subscription, not pay-
+    # per-use API credits. Injected as CLAUDE_CODE_OAUTH_TOKEN.
+    claude_oauth_token: str | None = None
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
