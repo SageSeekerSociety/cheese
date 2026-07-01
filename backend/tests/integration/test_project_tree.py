@@ -131,6 +131,41 @@ def test_upgrade_block_to_topic(client):
     assert r2.json()["data"]["id"] == new_topic["id"]
 
 
+def test_upgrade_doc_node_to_subtopic(client):
+    # 自上而下拆解 (eval A2): a paragraph in the parent doc is upgraded into a
+    # nested subtopic, and the node stays in place as a live-ref (its
+    # upgraded_to_topic_id points at the new subtopic).
+    p = _project(client)
+    topic = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "推荐系统"}
+    ).json()["data"]
+    # A doc with a 拆解 section; each line becomes a doc node.
+    client.put(
+        f"/api/topics/{topic['id']}/doc",
+        json={
+            "content": "## 拆解\n\n数据清洗\n\n特征工程\n\n模型训练",
+            "author": "user-1",
+        },
+    )
+    nodes = client.get(f"/api/topics/{topic['id']}/docs").json()["data"]["data"]
+    target = next(n for n in nodes if n["content"] == "特征工程")
+    assert target["upgraded_to_topic_id"] is None
+
+    r = client.post(
+        f"/api/blocks/{target['id']}/upgrade", json={"created_by": "user-1"}
+    )
+    assert r.status_code == 200
+    sub = r.json()["data"]
+    assert sub["parent_id"] == topic["id"]
+    assert sub["kind"] == "subtopic"
+
+    # The doc node is now a live-ref to the subtopic, in place.
+    nodes2 = client.get(f"/api/topics/{topic['id']}/docs").json()["data"]["data"]
+    ref = next(n for n in nodes2 if n["id"] == target["id"])
+    assert ref["upgraded_to_topic_id"] == sub["id"]
+    assert ref["content"] == "特征工程"  # text unchanged; only the link is added
+
+
 def test_archived_topic_is_frozen(client):
     # 归档后工作面冻结 (spec §6.3): no split, no doc edit on an archived topic.
     p = _project(client)

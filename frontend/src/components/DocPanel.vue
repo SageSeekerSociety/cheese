@@ -21,6 +21,7 @@ import {
   listFiles,
   putDoc,
   readFile,
+  upgradeBlock,
 } from '../api'
 import type {
   Block,
@@ -49,12 +50,21 @@ const props = withDefaults(
     worklog?: string[]
     // 专注模式 (spec §7.1): the doc spans the whole workspace (chat hidden).
     focus?: boolean
+    // Project topics (A2): resolve a doc node's upgraded_to_topic_id to the
+    // subtopic's title + live status for the in-place live-ref badge.
+    topicList?: Topic[]
   }>(),
-  { worklog: () => [], focus: false },
+  { worklog: () => [], focus: false, topicList: () => [] },
 )
 
 // 专注模式 toggle is owned by the parent (it hides the chat pane); we just ask.
-const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
+// open-topic (A2): a doc live-ref chip was clicked — the parent navigates to the
+// subtopic. topics-changed: a split created a subtopic — refresh the sidebar.
+const emit = defineEmits<{
+  (e: 'toggle-focus'): void
+  (e: 'open-topic', topicId: string): void
+  (e: 'topics-changed'): void
+}>()
 
 // B1 Phase 2 (cross-view link, panel-level): when a chat action that changed the
 // doc is clicked, flash the document + scroll it into view — connecting the
@@ -132,6 +142,96 @@ async function highlightTurn(turnId: string) {
 async function highlightNode(nodeId: string) {
   const aligned = await alignedDocBlocks()
   await flashBlocks(aligned.filter((a) => a.node.id === nodeId).map((a) => a.el))
+}
+
+// --- A2 自上而下拆解: a doc paragraph becomes a nested subtopic, and stays in
+// place as a live-ref that shows the subtopic's live status. Same positional
+// overlay technique as the highlight — we anchor a badge beside the paragraph
+// without mutating ProseMirror's DOM. ---
+interface LiveRef {
+  nodeId: string
+  topicId: string
+  top: number
+  title: string
+  status: string
+}
+const liveRefs = ref<LiveRef[]>([])
+
+const STATUS_LABEL: Record<string, string> = {
+  open: '进行中',
+  in_progress: '进行中',
+  active: '进行中',
+  draft: '草稿',
+  archived: '已完成',
+  completed: '已完成',
+}
+function statusLabel(s: string): string {
+  return STATUS_LABEL[s] ?? s
+}
+
+// Recompute the live-ref badge positions from the current doc render. Called after
+// (re)loads and on AI activity, so a badge tracks its paragraph and its status
+// stays fresh. Positions are relative to .doc-editor-wrap, which scrolls with the
+// content — so no scroll listener is needed.
+async function positionLiveRefs() {
+  const aligned = await alignedDocBlocks()
+  const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
+  if (!wrap) {
+    liveRefs.value = []
+    return
+  }
+  const wrapRect = wrap.getBoundingClientRect()
+  liveRefs.value = aligned
+    .filter((a) => a.node.upgraded_to_topic_id)
+    .map((a) => {
+      const sub = props.topicList.find(
+        (t) => t.id === a.node.upgraded_to_topic_id,
+      )
+      return {
+        nodeId: a.node.id,
+        topicId: a.node.upgraded_to_topic_id as string,
+        top: a.el.getBoundingClientRect().top - wrapRect.top,
+        title: sub?.title ?? '子话题',
+        status: sub?.status ?? '',
+      }
+    })
+}
+
+// "单独实现" on a doc block (A2): upgrade that paragraph's node into a nested
+// subtopic. The node keeps its text and gains a live-ref link; we open the new
+// subtopic and ask the parent to refresh the sidebar.
+const splitBusy = ref(false)
+async function splitNodeToSubtopic() {
+  const ed = editor.value
+  const tid = props.topic?.id
+  if (!ed || !tid || hoverPos.value == null || splitBusy.value) return
+  // The server node list must line up with what's on screen; unsaved edits would
+  // desync the positional map, so require a clean doc first.
+  if (dirty.value) {
+    errorMsg.value = '请先保存文档，再拆解段落'
+    return
+  }
+  // Map the hovered ProseMirror position → the top-level child index.
+  let index = -1
+  ed.state.doc.forEach((_node, offset, i) => {
+    if (offset === hoverPos.value) index = i
+  })
+  if (index < 0 || index !== Math.round(index)) return
+  splitBusy.value = true
+  try {
+    const nodes = (await getDocNodes(tid)).data
+    if (index >= nodes.length || nodes.length !== ed.state.doc.childCount) {
+      errorMsg.value = '文档结构已变化，请重试'
+      return
+    }
+    const sub = await upgradeBlock(nodes[index].id, AUTHOR)
+    emit('topics-changed')
+    emit('open-topic', sub.id)
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '拆解失败'
+  } finally {
+    splitBusy.value = false
+  }
 }
 
 async function pulse() {
@@ -459,6 +559,7 @@ async function loadDoc(topicId: string) {
     setEditorMarkdown(md)
     dirty.value = false
     savedAt.value = null
+    positionLiveRefs() // A2: place in-place subtopic badges for the new doc
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载文档失败'
   } finally {
@@ -479,6 +580,7 @@ async function reloadFromActivity(topicId: string) {
       setEditorMarkdown(md)
       savedAt.value = null
     }
+    positionLiveRefs() // A2: refresh subtopic badges + their live status
   } catch {
     // Silent: activity-driven refresh is best-effort.
   }
@@ -542,7 +644,24 @@ watch(
   },
 )
 
+// A2: when the sidebar's topics change (a subtopic's status moved, or a new one
+// was spawned), refresh the badges' titles/status without a full doc reload.
+watch(
+  () => props.topicList,
+  () => {
+    if (props.topic?.id) positionLiveRefs()
+  },
+  { deep: true },
+)
+
+// Keep badge positions correct when the panel is resized.
+function onResize() {
+  if (props.topic?.id) positionLiveRefs()
+}
+if (typeof window !== 'undefined') window.addEventListener('resize', onResize)
+
 onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') window.removeEventListener('resize', onResize)
   editor.value?.destroy()
 })
 </script>
@@ -632,14 +751,41 @@ onBeforeUnmount(() => {
           <h1 class="doc-page__title">{{ topic.title }}</h1>
           <div class="doc-editor-wrap">
             <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
-            <!-- Real block handles: ⠿ drags to reorder, ＋ inserts a block below.
-                 Only in edit mode. -->
+            <!-- A2 in-place live-refs: a badge beside any paragraph that was
+                 upgraded into a subtopic, showing its live status. Click to open
+                 the subtopic. Positioned over the doc without touching the editor. -->
+            <button
+              v-for="lr in liveRefs"
+              :key="lr.nodeId"
+              type="button"
+              class="doc-liveref"
+              :style="{ top: `${lr.top}px` }"
+              :title="`子话题「${lr.title}」· ${statusLabel(lr.status)} — 点击打开`"
+              @click="emit('open-topic', lr.topicId)"
+            >
+              <span class="doc-liveref__dot" :class="`is-${lr.status}`" />
+              🧩 {{ lr.title }}
+              <span class="doc-liveref__status">{{ statusLabel(lr.status) }}</span>
+            </button>
+            <!-- Real block handles: 🧩 splits the block into a subtopic, ⠿ drags to
+                 reorder, ＋ inserts a block below. Only in edit mode. -->
             <DragHandle
               v-if="editor && editable"
               :editor="editor"
               :on-node-change="onDocNodeChange"
               class="doc-handle"
             >
+              <button
+                type="button"
+                class="doc-handle__btn doc-handle__split"
+                title="单独实现（拆成子话题）"
+                draggable="false"
+                :disabled="splitBusy"
+                @dragstart.stop.prevent
+                @click="splitNodeToSubtopic"
+              >
+                🧩
+              </button>
               <button
                 type="button"
                 class="doc-handle__btn doc-handle__add"
@@ -1338,6 +1484,60 @@ onBeforeUnmount(() => {
 .doc-handle__add {
   cursor: pointer;
   font-size: 18px;
+}
+.doc-handle__split {
+  cursor: pointer;
+  font-size: 13px;
+}
+.doc-handle__split:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* A2: in-place live-ref badge — a subtopic spawned from this paragraph. Sits at
+   the right edge of the doc column, anchored to the paragraph's vertical
+   position; scrolls with the content (it lives inside .doc-editor-wrap). */
+.doc-liveref {
+  position: absolute;
+  right: -6px;
+  transform: translateY(-2px);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  padding: 2px 9px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: rgb(var(--v-theme-primary));
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-primary), 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.doc-liveref:hover {
+  background: rgba(var(--v-theme-primary), 0.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.doc-liveref__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: #f5a623; /* 进行中 default (amber) */
+}
+.doc-liveref__dot.is-archived,
+.doc-liveref__dot.is-completed {
+  background: #35b37e; /* 已完成 (green) */
+}
+.doc-liveref__status {
+  color: var(--muted);
+  font-size: 0.66rem;
 }
 .doc-handle__grip {
   cursor: grab;

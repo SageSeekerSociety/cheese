@@ -818,7 +818,10 @@ onMounted(async () => {
           :activity-tick="activityTick"
           :worklog="worklog"
           :focus="focusMode"
+          :topic-list="topics"
           @toggle-focus="focusMode = !focusMode"
+          @open-topic="selectTopic"
+          @topics-changed="refreshTopics"
         />
       </div>
 
