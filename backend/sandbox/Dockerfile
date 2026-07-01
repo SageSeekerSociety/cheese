@@ -2,9 +2,20 @@
 # tools jailed to this container. jj (colocated git) auto-snapshots edits.
 FROM node:22-bookworm-slim
 
+# Universal toolchain (the shared base, like Codex's `universal` image): package
+# managers + build tools every project tends to need. Project-specific deps get
+# layered on top (uv sync / npm ci) — see cheesex-dev.Dockerfile.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates curl xz-utils python3 python3-pip \
+      build-essential pkg-config ripgrep jq less unzip \
+      postgresql-client libpq-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# uv — Python package/env manager (symmetric to npm). Installed from PyPI (the
+# uv wheel bundles the binary) — reliable through the proxy, unlike ghcr. uv
+# fetches its own Python (base OS python3 is 3.11, cheesex needs >=3.13 — uv
+# resolves that regardless of the base).
+RUN pip3 install --no-cache-dir --break-system-packages uv && uv --version
 
 # jujutsu (jj) — auto-snapshotting VCS, git-compatible
 ARG JJ_VERSION=0.42.0
