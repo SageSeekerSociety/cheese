@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, watch, type Ref } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '../components/ChatPanel.vue'
 import DocPanel from '../components/DocPanel.vue'
@@ -42,7 +42,10 @@ try {
 // 专注模式 (spec §7.1): hide the chat column so the document spans the whole
 // workspace. Session-only (intentionally not persisted — it's a transient mode).
 const focusMode = ref(false)
-const docRef = ref<{ pulse: () => void } | null>(null)
+const docRef = ref<{
+  pulse: () => void
+  highlightTurn: (turnId: string) => void
+} | null>(null)
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 watch([railWidth, chatPct], () => {
   localStorage.setItem(
@@ -406,7 +409,7 @@ function handleStateChanged(resource: string) {
 }
 
 // An action card's button → open the relevant view (§3.1.1 控件).
-function handleOpenResource(resource: string) {
+async function handleOpenResource(resource: string, turnId?: string) {
   const pid = selectedProjectId.value
   if (!pid) return
   if (resource === 'decision') {
@@ -416,9 +419,14 @@ function handleOpenResource(resource: string) {
   } else if (resource === 'accept') {
     loadAcceptCard()
   } else if (resource === 'doc') {
-    // B1 Phase 2: flash the living doc so the chat action links to the state.
+    // B1 Phase 2: highlight the exact paragraphs this turn changed (falls back to
+    // a whole-doc pulse when the turn's blocks aren't tagged). Leaving focus mode
+    // re-renders the editor, which recreates its DOM — wait for that render to
+    // settle before highlightTurn tags + flashes, or the flash is wiped instantly.
     focusMode.value = false
-    docRef.value?.pulse()
+    await nextTick()
+    if (turnId) docRef.value?.highlightTurn(turnId)
+    else docRef.value?.pulse()
   }
   // topics: the topic panel is already in view next to the chat.
 }

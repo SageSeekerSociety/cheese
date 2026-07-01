@@ -12,6 +12,7 @@ import {
   addComment,
   getComments,
   getDoc,
+  getDocNodes,
   getGitDiff,
   getGitLog,
   getProjectUsage,
@@ -60,10 +61,71 @@ const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
 // process (conversation) to the state (doc). Paragraph-level anchoring needs the
 // node-rendered editor (follow-up).
 const pulsing = ref(false)
+
+// Locate the editor blocks a turn produced, on demand. The node tree (GET /docs)
+// and the rendered ProseMirror blocks are in the same order (both derive from the
+// same doc), so a positional map connects turn_id → DOM element. We must NOT tag
+// those elements: ProseMirror's contentDOM is editable and guarded by a
+// MutationObserver that reverts any foreign attribute/class we add on the next
+// microtask. So instead we read positions here and highlight via an overlay that
+// lives outside the editable region (see highlightTurn). Retries a few frames
+// because tiptap commits its DOM asynchronously after setEditorMarkdown.
+async function blocksForTurn(turnId: string): Promise<HTMLElement[]> {
+  const tid = props.topic?.id
+  if (!tid) return []
+  let nodes: Block[]
+  try {
+    nodes = (await getDocNodes(tid)).data
+  } catch {
+    return []
+  }
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await nextTick()
+    const blocks = Array.from(
+      document.querySelectorAll('.doc-editor .ProseMirror > *'),
+    ) as HTMLElement[]
+    if (blocks.length === nodes.length) {
+      return blocks.filter((_, i) => nodes[i].turn_id === turnId)
+    }
+    await new Promise((r) => window.setTimeout(r, 100))
+  }
+  return []
+}
+
+// B1 Phase 2: highlight the exact paragraphs a turn produced. We draw transient
+// overlay rectangles positioned over the target blocks rather than styling the
+// blocks themselves — ProseMirror owns and defends its editable DOM, so any class
+// we add there is reverted instantly. Overlays live in `.doc-editor-wrap`
+// (position: relative) and never touch the editor. Falls back to a whole-doc
+// pulse when the turn's blocks can't be located.
+async function highlightTurn(turnId: string) {
+  const hit = await blocksForTurn(turnId)
+  const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
+  if (hit.length === 0 || !wrap) {
+    pulse()
+    return
+  }
+  hit[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // Position overlays relative to the wrap after the smooth-scroll settles enough
+  // to be visible; getBoundingClientRect is read once, so the flash is anchored to
+  // where the block is now (fine for a 1.4s cue).
+  await nextTick()
+  const wrapRect = wrap.getBoundingClientRect()
+  for (const el of hit) {
+    const r = el.getBoundingClientRect()
+    const ov = document.createElement('div')
+    ov.className = 'node-flash-overlay'
+    ov.style.top = `${r.top - wrapRect.top}px`
+    ov.style.left = `${r.left - wrapRect.left}px`
+    ov.style.width = `${r.width}px`
+    ov.style.height = `${r.height}px`
+    wrap.appendChild(ov)
+    window.setTimeout(() => ov.remove(), 1500)
+  }
+}
+
 async function pulse() {
-  document
-    .querySelector('.doc-body')
-    ?.scrollTo({ top: 0, behavior: 'smooth' })
+  document.querySelector('.doc-body')?.scrollTo({ top: 0, behavior: 'smooth' })
   pulsing.value = false
   await nextTick()
   pulsing.value = true
@@ -71,7 +133,7 @@ async function pulse() {
     pulsing.value = false
   }, 1200)
 }
-defineExpose({ pulse })
+defineExpose({ pulse, highlightTurn })
 
 // ---- 按需打开的工具 (spec §7.1): slide-out tool drawer ----
 interface ToolDef {
@@ -885,6 +947,30 @@ onBeforeUnmount(() => {
   color: rgba(var(--v-theme-on-surface), 0.4);
   pointer-events: none;
   margin: 0;
+}
+/* B1 Phase 2: flash the exact paragraph(s) a turn produced. Rendered as an
+   overlay (not a class on the paragraph) because ProseMirror reverts foreign
+   mutations to its editable DOM. `:deep` because these divs are created
+   imperatively inside the (scoped) .doc-editor-wrap. */
+.doc-editor-wrap :deep(.node-flash-overlay) {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  border-radius: 5px;
+  margin: -3px -8px;
+  padding: 3px 8px;
+  box-sizing: content-box;
+  animation: nodeFlash 1.5s ease-out forwards;
+}
+@keyframes nodeFlash {
+  0% {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 1px transparent;
+  }
 }
 /* B1 Phase 2: a brief highlight when a chat action points at the doc. */
 .doc-pulse {

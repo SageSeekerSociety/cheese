@@ -34,6 +34,9 @@ export interface Block {
   // live link an upgraded block points to.
   reply_to?: string | null
   struct_parent?: string | null
+  node_type?: string | null
+  struct_order?: number | null
+  turn_id?: string | null
   refs?: string[]
   upgraded_to_topic_id?: string | null
   created_at: string

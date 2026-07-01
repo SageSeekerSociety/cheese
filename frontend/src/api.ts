@@ -210,6 +210,15 @@ export function putDoc(
   })
 }
 
+// B1: the living doc's structured node tree (heading/paragraph/list/…), in order.
+// Each node has a stable id + the turn_id that produced it — used for cross-view
+// highlight (B1 P2) and comment anchoring (B4).
+export function getDocNodes(
+  topicId: string,
+): Promise<{ data: Block[]; total: number }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/docs`)
+}
+
 // 段落评论 (eval B4): inline comments, each anchored to a doc node via reply_to.
 export function getComments(
   topicId: string,

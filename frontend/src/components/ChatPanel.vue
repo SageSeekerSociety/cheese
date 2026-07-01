@@ -108,7 +108,7 @@ const emit = defineEmits<{
   // topic/doc → open that topic).
   (e: 'mention-click', name: string): void
   // An action card's button (decision → decisions page, milestone → calendar…).
-  (e: 'open-resource', resource: string): void
+  (e: 'open-resource', resource: string, turnId?: string): void
 }>()
 
 const AUTHOR = 'user-1'
@@ -587,7 +587,9 @@ onBeforeUnmount(() => {
               size="x-small"
               variant="tonal"
               color="primary"
-              @click="emit('open-resource', actionResource(m)!)"
+              @click="
+                emit('open-resource', actionResource(m)!, m.turn_id ?? undefined)
+              "
             >
               {{ ACTION_META[actionResource(m)!].btn }}
             </v-btn>
