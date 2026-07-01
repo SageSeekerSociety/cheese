@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     # container (native Bash/Read/Write jailed there) via the cli_path shim, and
     # platform actions go through the `cheese` CLI → REST. Requires Docker.
     agent_sandbox_enabled: bool = False
+    # Compute plane (design v3 ComputePool): "local" runs turns in a local Docker
+    # sandbox; "remote" ships each turn to a cheesed node at cheesed_url. The node's
+    # container calls cheese back to cheesed_cheese_api (the backend's address that's
+    # reachable FROM the node — host.docker.internal works when the node is local).
+    compute_provider: str = "local"
+    cheesed_url: str = "http://localhost:8100"
+    cheesed_cheese_api: str = "http://host.docker.internal:8099/api"
     sandbox_image: str = "cheesex-agent-sandbox:latest"
     sandbox_shim: str = "./sandbox/claude-sbx"
     # Base URL the in-container `cheese` CLI calls back to (host → backend).

@@ -8,6 +8,7 @@ from fastapi import Depends
 from app.core.config import settings
 from app.core.db import async_session_factory, get_db
 from app.domain.agent.chat import ChatService
+from app.domain.agent.compute import build_compute_pool
 from app.domain.agent.profiles import ProfileRegistry, build_registry
 from app.domain.agent.runtime import InProcessBroker, TurnRunner
 from app.domain.agent.service import AgentService
@@ -38,6 +39,7 @@ def get_chat_service() -> ChatService:
         workspace_root=settings.workspace_root,
         sandbox_enabled=settings.agent_sandbox_enabled,
         profiles=get_profile_registry(),
+        compute=build_compute_pool(agent),
     )
 
 

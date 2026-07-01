@@ -266,13 +266,15 @@ class ChatService:
         workspace_root: str,
         sandbox_enabled: bool = False,
         profiles: ProfileRegistry | None = None,
+        compute: ComputePool | None = None,
     ):
         self._sessions = session_factory
         self._base_prompt = base_system_prompt
         # Compute side of the two-pool model: a provider owns sandbox creation +
         # turn execution + workspace checkpointing (design §3/v3, review R2). The
-        # turn path talks to the pool, never to a sandbox dict.
-        self._compute = ComputePool.local(
+        # turn path talks to the pool, never to a sandbox dict. Defaults to a local
+        # Docker pool; deps injects a remote pool when configured.
+        self._compute = compute or ComputePool.local(
             agent=agent,
             workspace_root=workspace_root,
             sandbox_enabled=sandbox_enabled,

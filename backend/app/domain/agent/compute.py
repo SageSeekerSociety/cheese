@@ -14,14 +14,21 @@ two methods by relocating execution to a cheesed node and relaying the event
 stream + git refs back.
 """
 
+import json
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Protocol
 
+import httpx
+
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.service import AgentEvent, AgentService
+from app.domain.agent.service import (
+    AgentEvent,
+    AgentService,
+    event_from_dict,
+)
 from app.domain.workspace import service as ws
 
 # Author handle for 芝士's cheese-CLI callbacks (kept here to avoid importing
@@ -176,6 +183,68 @@ class LocalDockerProvider:
             pass
 
 
+class RemoteCheesedProvider:
+    """Runs a turn on a remote cheesed node (design v2 R2/§5). Ships the request to
+    the node's daemon and relays the AgentEvent stream back over NDJSON. The node's
+    container calls cheese back to `cheese_api` with the per-turn scoped token the
+    backend mints here — so execution runs anywhere while the platform stays the
+    source of truth and the signing secret never leaves the backend."""
+
+    name = "remote-cheesed"
+
+    def __init__(self, *, cheesed_url: str, cheese_api: str):
+        self._url = cheesed_url.rstrip("/")
+        self._cheese_api = cheese_api
+
+    def available(self) -> bool:
+        return True
+
+    async def run_turn(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID | None,
+        prompt: str,
+        system_prompt: str,
+        resume_session_id: str | None,
+        model: str | None = None,
+        env: dict[str, str] | None = None,
+        memory_scope: str | None = None,
+        owner: str | None = None,
+        turn_id: uuid.UUID | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        body = {
+            "project_id": str(project_id),
+            "topic_id": str(topic_id),
+            "prompt": prompt,
+            "system_prompt": system_prompt,
+            "resume_session_id": resume_session_id,
+            "model": model or settings.agent_model,
+            "env": env or {},
+            "cheese_api": self._cheese_api,
+            # Minted here (backend holds the signing secret); the node only relays it.
+            "cheese_token": mint_scoped_token(
+                project_id=str(project_id), topic_id=str(topic_id)
+            ),
+            "turn_id": str(turn_id) if turn_id else None,
+            "memory_scope": memory_scope,
+            "owner": owner,
+        }
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST", f"{self._url}/run-turn", json=body
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line.strip():
+                        yield event_from_dict(json.loads(line))
+
+    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        # The worktree lives on the node; syncing its git refs back (materialize/
+        # fetch_refs) is the R9 workspace-lifecycle follow-up.
+        return
+
+
 class ComputePool:
     """A pool of compute providers + per-turn selection (design §3 / v3).
 
@@ -202,8 +271,27 @@ class ComputePool:
     def default(self) -> ComputeProvider:
         return self._providers[self._default_name]
 
+    @classmethod
+    def remote(cls, *, cheesed_url: str, cheese_api: str) -> "ComputePool":
+        provider = RemoteCheesedProvider(cheesed_url=cheesed_url, cheese_api=cheese_api)
+        return cls([provider], provider.name)
+
     def select(self, *, env_spec: dict | None = None) -> ComputeProvider:
         """Pick a provider for this turn. Single-provider today → the default
         (always available); caps/quota/queue routing arrives with more providers
         (design §3 pick_provider, v2 R9)."""
         return self.default()
+
+
+def build_compute_pool(agent: AgentService) -> ComputePool:
+    """Build the ComputePool from settings (design v3): local Docker by default,
+    or a remote cheesed node when compute_provider='remote'."""
+    if settings.compute_provider == "remote":
+        return ComputePool.remote(
+            cheesed_url=settings.cheesed_url, cheese_api=settings.cheesed_cheese_api
+        )
+    return ComputePool.local(
+        agent=agent,
+        workspace_root=settings.workspace_root,
+        sandbox_enabled=settings.agent_sandbox_enabled,
+    )

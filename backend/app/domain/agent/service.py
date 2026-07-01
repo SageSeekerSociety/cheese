@@ -74,6 +74,43 @@ class AgentResult:
 AgentEvent = AgentDelta | AgentToolUse | AgentResult
 
 
+def event_to_dict(event: AgentEvent) -> dict:
+    """Serialize an AgentEvent for the wire (backend ⇄ cheesed node, design v2 R2)."""
+    if isinstance(event, AgentDelta):
+        return {"t": "delta", "text": event.text}
+    if isinstance(event, AgentToolUse):
+        return {"t": "tool", "name": event.name, "input": event.input}
+    usage = event.usage
+    return {
+        "t": "result",
+        "text": event.text,
+        "session_id": event.session_id,
+        "usage": None
+        if usage is None
+        else {
+            "model": usage.model,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "cost_usd": usage.cost_usd,
+        },
+    }
+
+
+def event_from_dict(d: dict) -> AgentEvent:
+    """Inverse of event_to_dict."""
+    kind = d.get("t")
+    if kind == "delta":
+        return AgentDelta(text=d.get("text", ""))
+    if kind == "tool":
+        return AgentToolUse(name=d.get("name", ""), input=d.get("input") or {})
+    u = d.get("usage")
+    return AgentResult(
+        text=d.get("text", ""),
+        session_id=d.get("session_id"),
+        usage=None if u is None else AgentUsage(**u),
+    )
+
+
 def _extract_text_delta(event: dict) -> str | None:
     """Pull text from an Anthropic streaming event dict, if present."""
     if event.get("type") != "content_block_delta":
