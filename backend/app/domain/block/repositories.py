@@ -28,6 +28,7 @@ class BlockRepository:
         node_type: str | None = None,
         struct_order: float | None = None,
         turn_id: uuid.UUID | None = None,
+        anchor_quote: str | None = None,
     ) -> Block:
         # Cheese-side handlers don't pass turn_id explicitly; fall back to the
         # ambient turn id set from the X-Cheese-Turn header (R4).
@@ -46,6 +47,7 @@ class BlockRepository:
             node_type=node_type,
             struct_order=struct_order,
             turn_id=turn_id,
+            anchor_quote=anchor_quote,
         )
         self._session.add(block)
         await self._session.flush()

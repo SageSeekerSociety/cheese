@@ -231,10 +231,11 @@ export function addComment(
   content: string,
   author: string,
   anchor?: string,
+  quote?: string,
 ): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(topicId)}/comments`, {
     method: 'POST',
-    body: JSON.stringify({ content, author, anchor }),
+    body: JSON.stringify({ content, author, anchor, quote }),
   })
 }
 

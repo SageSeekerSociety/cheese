@@ -130,6 +130,11 @@ async def add_comment(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
         if node is None or node.topic_id != topic_id:
             raise ValidationError("锚点不是本话题的文档块")
         reply_to = node.id
+    # B4 Feishu-style: the exact selected span, kept for display next to the
+    # comment. Bounded so a runaway selection can't bloat the row.
+    quote = (body.get("quote") or "").strip() or None
+    if quote and len(quote) > 500:
+        quote = quote[:500]
     comment = await repo.add(
         project_id=topic.project_id,
         topic_id=topic_id,
@@ -138,6 +143,7 @@ async def add_comment(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
         content=content,
         kind=BlockKind.comment,
         reply_to=reply_to,
+        anchor_quote=quote,
     )
     return ok(BlockOut.model_validate(comment).model_dump(mode="json"))
 

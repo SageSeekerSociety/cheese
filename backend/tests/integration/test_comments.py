@@ -35,6 +35,32 @@ def test_comment_anchors_to_doc_node_and_is_not_in_timeline(client):
     assert not any(b["kind"] == "comment" for b in blocks)
 
 
+def test_comment_stores_selected_quote(client):
+    # B4 Feishu-style: a comment made on a text selection keeps the quoted span.
+    tid = _topic(client)
+    client.put(
+        f"/api/topics/{tid}/doc",
+        json={"content": "# 目标\n\n做一个课程推荐系统", "author": "u"},
+    )
+    nodes = client.get(f"/api/topics/{tid}/docs").json()["data"]["data"]
+    anchor = nodes[1]["id"]  # the paragraph node
+    r = client.post(
+        f"/api/topics/{tid}/comments",
+        json={
+            "anchor": anchor,
+            "quote": "课程推荐系统",
+            "content": "这个范围要再收窄",
+            "author": "user-1",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["anchor_quote"] == "课程推荐系统"
+    assert r.json()["data"]["reply_to"] == anchor
+
+    got = client.get(f"/api/topics/{tid}/comments").json()["data"]["data"]
+    assert got[0]["anchor_quote"] == "课程推荐系统"
+
+
 def test_comment_requires_content(client):
     tid = _topic(client)
     r = client.post(f"/api/topics/{tid}/comments", json={"content": "  "})

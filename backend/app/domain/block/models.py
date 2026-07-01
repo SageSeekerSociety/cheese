@@ -78,6 +78,11 @@ class Block(UuidPk, Timestamps, Base):
     node_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     struct_order: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # B4 段落评论: the exact text a comment was selected on (Feishu-style). The
+    # comment still anchors to its paragraph via reply_to; this preserves the quoted
+    # span for display. Only set on kind=comment blocks.
+    anchor_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # The agent turn that produced this block (review R4): groups a turn's blocks
     # for traceability / recovery / the collaboration-trajectory dataset. Null for
     # human-authored or pre-R4 blocks.

@@ -24,6 +24,8 @@ class BlockOut(BaseModel):
     # B1 doc tree: structural type + sibling order (set only on doc_node blocks).
     node_type: str | None = None
     struct_order: float | None = None
+    # B4 段落评论: the quoted text a comment was selected on (set on comment blocks).
+    anchor_quote: str | None = None
     refs: list[str] = []
     upgraded_to_topic_id: uuid.UUID | None = None
     # The agent turn that produced this block (R4): groups a turn's blocks.

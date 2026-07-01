@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
+import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
@@ -335,6 +336,9 @@ const anchorNodes = ref<Block[]>([])
 const anchorId = ref<string | null>(null)
 const newComment = ref('')
 const commentBusy = ref(false)
+// The text span the current draft is quoting (set from a doc selection, B4).
+const pendingQuote = ref<string | null>(null)
+const commentInputRef = ref<{ focus?: () => void } | null>(null)
 
 // A short label for a doc node, used in the anchor picker and comment chips. The
 // node's own content is either AI- or human-authored text; we only ever truncate
@@ -364,14 +368,30 @@ async function submitComment() {
   if (!tid || !text) return
   commentBusy.value = true
   try {
-    await addComment(tid, text, AUTHOR, anchorId.value ?? undefined)
+    await addComment(
+      tid,
+      text,
+      AUTHOR,
+      anchorId.value ?? undefined,
+      pendingQuote.value ?? undefined,
+    )
     await loadComments(tid)
     newComment.value = ''
+    pendingQuote.value = null
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '评论失败'
   } finally {
     commentBusy.value = false
   }
+}
+
+// Open the 评论 drawer (used by the selection CTA). Loads comments the same way
+// toggling the tool does.
+async function openCommentTool() {
+  openTool.value = 'comments'
+  drawerOpen.value = true
+  const tid = props.topic?.id
+  if (tid) await loadComments(tid)
 }
 
 // 现场: read-only transcript timeline.
@@ -530,8 +550,68 @@ const editor = useEditor({
     if (loadingFromServer.value) return
     dirty.value = true
     savedAt.value = null
+    commentCta.value = null // the doc changed under the selection; drop the CTA
   },
+  onSelectionUpdate: ({ editor: ed }) => updateCommentCta(ed),
 })
+
+// B4 Feishu-style: a floating "评论" button that appears over a text selection in
+// the doc. Clicking it opens the comment composer anchored to the selected
+// paragraph, with the selected span quoted. Positioned inside .doc-editor-wrap
+// (like the other overlays) so it scrolls with the content.
+interface CommentCta {
+  top: number
+  left: number
+  quote: string
+  nodeIndex: number
+}
+const commentCta = ref<CommentCta | null>(null)
+
+function updateCommentCta(ed: CoreEditor) {
+  const { from, to, empty } = ed.state.selection
+  if (empty || !editable.value) {
+    commentCta.value = null
+    return
+  }
+  const quote = ed.state.doc.textBetween(from, to, ' ').trim()
+  if (!quote) {
+    commentCta.value = null
+    return
+  }
+  const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
+  if (!wrap) return
+  const wrapRect = wrap.getBoundingClientRect()
+  const start = ed.view.coordsAtPos(from)
+  const end = ed.view.coordsAtPos(to)
+  commentCta.value = {
+    top: start.top - wrapRect.top - 38,
+    left: Math.min(end.right, start.left + 240) - wrapRect.left,
+    quote,
+    // depth-0 index = the top-level block the selection starts in.
+    nodeIndex: ed.state.selection.$from.index(0),
+  }
+}
+
+async function commentOnSelection() {
+  const ed = editor.value
+  const tid = props.topic?.id
+  const cta = commentCta.value
+  if (!ed || !tid || !cta) return
+  const nodes = (await getDocNodes(tid)).data
+  // Same filler-tolerant alignment as split/highlight.
+  if (cta.nodeIndex >= nodes.length || nodes.length !== contentBlocks().length) {
+    // Fall back to a whole-doc comment if the structure can't be mapped.
+    anchorId.value = null
+  } else {
+    anchorId.value = nodes[cta.nodeIndex].id
+  }
+  pendingQuote.value = cta.quote
+  commentCta.value = null
+  // Open the comments drawer and focus the composer.
+  await openCommentTool()
+  await nextTick()
+  commentInputRef.value?.focus?.()
+}
 
 // Guard: when we programmatically setContent from a server reload we don't want
 // onUpdate to flag the doc as dirty.
@@ -771,6 +851,20 @@ onBeforeUnmount(() => {
           <h1 class="doc-page__title">{{ topic.title }}</h1>
           <div class="doc-editor-wrap">
             <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
+            <!-- B4 Feishu-style: select text in the doc → a floating 评论 button
+                 appears over the selection. Click to comment on that span. -->
+            <button
+              v-if="commentCta"
+              type="button"
+              class="doc-comment-cta"
+              :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
+              title="评论选中内容"
+              @mousedown.prevent
+              @click="commentOnSelection"
+            >
+              <v-icon size="14">mdi-comment-plus-outline</v-icon>
+              评论
+            </button>
             <!-- A2 in-place live-refs: a badge beside any paragraph that was
                  upgraded into a subtopic, showing its live status. Click to open
                  the subtopic. Positioned over the doc without touching the editor. -->
@@ -1003,10 +1097,20 @@ onBeforeUnmount(() => {
               </div>
               <div v-for="c in comments" :key="c.id" class="comment-item mb-3">
                 <div class="text-caption c-muted mb-1">{{ c.author }}</div>
-                <!-- anchor chip: which paragraph this comment is on. Click to
-                     scroll + flash it in the doc (B4). -->
+                <!-- Feishu-style quote: the exact span the comment was made on.
+                     Click to scroll + flash the paragraph it lives in (B4). -->
                 <button
-                  v-if="commentAnchor(c)"
+                  v-if="c.anchor_quote"
+                  type="button"
+                  class="comment-quote mb-1"
+                  :title="commentAnchor(c) ? '定位到该段' : ''"
+                  @click="c.reply_to && highlightNode(c.reply_to)"
+                >
+                  {{ c.anchor_quote }}
+                </button>
+                <!-- otherwise, a plain paragraph-anchor chip (dropdown-picked). -->
+                <button
+                  v-else-if="commentAnchor(c)"
                   type="button"
                   class="comment-anchor mb-1"
                   @click="highlightNode(c.reply_to!)"
@@ -1016,8 +1120,20 @@ onBeforeUnmount(() => {
                 </button>
                 <div class="text-body-2">{{ c.content }}</div>
               </div>
-              <!-- anchor picker: target a specific paragraph, or the whole doc -->
+              <!-- draft quote: the selected span this comment will attach to -->
+              <div v-if="pendingQuote" class="comment-quote-draft mt-2">
+                <span class="comment-quote-draft__text">{{ pendingQuote }}</span>
+                <v-icon
+                  size="14"
+                  class="comment-quote-draft__x"
+                  title="取消引用"
+                  @click="pendingQuote = null"
+                >mdi-close</v-icon>
+              </div>
+              <!-- anchor picker: only for whole-doc / paragraph comments made
+                   without a text selection (a selection sets the quote instead). -->
               <v-select
+                v-if="!pendingQuote"
                 v-model="anchorId"
                 :items="anchorOptions"
                 item-title="label"
@@ -1029,8 +1145,9 @@ onBeforeUnmount(() => {
                 class="mt-2"
               />
               <v-textarea
+                ref="commentInputRef"
                 v-model="newComment"
-                placeholder="写条评论…"
+                :placeholder="pendingQuote ? '对选中内容评论…' : '写条评论…'"
                 rows="2"
                 auto-grow
                 variant="outlined"
@@ -1221,6 +1338,71 @@ onBeforeUnmount(() => {
 .comment-item {
   border-left: 2px solid rgba(var(--v-border-color), 0.4);
   padding-left: 10px;
+}
+/* B4 Feishu-style: floating "评论" CTA over a text selection. */
+.doc-comment-cta {
+  position: absolute;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 10px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+  color: #fff;
+  background: rgb(var(--v-theme-primary));
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  border: none;
+  white-space: nowrap;
+}
+.doc-comment-cta:hover {
+  filter: brightness(1.08);
+}
+/* B4: the quoted span shown on a saved comment (click → flash its paragraph). */
+.comment-quote {
+  display: block;
+  text-align: left;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-left: 2px solid rgb(var(--v-theme-primary));
+  border-radius: 0 4px 4px 0;
+  background: rgba(var(--v-theme-primary), 0.07);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+  cursor: pointer;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+}
+.comment-quote:hover {
+  background: rgba(var(--v-theme-primary), 0.14);
+}
+/* B4: the draft quote in the composer, with a clear button. */
+.comment-quote-draft {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 8px;
+  border-left: 2px solid rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.07);
+  border-radius: 0 4px 4px 0;
+}
+.comment-quote-draft__text {
+  flex: 1;
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.5;
+  max-height: 3em;
+  overflow: hidden;
+}
+.comment-quote-draft__x {
+  cursor: pointer;
+  color: var(--faint);
+}
+.comment-quote-draft__x:hover {
+  color: var(--muted);
 }
 
 /* B1 Phase 2: a brief highlight when a chat action points at the doc. */

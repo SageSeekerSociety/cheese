@@ -36,6 +36,7 @@ export interface Block {
   struct_parent?: string | null
   node_type?: string | null
   struct_order?: number | null
+  anchor_quote?: string | null
   turn_id?: string | null
   refs?: string[]
   upgraded_to_topic_id?: string | null
