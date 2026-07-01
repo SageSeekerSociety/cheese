@@ -80,6 +80,8 @@ function onPickProject(id: string | null) {
 const activeTab = computed<string>(() => {
   if (route.name === 'overview') return 'overview'
   if (route.name === 'calendar') return 'calendar'
+  if (route.name === 'project-settings') return 'settings'
+  if (route.name === 'market') return 'market'
   if (route.name === 'spaces' || route.name === 'space-board') return 'spaces'
   return 'workspace'
 })
@@ -106,6 +108,17 @@ function goCalendar() {
   if (currentProjectId.value) {
     router.push({ name: 'calendar', params: { projectId: currentProjectId.value } })
   }
+}
+function goSettings() {
+  if (currentProjectId.value) {
+    router.push({
+      name: 'project-settings',
+      params: { projectId: currentProjectId.value },
+    })
+  }
+}
+function goMarket() {
+  router.push({ name: 'market' })
 }
 
 // ---- 通知中心 (G2/G3): app-bar bell + menu ----
@@ -269,7 +282,15 @@ provide('activityBump', activityBump)
         >
           日历
         </v-tab>
+        <v-tab
+          value="settings"
+          :disabled="!currentProjectId"
+          @click="goSettings"
+        >
+          设置
+        </v-tab>
         <v-tab value="spaces" @click="goSpaces">机构看板</v-tab>
+        <v-tab value="market" @click="goMarket">市场</v-tab>
       </v-tabs>
 
       <v-spacer />

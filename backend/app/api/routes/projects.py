@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_profile_registry
 from app.api.response import ok, page
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.agent.market import compute_default_name, compute_selectable
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -157,5 +159,36 @@ async def set_execution_profile(
     if name not in allowed:
         raise ValidationError(f"执行档案 {name!r} 对本项目不可用")
     project.settings = {**(project.settings or {}), "execution_profile": name}
+    await db.flush()
+    return ok({"current": name})
+
+
+# --- Compute pool (design §3): which machine runs this project's sandbox ---
+
+
+@router.get("/{project_id}/compute-profiles")
+async def list_compute_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
+    """Compute pools this project may select (only the ones actually deployed),
+    plus the current selection. Default = 知是本地算力."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    current = (project.settings or {}).get("compute_profile") or compute_default_name()
+    profiles = [asdict(v) for v in compute_selectable(settings)]
+    return ok({"current": current, "profiles": profiles})
+
+
+@router.put("/{project_id}/compute-profile")
+async def set_compute_profile(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Set the project's compute pool. Only a deployed (available) pool is
+    accepted, so a project never selects compute that isn't actually there."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    name = (body.get("profile") or "").strip() or compute_default_name()
+    allowed = {v.id for v in compute_selectable(settings)}
+    if name not in allowed:
+        raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
+    project.settings = {**(project.settings or {}), "compute_profile": name}
     await db.flush()
     return ok({"current": name})

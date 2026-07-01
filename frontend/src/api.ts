@@ -4,11 +4,14 @@ import type {
   AcceptCard,
   ApiEnvelope,
   Block,
+  ComputeProfiles,
   Contributions,
+  ExecProfiles,
   FileContent,
   GitCommit,
   InboxItem,
   ListPayload,
+  MarketPools,
   MemberSummary,
   MilestoneFull,
   Notification,
@@ -134,6 +137,45 @@ export function upgradeBlock(
   return request<Topic>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
     body: JSON.stringify({ created_by: createdBy }),
+  })
+}
+
+// ---- 资源池市场 + 项目设置 (design v3) ----
+
+// The full 市场 catalog: every AI pool + compute pool on offer.
+export function getMarketPools(): Promise<MarketPools> {
+  return request<MarketPools>('/market/pools')
+}
+
+// AI 模型池: the project's current profile + the ones it may select.
+export function getExecutionProfiles(projectId: string): Promise<ExecProfiles> {
+  return request<ExecProfiles>(
+    `/projects/${encodeURIComponent(projectId)}/execution-profiles`,
+  )
+}
+export function setExecutionProfile(
+  projectId: string,
+  profile: string,
+): Promise<{ current: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/execution-profile`, {
+    method: 'PUT',
+    body: JSON.stringify({ profile }),
+  })
+}
+
+// 算力池: the project's current compute pool + the deployed ones it may select.
+export function getComputeProfiles(projectId: string): Promise<ComputeProfiles> {
+  return request<ComputeProfiles>(
+    `/projects/${encodeURIComponent(projectId)}/compute-profiles`,
+  )
+}
+export function setComputeProfile(
+  projectId: string,
+  profile: string,
+): Promise<{ current: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/compute-profile`, {
+    method: 'PUT',
+    body: JSON.stringify({ profile }),
   })
 }
 

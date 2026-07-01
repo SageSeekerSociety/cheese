@@ -315,3 +315,44 @@ export interface Contributions {
   by_author_type: { human: number; ai: number; system: number }
   by_author: Record<string, number>
 }
+
+// ---- 资源池市场 (design v3: AI 池 + 算力池) ----
+
+// A pool listing in the 市场 catalog / a project's settings selector.
+export interface PoolListing {
+  kind: 'ai' | 'compute'
+  id: string
+  label: string
+  tier: string
+  price: string
+  description: string
+  available: boolean
+  default: boolean
+}
+
+// GET /api/market/pools
+export interface MarketPools {
+  ai: PoolListing[]
+  compute: PoolListing[]
+}
+
+// A selectable AI execution profile (GET /projects/{id}/execution-profiles).
+export interface ExecProfileOption {
+  name: string
+  label: string
+  tier: string
+  model: string
+  available: boolean
+}
+
+// GET /projects/{id}/execution-profiles
+export interface ExecProfiles {
+  current: string
+  profiles: ExecProfileOption[]
+}
+
+// GET /projects/{id}/compute-profiles
+export interface ComputeProfiles {
+  current: string
+  profiles: PoolListing[]
+}

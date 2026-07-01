@@ -88,6 +88,13 @@ class ProfileRegistry:
     def get(self, name: str | None) -> AgentProfile | None:
         return self._profiles.get(name) if name else None
 
+    def all(self) -> list[tuple[str, AgentProfile]]:
+        """Every registered profile (name, profile), default first — for the
+        market catalog, which lists even the ones this owner can't select."""
+        items = list(self._profiles.items())
+        items.sort(key=lambda kv: (kv[0] != self._default_name, kv[0]))
+        return items
+
     def _allowed(self, profile: AgentProfile, owner_handle: str | None) -> bool:
         if not profile.available:
             return False

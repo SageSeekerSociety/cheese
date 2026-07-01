@@ -8,6 +8,8 @@ import ProjectDocsView from './views/ProjectDocsView.vue'
 import SpacesView from './views/SpacesView.vue'
 import SpaceBoardView from './views/SpaceBoardView.vue'
 import MemberView from './views/MemberView.vue'
+import ProjectSettingsView from './views/ProjectSettingsView.vue'
+import MarketView from './views/MarketView.vue'
 
 const routes: RouteRecordRaw[] = [
   // 工作台: sidebar + chat + doc. The optional :projectId pre-selects a project.
@@ -52,6 +54,13 @@ const routes: RouteRecordRaw[] = [
     component: ProjectDocsView,
     props: true,
   },
+  // 项目设置 (design v3): pick the project's AI + compute resource pools.
+  {
+    path: '/project/:projectId/settings',
+    name: 'project-settings',
+    component: ProjectSettingsView,
+    props: true,
+  },
   // 成员页 / portfolio (spec §7.2).
   {
     path: '/project/:projectId/members/:handle',
@@ -59,6 +68,8 @@ const routes: RouteRecordRaw[] = [
     component: MemberView,
     props: true,
   },
+  // 市场 (design v3): browse the AI + compute resource-pool catalog.
+  { path: '/market', name: 'market', component: MarketView },
   // 机构看板 (eval F3): a spaces picker + per-space board.
   { path: '/spaces', name: 'spaces', component: SpacesView },
   {
