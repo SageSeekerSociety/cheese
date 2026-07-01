@@ -5,10 +5,16 @@ import {
   getComputeProfiles,
   getExecutionProfiles,
   getProject,
+  getSandboxImage,
   setComputeProfile,
   setExecutionProfile,
+  setSandboxImage,
 } from '../api'
-import type { ComputeProfiles, ExecProfiles } from '../types'
+import type {
+  ComputeProfiles,
+  ExecProfiles,
+  SandboxImageInfo,
+} from '../types'
 
 // 项目设置 (design v3): a project picks which resource pools it runs on — an AI
 // pool (model/provider) and a compute pool (which machine runs the sandbox).
@@ -22,8 +28,11 @@ const ai = ref<ExecProfiles | null>(null)
 const compute = ref<ComputeProfiles | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
+const env = ref<SandboxImageInfo | null>(null)
 const savingAi = ref<string | null>(null)
 const savingCompute = ref<string | null>(null)
+// '' is the sentinel for the default-image row (image null); a real image key otherwise.
+const savingEnv = ref<string | null>(null)
 
 const TIER_LABEL: Record<string, string> = {
   default: '默认',
@@ -37,14 +46,16 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, compP] = await Promise.all([
+    const [proj, execP, compP, envP] = await Promise.all([
       getProject(props.projectId),
       getExecutionProfiles(props.projectId),
       getComputeProfiles(props.projectId),
+      getSandboxImage(props.projectId),
     ])
     projectName.value = proj.name
     ai.value = execP
     compute.value = compP
+    env.value = envP
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载设置失败'
   } finally {
@@ -75,6 +86,20 @@ async function pickCompute(id: string) {
     error.value = e instanceof Error ? e.message : '切换算力池失败'
   } finally {
     savingCompute.value = null
+  }
+}
+
+// Pick the env image. image='' means the default (pool base image → current null).
+async function pickEnv(image: string) {
+  if (!env.value || (env.value.current ?? '') === image) return
+  savingEnv.value = image || '__default__'
+  try {
+    const r = await setSandboxImage(props.projectId, image)
+    env.value = { ...env.value, current: r.current }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '切换环境镜像失败'
+  } finally {
+    savingEnv.value = null
   }
 }
 
@@ -210,6 +235,69 @@ watch(() => props.projectId, load)
               需要远程节点或 GPU？到
               <a class="link" @click="router.push({ name: 'market' })">市场</a>
               申请接入。
+            </p>
+          </div>
+        </section>
+
+        <!-- 环境 (spec §9.1): which sandbox image the agent runs in -->
+        <section class="ln-section">
+          <div class="ln-section-head">
+            <v-icon size="18" class="me-1 c-muted">mdi-package-variant-closed</v-icon>
+            <span class="ln-section-title">环境镜像</span>
+          </div>
+          <div class="ln-body">
+            <!-- Default (pool base image) -->
+            <button
+              type="button"
+              class="pool-row"
+              :class="{ 'pool-row--active': !env?.current }"
+              :disabled="savingEnv !== null"
+              @click="pickEnv('')"
+            >
+              <span class="pool-radio" :class="{ 'pool-radio--on': !env?.current }" />
+              <div class="pool-main">
+                <div class="pool-title">知是基座（默认）</div>
+                <div class="pool-sub c-muted">{{ env?.default }}</div>
+              </div>
+              <v-progress-circular
+                v-if="savingEnv === '__default__'"
+                indeterminate
+                size="16"
+                width="2"
+                color="primary"
+              />
+              <span v-else-if="!env?.current" class="pool-current">使用中</span>
+            </button>
+            <!-- Curated images (e.g. cheesex-dev for dogfooding on this repo) -->
+            <button
+              v-for="o in env?.options ?? []"
+              :key="o.image"
+              type="button"
+              class="pool-row"
+              :class="{ 'pool-row--active': env?.current === o.image }"
+              :disabled="savingEnv !== null"
+              @click="pickEnv(o.image)"
+            >
+              <span
+                class="pool-radio"
+                :class="{ 'pool-radio--on': env?.current === o.image }"
+              />
+              <div class="pool-main">
+                <div class="pool-title">{{ o.label }}</div>
+                <div class="pool-sub c-muted">{{ o.image }}</div>
+              </div>
+              <v-progress-circular
+                v-if="savingEnv === o.image"
+                indeterminate
+                size="16"
+                width="2"
+                color="primary"
+              />
+              <span v-else-if="env?.current === o.image" class="pool-current">使用中</span>
+            </button>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              基座装了 uv / node / git 等通用工具；cheesex-dev 额外预装了本仓库的
+              依赖，芝士可以直接在盒子里跑 cheesex 自己的测试（dogfooding）。
             </p>
           </div>
         </section>

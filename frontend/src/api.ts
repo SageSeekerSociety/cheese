@@ -19,6 +19,7 @@ import type {
   Project,
   ProjectMemberRow,
   ProjectOverview,
+  SandboxImageInfo,
   Space,
   SpaceDashboard,
   Topic,
@@ -177,6 +178,22 @@ export function setComputeProfile(
   return request(`/projects/${encodeURIComponent(projectId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({ profile }),
+  })
+}
+
+// 环境 (spec §9.1): which sandbox image runs this project's agent.
+export function getSandboxImage(projectId: string): Promise<SandboxImageInfo> {
+  return request<SandboxImageInfo>(
+    `/projects/${encodeURIComponent(projectId)}/sandbox-image`,
+  )
+}
+export function setSandboxImage(
+  projectId: string,
+  image: string,
+): Promise<{ current: string | null }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/sandbox-image`, {
+    method: 'PUT',
+    body: JSON.stringify({ image }),
   })
 }
 

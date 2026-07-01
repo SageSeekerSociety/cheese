@@ -1,5 +1,6 @@
 """Project routes."""
 
+import re
 import uuid
 from dataclasses import asdict
 from typing import Annotated
@@ -192,3 +193,55 @@ async def set_compute_profile(project_id: uuid.UUID, body: dict, db: DbSession) 
     project.settings = {**(project.settings or {}), "compute_profile": name}
     await db.flush()
     return ok({"current": name})
+
+
+# --- Environment (spec §9.1): which sandbox image runs this project's agent ---
+
+# A docker image reference, e.g. "cheesex-dev:v0". Kept strict so the value can't
+# smuggle anything into the sandbox shim's `docker run "$SBX_IMAGE"`.
+_IMAGE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/-]*(:[a-zA-Z0-9._-]+)?$")
+
+# Curated env images the UI offers. The default (None) = the pool's base image;
+# cheesex-dev bakes this repo's toolchain for dogfooding on 知是 itself.
+_SANDBOX_IMAGE_OPTIONS = [
+    {"image": "cheesex-dev:v0", "label": "cheesex-dev（本仓库工具链 · dogfooding）"},
+]
+
+
+@router.get("/{project_id}/sandbox-image")
+async def get_sandbox_image(project_id: uuid.UUID, db: DbSession) -> dict:
+    """The project's env image: `current` (None = using the pool default),
+    the `default` base image, and a few curated `options`."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    current = (project.settings or {}).get("sandbox_image")
+    return ok(
+        {
+            "current": current,
+            "default": settings.sandbox_image,
+            "options": _SANDBOX_IMAGE_OPTIONS,
+        }
+    )
+
+
+@router.put("/{project_id}/sandbox-image")
+async def set_sandbox_image(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Point a project at a specific env image (e.g. cheesex-dev:v0 for dogfooding),
+    or clear it (empty → back to the pool default)."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    image = (body.get("image") or "").strip()
+    new_settings = {**(project.settings or {})}
+    if not image:
+        new_settings.pop("sandbox_image", None)  # revert to the pool default
+        current = None
+    else:
+        if not _IMAGE_RE.match(image):
+            raise ValidationError(f"镜像名不合法：{image!r}")
+        new_settings["sandbox_image"] = image
+        current = image
+    project.settings = new_settings
+    await db.flush()
+    return ok({"current": current})

@@ -365,3 +365,15 @@ export interface ComputeProfiles {
   current: string
   profiles: PoolListing[]
 }
+
+// GET /projects/{id}/sandbox-image (spec §9.1 environment): which image runs the
+// project's agent. current=null → using the pool default base image.
+export interface SandboxImageOption {
+  image: string
+  label: string
+}
+export interface SandboxImageInfo {
+  current: string | null
+  default: string
+  options: SandboxImageOption[]
+}

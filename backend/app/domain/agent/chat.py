@@ -335,18 +335,25 @@ class ChatService:
                 yield frame
 
     async def _model_kwargs(self, project_id: uuid.UUID) -> dict:
-        """Resolve this project's ExecutionProfile → model+env overrides for the
-        agent call (design §2). Empty when no registry is configured (the agent
-        uses its built-in default)."""
-        if self._profiles is None:
-            return {}
+        """Per-turn overrides for the agent call, resolved from project.settings:
+        the ExecutionProfile → model+env (design §2), and the sandbox image (spec
+        §9.1 environment — a project can run on cheesex-dev for dogfooding). model
+        is skipped when no registry is configured (the agent uses its default); the
+        image is resolved regardless (it's independent of the AI profile)."""
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
-        profile = self._profiles.resolve(
-            project.settings if project else None,
-            project.owner_handle if project else None,
-        )
-        return {"model": profile.model, "env": profile.full_env()}
+        kwargs: dict = {}
+        image = (project.settings or {}).get("sandbox_image") if project else None
+        if image:
+            kwargs["sandbox_image"] = image
+        if self._profiles is not None:
+            profile = self._profiles.resolve(
+                project.settings if project else None,
+                project.owner_handle if project else None,
+            )
+            kwargs["model"] = profile.model
+            kwargs["env"] = profile.full_env()
+        return kwargs
 
     async def _stream_with_retry(self, provider, **kwargs):
         """Run a streaming turn via the compute provider, retrying transient
