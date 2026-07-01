@@ -263,6 +263,20 @@ function selectTopic(id: string) {
   mode.value = 'topic'
   selectedTopicId.value = id
   worklog.value = []
+  // Keep the URL's ?topic= in sync with what's open, so refresh, share, and
+  // back-navigation (e.g. returning from a member page) land on this topic and
+  // not whatever was in the URL when the workspace first mounted. `replace` —
+  // switching topics is a view change, not a new history entry to walk back
+  // through. Guard avoids a redundant navigation when the query already matches
+  // (e.g. this call came from the route.query.topic watcher).
+  const pid = selectedProjectId.value ?? props.projectId
+  if (pid && route.query.topic !== id) {
+    router.replace({
+      name: 'workspace-project',
+      params: { projectId: pid },
+      query: { topic: id },
+    })
+  }
 }
 
 // ---- 采纳卡 (eval C5/A3): a banner above the composer ----
@@ -486,7 +500,7 @@ async function handleCreateTopic(title: string) {
     // Untitled by default — the title is derived from the first message.
     const topic = await createTopic(projectId, title.trim() || '新话题')
     topics.value.push(topic)
-    selectedTopicId.value = topic.id
+    selectTopic(topic.id)
   } catch (e) {
     reportError(e, '创建话题失败')
   }
@@ -497,7 +511,7 @@ async function handleSplitTopic(payload: { topicId: string; title: string }) {
   try {
     const sub = await splitTopic(payload.topicId, payload.title, AUTHOR)
     await refreshTopics()
-    selectedTopicId.value = sub.id
+    selectTopic(sub.id)
   } catch (e) {
     reportError(e, '拆分子话题失败')
   }
@@ -508,7 +522,7 @@ async function handleUpgradeMessage(messageId: string) {
   try {
     const topic = await upgradeBlock(messageId, AUTHOR)
     await refreshTopics()
-    selectedTopicId.value = topic.id
+    selectTopic(topic.id)
   } catch (e) {
     reportError(e, '升级为话题失败')
   }
