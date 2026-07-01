@@ -1681,30 +1681,26 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
-/* 文件: an embedded VS Code-style pane — dark editor + explorer. Fills the drawer
-   height so the editor scrolls internally instead of growing the drawer. */
+/* 文件: a two-pane browser — list + Monaco editor. Light, to match the app.
+   Fills the drawer height so the editor scrolls internally. */
 .file-tool {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #1e1e1e;
-  color: #cccccc;
 }
 .file-bar {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
-  background: #252526;
-  border-bottom: 1px solid #1a1a1a;
-  color: #cccccc; /* the ☰ toggle inherits this when inactive */
+  border-bottom: 1px solid rgba(var(--v-border-color), 0.5);
   flex: 0 0 auto;
 }
 .file-bar__path {
   font-family: var(--font-mono);
   font-size: 0.76rem;
-  color: #c9c9c9;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1714,7 +1710,7 @@ onBeforeUnmount(() => {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #e2c08d; /* VS Code "modified" amber */
+  background: var(--accent);
   flex: 0 0 auto;
 }
 .file-body {
@@ -1725,8 +1721,8 @@ onBeforeUnmount(() => {
 .file-list {
   flex: 0 0 150px;
   overflow-y: auto;
-  background: #252526;
-  border-right: 1px solid #1a1a1a;
+  background: var(--fill);
+  border-right: 1px solid rgba(var(--v-border-color), 0.5);
   padding: 4px 0;
 }
 .file-item {
@@ -1738,14 +1734,14 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   cursor: pointer;
-  color: #cccccc;
+  color: var(--text);
 }
 .file-item:hover {
-  background: #2a2d2e;
+  background: rgba(var(--v-border-color), 0.18);
 }
 .file-item--active {
-  background: #37373d;
-  color: #ffffff;
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
 }
 .file-item__name {
   font-family: var(--font-mono);
@@ -1759,26 +1755,13 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #1e1e1e;
-}
-.file-editor .c-faint {
-  color: #7a7a7a;
-}
-.file-list .c-faint {
-  color: #7a7a7a;
-}
-/* Light icons on the dark file bar / explorer. */
-.file-icon-btn :deep(.v-icon) {
-  color: #b3b3b3;
+  background: #ffffff;
 }
 .file-icon-btn--on :deep(.v-icon) {
-  color: #ffffff;
-}
-.file-item :deep(.v-icon) {
-  color: #8a8a8a;
+  color: rgb(var(--v-theme-primary));
 }
 .file-item--active :deep(.v-icon) {
-  color: #ffffff;
+  color: rgb(var(--v-theme-primary));
 }
 .usage-grid {
   display: grid;

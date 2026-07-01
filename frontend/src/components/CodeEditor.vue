@@ -20,6 +20,40 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
   },
 }
 
+// Our own light theme — a Monaco/VS Code editor that belongs to the app rather
+// than a generic (or dark) island: app-white background, the amber brand accent
+// for cursor + selection, our gray scale for the gutter, readable syntax colors.
+monaco.editor.defineTheme('cheesex-light', {
+  base: 'vs',
+  inherit: true,
+  rules: [
+    { token: 'comment', foreground: '8a8f98', fontStyle: 'italic' },
+    { token: 'keyword', foreground: '0b5cad' },
+    { token: 'string', foreground: 'a8471c' },
+    { token: 'number', foreground: '0a7a52' },
+    { token: 'type', foreground: '267f99' },
+    { token: 'function', foreground: '8a6d1b' },
+    { token: 'variable', foreground: '2b2b2b' },
+  ],
+  colors: {
+    'editor.background': '#ffffff',
+    'editor.foreground': '#2c2c2c',
+    'editorLineNumber.foreground': '#cccccc',
+    'editorLineNumber.activeForeground': '#6b6b6b',
+    'editor.lineHighlightBackground': '#faf8f4',
+    'editor.lineHighlightBorder': '#00000000',
+    'editor.selectionBackground': '#fbe3c6',
+    'editor.inactiveSelectionBackground': '#f1e7d9',
+    'editor.selectionHighlightBackground': '#f6ead9',
+    'editorCursor.foreground': '#e08a34',
+    'editorIndentGuide.background1': '#efefef',
+    'editorGutter.background': '#ffffff',
+    'editorWidget.background': '#ffffff',
+    'scrollbarSlider.background': '#0000001f',
+    'scrollbarSlider.hoverBackground': '#00000033',
+  },
+})
+
 const props = withDefaults(
   defineProps<{ modelValue: string; filename?: string; readonly?: boolean }>(),
   { filename: '', readonly: false },
@@ -53,7 +87,7 @@ onMounted(() => {
   editor = monaco.editor.create(host.value, {
     value: props.modelValue,
     language: langFor(props.filename),
-    theme: 'vs-dark',
+    theme: 'cheesex-light',
     readOnly: props.readonly,
     automaticLayout: true, // follow the drawer's resize
     minimap: { enabled: false }, // too cramped for a side drawer
@@ -109,6 +143,6 @@ onBeforeUnmount(() => editor?.dispose())
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #1e1e1e;
+  background: #ffffff;
 }
 </style>
