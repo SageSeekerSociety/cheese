@@ -146,6 +146,15 @@ _ACTION_LABEL = {
 }
 
 
+def _parse_uuid(raw: str | None) -> uuid.UUID | None:
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(raw)
+    except ValueError:
+        return None
+
+
 def _cheese_resource(command: str) -> str | None:
     """Resource hint for a Bash `cheese <sub>` command, else None."""
     parts = command.split()
@@ -307,9 +316,11 @@ class ChatService:
         content: str,
         summon: bool = True,
         turn_id: uuid.UUID | None = None,
+        reply_to: str | None = None,
     ) -> AsyncIterator[dict]:
         """Serialize per topic, then run the turn (spec §9.1 串行队列). turn_id
-        groups this turn's blocks (R4); generated if a caller didn't supply one."""
+        groups this turn's blocks (R4); generated if a caller didn't supply one.
+        reply_to threads this message under another (B3)."""
         turn_id = turn_id or uuid.uuid4()
         async with self._lock_for(topic_id):
             async for frame in self._converse_impl(
@@ -318,6 +329,7 @@ class ChatService:
                 content=content,
                 summon=summon,
                 turn_id=turn_id,
+                reply_to=reply_to,
             ):
                 yield frame
 
@@ -386,6 +398,7 @@ class ChatService:
         content: str,
         summon: bool = True,
         turn_id: uuid.UUID | None = None,
+        reply_to: str | None = None,
     ) -> AsyncIterator[dict]:
         """Run one chat turn, yielding WS frames as JSON-ready dicts.
 
@@ -412,6 +425,7 @@ class ChatService:
                 content=content,
                 kind=BlockKind.message,
                 turn_id=turn_id,
+                reply_to=_parse_uuid(reply_to),  # B3: thread under another message
             )
             user_payload = _block_payload(BlockOut.model_validate(user_block))
 

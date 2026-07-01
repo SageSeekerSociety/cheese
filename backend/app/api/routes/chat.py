@@ -65,13 +65,20 @@ async def chat(
             author = payload.get("author") or "anonymous"
             # @芝士 toggle: summon the AI, or just post (spec C3, default post).
             summon = bool(payload.get("summon", False))
+            # B3: replying to a specific message threads under it.
+            reply_to = payload.get("reply_to") or None
             if not content:
                 await send({"type": "error", "message": "empty content"})
                 continue
             # Fire-and-forget: the turn runs in the background and streams back
             # over the broker; this loop stays free to accept more messages.
             runner.submit(
-                chat_service, topic_id, author=author, content=content, summon=summon
+                chat_service,
+                topic_id,
+                author=author,
+                content=content,
+                summon=summon,
+                reply_to=reply_to,
             )
     except WebSocketDisconnect:
         pass

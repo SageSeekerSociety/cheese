@@ -96,6 +96,7 @@ class TurnRunner:
         author: str,
         content: str,
         summon: bool,
+        reply_to: str | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
@@ -104,7 +105,7 @@ class TurnRunner:
         task = asyncio.create_task(
             self._run(
                 chat_service, topic_id, turn_id,
-                author=author, content=content, summon=summon,
+                author=author, content=content, summon=summon, reply_to=reply_to,
             )
         )
         self._tasks.add(task)
@@ -120,6 +121,7 @@ class TurnRunner:
         author: str,
         content: str,
         summon: bool,
+        reply_to: str | None = None,
     ) -> None:
         channel = str(topic_id)
         try:
@@ -134,6 +136,7 @@ class TurnRunner:
                     content=content,
                     summon=summon,
                     turn_id=turn_id,
+                    reply_to=reply_to,
                 ):
                     await self._broker.publish(channel, frame)
         except TimeoutError:
