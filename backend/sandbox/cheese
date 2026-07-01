@@ -191,8 +191,16 @@ def main() -> None:
             print(f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{h}> 点名 ta")
     elif a.cmd == "artifact":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        _call("POST", f"/topics/{topic}/artifact", {"path": a.path, "as": a.as_})
-        print(f"已把 {a.path} 设为当前预览（{a.as_}）。")
+        # The platform resolves artifact paths against the worktree ROOT (/work),
+        # but the agent's cwd may be a subdir (e.g. after `cd backend`). Normalize
+        # the given path to worktree-root-relative so `cheese artifact x.html` from
+        # /work/backend points at backend/x.html, not a missing /work/x.html.
+        root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
+        rel = os.path.relpath(os.path.abspath(a.path), root)
+        if rel.startswith(".."):  # outside the worktree — let the backend validate
+            rel = a.path
+        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": a.as_})
+        print(f"已把 {rel} 设为当前预览（{a.as_}）。")
 
 
 if __name__ == "__main__":
