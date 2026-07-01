@@ -9,6 +9,8 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import CheeseAvatar from './CheeseAvatar.vue'
 import {
+  addComment,
+  getComments,
   getDoc,
   getGitDiff,
   getGitLog,
@@ -64,6 +66,7 @@ const TOOLS: ToolDef[] = [
   { key: 'git', label: 'Git', icon: 'mdi-source-branch' },
   { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
   { key: 'files', label: '文件', icon: 'mdi-folder-outline' },
+  { key: 'comments', label: '评论', icon: 'mdi-comment-outline' },
   { key: 'resources', label: '资源', icon: 'mdi-link-variant' },
 ]
 const openTool = ref<string | null>(null)
@@ -113,6 +116,26 @@ const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
 // ---- Per-tool data (lazy-loaded when its drawer opens) ----
 const toolLoading = ref(false)
 const toolError = ref<string | null>(null)
+
+// 评论 (B4): inline comments anchored to doc nodes.
+const comments = ref<Block[]>([])
+const newComment = ref('')
+const commentBusy = ref(false)
+async function submitComment() {
+  const tid = props.topic?.id
+  const text = newComment.value.trim()
+  if (!tid || !text) return
+  commentBusy.value = true
+  try {
+    await addComment(tid, text, AUTHOR)
+    comments.value = (await getComments(tid)).data
+    newComment.value = ''
+  } catch (e) {
+    toolError.value = e instanceof Error ? e.message : '评论失败'
+  } finally {
+    commentBusy.value = false
+  }
+}
 
 // 现场: read-only transcript timeline.
 const transcript = ref<Block[]>([])
@@ -176,6 +199,8 @@ async function loadTool(key: string) {
       files.value = list
       const html = list.find((f) => f.path.toLowerCase().endsWith('.html'))
       previewFile.value = html ? await readFile(pid, html.path, tid) : null
+    } else if (key === 'comments') {
+      comments.value = (await getComments(tid)).data
     }
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '加载失败'
@@ -680,6 +705,43 @@ onBeforeUnmount(() => {
                   </v-list-item>
                 </v-list>
               </template>
+            </div>
+          </template>
+
+          <!-- 评论 (B4): inline comments on the living doc -->
+          <template v-else-if="openTool === 'comments'">
+            <div class="pa-3">
+              <div
+                v-if="comments.length === 0"
+                class="text-center text-medium-emphasis py-6"
+              >
+                还没有评论
+              </div>
+              <div v-for="c in comments" :key="c.id" class="comment-item mb-3">
+                <div class="text-caption c-muted mb-1">{{ c.author }}</div>
+                <div class="text-body-2">{{ c.content }}</div>
+              </div>
+              <v-textarea
+                v-model="newComment"
+                placeholder="写条评论…"
+                rows="2"
+                auto-grow
+                variant="outlined"
+                density="compact"
+                hide-details
+                class="mt-2"
+              />
+              <v-btn
+                size="small"
+                color="primary"
+                variant="flat"
+                class="mt-2"
+                :loading="commentBusy"
+                :disabled="!newComment.trim()"
+                @click="submitComment"
+              >
+                发表评论
+              </v-btn>
             </div>
           </template>
 

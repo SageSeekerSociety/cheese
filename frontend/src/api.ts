@@ -210,6 +210,25 @@ export function putDoc(
   })
 }
 
+// 段落评论 (eval B4): inline comments, each anchored to a doc node via reply_to.
+export function getComments(
+  topicId: string,
+): Promise<{ data: Block[]; total: number }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/comments`)
+}
+
+export function addComment(
+  topicId: string,
+  content: string,
+  author: string,
+  anchor?: string,
+): Promise<Block> {
+  return request<Block>(`/topics/${encodeURIComponent(topicId)}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ content, author, anchor }),
+  })
+}
+
 // 决策记录 (spec §7.1): the project's decision log. Each entry is a Block whose
 // `topic_id` points back to the source topic where the decision was made.
 export function getProjectDecisions(
