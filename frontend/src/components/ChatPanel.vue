@@ -360,6 +360,32 @@ async function loadTopic(topic: Topic) {
 // Send a message. `summon` (= @芝士) asks 芝士 to reply; when false the message
 // is just posted (spec §7.1 默认不 @). The composer lives in WorkspaceView and
 // drives this via the exposed ref, so the input bar can span chat + doc.
+// B3: reply target — the message this next send threads under (reply_to).
+const replyTarget = ref<Block | null>(null)
+function setReply(m: Block) {
+  replyTarget.value = m
+}
+function clearReply() {
+  replyTarget.value = null
+}
+function parentOf(m: Block): Block | undefined {
+  return m.reply_to ? messages.value.find((x) => x.id === m.reply_to) : undefined
+}
+function showReplyCue(m: Block): boolean {
+  // Only human replies are explicit threads. An AI message's reply_to is the
+  // implicit link to the user message that triggered it — not a thread cue.
+  return m.author_type === 'human' && !!parentOf(m)
+}
+function replySnippet(m: Block): string {
+  const t = m.content.replace(/\s+/g, ' ').trim()
+  return t.length > 24 ? t.slice(0, 24) + '…' : t
+}
+function scrollToMessage(id: string) {
+  document
+    .querySelector(`[data-mid="${id}"]`)
+    ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
 function send(content: string, summon: boolean): boolean {
   const trimmed = content.trim()
   if (!trimmed || !socket || socket.readyState !== WebSocket.OPEN) return false
@@ -369,7 +395,9 @@ function send(content: string, summon: boolean): boolean {
     content: trimmed,
     author: AUTHOR,
     summon,
+    reply_to: replyTarget.value?.id ?? undefined,
   }
+  replyTarget.value = null
   socket.send(JSON.stringify(msg))
   // Only show the "awaiting reply" affordances when 芝士 was summoned. Setting
   // streaming='' immediately renders the 芝士 bubble + "正在看…" placeholder —
@@ -574,6 +602,7 @@ onBeforeUnmount(() => {
             v-else
             class="im-row"
             :class="{ 'im-row--cont': !isRunStart(i) }"
+            :data-mid="m.id"
           >
             <!-- avatar gutter: only on the first of a run -->
             <div class="im-gutter">
@@ -590,6 +619,16 @@ onBeforeUnmount(() => {
                 <span class="im-name">{{ displayName(m) }}</span>
                 <span class="im-time">{{ fmtTime(m.created_at) }}</span>
               </div>
+              <!-- B3: a reply shows the message it threads under -->
+              <button
+                v-if="showReplyCue(m)"
+                type="button"
+                class="im-replied"
+                @click="scrollToMessage(m.reply_to!)"
+              >
+                <v-icon size="12">mdi-reply</v-icon>
+                回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
+              </button>
               <div
                 v-if="m.author_type === 'ai'"
                 class="im-text md-content"
@@ -611,6 +650,14 @@ onBeforeUnmount(() => {
             <!-- hover action bar, top-right of the row (Feishu). Only the action
                  we actually implement — 升级为话题 — is shown (no dead buttons). -->
             <div class="im-actions">
+              <v-btn
+                icon="mdi-reply"
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                title="回复"
+                @click="setReply(m)"
+              />
               <v-btn
                 icon="mdi-arrow-up-bold-box-outline"
                 size="x-small"
@@ -683,6 +730,21 @@ onBeforeUnmount(() => {
       >
         {{ errorMsg }}
       </v-alert>
+
+      <!-- B3: replying-to indicator — the next message threads under this one. -->
+      <div v-if="replyTarget" class="reply-bar">
+        <v-icon size="14" class="me-1">mdi-reply</v-icon>
+        <span class="reply-bar__text">
+          回复 {{ displayName(replyTarget) }}：{{ replySnippet(replyTarget) }}
+        </span>
+        <v-btn
+          icon="mdi-close"
+          size="x-small"
+          variant="text"
+          density="comfortable"
+          @click="clearReply"
+        />
+      </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
       <template v-if="showComposer">
@@ -917,6 +979,42 @@ onBeforeUnmount(() => {
   word-break: break-word;
 }
 /* Live link from an upgraded block to its new topic. */
+/* B3: the "回复 X：…" cue above a reply, and the composer reply-to bar. */
+.im-replied {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  margin-bottom: 3px;
+  padding: 1px 6px;
+  font-size: 12px;
+  color: var(--ink-3, #8a8f98);
+  background: var(--fill);
+  border-radius: 5px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.im-replied:hover {
+  color: var(--accent-ink);
+}
+.reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--ink-2, #656a72);
+  background: var(--fill);
+  border-top: 1px solid var(--line);
+}
+.reply-bar__text {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .im-upgraded {
   display: inline-flex;
   align-items: center;

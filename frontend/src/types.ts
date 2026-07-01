@@ -79,6 +79,7 @@ export interface WsClientMessage {
   content: string
   author: string
   summon: boolean
+  reply_to?: string // B3: thread this message under another
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----
