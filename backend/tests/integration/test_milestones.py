@@ -89,14 +89,20 @@ def test_list_unknown_project_404(client):
 
 def test_calendar_filters_upcoming_and_dated(client):
     project_id = _create_project(client)
-    # Has date, upcoming -> shown
-    _add_milestone(client, project_id, title="b", due_date="2026-08-01T00:00:00Z")
-    _add_milestone(client, project_id, title="a", due_date="2026-07-01T00:00:00Z")
+    # Dates relative to now so the test isn't brittle as the calendar rolls over.
+    now = datetime.now(UTC)
+    # Has date, upcoming -> shown (a sorts before b)
+    _add_milestone(
+        client, project_id, title="b", due_date=_iso(now + timedelta(days=40))
+    )
+    _add_milestone(
+        client, project_id, title="a", due_date=_iso(now + timedelta(days=10))
+    )
     # Upcoming but no date -> hidden
     _add_milestone(client, project_id, title="no-date")
     # Dated but marked done -> hidden
     done = _add_milestone(
-        client, project_id, title="done", due_date="2026-05-01T00:00:00Z"
+        client, project_id, title="done", due_date=_iso(now - timedelta(days=30))
     )
     r = client.put(f"/api/milestones/{done['id']}", json={"status": "done"})
     assert r.status_code == 200
