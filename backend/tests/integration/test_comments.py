@@ -1,0 +1,52 @@
+"""B4: inline comments anchored to a doc node."""
+
+
+def _topic(client) -> str:
+    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    t = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "T"}
+    ).json()["data"]
+    return t["id"]
+
+
+def test_comment_anchors_to_doc_node_and_is_not_in_timeline(client):
+    tid = _topic(client)
+    # Build the doc tree, grab a node to anchor to.
+    client.put(
+        f"/api/topics/{tid}/doc",
+        json={"content": "# 目标\n\n做推荐系统", "author": "u"},
+    )
+    nodes = client.get(f"/api/topics/{tid}/docs").json()["data"]["data"]
+    anchor = nodes[0]["id"]
+
+    r = client.post(
+        f"/api/topics/{tid}/comments",
+        json={"anchor": anchor, "content": "这里要写清楚指标", "author": "user-1"},
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["reply_to"] == anchor
+    assert r.json()["data"]["kind"] == "comment"
+
+    comments = client.get(f"/api/topics/{tid}/comments").json()["data"]["data"]
+    assert len(comments) == 1 and comments[0]["reply_to"] == anchor
+
+    # A comment is a document-view block, not a conversation message.
+    blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+    assert not any(b["kind"] == "comment" for b in blocks)
+
+
+def test_comment_requires_content(client):
+    tid = _topic(client)
+    r = client.post(f"/api/topics/{tid}/comments", json={"content": "  "})
+    assert r.status_code == 422
+
+
+def test_comment_rejects_foreign_anchor(client):
+    tid = _topic(client)
+    other = _topic(client)
+    client.put(f"/api/topics/{other}/doc", json={"content": "# X", "author": "u"})
+    foreign = client.get(f"/api/topics/{other}/docs").json()["data"]["data"][0]["id"]
+    r = client.post(
+        f"/api/topics/{tid}/comments", json={"anchor": foreign, "content": "x"}
+    )
+    assert r.status_code == 422

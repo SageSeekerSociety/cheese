@@ -29,6 +29,9 @@ class BlockKind(enum.StrEnum):
     # anchoring (cross-view highlight, comments, live refs). Excluded from the
     # conversation timeline.
     doc_node = "doc_node"
+    # B4: an inline comment anchored to a doc node (reply_to = the doc_node id).
+    # Shown in the document margin, not the conversation timeline.
+    comment = "comment"
     decision = "decision"
     attachment = "attachment"
     event = "event"

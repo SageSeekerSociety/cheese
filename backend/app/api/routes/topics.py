@@ -104,6 +104,44 @@ async def list_topic_docs(topic_id: uuid.UUID, db: DbSession) -> dict:
     return ok(page(items, len(items)))
 
 
+@router.get("/{topic_id}/comments")
+async def list_comments(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """段落评论 (eval B4): inline comments, each anchored to a doc node via
+    reply_to."""
+    await TopicService(db).get_or_404(topic_id)
+    comments = await BlockRepository(db).list_comments_for_topic(topic_id)
+    items = [BlockOut.model_validate(c).model_dump(mode="json") for c in comments]
+    return ok(page(items, len(items)))
+
+
+@router.post("/{topic_id}/comments")
+async def add_comment(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Add an inline comment anchored to a doc node (eval B4). Dual-use like the
+    doc panel — a human selects text and comments; not cheese-gated."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    anchor = (body.get("anchor") or "").strip()
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise ValidationError("评论内容不能为空")
+    repo = BlockRepository(db)
+    reply_to: uuid.UUID | None = None
+    if anchor:
+        node = await repo.get(uuid.UUID(anchor))
+        if node is None or node.topic_id != topic_id:
+            raise ValidationError("锚点不是本话题的文档块")
+        reply_to = node.id
+    comment = await repo.add(
+        project_id=topic.project_id,
+        topic_id=topic_id,
+        author=(body.get("author") or "anonymous"),
+        author_type=AuthorType.human,
+        content=content,
+        kind=BlockKind.comment,
+        reply_to=reply_to,
+    )
+    return ok(BlockOut.model_validate(comment).model_dump(mode="json"))
+
+
 @router.get("/{topic_id}/doc")
 async def get_topic_doc(topic_id: uuid.UUID, db: DbSession) -> dict:
     """The topic's single living doc (spec §2.2 docs-out)."""

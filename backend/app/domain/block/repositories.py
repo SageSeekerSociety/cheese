@@ -96,15 +96,21 @@ class BlockRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    # Document-view kinds — never part of the conversation timeline.
+    _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment)
+
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[Block]:
         """Timeline view: blocks of a topic, oldest first (spec §5).
 
-        Excludes doc_node tree blocks — those belong to the document view, not
-        the conversation timeline.
+        Excludes doc_node tree blocks and inline comments — those belong to the
+        document view, not the conversation timeline.
         """
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.kind != BlockKind.doc_node)
+            .where(
+                Block.topic_id == topic_id,
+                Block.kind.not_in(self._NON_TIMELINE),
+            )
             .order_by(Block.created_at)
         )
         return list((await self._session.scalars(stmt)).all())
@@ -113,9 +119,24 @@ class BlockRepository:
         stmt = (
             select(func.count())
             .select_from(Block)
-            .where(Block.topic_id == topic_id, Block.kind != BlockKind.doc_node)
+            .where(
+                Block.topic_id == topic_id,
+                Block.kind.not_in(self._NON_TIMELINE),
+            )
         )
         return int((await self._session.scalar(stmt)) or 0)
+
+    async def list_comments_for_topic(self, topic_id: uuid.UUID) -> list[Block]:
+        """Inline comments (B4), oldest first; each anchors to a doc node via
+        reply_to."""
+        stmt = (
+            select(Block)
+            .where(
+                Block.topic_id == topic_id, Block.kind == BlockKind.comment
+            )
+            .order_by(Block.created_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
 
     async def list_by_kind_for_project(
         self, project_id: uuid.UUID, kind: BlockKind
