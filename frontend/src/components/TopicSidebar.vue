@@ -681,8 +681,8 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
    and a gradient shoulder fades the title out under the buttons. */
 .topic-row {
   position: relative;
-  min-height: 30px;
-  margin-block: 1px;
+  min-height: 36px;
+  margin-block: 2px;
 }
 .topic-row :deep(.v-list-item__content) {
   padding-block: 0;
