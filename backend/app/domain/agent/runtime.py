@@ -104,6 +104,7 @@ class TurnRunner:
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
         is_resume: bool = False,
+        resume_reason: str | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
@@ -114,6 +115,7 @@ class TurnRunner:
                 chat_service, topic_id, turn_id,
                 author=author, content=content, summon=summon, reply_to=reply_to,
                 attachments=attachments, is_resume=is_resume,
+                resume_reason=resume_reason,
             )
         )
         self._tasks.add(task)
@@ -127,7 +129,13 @@ class TurnRunner:
         "请从断点接着完成原任务；如果其实已经完成了，就直接收尾汇报。"
     )
 
-    def _schedule_resume(self, chat_service, topic_id: uuid.UUID, after_s: float):
+    def _schedule_resume(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        after_s: float,
+        reason: str = "从上一轮的断点继续",
+    ):
         """One bounded auto-resume: wait, then run a system-nudged turn that
         continues the saved session. Resumed turns never schedule another
         resume (is_resume=True), so a persistent failure stops after one shot."""
@@ -141,6 +149,7 @@ class TurnRunner:
                 content=self.RESUME_PROMPT,
                 summon=True,
                 is_resume=True,
+                resume_reason=reason,
             )
 
         task = asyncio.create_task(_later())
@@ -160,9 +169,15 @@ class TurnRunner:
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
         is_resume: bool = False,
+        resume_reason: str | None = None,
     ) -> None:
         channel = str(topic_id)
         resume_after: float | None = None
+        resume_why = "上一轮异常中断，接着跑"
+        logger.info(
+            "turn %s start topic=%s author=%s summon=%s resume=%s",
+            turn_id, topic_id, author, summon, is_resume,
+        )
         try:
             # Wall-clock ceiling (R8): a wedged turn must not hold the topic lock
             # forever. On timeout the async-for exits, closing the converse
@@ -178,28 +193,41 @@ class TurnRunner:
                     reply_to=reply_to,
                     attachments=attachments,
                     is_resume=is_resume,
+                    resume_reason=resume_reason,
                 ):
                     if frame.get("type") == "resume_hint":
                         # Internal: chat layer says this failure is worth an
                         # automatic continuation (e.g. rate-limit reset time).
                         resume_after = float(frame.get("after_s", 5))
+                        resume_why = str(frame.get("reason") or resume_why)
                         continue
                     await self._broker.publish(channel, frame)
+            logger.info("turn %s done topic=%s", turn_id, topic_id)
         except TimeoutError:
             logger.warning(
                 "turn %s timed out (>%ss) for topic %s; interrupted",
                 turn_id, self._timeout, topic_id,
             )
+            text = (
+                "⚠️ 芝士这轮超时被中断了（可能卡在某步）。已完成的改动都在；"
+                "马上自动接着跑一次。"
+            )
+            block = None
+            try:
+                block = await chat_service.post_system_event(topic_id, text, turn_id)
+            except Exception:  # noqa: BLE001 — best effort
+                logger.exception("failed to persist timeout event")
+            if block is not None:
+                await self._broker.publish(
+                    channel, {"type": "event_block", "block": block}
+                )
             await self._broker.publish(
                 channel,
-                {
-                    "type": "error",
-                    "message": "芝士这轮超时被中断了（可能卡在某步）。"
-                    "已完成的改动已保存，马上自动接着跑一次。",
-                },
+                {"type": "error", "message": text, "persisted": block is not None},
             )
             if not is_resume:
                 resume_after = 10.0
+                resume_why = "上一轮超时中断，接着跑"
         except AppError as exc:
             await self._broker.publish(
                 channel, {"type": "error", "message": exc.message}
@@ -229,4 +257,4 @@ class TurnRunner:
             if not is_resume:
                 resume_after = 5.0
         if resume_after is not None and not is_resume:
-            self._schedule_resume(chat_service, topic_id, resume_after)
+            self._schedule_resume(chat_service, topic_id, resume_after, resume_why)
