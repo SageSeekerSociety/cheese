@@ -16,10 +16,13 @@ the durable lease is the documented multi-instance upgrade.
 import asyncio
 import contextlib
 import logging
+import time
 import uuid
+from collections import deque
 from collections.abc import AsyncIterator
 
 from app.core.errors import AppError
+from app.core.obs import bind_context, clear_context
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -87,6 +90,12 @@ class TurnRunner:
         self._timeout = turn_timeout_s
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
+        # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
+        self._recent: deque[dict] = deque(maxlen=100)
+
+    def recent_turns(self) -> list[dict]:
+        """Newest-first lifecycle summaries for /debug/turns."""
+        return list(reversed(self._recent))
 
     def active_turns(self) -> int:
         """How many turns are currently in flight — /health exposes this so a
@@ -174,9 +183,25 @@ class TurnRunner:
         channel = str(topic_id)
         resume_after: float | None = None
         resume_why = "上一轮异常中断，接着跑"
+        # Correlate: every log line anywhere inside this turn carries these ids.
+        bind_context(turn=str(turn_id)[:8], topic=str(topic_id)[:8])
+        t0 = time.monotonic()
+        rec = {
+            "turn_id": str(turn_id),
+            "topic_id": str(topic_id),
+            "author": author,
+            "summon": summon,
+            "is_resume": is_resume,
+            "status": "running",
+            "started_at": time.time(),
+            "first_output_s": None,
+            "tools": 0,
+            "duration_s": None,
+            "detail": None,
+        }
+        self._recent.append(rec)
         logger.info(
-            "turn %s start topic=%s author=%s summon=%s resume=%s",
-            turn_id, topic_id, author, summon, is_resume,
+            "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
         )
         try:
             # Wall-clock ceiling (R8): a wedged turn must not hold the topic lock
@@ -195,15 +220,32 @@ class TurnRunner:
                     is_resume=is_resume,
                     resume_reason=resume_reason,
                 ):
-                    if frame.get("type") == "resume_hint":
+                    kind = frame.get("type")
+                    if kind == "resume_hint":
                         # Internal: chat layer says this failure is worth an
                         # automatic continuation (e.g. rate-limit reset time).
                         resume_after = float(frame.get("after_s", 5))
                         resume_why = str(frame.get("reason") or resume_why)
+                        rec["detail"] = resume_why
                         continue
+                    if kind in ("delta", "tool") and rec["first_output_s"] is None:
+                        rec["first_output_s"] = round(time.monotonic() - t0, 2)
+                    if kind == "tool":
+                        rec["tools"] += 1
+                    if kind == "error":
+                        rec["status"] = "error"
+                        rec["detail"] = str(frame.get("message", ""))[:200]
                     await self._broker.publish(channel, frame)
-            logger.info("turn %s done topic=%s", turn_id, topic_id)
+            if rec["status"] == "running":
+                rec["status"] = "done"
+            rec["duration_s"] = round(time.monotonic() - t0, 1)
+            logger.info(
+                "turn done: status=%s tools=%s first_output=%ss duration=%ss",
+                rec["status"], rec["tools"], rec["first_output_s"], rec["duration_s"],
+            )
         except TimeoutError:
+            rec["status"] = "timeout"
+            rec["duration_s"] = round(time.monotonic() - t0, 1)
             logger.warning(
                 "turn %s timed out (>%ss) for topic %s; interrupted",
                 turn_id, self._timeout, topic_id,
@@ -229,10 +271,15 @@ class TurnRunner:
                 resume_after = 10.0
                 resume_why = "上一轮超时中断，接着跑"
         except AppError as exc:
+            rec["status"] = "error"
+            rec["detail"] = exc.message
+            rec["duration_s"] = round(time.monotonic() - t0, 1)
             await self._broker.publish(
                 channel, {"type": "error", "message": exc.message}
             )
         except Exception:  # noqa: BLE001 — surface agent/runtime failures (spec H4)
+            rec["status"] = "crashed"
+            rec["duration_s"] = round(time.monotonic() - t0, 1)
             logger.exception("turn %s failed for topic %s", turn_id, topic_id)
             # The failure goes into the 现场 timeline as a persisted system event
             # (scrolls with the flow, survives reload) — not just a transient
@@ -257,4 +304,6 @@ class TurnRunner:
             if not is_resume:
                 resume_after = 5.0
         if resume_after is not None and not is_resume:
+            rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
             self._schedule_resume(chat_service, topic_id, resume_after, resume_why)
+        clear_context("turn", "topic")

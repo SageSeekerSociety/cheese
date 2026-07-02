@@ -10,7 +10,6 @@ this file.
 """
 
 import importlib
-import logging
 import pkgutil
 import re
 
@@ -25,15 +24,13 @@ from fastapi.responses import JSONResponse
 import app.api.routes as routes_pkg
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
+from app.core.obs import bind_context, clear_context, configure_logging, get_logger
 from app.core.sandbox_auth import is_valid_cheese_token
 from app.core.turn_context import current_turn_id, parse_turn_id
 
-# Observable (取证军规): every app log line carries a timestamp, and turn
-# lifecycle logs at INFO — uvicorn's own access lines keep their format.
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+# Observable (可观测性军规): structlog + contextvars — every line timestamped,
+# every request/turn correlated. See app/core/obs.py.
+configure_logging()
 
 
 @asynccontextmanager
@@ -110,6 +107,40 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
+_http_log = get_logger("http")
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next: Callable):  # type: ignore[type-arg]
+    """Correlation + timing for every request: bind request_id (respecting an
+    incoming X-Request-ID) to the async context, echo it back, log the duration.
+    contextvars are task-local, so concurrent requests never bleed ids."""
+    import time
+    import uuid as _uuid
+
+    rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
+    bind_context(req=rid)
+    t0 = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        _http_log.exception(
+            "request failed", method=request.method, path=request.url.path
+        )
+        raise
+    finally:
+        clear_context("req")
+    ms = round((time.perf_counter() - t0) * 1000, 1)
+    # WS upgrades and health probes are logged by their own layers; skip noise.
+    if request.url.path != "/health":
+        _http_log.info(
+            "req", method=request.method, path=request.url.path,
+            status=response.status_code, ms=ms, req=rid,
+        )
+    response.headers["X-Request-ID"] = rid
+    return response
+
+
 @app.middleware("http")
 async def cheese_token_gate(request: Request, call_next: Callable):  # type: ignore[type-arg]
     method, path = request.method, request.url.path
@@ -138,6 +169,16 @@ async def cheese_token_gate(request: Request, call_next: Callable):  # type: ign
 
 
 loaded_routers = _discover_routers(app)
+
+
+@app.get("/debug/turns")
+async def debug_turns() -> dict:
+    """可 debug: the last ~100 turns' lifecycle summaries (status, timings,
+    tool counts, failure reasons) — read the state of the world without
+    grepping logs."""
+    from app.api.deps import get_turn_runner
+
+    return {"code": 200, "message": "ok", "data": get_turn_runner().recent_turns()}
 
 
 @app.get("/health")
