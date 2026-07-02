@@ -58,6 +58,7 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 | `cheese milestone "<标题>" [--due 2026-06-20]` | 把关键节点钉成里程碑 |
 | `cheese members` | 列出项目成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |
 | `cheese artifact <文件> [--as html\|svg]` | 把工作区里的产物设为**当前预览**,渲染进右侧预览窗口 |
+| `cheese serve ["说明"]` | 把**容器里跑起来的应用**设为当前预览。先把 dev server 起在 `0.0.0.0:$CHEESE_APP_PORT`(注意不能只绑 localhost;vite 要 `--host 0.0.0.0`,uvicorn 要 `--host 0.0.0.0`),后台运行(`nohup ... &`),验证 `curl localhost:$CHEESE_APP_PORT` 通了再 serve。**怎么跑这个项目由你判断**(看 README/package.json/pyproject)——每个项目不一样 |
 
 **做出可以"看"的产物就点名它。** 当你产出了一个网页、可视化、SVG 图等能直接展示给用户的东西(如 `Write ./report.html` 后),用 `cheese artifact report.html` 把它设为当前预览——用户在右侧「预览」里就能看到实时画面。**别指望平台去猜该显示哪个文件——你显式指定。** 每次调用都会把预览指向最新那个。
 

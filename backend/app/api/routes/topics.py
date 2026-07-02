@@ -221,6 +221,10 @@ async def return_conclusion(
 _ARTIFACT_MIME = {
     "html": "text/html",
     "svg": "image/svg+xml",
+    # 运行环境预览: the artifact is a RUNNING app inside the topic's container,
+    # listening on the conventional $CHEESE_APP_PORT. HOW to run it is the AI's
+    # judgment (per-project); the platform only proxies the published port.
+    "app": "application/x-cheesex-app",
 }
 
 
@@ -241,8 +245,13 @@ async def set_artifact(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     """芝士 marks a worktree file as a renderable artifact (spec §9.1) — used by
     `cheese artifact`. With no anchor it becomes the topic's current preview."""
     topic = await TopicService(db).get_or_404(topic_id)
-    path = _clean_artifact_path(body.get("path") or "")
     as_ = (body.get("as") or "html").strip().lower()
+    # An app artifact points at the running server, not a file — the stored
+    # content is a human note ("Vue dev server"), not a path.
+    if as_ == "app":
+        path = (body.get("path") or "app").strip()[:120]
+    else:
+        path = _clean_artifact_path(body.get("path") or "")
     mime = _ARTIFACT_MIME.get(as_)
     if mime is None:
         allowed = "、".join(_ARTIFACT_MIME)
@@ -269,7 +278,19 @@ async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
     art = await BlockRepository(db).latest_artifact(topic_id)
     if art is None:
         return ok(None)
-    return ok({"path": art.content, "mime": art.mime_type})
+    if art.mime_type == _ARTIFACT_MIME["app"]:
+        # Resolve the container's published port LIVE — the mapping only exists
+        # while the topic's container is up.
+        url = ws.app_preview_url(topic_id)
+        return ok(
+            {
+                "kind": "app",
+                "path": art.content,
+                "mime": art.mime_type,
+                "url": url,
+            }
+        )
+    return ok({"kind": "file", "path": art.content, "mime": art.mime_type})
 
 
 # ---- 聊天图片附件 (图片输入) -------------------------------------------------

@@ -508,6 +508,10 @@ const projectUsage = ref<UsageStats | null>(null)
 const previewFile = ref<FileContent | null>(null)
 const previewMime = ref<string>('text/html')
 const previewNamed = ref(false)
+// 运行环境预览: the agent declared a RUNNING app (cheese serve) — iframe its
+// live-resolved localhost URL instead of rendering file content.
+const previewAppUrl = ref<string | null>(null)
+const previewAppNote = ref<string>('')
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -562,7 +566,14 @@ async function loadTool(key: string) {
       // platform never picks the preview itself.
       const art = await getPreview(tid).catch(() => null)
       if (props.topic?.id !== tid) return
-      if (art) {
+      previewAppUrl.value = null
+      previewAppNote.value = ''
+      if (art && art.kind === 'app') {
+        previewNamed.value = true
+        previewAppNote.value = art.path
+        previewAppUrl.value = art.url ?? null
+        previewFile.value = null
+      } else if (art) {
         previewNamed.value = true
         previewMime.value = art.mime || 'text/html'
         previewFile.value = await readFile(pid, art.path, tid).catch(() => null)
@@ -1419,7 +1430,32 @@ onBeforeUnmount(() => {
           <!-- 预览 (spec §9.1): the artifact 芝士 pointed at (cheese artifact),
                rendered by its mimeType. Never guessed by the platform. -->
           <template v-else-if="openTool === 'preview'">
-            <div v-if="previewFile" class="preview-wrap">
+            <!-- 运行环境预览: live app in the topic's container -->
+            <div v-if="previewAppUrl" class="preview-wrap">
+              <div class="preview-bar text-caption px-3 pt-2">
+                <span class="text-medium-emphasis">{{ previewAppNote }}</span>
+                <v-chip size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
+                <v-chip size="x-small" variant="outlined" class="ms-1">
+                  {{ previewAppUrl }}
+                </v-chip>
+              </div>
+              <iframe
+                class="preview-frame"
+                :src="previewAppUrl"
+                sandbox="allow-same-origin allow-scripts allow-forms"
+              />
+            </div>
+            <div
+              v-else-if="previewNamed && previewAppNote"
+              class="text-center text-medium-emphasis py-8"
+            >
+              <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
+              <div>应用暂时不在线</div>
+              <div class="text-caption mt-1">
+                芝士声明过一个运行中的应用，但它的容器当前没在跑——再 @ 它一次即可拉起。
+              </div>
+            </div>
+            <div v-else-if="previewFile" class="preview-wrap">
               <div class="preview-bar text-caption px-3 pt-2">
                 <span class="text-medium-emphasis">{{ previewFile.path }}</span>
                 <v-chip
