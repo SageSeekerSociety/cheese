@@ -211,6 +211,29 @@ def write_file(
     target.write_text(content, encoding="utf-8")
 
 
+def read_file_bytes(
+    project_id: uuid.UUID, path: str, topic_id: uuid.UUID | None = None
+) -> bytes:
+    """Raw bytes of a worktree file (binary-safe — images/attachments; the text
+    reader would mangle them). Same traversal guard as read_file."""
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
+    if not target.is_file():
+        raise ValidationError("file not found")
+    return target.read_bytes()
+
+
+def write_file_bytes(
+    project_id: uuid.UUID, path: str, data: bytes, topic_id: uuid.UUID | None = None
+) -> None:
+    """Binary-safe write into the topic's worktree (聊天图片等附件落盘 — 进版本库，
+    文件面板可见，沙箱里芝士可直接 Read). Same guards as write_file."""
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+
+
 def git_log(project_id: uuid.UUID, limit: int = 50) -> list[dict]:
     repo = ensure_repo(project_id)
     # A fresh repo has no commits yet — `git log` would exit non-zero. Return an

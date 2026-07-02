@@ -65,6 +65,7 @@ class ComputeProvider(Protocol):
         owner: str | None = None,
         turn_id: uuid.UUID | None = None,
         sandbox_image: str | None = None,
+        images: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]: ...
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None: ...
@@ -157,6 +158,7 @@ class LocalDockerProvider:
         owner: str | None = None,
         turn_id: uuid.UUID | None = None,
         sandbox_image: str | None = None,
+        images: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         # topic_id None (e.g. a project with no root topic) → no per-topic sandbox.
         if self.sandboxed() and topic_id is not None:
@@ -178,6 +180,7 @@ class LocalDockerProvider:
             sandbox=sandbox,
             model=model,
             env=env,
+            images=images,
         )
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
@@ -221,6 +224,7 @@ class RemoteCheesedProvider:
         owner: str | None = None,
         turn_id: uuid.UUID | None = None,
         sandbox_image: str | None = None,
+        images: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         body = {
             "project_id": str(project_id),
@@ -240,6 +244,9 @@ class RemoteCheesedProvider:
             "turn_id": str(turn_id) if turn_id else None,
             "memory_scope": memory_scope,
             "owner": owner,
+            # 图片输入: worktree-relative image refs; the NODE (which has the
+            # files) base64-embeds them into the user message (build_query_input).
+            "images": images or [],
         }
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(

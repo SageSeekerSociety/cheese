@@ -11,8 +11,10 @@ Key SDK facts (verified against installed claude-agent-sdk 0.2.x):
 - `ResultMessage.session_id` is the token used to resume the conversation.
 """
 
+import base64
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import (
@@ -161,6 +163,67 @@ def _assistant_text(message: AssistantMessage) -> str:
     )
 
 
+# Per-image ceiling for NATIVE image input (图片输入): the Anthropic API rejects
+# images over ~5MB base64, and base64 inflates raw bytes by 4/3 — so cap raw
+# size at 3.75MB. Bigger files fall back to a text note pointing at the
+# worktree path (sandbox Read is image-capable, so 芝士 can still open it).
+_IMAGE_MAX_BYTES = 3_750_000
+
+
+def _image_content_block(cwd: str, path: str, media_type: str) -> dict | None:
+    """Base64 image block for one worktree image, or None if the file is
+    missing, escapes the worktree, or exceeds the API's per-image size cap."""
+    try:
+        root = Path(cwd).resolve()
+        target = (root / path).resolve()
+        if not target.is_relative_to(root) or not target.is_file():
+            return None
+        if target.stat().st_size > _IMAGE_MAX_BYTES:
+            return None
+        data = base64.standard_b64encode(target.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": media_type, "data": data},
+    }
+
+
+def build_query_input(
+    prompt: str, images: list[dict] | None, cwd: str
+) -> str | list[dict]:
+    """What we hand to `client.query()`: the plain prompt string, or — when the
+    turn carries images (图片输入) — Anthropic-style content blocks with each
+    image embedded natively (base64), so 芝士 SEES them in the message itself
+    (Claude Code native image input) instead of having to Read files.
+
+    Images that can't be embedded (too big / unreadable) degrade to a text note
+    pointing at the worktree path."""
+    if not images:
+        return prompt
+    image_blocks: list[dict] = []
+    notes: list[str] = []
+    for img in images:
+        path = str(img.get("path") or "")
+        media_type = str(img.get("media_type") or "") or "image/png"
+        block = _image_content_block(cwd, path, media_type)
+        if block is not None:
+            image_blocks.append(block)
+        elif path:
+            notes.append(
+                f"（图片 {path} 未能随消息附上——太大或暂不可读；"
+                "可用 Read 工具打开这个工作区文件查看）"
+            )
+    if not image_blocks and not notes:
+        return prompt
+    text = "\n".join(s for s in (prompt, *notes) if s)
+    blocks: list[dict] = []
+    if text:
+        blocks.append({"type": "text", "text": text})
+    blocks.extend(image_blocks)
+    return blocks
+
+
 # Claude Code's built-in tools. 芝士 must act only through platform (cheese) MCP
 # tools (spec §9.1), so we disallow the built-ins — no arbitrary Bash/file I/O.
 _BUILTIN_TOOLS = [
@@ -197,9 +260,15 @@ class AgentService:
         sandbox: dict[str, Any] | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
+        images: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Yield AgentDelta chunks (and AgentToolUse events) live, then a final
         AgentResult.
+
+        `images` (图片输入): worktree images this turn carries, each
+        {"path": <cwd-relative>, "media_type": <mime>} — embedded NATIVELY as
+        base64 image blocks in the user message (see build_query_input), so the
+        model sees them without any tool round-trip.
 
         - sandbox given: run `claude` INSIDE a per-topic container via the cli_path
           shim, with NATIVE tools (Bash/Read/Write/Edit jailed by the container)
@@ -261,8 +330,24 @@ class AgentService:
         cli_errors: list[str] | None = None
         rate_limit: dict | None = None
 
+        query_input = build_query_input(prompt, images, cwd)
+        if isinstance(query_input, str):
+            request: Any = query_input
+        else:
+            # Streaming-input form: one user message whose content is a block
+            # list (text + native base64 image blocks) — the SDK/CLI accept
+            # Anthropic-style content arrays here.
+            async def _one_message() -> AsyncIterator[dict]:
+                yield {
+                    "type": "user",
+                    "message": {"role": "user", "content": query_input},
+                    "parent_tool_use_id": None,
+                }
+
+            request = _one_message()
+
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(prompt)
+            await client.query(request)
             async for message in client.receive_response():
                 if isinstance(message, StreamEvent):
                     text = _extract_text_delta(message.event)

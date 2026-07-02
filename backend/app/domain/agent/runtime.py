@@ -102,6 +102,7 @@ class TurnRunner:
         content: str,
         summon: bool,
         reply_to: str | None = None,
+        attachments: list[dict] | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
@@ -111,6 +112,7 @@ class TurnRunner:
             self._run(
                 chat_service, topic_id, turn_id,
                 author=author, content=content, summon=summon, reply_to=reply_to,
+                attachments=attachments,
             )
         )
         self._tasks.add(task)
@@ -127,6 +129,7 @@ class TurnRunner:
         content: str,
         summon: bool,
         reply_to: str | None = None,
+        attachments: list[dict] | None = None,
     ) -> None:
         channel = str(topic_id)
         try:
@@ -142,6 +145,7 @@ class TurnRunner:
                     summon=summon,
                     turn_id=turn_id,
                     reply_to=reply_to,
+                    attachments=attachments,
                 ):
                     await self._broker.publish(channel, frame)
         except TimeoutError:
