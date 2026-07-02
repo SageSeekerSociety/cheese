@@ -35,3 +35,20 @@ def markdown_preview(text: str, limit: int = 200) -> str:
     for marker in _PAIRED:
         cut = _drop_unclosed(cut, marker)
     return f"{cut.rstrip()}…"
+
+
+def truncate_words(text: str, n: int) -> str:
+    """Keep the first `n` whitespace-delimited words of `text`, rejoined with a
+    single space. If any words were dropped, append an ellipsis.
+
+    Returns "" when `n <= 0` or `text` has no words. Like `markdown_preview`,
+    this only trims — it never rewrites the words that survive.
+    """
+    if n <= 0:
+        return ""
+    words = _WS.sub(" ", text).strip().split(" ")
+    if words == [""]:
+        return ""
+    if len(words) <= n:
+        return " ".join(words)
+    return " ".join(words[:n]) + "…"

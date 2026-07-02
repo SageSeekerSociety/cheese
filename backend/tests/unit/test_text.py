@@ -1,6 +1,6 @@
 """markdown_preview: clean notification previews (no dangling markdown)."""
 
-from app.core.text import markdown_preview
+from app.core.text import markdown_preview, truncate_words
 
 
 def test_short_text_passes_through_with_whitespace_collapsed():
@@ -34,3 +34,29 @@ def test_mention_tokens_are_preserved():
     text = "分工：<@user-1> 负责后端，" + "详情" * 200
     out = markdown_preview(text, 50)
     assert "<@user-1>" in out
+
+
+# --- truncate_words -------------------------------------------------------
+
+
+def test_truncate_words_returns_all_words_when_under_limit():
+    # Fewer words than n: everything survives, whitespace collapsed, no ellipsis.
+    assert truncate_words("hello   world", 5) == "hello world"
+
+
+def test_truncate_words_appends_ellipsis_when_cut():
+    assert truncate_words("one two three four five", 3) == "one two three…"
+
+
+def test_truncate_words_no_ellipsis_when_exactly_n():
+    assert truncate_words("one two three", 3) == "one two three"
+
+
+def test_truncate_words_empty_string_returns_empty():
+    assert truncate_words("", 5) == ""
+    assert truncate_words("   ", 5) == ""
+
+
+def test_truncate_words_non_positive_n_returns_empty():
+    assert truncate_words("one two three", 0) == ""
+    assert truncate_words("one two three", -1) == ""
