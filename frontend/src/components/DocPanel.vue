@@ -412,6 +412,67 @@ const fileSaved = ref<string>('') // last loaded/saved content, for the dirty fl
 const fileSaving = ref(false)
 const fileListOpen = ref(true) // the ☰ toggle hides the list for a wider editor
 const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
+
+// 文件树: the backend returns a flat list of full relative paths; build a
+// nested tree out of it (folders first, each level sorted by name), then
+// flatten into render rows — skipping the subtrees of collapsed folders.
+// Default is fully expanded.
+interface FileRow {
+  type: 'dir' | 'file'
+  path: string // full relative path (dir or file)
+  name: string // last segment, what we display
+  depth: number
+  bytes: number
+}
+const collapsedDirs = ref(new Set<string>())
+function toggleDir(path: string) {
+  const next = new Set(collapsedDirs.value)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
+  collapsedDirs.value = next
+}
+const fileRows = computed<FileRow[]>(() => {
+  interface DirNode {
+    dirs: Map<string, DirNode>
+    files: WorkspaceFile[]
+  }
+  const root: DirNode = { dirs: new Map(), files: [] }
+  for (const f of files.value) {
+    const parts = f.path.split('/')
+    let node = root
+    for (const part of parts.slice(0, -1)) {
+      let child = node.dirs.get(part)
+      if (!child) {
+        child = { dirs: new Map(), files: [] }
+        node.dirs.set(part, child)
+      }
+      node = child
+    }
+    node.files.push(f)
+  }
+  const rows: FileRow[] = []
+  const walk = (node: DirNode, prefix: string, depth: number) => {
+    for (const name of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
+      const path = prefix ? `${prefix}/${name}` : name
+      rows.push({ type: 'dir', path, name, depth, bytes: 0 })
+      if (!collapsedDirs.value.has(path)) {
+        walk(node.dirs.get(name)!, path, depth + 1)
+      }
+    }
+    const sorted = [...node.files].sort((a, b) => a.path.localeCompare(b.path))
+    for (const f of sorted) {
+      rows.push({
+        type: 'file',
+        path: f.path,
+        name: f.path.split('/').pop() ?? f.path,
+        depth,
+        bytes: f.bytes,
+      })
+    }
+  }
+  walk(root, '', 0)
+  return rows
+})
 // 资源: usage for this topic vs the whole project.
 const topicUsage = ref<UsageStats | null>(null)
 const projectUsage = ref<UsageStats | null>(null)
@@ -1125,18 +1186,38 @@ onBeforeUnmount(() => {
                   >
                     暂无文件
                   </div>
-                  <button
-                    v-for="f in files"
-                    :key="f.path"
-                    type="button"
-                    class="file-item"
-                    :class="{ 'file-item--active': openPath === f.path }"
-                    :title="`${f.path} · ${fmtBytes(f.bytes)}`"
-                    @click="selectFile(f.path)"
-                  >
-                    <v-icon size="13" class="me-1 c-muted">mdi-file-outline</v-icon>
-                    <span class="file-item__name">{{ f.path }}</span>
-                  </button>
+                  <template v-for="row in fileRows" :key="`${row.type}:${row.path}`">
+                    <!-- folder row: click toggles expand/collapse -->
+                    <button
+                      v-if="row.type === 'dir'"
+                      type="button"
+                      class="file-item file-item--dir"
+                      :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
+                      :title="row.path"
+                      @click="toggleDir(row.path)"
+                    >
+                      <v-icon size="13" class="c-muted">
+                        {{ collapsedDirs.has(row.path) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+                      </v-icon>
+                      <v-icon size="13" class="me-1 c-muted">
+                        {{ collapsedDirs.has(row.path) ? 'mdi-folder-outline' : 'mdi-folder-open-outline' }}
+                      </v-icon>
+                      <span class="file-item__name">{{ row.name }}</span>
+                    </button>
+                    <!-- file row: shows only the file name, indented under its folder -->
+                    <button
+                      v-else
+                      type="button"
+                      class="file-item"
+                      :class="{ 'file-item--active': openPath === row.path }"
+                      :style="{ paddingLeft: `${8 + row.depth * 14 + 13}px` }"
+                      :title="`${row.path} · ${fmtBytes(row.bytes)}`"
+                      @click="selectFile(row.path)"
+                    >
+                      <v-icon size="13" class="me-1 c-muted">mdi-file-outline</v-icon>
+                      <span class="file-item__name">{{ row.name }}</span>
+                    </button>
+                  </template>
                 </div>
                 <div class="file-editor">
                   <CodeEditor
@@ -1736,6 +1817,9 @@ onBeforeUnmount(() => {
   background: transparent;
   cursor: pointer;
   color: var(--text);
+}
+.file-item--dir .file-item__name {
+  font-weight: 500;
 }
 .file-item:hover {
   background: rgba(var(--v-border-color), 0.18);
