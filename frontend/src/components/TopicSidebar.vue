@@ -279,8 +279,8 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
             <v-btn
               icon="mdi-plus"
               size="x-small"
-              variant="text"
-              class="c-faint"
+              variant="tonal"
+              color="primary"
               title="新建话题"
               @click="newTopic"
             />
@@ -628,9 +628,9 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
   /* 未读计数 = 裸的琥珀数字（owner 定的醒目色），行里唯一常驻的右对齐元素。
      形态历经红圆/石墨药丸被否——干净的行 + 一个琥珀数字才是答案。 */
   background: none;
-  color: var(--accent-ink, #9a5413);
+  color: var(--accent, #f57f17);
   margin-left: 6px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;

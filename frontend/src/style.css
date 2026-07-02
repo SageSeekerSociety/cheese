@@ -238,7 +238,7 @@ body {
    UA's default border/background leaks in (the mystery dark boxes around 本体
    bar / 已归档 / project switcher rows). Vuetify's v-btn is unaffected, and
    buttons that declare their own border (e.g. .pool-row) override this. */
-button {
+button:not(.v-btn) {
   border: none;
   background: none;
   font: inherit;
