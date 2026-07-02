@@ -12,6 +12,7 @@ import type {
   InboxItem,
   ListPayload,
   MarketPools,
+  Me,
   MemberSummary,
   MilestoneFull,
   Notification,
@@ -51,10 +52,13 @@ export function listProjects(): Promise<ListPayload<Project>> {
   return request<ListPayload<Project>>('/projects')
 }
 
-export function createProject(name: string): Promise<Project> {
+export function createProject(
+  name: string,
+  ownerHandle?: string,
+): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, owner_handle: ownerHandle }),
   })
 }
 
@@ -93,6 +97,18 @@ export function getMemberSummary(
       handle,
     )}/summary`,
   )
+}
+
+// 极简登录 (Phase 0): get-or-create by handle, no password.
+export function login(handle: string, name = ''): Promise<Me> {
+  return request<Me>('/users/login', {
+    method: 'POST',
+    body: JSON.stringify({ handle, name }),
+  })
+}
+
+export function listUsers(): Promise<ListPayload<Me>> {
+  return request<ListPayload<Me>>('/users')
 }
 
 // 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2). Cross-project résumé:

@@ -8,14 +8,49 @@ import {
   getNotifications,
   ingestActivity,
   listProjects,
+  listUsers,
   markNotificationRead,
   resolveNotification,
   sendNotificationFeedback,
 } from './api'
-import type { Notification, Project } from './types'
+import type { Me, Notification, Project } from './types'
 import CheeseAvatar from './components/CheeseAvatar.vue'
+import { me, signIn, signOut } from './me'
 
-const ME = 'user-1'
+// 极简登录 (Phase 0): the main UI only mounts when signed in, so every
+// component can read its author handle once at setup.
+const loginHandle = ref('')
+const loginName = ref('')
+const loginBusy = ref(false)
+const loginError = ref<string | null>(null)
+const knownUsers = ref<Me[]>([])
+
+async function loadKnownUsers() {
+  try {
+    knownUsers.value = (await listUsers()).data
+  } catch {
+    knownUsers.value = []
+  }
+}
+
+async function doSignIn(handle?: string) {
+  const h = (handle ?? loginHandle.value).trim().toLowerCase()
+  if (!h) return
+  loginBusy.value = true
+  loginError.value = null
+  try {
+    await signIn(h, loginName.value)
+  } catch (e) {
+    loginError.value = e instanceof Error ? e.message : '登录失败'
+  } finally {
+    loginBusy.value = false
+  }
+}
+
+function doSignOut() {
+  signOut()
+  loadKnownUsers() // repopulate the quick-pick list for the login screen
+}
 
 // Notification bodies are AI/human-authored markdown (e.g. a 子话题 conclusion
 // with bullets/bold flowing back via C4), so render them as markdown like the
@@ -57,7 +92,10 @@ async function loadProjects() {
     // Non-fatal; the picker just stays empty.
   }
 }
-onMounted(loadProjects)
+onMounted(() => {
+  loadProjects()
+  if (!me.value) loadKnownUsers()
+})
 
 // If the routed project isn't in the list (created after load / stale tab),
 // refetch — otherwise the picker shows the raw id instead of the name.
@@ -141,7 +179,10 @@ async function loadNotifications() {
   }
   notifLoading.value = true
   try {
-    const payload = await getNotifications(currentProjectId.value, ME)
+    const payload = await getNotifications(
+      currentProjectId.value,
+      me.value?.handle ?? '',
+    )
     notifications.value = payload.data
   } catch {
     // Non-fatal; the bell just shows nothing.
@@ -229,7 +270,7 @@ async function submitNote() {
   if (!pid || !text) return
   noteSubmitting.value = true
   try {
-    await ingestActivity(pid, text, ME)
+    await ingestActivity(pid, text, me.value?.handle ?? '')
     noteDialog.value = false
     noteText.value = ''
     toast.value = '芝士已整理成活动话题'
@@ -474,11 +515,25 @@ provide('activityBump', activityBump)
         </v-card>
       </v-menu>
 
-      <!-- User chip — neutral (--fill), not amber. -->
-      <div class="user-chip me-4">
-        <div class="user-chip__avatar">U</div>
-        <span class="user-chip__name">user-1</span>
-      </div>
+      <!-- User chip — neutral (--fill), not amber. Click → switch identity. -->
+      <v-menu v-if="me" location="bottom end">
+        <template #activator="{ props: chip }">
+          <div class="user-chip me-4" v-bind="chip" style="cursor: pointer">
+            <div class="user-chip__avatar">
+              {{ me.name.slice(0, 1).toUpperCase() }}
+            </div>
+            <span class="user-chip__name">{{ me.name }}</span>
+          </div>
+        </template>
+        <v-list density="compact" min-width="180">
+          <v-list-item disabled>
+            <v-list-item-title class="t-meta">@{{ me.handle }}</v-list-item-title>
+          </v-list-item>
+          <v-list-item prepend-icon="mdi-logout" @click="doSignOut">
+            <v-list-item-title>退出登录</v-list-item-title>
+          </v-list-item>
+        </v-list>
+      </v-menu>
     </v-app-bar>
 
     <!-- 记一笔 / 导入 (E1/E3): 芝士 digests raw input into an [活动] topic. -->
@@ -530,7 +585,69 @@ provide('activityBump', activityBump)
     </v-snackbar>
 
     <v-main class="app-main">
-      <router-view />
+      <!-- 登录门 (Phase 0): the workspace only mounts when signed in, so every
+           component reads a real author handle at setup. -->
+      <router-view v-if="me" />
+      <div v-else class="login-gate fill-height d-flex align-center justify-center">
+        <v-card rounded="lg" width="380" class="pa-6" elevation="2">
+          <div class="d-flex align-center ga-2 mb-1">
+            <CheeseAvatar :size="24" />
+            <span class="t-title">进入知是</span>
+          </div>
+          <p class="t-meta c-muted mb-4">
+            报上名号即可——一个 handle 就是你的身份。
+          </p>
+          <div v-if="knownUsers.length" class="mb-4">
+            <div class="t-meta c-muted mb-2">已有成员，点击直接进入：</div>
+            <div class="d-flex flex-wrap ga-2">
+              <v-chip
+                v-for="u in knownUsers"
+                :key="u.handle"
+                size="small"
+                :disabled="loginBusy"
+                @click="doSignIn(u.handle)"
+              >
+                {{ u.name }}（@{{ u.handle }}）
+              </v-chip>
+            </div>
+            <v-divider class="my-4" />
+          </div>
+          <v-text-field
+            v-model="loginName"
+            label="名字"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="mb-3"
+          />
+          <v-text-field
+            v-model="loginHandle"
+            label="handle（小写字母/数字/横线）"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="mb-4"
+            @keydown.enter="doSignIn()"
+          />
+          <v-alert
+            v-if="loginError"
+            type="error"
+            density="compact"
+            class="mb-3"
+            :text="loginError"
+          />
+          <v-btn
+            color="primary"
+            variant="flat"
+            block
+            :loading="loginBusy"
+            :disabled="!loginHandle.trim()"
+            @click="doSignIn()"
+          >
+            进入
+          </v-btn>
+        </v-card>
+      </div>
     </v-main>
   </v-app>
 </template>

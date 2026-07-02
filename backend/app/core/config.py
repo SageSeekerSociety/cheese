@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # API key; when set, the sandbox `claude` runs on the subscription, not pay-
     # per-use API credits. Injected as CLAUDE_CODE_OAUTH_TOKEN.
     claude_oauth_token: str | None = None
+    # ExecutionProfile "claude-fable" (tier=testing): the Fable frontier model on
+    # the same personal seat/credentials as claude-opus — a second dogfooding
+    # channel so we can compare models on real platform work.
+    fable_model: str = "claude-fable-5"
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []

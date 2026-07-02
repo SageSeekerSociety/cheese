@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { myHandle } from '../me'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { marked } from 'marked'
@@ -23,7 +24,7 @@ const props = defineProps<{
 }>()
 const route = useRoute()
 
-const AUTHOR = 'user-1'
+const AUTHOR = myHandle()
 
 // Which document to show: an explicit prop (embedded) wins over the route name.
 const kind = computed<Kind>(() => {

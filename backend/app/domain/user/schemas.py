@@ -15,6 +15,14 @@ class UserCreate(BaseModel):
     skills: list[str] = Field(default_factory=list)
 
 
+class UserLogin(BaseModel):
+    """极简登录 (Phase 0, spec §7.2): no password — the handle IS the identity.
+    Get-or-create: a known handle signs in, a new one registers on the spot."""
+
+    handle: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    name: str = Field(default="", max_length=120)
+
+
 class UserUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     email: str | None = Field(default=None, max_length=200)

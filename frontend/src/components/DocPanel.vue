@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { myHandle } from '../me'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
@@ -569,7 +570,7 @@ function eventArg(content: string): string {
   return nl >= 0 ? content.slice(nl + 1).trim() : ''
 }
 
-const AUTHOR = 'user-1'
+const AUTHOR = myHandle()
 const PLACEHOLDER = '芝士会在这里维护文档，你也可以直接编辑'
 
 const editable = ref(true)

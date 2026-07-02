@@ -82,3 +82,30 @@ def test_update_profile(client):
 def test_update_missing_user_404(client):
     r = client.put("/api/users/nope", json={"name": "x"})
     assert r.status_code == 404
+
+
+# ---- 极简登录 (Phase 0): POST /api/users/login, get-or-create by handle ----
+
+
+def test_login_creates_then_signs_in(client):
+    # New handle → registered on the spot; name defaults sensibly.
+    r = client.post("/api/users/login", json={"handle": "andyl", "name": "Andy"})
+    assert r.status_code == 200
+    assert r.json()["data"]["name"] == "Andy"
+    # Same handle again → same user back (get, not duplicate; name unchanged).
+    r = client.post("/api/users/login", json={"handle": "andyl", "name": "Other"})
+    assert r.status_code == 200
+    assert r.json()["data"]["name"] == "Andy"
+    assert client.get("/api/users").json()["data"]["total"] == 1
+    # Name omitted → handle doubles as the display name.
+    r = client.post("/api/users/login", json={"handle": "bob"})
+    assert r.json()["data"]["name"] == "bob"
+
+
+def test_login_rejects_reserved_and_bad_handles(client):
+    # 芝士's identity can never be claimed by a human.
+    r = client.post("/api/users/login", json={"handle": "cheese"})
+    assert r.status_code == 422
+    for bad in ["A B", "Upper", "-lead", "x"]:
+        r = client.post("/api/users/login", json={"handle": bad})
+        assert r.status_code == 422, bad

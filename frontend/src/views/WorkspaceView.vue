@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { myHandle } from '../me'
 import { computed, inject, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '../components/ChatPanel.vue'
@@ -76,7 +77,7 @@ function startPaneDrag(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
-const AUTHOR = 'user-1'
+const AUTHOR = myHandle()
 
 const projects = ref<Project[]>([])
 const topics = ref<Topic[]>([])
@@ -485,7 +486,9 @@ function handleToolUsed(name: string) {
 
 async function handleCreateProject(name: string) {
   try {
-    const project = await createProject(name)
+    // The signed-in user owns what they create (drives testing-tier profile
+    // permission checks and 谁能撤销采纳 etc.).
+    const project = await createProject(name, AUTHOR)
     projects.value.push(project)
     selectProject(project.id)
   } catch (e) {
