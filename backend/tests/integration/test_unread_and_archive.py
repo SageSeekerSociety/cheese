@@ -70,7 +70,7 @@ def test_topic_unread_counts_and_read_cursor(client):
 def test_mark_read_requires_handle(client):
     _, topic_id = _create_project_and_topic(client)
     r = client.post(f"/api/topics/{topic_id}/read", json={})
-    assert r.status_code == 400
+    assert r.status_code == 422
 
 
 def test_notifications_unread_count_and_read_all(client):
@@ -144,4 +144,4 @@ def test_root_topic_cannot_be_archived(client):
     if root_topic_id is None:
         return  # project without a root topic — nothing to guard
     r = client.post(f"/api/topics/{root_topic_id}/archive", json={"by": "user-1"})
-    assert r.status_code == 400
+    assert r.status_code == 422

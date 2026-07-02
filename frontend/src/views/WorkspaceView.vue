@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
-import { computed, inject, nextTick, onMounted, ref, watch, type Ref } from 'vue'
+import {
+  computed,
+  inject,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+  type Ref,
+} from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '../components/ChatPanel.vue'
 import DocPanel from '../components/DocPanel.vue'
@@ -8,18 +17,22 @@ import ProjectDocsView from './ProjectDocsView.vue'
 import TopicSidebar from '../components/TopicSidebar.vue'
 import {
   acceptCard,
+  archiveTopic,
   createProject,
   createTopic,
   getAcceptCards,
   getPrivateChat,
   getTopic,
+  getTopicUnread,
   listProjectMembers,
   listProjects,
   listTopics,
+  markTopicRead,
   reassignCard,
   rejectCard,
   revokeCard,
   splitTopic,
+  unarchiveTopic,
   upgradeBlock,
 } from '../api'
 import type { AcceptCard, Project, ProjectMemberRow, Topic } from '../types'
@@ -280,6 +293,7 @@ async function loadTopicsFor(id: string) {
   } finally {
     if (selectedProjectId.value === id) loadingTopics.value = false
   }
+  refreshUnread()
 }
 
 // Navigate so the URL carries the project; the route watcher below loads it.
@@ -426,6 +440,54 @@ async function onRejectCard() {
   }
 }
 
+// ---- 话题级未读 (Feishu-style badges, spec 前端体验优化 A) ----
+const unreadMap = ref<Record<string, number>>({})
+
+async function refreshUnread() {
+  const pid = selectedProjectId.value
+  if (!pid || !AUTHOR) return
+  try {
+    const map = await getTopicUnread(pid, AUTHOR)
+    if (selectedProjectId.value !== pid) return
+    // The open topic is being read right now — its badge never shows.
+    if (selectedTopicId.value) delete map[selectedTopicId.value]
+    unreadMap.value = map
+  } catch {
+    // Best-effort; badges just stay as they were.
+  }
+}
+
+// Opening a topic = reading it: bump the server-side cursor and clear the
+// badge locally (optimistic — the next refresh agrees).
+function markSelectedRead(id: string) {
+  if (!AUTHOR) return
+  if (unreadMap.value[id] !== undefined) {
+    const next = { ...unreadMap.value }
+    delete next[id]
+    unreadMap.value = next
+  }
+  markTopicRead(id, AUTHOR).catch(() => {})
+}
+
+// ---- 归档去向: manual archive / unarchive from the sidebar ----
+async function handleArchiveTopic(id: string) {
+  try {
+    await archiveTopic(id, AUTHOR)
+    await refreshTopics()
+  } catch (e) {
+    reportError(e, '归档失败')
+  }
+}
+
+async function handleUnarchiveTopic(id: string) {
+  try {
+    await unarchiveTopic(id, AUTHOR)
+    await refreshTopics()
+  } catch (e) {
+    reportError(e, '取消归档失败')
+  }
+}
+
 // Silent refresh of the current project's topic list (no spinner / selection
 // reset), so newly created sub-topics show up after 芝士 acts.
 async function refreshTopics() {
@@ -442,6 +504,11 @@ async function refreshTopics() {
 function handleTurnDone() {
   activityTick.value += 1
   refreshTopics()
+  // 芝士's reply landed after our read cursor — the user is watching this
+  // topic, so re-bump the cursor before refreshing badges (other topics that
+  // got messages in the background DO light up).
+  if (selectedTopicId.value) markSelectedRead(selectedTopicId.value)
+  refreshUnread()
 }
 
 // A `cheese <sub>` command changed a platform resource mid-turn (it runs as Bash,
@@ -580,9 +647,11 @@ watch(
 )
 
 // Load the accept-card banner whenever the selected topic changes (covers
-// sidebar selection, create/split/upgrade, and route-driven selection).
-watch(selectedTopicId, () => {
+// sidebar selection, create/split/upgrade, and route-driven selection), and
+// mark the newly opened topic read (its unread badge clears, Feishu-style).
+watch(selectedTopicId, (id) => {
   loadAcceptCard()
+  if (id) markSelectedRead(id)
 })
 
 // ?topic=<id> changing while already in the workspace (same project) — e.g. a
@@ -606,6 +675,11 @@ if (activityBump) {
   })
 }
 
+// 实时性 (前端体验优化 C, MVP): poll unread badges so messages landing in
+// OTHER topics light up without a manual refresh. 30s keeps it fresher than
+// "only when I click around" without hammering the backend.
+let unreadTimer: number | undefined
+
 onMounted(async () => {
   await refreshProjects()
   if (props.projectId) {
@@ -616,6 +690,13 @@ onMounted(async () => {
       router.replace({ name: 'workspace-project', params: { projectId: first.id } })
     }
   }
+  unreadTimer = window.setInterval(() => {
+    refreshUnread()
+  }, 30_000)
+})
+
+onUnmounted(() => {
+  if (unreadTimer !== undefined) window.clearInterval(unreadTimer)
 })
 </script>
 
@@ -631,10 +712,13 @@ onMounted(async () => {
       :loading-topics="loadingTopics"
       :private-active="mode === 'private'"
       :active-docs="mode === 'docs' ? docKind : null"
+      :unread-map="unreadMap"
       @select-project="selectProject"
       @select-topic="selectTopic"
       @select-private="selectPrivate"
       @select-docs="selectDocs"
+      @archive-topic="handleArchiveTopic"
+      @unarchive-topic="handleUnarchiveTopic"
       @create-project="handleCreateProject"
       @create-topic="handleCreateTopic"
       @split-topic="handleSplitTopic"
