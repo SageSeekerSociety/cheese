@@ -1439,6 +1439,9 @@ onBeforeUnmount(() => {
                   {{ previewAppUrl }}
                 </v-chip>
               </div>
+              <!-- The app is on 127.0.0.1:<port> — already a DIFFERENT origin
+                   from the platform, so allow-same-origin only lets the app be
+                   itself (cookies/storage on its own origin), never us. -->
               <iframe
                 class="preview-frame"
                 :src="previewAppUrl"
@@ -1469,10 +1472,13 @@ onBeforeUnmount(() => {
                   {{ previewMime }}
                 </v-chip>
               </div>
+              <!-- allow-scripts WITHOUT allow-same-origin (Claude Artifacts
+                   posture): interactive artifacts run their JS, but in an
+                   opaque origin that cannot touch the platform page. -->
               <iframe
                 class="preview-frame"
                 :srcdoc="previewFile.content"
-                sandbox="allow-same-origin"
+                sandbox="allow-scripts"
               />
             </div>
             <div v-else class="text-center text-medium-emphasis py-8">
