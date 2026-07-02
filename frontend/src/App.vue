@@ -754,7 +754,8 @@ provide('activityBump', activityBump)
   height: 15px;
   padding: 0 4px;
   border-radius: 8px;
-  background: #e5484d; /* softened red, not the theme's alarm error */
+  /* 知是的墨色语言：计数是信息不是警报——石墨胶囊，不用红。 */
+  background: var(--ink, #2b2b2b);
   color: #fff;
   font-size: 10px;
   font-weight: 600;
