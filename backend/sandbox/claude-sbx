@@ -15,9 +15,11 @@
 SBX_IMAGE="${SBX_IMAGE:-cheesex-agent-sandbox:latest}"
 NAME="${SBX_CONTAINER:?SBX_CONTAINER not set}"
 
-# Ensure the topic's container exists and is running. Mounts are fixed at creation
-# (the worktree + session dirs are stable per topic); it idles on `sleep infinity`.
-if ! docker inspect "$NAME" >/dev/null 2>&1; then
+# Ensure the topic's container exists, runs the CURRENT image, and is running.
+# Mounts are fixed at creation (the worktree + session dirs are stable per
+# topic); it idles on `sleep infinity`. Containers survive backend restarts and
+# are only recreated when the project's env image changed.
+create_container() {
   docker run -d --name "$NAME" --user node \
     -e HOME=/home/node \
     --add-host host.docker.internal:host-gateway \
@@ -27,6 +29,15 @@ if ! docker inspect "$NAME" >/dev/null 2>&1; then
     --memory 2g --cpus 2 --pids-limit 512 \
     --label cheesex-sandbox=1 \
     "$SBX_IMAGE" sleep infinity >/dev/null
+}
+
+CUR_IMAGE="$(docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null || true)"
+if [ -z "$CUR_IMAGE" ]; then
+  create_container
+elif [ "$CUR_IMAGE" != "$SBX_IMAGE" ]; then
+  # 环境镜像 changed in project settings → rebuild this topic's box on the spot.
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  create_container
 elif [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" != "true" ]; then
   docker start "$NAME" >/dev/null
 fi

@@ -352,6 +352,31 @@ class ChatService:
             ):
                 yield frame
 
+    async def post_system_event(
+        self, topic_id: uuid.UUID, content: str, turn_id: uuid.UUID | None = None
+    ) -> dict | None:
+        """Persist a system event into the 现场 timeline (e.g. a turn failure):
+        visible in the flow, scrolls with it, and survives a reload — unlike a
+        transient banner. Returns the block payload, or None if the topic died."""
+        async with self._sessions() as session:
+            topics = TopicRepository(session)
+            blocks = BlockRepository(session)
+            topic = await topics.get(topic_id)
+            if topic is None:
+                return None
+            block = await blocks.add(
+                project_id=topic.project_id,
+                topic_id=topic.id,
+                author="system",
+                author_type=AuthorType.system,
+                content=content,
+                kind=BlockKind.event,
+                turn_id=turn_id,
+            )
+            payload = _block_payload(BlockOut.model_validate(block))
+            await session.commit()
+        return payload
+
     async def _post_user_message(
         self,
         topic_id: uuid.UUID,

@@ -138,3 +138,35 @@ async def test_runner_publishes_friendly_error_on_failure():
         runner.submit(_Boom(), topic, author="u", content="hi", summon=True)
         frame = await asyncio.wait_for(q.get(), 1)
     assert frame["type"] == "error"
+
+
+@pytest.mark.anyio
+async def test_turn_failure_lands_in_the_timeline():
+    """现场即事实记录: a failed turn persists a system event block (survives
+    reload, scrolls with the flow) and marks the error frame persisted=True so
+    the client doesn't double-show a banner."""
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+
+    class _Boom:
+        def __init__(self) -> None:
+            self.posted: str | None = None
+
+        async def converse(self, **_):
+            raise RuntimeError("kaboom")
+            yield  # pragma: no cover — makes this an async generator
+
+        async def post_system_event(self, topic_id, content, turn_id=None):
+            self.posted = content
+            return {"id": "b1", "kind": "event", "content": content}
+
+    svc = _Boom()
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(svc, topic, author="u", content="hi", summon=True)
+        first = await asyncio.wait_for(q.get(), 1)
+        second = await asyncio.wait_for(q.get(), 1)
+    assert first["type"] == "event_block"
+    assert "中断" in first["block"]["content"]
+    assert second["type"] == "error" and second["persisted"] is True
+    assert svc.posted == first["block"]["content"]

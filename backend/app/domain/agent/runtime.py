@@ -88,6 +88,11 @@ class TurnRunner:
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
 
+    def active_turns(self) -> int:
+        """How many turns are currently in flight — /health exposes this so a
+        redeploy can drain (wait for running turns) instead of killing them."""
+        return len(self._tasks)
+
     def submit(
         self,
         chat_service,
@@ -158,11 +163,20 @@ class TurnRunner:
             )
         except Exception:  # noqa: BLE001 — surface agent/runtime failures (spec H4)
             logger.exception("turn %s failed for topic %s", turn_id, topic_id)
+            # The failure goes into the 现场 timeline as a persisted system event
+            # (scrolls with the flow, survives reload) — not just a transient
+            # banner. No invented cause: the log has the real traceback.
+            text = "⚠️ 芝士这轮中断了。已完成的改动都在；再 @ 它一次会接着做。"
+            block = None
+            try:
+                block = await chat_service.post_system_event(topic_id, text, turn_id)
+            except Exception:  # noqa: BLE001 — best effort, never mask the error
+                logger.exception("failed to persist turn-failure event")
+            if block is not None:
+                await self._broker.publish(
+                    channel, {"type": "event_block", "block": block}
+                )
             await self._broker.publish(
                 channel,
-                {
-                    "type": "error",
-                    "message": "芝士这轮中断了（偶发的沙箱/模型错误）。"
-                    "它已完成的改动已保存，再 @ 它一次就会接着来。",
-                },
+                {"type": "error", "message": text, "persisted": block is not None},
             )
