@@ -148,6 +148,20 @@ _ACTION_LABEL = {
 }
 
 
+# HTTP statuses worth an automatic re-run: timeouts, throttling, server-side
+# blips. Anything else (or a rejected seat rate-limit) surfaces immediately.
+_TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
+
+
+def _transient_provider_error(result: AgentResult) -> bool:
+    rl = result.rate_limit or {}
+    if rl.get("status") == "rejected":
+        return False  # seat limit — resets hours later, retrying just burns turns
+    if result.api_error_status is not None:
+        return result.api_error_status in _TRANSIENT_HTTP
+    return True  # unclassified error result with zero output — one more try is cheap
+
+
 def _parse_uuid(raw: str | None) -> uuid.UUID | None:
     if not raw:
         return None
@@ -520,21 +534,39 @@ class ChatService:
     async def _stream_with_retry(self, provider, **kwargs):
         """Run a streaming turn via the compute provider, retrying transient
         failures with backoff — but ONLY before any output is produced (cold-start
-        / SDK exit-1 races). If it fails mid-stream, re-raise so the partial turn
-        surfaces rather than replaying. Backoff: 0.5s → 1s → 2s, up to 3 attempts."""
+        / SDK exit-1 races). Two failure shapes are retried: exceptions, and a
+        run whose RESULT is a transient provider error (structured
+        api_error_status 408/429/5xx — e.g. a momentary overload). A rejected
+        seat rate-limit is NOT transient (resets hours later) and surfaces
+        immediately. If a turn fails mid-stream, re-raise / surface so the
+        partial turn shows rather than replaying work."""
         delay = 0.5
         for attempt in range(3):
             produced = False
+            retry_result = False
             try:
                 async for event in provider.run_turn(**kwargs):
+                    if (
+                        isinstance(event, AgentResult)
+                        and event.is_error
+                        and not produced
+                        and attempt < 2
+                        and _transient_provider_error(event)
+                    ):
+                        retry_result = True
+                        break  # swallow the error result and re-run the turn
                     produced = True
                     yield event
-                return
+                if not retry_result:
+                    return
+                # Provider-side hiccup: back off a little longer than the
+                # cold-start schedule before asking again.
+                await asyncio.sleep(max(delay, 2.0))
             except Exception:  # noqa: BLE001 — transient sandbox/model errors
                 if produced or attempt == 2:
                     raise
                 await asyncio.sleep(delay)
-                delay *= 2
+            delay *= 2
 
     async def _notify_mentions(
         self, session, topic, author: str, text: str, roster: list[dict]
