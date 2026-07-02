@@ -421,6 +421,7 @@ class ChatService:
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
         is_resume: bool = False,
+        resume_reason: str | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
@@ -433,8 +434,9 @@ class ChatService:
             # Auto-resume (续跑): no human spoke — the opener is a SYSTEM event
             # in the 现场, and the continuation instruction goes straight to
             # the agent as the prompt.
+            why = resume_reason or "从上一轮的断点继续"
             payload = await self.post_system_event(
-                topic_id, "⏯️ 自动续跑：从上一轮的断点继续", turn_id
+                topic_id, f"⏯️ 自动续跑：{why}", turn_id
             )
             if payload is None:
                 raise NotFoundError("Topic not found")
@@ -840,6 +842,10 @@ class ChatService:
             # system event, platform-worded from STRUCTURED fields (rate-limit
             # resets_at → 北京时间; api_error_status → HTTP code), with the raw
             # provider detail quoted for the record.
+            logger.warning(
+                "turn %s provider error topic=%s rate_limit=%s api_status=%s",
+                turn_id, topic_id, rate_limit, api_error_status,
+            )
             detail = final_text.strip()
             quoted = f"（服务原话：{detail}）" if detail else ""
             resume_after_s: float | None = None
@@ -912,7 +918,11 @@ class ChatService:
             yield {"type": "error", "message": fail_text, "persisted": True}
             if resume_after_s is not None:
                 # Internal frame: the runner schedules the auto-resume.
-                yield {"type": "resume_hint", "after_s": resume_after_s}
+                yield {
+                    "type": "resume_hint",
+                    "after_s": resume_after_s,
+                    "reason": "座位额度已恢复，继续之前的任务",
+                }
             yield {"type": "done"}
             return
 

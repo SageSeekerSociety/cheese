@@ -10,8 +10,11 @@ this file.
 """
 
 import importlib
+import logging
 import pkgutil
 import re
+
+# (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -24,6 +27,13 @@ from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.sandbox_auth import is_valid_cheese_token
 from app.core.turn_context import current_turn_id, parse_turn_id
+
+# Observable (取证军规): every app log line carries a timestamp, and turn
+# lifecycle logs at INFO — uvicorn's own access lines keep their format.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 @asynccontextmanager
