@@ -196,16 +196,23 @@ function pickMention(label: string) {
 }
 
 function onComposerKey(e: KeyboardEvent) {
+  if (e.key !== 'Enter' || e.shiftKey) return
+  // IME composition (拼音选字/上屏) fires an Enter keydown too — that Enter is
+  // for the输入法, not for us. Never treat it as "send". (keyCode 229 covers
+  // browsers that don't set isComposing on the trailing keydown.)
+  if (e.isComposing || e.keyCode === 229) return
+  // Only act on Enter that truly originates from the focused composer
+  // textarea — guards against bubbled / fallthrough keydowns triggering an
+  // unintended send when the input isn't focused.
+  const t = e.target as HTMLElement | null
+  if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
+  e.preventDefault()
   // While the @-menu is open, Enter picks the first match instead of sending.
-  if (e.key === 'Enter' && !e.shiftKey && mentionMatches.value.length) {
-    e.preventDefault()
+  if (mentionMatches.value.length) {
     pickMention(mentionMatches.value[0].label)
     return
   }
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
-    sendDraft()
-  }
+  sendDraft()
 }
 
 function reportError(e: unknown, fallback: string) {
