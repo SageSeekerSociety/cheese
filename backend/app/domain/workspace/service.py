@@ -244,6 +244,13 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     """采纳 = merge (spec §6.3): merge the topic's branch into the base branch.
     Best-effort — on conflict it aborts and reports, never half-merges."""
     repo = ensure_repo(project_id)
+    # Fold any pending working-copy changes into the branch first: a human may
+    # have edited files (人改文件即指令) with no agent turn afterwards to
+    # snapshot them — accepting must deliver what the reviewer actually saw.
+    try:
+        snapshot_worktree(project_id, topic_id, "采纳前快照")
+    except ValidationError:
+        pass  # no workspace/jj state yet — nothing pending to fold
     branch = branch_for_topic(topic_id)
     if not _branch_exists(repo, branch):
         return {"merged": False, "reason": "no topic branch"}
