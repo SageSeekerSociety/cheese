@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
+import { toolLabel } from '../lib/toolLabels'
 import { computed, inject, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '../components/ChatPanel.vue'
@@ -191,33 +192,6 @@ function onAttFilePicked(e: Event) {
 // 施工现场 log for the current topic, fed into DocPanel's 现场 drawer.
 const worklog = ref<string[]>([])
 
-const TOOL_LABELS: Record<string, string> = {
-  create_subtopic: '拆出子话题',
-  update_doc: '更新了文档',
-  remember: '记入项目记忆',
-  notify: '发送通知',
-  request_accept: '递出验收卡',
-  return_conclusion: '回流结论',
-  // Native Claude Code tools — the worklog speaks Chinese too.
-  Bash: '执行命令',
-  Write: '写文件',
-  Edit: '改文件',
-  Read: '读文件',
-  Glob: '找文件',
-  Grep: '搜内容',
-  WebSearch: '搜网页',
-  WebFetch: '看网页',
-  Agent: '派分身去查',
-  Task: '派分身去查',
-  NotebookEdit: '改笔记本',
-  TodoWrite: '更新任务清单',
-  BashOutput: '看命令输出',
-  KillShell: '停掉命令',
-  ExitPlanMode: '提交方案待确认',
-  AskUserQuestion: '向用户提问',
-  Skill: '调用技能',
-  ToolSearch: '查找工具',
-}
 
 function sendDraft() {
   const ok = chatRef.value?.send(
@@ -567,7 +541,7 @@ function expandMentions(text: string): string {
 }
 
 function handleToolUsed(name: string) {
-  worklog.value.push(TOOL_LABELS[name] ?? name)
+  worklog.value.push(toolLabel(name))
   if (name === 'update_doc') {
     activityTick.value += 1
   } else if (name === 'create_subtopic') {

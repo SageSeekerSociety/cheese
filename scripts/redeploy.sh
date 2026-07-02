@@ -68,12 +68,21 @@ fi
 log "restart backend on :$PORT"
 pkill -f "uvicorn app.main:app.*--port $PORT" 2>/dev/null || true
 sleep 1
-# </dev/null detaches the daemon from OUR stdio: without it, a caller piping
-# this script (e.g. `redeploy.sh | tail`) hangs forever — the daemon inherits
-# the pipe's write end and it never reaches EOF.
-(cd "$ROOT/backend" \
-  && nohup uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT \
-       >>"$ROOT/tmp_backend.log" 2>&1 </dev/null &)
+# start_new_session detaches the daemon COMPLETELY (own session + process
+# group, stdio to the log): a caller that pipes this script or kills our
+# process group on timeout can no longer take the backend down with it.
+python3 - "$ROOT" "$PORT" <<'PYEOF'
+import subprocess, sys
+root, port = sys.argv[1], sys.argv[2]
+subprocess.Popen(
+    ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", port],
+    cwd=f"{root}/backend",
+    stdout=open(f"{root}/tmp_backend.log", "a"),
+    stderr=subprocess.STDOUT,
+    stdin=subprocess.DEVNULL,
+    start_new_session=True,
+)
+PYEOF
 
 # 6. Health check — a redeploy that leaves the platform dead must fail loudly.
 for i in $(seq 1 20); do
@@ -88,8 +97,18 @@ done
 # 7. Frontend: vite dev hot-reloads on its own; just make sure it's running.
 if ! curl -s -m 2 -o /dev/null "http://localhost:$FRONTEND_PORT"; then
   log "frontend down — starting vite dev server"
-  (cd "$ROOT/frontend" \
-    && nohup npm run dev >>"$ROOT/tmp_frontend.log" 2>&1 </dev/null &)
+  python3 - "$ROOT" <<'PYEOF'
+import subprocess, sys
+root = sys.argv[1]
+subprocess.Popen(
+    ["npm", "run", "dev"],
+    cwd=f"{root}/frontend",
+    stdout=open(f"{root}/tmp_frontend.log", "a"),
+    stderr=subprocess.STDOUT,
+    stdin=subprocess.DEVNULL,
+    start_new_session=True,
+)
+PYEOF
   sleep 3
   curl -s -m 2 -o /dev/null "http://localhost:$FRONTEND_PORT" \
     || log "WARN: frontend still not answering (check $ROOT/tmp_frontend.log)"
