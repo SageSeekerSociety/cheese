@@ -461,10 +461,12 @@ function handleMentionClick(handle: string) {
 // patterns first so substrings don't mis-match — same encoding 芝士 uses.
 function expandMentions(text: string): string {
   const subs: { pat: string; token: string }[] = [
-    ...projectMembers.value.map((m) => ({
-      pat: `@${m.name || m.user_handle}`,
-      token: `<@${m.user_handle}>`,
-    })),
+    // Both spellings a human naturally types: @名字 and @handle (e.g. a handle
+    // pasted from someone else's message).
+    ...projectMembers.value.flatMap((m) => [
+      { pat: `@${m.name || m.user_handle}`, token: `<@${m.user_handle}>` },
+      { pat: `@${m.user_handle}`, token: `<@${m.user_handle}>` },
+    ]),
     ...topics.value.map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
   ].sort((a, b) => b.pat.length - a.pat.length)
   let out = text

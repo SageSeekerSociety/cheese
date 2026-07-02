@@ -637,7 +637,13 @@ onBeforeUnmount(() => {
                 class="im-text md-content"
                 v-html="renderMarkdown(m.content)"
               />
-              <div v-else class="im-text" v-html="renderPlain(m.content)" />
+              <!-- 现场尊重原文: human text renders verbatim — newlines and
+                   spacing preserved (pre-wrap), no markdown reflow. -->
+              <div
+                v-else
+                class="im-text im-text--verbatim"
+                v-html="renderPlain(m.content)"
+              />
               <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
               <button
                 v-if="m.upgraded_to_topic_id"
@@ -980,6 +986,10 @@ onBeforeUnmount(() => {
   line-height: 1.62;
   color: var(--text);
   word-break: break-word;
+}
+/* 现场尊重原文: exactly what the human typed, line breaks included. */
+.im-text--verbatim {
+  white-space: pre-wrap;
 }
 /* Live link from an upgraded block to its new topic. */
 /* B3: the "回复 X：…" cue above a reply, and the composer reply-to bar. */
