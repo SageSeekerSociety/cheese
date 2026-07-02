@@ -34,7 +34,9 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
 
 
 def _unread(client, project_id: str, handle: str) -> dict:
-    r = client.get(f"/api/projects/{project_id}/topic-unread", params={"handle": handle})
+    r = client.get(
+        f"/api/projects/{project_id}/topic-unread", params={"handle": handle}
+    )
     assert r.status_code == 200
     return r.json()["data"]
 
