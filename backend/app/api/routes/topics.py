@@ -198,6 +198,33 @@ async def set_title(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
+@router.post("/{topic_id}/read")
+async def mark_topic_read(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """话题级已读位: bump the user's read cursor (opening a topic clears its
+    unread badge, Feishu-style)."""
+    handle = (body.get("handle") or "").strip()
+    if not handle:
+        raise ValidationError("handle 不能为空")
+    await TopicService(db).mark_read(topic_id, handle)
+    return ok({"topic_id": str(topic_id), "handle": handle})
+
+
+@router.post("/{topic_id}/archive")
+async def archive_topic(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """手动归档 (归档去向): explicit archive, independent of 采纳."""
+    by = (body.get("by") or "anonymous").strip() or "anonymous"
+    topic = await TopicService(db).archive(topic_id, by=by)
+    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
+@router.post("/{topic_id}/unarchive")
+async def unarchive_topic(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """取消归档: bring an archived topic back to active."""
+    by = (body.get("by") or "anonymous").strip() or "anonymous"
+    topic = await TopicService(db).unarchive(topic_id, by=by)
+    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
 @router.post("/{topic_id}/split")
 async def split_topic(topic_id: uuid.UUID, body: SplitIn, db: DbSession) -> dict:
     """从上往下拆解：split a todo into a sub-topic (eval A2)."""
@@ -273,6 +300,21 @@ async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
     if art is None:
         return ok(None)
     return ok({"path": art.content, "mime": art.mime_type})
+
+
+# Per-project unread map lives under /api/projects (a "/unread" path under
+# /api/topics would be shadowed by the /{topic_id} route). Separate router.
+project_router = APIRouter(prefix="/api/projects", tags=["topics"])
+
+
+@project_router.get("/{project_id}/topic-unread")
+async def project_topic_unread(
+    project_id: uuid.UUID, handle: str, db: DbSession
+) -> dict:
+    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for one
+    user, one query. Topics with zero unread are omitted."""
+    counts = await TopicService(db).unread_counts(project_id, handle)
+    return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 
 # Block upgrade lives here (it produces a topic). Separate router prefix.

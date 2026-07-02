@@ -67,6 +67,16 @@ class NotificationService:
         items = await self._repo.list_inbox(project_id, target_handle=target_handle)
         return items, len(items)
 
+    async def unread_count(
+        self, project_id: uuid.UUID, *, target_handle: str | None = None
+    ) -> int:
+        return await self._repo.unread_count(project_id, target_handle=target_handle)
+
+    async def mark_all_read(
+        self, project_id: uuid.UUID, *, target_handle: str | None = None
+    ) -> int:
+        return await self._repo.mark_all_read(project_id, target_handle=target_handle)
+
     async def get_or_404(self, notification_id: uuid.UUID) -> Notification:
         notification = await self._repo.get(notification_id)
         if notification is None:

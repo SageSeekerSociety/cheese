@@ -7,6 +7,7 @@ sub-topic's conclusion flows back to its parent (结论回流).
 
 import difflib
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,6 +107,63 @@ class TopicService:
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)
         return await self._repo.list_children(topic_id)
+
+    # ---- 话题级未读 (Feishu-style badges) -------------------------------
+
+    async def unread_counts(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> dict[uuid.UUID, int]:
+        if await self._projects.get(project_id) is None:
+            raise NotFoundError("Project not found")
+        return await self._repo.unread_counts(project_id, user_handle)
+
+    async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
+        await self.get_or_404(topic_id)
+        await self._repo.mark_read(topic_id, user_handle)
+
+    # ---- 手动归档 / 取消归档 (归档去向, spec §6.3 extension) -------------
+
+    async def archive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
+        """Manually archive a topic (idempotent). Until now archive only
+        happened as a side effect of 采纳; this is the explicit '这事完了/
+        不做了' action. The root topic (项目本体) can't be archived."""
+        topic = await self.get_or_404(topic_id)
+        if topic.kind == TopicKind.root:
+            raise ValidationError("项目本体不能归档")
+        if topic.status == TopicStatus.archived:
+            return topic
+        topic.status = TopicStatus.archived
+        topic.archived_at = datetime.now(UTC)
+        await self._blocks.add(
+            project_id=topic.project_id,
+            topic_id=topic.id,
+            author=by,
+            author_type=AuthorType.system,
+            content=f"📦 {by} 归档了话题",
+            kind=BlockKind.event,
+        )
+        await self._session.flush()
+        return topic
+
+    async def unarchive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
+        """Bring an archived topic back to active (idempotent). Accept markers
+        are kept — un-archiving doesn't rewrite acceptance history (use 撤回采纳
+        for that)."""
+        topic = await self.get_or_404(topic_id)
+        if topic.status != TopicStatus.archived:
+            return topic
+        topic.status = TopicStatus.active
+        topic.archived_at = None
+        await self._blocks.add(
+            project_id=topic.project_id,
+            topic_id=topic.id,
+            author=by,
+            author_type=AuthorType.system,
+            content=f"📂 {by} 取消归档，话题恢复活跃",
+            kind=BlockKind.event,
+        )
+        await self._session.flush()
+        return topic
 
     async def _add_opening(self, topic: Topic, *, from_discussion: bool) -> None:
         await self._blocks.add(
