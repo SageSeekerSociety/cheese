@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { relTime } from '../lib/relTime'
 import type { Project, Topic } from '../types'
 import CheeseAvatar from './CheeseAvatar.vue'
 
