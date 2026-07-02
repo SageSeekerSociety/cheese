@@ -307,10 +307,19 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         )
     except ValidationError as exc:
         try:
+            conflicts = _git(
+                repo, "diff", "--name-only", "--diff-filter=U"
+            ).strip().splitlines()
+        except ValidationError:
+            conflicts = []
+        try:
             _git(repo, "merge", "--abort")
         except ValidationError:
             pass
-        return {"merged": False, "reason": str(exc)}
+        reason = (
+            "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
+        )
+        return {"merged": False, "reason": reason, "conflicts": conflicts}
     return {"merged": True, "branch": branch, "into": base}
 
 
@@ -426,6 +435,31 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
         )
         return {"synced": False, "reason": reason, "conflicts": conflicts}
     return {"synced": True, "commits": behind}
+
+
+def prepare_conflict_resolution(
+    project_id: uuid.UUID, topic_id: uuid.UUID
+) -> list[str]:
+    """采纳冲突 → 派芝士解决的前置：在话题的 jj workspace 里创建 branch×base 的
+    合并提交，冲突以标记形式materialize 在文件里；返回冲突文件列表。芝士改完文件、
+    平台照常快照（merge commit 连同解决一起入 bookmark），重试采纳即可干净合并。"""
+    branch = branch_for_topic(topic_id)
+    wt = _ensure_worktree(project_id, branch)
+    base = _base_branch(ensure_repo(project_id))
+    # The workspace's jj view lags the git side — pull the base branch's latest
+    # commits in first, or the merge would use a stale bookmark (and possibly
+    # see no conflict at all).
+    try:
+        _jj(wt, "git", "import")
+    except ValidationError:
+        pass
+    _jj(wt, "new", branch, base)
+    out = _jj(wt, "resolve", "--list")
+    files = [line.split()[0] for line in out.splitlines() if line.strip()]
+    # Move the bookmark onto the (conflicted) merge so the snapshot/export path
+    # keeps working; the resolution edits amend this same commit.
+    _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
+    return files
 
 
 def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:

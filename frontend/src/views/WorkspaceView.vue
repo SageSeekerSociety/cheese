@@ -370,9 +370,14 @@ const acceptBusy = ref(false)
 const rejectNote = ref('')
 const showRejectInput = ref(false)
 
-// Newest pending card (the list comes newest-first).
+// Newest pending card (the list comes newest-first). A card in `conflict`
+// (采纳时合并冲突，芝士被派去解决) keeps the merge box up — as a STATE, with a
+// retry button — instead of pretending the accept went through.
 const pendingCard = computed<AcceptCard | null>(
-  () => acceptCards.value.find((c) => c.status === 'pending') ?? null,
+  () =>
+    acceptCards.value.find(
+      (c) => c.status === 'pending' || c.status === 'conflict',
+    ) ?? null,
 )
 // The accepted card on an archived topic — its presence lets us offer 撤回采纳.
 const acceptedCard = computed<AcceptCard | null>(
@@ -442,7 +447,11 @@ async function onAcceptCard() {
   if (!card) return
   acceptBusy.value = true
   try {
-    await acceptCard(card.id, AUTHOR)
+    const updated = await acceptCard(card.id, AUTHOR)
+    if (updated.status === 'conflict') {
+      globalError.value =
+        '合并冲突，这次没有归档——芝士已被派去解决，它汇报后再点「重试采纳」。'
+    }
     await Promise.all([loadAcceptCard(), refreshSelectedTopic()])
   } catch (e) {
     reportError(e, '采纳失败')
@@ -863,10 +872,30 @@ onUnmounted(() => {
               <div class="merge-box__bar" />
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
-                  <v-icon color="success" size="19">
-                    mdi-source-merge
+                  <v-icon
+                    :color="pendingCard.status === 'conflict' ? 'warning' : 'success'"
+                    size="19"
+                  >
+                    {{
+                      pendingCard.status === 'conflict'
+                        ? 'mdi-source-merge'
+                        : 'mdi-source-merge'
+                    }}
                   </v-icon>
-                  <span class="t-title">成果待采纳</span>
+                  <span class="t-title">
+                    {{
+                      pendingCard.status === 'conflict'
+                        ? '合并冲突 · 芝士处理中'
+                        : '成果待采纳'
+                    }}
+                  </span>
+                </div>
+                <div
+                  v-if="pendingCard.status === 'conflict'"
+                  class="text-caption text-medium-emphasis mb-2"
+                >
+                  {{ pendingCard.note || '采纳时合并冲突，芝士正在工作区里解决。' }}
+                  它在对话里汇报解决完之后，点下面重试。
                 </div>
                 <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
                   <span>等</span>
@@ -924,7 +953,9 @@ onUnmounted(() => {
                     prepend-icon="mdi-check"
                     @click="onAcceptCard"
                   >
-                    采纳并归档
+                    {{
+                      pendingCard.status === 'conflict' ? '重试采纳' : '采纳并归档'
+                    }}
                   </v-btn>
                   <v-btn
                     variant="text"
