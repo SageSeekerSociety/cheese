@@ -287,6 +287,7 @@ export type AcceptStatus =
   | 'accepted'
   | 'rejected'
   | 'revoked'
+  | 'conflict'
   | string
 
 // GET /topics/{id}/accept-card (list, newest first).
