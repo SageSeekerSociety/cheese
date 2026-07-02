@@ -146,7 +146,11 @@ class AcceptService:
         from app.domain.workspace import service as ws
 
         try:
-            ws.merge_topic(topic.project_id, topic.id)
+            merged = ws.merge_topic(topic.project_id, topic.id)
+            if merged.get("merged"):
+                # 采纳即上线 (dogfooding): push the accepted work back to a
+                # local upstream and fire its check/deploy hook. Best effort.
+                ws.push_back(topic.project_id, topic.id)
         except Exception:  # noqa: BLE001 — git is a side channel, never fatal here
             pass
 

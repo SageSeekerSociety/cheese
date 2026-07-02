@@ -107,3 +107,15 @@ def test_git_diff_rejects_option_injection(client):
     pid = _mkproject(client)
     r = client.get(f"/api/projects/{pid}/git/diff", params={"ref": "--help"})
     assert r.status_code == 422
+
+
+def test_merge_folds_unsnapshotted_human_edits(client):
+    """采纳前快照: a human edit (人改文件即指令) with no agent turn afterwards
+    must still be delivered by the accept-merge."""
+    pid = _mkproject(client)
+    tid = uuid.uuid4()
+    wt = ws.topic_worktree(pid, tid)
+    (wt / "human.txt").write_text("edited by hand\n", encoding="utf-8")
+    # NO snapshot_worktree here — merge itself must fold the pending change.
+    assert ws.merge_topic(pid, tid)["merged"] is True
+    assert "edited by hand" in ws.read_file(pid, "human.txt")
