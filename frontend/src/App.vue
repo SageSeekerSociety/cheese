@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
+import { renderMarkdown as renderMarkdownWith } from './lib/renderMessage'
 import { NOTIF_KIND, label } from './labels'
 import {
   getNotifications,
@@ -55,23 +54,11 @@ function doSignOut() {
 // Notification bodies are AI/human-authored markdown (e.g. a 子话题 conclusion
 // with bullets/bold flowing back via C4), so render them as markdown like the
 // chat and doc do — not raw text. Reference tokens (<@handle>, <#topicId>) render
-// as chips instead of leaking as literal angle-bracket text.
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-// marked escapes "<@h>" to "&lt;@h&gt;"; match that form and swap in a chip.
-const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;/g
-function highlightTokens(html: string): string {
-  return html.replace(ESCAPED_TOKEN, (_m, kind, id) =>
-    kind === '@'
-      ? `<span class="mention" data-handle="${escapeHtml(id)}">@${escapeHtml(id)}</span>`
-      : `<span class="mention topic-ref" data-topic="${escapeHtml(id)}">#话题</span>`,
-  )
-}
+// as chips instead of leaking as literal angle-bracket text. No roster/topic
+// maps here, so chips fall back to the handle / "话题" label.
+const EMPTY_MAPS = { mentionNames: {}, topicTitles: {} }
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(
-    highlightTokens(marked.parse(text, { async: false }) as string),
-  )
+  return renderMarkdownWith(text, EMPTY_MAPS)
 }
 
 const route = useRoute()

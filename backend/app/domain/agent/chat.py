@@ -233,18 +233,40 @@ def _topic_refs(text: str) -> list[str]:
     return [f"topic:{tid}" for tid in dict.fromkeys(_TOPIC_REF_RE.findall(text or ""))]
 
 
+# After an ASCII-word-ending @name/@handle, the next char must not continue the
+# word — so roster handle "andy" never eats the front of a literal "@andyl".
+# ASCII-only on purpose: Python's \w matches CJK, and "@张衡来负责" must still
+# resolve 张衡 even though 来 follows without a space.
+_ASCII_WORD = re.compile(r"[A-Za-z0-9_-]$")
+_ASCII_BOUNDARY = r"(?![A-Za-z0-9_-])"
+
+
 def _expand_mention_names(
     text: str, roster: list[dict], topics: list[dict] | None = None
 ) -> str:
-    """Canonicalize a friendly "@名字 / @话题名" into the structured token
-    (<@handle> / <#id>) — deterministic exact-match against the roster/topics,
-    longest first. So 芝士 just prefixing @ works; tokens already present are
-    untouched (they don't match the @name patterns)."""
-    subs = [(f"@{m['name']}", f"<@{m['handle']}>") for m in roster]
-    subs += [(f"@{t['title']}", f"<#{t['id']}>") for t in (topics or [])]
+    """Canonicalize a friendly "@名字 / @handle / @话题名" into the structured
+    token (<@handle> / <#id>) — deterministic exact-match against the
+    roster/topics, longest first. Both the display name AND the handle work:
+    in chat people are labeled by handle, so "@andyl" must resolve even when
+    andyl's display name differs. Tokens already present are untouched (they
+    don't match the @name patterns)."""
+    subs: list[tuple[str, str]] = []
+    for m in roster:
+        tok = f"<@{m['handle']}>"
+        for key in (m.get("name"), m.get("handle")):
+            if key:  # an empty pattern ("@") would swallow every @ in the text
+                subs.append((f"@{key}", tok))
+    subs += [(f"@{t['title']}", f"<#{t['id']}>") for t in (topics or []) if t["title"]]
     subs.sort(key=lambda s: len(s[0]), reverse=True)
+    seen: set[str] = set()
     for pat, tok in subs:
-        text = text.replace(pat, tok)
+        if pat in seen:  # name == handle yields the same pattern twice
+            continue
+        seen.add(pat)
+        boundary = _ASCII_BOUNDARY if _ASCII_WORD.search(pat) else ""
+        # (?<!<) keeps already-encoded tokens intact: the "@handle" inside a
+        # produced "<@handle>" must not be re-wrapped by a later pattern.
+        text = re.sub(r"(?<!<)" + re.escape(pat) + boundary, lambda _m: tok, text)
     return text
 
 
