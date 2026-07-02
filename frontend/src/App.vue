@@ -428,13 +428,15 @@ provide('activityBump', activityBump)
             :disabled="!currentProjectId"
             v-bind="menuProps"
           >
-            <v-badge
-              :model-value="unreadCount > 0"
-              :content="unreadCount"
-              color="error"
-            >
+            <span class="bell-wrap">
               <v-icon>mdi-bell-outline</v-icon>
-            </v-badge>
+              <!-- Refined count pill (not Vuetify's oversized error badge):
+                   tiny, soft red, surface-colored ring so it sits INTO the
+                   bar instead of floating on it. -->
+              <span v-if="unreadCount > 0" class="bell-badge">
+                {{ unreadCount > 99 ? '99+' : unreadCount }}
+              </span>
+            </span>
           </v-btn>
         </template>
 
@@ -740,6 +742,29 @@ provide('activityBump', activityBump)
 }
 
 /* User chip — neutral. */
+.bell-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.bell-badge {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #e5484d; /* softened red, not the theme's alarm error */
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  letter-spacing: 0;
+  border: 1.5px solid var(--surface);
+  box-sizing: content-box;
+}
+
 .user-chip {
   display: inline-flex;
   align-items: center;
