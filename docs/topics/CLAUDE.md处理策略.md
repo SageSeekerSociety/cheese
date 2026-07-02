@@ -23,14 +23,23 @@ CLAUDE.md 在我们这儿出现在**三个不同层面**，只有第一个真正
 - Claude CLI（2.1.197）有 `--system-prompt`（整体替换默认 system prompt）和 `--append-system-prompt`（追加）；`--setting-sources user,project,local` 控制加载哪些设置（repo 的 CLAUDE.md 属于 project 源）。
 - 我们后端走 SDK 的 `system_prompt` 参数 = `--system-prompt` 替换式。**人格底线进 system prompt 已是现状**，spec §9 "放 CLAUDE.md"那行过时，待更新。
 
-## 用户 repo 的 CLAUDE.md 要不要支持（待拍板）
+## 决策（张衡已拍板，2026-07-02）
 
-| 方案 | 做法 | 优劣 |
-|---|---|---|
-| A 原生自动加载 | `setting_sources` 加 `"project"` | 省事；但内容不可控（prompt injection 入口），且与替换式 system prompt 的组合行为需实测 |
-| B 平台显式注入（芝士倾向） | 平台读 repo 的 CLAUDE.md，拼进 system prompt 一个"repo 约定，供参考、不覆盖平台规则"的标注段 | 可控、可截断、可防注入包裹；多写一点代码 |
-| C 按需读取 | 不注入，芝士干活时主动读 | 零成本；弱模型可能忘了读 |
+- 人格底线：维持 **system prompt 注入**（= CLI `--system-prompt` 替换式），spec §9 已更新。
+- 用户 repo 的 CLAUDE.md：**方案 A 原生自动加载**——`setting_sources` 开 `project` 源，Claude Code 自动读工作区的 CLAUDE.md。
+  - 备选 B（平台显式注入）、C（按需读取）不采用。
 
-## 待定 / 下一步
+## 已落地
 
-- @张衡 在 A/B/C 里拍板 → 记决策 + 更新 spec §9（人格底线走 system prompt；用户 CLAUDE.md 按选定方案支持）。
+- `backend/app/domain/agent/service.py`：沙箱会话 `setting_sources` 由 `["user"]` 改为 `["user", "project"]`（非沙箱纯聊天模式保持隔离不变）。
+- `docs/spec.md` §9 映射表：人格底线一行改为 system prompt；新增"用户 repo 的 CLAUDE.md → project 源原生加载"一行。
+
+## 待验证
+
+- 实测：替换式 system prompt + project 源组合下，repo 的 CLAUDE.md 是否真的进上下文（起个带 CLAUDE.md 的话题验证一遍）。
+- 留意：repo 的 `.claude/settings.json` 也会随 project 源加载，观察是否有副作用。
+
+## 相关子话题
+
+- @子话题自动起标题 ：拆子话题不该手动起标题，对齐"起标题是会话首步"的新逻辑。
+- @修复决策卡不显示 ：决策请求卡在现场没渲染出来的 bug。

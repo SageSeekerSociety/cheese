@@ -431,7 +431,8 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 | 改文档即下指令 | 文件变更 → 注入 session（streaming input） | 现成 |
 | 施工现场 | transcript 流 | 现成 |
 | Skills（文档形态/对话风格/活动消化/巡检/验收/升级） | `.claude/skills/` 按需加载 | **我们写（灵魂）** |
-| 人格底线/不变规则 | CLAUDE.md（每次都加载） | 我们写 |
+| 人格底线/不变规则 | system prompt（SDK `system_prompt` = CLI `--system-prompt`，替换式，平台拼好每次会话注入） | 我们写 |
+| 用户 repo 自带的 CLAUDE.md | `setting_sources` 开 `project` 源，Claude Code 原生自动加载（决策：方案 A） | 现成 |
 | 权限检查（红线/配额/成果必须过检查才能发布） | hooks + canUseTool | 我们写 |
 | 工具（记忆/开发环境/语音转文字/GitHub/汇总） | MCP servers | 我们接 |
 | 整个芝士配置 | 打包成一个 plugin | 我们打包 |
