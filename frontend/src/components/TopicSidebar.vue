@@ -279,8 +279,8 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
             <v-btn
               icon="mdi-plus"
               size="x-small"
-              variant="tonal"
-              color="primary"
+              variant="text"
+              class="c-faint"
               title="新建话题"
               @click="newTopic"
             />
@@ -303,59 +303,48 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
               rounded="lg"
               class="topic-row"
               :class="{ 'is-active': row.topic.id === selectedTopicId }"
-              :style="{ paddingInlineStart: 12 + row.depth * 16 + 'px' }"
+              :style="{ paddingInlineStart: 14 + row.depth * 12 + 'px' }"
               @click="emit('select-topic', row.topic.id)"
             >
-              <template #prepend>
-                <v-icon
-                  size="17"
-                  class="me-1 c-faint"
-                  :icon="
-                    row.depth > 0
-                      ? 'mdi-subdirectory-arrow-right'
-                      : 'mdi-message-text-outline'
-                  "
-                />
-              </template>
-              <v-list-item-title class="d-flex align-center ga-2 topic-title">
+              <!-- 一行常驻的只有两样：标题、未读数（评审 2026-07-03）。
+                   图标/种类标签删除（缩进已表达层级），操作 hover 才浮现。 -->
+              <v-list-item-title class="d-flex align-center topic-title">
                 <span
                   class="text-truncate"
                   :class="{ 'title-unread': unreadOf(row.topic.id) > 0 }"
                 >{{ row.topic.title }}</span>
-                <span class="kind-text">{{ kindLabel(row.topic) }}</span>
                 <span
                   v-if="statusBadge(row.topic.status)"
-                  class="d-inline-flex align-center ga-1 c-faint topic-status"
+                  class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
                 >
                   <span class="status-dot status-dot--warn" />
                   {{ statusBadge(row.topic.status) }}
                 </span>
               </v-list-item-title>
               <template #append>
-                <!-- 未读：标题加粗是信号，计数只是裸的灰色小数字——
-                     每行一颗实心药丸（无论什么色）都是视觉铆钉。 -->
                 <span
                   v-if="unreadOf(row.topic.id) > 0"
-                  class="unread-badge me-1"
+                  class="unread-badge"
                 >{{ unreadLabel(row.topic.id) }}</span>
-                <v-btn
-                  icon="mdi-archive-arrow-down-outline"
-                  size="x-small"
-                  variant="text"
-                  density="comfortable"
-                  title="归档话题"
-                  class="split-btn"
-                  @click.stop="emit('archive-topic', row.topic.id)"
-                />
-                <v-btn
-                  icon="mdi-source-branch-plus"
-                  size="x-small"
-                  variant="text"
-                  density="comfortable"
-                  title="拆出子话题"
-                  class="split-btn"
-                  @click.stop="onSplit(row.topic)"
-                />
+                <!-- hover 浮出的操作层：绝对定位覆盖行尾，不占布局宽度 -->
+                <div class="row-actions" @click.stop>
+                  <v-btn
+                    icon="mdi-archive-arrow-down-outline"
+                    size="x-small"
+                    variant="text"
+                    density="comfortable"
+                    title="归档话题"
+                    @click.stop="emit('archive-topic', row.topic.id)"
+                  />
+                  <v-btn
+                    icon="mdi-source-branch-plus"
+                    size="x-small"
+                    variant="text"
+                    density="comfortable"
+                    title="拆出子话题"
+                    @click.stop="onSplit(row.topic)"
+                  />
+                </div>
               </template>
             </v-list-item>
 
@@ -636,13 +625,13 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* 未读计数 = 裸数字，无底色：信号在标题加粗上，数字只是补充信息。
-     （先红圆后石墨药丸都被否了——形态才是问题，review 2026-07-03） */
+  /* 未读计数 = 裸的琥珀数字（owner 定的醒目色），行里唯一常驻的右对齐元素。
+     形态历经红圆/石墨药丸被否——干净的行 + 一个琥珀数字才是答案。 */
   background: none;
-  color: var(--muted, #8a8a8a);
+  color: var(--accent-ink, #9a5413);
   margin-left: 6px;
-  font-size: 10.5px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -686,21 +675,41 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
   color: var(--muted);
 }
 
-/* Row split button stays a stable, always-clickable target. It was previously
-   opacity:0 until the whole row was hovered, which made it "run away" — moving
-   the cursor toward it near the row edge flickered the hover state and the
-   button vanished. Keep it faint-but-present, brightening on hover/focus. */
-.topic-row .split-btn {
-  opacity: 0.4;
-  color: var(--faint);
-  transition: opacity 0.12s ease, color 0.12s ease;
+/* Hover-only action overlay (评审处方): absolutely positioned over the row's
+   tail, zero layout width — the title gets the full rail. Hover detection is
+   the WHOLE row (the old flicker came from hovering the buttons themselves),
+   and a gradient shoulder fades the title out under the buttons. */
+.topic-row {
+  position: relative;
+  min-height: 32px;
 }
-.topic-row:hover .split-btn,
-.topic-row:focus-within .split-btn,
-.topic-row .split-btn:hover,
-.topic-row .split-btn:focus-visible {
-  opacity: 1;
+.topic-row :deep(.v-list-item__content) {
+  padding-block: 0;
+}
+.row-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding-left: 18px;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--surface) 22%);
+  transition: opacity 0.1s ease;
   color: var(--muted);
+}
+.topic-row:hover .row-actions,
+.topic-row:focus-within .row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* While the actions are out, the count steps aside (they share the tail). */
+.topic-row:hover .unread-badge,
+.topic-row:focus-within .unread-badge {
+  opacity: 0;
 }
 </style>
 
