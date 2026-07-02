@@ -68,9 +68,12 @@ fi
 log "restart backend on :$PORT"
 pkill -f "uvicorn app.main:app.*--port $PORT" 2>/dev/null || true
 sleep 1
+# </dev/null detaches the daemon from OUR stdio: without it, a caller piping
+# this script (e.g. `redeploy.sh | tail`) hangs forever — the daemon inherits
+# the pipe's write end and it never reaches EOF.
 (cd "$ROOT/backend" \
   && nohup uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT \
-       >>"$ROOT/tmp_backend.log" 2>&1 &)
+       >>"$ROOT/tmp_backend.log" 2>&1 </dev/null &)
 
 # 6. Health check — a redeploy that leaves the platform dead must fail loudly.
 for i in $(seq 1 20); do
@@ -86,7 +89,7 @@ done
 if ! curl -s -m 2 -o /dev/null "http://localhost:$FRONTEND_PORT"; then
   log "frontend down — starting vite dev server"
   (cd "$ROOT/frontend" \
-    && nohup npm run dev >>"$ROOT/tmp_frontend.log" 2>&1 &)
+    && nohup npm run dev >>"$ROOT/tmp_frontend.log" 2>&1 </dev/null &)
   sleep 3
   curl -s -m 2 -o /dev/null "http://localhost:$FRONTEND_PORT" \
     || log "WARN: frontend still not answering (check $ROOT/tmp_frontend.log)"
