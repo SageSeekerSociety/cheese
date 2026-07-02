@@ -124,3 +124,46 @@ class NotificationRepository:
         await self._session.flush()
         await self._session.refresh(notification)
         return notification
+
+    def _visible_to(self, stmt, target_handle: str | None):
+        if target_handle is not None:
+            stmt = stmt.where(
+                (Notification.target_handle == target_handle)
+                | (Notification.target_handle.is_(None))
+            )
+        return stmt
+
+    async def unread_count(
+        self, project_id: uuid.UUID, *, target_handle: str | None = None
+    ) -> int:
+        """Badge count: unread, non-silent notifications visible to this user.
+        Silent ones are 默默记下来 (spec §8.6) — they never light the badge."""
+        stmt = (
+            select(func.count())
+            .select_from(Notification)
+            .where(
+                Notification.project_id == project_id,
+                Notification.read_at.is_(None),
+                Notification.level != NotifLevel.silent,
+            )
+        )
+        stmt = self._visible_to(stmt, target_handle)
+        return int((await self._session.scalar(stmt)) or 0)
+
+    async def mark_all_read(
+        self, project_id: uuid.UUID, *, target_handle: str | None = None
+    ) -> int:
+        """全部标记已读 — returns how many were marked. Unresolved decision
+        requests stay in the inbox (resolution ≠ read), but their badge count
+        clears like Feishu."""
+        stmt = select(Notification).where(
+            Notification.project_id == project_id,
+            Notification.read_at.is_(None),
+        )
+        stmt = self._visible_to(stmt, target_handle)
+        items = list((await self._session.scalars(stmt)).all())
+        now = datetime.now(UTC)
+        for n in items:
+            n.read_at = now
+        await self._session.flush()
+        return len(items)
