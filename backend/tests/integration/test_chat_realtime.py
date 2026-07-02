@@ -95,3 +95,71 @@ async def test_post_lands_while_agent_turn_is_running(tmp_path):
     agent.release.set()
     turn_frames = await asyncio.wait_for(turn, 5)
     assert any(f["type"] == "assistant_block" for f in turn_frames)
+
+
+class LimitAgent(AgentService):
+    """Simulates the seat rate-limit: the run 'succeeds' but the result is a
+    structured error whose text is the provider's raw message."""
+
+    def __init__(self) -> None:
+        super().__init__(model="stub")
+
+    async def stream_reply(
+        self, *, prompt, system_prompt, cwd, resume_session_id,
+        sandbox=None, allowed_tools=None, **_,
+    ):
+        yield AgentResult(
+            text="You've hit your session limit · resets 12:10pm (UTC)",
+            session_id="s1",
+            usage=None,
+            is_error=True,
+        )
+
+
+@pytest.mark.anyio
+async def test_error_result_never_becomes_cheeses_reply(tmp_path):
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    svc = ChatService(
+        session_factory=factory,
+        agent=LimitAgent(),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    frames = [
+        f
+        async for f in svc.converse(
+            topic_id=topic_id, author="u", content="做点事", summon=True
+        )
+    ]
+    kinds = [f["type"] for f in frames]
+    assert "assistant_block" not in kinds  # the raw provider text is NOT 芝士 speaking
+    err = next(f for f in frames if f["type"] == "error")
+    assert err["persisted"] is True and "session limit" in err["message"]
+    ev = next(f for f in frames if f["type"] == "event_block")
+    assert ev["block"]["author"] == "system"
+    assert "AI 服务返回错误" in ev["block"]["content"]
+
+    # Persisted state: user message + the system event, no cheese message.
+    from app.domain.block.repositories import BlockRepository
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(topic_id)
+    authors = [(b.author, b.kind.value) for b in rows]
+    assert ("cheese", "message") not in authors
+    assert ("system", "event") in authors

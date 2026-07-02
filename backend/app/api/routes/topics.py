@@ -70,14 +70,9 @@ async def topic_transcript(topic_id: uuid.UUID, db: DbSession) -> dict:
     tool/event actions, read-only."""
     await TopicService(db).get_or_404(topic_id)
     blocks = await BlockRepository(db).list_for_topic(topic_id)
-    # 现场 = what 芝士 said (ai messages) + what it did (tool events). Exclude the
-    # doc/decision artifacts (author_type is also ai) — those have their own views.
-    site = [
-        b
-        for b in blocks
-        if (b.author_type == AuthorType.ai and b.kind == BlockKind.message)
-        or b.kind == BlockKind.event
-    ]
+    # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
+    # to the conversation pane — mirroring them here just duplicates the chat.
+    site = [b for b in blocks if b.kind == BlockKind.event]
     items = [BlockOut.model_validate(b).model_dump(mode="json") for b in site]
     return ok(page(items, len(items)))
 

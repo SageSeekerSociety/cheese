@@ -167,16 +167,26 @@ def _safe_path(repo: Path, rel: str) -> Path:
     return target
 
 
+# Never listed (nor descended into): VCS internals + dependency/cache dirs a
+# turn may create in the worktree (npm ci → 13k node_modules entries).
+_SKIP_DIRS = {
+    ".git", ".jj", "node_modules", ".venv", "__pycache__",
+    ".pytest_cache", ".ruff_cache", ".cache", "dist", ".next",
+}
+
+
 def list_files(
     project_id: uuid.UUID, topic_id: uuid.UUID | None = None
 ) -> list[dict]:
     tree = _tree(project_id, topic_id)
     files: list[dict] = []
-    for p in sorted(tree.rglob("*")):
-        if ".git" in p.parts or ".jj" in p.parts or p.is_dir():
-            continue
-        rel = p.relative_to(tree)
-        files.append({"path": str(rel), "bytes": p.stat().st_size})
+    for root, dirnames, filenames in os.walk(tree):
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        for name in sorted(filenames):
+            p = Path(root) / name
+            rel = p.relative_to(tree)
+            files.append({"path": str(rel), "bytes": p.stat().st_size})
+    files.sort(key=lambda f: f["path"])
     return files
 
 

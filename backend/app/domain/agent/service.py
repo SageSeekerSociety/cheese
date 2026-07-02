@@ -66,11 +66,16 @@ class AgentUsage:
 
 @dataclass
 class AgentResult:
-    """Authoritative final reply plus the session id to resume next time."""
+    """Authoritative final reply plus the session id to resume next time.
+
+    is_error mirrors the SDK ResultMessage's structured flag: the run ended in a
+    provider/infra failure (e.g. seat rate-limit) and `text` is that failure's
+    detail — NOT something 芝士 said."""
 
     text: str
     session_id: str | None
     usage: AgentUsage | None = None
+    is_error: bool = False
 
 
 AgentEvent = AgentDelta | AgentToolUse | AgentResult
@@ -292,6 +297,7 @@ class AgentService:
         final_text = ""
         session_id = resume_session_id
         usage = AgentUsage(model=eff_model)
+        result_error = False
 
         query_input = build_query_input(prompt, images, cwd)
         if isinstance(query_input, str):
@@ -330,6 +336,7 @@ class AgentService:
                         session_id = message.session_id
                 elif isinstance(message, ResultMessage):
                     session_id = message.session_id or session_id
+                    result_error = bool(message.is_error)
                     if not final_text and message.result:
                         final_text = message.result
                     if message.total_cost_usd:
@@ -339,4 +346,9 @@ class AgentService:
                         usage.input_tokens = int(u.get("input_tokens", 0) or 0)
                         usage.output_tokens = int(u.get("output_tokens", 0) or 0)
 
-        yield AgentResult(text=final_text, session_id=session_id, usage=usage)
+        yield AgentResult(
+            text=final_text,
+            session_id=session_id,
+            usage=usage,
+            is_error=result_error,
+        )
