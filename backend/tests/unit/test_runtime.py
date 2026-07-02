@@ -170,3 +170,48 @@ async def test_turn_failure_lands_in_the_timeline():
     assert "中断" in first["block"]["content"]
     assert second["type"] == "error" and second["persisted"] is True
     assert svc.posted == first["block"]["content"]
+
+
+@pytest.mark.anyio
+async def test_failed_turn_auto_resumes_once(monkeypatch):
+    """续跑: a crashed turn schedules exactly ONE system-nudged continuation;
+    the resumed turn carries is_resume=True so it can never chain another."""
+
+    async def _instant(_s):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _instant)
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+
+    class _Svc:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def converse(self, **kw):
+            self.calls.append(kw)
+            if len(self.calls) == 1:
+                raise RuntimeError("boom")
+                yield  # pragma: no cover — makes this an async generator
+            yield {"type": "assistant_block", "block": {"id": "a"}}
+            yield {"type": "done"}
+
+        async def post_system_event(self, topic_id, content, turn_id=None):
+            return {"id": "sys", "kind": "event", "content": content}
+
+    svc = _Svc()
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(svc, topic, author="u", content="hi", summon=True)
+        seen: list[str] = []
+        while "assistant_block" not in seen:
+            f = await asyncio.wait_for(q.get(), 2)
+            seen.append(f["type"])
+
+    assert len(svc.calls) == 2  # original + exactly one auto-resume
+    resumed = svc.calls[1]
+    assert resumed["is_resume"] is True
+    assert resumed["author"] == "system"
+    assert "断" in resumed["content"]  # the continuation instruction
+    # The failure surfaced first, then the resumed turn's reply.
+    assert "error" in seen and seen[-1] == "assistant_block"
