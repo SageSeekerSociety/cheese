@@ -91,7 +91,7 @@ _TOOL_VERB.update(
         "Edit": "改文件",
         "Read": "读文件",
         "Glob": "找文件",
-        "Grep": "搜代码",
+        "Grep": "搜内容",
         "WebSearch": "搜网页",
         "WebFetch": "看网页",
         "Agent": "派分身去查",
