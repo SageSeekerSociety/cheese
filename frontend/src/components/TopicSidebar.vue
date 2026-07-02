@@ -318,7 +318,10 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
                 />
               </template>
               <v-list-item-title class="d-flex align-center ga-2 topic-title">
-                <span class="text-truncate">{{ row.topic.title }}</span>
+                <span
+                  class="text-truncate"
+                  :class="{ 'title-unread': unreadOf(row.topic.id) > 0 }"
+                >{{ row.topic.title }}</span>
                 <span class="kind-text">{{ kindLabel(row.topic) }}</span>
                 <span
                   v-if="statusBadge(row.topic.status)"
@@ -329,7 +332,8 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
                 </span>
               </v-list-item-title>
               <template #append>
-                <!-- 未读角标 (Feishu-style): red count, cleared on open. -->
+                <!-- 未读：标题加粗是信号，计数只是裸的灰色小数字——
+                     每行一颗实心药丸（无论什么色）都是视觉铆钉。 -->
                 <span
                   v-if="unreadOf(row.topic.id) > 0"
                   class="unread-badge me-1"
@@ -576,6 +580,11 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
   text-overflow: ellipsis;
 }
 
+/* Unread: the row's title carries the signal. */
+.title-unread {
+  font-weight: 650;
+}
+
 /* Topic / nav rows: title ink, quiet by default. */
 .topic-row :deep(.v-list-item-title),
 .nav-row :deep(.v-list-item-title) {
@@ -627,23 +636,23 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: #f54a45; /* Feishu red — intentional, not the amber accent */
-  color: #fff;
-  font-size: 11px;
+  /* 未读计数 = 裸数字，无底色：信号在标题加粗上，数字只是补充信息。
+     （先红圆后石墨药丸都被否了——形态才是问题，review 2026-07-03） */
+  background: none;
+  color: var(--muted, #8a8a8a);
+  margin-left: 6px;
+  font-size: 10.5px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 /* Collapsed 已归档 header: just a dot hint, not a count. */
 .unread-badge--dot {
-  min-width: 8px;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   padding: 0;
   border-radius: 50%;
+  background: var(--muted, #8a8a8a);
 }
 
 /* 已归档 group toggle at the bottom of the topic list. */

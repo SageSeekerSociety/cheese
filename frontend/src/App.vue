@@ -754,9 +754,9 @@ provide('activityBump', activityBump)
   height: 15px;
   padding: 0 4px;
   border-radius: 8px;
-  /* 知是的墨色语言：计数是信息不是警报——石墨胶囊，不用红。 */
-  background: var(--ink, #2b2b2b);
-  color: #fff;
+  /* 安静语言：浅灰底 + 墨字——可见但不喊叫（红/石墨实心均被否）。 */
+  background: var(--fill, #ececec);
+  color: var(--text, #2b2b2b);
   font-size: 10px;
   font-weight: 600;
   line-height: 15px;
