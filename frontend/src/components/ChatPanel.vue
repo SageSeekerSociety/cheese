@@ -467,10 +467,14 @@ function sendDraft() {
 }
 
 function onComposerKey(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
-    sendDraft()
-  }
+  if (e.key !== 'Enter' || e.shiftKey) return
+  // IME composition (拼音选字/上屏) fires an Enter keydown too — never send.
+  if (e.isComposing || e.keyCode === 229) return
+  // Only act on Enter from the focused composer textarea itself.
+  const t = e.target as HTMLElement | null
+  if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
+  e.preventDefault()
+  sendDraft()
 }
 
 watch(
