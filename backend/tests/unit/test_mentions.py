@@ -67,7 +67,9 @@ def test_member_with_empty_name_does_not_swallow_every_at():
 
 
 def test_expands_topic_title_to_topic_token():
-    topics = [{"id": "abc12345-0000-0000-0000-000000000000", "title": "搭建推荐算法原型"}]
+    topics = [
+        {"id": "abc12345-0000-0000-0000-000000000000", "title": "搭建推荐算法原型"}
+    ]
     out = _expand_mention_names("进展同步到 @搭建推荐算法原型", ROSTER, topics)
     assert out == "进展同步到 <#abc12345-0000-0000-0000-000000000000>"
 

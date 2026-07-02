@@ -75,7 +75,9 @@ export type WsServerFrame =
   | { type: 'state'; resource: string }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
-  | { type: 'error'; message: string }
+  // persisted=true → the failure already landed in the timeline as an event
+  // block; the client must not double-show it as a floating banner.
+  | { type: 'error'; message: string; persisted?: boolean }
   | { type: 'done' }
 
 // WebSocket client -> server frame. `summon` = @芝士: true asks the AI to

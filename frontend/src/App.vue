@@ -54,8 +54,8 @@ function doSignOut() {
 // Notification bodies are AI/human-authored markdown (e.g. a 子话题 conclusion
 // with bullets/bold flowing back via C4), so render them as markdown like the
 // chat and doc do — not raw text. Reference tokens (<@handle>, <#topicId>) render
-// as chips instead of leaking as literal angle-bracket text. No roster/topic
-// maps here, so chips fall back to the handle / "话题" label.
+// as chips instead of leaking as literal angle-bracket text.
+// No roster/topic maps here, so chips fall back to the handle / "话题" label.
 const EMPTY_MAPS = { mentionNames: {}, topicTitles: {} }
 function renderMarkdown(text: string): string {
   return renderMarkdownWith(text, EMPTY_MAPS)

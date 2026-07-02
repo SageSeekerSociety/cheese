@@ -33,15 +33,12 @@ async def lifespan(_: FastAPI):
     from app.api.deps import get_chat_service
     from app.domain.scheduler.service import SchedulerRunner, SchedulerService
 
-    # Per-topic sandbox containers are long-lived but their mounts are tied to a
-    # specific process's worktree paths; drop any left over from a previous run so
-    # each topic recreates a fresh one on its next turn.
-    if settings.agent_sandbox_enabled:
-        from app.domain.workspace import service as ws
-
-        reaped = ws.reap_sandbox_containers()
-        if reaped:
-            print(f"[sandbox] reaped {reaped} stale container(s) at startup")
+    # Per-topic sandbox containers are long-lived and REUSED across backend
+    # restarts: their mounts are stable host paths (worktree + session dirs), so
+    # a redeploy must NOT reap them — that killed in-flight work and raced the
+    # first turns after a restart. The claude-sbx shim validates each container
+    # against the project's current image and recreates it only when the image
+    # changed. (reap_sandbox_containers stays available as an ops tool.)
 
     scheduler = SchedulerService(chat_service=get_chat_service())
     runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
@@ -135,4 +132,12 @@ loaded_routers = _discover_routers(app)
 
 @app.get("/health")
 async def health() -> dict:
-    return {"code": 200, "message": "ok", "data": {"status": "healthy"}}
+    from app.api.deps import get_turn_runner
+
+    # active_turns lets a redeploy drain: wait until no agent turn is in flight
+    # before restarting, so a deploy never kills 芝士 mid-work.
+    return {
+        "code": 200,
+        "message": "ok",
+        "data": {"status": "healthy", "active_turns": get_turn_runner().active_turns()},
+    }

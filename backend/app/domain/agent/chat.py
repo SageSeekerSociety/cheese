@@ -196,7 +196,9 @@ def _build_system_prompt(
             "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n" + lines
         )
     if roster:
-        lines = "\n".join(f"- {m['name']}（{m['role']}）" for m in roster)
+        lines = "\n".join(
+            f"- {m['name']}（{m['role']}，handle: {m['handle']}）" for m in roster
+        )
         parts.append(
             "## 项目成员 & 怎么点名\n"
             "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
@@ -266,7 +268,10 @@ def _expand_mention_names(
         boundary = _ASCII_BOUNDARY if _ASCII_WORD.search(pat) else ""
         # (?<!<) keeps already-encoded tokens intact: the "@handle" inside a
         # produced "<@handle>" must not be re-wrapped by a later pattern.
-        text = re.sub(r"(?<!<)" + re.escape(pat) + boundary, lambda _m: tok, text)
+        # bind tok per-iteration (B023): a bare closure would see the last tok
+        text = re.sub(
+            r"(?<!<)" + re.escape(pat) + boundary, lambda _m, t=tok: t, text
+        )
     return text
 
 
@@ -341,20 +346,103 @@ class ChatService:
         turn_id: uuid.UUID | None = None,
         reply_to: str | None = None,
     ) -> AsyncIterator[dict]:
-        """Serialize per topic, then run the turn (spec §9.1 串行队列). turn_id
-        groups this turn's blocks (R4); generated if a caller didn't supply one.
+        """Post the human message instantly, then (if summoned) run the agent
+        turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
+        block persists + broadcasts BEFORE the lock, so a post never queues
+        behind a running agent turn. turn_id groups this turn's blocks (R4);
         reply_to threads this message under another (B3)."""
         turn_id = turn_id or uuid.uuid4()
+        user_payload, user_block_id = await self._post_user_message(
+            topic_id,
+            author=author,
+            content=content,
+            turn_id=turn_id,
+            reply_to=reply_to,
+        )
+        yield {"type": "user_block", "block": user_payload}
+
+        # Default human-to-human: post and stay quiet (spec C3 / §7.1).
+        if not summon:
+            yield {"type": "done"}
+            return
+
         async with self._lock_for(topic_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
-                author=author,
                 content=content,
-                summon=summon,
                 turn_id=turn_id,
-                reply_to=reply_to,
+                user_block_id=user_block_id,
             ):
                 yield frame
+
+    async def post_system_event(
+        self, topic_id: uuid.UUID, content: str, turn_id: uuid.UUID | None = None
+    ) -> dict | None:
+        """Persist a system event into the 现场 timeline (e.g. a turn failure):
+        visible in the flow, scrolls with it, and survives a reload — unlike a
+        transient banner. Returns the block payload, or None if the topic died."""
+        async with self._sessions() as session:
+            topics = TopicRepository(session)
+            blocks = BlockRepository(session)
+            topic = await topics.get(topic_id)
+            if topic is None:
+                return None
+            block = await blocks.add(
+                project_id=topic.project_id,
+                topic_id=topic.id,
+                author="system",
+                author_type=AuthorType.system,
+                content=content,
+                kind=BlockKind.event,
+                turn_id=turn_id,
+            )
+            payload = _block_payload(BlockOut.model_validate(block))
+            await session.commit()
+        return payload
+
+    async def _post_user_message(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        author: str,
+        content: str,
+        turn_id: uuid.UUID,
+        reply_to: str | None,
+    ) -> tuple[dict, uuid.UUID]:
+        """Persist the human message + its @mention notifications in one short
+        transaction, outside any turn lock. Returns (payload, block_id)."""
+        async with self._sessions() as session:
+            topics = TopicRepository(session)
+            blocks = BlockRepository(session)
+            topic = await topics.get(topic_id)
+            if topic is None:
+                raise NotFoundError("Topic not found")
+            user_block = await blocks.add(
+                project_id=topic.project_id,
+                topic_id=topic.id,
+                author=author,
+                author_type=AuthorType.human,
+                content=content,
+                kind=BlockKind.message,
+                turn_id=turn_id,
+                reply_to=_parse_uuid(reply_to),  # B3: thread under another message
+            )
+            # Resolve <@handle> mentions in the human message → strong notify.
+            roster = (
+                []
+                if topic.is_private
+                else await ProjectRepository(session).list_members(topic.project_id)
+            )
+            resolved, _unresolved = await self._notify_mentions(
+                session, topic, author, content, roster
+            )
+            refs = [f"user:{h}" for h in resolved] + _topic_refs(content)
+            if refs:
+                user_block.refs = refs
+            block_id = user_block.id
+            payload = _block_payload(BlockOut.model_validate(user_block))
+            await session.commit()
+        return payload, block_id
 
     async def _model_kwargs(self, project_id: uuid.UUID) -> dict:
         """Per-turn overrides for the agent call, resolved from project.settings:
@@ -424,20 +512,15 @@ class ChatService:
         self,
         *,
         topic_id: uuid.UUID,
-        author: str,
         content: str,
-        summon: bool = True,
-        turn_id: uuid.UUID | None = None,
-        reply_to: str | None = None,
+        turn_id: uuid.UUID,
+        user_block_id: uuid.UUID,
     ) -> AsyncIterator[dict]:
-        """Run one chat turn, yielding WS frames as JSON-ready dicts.
-
-        When ``summon`` is False (default human-to-human, spec C3 / §7.1), the
-        message is just posted — 芝士 stays quiet (it still ingests it for memory
-        on its next summoned turn via the resumed session). When True (@芝士),
-        芝士 replies and may use tools.
-        """
-        # --- tx1: load topic, persist user block, load memory ---
+        """Run the AGENT part of a turn (the human block was already posted by
+        _post_user_message), yielding WS frames as JSON-ready dicts. Runs under
+        the per-topic lock; the prompt is built from history at lock time so a
+        queued turn picks up every message posted while it waited."""
+        # --- tx1: load topic + history, load memory ---
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
@@ -446,18 +529,6 @@ class ChatService:
             topic = await topics.get(topic_id)
             if topic is None:
                 raise NotFoundError("Topic not found")
-
-            user_block = await blocks.add(
-                project_id=topic.project_id,
-                topic_id=topic.id,
-                author=author,
-                author_type=AuthorType.human,
-                content=content,
-                kind=BlockKind.message,
-                turn_id=turn_id,
-                reply_to=_parse_uuid(reply_to),  # B3: thread under another message
-            )
-            user_payload = _block_payload(BlockOut.model_validate(user_block))
 
             # Speaker-labelled prompt covering every human message since 芝士's
             # last reply — so messages posted without @芝士 are still seen on the
@@ -509,23 +580,6 @@ class ChatService:
             project_id = topic.project_id
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
-            user_block_id = user_block.id
-            # Resolve <@handle> mentions in the human message → strong notify them.
-            resolved, _unresolved = await self._notify_mentions(
-                session, topic, author, content, roster
-            )
-            refs = [f"user:{h}" for h in resolved] + _topic_refs(content)
-            if refs:
-                user_block.refs = refs
-                user_payload = _block_payload(BlockOut.model_validate(user_block))
-            await session.commit()
-
-        yield {"type": "user_block", "block": user_payload}
-
-        # Default human-to-human: post and stay quiet (spec C3 / §7.1).
-        if not summon:
-            yield {"type": "done"}
-            return
 
         # --- streaming: no DB transaction held open ---
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills

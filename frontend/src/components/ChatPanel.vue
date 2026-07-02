@@ -298,7 +298,9 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'error':
-      errorMsg.value = frame.message
+      // A persisted turn failure is already in the timeline as an event block
+      // (现场即事实记录); only un-persisted errors need the floating banner.
+      if (!frame.persisted) errorMsg.value = frame.message
       streaming.value = null
       awaitingReply.value = false
       break
@@ -613,9 +615,11 @@ onBeforeUnmount(() => {
                 class="im-text md-content"
                 v-html="renderMarkdown(m.content)"
               />
+              <!-- 现场尊重原文: human text renders verbatim — newlines and
+                   spacing preserved (pre-wrap), no markdown reflow. -->
               <div
                 v-else
-                class="im-text im-text--plain"
+                class="im-text im-text--verbatim"
                 v-html="renderPlain(m.content)"
               />
               <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
@@ -707,7 +711,7 @@ onBeforeUnmount(() => {
         v-if="errorMsg"
         type="error"
         density="compact"
-        class="ma-3 mt-0"
+        class="ma-3 mt-0 flex-shrink-0"
         closable
         @click:close="errorMsg = null"
       >
@@ -832,6 +836,10 @@ onBeforeUnmount(() => {
 }
 .messages {
   background: var(--surface);
+  /* A flex child's implicit min-height is its content — without this, a long
+     timeline refuses to shrink and pushes whatever follows (error alert,
+     reply bar) below the pane edge, clipped. */
+  min-height: 0;
 }
 .composer {
   background: var(--surface);
@@ -961,9 +969,8 @@ onBeforeUnmount(() => {
   color: var(--text);
   word-break: break-word;
 }
-/* Human plain-text messages keep their typed newlines: renderPlain leaves \n
-   in the text, and without pre-wrap the browser collapses them to spaces. */
-.im-text--plain {
+/* 现场尊重原文: exactly what the human typed, line breaks included. */
+.im-text--verbatim {
   white-space: pre-wrap;
 }
 /* Live link from an upgraded block to its new topic. */

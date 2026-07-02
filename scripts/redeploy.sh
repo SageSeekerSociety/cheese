@@ -48,16 +48,34 @@ if [[ $BUILD_IMAGES -eq 1 ]]; then
     || die "cheesex-dev image build failed (see $LOG)"
 fi
 
-# 4. Restart the backend. Existing topic sandbox containers are reaped by the
-#    backend itself at startup (reap_sandbox_containers) and recreated on demand.
+# 4. Drain: wait for in-flight agent turns so the restart never kills 芝士
+#    mid-work (turn state lives in the backend process). Bounded wait — after
+#    120s we restart anyway and say so.
+if curl -s -m 2 "http://localhost:$PORT/health" >/dev/null; then
+  for i in $(seq 1 120); do
+    ACTIVE="$(curl -s -m 2 "http://localhost:$PORT/health" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"].get("active_turns", 0))' \
+      2>/dev/null || echo 0)"
+    [[ "$ACTIVE" == "0" ]] && { log "drain: no active turns"; break; }
+    [[ $i -eq 1 ]] && log "drain: $ACTIVE active turn(s), waiting (max 120s)…"
+    [[ $i -eq 120 ]] && log "drain: still $ACTIVE active after 120s — restarting anyway"
+    sleep 1
+  done
+fi
+
+# 5. Restart the backend. Topic sandbox containers survive the restart and are
+#    reused; the claude-sbx shim recreates one only when its image changed.
 log "restart backend on :$PORT"
 pkill -f "uvicorn app.main:app.*--port $PORT" 2>/dev/null || true
 sleep 1
+# </dev/null detaches the daemon from OUR stdio: without it, a caller piping
+# this script (e.g. `redeploy.sh | tail`) hangs forever — the daemon inherits
+# the pipe's write end and it never reaches EOF.
 (cd "$ROOT/backend" \
   && nohup uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT \
-       >>"$ROOT/tmp_backend.log" 2>&1 &)
+       >>"$ROOT/tmp_backend.log" 2>&1 </dev/null &)
 
-# 5. Health check — a redeploy that leaves the platform dead must fail loudly.
+# 6. Health check — a redeploy that leaves the platform dead must fail loudly.
 for i in $(seq 1 20); do
   sleep 1
   if curl -s -m 2 -o /dev/null "http://localhost:$PORT/api/projects"; then
@@ -67,11 +85,11 @@ for i in $(seq 1 20); do
   [[ $i -eq 20 ]] && die "backend not healthy after 20s (tail $ROOT/tmp_backend.log)"
 done
 
-# 6. Frontend: vite dev hot-reloads on its own; just make sure it's running.
+# 7. Frontend: vite dev hot-reloads on its own; just make sure it's running.
 if ! curl -s -m 2 -o /dev/null "http://localhost:$FRONTEND_PORT"; then
   log "frontend down — starting vite dev server"
   (cd "$ROOT/frontend" \
-    && nohup npm run dev >>"$ROOT/tmp_frontend.log" 2>&1 &)
+    && nohup npm run dev >>"$ROOT/tmp_frontend.log" 2>&1 </dev/null &)
   sleep 3
   curl -s -m 2 -o /dev/null "http://localhost:$FRONTEND_PORT" \
     || log "WARN: frontend still not answering (check $ROOT/tmp_frontend.log)"
