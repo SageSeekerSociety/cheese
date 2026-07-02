@@ -25,6 +25,20 @@ class UserService:
         )
         return await self._repo.add(user)
 
+    # The AI's identity and platform-reserved names can never be claimed by a
+    # human sign-in.
+    _RESERVED = frozenset({"cheese", "zhishi", "system", "admin"})
+
+    async def login(self, handle: str, name: str = "") -> User:
+        """极简登录 (Phase 0): get-or-create, no password — handle IS the
+        identity. A known handle signs in; a new one registers on the spot."""
+        if handle in self._RESERVED:
+            raise ValidationError(f"'{handle}' 是保留名，换一个吧")
+        user = await self._repo.get_by_handle(handle)
+        if user is not None:
+            return user
+        return await self._repo.add(User(handle=handle, name=name or handle))
+
     async def get_or_404(self, handle: str) -> User:
         user = await self._repo.get_by_handle(handle)
         if user is None:

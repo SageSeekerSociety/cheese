@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.domain.user.schemas import UserCreate, UserOut, UserUpdate
+from app.domain.user.schemas import UserCreate, UserLogin, UserOut, UserUpdate
 from app.domain.user.services import UserService
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -18,6 +18,14 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 @router.post("")
 async def create_user(body: UserCreate, db: DbSession) -> dict:
     user = await UserService(db).create(body)
+    return ok(UserOut.model_validate(user).model_dump(mode="json"))
+
+
+@router.post("/login")
+async def login(body: UserLogin, db: DbSession) -> dict:
+    """极简登录 (Phase 0): get-or-create by handle, no password. The frontend
+    keeps the returned identity locally and sends it as the author of actions."""
+    user = await UserService(db).login(handle=body.handle, name=body.name)
     return ok(UserOut.model_validate(user).model_dump(mode="json"))
 
 

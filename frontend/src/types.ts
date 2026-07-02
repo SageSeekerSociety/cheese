@@ -378,6 +378,13 @@ export interface SandboxImageInfo {
   options: SandboxImageOption[]
 }
 
+// 当前用户 (Phase 0 极简登录): what /users/login returns and what we keep locally.
+export interface Me {
+  id: string
+  handle: string
+  name: string
+}
+
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)
 // and keep pulling its history in via 同步上游.
 export interface UpstreamInfo {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { myHandle } from '../me'
 import { computed, onMounted, ref, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -21,7 +22,7 @@ import type {
 
 const props = defineProps<{ projectId: string }>()
 
-const ME = 'user-1'
+const ME = myHandle()
 
 const overview = ref<ProjectOverview | null>(null)
 const inbox = ref<InboxItem[]>([])

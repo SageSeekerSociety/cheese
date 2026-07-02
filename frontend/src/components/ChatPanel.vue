@@ -8,6 +8,7 @@ const BOTTOM_THRESHOLD = 80
 </script>
 
 <script setup lang="ts">
+import { myHandle } from '../me'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -111,7 +112,7 @@ const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string): void
 }>()
 
-const AUTHOR = 'user-1'
+const AUTHOR = myHandle()
 
 // Keep the module-level handle→name map in sync with the roster prop, so
 // <@handle> tokens render with the member's display name.
