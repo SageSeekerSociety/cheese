@@ -7,8 +7,6 @@ import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 import CheeseAvatar from './CheeseAvatar.vue'
 import CodeEditor from './CodeEditor.vue'
 import {
@@ -36,10 +34,6 @@ import type {
   UsageStats,
   WorkspaceFile,
 } from '../types'
-
-function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
-}
 
 // The living doc is the core interface (spec §2.2): an AI-maintained markdown
 // document the user can also edit ("改文档即指令"). Stored as markdown, so the
@@ -1105,7 +1099,11 @@ onBeforeUnmount(() => {
                       <span class="site-msg__name">{{ authorLabel(b) }}</span>
                       <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
                     </div>
-                    <div class="md-content text-body-2" v-html="renderMarkdown(b.content)" />
+                    <!-- Raw transcript text on purpose (决定: 现场内容改为raw):
+                         现场 shows what 芝士 actually emitted — markdown syntax,
+                         <@handle> tokens and all — like a Claude Code session,
+                         NOT the rendered chat version. -->
+                    <div class="site-msg__raw">{{ b.content }}</div>
                   </div>
                 </div>
               </template>
@@ -1725,15 +1723,15 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-family: var(--font-mono);
 }
-/* 现场 is a transcript, not a doc — tame heading sizes inside 芝士 messages so
-   they read like chat, not a document. */
-.site-msg__main :deep(h1),
-.site-msg__main :deep(h2),
-.site-msg__main :deep(h3) {
-  font-size: 1em;
-  font-weight: 600;
-  margin: 6px 0 2px;
-  color: var(--ink);
+/* 现场 is a transcript, not a doc — 芝士's messages are shown RAW (markdown
+   source, <@handle> tokens intact), Claude Code style: mono + pre-wrap. */
+.site-msg__raw {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
 }
 /* Transparent scrim: an outside click dismisses the floating panel. */
 .tool-scrim {
