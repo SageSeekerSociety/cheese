@@ -22,9 +22,11 @@ def test_transcript_and_usage_after_chat(client):
     pid, tid = _topic(client)
     _chat(client, tid)
 
-    # 施工现场: AI messages show up in the transcript.
+    # 施工现场 = 工作细节 only: chat messages (human or AI) never mirror into
+    # the transcript — they live in the conversation pane.
     tr = client.get(f"/api/topics/{tid}/transcript").json()["data"]["data"]
-    assert any(b["author_type"] == "ai" for b in tr)
+    assert all(b["kind"] == "event" for b in tr)
+    assert not any(b["kind"] == "message" for b in tr)
 
     # 资源用量: token/cost recorded for the topic and rolled up to the project.
     tu = client.get(f"/api/topics/{tid}/usage").json()["data"]

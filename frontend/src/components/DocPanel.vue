@@ -415,8 +415,8 @@ const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
 
 // 文件树: the backend returns a flat list of full relative paths; build a
 // nested tree out of it (folders first, each level sorted by name), then
-// flatten into render rows — skipping the subtrees of collapsed folders.
-// Default is fully expanded.
+// flatten into render rows — only expanded folders contribute their subtrees.
+// Default is fully COLLAPSED: open exactly what you need.
 interface FileRow {
   type: 'dir' | 'file'
   path: string // full relative path (dir or file)
@@ -424,12 +424,12 @@ interface FileRow {
   depth: number
   bytes: number
 }
-const collapsedDirs = ref(new Set<string>())
+const expandedDirs = ref(new Set<string>())
 function toggleDir(path: string) {
-  const next = new Set(collapsedDirs.value)
+  const next = new Set(expandedDirs.value)
   if (next.has(path)) next.delete(path)
   else next.add(path)
-  collapsedDirs.value = next
+  expandedDirs.value = next
 }
 const fileRows = computed<FileRow[]>(() => {
   interface DirNode {
@@ -455,7 +455,7 @@ const fileRows = computed<FileRow[]>(() => {
     for (const name of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
       const path = prefix ? `${prefix}/${name}` : name
       rows.push({ type: 'dir', path, name, depth, bytes: 0 })
-      if (!collapsedDirs.value.has(path)) {
+      if (expandedDirs.value.has(path)) {
         walk(node.dirs.get(name)!, path, depth + 1)
       }
     }
@@ -1197,10 +1197,10 @@ onBeforeUnmount(() => {
                       @click="toggleDir(row.path)"
                     >
                       <v-icon size="13" class="c-muted">
-                        {{ collapsedDirs.has(row.path) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+                        {{ expandedDirs.has(row.path) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
                       </v-icon>
                       <v-icon size="13" class="me-1 c-muted">
-                        {{ collapsedDirs.has(row.path) ? 'mdi-folder-outline' : 'mdi-folder-open-outline' }}
+                        {{ expandedDirs.has(row.path) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}
                       </v-icon>
                       <span class="file-item__name">{{ row.name }}</span>
                     </button>

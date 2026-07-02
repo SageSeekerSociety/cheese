@@ -600,6 +600,7 @@ class ChatService:
         )
         final_text = ""
         new_session_id = resume_session_id
+        result_error = False
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
@@ -647,6 +648,55 @@ class ChatService:
                 final_text = event.text
                 new_session_id = event.session_id
                 usage = event.usage
+                result_error = event.is_error
+
+        if result_error:
+            # Provider/infra failure surfaced as the run's result (e.g. seat
+            # rate-limit "You've hit your session limit"). NEVER ventriloquize
+            # it as 芝士's message — it goes into the 现场 as a system event,
+            # platform-worded, with the raw provider detail quoted.
+            fail_text = (
+                "⚠️ 芝士这轮没能完成——AI 服务返回错误"
+                + (f"：{final_text}" if final_text.strip() else "")
+                + "。稍后再 @ 它重试。"
+            )
+            async with self._sessions() as session:
+                blocks = BlockRepository(session)
+                for name, tool_input in tool_events:
+                    await blocks.add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        author=CHEESE_AUTHOR,
+                        author_type=AuthorType.ai,
+                        content=_format_tool_event(name, tool_input),
+                        kind=BlockKind.event,
+                        turn_id=turn_id,
+                    )
+                if usage is not None:
+                    await UsageRepository(session).add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        model=usage.model,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        cost_usd=usage.cost_usd,
+                    )
+                fail_block = await blocks.add(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    author="system",
+                    author_type=AuthorType.system,
+                    content=fail_text,
+                    kind=BlockKind.event,
+                    turn_id=turn_id,
+                )
+                fail_payload = _block_payload(BlockOut.model_validate(fail_block))
+                await session.commit()
+            provider.checkpoint(project_id, topic_id)
+            yield {"type": "event_block", "block": fail_payload}
+            yield {"type": "error", "message": fail_text, "persisted": True}
+            yield {"type": "done"}
+            return
 
         # Canonicalize friendly "@名字 / @话题名" → tokens so they render as chips
         # and notify, even when 芝士 didn't emit the exact <@handle> form.
