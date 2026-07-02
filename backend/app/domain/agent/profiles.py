@@ -157,8 +157,21 @@ def build_registry(settings) -> ProfileRegistry:  # type: ignore[no-untyped-def]
         haiku_model=settings.claude_model,
         oauth_token=settings.claude_oauth_token,
     )
+    # Second dogfooding channel: the Fable frontier model on the same seat —
+    # lets us A/B models on real platform work by just switching the project's
+    # AI pool.
+    fable = AgentProfile(
+        name="claude-fable",
+        label="Claude Fable（测试·仅 dogfooding）",
+        tier=TIER_TESTING,
+        model=settings.fable_model,
+        base_url=settings.claude_base_url,
+        auth_token=settings.claude_auth_token,
+        haiku_model=settings.fable_model,
+        oauth_token=settings.claude_oauth_token,
+    )
     return ProfileRegistry(
-        [default, claude],
+        [default, claude, fable],
         default_name="default",
         dogfood_owners=frozenset(settings.dogfood_owner_handles),
     )

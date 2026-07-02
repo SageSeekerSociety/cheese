@@ -76,3 +76,37 @@ def test_full_env_replaces_provider_and_pins_subagent_models():
     assert "ANTHROPIC_BASE_URL" not in env  # None base_url → Anthropic default
     assert env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "claude-opus-4-8"
     assert env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-4-8"
+
+
+def test_build_registry_has_fable_channel():
+    """The Fable dogfooding channel: same seat credentials as claude-opus, its
+    own model, selectable only by dogfood owners."""
+    from types import SimpleNamespace
+
+    from app.domain.agent.profiles import build_registry
+
+    settings = SimpleNamespace(
+        agent_model="glm-5.2",
+        anthropic_base_url="https://gw/anthropic",
+        anthropic_auth_token="pool-key",
+        agent_haiku_model="glm-4.5-air",
+        claude_model="claude-opus-4-8",
+        claude_base_url=None,
+        claude_auth_token=None,
+        claude_oauth_token="oauth-tok",
+        fable_model="claude-fable-5",
+        dogfood_owner_handles=["andyl"],
+    )
+    reg = build_registry(settings)
+    fable = reg.get("claude-fable")
+    assert fable is not None and fable.tier == TIER_TESTING
+    assert fable.model == "claude-fable-5"
+    assert fable.full_env()["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-tok"
+    assert fable.full_env()["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "claude-fable-5"
+    # Dogfood owner sees it; an outsider doesn't.
+    assert any(v.name == "claude-fable" for v in reg.selectable("andyl"))
+    assert not any(v.name == "claude-fable" for v in reg.selectable("stranger"))
+    # A non-dogfood project pointing at fable falls back to the pool.
+    pick = {"execution_profile": "claude-fable"}
+    assert reg.resolve(pick, "stranger").name == "default"
+    assert reg.resolve(pick, "andyl").name == "claude-fable"
