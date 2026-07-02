@@ -24,6 +24,9 @@ NAME="${SBX_CONTAINER:?SBX_CONTAINER not set}"
 # declares it with `cheese serve`; the platform reads the mapping via
 # `docker port` and proxies the preview iframe straight to it.
 APP_PORT=3000
+# The cheese CLI is MOUNTED from the host (not baked): CLI changes reach every
+# container instantly — no image rebuild, no stale-binary class of bugs.
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 create_container() {
   docker run -d --name "$NAME" --user node \
     -e HOME=/home/node \
@@ -32,6 +35,7 @@ create_container() {
     --add-host host.docker.internal:host-gateway \
     -v "${SBX_SESSION}":/home/node/.claude \
     -v "${SBX_WORKTREE}":/work -w /work \
+    -v "$SELF_DIR/cheese":/usr/local/bin/cheese:ro \
     --network bridge \
     --memory 2g --cpus 2 --pids-limit 512 \
     --label cheesex-sandbox=1 \
@@ -47,6 +51,11 @@ elif [ "$CUR_IMAGE" != "$SBX_IMAGE" ]; then
   create_container
 elif ! docker port "$NAME" "$APP_PORT" >/dev/null 2>&1; then
   # Pre-app-port container (no published port) → recreate with the mapping.
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  create_container
+elif ! docker inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' "$NAME" \
+    | grep -q '^/usr/local/bin/cheese$'; then
+  # Pre-mounted-CLI container (baked cheese) → recreate with the host mount.
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   create_container
 elif [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" != "true" ]; then
