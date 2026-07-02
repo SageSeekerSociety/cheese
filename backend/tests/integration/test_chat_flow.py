@@ -195,3 +195,23 @@ def _drain_until_done(ws) -> list[dict]:
         if frame["type"] in ("done", "error"):
             break
     return frames
+
+
+def test_debug_turns_records_lifecycle(client):
+    """可 debug: /debug/turns exposes each turn's lifecycle summary (status,
+    timings, tool counts) without grepping logs."""
+    _, topic_id = _create_project_and_topic(client)
+    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+        ws.send_json(
+            {"type": "message", "content": "你好", "author": "u", "summon": True}
+        )
+        while ws.receive_json()["type"] not in ("done", "error"):
+            pass
+
+    turns = client.get("/debug/turns").json()["data"]
+    assert turns, "at least the turn we just ran"
+    t = turns[0]
+    assert t["topic_id"] == topic_id
+    assert t["status"] == "done"
+    assert t["duration_s"] is not None
+    assert t["first_output_s"] is not None  # streamed deltas were observed
