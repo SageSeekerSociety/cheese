@@ -116,7 +116,8 @@ class AcceptService:
 
     async def accept(self, *, card_id: uuid.UUID, decided_by: str) -> AcceptCard:
         card = await self._card_or_404(card_id)
-        if card.status != AcceptStatus.pending:
+        # pending → first attempt; conflict → retry after 芝士 resolved.
+        if card.status not in (AcceptStatus.pending, AcceptStatus.conflict):
             raise ValidationError("验收卡已处理，不能重复验收")
 
         topic = await self._topic_or_404(card.topic_id)
@@ -136,22 +137,39 @@ class AcceptService:
         # Institution protocol from linked Task Templates (spec §4.2).
         await self._enforce_protocol(topic, decided_by)
 
+        # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
+        # conflict must never silently archive the topic while the work is
+        # stranded on its branch (that shipped a lie once): the card moves to
+        # `conflict`, 芝士 gets dispatched to resolve, a human retries.
+        from app.domain.workspace import service as ws
+
+        merged: dict = {"merged": False, "reason": "workspace unavailable"}
+        try:
+            merged = ws.merge_topic(topic.project_id, topic.id)
+        except Exception as exc:  # noqa: BLE001 — surface, don't invent success
+            merged = {"merged": False, "reason": str(exc)}
+
+        if not merged.get("merged") and merged.get("conflicts"):
+            card.status = AcceptStatus.conflict
+            card.decided_by = decided_by
+            card.decided_at = datetime.now(UTC)
+            card.note = merged.get("reason", "")
+            await self._session.flush()
+            await self._session.refresh(card)
+            return card
+
+        # Merged (or nothing to merge — e.g. a discussion topic with no branch
+        # work): the accept completes as before.
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
         card.decided_by = decided_by
         card.decided_at = now
-
-        # 采纳 = merge (spec §6.3): merge the topic's branch into the base. Best
-        # effort — a git conflict / missing branch must not block the archival.
-        from app.domain.workspace import service as ws
-
         try:
-            merged = ws.merge_topic(topic.project_id, topic.id)
             if merged.get("merged"):
                 # 采纳即上线 (dogfooding): push the accepted work back to a
                 # local upstream and fire its check/deploy hook. Best effort.
                 ws.push_back(topic.project_id, topic.id)
-        except Exception:  # noqa: BLE001 — git is a side channel, never fatal here
+        except Exception:  # noqa: BLE001 — the push is a side channel
             pass
 
         # Topic is done → free its long-lived sandbox container (it would be

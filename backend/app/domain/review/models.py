@@ -22,6 +22,9 @@ class AcceptStatus(enum.StrEnum):
     accepted = "accepted"
     rejected = "rejected"
     revoked = "revoked"
+    # 采纳时 merge 冲突：话题不归档、卡片进入此状态，芝士被派去解决冲突，
+    # 解决后由人重试采纳（spec §6.3 冲突处理：芝士先尝试解决）。
+    conflict = "conflict"
 
 
 class AcceptCard(UuidPk, Timestamps, Base):

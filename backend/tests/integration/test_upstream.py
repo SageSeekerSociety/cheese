@@ -161,3 +161,58 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
             break
         time.sleep(0.1)
     assert marker.read_text().strip() == branch
+
+
+def test_accept_conflict_is_a_state_not_a_lie(client):
+    """采纳冲突 (spec §6.3): a conflicting merge must NOT archive the topic —
+    the card enters `conflict`, the workspace gets the materialized merge for
+    芝士 to resolve, and a retry after resolution completes the accept."""
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    pid = _project(client)
+    r = client.post(
+        "/api/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
+    )
+    tid = r.json()["data"]["id"]
+    puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
+
+    # Branch edits f.txt one way…
+    wt = ws.topic_worktree(puid, tuid)
+    (wt / "f.txt").write_text("branch version\n")
+    ws.snapshot_worktree(puid, tuid)
+    # …and base edits it the other way → guaranteed conflict.
+    repo = ws.ensure_repo(puid)
+    (repo / "f.txt").write_text("base version\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "base change"], check=True
+    )
+
+    card = client.post(
+        f"/api/topics/{tid}/accept-card",
+        json={"reviewer_handle": "u", "routing_reason": ""},
+    ).json()["data"]["id"]
+    r = client.post(f"/api/accept-cards/{card}/accept", json={"decided_by": "u"})
+    assert r.status_code == 200
+    d = r.json()["data"]
+    assert d["status"] == "conflict"
+    assert "f.txt" in d["note"]
+    # The topic is NOT archived — the work is not stranded silently.
+    t = client.get(f"/api/topics/{tid}").json()["data"]
+    assert t["status"] == "active"
+    # The workspace holds the materialized conflict for 芝士.
+    content = (wt / "f.txt").read_text()
+    assert "<<<<<<<" in content or "base version" in content
+
+    # Simulate 芝士 resolving: write the merged truth, snapshot.
+    (wt / "f.txt").write_text("merged version\n")
+    ws.snapshot_worktree(puid, tuid, "解决采纳冲突")
+
+    # Retry accept → clean merge, archived, base has the resolution.
+    r = client.post(f"/api/accept-cards/{card}/accept", json={"decided_by": "u"})
+    assert r.status_code == 200 and r.json()["data"]["status"] == "accepted"
+    t = client.get(f"/api/topics/{tid}").json()["data"]
+    assert t["status"] == "archived"
+    assert ws.read_file(puid, "f.txt") == "merged version\n"
