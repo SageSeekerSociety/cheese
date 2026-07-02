@@ -178,17 +178,22 @@ def _build_system_prompt(
     untitled: bool = False,
 ) -> str:
     parts = [base]
+    if untitled:
+        # First in the prompt on purpose: naming the topic is the FIRST action
+        # of the session — before the opening reply, before any other tool —
+        # so the rail never shows a working-but-unnamed 「新话题」.
+        parts.append(
+            "## 本轮第一件事：先给本话题起名（先于一切）\n"
+            "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
+            "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
+            "`cheese title \"<标题>\"` 起个 ≤12 字简短标题，然后再照常回应、干活。"
+            "这条优先于「先回应，再干活」：起标题只是一条命令，几乎不花时间。"
+            "（只起一次，定了别反复改。）"
+        )
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if skills:
         parts.append(skills)
-    if untitled:
-        parts.append(
-            "## 第一步：先给本话题起名\n"
-            "本话题还叫「新话题」（未命名）。**在做用户要求的事之前，第一步先**根据"
-            "用户的需求执行 `cheese title \"<标题>\"` 起个 ≤12 字简短标题，再继续。"
-            "（只起一次，定了别反复改。）"
-        )
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         parts.append(
