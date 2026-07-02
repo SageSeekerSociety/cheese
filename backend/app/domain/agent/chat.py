@@ -383,6 +383,7 @@ class ChatService:
         turn_id: uuid.UUID | None = None,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
+        is_resume: bool = False,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
@@ -391,21 +392,33 @@ class ChatService:
         reply_to threads this message under another (B3); attachments are
         uploaded worktree images this message carries (图片输入)."""
         turn_id = turn_id or uuid.uuid4()
-        user_payloads, user_block_id = await self._post_user_message(
-            topic_id,
-            author=author,
-            content=content,
-            turn_id=turn_id,
-            reply_to=reply_to,
-            attachments=attachments,
-        )
-        for payload in user_payloads:
-            yield {"type": "user_block", "block": payload}
+        if is_resume:
+            # Auto-resume (续跑): no human spoke — the opener is a SYSTEM event
+            # in the 现场, and the continuation instruction goes straight to
+            # the agent as the prompt.
+            payload = await self.post_system_event(
+                topic_id, "⏯️ 自动续跑：从上一轮的断点继续", turn_id
+            )
+            if payload is None:
+                raise NotFoundError("Topic not found")
+            yield {"type": "event_block", "block": payload}
+            user_block_id = None
+        else:
+            user_payloads, user_block_id = await self._post_user_message(
+                topic_id,
+                author=author,
+                content=content,
+                turn_id=turn_id,
+                reply_to=reply_to,
+                attachments=attachments,
+            )
+            for payload in user_payloads:
+                yield {"type": "user_block", "block": payload}
 
-        # Default human-to-human: post and stay quiet (spec C3 / §7.1).
-        if not summon:
-            yield {"type": "done"}
-            return
+            # Default human-to-human: post and stay quiet (spec C3 / §7.1).
+            if not summon:
+                yield {"type": "done"}
+                return
 
         async with self._lock_for(topic_id):
             async for frame in self._converse_impl(
@@ -413,6 +426,7 @@ class ChatService:
                 content=content,
                 turn_id=turn_id,
                 user_block_id=user_block_id,
+                is_resume=is_resume,
             ):
                 yield frame
 
@@ -617,7 +631,8 @@ class ChatService:
         topic_id: uuid.UUID,
         content: str,
         turn_id: uuid.UUID,
-        user_block_id: uuid.UUID,
+        user_block_id: uuid.UUID | None,
+        is_resume: bool = False,
     ) -> AsyncIterator[dict]:
         """Run the AGENT part of a turn (the human block was already posted by
         _post_user_message), yielding WS frames as JSON-ready dicts. Runs under
@@ -790,6 +805,7 @@ class ChatService:
             # provider detail quoted for the record.
             detail = final_text.strip()
             quoted = f"（服务原话：{detail}）" if detail else ""
+            resume_after_s: float | None = None
             if (
                 rate_limit
                 and rate_limit.get("status") == "rejected"
@@ -798,10 +814,17 @@ class ChatService:
                 resets = datetime.fromtimestamp(
                     rate_limit["resets_at"], tz=ZoneInfo("Asia/Shanghai")
                 )
+                recover = (
+                    "恢复后我会自动接着跑" if not is_resume else "到点再 @ 它"
+                )
                 fail_text = (
                     f"⚠️ 芝士的 AI 座位额度用完了，北京时间 "
-                    f"{resets:%m-%d %H:%M} 恢复，到点再 @ 它。{quoted}"
+                    f"{resets:%m-%d %H:%M} 恢复，{recover}。{quoted}"
                 )
+                if not is_resume:
+                    # Resume ~2min after the window opens (clock skew buffer).
+                    wait_s = rate_limit["resets_at"] - datetime.now(UTC).timestamp()
+                    resume_after_s = max(60.0, wait_s + 120.0)
             elif api_error_status:
                 fail_text = (
                     f"⚠️ 芝士这轮没能完成——AI 接口错误（HTTP {api_error_status}）。"
@@ -850,6 +873,9 @@ class ChatService:
             provider.checkpoint(project_id, topic_id)
             yield {"type": "event_block", "block": fail_payload}
             yield {"type": "error", "message": fail_text, "persisted": True}
+            if resume_after_s is not None:
+                # Internal frame: the runner schedules the auto-resume.
+                yield {"type": "resume_hint", "after_s": resume_after_s}
             yield {"type": "done"}
             return
 
