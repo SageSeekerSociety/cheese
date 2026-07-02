@@ -77,6 +77,9 @@ class RunTurn(BaseModel):
     turn_id: str | None = None
     memory_scope: str | None = None
     owner: str | None = None
+    # 图片输入: worktree-relative image refs [{path, media_type}] — embedded as
+    # native base64 image blocks here on the node, where the files live.
+    images: list[dict] = []
 
 
 @app.get("/health")
@@ -124,6 +127,7 @@ async def run_turn(req: RunTurn) -> StreamingResponse:
             sandbox=sandbox,
             model=req.model,
             env=req.env,
+            images=req.images or None,
         ):
             yield json.dumps(event_to_dict(event)) + "\n"
 

@@ -3,7 +3,8 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, page
@@ -22,6 +23,7 @@ from app.domain.topic.schemas import (
 )
 from app.domain.topic.services import TopicService
 from app.domain.usage.repositories import UsageRepository
+from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
 
@@ -273,6 +275,73 @@ async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
     if art is None:
         return ok(None)
     return ok({"path": art.content, "mime": art.mime_type})
+
+
+# ---- 聊天图片附件 (图片输入) -------------------------------------------------
+# An attachment is a REAL file in the topic's worktree (所有产出都是 git): the
+# upload writes bytes under uploads/, the message references it as an
+# attachment block, and 芝士 sees it by Read-ing the file in its sandbox.
+
+# Images only for now; the mime comes from the upload's content-type and the
+# raw reader re-derives it from the extension (never from file sniffing).
+_IMAGE_MIME_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+_EXT_IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024  # 10MB per image
+
+
+@router.post("/{topic_id}/attachments")
+async def upload_attachment(
+    topic_id: uuid.UUID, file: UploadFile, db: DbSession
+) -> dict:
+    """Upload a chat image into the topic's worktree (uploads/…). Returns the
+    {path, mime} the client then references when sending the message."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    ext = _IMAGE_MIME_EXT.get(mime)
+    if ext is None:
+        allowed = "、".join(sorted(_IMAGE_MIME_EXT))
+        raise ValidationError(f"只支持图片（{allowed}）")
+    data = await file.read(MAX_ATTACHMENT_BYTES + 1)
+    if not data:
+        raise ValidationError("空文件")
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise ValidationError("图片太大（上限 10MB）")
+    # Structural name only (uuid + extension) — nothing derived from content.
+    path = f"uploads/img-{uuid.uuid4().hex[:12]}{ext}"
+    ws.write_file_bytes(topic.project_id, path, data, topic_id=topic_id)
+    return ok({"path": path, "mime": mime, "bytes": len(data)})
+
+
+@router.get("/{topic_id}/attachments/raw")
+async def attachment_raw(topic_id: uuid.UUID, path: str, db: DbSession) -> Response:
+    """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
+    to images so this can never serve executable HTML from the worktree."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    clean = _clean_artifact_path(path)
+    suffix = "." + clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
+    mime = _EXT_IMAGE_MIME.get(suffix)
+    if mime is None:
+        raise ValidationError("只能读取图片附件")
+    data = ws.read_file_bytes(topic.project_id, clean, topic_id=topic_id)
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 # Block upgrade lives here (it produces a topic). Separate router prefix.

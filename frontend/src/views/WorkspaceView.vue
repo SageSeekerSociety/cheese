@@ -8,6 +8,7 @@ import ProjectDocsView from './ProjectDocsView.vue'
 import TopicSidebar from '../components/TopicSidebar.vue'
 import {
   acceptCard,
+  attachmentRawUrl,
   createProject,
   createTopic,
   getAcceptCards,
@@ -22,7 +23,14 @@ import {
   splitTopic,
   upgradeBlock,
 } from '../api'
-import type { AcceptCard, Project, ProjectMemberRow, Topic } from '../types'
+import { usePendingAttachments } from '../lib/attachments'
+import type {
+  AcceptCard,
+  ChatAttachment,
+  Project,
+  ProjectMemberRow,
+  Topic,
+} from '../types'
 
 // projectId comes from the route (/project/:projectId). When absent we fall
 // back to the first project so 工作台 is never empty.
@@ -144,12 +152,41 @@ const hasError = computed<boolean>({
 
 // ---- Spanning composer (spec §7.1: 输入栏在对话+文档区域底部) ----
 const chatRef = ref<{
-  send: (content: string, summon: boolean) => boolean
+  send: (
+    content: string,
+    summon: boolean,
+    attachments?: ChatAttachment[],
+  ) => boolean
   connected: boolean
 } | null>(null)
 const draft = ref('')
 const summon = ref(false) // @芝士 toggle: default OFF (人与人对话为主)
 const composerReady = computed(() => !!chatRef.value?.connected)
+
+// 图片输入: paste a screenshot / pick images → upload to the topic's worktree,
+// preview above the composer, reference them on send.
+const composerFileInput = ref<HTMLInputElement | null>(null)
+const {
+  pending: pendingAtts,
+  uploading: attsUploading,
+  addFiles: addAttFiles,
+  onPaste: onComposerPaste,
+  removeAt: removePendingAtt,
+  clear: clearPendingAtts,
+} = usePendingAttachments(
+  () => selectedTopic.value?.id,
+  (msg) => {
+    globalError.value = msg
+  },
+)
+function pickAttFiles() {
+  composerFileInput.value?.click()
+}
+function onAttFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (input.files?.length) void addAttFiles(input.files)
+  input.value = ''
+}
 
 // 施工现场 log for the current topic, fed into DocPanel's 现场 drawer.
 const worklog = ref<string[]>([])
@@ -164,8 +201,15 @@ const TOOL_LABELS: Record<string, string> = {
 }
 
 function sendDraft() {
-  const ok = chatRef.value?.send(expandMentions(draft.value), summon.value)
-  if (ok) draft.value = ''
+  const ok = chatRef.value?.send(
+    expandMentions(draft.value),
+    summon.value,
+    pendingAtts.value.slice(),
+  )
+  if (ok) {
+    draft.value = ''
+    clearPendingAtts()
+  }
 }
 
 // @-autocomplete: the @token currently being typed at the end of the draft, and
@@ -583,6 +627,7 @@ watch(
 // sidebar selection, create/split/upgrade, and route-driven selection).
 watch(selectedTopicId, () => {
   loadAcceptCard()
+  clearPendingAtts() // pending images belong to the topic they were typed in
 })
 
 // ?topic=<id> changing while already in the workspace (same project) — e.g. a
@@ -915,6 +960,29 @@ onMounted(async () => {
               <span v-if="i === 0" class="mention-menu-hint">Enter</span>
             </button>
           </div>
+          <!-- 图片输入: images waiting to go with the next send. -->
+          <div v-if="pendingAtts.length || attsUploading" class="att-strip">
+            <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
+              <img
+                :src="attachmentRawUrl(selectedTopic.id, a.path)"
+                :alt="a.path"
+              />
+              <button
+                type="button"
+                class="att-remove"
+                title="移除"
+                @click="removePendingAtt(i)"
+              >
+                ×
+              </button>
+            </div>
+            <v-progress-circular
+              v-if="attsUploading"
+              indeterminate
+              size="18"
+              width="2"
+            />
+          </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
               v-model="draft"
@@ -927,20 +995,39 @@ onMounted(async () => {
               class="composer-input flex-grow-1"
               :placeholder="
                 summon
-                  ? '让芝士做点什么…（Enter 发送，Shift+Enter 换行）'
+                  ? '让芝士做点什么…（Enter 发送，Shift+Enter 换行，可粘贴图片）'
                   : '发条消息…（默认不 @ 芝士；点 @芝士 让它回复）'
               "
               :disabled="!composerReady"
               @keydown="onComposerKey"
+              @paste="onComposerPaste"
               @compositionstart="onCompositionStart"
               @compositionend="onCompositionEnd"
+            />
+            <input
+              ref="composerFileInput"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              class="d-none"
+              @change="onAttFilePicked"
+            />
+            <v-btn
+              icon="mdi-image-plus-outline"
+              variant="text"
+              size="small"
+              title="发送图片"
+              :disabled="!composerReady"
+              @click="pickAttFiles"
             />
             <v-btn
               color="primary"
               variant="flat"
               icon="mdi-send"
               size="small"
-              :disabled="!composerReady || !draft.trim()"
+              :disabled="
+                !composerReady || (!draft.trim() && !pendingAtts.length)
+              "
               @click="sendDraft"
             />
           </div>
@@ -991,6 +1078,43 @@ onMounted(async () => {
 }
 .composer {
   background: var(--surface);
+}
+/* 图片输入: pending images above the composer, each with a remove button. */
+.att-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 2px;
+}
+.att-thumb {
+  position: relative;
+  line-height: 0;
+}
+.att-thumb img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--fill);
+}
+.att-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.att-remove:hover {
+  color: var(--ink);
 }
 /* @-autocomplete dropdown (§3.1.1) */
 .mention-menu {

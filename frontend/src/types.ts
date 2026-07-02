@@ -80,6 +80,13 @@ export type WsServerFrame =
   | { type: 'error'; message: string; persisted?: boolean }
   | { type: 'done' }
 
+// 图片输入: an uploaded worktree image the message carries. `path` comes from
+// POST /topics/{id}/attachments; the WS frame only references it (no binary).
+export interface ChatAttachment {
+  path: string
+  mime: string
+}
+
 // WebSocket client -> server frame. `summon` = @芝士: true asks the AI to
 // reply, false (default) just posts the message (spec §7.1 默认不 @).
 export interface WsClientMessage {
@@ -88,6 +95,7 @@ export interface WsClientMessage {
   author: string
   summon: boolean
   reply_to?: string // B3: thread this message under another
+  attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----

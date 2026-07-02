@@ -10,13 +10,15 @@ const BOTTOM_THRESHOLD = 80
 <script setup lang="ts">
 import { myHandle } from '../me'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { chatWsUrl, listBlocks } from '../api'
+import { attachmentRawUrl, chatWsUrl, listBlocks } from '../api'
+import { usePendingAttachments } from '../lib/attachments'
 import {
   renderMarkdown as renderMarkdownWith,
   renderPlain as renderPlainWith,
 } from '../lib/renderMessage'
 import type {
   Block,
+  ChatAttachment,
   ProjectMemberRow,
   TodoItem,
   Topic,
@@ -309,6 +311,7 @@ async function loadTopic(topic: Topic) {
   streaming.value = null
   awaitingReply.value = false
   todoItems.value = []
+  clearPendingAtts() // pending images belong to the topic they were typed in
   messages.value = []
   loadingHistory.value = true
   closeSocket()
@@ -346,8 +349,17 @@ function showReplyCue(m: Block): boolean {
   return m.author_type === 'human' && !!parentOf(m)
 }
 function replySnippet(m: Block): string {
+  if (m.kind === 'attachment') return '[图片]'
   const t = m.content.replace(/\s+/g, ' ').trim()
   return t.length > 24 ? t.slice(0, 24) + '…' : t
+}
+
+// An image attachment block (图片输入) — rendered as an inline <img>.
+function isImageBlock(m: Block): boolean {
+  return m.kind === 'attachment' && (m.mime_type || '').startsWith('image/')
+}
+function imageUrl(m: Block): string {
+  return props.topic ? attachmentRawUrl(props.topic.id, m.content) : ''
 }
 function scrollToMessage(id: string) {
   document
@@ -355,9 +367,16 @@ function scrollToMessage(id: string) {
     ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
-function send(content: string, summon: boolean): boolean {
+function send(
+  content: string,
+  summon: boolean,
+  attachments?: ChatAttachment[],
+): boolean {
   const trimmed = content.trim()
-  if (!trimmed || !socket || socket.readyState !== WebSocket.OPEN) return false
+  const atts = attachments?.length ? attachments : undefined
+  // An image-only send (no text) is a valid message (图片输入).
+  if ((!trimmed && !atts) || !socket || socket.readyState !== WebSocket.OPEN)
+    return false
   errorMsg.value = null
   const msg: WsClientMessage = {
     type: 'message',
@@ -365,6 +384,7 @@ function send(content: string, summon: boolean): boolean {
     author: AUTHOR,
     summon,
     reply_to: replyTarget.value?.id ?? undefined,
+    attachments: atts,
   }
   replyTarget.value = null
   socket.send(JSON.stringify(msg))
@@ -388,7 +408,7 @@ defineExpose({ send, connected })
 const visible = computed<Block[]>(() => {
   const out: Block[] = []
   for (const m of messages.value) {
-    if (m.kind === 'message') {
+    if (m.kind === 'message' || m.kind === 'attachment') {
       out.push(m)
     } else if (m.kind === 'event' && m.author_type === 'system') {
       // Collapse a run of identical system lines (e.g. repeated 编辑了文档) so
@@ -451,8 +471,36 @@ const prBranch = computed<string>(() => {
 const draft = ref('')
 const summon = ref(props.defaultSummon)
 
+// 图片输入: paste (screenshot) or pick images; they upload to the topic's
+// worktree immediately and wait in a preview strip until send.
+const fileInput = ref<HTMLInputElement | null>(null)
+const {
+  pending: pendingAtts,
+  uploading: attsUploading,
+  addFiles,
+  onPaste: onComposerPaste,
+  removeAt: removePendingAtt,
+  clear: clearPendingAtts,
+} = usePendingAttachments(
+  () => props.topic?.id,
+  (msg) => {
+    errorMsg.value = msg
+  },
+)
+function pickFiles() {
+  fileInput.value?.click()
+}
+function onFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (input.files?.length) void addFiles(input.files)
+  input.value = '' // allow re-picking the same file
+}
+
 function sendDraft() {
-  if (send(draft.value, summon.value)) draft.value = ''
+  if (send(draft.value, summon.value, pendingAtts.value.slice())) {
+    draft.value = ''
+    clearPendingAtts()
+  }
 }
 
 // IME (输入法) guard — see WorkspaceView.vue for the full story: Safari fires
@@ -624,8 +672,19 @@ onBeforeUnmount(() => {
                 <v-icon size="12">mdi-reply</v-icon>
                 回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
               </button>
+              <!-- 图片输入: an attachment block renders as the image itself
+                   (click opens the original in a new tab). -->
+              <a
+                v-if="isImageBlock(m)"
+                class="im-image-link"
+                :href="imageUrl(m)"
+                target="_blank"
+                rel="noopener"
+              >
+                <img class="im-image" :src="imageUrl(m)" :alt="m.content" loading="lazy" />
+              </a>
               <div
-                v-if="m.author_type === 'ai'"
+                v-else-if="m.author_type === 'ai'"
                 class="im-text md-content"
                 v-html="renderMarkdown(m.content)"
               />
@@ -756,6 +815,26 @@ onBeforeUnmount(() => {
             </button>
             <v-spacer />
           </div>
+          <!-- 图片输入: images waiting to go with the next send. -->
+          <div v-if="pendingAtts.length || attsUploading" class="att-strip">
+            <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
+              <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
+              <button
+                type="button"
+                class="att-remove"
+                title="移除"
+                @click="removePendingAtt(i)"
+              >
+                ×
+              </button>
+            </div>
+            <v-progress-circular
+              v-if="attsUploading"
+              indeterminate
+              size="18"
+              width="2"
+            />
+          </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
               v-model="draft"
@@ -766,18 +845,35 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input flex-grow-1"
-              placeholder="发条消息…（Enter 发送，Shift+Enter 换行）"
+              placeholder="发条消息…（Enter 发送，Shift+Enter 换行，可直接粘贴图片）"
               :disabled="!connected"
               @keydown="onComposerKey"
+              @paste="onComposerPaste"
               @compositionstart="onCompositionStart"
               @compositionend="onCompositionEnd"
+            />
+            <input
+              ref="fileInput"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              class="d-none"
+              @change="onFilePicked"
+            />
+            <v-btn
+              icon="mdi-image-plus-outline"
+              variant="text"
+              size="small"
+              title="发送图片"
+              :disabled="!connected"
+              @click="pickFiles"
             />
             <v-btn
               color="primary"
               variant="flat"
               icon="mdi-send"
               size="small"
-              :disabled="!connected || !draft.trim()"
+              :disabled="!connected || (!draft.trim() && !pendingAtts.length)"
               @click="sendDraft"
             />
           </div>
@@ -979,6 +1075,57 @@ onBeforeUnmount(() => {
 /* 现场尊重原文: exactly what the human typed, line breaks included. */
 .im-text--verbatim {
   white-space: pre-wrap;
+}
+/* 图片输入: an image message — bounded thumbnail, click opens the original. */
+.im-image-link {
+  display: inline-block;
+  margin-top: 2px;
+  line-height: 0;
+}
+.im-image {
+  max-width: min(360px, 100%);
+  max-height: 260px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--fill);
+  object-fit: contain;
+}
+/* Pending images above the composer, each with a remove button. */
+.att-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 2px;
+}
+.att-thumb {
+  position: relative;
+  line-height: 0;
+}
+.att-thumb img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--fill);
+}
+.att-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.att-remove:hover {
+  color: var(--ink);
 }
 /* Live link from an upgraded block to its new topic. */
 /* B3: the "回复 X：…" cue above a reply, and the composer reply-to bar. */
