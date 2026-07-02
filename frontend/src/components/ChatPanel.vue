@@ -10,9 +10,11 @@ const BOTTOM_THRESHOLD = 80
 <script setup lang="ts">
 import { myHandle } from '../me'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 import { chatWsUrl, listBlocks } from '../api'
+import {
+  renderMarkdown as renderMarkdownWith,
+  renderPlain as renderPlainWith,
+} from '../lib/renderMessage'
 import type {
   Block,
   ProjectMemberRow,
@@ -23,45 +25,19 @@ import type {
 } from '../types'
 import CheeseAvatar from './CheeseAvatar.vue'
 
-// Render 芝士's markdown replies to safe HTML (spec §3: AI 必须说人话, 可读).
-// References are encoded tokens (not guessed-from-prose): `<@handle>` for a
-// teammate, `<#topicId>` for a topic/its doc. Both 芝士 and the composer emit
-// them; here we render each as a clickable chip showing the name/title. The
-// handle→name and id→title maps are filled from the roster / topics props.
+// Message rendering (markdown / plain / reference chips) lives in
+// ../lib/renderMessage so it's unit-testable; here we just bind the
+// handle→name and id→title maps filled from the roster / topics props.
 const mentionNames: Record<string, string> = {}
 const topicTitles: Record<string, string> = {}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-function tokenChip(kind: string, id: string): string {
-  if (kind === '@') {
-    const name = mentionNames[id] || id
-    return `<span class="mention" data-handle="${id}">@${escapeHtml(name)}</span>`
-  }
-  const title = topicTitles[id] || '话题'
-  return `<span class="mention topic-ref" data-topic="${id}">#${escapeHtml(title)}</span>`
-}
-
-// Expand reference tokens to chip spans AFTER escaping/markdown: marked (and our
-// escape) turn "<@h>" into "&lt;@h&gt;", so we match that escaped form and swap in
-// the chip HTML — injecting raw <span> *before* marked would get re-escaped.
-const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;/g
-
-function highlightTokens(html: string): string {
-  return html.replace(ESCAPED_TOKEN, (_m, k, id) => tokenChip(k, id))
-}
+const refMaps = { mentionNames, topicTitles }
 
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(
-    highlightTokens(marked.parse(text, { async: false }) as string),
-  )
+  return renderMarkdownWith(text, refMaps)
 }
 
-// Plain (non-markdown) human text → escape, expand reference tokens, keep newlines.
 function renderPlain(text: string): string {
-  return DOMPurify.sanitize(highlightTokens(escapeHtml(text)))
+  return renderPlainWith(text, refMaps)
 }
 
 const props = withDefaults(
