@@ -175,3 +175,70 @@ async def test_error_result_never_becomes_cheeses_reply(tmp_path):
     authors = [(b.author, b.kind.value) for b in rows]
     assert ("cheese", "message") not in authors
     assert ("system", "event") in authors
+
+
+class FlakyAgent(AgentService):
+    """First call: transient HTTP 529 error result. Second call: normal reply.
+    The turn must auto-retry and the user only ever sees the good reply."""
+
+    def __init__(self) -> None:
+        super().__init__(model="stub")
+        self.calls = 0
+
+    async def stream_reply(
+        self, *, prompt, system_prompt, cwd, resume_session_id,
+        sandbox=None, allowed_tools=None, **_,
+    ):
+        self.calls += 1
+        if self.calls == 1:
+            yield AgentResult(
+                text="API Error (529 Overloaded)", session_id="s1",
+                usage=None, is_error=True, api_error_status=529,
+            )
+        else:
+            yield AgentDelta(text="搞定")
+            yield AgentResult(text="搞定", session_id="s1", usage=None)
+
+
+@pytest.mark.anyio
+async def test_transient_api_error_is_retried(tmp_path, monkeypatch):
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)  # skip the real backoff
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    agent = FlakyAgent()
+    svc = ChatService(
+        session_factory=factory,
+        agent=agent,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    frames = [
+        f
+        async for f in svc.converse(
+            topic_id=topic_id, author="u", content="做点事", summon=True
+        )
+    ]
+    kinds = [f["type"] for f in frames]
+    assert agent.calls == 2  # retried exactly once
+    assert "error" not in kinds  # the 529 never surfaced
+    final = next(f for f in frames if f["type"] == "assistant_block")
+    assert final["block"]["content"] == "搞定"
+
+
+async def _fast_sleep(_s: float) -> None:
+    return None
