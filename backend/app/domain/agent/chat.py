@@ -298,6 +298,19 @@ def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
 
 
+def _prompt_line(b) -> str:
+    """One speaker-labelled prompt line per pending human block. An attachment
+    block is a worktree image — embedded NATIVELY in this turn's user message
+    (base64 image block, see service.build_query_input), so the line just says
+    who sent it and where the file lives."""
+    if b.kind == BlockKind.attachment:
+        return (
+            f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
+            f"它同时存在你工作目录的 {b.content}）"
+        )
+    return f"[{b.author}]: {b.content}"
+
+
 class ChatService:
     def __init__(
         self,
@@ -350,21 +363,25 @@ class ChatService:
         summon: bool = True,
         turn_id: uuid.UUID | None = None,
         reply_to: str | None = None,
+        attachments: list[dict] | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
         block persists + broadcasts BEFORE the lock, so a post never queues
         behind a running agent turn. turn_id groups this turn's blocks (R4);
-        reply_to threads this message under another (B3)."""
+        reply_to threads this message under another (B3); attachments are
+        uploaded worktree images this message carries (图片输入)."""
         turn_id = turn_id or uuid.uuid4()
-        user_payload, user_block_id = await self._post_user_message(
+        user_payloads, user_block_id = await self._post_user_message(
             topic_id,
             author=author,
             content=content,
             turn_id=turn_id,
             reply_to=reply_to,
+            attachments=attachments,
         )
-        yield {"type": "user_block", "block": user_payload}
+        for payload in user_payloads:
+            yield {"type": "user_block", "block": payload}
 
         # Default human-to-human: post and stay quiet (spec C3 / §7.1).
         if not summon:
@@ -413,41 +430,70 @@ class ChatService:
         content: str,
         turn_id: uuid.UUID,
         reply_to: str | None,
-    ) -> tuple[dict, uuid.UUID]:
-        """Persist the human message + its @mention notifications in one short
-        transaction, outside any turn lock. Returns (payload, block_id)."""
+        attachments: list[dict] | None = None,
+    ) -> tuple[list[dict], uuid.UUID]:
+        """Persist the human message (+ its image attachment blocks) and the
+        @mention notifications in one short transaction, outside any turn lock.
+        Returns (payloads, anchor_block_id) — the anchor is what 芝士's reply
+        threads under (the text block, or the first attachment when image-only)."""
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
             topic = await topics.get(topic_id)
             if topic is None:
                 raise NotFoundError("Topic not found")
-            user_block = await blocks.add(
-                project_id=topic.project_id,
-                topic_id=topic.id,
-                author=author,
-                author_type=AuthorType.human,
-                content=content,
-                kind=BlockKind.message,
-                turn_id=turn_id,
-                reply_to=_parse_uuid(reply_to),  # B3: thread under another message
-            )
-            # Resolve <@handle> mentions in the human message → strong notify.
-            roster = (
-                []
-                if topic.is_private
-                else await ProjectRepository(session).list_members(topic.project_id)
-            )
-            resolved, _unresolved = await self._notify_mentions(
-                session, topic, author, content, roster
-            )
-            refs = [f"user:{h}" for h in resolved] + _topic_refs(content)
-            if refs:
-                user_block.refs = refs
-            block_id = user_block.id
-            payload = _block_payload(BlockOut.model_validate(user_block))
+            payloads: list[dict] = []
+            anchor_id: uuid.UUID | None = None
+            if content:
+                user_block = await blocks.add(
+                    project_id=topic.project_id,
+                    topic_id=topic.id,
+                    author=author,
+                    author_type=AuthorType.human,
+                    content=content,
+                    kind=BlockKind.message,
+                    turn_id=turn_id,
+                    reply_to=_parse_uuid(reply_to),  # B3: thread under another
+                )
+                # Resolve <@handle> mentions in the human message → strong notify.
+                roster = (
+                    []
+                    if topic.is_private
+                    else await ProjectRepository(session).list_members(
+                        topic.project_id
+                    )
+                )
+                resolved, _unresolved = await self._notify_mentions(
+                    session, topic, author, content, roster
+                )
+                refs = [f"user:{h}" for h in resolved] + _topic_refs(content)
+                if refs:
+                    user_block.refs = refs
+                anchor_id = user_block.id
+                payloads.append(_block_payload(BlockOut.model_validate(user_block)))
+            # 图片输入: each image = an attachment block. content = the worktree
+            # path (a REAL file, uploaded before this message), mime_type = how
+            # to render it — structured fields, never parsed out of prose.
+            for att in attachments or []:
+                att_block = await blocks.add(
+                    project_id=topic.project_id,
+                    topic_id=topic.id,
+                    author=author,
+                    author_type=AuthorType.human,
+                    content=str(att.get("path") or ""),
+                    kind=BlockKind.attachment,
+                    mime_type=str(att.get("mime") or "") or None,
+                    turn_id=turn_id,
+                    # An image-only send still honors the reply thread (B3).
+                    reply_to=None if content else _parse_uuid(reply_to),
+                )
+                if anchor_id is None:
+                    anchor_id = att_block.id
+                payloads.append(_block_payload(BlockOut.model_validate(att_block)))
+            if anchor_id is None:  # guarded by the route, but never crash a turn
+                raise NotFoundError("empty message")
             await session.commit()
-        return payload, block_id
+        return payloads, anchor_id
 
     async def _model_kwargs(self, project_id: uuid.UUID) -> dict:
         """Per-turn overrides for the agent call, resolved from project.settings:
@@ -547,11 +593,20 @@ class ChatService:
             pending = [
                 b
                 for b in history[last_ai + 1 :]
-                if b.kind == BlockKind.message and b.author_type == AuthorType.human
+                if b.kind in (BlockKind.message, BlockKind.attachment)
+                and b.author_type == AuthorType.human
             ]
             prompt_text = (
-                "\n".join(f"[{b.author}]: {b.content}" for b in pending) or content
+                "\n".join(_prompt_line(b) for b in pending) or content
             )
+            # 图片输入: every pending image rides this turn's user message as a
+            # NATIVE base64 image block (Claude Code native image input) — the
+            # provider side that has the file does the embedding.
+            turn_images = [
+                {"path": b.content, "media_type": b.mime_type or "image/png"}
+                for b in pending
+                if b.kind == BlockKind.attachment and b.content
+            ]
 
             is_private = topic.is_private
             private_owner = topic.private_owner
@@ -621,6 +676,7 @@ class ChatService:
             memory_scope="personal" if is_private else None,
             owner=private_owner if is_private else None,
             turn_id=turn_id,
+            images=turn_images or None,
             **model_kwargs,
         ):
             if isinstance(event, AgentDelta):

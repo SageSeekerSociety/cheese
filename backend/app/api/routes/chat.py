@@ -8,9 +8,14 @@ keeps running and persisting (invariant 2: the job doesn't depend on who watches
 and multiple connections to the same topic all see the live stream.
 
 Protocol (unchanged frontend contract):
-  client → {"type":"message","content": str, "author": str, "summon": bool}
+  client → {"type":"message","content": str, "author": str, "summon": bool,
+            "attachments"?: [{"path": str, "mime": str}]}
   server → user_block / delta / tool / todo / state / event_block /
            assistant_block / error / done
+
+Attachments are uploaded FIRST via POST /api/topics/{id}/attachments (the file
+lands in the topic's worktree); the WS message then references them by path —
+the frame itself stays JSON text, no binary over the socket.
 """
 
 import asyncio
@@ -67,7 +72,15 @@ async def chat(
             summon = bool(payload.get("summon", False))
             # B3: replying to a specific message threads under it.
             reply_to = payload.get("reply_to") or None
-            if not content:
+            # 图片输入: previously-uploaded worktree files this message carries.
+            # Structural validation only; the path was produced by the upload
+            # route, and block creation re-checks nothing content-wise.
+            attachments = [
+                {"path": a["path"], "mime": str(a.get("mime") or "")}
+                for a in (payload.get("attachments") or [])[:9]
+                if isinstance(a, dict) and isinstance(a.get("path"), str) and a["path"]
+            ]
+            if not content and not attachments:
                 await send({"type": "error", "message": "empty content"})
                 continue
             # Fire-and-forget: the turn runs in the background and streams back
@@ -79,6 +92,7 @@ async def chat(
                 content=content,
                 summon=summon,
                 reply_to=reply_to,
+                attachments=attachments,
             )
     except WebSocketDisconnect:
         pass
