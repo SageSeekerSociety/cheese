@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
-import { toolLabel } from '../lib/toolLabels'
+import { formatToolAction, toolLabel } from '../lib/toolLabels'
 import { computed, inject, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '../components/ChatPanel.vue'
@@ -189,8 +189,12 @@ function onAttFilePicked(e: Event) {
   input.value = ''
 }
 
-// 施工现场 log for the current topic, fed into DocPanel's 现场 drawer.
-const worklog = ref<string[]>([])
+// 施工现场 live feed for the current topic — DocPanel's 现场 drawer shows it
+// with a pulsing dot while the turn runs; cleared when the turn ends (the
+// persisted transcript takes over as the durable record).
+const worklog = ref<{ label: string; text: string }[]>([])
+const working = ref(false)
+const workingSince = ref<number | null>(null)
 
 
 function sendDraft() {
@@ -477,6 +481,10 @@ async function refreshTopics() {
 }
 
 function handleTurnDone() {
+  // The live feed's job is over — the persisted 现场 transcript is the record.
+  working.value = false
+  workingSince.value = null
+  worklog.value = []
   activityTick.value += 1
   refreshTopics()
 }
@@ -540,8 +548,13 @@ function expandMentions(text: string): string {
   return out
 }
 
-function handleToolUsed(name: string) {
-  worklog.value.push(toolLabel(name))
+function handleToolUsed(name: string, input?: Record<string, unknown>) {
+  if (!working.value) workingSince.value = Date.now()
+  working.value = true
+  worklog.value.push({
+    label: toolLabel(name),
+    text: formatToolAction(name, input),
+  })
   if (name === 'update_doc') {
     activityTick.value += 1
   } else if (name === 'create_subtopic') {
@@ -903,6 +916,8 @@ onMounted(async () => {
           :topic="selectedTopic"
           :activity-tick="activityTick"
           :worklog="worklog"
+          :working="working"
+          :working-since="workingSince"
           :focus="focusMode"
           :topic-list="topics"
           @toggle-focus="focusMode = !focusMode"

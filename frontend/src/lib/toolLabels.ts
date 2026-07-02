@@ -72,3 +72,13 @@ export function formatToolAction(
   const preview = String(raw).split(/\s+/).join(' ').slice(0, 80)
   return preview ? `${label} · ${preview}` : label
 }
+
+// Deterministic batch summary, Claude Code style — counts per verb, no model:
+// "搜内容×2 · 读文件×5 · 执行命令×1"
+export function summarizeActions(labels: string[]): string {
+  const counts = new Map<string, number>()
+  for (const l of labels) counts.set(l, (counts.get(l) ?? 0) + 1)
+  return [...counts.entries()]
+    .map(([label, n]) => (n > 1 ? `${label}×${n}` : label))
+    .join(' · ')
+}

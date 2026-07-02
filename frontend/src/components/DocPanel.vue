@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
+import { summarizeActions } from '../lib/toolLabels'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
@@ -46,14 +47,24 @@ const props = withDefaults(
     // panel reloads the doc 芝士 just wrote. See WorkspaceView activityTick.
     activityTick: number
     // 施工现场: this topic's AI tool-action log, shown in the 现场 drawer.
-    worklog?: string[]
+    worklog?: { label: string; text: string }[]
+    // A turn is in flight — the 现场 live feed's newest line pulses.
+    working?: boolean
+    // Epoch ms when the current turn's first tool ran (drives the ⏱ elapsed).
+    workingSince?: number | null
     // 专注模式 (spec §7.1): the doc spans the whole workspace (chat hidden).
     focus?: boolean
     // Project topics (A2): resolve a doc node's upgraded_to_topic_id to the
     // subtopic's title + live status for the in-place live-ref badge.
     topicList?: Topic[]
   }>(),
-  { worklog: () => [], focus: false, topicList: () => [] },
+  {
+    worklog: () => [],
+    working: false,
+    workingSince: null,
+    focus: false,
+    topicList: () => [],
+  },
 )
 
 // 专注模式 toggle is owned by the parent (it hides the chat pane); we just ask.
@@ -394,6 +405,27 @@ async function openCommentTool() {
 
 // 现场: read-only transcript timeline.
 const transcript = ref<Block[]>([])
+// Live-turn elapsed seconds (ticks while `working`).
+const nowTick = ref(Date.now())
+let tickTimer: ReturnType<typeof setInterval> | null = null
+watch(
+  () => props.working,
+  (w) => {
+    if (tickTimer) clearInterval(tickTimer)
+    tickTimer = w ? setInterval(() => (nowTick.value = Date.now()), 1000) : null
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => {
+  if (tickTimer) clearInterval(tickTimer)
+})
+const liveElapsed = computed(() => {
+  if (!props.working || !props.workingSince) return null
+  return Math.max(0, Math.round((nowTick.value - props.workingSince) / 1000))
+})
+const liveSummary = computed(() =>
+  summarizeActions(props.worklog.map((w) => w.label)),
+)
 // Git: commit log + working-tree diff.
 const gitCommits = ref<GitCommit[]>([])
 const gitDiff = ref<string>('')
@@ -1073,7 +1105,7 @@ onBeforeUnmount(() => {
           <!-- 现场: read-only transcript timeline (芝士 messages + 🔧 events) -->
           <template v-else-if="openTool === 'site'">
             <div
-              v-if="transcript.length === 0"
+              v-if="transcript.length === 0 && worklog.length === 0"
               class="text-center text-medium-emphasis py-6"
             >
               本话题暂无施工记录
@@ -1107,6 +1139,33 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </template>
+
+              <!-- 本轮实时动作 (live feed): what 芝士 is doing RIGHT NOW —
+                   newest line pulses; the list clears when the turn ends and
+                   the persisted transcript above becomes the record. -->
+              <template v-for="(act, i) in worklog" :key="'live-' + i">
+                <div class="site-act">
+                  <span
+                    class="site-act__dot"
+                    :class="{
+                      'site-act__dot--live': working && i === worklog.length - 1,
+                    }"
+                  >●</span>
+                  <div class="site-act__body">
+                    <span class="site-act__verb">{{ act.text }}</span>
+                  </div>
+                </div>
+              </template>
+              <!-- 本轮聚合摘要 (Claude Code 风): deterministic counts + ⏱ -->
+              <div v-if="working && worklog.length" class="site-summary">
+                <span class="site-act__dot site-act__dot--live">●</span>
+                <span>
+                  {{ liveSummary }}
+                  <template v-if="liveElapsed !== null">
+                    （{{ liveElapsed }}s）
+                  </template>
+                </span>
+              </div>
             </div>
           </template>
 
@@ -1699,6 +1758,27 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.5;
+}
+.site-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line-2, #e3e3e3);
+  font-size: 12px;
+  color: var(--muted, #777);
+}
+.site-act__dot--live {
+  color: rgb(var(--v-theme-primary));
+  animation: site-pulse 1.2s ease-in-out infinite;
+}
+@keyframes site-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-act__dot--live { animation: none; }
 }
 .site-act__dot {
   color: var(--accent);

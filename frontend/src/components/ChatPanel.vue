@@ -16,7 +16,6 @@ import {
   renderMarkdown as renderMarkdownWith,
   renderPlain as renderPlainWith,
 } from '../lib/renderMessage'
-import { formatToolAction } from '../lib/toolLabels'
 import type {
   Block,
   ChatAttachment,
@@ -75,7 +74,7 @@ const props = withDefaults(
 // without a manual reload (spec §7.1 实时联动). `tool-used` fires per tool call
 // (carries the short tool name); `turn-done` fires when a turn completes.
 const emit = defineEmits<{
-  (e: 'tool-used', name: string): void
+  (e: 'tool-used', name: string, input?: Record<string, unknown>): void
   // A cheese command changed a platform resource (doc/decision/topics/...) —
   // the parent refreshes that panel live, mid-turn.
   (e: 'state-changed', resource: string): void
@@ -116,10 +115,6 @@ const messages = ref<Block[]>([])
 const loadingHistory = ref(false)
 const connected = ref(false)
 const errorMsg = ref<string | null>(null)
-
-// The tool call 芝士 is executing RIGHT NOW (Claude Code 风格的实时动作行,
-// with a pulsing dot). Ephemeral: replaced per tool frame, gone at turn end.
-const liveAction = ref<string | null>(null)
 
 // In-progress assistant message being streamed via `delta` frames.
 // Held separately and rendered after `messages`; replaced by the final
@@ -303,11 +298,9 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'tool':
-      // 工作细节不进对话流 (they live in the 现场 drawer) — but the CURRENT
-      // action shows as a live one-liner, and the parent refreshes panels.
-      liveAction.value = formatToolAction(frame.name, frame.input)
-      emit('tool-used', frame.name.replace(/^mcp__cheese__/, ''))
-      autoScroll()
+      // 工作细节不进对话流 — the live feed belongs to the 现场 drawer. Hand
+      // the parent the full call so it can build the live worklog line.
+      emit('tool-used', frame.name.replace(/^mcp__cheese__/, ''), frame.input)
       break
     case 'todo':
       // Live working-log checklist (process), updated in place.
@@ -327,7 +320,6 @@ function handleFrame(frame: WsServerFrame) {
     case 'assistant_block':
       pushBlock(frame.block)
       streaming.value = null
-      liveAction.value = null
       catchUpDeltas = ''
       todoItems.value = [] // working-log done; the final message is the summary
       autoScroll()
@@ -337,12 +329,10 @@ function handleFrame(frame: WsServerFrame) {
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
       streaming.value = null
-      liveAction.value = null
       awaitingReply.value = false
       break
     case 'done':
       streaming.value = null
-      liveAction.value = null
       awaitingReply.value = false
       emit('turn-done')
       autoScroll()
@@ -353,7 +343,6 @@ function handleFrame(frame: WsServerFrame) {
 async function loadTopic(topic: Topic) {
   errorMsg.value = null
   streaming.value = null
-  liveAction.value = null
   awaitingReply.value = false
   todoItems.value = []
   clearPendingAtts() // pending images belong to the topic they were typed in
@@ -800,32 +789,11 @@ onBeforeUnmount(() => {
             <div class="im-text">
               <!-- Instant ack before the first token / during cold start -->
               <span
-                v-if="awaitingReply && !streaming && !liveAction"
+                v-if="awaitingReply && !streaming"
                 class="text-medium-emphasis"
               >芝士 正在看…</span>
               <span v-else class="md-content" v-html="renderMarkdown(streaming || '')" />
-              <span v-if="awaitingReply && !liveAction" class="caret" />
-            </div>
-
-            <!-- 实时动作行 (Claude Code 风): what 芝士 is executing right now,
-                 with a pulsing dot. Ephemeral — replaced per tool, gone at end. -->
-            <div v-if="liveAction" class="live-action">
-              <span class="live-dot" />
-              <span class="live-action__text">{{ liveAction }}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Turn active but the streaming bubble isn't mounted (e.g. came back
-             mid-turn): the live action line still shows on its own. -->
-        <div v-if="streaming === null && liveAction" class="im-row">
-          <div class="im-gutter">
-            <CheeseAvatar :size="28" />
-          </div>
-          <div class="im-main">
-            <div class="live-action">
-              <span class="live-dot" />
-              <span class="live-action__text">{{ liveAction }}</span>
+              <span v-if="awaitingReply" class="caret" />
             </div>
           </div>
         </div>
@@ -1281,36 +1249,6 @@ onBeforeUnmount(() => {
 }
 
 /* system / event line: centered, faint, small */
-/* 实时动作行 — the pulsing "working" indicator (Claude Code 的 ⏺). */
-.live-action {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 4px;
-  font-size: 12.5px;
-  color: var(--muted, #777);
-}
-.live-action__text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.live-dot {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgb(var(--v-theme-primary));
-  animation: live-pulse 1.2s ease-in-out infinite;
-}
-@keyframes live-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(0.75); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .live-dot { animation: none; }
-}
-
 .im-event {
   text-align: center;
   color: var(--faint);
