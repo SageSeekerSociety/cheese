@@ -137,6 +137,45 @@ export function createTopic(
   })
 }
 
+// ---- 话题级未读 (Feishu-style badges) ----
+
+// {topic_id: unread_count} for one user; topics with zero unread are omitted.
+export function getTopicUnread(
+  projectId: string,
+  handle: string,
+): Promise<Record<string, number>> {
+  return request<Record<string, number>>(
+    `/projects/${encodeURIComponent(projectId)}/topic-unread?handle=${encodeURIComponent(handle)}`,
+  )
+}
+
+// Opening a topic bumps the user's read cursor (clears its badge).
+export function markTopicRead(
+  topicId: string,
+  handle: string,
+): Promise<Record<string, string>> {
+  return request<Record<string, string>>(
+    `/topics/${encodeURIComponent(topicId)}/read`,
+    { method: 'POST', body: JSON.stringify({ handle }) },
+  )
+}
+
+// ---- 归档去向: manual archive / unarchive ----
+
+export function archiveTopic(topicId: string, by: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/archive`, {
+    method: 'POST',
+    body: JSON.stringify({ by }),
+  })
+}
+
+export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/unarchive`, {
+    method: 'POST',
+    body: JSON.stringify({ by }),
+  })
+}
+
 // Split a topic into a sub-topic (芝士的分身 works there). eval A1 / tree.
 export function splitTopic(
   topicId: string,
@@ -570,6 +609,31 @@ export function getNotifications(
     `/projects/${encodeURIComponent(projectId)}/notifications?target_handle=${encodeURIComponent(
       targetHandle,
     )}`,
+  )
+}
+
+// Server-side bell badge: unread, non-silent, visible to this user.
+export function getNotificationUnreadCount(
+  projectId: string,
+  targetHandle: string,
+): Promise<{ unread: number }> {
+  return request<{ unread: number }>(
+    `/projects/${encodeURIComponent(projectId)}/notifications/unread-count?target_handle=${encodeURIComponent(
+      targetHandle,
+    )}`,
+  )
+}
+
+// 全部标记已读 (Feishu-style).
+export function markAllNotificationsRead(
+  projectId: string,
+  targetHandle: string,
+): Promise<{ marked: number }> {
+  return request<{ marked: number }>(
+    `/projects/${encodeURIComponent(projectId)}/notifications/read-all?target_handle=${encodeURIComponent(
+      targetHandle,
+    )}`,
+    { method: 'POST' },
   )
 }
 

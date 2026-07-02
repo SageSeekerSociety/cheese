@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { renderMarkdown as renderMarkdownWith } from './lib/renderMessage'
 import { NOTIF_KIND, label } from './labels'
 import {
+  getNotificationUnreadCount,
   getNotifications,
   ingestActivity,
   listProjects,
   listUsers,
+  markAllNotificationsRead,
   markNotificationRead,
   resolveNotification,
   sendNotificationFeedback,
@@ -155,13 +157,28 @@ const notifLoading = ref(false)
 const visibleNotifs = computed<Notification[]>(() =>
   notifications.value.filter((n) => n.level !== 'silent'),
 )
-const unreadCount = computed<number>(
-  () => visibleNotifs.value.filter((n) => n.read_at === null).length,
-)
+// Badge count comes from the server (it excludes silent), so the bell is
+// right without fetching the whole list. Falls back to 0 between projects.
+const unreadCount = ref(0)
+
+async function refreshUnreadCount() {
+  const pid = currentProjectId.value
+  if (!pid || !me.value) {
+    unreadCount.value = 0
+    return
+  }
+  try {
+    const { unread } = await getNotificationUnreadCount(pid, me.value.handle)
+    if (currentProjectId.value === pid) unreadCount.value = unread
+  } catch {
+    // Best-effort; the badge keeps its last value.
+  }
+}
 
 async function loadNotifications() {
   if (!currentProjectId.value) {
     notifications.value = []
+    unreadCount.value = 0
     return
   }
   notifLoading.value = true
@@ -176,14 +193,36 @@ async function loadNotifications() {
   } finally {
     notifLoading.value = false
   }
+  refreshUnreadCount()
 }
 
 async function onMarkNotifRead(n: Notification) {
   try {
     const updated = await markNotificationRead(n.id)
     n.read_at = updated.read_at
+    refreshUnreadCount()
   } catch {
     // ignore
+  }
+}
+
+// 全部标记已读 (Feishu-style): one click clears the badge.
+const markAllBusy = ref(false)
+async function onMarkAllRead() {
+  const pid = currentProjectId.value
+  if (!pid || !me.value) return
+  markAllBusy.value = true
+  try {
+    await markAllNotificationsRead(pid, me.value.handle)
+    const now = new Date().toISOString()
+    for (const n of notifications.value) {
+      if (n.read_at === null) n.read_at = now
+    }
+    unreadCount.value = 0
+  } catch {
+    // ignore — the button stays for a retry
+  } finally {
+    markAllBusy.value = false
   }
 }
 
@@ -210,6 +249,7 @@ async function onResolveNotif(n: Notification, chosen: string) {
     const updated = await resolveNotification(n.id, chosen)
     n.payload = updated.payload
     n.read_at = updated.read_at
+    refreshUnreadCount()
   } catch {
     // ignore — the menu stays open for a retry
   }
@@ -233,10 +273,22 @@ function openNotifTopic(n: Notification) {
   if (n.read_at === null) onMarkNotifRead(n)
 }
 
-// Refresh notifications when the project changes or the menu opens.
+// Refresh notifications when the project changes or the menu opens; the badge
+// also refreshes on a 30s poll (实时性 C, MVP) so it stays current without a
+// manual click.
 watch(currentProjectId, () => loadNotifications())
 watch(notifMenu, (open) => {
   if (open) loadNotifications()
+})
+let notifTimer: number | undefined
+onMounted(() => {
+  refreshUnreadCount()
+  notifTimer = window.setInterval(() => {
+    refreshUnreadCount()
+  }, 30_000)
+})
+onUnmounted(() => {
+  if (notifTimer !== undefined) window.clearInterval(notifTimer)
 })
 
 // ---- 记一笔 / 导入 (E1/E3): app-bar dialog ----
@@ -392,9 +444,19 @@ provide('activityBump', activityBump)
               <v-icon size="17" class="me-1 c-faint">mdi-bell-outline</v-icon>
               通知
             </v-toolbar-title>
-            <span v-if="unreadCount" class="chip-neutral me-3">
+            <span v-if="unreadCount" class="chip-neutral me-2">
               {{ unreadCount }} 未读
             </span>
+            <v-btn
+              v-if="unreadCount"
+              size="x-small"
+              variant="text"
+              class="me-3"
+              :loading="markAllBusy"
+              @click="onMarkAllRead"
+            >
+              全部已读
+            </v-btn>
           </v-toolbar>
 
           <div class="overflow-y-auto">

@@ -19,6 +19,10 @@ export interface Topic {
   kind: string
   status: string
   created_at: string
+  // Lifecycle markers (spec §6.3) — used by the 已归档 group ordering.
+  accepted_by?: string | null
+  accepted_at?: string | null
+  archived_at?: string | null
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'

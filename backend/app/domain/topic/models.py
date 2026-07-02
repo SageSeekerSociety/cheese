@@ -13,7 +13,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String
+from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -80,3 +80,24 @@ class Topic(UuidPk, Timestamps, Base):
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class TopicReadState(UuidPk, Timestamps, Base):
+    """Per-user read cursor on a topic (话题级未读, Feishu-style).
+
+    One row per (topic, user); last_read_at is bumped whenever the user opens
+    the topic. Unread = message blocks by OTHERS created after this cursor
+    (no row = everything by others is unread). Deliberately a cursor, not a
+    per-message read table — cheap to bump, cheap to count against.
+    """
+
+    __tablename__ = "topic_read_states"
+    __table_args__ = (
+        UniqueConstraint("topic_id", "user_handle", name="uq_topic_read_user"),
+    )
+
+    topic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+    )
+    user_handle: Mapped[str] = mapped_column(String(64), index=True)
+    last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -16,6 +16,8 @@ const props = defineProps<{
   activeDocs?: string | null
   // Drawer width (px), made resizable by the parent.
   width?: number
+  // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
+  unreadMap?: Record<string, number>
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +26,9 @@ const emit = defineEmits<{
   (e: 'create-project', name: string): void
   (e: 'create-topic', title: string): void
   (e: 'split-topic', payload: { topicId: string; title: string }): void
+  // 归档去向: manual archive / unarchive from the row's ⋯ actions.
+  (e: 'archive-topic', id: string): void
+  (e: 'unarchive-topic', id: string): void
   // Open the 1:1 private chat with 芝士 in the main area (飞书私聊 conversation).
   (e: 'select-private'): void
   // Open a 项目文档 (章程/决策记录/周报集) in the main area, keeping the rail.
@@ -146,6 +151,34 @@ const tree = computed<TreeRow[]>(() => {
   return rows
 })
 
+// 归档去向: archived topics leave the active tree and live in a collapsed
+// 「已归档」 group at the bottom (newest archived first) — like Feishu's
+// folded conversations. Non-archived children of an archived parent stay in
+// the active list (their work isn't done).
+const activeTree = computed<TreeRow[]>(() =>
+  tree.value.filter((r) => r.topic.status !== 'archived'),
+)
+const archivedRows = computed<Topic[]>(() =>
+  props.topics
+    .filter((t) => t.status === 'archived' && inferKind(t) !== 'root')
+    .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? '')),
+)
+const archivedOpen = ref(false)
+
+// ---- 话题级未读角标 (Feishu-style) ----
+function unreadOf(id: string): number {
+  return props.unreadMap?.[id] ?? 0
+}
+// The badge shows at most 99+ (a runaway count shouldn't stretch the row).
+function unreadLabel(id: string): string {
+  const n = unreadOf(id)
+  return n > 99 ? '99+' : String(n)
+}
+// Unread hiding inside the collapsed archived group still deserves a hint.
+const archivedUnread = computed<number>(() =>
+  archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0),
+)
+
 // The root topic (本体) — represented by the rail header (a selector + a click
 // target), not a list row. And the current project's display name.
 const rootTopic = computed<Topic | null>(
@@ -191,6 +224,10 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
           <v-icon size="18" class="bentai-bar__icon">mdi-hexagon-outline</v-icon>
           <span class="bentai-bar__name">{{ currentProjectName }}</span>
           <span class="chip-neutral">本体</span>
+          <span
+            v-if="rootTopic && unreadOf(rootTopic.id) > 0"
+            class="unread-badge"
+          >{{ unreadLabel(rootTopic.id) }}</span>
         </button>
         <!-- ONLY the caret opens the switcher (clicking the bar opens 本体). -->
         <v-menu v-model="switcherOpen" location="bottom end" :offset="6">
@@ -260,7 +297,7 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 
           <v-list v-else density="compact" nav class="py-0">
             <v-list-item
-              v-for="row in tree"
+              v-for="row in activeTree"
               :key="row.topic.id"
               :active="row.topic.id === selectedTopicId"
               rounded="lg"
@@ -287,18 +324,25 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
                   v-if="statusBadge(row.topic.status)"
                   class="d-inline-flex align-center ga-1 c-faint topic-status"
                 >
-                  <span
-                    class="status-dot"
-                    :class="
-                      row.topic.status === 'archived'
-                        ? 'status-dot--muted'
-                        : 'status-dot--warn'
-                    "
-                  />
+                  <span class="status-dot status-dot--warn" />
                   {{ statusBadge(row.topic.status) }}
                 </span>
               </v-list-item-title>
               <template #append>
+                <!-- 未读角标 (Feishu-style): red count, cleared on open. -->
+                <span
+                  v-if="unreadOf(row.topic.id) > 0"
+                  class="unread-badge me-1"
+                >{{ unreadLabel(row.topic.id) }}</span>
+                <v-btn
+                  icon="mdi-archive-arrow-down-outline"
+                  size="x-small"
+                  variant="text"
+                  density="comfortable"
+                  title="归档话题"
+                  class="split-btn"
+                  @click.stop="emit('archive-topic', row.topic.id)"
+                />
                 <v-btn
                   icon="mdi-source-branch-plus"
                   size="x-small"
@@ -311,10 +355,65 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
               </template>
             </v-list-item>
 
-            <v-list-item v-if="tree.length === 0" class="c-faint t-body">
+            <v-list-item v-if="activeTree.length === 0" class="c-faint t-body">
               暂无话题
             </v-list-item>
           </v-list>
+
+          <!-- 归档去向: collapsed 已归档 group at the bottom of the topic list.
+               Archived topics leave the active tree and land here (newest
+               first), so done work stops crowding the rail. -->
+          <template v-if="archivedRows.length">
+            <button
+              type="button"
+              class="archived-toggle"
+              @click="archivedOpen = !archivedOpen"
+            >
+              <v-icon size="15" class="c-faint">
+                {{ archivedOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
+              </v-icon>
+              <span class="t-eyebrow">已归档</span>
+              <span class="archived-count">{{ archivedRows.length }}</span>
+              <span
+                v-if="!archivedOpen && archivedUnread > 0"
+                class="unread-badge unread-badge--dot"
+                title="归档话题里有新消息"
+              />
+            </button>
+            <v-list v-if="archivedOpen" density="compact" nav class="py-0">
+              <v-list-item
+                v-for="t in archivedRows"
+                :key="t.id"
+                :active="t.id === selectedTopicId"
+                rounded="lg"
+                class="topic-row topic-row--archived"
+                :class="{ 'is-active': t.id === selectedTopicId }"
+                @click="emit('select-topic', t.id)"
+              >
+                <template #prepend>
+                  <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
+                </template>
+                <v-list-item-title class="d-flex align-center ga-2 topic-title">
+                  <span class="text-truncate">{{ t.title }}</span>
+                  <span class="kind-text">{{ kindLabel(t) }}</span>
+                </v-list-item-title>
+                <template #append>
+                  <span v-if="unreadOf(t.id) > 0" class="unread-badge me-1">
+                    {{ unreadLabel(t.id) }}
+                  </span>
+                  <v-btn
+                    icon="mdi-archive-arrow-up-outline"
+                    size="x-small"
+                    variant="text"
+                    density="comfortable"
+                    title="取消归档"
+                    class="split-btn"
+                    @click.stop="emit('unarchive-topic', t.id)"
+                  />
+                </template>
+              </v-list-item>
+            </v-list>
+          </template>
 
           <v-divider class="mx-3 my-1" />
 
@@ -520,6 +619,62 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 
 .topic-status {
   font-size: 11.5px;
+}
+
+/* 未读角标 (Feishu-style): a compact red pill with the count. */
+.unread-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #f54a45; /* Feishu red — intentional, not the amber accent */
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+/* Collapsed 已归档 header: just a dot hint, not a count. */
+.unread-badge--dot {
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+/* 已归档 group toggle at the bottom of the topic list. */
+.archived-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 16px);
+  margin: 2px 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.archived-toggle:hover {
+  background: var(--fill);
+}
+.archived-toggle .t-eyebrow {
+  padding: 0;
+}
+.archived-count {
+  font-size: 11px;
+  color: var(--faint);
+  background: var(--fill);
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+/* Archived rows read as "done": slightly dimmed titles. */
+.topic-row--archived :deep(.v-list-item-title) {
+  color: var(--muted);
 }
 
 /* Row split button stays a stable, always-clickable target. It was previously
