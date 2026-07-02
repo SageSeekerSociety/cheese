@@ -154,6 +154,28 @@ function onMessagesClick(e: MouseEvent) {
   else if (el.dataset.topic) emit('open-topic', el.dataset.topic)
 }
 
+// Catch-up mode: right after (re)opening the socket, the broker REPLAYS every
+// buffered frame of an in-progress turn in one burst. Rendering + auto-scrolling
+// per frame makes the pane visibly flash for seconds on a long turn — so during
+// the burst we apply frames quietly and do ONE scroll when it goes idle.
+let catchingUp = false
+let catchUpTimer: ReturnType<typeof setTimeout> | null = null
+// Deltas buffered during catch-up: re-rendering the whole markdown per replayed
+// delta is O(n²) on a long turn — buffer, then flush once.
+let catchUpDeltas = ''
+function noteCatchUpFrame() {
+  if (!catchingUp) return
+  if (catchUpTimer) clearTimeout(catchUpTimer)
+  catchUpTimer = setTimeout(() => {
+    catchingUp = false
+    if (catchUpDeltas) {
+      streaming.value = (streaming.value ?? '') + catchUpDeltas
+      catchUpDeltas = ''
+    }
+    autoScroll()
+  }, 200)
+}
+
 let socket: WebSocket | null = null
 const scrollRef = ref<HTMLElement | null>(null)
 
@@ -175,8 +197,11 @@ function scrollToBottom() {
   })
 }
 
-// Auto-follow new messages only when the user hasn't scrolled up.
+// Auto-follow new messages only when the user hasn't scrolled up. During a
+// replay catch-up the per-frame calls are suppressed; noteCatchUpFrame does a
+// single scroll once the burst settles.
 function autoScroll() {
+  if (catchingUp) return
   if (atBottom.value) scrollToBottom()
 }
 
@@ -217,6 +242,9 @@ function closeSocket() {
 }
 
 function openSocket(topicId: string) {
+  catchingUp = true
+  catchUpDeltas = ''
+  noteCatchUpFrame()
   closeSocket()
   const ws = new WebSocket(chatWsUrl(topicId))
   socket = ws
@@ -240,6 +268,7 @@ function openSocket(topicId: string) {
       return
     }
     handleFrame(frame)
+    noteCatchUpFrame()
   }
 }
 
@@ -259,7 +288,11 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'delta':
-      streaming.value = (streaming.value ?? '') + frame.text
+      if (catchingUp) {
+        catchUpDeltas += frame.text
+      } else {
+        streaming.value = (streaming.value ?? '') + frame.text
+      }
       autoScroll()
       break
     case 'tool':
@@ -285,6 +318,7 @@ function handleFrame(frame: WsServerFrame) {
     case 'assistant_block':
       pushBlock(frame.block)
       streaming.value = null
+      catchUpDeltas = ''
       todoItems.value = [] // working-log done; the final message is the summary
       autoScroll()
       break
