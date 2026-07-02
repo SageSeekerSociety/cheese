@@ -558,6 +558,30 @@ def exec_in_sandbox(
     }
 
 
+# 运行环境预览: every topic container publishes this in-container port to a
+# random localhost port at creation (claude-sbx). The AI starts whatever server
+# the project needs on 0.0.0.0:$CHEESE_APP_PORT and declares it (cheese serve).
+APP_PORT = 3000
+
+
+def app_preview_url(topic_id: uuid.UUID) -> str | None:
+    """http://127.0.0.1:<host-port> for the topic container's published app
+    port, or None (container down / mapping missing — old container)."""
+    if not sandbox_available():
+        return None
+    result = subprocess.run(
+        ["docker", "port", container_name(topic_id), str(APP_PORT)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    # e.g. "127.0.0.1:55007" (possibly one line per address family).
+    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    port = line.rsplit(":", 1)[-1]
+    return f"http://127.0.0.1:{port}" if port.isdigit() else None
+
+
 def container_name(topic_id: uuid.UUID) -> str:
     """Deterministic name of a topic's long-lived sandbox container."""
     return f"cheesex-sbx-{topic_id.hex[:12]}"

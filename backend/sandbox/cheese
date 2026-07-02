@@ -19,6 +19,7 @@
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
   cheese milestone "中期汇报" --due 2026-06-20
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
+  cheese serve "Vue dev server"             # 应用跑在 0.0.0.0:$CHEESE_APP_PORT 后,设为预览
   cheese artifact chart.svg --as svg        # SVG 同理
 """
 
@@ -115,6 +116,10 @@ def main() -> None:
 
     sub.add_parser("members", help="列出项目成员(名字+handle+角色)")
 
+    psv = sub.add_parser("serve", help="把容器里跑起来的应用设为当前预览(先起在 0.0.0.0:$CHEESE_APP_PORT)")
+    psv.add_argument("note", nargs="?", default="app",
+                     help="一句话说明在跑什么,如 'Vue dev server'")
+
     part = sub.add_parser("artifact", help="把工作区文件设为可渲染产物(当前预览)")
     part.add_argument("path", help="工作区相对路径,如 report.html")
     part.add_argument("--as", dest="as_", default="html", choices=["html", "svg"],
@@ -189,6 +194,12 @@ def main() -> None:
         for m in rows:
             h = m.get("user_handle")
             print(f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{h}> 点名 ta")
+    elif a.cmd == "serve":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        port = os.environ.get("CHEESE_APP_PORT", "3000")
+        _call("POST", f"/topics/{topic}/artifact", {"path": a.note, "as": "app"})
+        print(f"已把容器 :{port} 上的应用设为当前预览（{a.note}）。"
+              f"确保它监听 0.0.0.0:{port}，别只绑 localhost。")
     elif a.cmd == "artifact":
         topic = _need("CHEESE_TOPIC", TOPIC)
         # The platform resolves artifact paths against the worktree ROOT (/work),

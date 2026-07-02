@@ -259,8 +259,12 @@ export interface FileContent {
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
 // topic's current preview. Null when 芝士 hasn't set one.
 export interface PreviewInfo {
+  // kind=file → render the file's content; kind=app → iframe straight to the
+  // running app the agent started in its container (url, live-resolved).
+  kind?: 'file' | 'app'
   path: string
   mime: string | null
+  url?: string | null
 }
 
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).

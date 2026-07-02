@@ -23,7 +23,7 @@ def test_artifact_sets_current_preview(client):
     assert block["content"] == "report.html"
 
     prev = client.get(f"/api/topics/{tid}/preview").json()["data"]
-    assert prev == {"path": "report.html", "mime": "text/html"}
+    assert prev == {"kind": "file", "path": "report.html", "mime": "text/html"}
 
 
 def test_artifact_type_maps_to_mime(client):
@@ -76,3 +76,37 @@ def test_artifact_requires_path(client):
     assert client.post(
         f"/api/topics/{tid}/artifact", json={"path": ""}
     ).status_code == 422
+
+
+def test_app_artifact_and_preview(client, monkeypatch):
+    """运行环境预览: `cheese serve` declares a RUNNING app; the preview resolves
+    the container's published port live and returns kind=app + url."""
+    from app.domain.workspace import service as ws
+
+    pr = client.post("/api/projects", json={"name": "P"})
+    pid = pr.json()["data"]["id"]
+    tr = client.post("/api/topics", json={"project_id": pid, "title": "T"})
+    tid = tr.json()["data"]["id"]
+
+    r = client.post(
+        f"/api/topics/{tid}/artifact", json={"path": "Vue dev server", "as": "app"}
+    )
+    assert r.status_code == 200
+
+    # Container up → live URL.
+    monkeypatch.setattr(ws, "app_preview_url", lambda t: "http://127.0.0.1:55007")
+    d = client.get(f"/api/topics/{tid}/preview").json()["data"]
+    assert d["kind"] == "app" and d["url"] == "http://127.0.0.1:55007"
+    assert d["path"] == "Vue dev server"
+
+    # Container down → declared but offline (url null), never a crash.
+    monkeypatch.setattr(ws, "app_preview_url", lambda t: None)
+    d = client.get(f"/api/topics/{tid}/preview").json()["data"]
+    assert d["kind"] == "app" and d["url"] is None
+
+    # A later file artifact supersedes the app as the current preview.
+    wt = ws.topic_worktree(__import__("uuid").UUID(pid), __import__("uuid").UUID(tid))
+    (wt / "r.html").write_text("<h1>hi</h1>")
+    client.post(f"/api/topics/{tid}/artifact", json={"path": "r.html", "as": "html"})
+    d = client.get(f"/api/topics/{tid}/preview").json()["data"]
+    assert d["kind"] == "file" and d["path"] == "r.html"
