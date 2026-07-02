@@ -80,12 +80,49 @@ _TOOL_ARG = {
 }
 
 
-# Native tools (sandbox mode) → 现场 labels.
+# Native Claude Code tools (sandbox mode) → 现场 labels. Systematic: every tool
+# the agent can invoke has a Chinese verb + its most telling argument as the
+# preview; an unmapped (future) tool falls back to its raw name, which is the
+# signal to extend this table.
 _TOOL_VERB.update(
-    {"Bash": "执行命令", "Write": "写文件", "Edit": "改文件", "Read": "读文件"}
+    {
+        "Bash": "执行命令",
+        "Write": "写文件",
+        "Edit": "改文件",
+        "Read": "读文件",
+        "Glob": "找文件",
+        "Grep": "搜代码",
+        "WebSearch": "搜网页",
+        "WebFetch": "看网页",
+        "Agent": "派分身去查",
+        "Task": "派分身去查",  # older CLI name for Agent
+        "NotebookEdit": "改笔记本",
+        "TodoWrite": "更新任务清单",
+        "BashOutput": "看命令输出",
+        "KillShell": "停掉命令",
+        "KillBash": "停掉命令",
+        "ExitPlanMode": "提交方案待确认",
+        "AskUserQuestion": "向用户提问",
+        "Skill": "调用技能",
+        "ToolSearch": "查找工具",
+    }
 )
 _TOOL_ARG.update(
-    {"Bash": "command", "Write": "file_path", "Edit": "file_path", "Read": "file_path"}
+    {
+        "Bash": "command",
+        "Write": "file_path",
+        "Edit": "file_path",
+        "Read": "file_path",
+        "Glob": "pattern",
+        "Grep": "pattern",
+        "WebSearch": "query",
+        "WebFetch": "url",
+        "Agent": "description",
+        "Task": "description",
+        "NotebookEdit": "notebook_path",
+        "Skill": "skill",
+        "ToolSearch": "query",
+    }
 )
 
 
