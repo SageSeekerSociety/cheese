@@ -101,11 +101,12 @@ def test_message_with_attachment_creates_block_and_prompts_agent(
     assert att_block["mime_type"] == "image/png"
     assert att_block["author_type"] == "human"
 
-    # The prompt points 芝士 at the image file (it Reads it in the sandbox).
+    # The prompt tells 芝士 the image is attached INLINE (images= carries the
+    # content to the model) and where the file lives in its workspace.
     prompt = stub_agent.last_prompt or ""
     assert "[user-1]: 看看这张截图" in prompt
     assert att["path"] in prompt
-    assert "Read" in prompt
+    assert "已附在本条消息里" in prompt
 
     # Persisted in the timeline: message + attachment + AI reply.
     blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]

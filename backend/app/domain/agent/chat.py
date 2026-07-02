@@ -10,6 +10,7 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
+import logging
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -27,6 +28,7 @@ from app.domain.agent.service import (
     AgentDelta,
     AgentResult,
     AgentService,
+    AgentSessionInfo,
     AgentToolUse,
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_skills
@@ -48,6 +50,8 @@ HEARTBEAT_SKILLS = ["heartbeat", "conversation-style"]
 PRIVATE_SKILLS = ["private-chat", "conversation-style"]
 
 CHEESE_AUTHOR = "cheese"
+
+logger = logging.getLogger(__name__)
 
 # 施工现场: render each tool call like a Claude Code action line — a Chinese verb
 # plus a short preview of its most telling argument. Stored in the event block as
@@ -437,6 +441,21 @@ class ChatService:
             await session.commit()
         return payload
 
+    async def _save_session_pointer(
+        self, topic_id: uuid.UUID, session_id: str
+    ) -> None:
+        """Best-effort: point the topic at the (possibly partial) session so the
+        next summon resumes it. Never raises — used on failure paths."""
+        try:
+            async with self._sessions() as session:
+                topics = TopicRepository(session)
+                topic = await topics.get(topic_id)
+                if topic is not None:
+                    await topics.set_session_id(topic, session_id)
+                    await session.commit()
+        except Exception:  # noqa: BLE001 — never mask the original failure
+            logger.exception("failed to save session pointer for %s", topic_id)
+
     async def _post_user_message(
         self,
         topic_id: uuid.UUID,
@@ -702,46 +721,66 @@ class ChatService:
         todo: list[dict] = []
         actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None
-        async for event in self._stream_with_retry(
-            provider,
-            project_id=project_id,
-            topic_id=topic_id,
-            prompt=prompt_text,
-            system_prompt=system_prompt,
-            resume_session_id=resume_session_id,
-            memory_scope="personal" if is_private else None,
-            owner=private_owner if is_private else None,
-            turn_id=turn_id,
-            images=turn_images or None,
-            **model_kwargs,
-        ):
-            if isinstance(event, AgentDelta):
-                yield {"type": "delta", "text": event.text}
-            elif isinstance(event, AgentToolUse):
-                name = event.name.replace("mcp__cheese__", "")
-                args = event.input or {}
-                # Task tools → live working-log todo (process, not 现场).
-                if name in _TASK_TOOLS:
-                    if _apply_task_event(todo, name, args):
-                        yield {"type": "todo", "items": [dict(t) for t in todo]}
-                    continue
-                tool_events.append((name, args))
-                yield {"type": "tool", "name": event.name, "input": args}
-                # cheese <sub> ran as Bash → tell the UI which panel changed, so it
-                # refreshes mid-turn (doc/decisions/...), non-disruptively.
-                if name == "Bash":
-                    resource = _cheese_resource(str(args.get("command", "")))
-                    if resource:
-                        yield {"type": "state", "resource": resource}
-                        if resource in _ACTION_LABEL and resource not in actions:
-                            actions.append(resource)
-            elif isinstance(event, AgentResult):
-                final_text = event.text
-                new_session_id = event.session_id
-                usage = event.usage
-                result_error = event.is_error
-                api_error_status = event.api_error_status
-                rate_limit = event.rate_limit
+        try:
+            async for event in self._stream_with_retry(
+                provider,
+                project_id=project_id,
+                topic_id=topic_id,
+                prompt=prompt_text,
+                system_prompt=system_prompt,
+                resume_session_id=resume_session_id,
+                memory_scope="personal" if is_private else None,
+                owner=private_owner if is_private else None,
+                turn_id=turn_id,
+                images=turn_images or None,
+                **model_kwargs,
+            ):
+                if isinstance(event, AgentSessionInfo):
+                    # Announced early so even a failed turn persists it below.
+                    new_session_id = event.session_id
+                elif isinstance(event, AgentDelta):
+                    yield {"type": "delta", "text": event.text}
+                elif isinstance(event, AgentToolUse):
+                    name = event.name.replace("mcp__cheese__", "")
+                    args = event.input or {}
+                    # Task tools → live working-log todo (process, not 现场).
+                    if name in _TASK_TOOLS:
+                        if _apply_task_event(todo, name, args):
+                            yield {
+                                "type": "todo",
+                                "items": [dict(t) for t in todo],
+                            }
+                        continue
+                    tool_events.append((name, args))
+                    yield {"type": "tool", "name": event.name, "input": args}
+                    # cheese <sub> ran as Bash → tell the UI which panel changed,
+                    # so it refreshes mid-turn (doc/decisions/...), quietly.
+                    if name == "Bash":
+                        resource = _cheese_resource(str(args.get("command", "")))
+                        if resource:
+                            yield {"type": "state", "resource": resource}
+                            if (
+                                resource in _ACTION_LABEL
+                                and resource not in actions
+                            ):
+                                actions.append(resource)
+                elif isinstance(event, AgentResult):
+                    final_text = event.text
+                    new_session_id = event.session_id
+                    usage = event.usage
+                    result_error = event.is_error
+                    api_error_status = event.api_error_status
+                    rate_limit = event.rate_limit
+        except BaseException:
+            # The turn died mid-stream (error, timeout-cancel, crash). Persist
+            # the session pointer FIRST — the partial work lives in that session
+            # file, and "再 @ 一次接着做" is only true if the next turn RESUMES
+            # it (resume, not replay — replaying repeats side effects).
+            if new_session_id and new_session_id != resume_session_id:
+                await asyncio.shield(
+                    self._save_session_pointer(topic_id, new_session_id)
+                )
+            raise
 
         if result_error:
             # Provider/infra failure surfaced as the run's result. NEVER
@@ -806,6 +845,8 @@ class ChatService:
                 )
                 fail_payload = _block_payload(BlockOut.model_validate(fail_block))
                 await session.commit()
+            if new_session_id and new_session_id != resume_session_id:
+                await self._save_session_pointer(topic_id, new_session_id)
             provider.checkpoint(project_id, topic_id)
             yield {"type": "event_block", "block": fail_payload}
             yield {"type": "error", "message": fail_text, "persisted": True}
