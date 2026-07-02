@@ -6,6 +6,7 @@ Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照
 话题分支用 jj bookmark 导出成 git branch,采纳/diff 仍走 git(colocation)。
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -385,6 +386,39 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
         )
         return {"synced": False, "reason": reason, "conflicts": conflicts}
     return {"synced": True, "commits": behind}
+
+
+def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
+    """采纳即上线 (dogfooding last mile): after an accept-merge, push the
+    project's base branch to the upstream repo as dogfood/<topic>, and — when
+    that repo declares scripts/on-dogfood-push.sh — run the hook DETACHED (it
+    merges, checks, and redeploys; it may restart the very backend that spawned
+    it). Only local-path upstreams: pushing needs filesystem access, and
+    executing a repo's hook is an operator-trust decision we don't extend to
+    arbitrary remote URLs."""
+    repo = ensure_repo(project_id)
+    url = get_upstream(project_id)
+    if not url or not url.startswith("/"):
+        return {"pushed": False, "reason": "无本地上游，跳过回推"}
+    base = _base_branch(repo)
+    branch = f"dogfood/{topic_id.hex[:8]}"
+    # -f: re-accepting (after revoke / a follow-up round) moves the same branch.
+    _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=60)
+    hook = Path(url) / "scripts" / "on-dogfood-push.sh"
+    hook_started = False
+    if hook.is_file() and os.access(hook, os.X_OK):
+        log = Path(url) / "tmp_dogfood_push.log"
+        with open(log, "a") as out:
+            subprocess.Popen(  # noqa: S603 — operator-trusted local repo hook
+                [str(hook), branch],
+                cwd=url,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,  # survives our own redeploy
+            )
+        hook_started = True
+    return {"pushed": True, "branch": branch, "hook": hook_started}
 
 
 def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:

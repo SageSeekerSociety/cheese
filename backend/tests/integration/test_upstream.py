@@ -112,3 +112,52 @@ def test_unlink_upstream(client, tmp_path):
     r = client.put(f"/api/projects/{pid}/upstream", json={"url": ""})
     assert r.status_code == 200 and r.json()["data"]["url"] is None
     assert client.get(f"/api/projects/{pid}/upstream").json()["data"]["url"] is None
+
+
+def test_accept_pushes_back_and_fires_hook(client, tmp_path):
+    """采纳即上线: accepting a topic pushes the merged base branch to a local
+    upstream as dogfood/<topic> and runs the repo's on-dogfood-push.sh hook."""
+    import time
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    marker = up / "hook-ran.txt"
+    hook = up / "scripts" / "on-dogfood-push.sh"
+    hook.parent.mkdir()
+    hook.write_text('#!/bin/sh\necho "$1" > hook-ran.txt\n')
+    hook.chmod(0o755)
+
+    pid = _project(client)
+    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    r = client.post(
+        "/api/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
+    )
+    tid = r.json()["data"]["id"]
+
+    # Simulate a sandbox turn's edit, then run the accept flow end-to-end.
+    puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
+    wt = ws.topic_worktree(puid, tuid)
+    (wt / "work.txt").write_text("accepted work\n")
+    ws.snapshot_worktree(puid, tuid)
+
+    card = client.post(
+        f"/api/topics/{tid}/accept-card",
+        json={"reviewer_handle": "u", "routing_reason": ""},
+    ).json()["data"]["id"]
+    r = client.post(f"/api/accept-cards/{card}/accept", json={"decided_by": "u"})
+    assert r.status_code == 200
+
+    branch = f"dogfood/{tuid.hex[:8]}"
+    out = subprocess.run(
+        ["git", "-C", str(up), "show", f"{branch}:work.txt"],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == 0 and "accepted work" in out.stdout
+    # The detached hook runs asynchronously — give it a moment.
+    for _ in range(30):
+        if marker.exists():
+            break
+        time.sleep(0.1)
+    assert marker.read_text().strip() == branch
