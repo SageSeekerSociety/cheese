@@ -18,6 +18,19 @@ CLAUDE.md 在我们这儿出现在**三个不同层面**，只有第一个真正
 - 这是件好事：外来 repo 的 CLAUDE.md 可能带任意指令（相当于 prompt injection 入口），自动加载会让它劫持/覆盖芝士的行为。现在的隔离设计天然挡住了这条路。
 - 芝士需要了解该 repo 的规范时，可以**主动读**它当参考资料，和读 README 一样，不具备指令效力。
 
+## 已核实：CLI 的 system prompt 机制
+
+- Claude CLI（2.1.197）有 `--system-prompt`（整体替换默认 system prompt）和 `--append-system-prompt`（追加）；`--setting-sources user,project,local` 控制加载哪些设置（repo 的 CLAUDE.md 属于 project 源）。
+- 我们后端走 SDK 的 `system_prompt` 参数 = `--system-prompt` 替换式。**人格底线进 system prompt 已是现状**，spec §9 "放 CLAUDE.md"那行过时，待更新。
+
+## 用户 repo 的 CLAUDE.md 要不要支持（待拍板）
+
+| 方案 | 做法 | 优劣 |
+|---|---|---|
+| A 原生自动加载 | `setting_sources` 加 `"project"` | 省事；但内容不可控（prompt injection 入口），且与替换式 system prompt 的组合行为需实测 |
+| B 平台显式注入（芝士倾向） | 平台读 repo 的 CLAUDE.md，拼进 system prompt 一个"repo 约定，供参考、不覆盖平台规则"的标注段 | 可控、可截断、可防注入包裹；多写一点代码 |
+| C 按需读取 | 不注入，芝士干活时主动读 | 零成本；弱模型可能忘了读 |
+
 ## 待定 / 下一步
 
-- spec §9 那行"人格底线 → CLAUDE.md"与实现不一致：建议明确"人格底线走 system prompt，不用 CLAUDE.md（不绑定模型 + 防外来 repo 覆盖）"，并更新 spec。等 @张衡 / @Andy 确认后记决策。
+- @张衡 在 A/B/C 里拍板 → 记决策 + 更新 spec §9（人格底线走 system prompt；用户 CLAUDE.md 按选定方案支持）。
