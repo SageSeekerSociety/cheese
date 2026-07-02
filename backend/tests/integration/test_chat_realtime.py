@@ -99,10 +99,11 @@ async def test_post_lands_while_agent_turn_is_running(tmp_path):
 
 class LimitAgent(AgentService):
     """Simulates the seat rate-limit: the run 'succeeds' but the result is a
-    structured error whose text is the provider's raw message."""
+    structured error — rate_limit carries the reset as a unix timestamp."""
 
-    def __init__(self) -> None:
+    def __init__(self, **extra) -> None:
         super().__init__(model="stub")
+        self._extra = extra
 
     async def stream_reply(
         self, *, prompt, system_prompt, cwd, resume_session_id,
@@ -113,6 +114,7 @@ class LimitAgent(AgentService):
             session_id="s1",
             usage=None,
             is_error=True,
+            **self._extra,
         )
 
 
@@ -127,9 +129,15 @@ async def test_error_result_never_becomes_cheeses_reply(tmp_path):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # 1755000000 = 2025-08-12 20:00 Asia/Shanghai — the platform must translate
+    # the structured reset timestamp into 北京时间 wording.
     svc = ChatService(
         session_factory=factory,
-        agent=LimitAgent(),
+        agent=LimitAgent(
+            rate_limit={
+                "status": "rejected", "resets_at": 1755000000, "type": "five_hour"
+            }
+        ),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -153,7 +161,11 @@ async def test_error_result_never_becomes_cheeses_reply(tmp_path):
     assert err["persisted"] is True and "session limit" in err["message"]
     ev = next(f for f in frames if f["type"] == "event_block")
     assert ev["block"]["author"] == "system"
-    assert "AI 服务返回错误" in ev["block"]["content"]
+    # Structured rate-limit → platform wording with the reset in 北京时间,
+    # raw provider text quoted for the record.
+    assert "额度用完了" in ev["block"]["content"]
+    assert "北京时间 08-12 20:00" in ev["block"]["content"]
+    assert "服务原话" in ev["block"]["content"]
 
     # Persisted state: user message + the system event, no cheese message.
     from app.domain.block.repositories import BlockRepository

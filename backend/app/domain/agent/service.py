@@ -21,6 +21,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    RateLimitEvent,
     ResultMessage,
     StreamEvent,
     TextBlock,
@@ -76,6 +77,12 @@ class AgentResult:
     session_id: str | None
     usage: AgentUsage | None = None
     is_error: bool = False
+    # Structured failure context (no text sniffing): the failing API call's HTTP
+    # status, the CLI's error strings, and — when the seat rate-limit tripped —
+    # the RateLimitInfo dict (status / resets_at unix timestamp / type).
+    api_error_status: int | None = None
+    errors: list[str] | None = None
+    rate_limit: dict | None = None
 
 
 AgentEvent = AgentDelta | AgentToolUse | AgentResult
@@ -298,6 +305,9 @@ class AgentService:
         session_id = resume_session_id
         usage = AgentUsage(model=eff_model)
         result_error = False
+        api_error_status: int | None = None
+        cli_errors: list[str] | None = None
+        rate_limit: dict | None = None
 
         query_input = build_query_input(prompt, images, cwd)
         if isinstance(query_input, str):
@@ -334,9 +344,21 @@ class AgentService:
                     final_text = _assistant_text(message) or final_text
                     if message.session_id:
                         session_id = message.session_id
+                elif isinstance(message, RateLimitEvent):
+                    # Emitted on status transitions; `rejected` + resets_at is
+                    # the structured form of "You've hit your session limit".
+                    info = message.rate_limit_info
+                    rate_limit = {
+                        "status": info.status,
+                        "resets_at": info.resets_at,
+                        "type": info.rate_limit_type,
+                        "utilization": info.utilization,
+                    }
                 elif isinstance(message, ResultMessage):
                     session_id = message.session_id or session_id
                     result_error = bool(message.is_error)
+                    api_error_status = message.api_error_status
+                    cli_errors = message.errors
                     if not final_text and message.result:
                         final_text = message.result
                     if message.total_cost_usd:
@@ -351,4 +373,7 @@ class AgentService:
             session_id=session_id,
             usage=usage,
             is_error=result_error,
+            api_error_status=api_error_status,
+            errors=cli_errors,
+            rate_limit=rate_limit,
         )

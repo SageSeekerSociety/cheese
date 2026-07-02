@@ -14,6 +14,7 @@ import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -656,6 +657,8 @@ class ChatService:
         final_text = ""
         new_session_id = resume_session_id
         result_error = False
+        api_error_status: int | None = None
+        rate_limit: dict | None = None
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
@@ -705,17 +708,40 @@ class ChatService:
                 new_session_id = event.session_id
                 usage = event.usage
                 result_error = event.is_error
+                api_error_status = event.api_error_status
+                rate_limit = event.rate_limit
 
         if result_error:
-            # Provider/infra failure surfaced as the run's result (e.g. seat
-            # rate-limit "You've hit your session limit"). NEVER ventriloquize
-            # it as 芝士's message — it goes into the 现场 as a system event,
-            # platform-worded, with the raw provider detail quoted.
-            fail_text = (
-                "⚠️ 芝士这轮没能完成——AI 服务返回错误"
-                + (f"：{final_text}" if final_text.strip() else "")
-                + "。稍后再 @ 它重试。"
-            )
+            # Provider/infra failure surfaced as the run's result. NEVER
+            # ventriloquize it as 芝士's message — it goes into the 现场 as a
+            # system event, platform-worded from STRUCTURED fields (rate-limit
+            # resets_at → 北京时间; api_error_status → HTTP code), with the raw
+            # provider detail quoted for the record.
+            detail = final_text.strip()
+            quoted = f"（服务原话：{detail}）" if detail else ""
+            if (
+                rate_limit
+                and rate_limit.get("status") == "rejected"
+                and rate_limit.get("resets_at")
+            ):
+                resets = datetime.fromtimestamp(
+                    rate_limit["resets_at"], tz=ZoneInfo("Asia/Shanghai")
+                )
+                fail_text = (
+                    f"⚠️ 芝士的 AI 座位额度用完了，北京时间 "
+                    f"{resets:%m-%d %H:%M} 恢复，到点再 @ 它。{quoted}"
+                )
+            elif api_error_status:
+                fail_text = (
+                    f"⚠️ 芝士这轮没能完成——AI 接口错误（HTTP {api_error_status}）。"
+                    f"稍后再 @ 它重试。{quoted}"
+                )
+            else:
+                fail_text = (
+                    "⚠️ 芝士这轮没能完成——AI 服务返回错误"
+                    + (f"：{detail}" if detail else "")
+                    + "。稍后再 @ 它重试。"
+                )
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
                 for name, tool_input in tool_events:
