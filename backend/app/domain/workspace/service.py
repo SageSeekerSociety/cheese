@@ -6,6 +6,7 @@ Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照
 话题分支用 jj bookmark 导出成 git branch,采纳/diff 仍走 git(colocation)。
 """
 
+import re
 import shutil
 import subprocess
 import uuid
@@ -28,16 +29,19 @@ def branch_for_topic(topic_id: uuid.UUID) -> str:
     return f"topic/{topic_id.hex[:8]}"
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git(repo: Path, *args: str, timeout: int = 20) -> str:
     result = subprocess.run(
         ["git", *args],
         cwd=repo,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=timeout,
     )
     if result.returncode != 0:
-        raise ValidationError(f"git {args[0]} failed: {result.stderr.strip()}")
+        # git reports merge conflicts on stdout with an empty stderr — fall back
+        # so the caller's error isn't blank.
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise ValidationError(f"git {args[0]} failed: {detail}")
     return result.stdout
 
 
@@ -267,6 +271,120 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
             pass
         return {"merged": False, "reason": str(exc)}
     return {"merged": True, "branch": branch, "into": base}
+
+
+# ---- 上游仓库 (spec §6.3): 关联已有 repo + 同步上游 ----------------------------
+
+UPSTREAM_REMOTE = "upstream"
+
+# URL shapes we accept for the upstream remote: https, ssh, scp-style git@, or an
+# absolute local path. Everything else (option-looking strings, ext:: transport,
+# whitespace tricks) is rejected — the URL goes straight to `git fetch`.
+_UPSTREAM_URL_RE = re.compile(r"^(https://|ssh://|git@|/)[\w.@:/~+-]+$")
+
+
+def get_upstream(project_id: uuid.UUID) -> str | None:
+    """The project's linked upstream URL, or None when not linked. The git remote
+    itself is the storage — no separate DB field to drift out of sync."""
+    repo = ensure_repo(project_id)
+    result = subprocess.run(
+        ["git", "remote", "get-url", UPSTREAM_REMOTE],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def set_upstream(project_id: uuid.UUID, url: str) -> str | None:
+    """Link (or with an empty url, unlink) the project's upstream repo."""
+    repo = ensure_repo(project_id)
+    url = url.strip()
+    if not url:
+        subprocess.run(  # removing a missing remote is fine — unlink is idempotent
+            ["git", "remote", "remove", UPSTREAM_REMOTE],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        return None
+    if not _UPSTREAM_URL_RE.match(url):
+        raise ValidationError("上游地址不合法（支持 https/ssh/git@/绝对路径）")
+    if get_upstream(project_id) is None:
+        _git(repo, "remote", "add", UPSTREAM_REMOTE, url)
+    else:
+        _git(repo, "remote", "set-url", UPSTREAM_REMOTE, url)
+    return url
+
+
+def _upstream_ref(repo: Path) -> str:
+    """The upstream branch to sync from: main, falling back to master."""
+    for name in (DEFAULT_BRANCH, "master"):
+        ref = f"{UPSTREAM_REMOTE}/{name}"
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", ref],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            return ref
+    raise ValidationError("上游仓库没有 main/master 分支")
+
+
+def sync_upstream(project_id: uuid.UUID) -> dict:
+    """同步上游: fetch the upstream remote and merge its default branch into the
+    project's base branch. The first sync of a seeded/fresh repo is an
+    unrelated-histories merge; a conflict aborts cleanly (never half-merges) and
+    reports back — same contract as merge_topic."""
+    repo = ensure_repo(project_id)
+    if get_upstream(project_id) is None:
+        return {"synced": False, "reason": "未关联上游仓库"}
+    try:
+        _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
+        ref = _upstream_ref(repo)
+    except ValidationError as exc:
+        return {"synced": False, "reason": str(exc)}
+    base = _base_branch(repo)
+    behind = int(_git(repo, "rev-list", "--count", f"{base}..{ref}").strip() or "0")
+    if behind == 0:
+        return {"synced": True, "commits": 0, "reason": "已是最新"}
+    _git(repo, "checkout", "-q", base)
+    try:
+        _git(
+            repo,
+            "-c",
+            "user.name=芝士",
+            "-c",
+            "user.email=cheese@zhishi.local",
+            "merge",
+            "--no-ff",
+            "-q",
+            "--allow-unrelated-histories",
+            "-m",
+            f"同步上游 {ref} → {base}",
+            ref,
+        )
+    except ValidationError as exc:
+        # Name the conflicted files before aborting — "同步失败" without saying
+        # where is undebuggable for the user.
+        try:
+            conflicts = _git(
+                repo, "diff", "--name-only", "--diff-filter=U"
+            ).strip().splitlines()
+        except ValidationError:
+            conflicts = []
+        try:
+            _git(repo, "merge", "--abort")
+        except ValidationError:
+            pass
+        reason = (
+            "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
+        )
+        return {"synced": False, "reason": reason, "conflicts": conflicts}
+    return {"synced": True, "commits": behind}
 
 
 def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:

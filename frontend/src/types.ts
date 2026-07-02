@@ -377,3 +377,14 @@ export interface SandboxImageInfo {
   default: string
   options: SandboxImageOption[]
 }
+
+// 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)
+// and keep pulling its history in via 同步上游.
+export interface UpstreamInfo {
+  url: string | null
+}
+export interface UpstreamSyncResult {
+  synced: boolean
+  commits?: number
+  reason?: string
+}

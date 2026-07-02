@@ -6,14 +6,18 @@ import {
   getExecutionProfiles,
   getProject,
   getSandboxImage,
+  getUpstream,
   setComputeProfile,
   setExecutionProfile,
   setSandboxImage,
+  setUpstream,
+  syncUpstream,
 } from '../api'
 import type {
   ComputeProfiles,
   ExecProfiles,
   SandboxImageInfo,
+  UpstreamSyncResult,
 } from '../types'
 
 // 项目设置 (design v3): a project picks which resource pools it runs on — an AI
@@ -33,6 +37,12 @@ const savingAi = ref<string | null>(null)
 const savingCompute = ref<string | null>(null)
 // '' is the sentinel for the default-image row (image null); a real image key otherwise.
 const savingEnv = ref<string | null>(null)
+// 上游仓库: the linked repo URL as edited, plus save/sync state and last result.
+const upstreamUrl = ref('')
+const upstreamSaved = ref<string | null>(null)
+const savingUpstream = ref(false)
+const syncing = ref(false)
+const syncResult = ref<UpstreamSyncResult | null>(null)
 
 const TIER_LABEL: Record<string, string> = {
   default: '默认',
@@ -46,16 +56,19 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, compP, envP] = await Promise.all([
+    const [proj, execP, compP, envP, upP] = await Promise.all([
       getProject(props.projectId),
       getExecutionProfiles(props.projectId),
       getComputeProfiles(props.projectId),
       getSandboxImage(props.projectId),
+      getUpstream(props.projectId),
     ])
     projectName.value = proj.name
     ai.value = execP
     compute.value = compP
     env.value = envP
+    upstreamSaved.value = upP.url
+    upstreamUrl.value = upP.url ?? ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载设置失败'
   } finally {
@@ -100,6 +113,35 @@ async function pickEnv(image: string) {
     error.value = e instanceof Error ? e.message : '切换环境镜像失败'
   } finally {
     savingEnv.value = null
+  }
+}
+
+// Save (or with an empty field, unlink) the upstream repo URL.
+async function saveUpstream() {
+  savingUpstream.value = true
+  syncResult.value = null
+  try {
+    const r = await setUpstream(props.projectId, upstreamUrl.value.trim())
+    upstreamSaved.value = r.url
+    upstreamUrl.value = r.url ?? ''
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '保存上游仓库失败'
+  } finally {
+    savingUpstream.value = false
+  }
+}
+
+// Pull the upstream's new commits into the project repo (merge; conflicts abort
+// cleanly and show up in the result line).
+async function doSyncUpstream() {
+  syncing.value = true
+  syncResult.value = null
+  try {
+    syncResult.value = await syncUpstream(props.projectId)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '同步上游失败'
+  } finally {
+    syncing.value = false
   }
 }
 
@@ -298,6 +340,61 @@ watch(() => props.projectId, load)
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
               基座装了 uv / node / git 等通用工具；cheesex-dev 额外预装了本仓库的
               依赖，芝士可以直接在盒子里跑 cheesex 自己的测试（dogfooding）。
+            </p>
+          </div>
+        </section>
+
+        <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
+        <section class="ln-section">
+          <div class="ln-section-head">
+            <v-icon size="18" class="me-1 c-muted">mdi-source-branch-sync</v-icon>
+            <span class="ln-section-title">上游仓库</span>
+          </div>
+          <div class="ln-body">
+            <div class="d-flex align-center" style="gap: 8px">
+              <v-text-field
+                v-model="upstreamUrl"
+                density="compact"
+                variant="outlined"
+                hide-details
+                placeholder="https://… 或本机绝对路径（留空 = 取消关联）"
+                style="flex: 1"
+                @keydown.enter="saveUpstream"
+              />
+              <v-btn
+                size="small"
+                variant="tonal"
+                :loading="savingUpstream"
+                @click="saveUpstream"
+              >
+                保存
+              </v-btn>
+              <v-btn
+                size="small"
+                color="primary"
+                variant="flat"
+                :disabled="!upstreamSaved"
+                :loading="syncing"
+                @click="doSyncUpstream"
+              >
+                同步上游
+              </v-btn>
+            </div>
+            <p
+              v-if="syncResult"
+              class="t-body mt-2"
+              style="font-size: 0.8rem"
+              :class="syncResult.synced ? 'c-muted' : 'text-error'"
+            >
+              <template v-if="syncResult.synced && (syncResult.commits ?? 0) > 0">
+                已合入上游 {{ syncResult.commits }} 个提交。
+              </template>
+              <template v-else-if="syncResult.synced">已是最新，没有新提交。</template>
+              <template v-else>同步失败：{{ syncResult.reason }}</template>
+            </p>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              关联一个已有的 git 仓库，把它的历史拉进这个项目；之后随时同步新提交。
+              有冲突时会原样中止，不会合一半。
             </p>
           </div>
         </section>

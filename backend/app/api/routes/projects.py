@@ -28,6 +28,7 @@ from app.domain.project.schemas import (
 from app.domain.project.services import ProjectService
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
+from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -245,3 +246,29 @@ async def set_sandbox_image(project_id: uuid.UUID, body: dict, db: DbSession) ->
     project.settings = new_settings
     await db.flush()
     return ok({"current": current})
+
+
+@router.get("/{project_id}/upstream")
+async def get_project_upstream(project_id: uuid.UUID, db: DbSession) -> dict:
+    """The project's linked upstream repo (关联已有 repo, spec §6.3), if any."""
+    await ProjectService(db).get_or_404(project_id)
+    return ok({"url": ws.get_upstream(project_id)})
+
+
+@router.put("/{project_id}/upstream")
+async def set_project_upstream(
+    project_id: uuid.UUID, body: dict, db: DbSession
+) -> dict:
+    """Link the project to an existing git repo (empty url → unlink). The repo's
+    history then flows in via 同步上游, and stays syncable afterwards."""
+    await ProjectService(db).get_or_404(project_id)
+    url = ws.set_upstream(project_id, str(body.get("url") or ""))
+    return ok({"url": url})
+
+
+@router.post("/{project_id}/upstream/sync")
+async def sync_project_upstream(project_id: uuid.UUID, db: DbSession) -> dict:
+    """同步上游: fetch + merge the upstream default branch into the project base.
+    Conflicts abort cleanly and come back as {"synced": false, "reason": ...}."""
+    await ProjectService(db).get_or_404(project_id)
+    return ok(ws.sync_upstream(project_id))

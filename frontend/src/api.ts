@@ -23,6 +23,8 @@ import type {
   Space,
   SpaceDashboard,
   Topic,
+  UpstreamInfo,
+  UpstreamSyncResult,
   UsageStats,
   UserProfile,
   WorkspaceFile,
@@ -194,6 +196,27 @@ export function setSandboxImage(
   return request(`/projects/${encodeURIComponent(projectId)}/sandbox-image`, {
     method: 'PUT',
     body: JSON.stringify({ image }),
+  })
+}
+
+// 上游仓库 (spec §6.3): link an existing git repo and pull its history in.
+export function getUpstream(projectId: string): Promise<UpstreamInfo> {
+  return request<UpstreamInfo>(
+    `/projects/${encodeURIComponent(projectId)}/upstream`,
+  )
+}
+export function setUpstream(
+  projectId: string,
+  url: string,
+): Promise<UpstreamInfo> {
+  return request(`/projects/${encodeURIComponent(projectId)}/upstream`, {
+    method: 'PUT',
+    body: JSON.stringify({ url }),
+  })
+}
+export function syncUpstream(projectId: string): Promise<UpstreamSyncResult> {
+  return request(`/projects/${encodeURIComponent(projectId)}/upstream/sync`, {
+    method: 'POST',
   })
 }
 
