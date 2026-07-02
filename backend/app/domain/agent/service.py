@@ -64,6 +64,15 @@ class AgentUsage:
 
 
 @dataclass
+class AgentSessionInfo:
+    """Yielded as soon as the CLI announces the session id — BEFORE the final
+    result — so even a turn that dies mid-stream can persist the pointer, and
+    '再 @ 一次接着做' truly RESUMES the partial work instead of replaying."""
+
+    session_id: str
+
+
+@dataclass
 class AgentResult:
     """Authoritative final reply plus the session id to resume next time.
 
@@ -83,7 +92,7 @@ class AgentResult:
     rate_limit: dict | None = None
 
 
-AgentEvent = AgentDelta | AgentToolUse | AgentResult
+AgentEvent = AgentDelta | AgentToolUse | AgentSessionInfo | AgentResult
 
 
 def event_to_dict(event: AgentEvent) -> dict:
@@ -92,11 +101,17 @@ def event_to_dict(event: AgentEvent) -> dict:
         return {"t": "delta", "text": event.text}
     if isinstance(event, AgentToolUse):
         return {"t": "tool", "name": event.name, "input": event.input}
+    if isinstance(event, AgentSessionInfo):
+        return {"t": "session", "session_id": event.session_id}
     usage = event.usage
     return {
         "t": "result",
         "text": event.text,
         "session_id": event.session_id,
+        "is_error": event.is_error,
+        "api_error_status": event.api_error_status,
+        "errors": event.errors,
+        "rate_limit": event.rate_limit,
         "usage": None
         if usage is None
         else {
@@ -115,11 +130,17 @@ def event_from_dict(d: dict) -> AgentEvent:
         return AgentDelta(text=d.get("text", ""))
     if kind == "tool":
         return AgentToolUse(name=d.get("name", ""), input=d.get("input") or {})
+    if kind == "session":
+        return AgentSessionInfo(session_id=d.get("session_id", ""))
     u = d.get("usage")
     return AgentResult(
         text=d.get("text", ""),
         session_id=d.get("session_id"),
         usage=None if u is None else AgentUsage(**u),
+        is_error=bool(d.get("is_error", False)),
+        api_error_status=d.get("api_error_status"),
+        errors=d.get("errors"),
+        rate_limit=d.get("rate_limit"),
     )
 
 
@@ -258,6 +279,8 @@ class AgentService:
                             )
                     final_text = _assistant_text(message) or final_text
                     if message.session_id:
+                        if message.session_id != session_id:
+                            yield AgentSessionInfo(session_id=message.session_id)
                         session_id = message.session_id
                 elif isinstance(message, RateLimitEvent):
                     # Emitted on status transitions; `rejected` + resets_at is

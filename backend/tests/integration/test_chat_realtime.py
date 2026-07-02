@@ -13,7 +13,12 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401  (registers all tables on Base.metadata)
 from app.core.db import Base
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import AgentDelta, AgentResult, AgentService
+from app.domain.agent.service import (
+    AgentDelta,
+    AgentResult,
+    AgentService,
+    AgentSessionInfo,
+)
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 
@@ -242,3 +247,60 @@ async def test_transient_api_error_is_retried(tmp_path, monkeypatch):
 
 async def _fast_sleep(_s: float) -> None:
     return None
+
+
+class MidCrashAgent(AgentService):
+    """Announces its session, streams some work, then dies mid-stream."""
+
+    def __init__(self) -> None:
+        super().__init__(model="stub")
+
+    async def stream_reply(
+        self, *, prompt, system_prompt, cwd, resume_session_id,
+        sandbox=None, allowed_tools=None, **_,
+    ):
+        yield AgentSessionInfo(session_id="s-partial")
+        yield AgentDelta(text="干着呢")
+        raise RuntimeError("connection lost")
+
+
+@pytest.mark.anyio
+async def test_mid_stream_crash_saves_session_pointer(tmp_path, monkeypatch):
+    """Resume, not replay: a turn that dies after producing output must leave
+    the topic pointing at the PARTIAL session, so the next summon continues
+    from where it stopped instead of redoing (and re-side-effecting) the work."""
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    svc = ChatService(
+        session_factory=factory,
+        agent=MidCrashAgent(),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    with pytest.raises(RuntimeError):
+        async for _ in svc.converse(
+            topic_id=topic_id, author="u", content="做点事", summon=True
+        ):
+            pass
+
+    from app.domain.topic.repositories import TopicRepository
+
+    async with factory() as session:
+        fresh = await TopicRepository(session).get(topic_id)
+    assert fresh is not None and fresh.session_id == "s-partial"
