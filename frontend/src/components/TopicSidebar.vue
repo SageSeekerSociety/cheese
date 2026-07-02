@@ -681,10 +681,34 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
    and a gradient shoulder fades the title out under the buttons. */
 .topic-row {
   position: relative;
-  min-height: 32px;
+  min-height: 30px;
+  margin-block: 1px;
 }
 .topic-row :deep(.v-list-item__content) {
   padding-block: 0;
+}
+/* Item 感：每行一个小锚点 + hover 时可感的圆角底色——行是对象，不是漂浮的
+   文本（review round 5）。 */
+.topic-title::before {
+  content: '';
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--line-2, #d9d9d9);
+  margin-right: 9px;
+}
+.topic-row:hover {
+  background: var(--fill);
+}
+.topic-row:hover .row-actions {
+  background: linear-gradient(90deg, transparent, var(--fill) 22%);
+}
+.title-unread {
+  color: var(--text);
+}
+.topic-title:has(.title-unread)::before {
+  background: var(--accent, #f57f17);
 }
 .row-actions {
   position: absolute;
