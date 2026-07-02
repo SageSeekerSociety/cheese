@@ -556,7 +556,10 @@ async function loadTool(key: string) {
       projectUsage.value = pu
     } else if (key === 'preview') {
       // 芝士 points at the current preview via `cheese artifact` (render-by-type,
-      // spec §9.1). Fall back to the first *.html only when it hasn't named one.
+      // spec §7.1/§9.1). NO guessing when it hasn't named one: the old
+      // first-*.html fallback proudly served frontend/index.html — an SPA
+      // shell that renders blank — which is exactly why the spec says the
+      // platform never picks the preview itself.
       const art = await getPreview(tid).catch(() => null)
       if (props.topic?.id !== tid) return
       if (art) {
@@ -564,13 +567,8 @@ async function loadTool(key: string) {
         previewMime.value = art.mime || 'text/html'
         previewFile.value = await readFile(pid, art.path, tid).catch(() => null)
       } else {
-        const list = (await listFiles(pid, tid)).data
-        if (props.topic?.id !== tid) return
-        files.value = list
-        const html = list.find((f) => f.path.toLowerCase().endsWith('.html'))
         previewNamed.value = false
-        previewMime.value = 'text/html'
-        previewFile.value = html ? await readFile(pid, html.path, tid) : null
+        previewFile.value = null
       }
     } else if (key === 'comments') {
       await loadComments(tid)
@@ -1419,7 +1417,7 @@ onBeforeUnmount(() => {
           </template>
 
           <!-- 预览 (spec §9.1): the artifact 芝士 pointed at (cheese artifact),
-               rendered by its mimeType. Falls back to the first *.html. -->
+               rendered by its mimeType. Never guessed by the platform. -->
           <template v-else-if="openTool === 'preview'">
             <div v-if="previewFile" class="preview-wrap">
               <div class="preview-bar text-caption px-3 pt-2">
@@ -1443,8 +1441,12 @@ onBeforeUnmount(() => {
             </div>
             <div v-else class="text-center text-medium-emphasis py-8">
               <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-              <div>暂无可预览的产物</div>
-              <div class="text-caption mt-1">芝士做出网页/图表后会指定预览</div>
+              <div>芝士还没有指定预览</div>
+              <div class="text-caption mt-1">
+                它做出网页 / 图表等可看的产物时，会把成果放到这里。
+                预览渲染的是自足的单文件产物；要跑整个应用（如 Vue 工程）
+                属于"运行环境预览"，还没做。
+              </div>
             </div>
           </template>
           </div>
