@@ -6,6 +6,7 @@ model. The live agent is exercised separately by the smoke script.
 """
 
 import asyncio
+import time
 from collections.abc import Iterator
 
 import pytest
@@ -14,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401  (registers all tables on Base.metadata)
-from app.api.deps import get_chat_service
+from app.api.deps import get_chat_service, get_turn_runner
 from app.core.db import Base, get_db
 from app.core.sandbox_auth import SANDBOX_TOKEN
 from app.domain.agent.chat import ChatService
@@ -114,6 +115,14 @@ def client(stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
         # Expose the factory so tests can seed data (e.g. memory entries).
         c.test_factory = test_factory  # type: ignore[attr-defined]
         yield c
+        # Drain background turns (e.g. the 分身 kickoff a /split submits) BEFORE
+        # leaving the TestClient context: they run on the portal loop and write
+        # to this test's DB — disposing the engine under them makes flakes.
+        runner = get_turn_runner()
+        for _ in range(250):
+            if runner.active_turns() == 0:
+                break
+            time.sleep(0.02)
 
     app.dependency_overrides.clear()
     asyncio.run(engine.dispose())

@@ -107,12 +107,28 @@ class TurnRunner:
         on the same topic serialize on ChatService's per-topic lock (so a second
         submit queues behind the first)."""
         turn_id = uuid.uuid4()
-        task = asyncio.create_task(
-            self._run(
-                chat_service, topic_id, turn_id,
-                author=author, content=content, summon=summon, reply_to=reply_to,
-            )
+        frames = chat_service.converse(
+            topic_id=topic_id,
+            author=author,
+            content=content,
+            summon=summon,
+            turn_id=turn_id,
+            reply_to=reply_to,
         )
+        return self._spawn(chat_service, topic_id, turn_id, frames)
+
+    def submit_kickoff(self, chat_service, topic_id: uuid.UUID) -> uuid.UUID:
+        """分身自动开工 (spec §8.4): start a freshly split sub-topic's first turn
+        in the background. No human message is posted — the 分身 opens in its
+        own words from the task brief (its preset living doc)."""
+        turn_id = uuid.uuid4()
+        frames = chat_service.kickoff(topic_id=topic_id, turn_id=turn_id)
+        return self._spawn(chat_service, topic_id, turn_id, frames)
+
+    def _spawn(
+        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID, frames
+    ) -> uuid.UUID:
+        task = asyncio.create_task(self._run(chat_service, topic_id, turn_id, frames))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return turn_id
@@ -122,11 +138,7 @@ class TurnRunner:
         chat_service,
         topic_id: uuid.UUID,
         turn_id: uuid.UUID,
-        *,
-        author: str,
-        content: str,
-        summon: bool,
-        reply_to: str | None = None,
+        frames,
     ) -> None:
         channel = str(topic_id)
         try:
@@ -135,14 +147,7 @@ class TurnRunner:
             # generator → its `async with` blocks unwind → the topic lock releases
             # and the in-container claude process is torn down.
             async with asyncio.timeout(self._timeout):
-                async for frame in chat_service.converse(
-                    topic_id=topic_id,
-                    author=author,
-                    content=content,
-                    summon=summon,
-                    turn_id=turn_id,
-                    reply_to=reply_to,
-                ):
+                async for frame in frames:
                     await self._broker.publish(channel, frame)
         except TimeoutError:
             logger.warning(

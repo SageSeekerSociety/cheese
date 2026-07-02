@@ -77,6 +77,41 @@ async def test_runner_publishes_turn_frames_to_subscribers():
     assert seen == ["user_block", "delta", "done"]
 
 
+class _FakeKickoffChat:
+    """Stand-in ChatService.kickoff: the 分身's first turn after a split —
+    frames flow with NO human message posted."""
+
+    def __init__(self):
+        self.ran = False
+
+    async def kickoff(self, *, topic_id, turn_id=None):
+        self.ran = True
+        await asyncio.sleep(0)
+        yield {"type": "delta", "text": "开场白"}
+        yield {"type": "done"}
+
+
+@pytest.mark.anyio
+async def test_submit_kickoff_runs_first_turn_without_user_block():
+    # 分身自动开工 (spec §8.4): a split sub-topic's first turn starts by itself;
+    # the frame stream carries the 分身's own opening, never a user_block.
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+    chat = _FakeKickoffChat()
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit_kickoff(chat, topic)
+        seen = []
+        while True:
+            f = await asyncio.wait_for(q.get(), 1)
+            seen.append(f["type"])
+            if f["type"] == "done":
+                break
+    assert chat.ran is True
+    assert seen == ["delta", "done"]
+    assert "user_block" not in seen
+
+
 @pytest.mark.anyio
 async def test_turn_runs_to_completion_without_a_subscriber():
     # The job does not depend on who is watching (invariant 2): no subscriber,

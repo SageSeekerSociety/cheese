@@ -45,6 +45,38 @@ def _opening_text(title: str, *, from_discussion: bool) -> str:
     )
 
 
+def _brief_doc(
+    *,
+    child_title: str,
+    parent_title: str,
+    brief: str | None,
+    parent_doc: str | None,
+    created_by: str | None,
+) -> str:
+    """The newborn sub-topic's initial living doc: a task brief.
+
+    Pure assembly of EXISTING text — the splitter's brief (AI- or human-written)
+    and the parent's living doc, both copied verbatim under fixed structural
+    headings. No semantics are derived from prose and nothing speaks as 芝士
+    (CLAUDE.md red line); the 分身 rewrites this into its own status summary on
+    its kickoff turn."""
+    by = f"由 {created_by} " if created_by else ""
+    parts = [
+        f"# {child_title}",
+        f"> 任务简报（{by}从「{parent_title}」拆出时自动预置；"
+        "分身开工后会把这份文档改写成状态摘要）",
+        "## 拆分意图",
+        brief.strip()
+        if brief and brief.strip()
+        else "（拆分时没有附说明——任务以标题和下面的父话题文档为准）",
+        "## 父话题当时的活文档（快照，供参考）",
+        parent_doc.strip()
+        if parent_doc and parent_doc.strip()
+        else "（父话题当时还没有活文档）",
+    ]
+    return "\n\n".join(parts)
+
+
 class TopicService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -169,8 +201,15 @@ class TopicService:
         parent_topic_id: uuid.UUID,
         title: str,
         created_by: str | None = None,
+        brief: str | None = None,
     ) -> Topic:
-        """从上往下拆解 (eval A2): split a todo into a sub-topic under a topic."""
+        """从上往下拆解 (eval A2): split a todo into a sub-topic under a topic.
+
+        The child is born with a TASK BRIEF as its living doc (分身靠文档保持
+        一致, spec §8.4): the splitter's `brief` plus a verbatim snapshot of the
+        parent's living doc. No canned opening message anymore — the 分身's
+        auto-kickoff first turn (routes/topics.py) writes its own opening
+        (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md)."""
         parent = await self.get_or_404(parent_topic_id)
         # 归档后工作面冻结 (spec §6.3): no new sub-topics under a frozen topic —
         # follow-up work starts a new topic from the conclusion (升级), not here.
@@ -183,7 +222,25 @@ class TopicService:
             kind=_child_kind(parent),
             created_by=created_by,
         )
-        await self._add_opening(new_topic, from_discussion=False)
+        parent_doc = await self._blocks.doc_root(parent.id)
+        content = _brief_doc(
+            child_title=title,
+            parent_title=parent.title,
+            brief=brief,
+            parent_doc=parent_doc.content if parent_doc else None,
+            created_by=created_by,
+        )
+        # Author is `system`: the platform assembled this doc from existing
+        # text; it is 分身's starting state, not anyone's message.
+        doc = await self._blocks.add(
+            project_id=new_topic.project_id,
+            topic_id=new_topic.id,
+            author="system",
+            author_type=AuthorType.system,
+            content=content,
+            kind=BlockKind.doc,
+        )
+        await self._sync_doc_nodes(doc, content)
         return new_topic
 
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:

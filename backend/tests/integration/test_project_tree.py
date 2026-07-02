@@ -1,14 +1,27 @@
 """Project expansion + topic tree (spec §4, §6; evals A1/A2/A4)."""
 
 import asyncio
+import time
 import uuid
 
+from app.api.deps import get_turn_runner
 from app.domain.block.models import AuthorType, Block, BlockKind
 
 
 def _project(client, **kw) -> dict:
     body = {"name": "P", **kw}
     return client.post("/api/projects", json=body).json()["data"]
+
+
+def _wait_turns_idle() -> None:
+    """Wait for background turns (the 分身 kickoff a /split submits) to finish,
+    so in-test asserts and later writes don't race the kickoff's DB writes on
+    the shared in-memory SQLite connection."""
+    runner = get_turn_runner()
+    for _ in range(250):
+        if runner.active_turns() == 0:
+            return
+        time.sleep(0.02)
 
 
 def test_project_create_autocreates_root_topic(client):
@@ -223,6 +236,62 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     assert topic["kind"] == "topic"
 
 
+def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
+    # 分身开工带简报: the child is born with a task-brief living doc (splitter's
+    # brief + parent-doc snapshot), the canned opening is gone, and the 分身's
+    # first turn starts by itself (no human message needed).
+    p = _project(client)
+    topic = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "推荐系统"}
+    ).json()["data"]
+    client.put(
+        f"/api/topics/{topic['id']}/doc",
+        json={"content": "## 目标\n\n给校园二手书平台做推荐", "author": "user-1"},
+    )
+
+    sub = client.post(
+        f"/api/topics/{topic['id']}/split",
+        json={
+            "title": "清洗数据",
+            "created_by": "cheese",
+            "brief": "把 10 万条借阅日志去重、去空值，产出干净数据集",
+        },
+    ).json()["data"]
+
+    # The brief IS the child's living doc, parent doc copied verbatim below it.
+    doc = client.get(f"/api/topics/{sub['id']}/doc").json()["data"]
+    assert doc is not None
+    assert "把 10 万条借阅日志去重" in doc["content"]
+    assert "给校园二手书平台做推荐" in doc["content"]
+    assert "推荐系统" in doc["content"]  # source: parent title
+
+    # Auto-kickoff (spec §8.4): the 分身's own opening shows up without anyone
+    # posting — and it is the FIRST message (no canned template before it).
+    _wait_turns_idle()
+    blocks = client.get(f"/api/topics/{sub['id']}/blocks").json()["data"]["data"]
+    msgs = [b for b in blocks if b["kind"] == "message"]
+    assert msgs, "分身没有自动开工（没等到它的开场白）"
+    assert msgs[0]["author_type"] == "ai"
+    assert "我先确认理解，再开始推进" not in msgs[0]["content"]  # template gone
+
+
+def test_split_without_brief_still_seeds_doc(client):
+    # A human split from the UI carries no brief: the child still gets a doc
+    # (source + parent snapshot + an explicit "no brief" notice).
+    p = _project(client)
+    topic = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "大话题"}
+    ).json()["data"]
+    sub = client.post(
+        f"/api/topics/{topic['id']}/split", json={"title": "小任务"}
+    ).json()["data"]
+    _wait_turns_idle()
+    doc = client.get(f"/api/topics/{sub['id']}/doc").json()["data"]
+    assert doc is not None
+    assert "拆分时没有附说明" in doc["content"]
+    assert "大话题" in doc["content"]
+
+
 def test_split_and_return_conclusion(client):
     p = _project(client)
     topic = client.post(
@@ -235,6 +304,9 @@ def test_split_and_return_conclusion(client):
     ).json()["data"]
     assert sub["parent_id"] == topic["id"]
     assert sub["kind"] == "subtopic"
+    # Let the 分身's auto-kickoff finish before writing more to the shared
+    # in-memory DB (otherwise the two interleave on one SQLite connection).
+    _wait_turns_idle()
 
     # Sub-topic shows up under children.
     children = client.get(f"/api/topics/{topic['id']}/children").json()["data"]["data"]

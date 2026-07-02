@@ -6,9 +6,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_chat_service, get_turn_runner
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ValidationError
+from app.domain.agent.chat import ChatService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -199,12 +201,29 @@ async def set_title(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
 
 
 @router.post("/{topic_id}/split")
-async def split_topic(topic_id: uuid.UUID, body: SplitIn, db: DbSession) -> dict:
-    """从上往下拆解：split a todo into a sub-topic (eval A2)."""
+async def split_topic(
+    topic_id: uuid.UUID,
+    body: SplitIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """从上往下拆解：split a todo into a sub-topic (eval A2).
+
+    The child is seeded with a task-brief living doc, then its 分身 is kicked
+    off automatically (spec §8.4 分身异步工作): without this, a freshly split
+    sub-topic just sits idle until a human wanders in and posts a message."""
     topic = await TopicService(db).split_to_subtopic(
-        parent_topic_id=topic_id, title=body.title, created_by=body.created_by
+        parent_topic_id=topic_id,
+        title=body.title,
+        created_by=body.created_by,
+        brief=body.brief,
     )
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+    out = TopicOut.model_validate(topic).model_dump(mode="json")
+    # Commit BEFORE kicking off: the 分身's first turn runs in the background
+    # with its own session and must see the sub-topic + its brief doc.
+    await db.commit()
+    get_turn_runner().submit_kickoff(chat, topic.id)
+    return ok(out)
 
 
 @router.post("/{topic_id}/return-conclusion")

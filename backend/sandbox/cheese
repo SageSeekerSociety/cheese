@@ -82,8 +82,13 @@ def main() -> None:
     pdset.add_argument("file")
     pdsub.add_parser("get", help="打印本话题活文档")
 
-    ps = sub.add_parser("split", help="拆出子话题")
+    ps = sub.add_parser("split", help="拆出子话题（分身自动开工）")
     ps.add_argument("title")
+    ps.add_argument(
+        "--brief",
+        default=None,
+        help="任务简报：这个子话题要干什么/约束/验收标准。会预置成分身的活文档，分身开工全靠它——尽量写",
+    )
 
     pdec = sub.add_parser("decision", help="记录一条决策")
     pdec.add_argument("text")
@@ -134,8 +139,11 @@ def main() -> None:
         print((d or {}).get("content", "") if d else "")
     elif a.cmd == "split":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        r = _call("POST", f"/topics/{topic}/split", {"title": a.title, "created_by": AUTHOR})
-        print(f"已拆出子话题：{r['data']['title']}（id={r['data']['id']}）")
+        body = {"title": a.title, "created_by": AUTHOR}
+        if a.brief:
+            body["brief"] = a.brief
+        r = _call("POST", f"/topics/{topic}/split", body)
+        print(f"已拆出子话题：{r['data']['title']}（id={r['data']['id']}），分身已带简报自动开工")
     elif a.cmd == "decision":
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/decision", {"decision": a.text})
