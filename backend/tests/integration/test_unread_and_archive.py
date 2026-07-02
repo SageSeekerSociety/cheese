@@ -147,3 +147,31 @@ def test_root_topic_cannot_be_archived(client):
         return  # project without a root topic — nothing to guard
     r = client.post(f"/api/topics/{root_topic_id}/archive", json={"by": "user-1"})
     assert r.status_code == 422
+
+
+def test_archive_cascades_to_subtopics(client):
+    """归档整件事：a topic's active subtopics (and theirs) archive with it —
+    orphan 分身 without their parent context are meaningless."""
+    pr = client.post("/api/projects", json={"name": "P"})
+    pid = pr.json()["data"]["id"]
+    t = client.post("/api/topics", json={"project_id": pid, "title": "父"})
+    parent = t.json()["data"]["id"]
+    c1 = client.post(
+        f"/api/topics/{parent}/split", json={"title": "子1", "created_by": "u"}
+    ).json()["data"]["id"]
+    c2 = client.post(
+        f"/api/topics/{parent}/split", json={"title": "子2", "created_by": "u"}
+    ).json()["data"]["id"]
+    g = client.post(
+        f"/api/topics/{c1}/split", json={"title": "孙", "created_by": "u"}
+    ).json()["data"]["id"]
+
+    r = client.post(f"/api/topics/{parent}/archive", json={"by": "u"})
+    assert r.status_code == 200
+    for tid in (parent, c1, c2, g):
+        assert (
+            client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+        ), tid
+    # The cascaded child records why it went.
+    blocks = client.get(f"/api/topics/{c1}/blocks").json()["data"]["data"]
+    assert any("随父话题" in (b.get("content") or "") for b in blocks)

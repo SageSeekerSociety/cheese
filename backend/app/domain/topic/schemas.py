@@ -25,6 +25,7 @@ class TopicOut(BaseModel):
     kind: TopicKind
     status: TopicStatus
     created_at: datetime
+    updated_at: datetime
     # Lifecycle markers (spec §6.3): who accepted, when archived, and — for an
     # upgraded topic — which block it grew from (for the 活引用 back-link).
     accepted_by: str | None = None
