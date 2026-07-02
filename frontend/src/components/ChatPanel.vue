@@ -121,7 +121,6 @@ const streaming = ref<string | null>(null)
 const awaitingReply = ref(false)
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
-const toolActions = ref<string[]>([])
 // Live working-log todo (芝士's Task tools) for the in-progress turn (§3.1.1).
 const todoItems = ref<TodoItem[]>([])
 // Action cards: 芝士's cheese actions (decision/doc/...) are persisted as system
@@ -133,20 +132,6 @@ const ACTION_META: Record<string, { verb: string; btn: string }> = {
   milestone: { verb: '钉了一个里程碑', btn: '看日历' },
   accept: { verb: '递出了验收卡', btn: '去验收' },
   notify: { verb: '发了通知', btn: '' },
-}
-
-const TOOL_LABELS: Record<string, string> = {
-  create_subtopic: '拆出子话题',
-  update_doc: '更新了文档',
-  remember: '记入项目记忆',
-  notify: '发送通知',
-  request_accept: '递出验收卡',
-  return_conclusion: '回流结论',
-}
-
-function toolLabel(name: string): string {
-  const short = name.replace(/^mcp__cheese__/, '')
-  return TOOL_LABELS[short] ?? short
 }
 
 function todoMark(status: string): string {
@@ -258,24 +243,30 @@ function openSocket(topicId: string) {
   }
 }
 
+// Append a block unless it's already in the timeline: after a switch-away /
+// return, history (DB) and the broker's in-progress-turn replay overlap, and
+// a block must never show up twice (现场不能错).
+function pushBlock(b: Block) {
+  if (!messages.value.some((m) => m.id === b.id)) {
+    messages.value.push(b)
+  }
+}
+
 function handleFrame(frame: WsServerFrame) {
   switch (frame.type) {
     case 'user_block':
-      messages.value.push(frame.block)
+      pushBlock(frame.block)
       autoScroll()
       break
     case 'delta':
       streaming.value = (streaming.value ?? '') + frame.text
       autoScroll()
       break
-    case 'tool': {
-      toolActions.value.push(toolLabel(frame.name))
-      // Emit the short tool name (e.g. update_doc, create_subtopic) so the
-      // parent can refresh the relevant panel immediately.
+    case 'tool':
+      // 工作细节不进对话流 (they live in the 现场 drawer) — just tell the parent
+      // which tool ran so it can refresh the relevant panel / worklog live.
       emit('tool-used', frame.name.replace(/^mcp__cheese__/, ''))
-      autoScroll()
       break
-    }
     case 'todo':
       // Live working-log checklist (process), updated in place.
       todoItems.value = frame.items
@@ -288,11 +279,11 @@ function handleFrame(frame: WsServerFrame) {
       break
     case 'event_block':
       // A persisted, clickable action card (decision/doc/...) for this turn.
-      messages.value.push(frame.block)
+      pushBlock(frame.block)
       autoScroll()
       break
     case 'assistant_block':
-      messages.value.push(frame.block)
+      pushBlock(frame.block)
       streaming.value = null
       todoItems.value = [] // working-log done; the final message is the summary
       autoScroll()
@@ -317,7 +308,6 @@ async function loadTopic(topic: Topic) {
   errorMsg.value = null
   streaming.value = null
   awaitingReply.value = false
-  toolActions.value = []
   todoItems.value = []
   messages.value = []
   loadingHistory.value = true
@@ -385,7 +375,6 @@ function send(content: string, summon: boolean): boolean {
     awaitingReply.value = true
     streaming.value = ''
   }
-  toolActions.value = []
   todoItems.value = []
   scrollToBottom()
   return true
@@ -656,15 +645,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </template>
-
-        <!-- 施工现场 — 芝士's tool calls this turn, as Feishu system lines -->
-        <div
-          v-for="(act, i) in toolActions"
-          :key="'tool-' + i"
-          class="im-event text-caption"
-        >
-          <span>🔧 芝士 · {{ act }}</span>
-        </div>
 
         <!-- Live-streaming assistant message (always a run start) -->
         <div v-if="streaming !== null" class="im-row">
