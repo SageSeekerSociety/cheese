@@ -466,10 +466,31 @@ function sendDraft() {
   if (send(draft.value, summon.value)) draft.value = ''
 }
 
+// IME (输入法) guard — see WorkspaceView.vue for the full story: Safari fires
+// compositionend BEFORE the commit-Enter keydown, which then looks like a
+// plain Enter. Track composition ourselves and swallow the trailing Enter.
+let composing = false
+let compositionEndedAt = -1e9
+function onCompositionStart() {
+  composing = true
+}
+function onCompositionEnd(e: CompositionEvent) {
+  composing = false
+  compositionEndedAt = e.timeStamp
+}
+function isImeKey(e: KeyboardEvent) {
+  return (
+    composing ||
+    e.isComposing ||
+    e.keyCode === 229 ||
+    e.timeStamp - compositionEndedAt < 100
+  )
+}
+
 function onComposerKey(e: KeyboardEvent) {
   if (e.key !== 'Enter' || e.shiftKey) return
-  // IME composition (拼音选字/上屏) fires an Enter keydown too — never send.
-  if (e.isComposing || e.keyCode === 229) return
+  // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
+  if (isImeKey(e)) return
   // Only act on Enter from the focused composer textarea itself.
   const t = e.target as HTMLElement | null
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
@@ -768,6 +789,8 @@ onBeforeUnmount(() => {
               placeholder="发条消息…（Enter 发送，Shift+Enter 换行）"
               :disabled="!connected"
               @keydown="onComposerKey"
+              @compositionstart="onCompositionStart"
+              @compositionend="onCompositionEnd"
             />
             <v-btn
               color="primary"

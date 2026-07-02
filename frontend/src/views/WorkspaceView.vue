@@ -195,12 +195,34 @@ function pickMention(label: string) {
   draft.value = draft.value.replace(/@([^\s@]*)$/, `@${label} `)
 }
 
+// IME (输入法) guard. Chrome marks the commit-Enter keydown with
+// isComposing=true / keyCode 229, but Safari fires compositionend FIRST and
+// the trailing keydown looks like a plain Enter (isComposing=false, keyCode
+// 13). So we also track composition state ourselves and swallow any Enter
+// arriving right after compositionend — that keypress belongs to the IME
+// (上屏), not to "send".
+let composing = false
+let compositionEndedAt = -1e9
+function onCompositionStart() {
+  composing = true
+}
+function onCompositionEnd(e: CompositionEvent) {
+  composing = false
+  compositionEndedAt = e.timeStamp
+}
+function isImeKey(e: KeyboardEvent) {
+  return (
+    composing ||
+    e.isComposing ||
+    e.keyCode === 229 ||
+    e.timeStamp - compositionEndedAt < 100
+  )
+}
+
 function onComposerKey(e: KeyboardEvent) {
   if (e.key !== 'Enter' || e.shiftKey) return
-  // IME composition (拼音选字/上屏) fires an Enter keydown too — that Enter is
-  // for the输入法, not for us. Never treat it as "send". (keyCode 229 covers
-  // browsers that don't set isComposing on the trailing keydown.)
-  if (e.isComposing || e.keyCode === 229) return
+  // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
+  if (isImeKey(e)) return
   // Only act on Enter that truly originates from the focused composer
   // textarea — guards against bubbled / fallthrough keydowns triggering an
   // unintended send when the input isn't focused.
@@ -910,6 +932,8 @@ onMounted(async () => {
               "
               :disabled="!composerReady"
               @keydown="onComposerKey"
+              @compositionstart="onCompositionStart"
+              @compositionend="onCompositionEnd"
             />
             <v-btn
               color="primary"
