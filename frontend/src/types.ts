@@ -19,6 +19,8 @@ export interface Topic {
   kind: string
   status: string
   created_at: string
+  // Any activity (a turn, a status flip) touches this — the sidebar's 右锚.
+  updated_at?: string
   // Lifecycle markers (spec §6.3) — used by the 已归档 group ordering.
   accepted_by?: string | null
   accepted_at?: string | null

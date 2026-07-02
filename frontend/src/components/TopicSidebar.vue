@@ -302,12 +302,34 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
               :active="row.topic.id === selectedTopicId"
               rounded="lg"
               class="topic-row"
-              :class="{ 'is-active': row.topic.id === selectedTopicId }"
-              :style="{ paddingInlineStart: 14 + row.depth * 12 + 'px' }"
+              :class="{
+                'is-active': row.topic.id === selectedTopicId,
+                'is-sub': row.depth > 0,
+              }"
+              :style="{
+                paddingInlineStart: 14 + row.depth * 20 + 'px',
+                '--guide-x': 22 + (row.depth - 1) * 20 + 'px',
+              }"
               @click="emit('select-topic', row.topic.id)"
             >
-              <!-- 一行常驻的只有两样：标题、未读数（评审 2026-07-03）。
-                   图标/种类标签删除（缩进已表达层级），操作 hover 才浮现。 -->
+              <!-- 干净行 + 前置图标做身份锚（混合版）：图标未读变琥珀，
+                   种类标签仍不要（缩进表达层级），操作 hover 才浮现。 -->
+              <template #prepend>
+                <v-icon
+                  v-if="row.depth === 0"
+                  size="16"
+                  class="row-glyph"
+                  :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
+                  icon="mdi-message-text-outline"
+                />
+                <!-- 分身不用钩子箭头：树的结构交给缩进 + 竖向引导线，
+                     行内只留一个小圆点做锚（未读转琥珀）。 -->
+                <span
+                  v-else
+                  class="row-glyph row-glyph--dot"
+                  :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
+                />
+              </template>
               <v-list-item-title class="d-flex align-center topic-title">
                 <span
                   class="text-truncate"
@@ -326,6 +348,10 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
                   v-if="unreadOf(row.topic.id) > 0"
                   class="unread-badge"
                 >{{ unreadLabel(row.topic.id) }}</span>
+                <!-- items 感的右锚：没未读时给最后活跃时间（真实信息，非装饰） -->
+                <span v-else class="row-time">{{
+                  relTime(row.topic.updated_at)
+                }}</span>
                 <!-- hover 浮出的操作层：绝对定位覆盖行尾，不占布局宽度 -->
                 <div class="row-actions" @click.stop>
                   <v-btn
@@ -687,16 +713,35 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 .topic-row :deep(.v-list-item__content) {
   padding-block: 0;
 }
-/* Item 感：每行一个小锚点 + hover 时可感的圆角底色——行是对象，不是漂浮的
-   文本（review round 5）。 */
-.topic-title::before {
-  content: '';
-  flex: none;
-  width: 5px;
-  height: 5px;
+/* 核心修正：Vuetify 的 prepend spacer 默认 ~32px，把图标和标题隔出一条鸿沟，
+   稀释了一切缩进关系。压到 8px，缩进的台阶才立得起来。 */
+.topic-row :deep(.v-list-item__spacer) {
+  width: 8px !important;
+}
+/* Item 感（混合版）：前置图标做行的身份锚，未读转琥珀。 */
+.row-glyph {
+  color: var(--faint, #b5b5b5);
+}
+.row-glyph--dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--line-2, #d9d9d9);
-  margin-right: 9px;
+  background: currentColor;
+  margin-left: 5px;
+  flex: none;
+}
+.row-glyph--unread {
+  color: var(--accent, #f57f17);
+}
+/* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。 */
+.topic-row.is-sub::before {
+  content: '';
+  position: absolute;
+  left: var(--guide-x, 24px);
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--line-2, #e3e3e3);
 }
 .topic-row:hover {
   background: var(--fill);
@@ -707,9 +752,7 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 .title-unread {
   color: var(--text);
 }
-.topic-title:has(.title-unread)::before {
-  background: var(--accent, #f57f17);
-}
+
 .row-actions {
   position: absolute;
   right: 4px;
@@ -732,8 +775,16 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 }
 /* While the actions are out, the count steps aside (they share the tail). */
 .topic-row:hover .unread-badge,
-.topic-row:focus-within .unread-badge {
+.topic-row:focus-within .unread-badge,
+.topic-row:hover .row-time,
+.topic-row:focus-within .row-time {
   opacity: 0;
+}
+.row-time {
+  flex: none;
+  color: var(--faint, #b5b5b5);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 </style>
 
