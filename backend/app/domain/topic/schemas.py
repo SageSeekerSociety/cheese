@@ -41,6 +41,9 @@ class UpgradeBlockIn(BaseModel):
 class SplitIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     created_by: str | None = None
+    # 任务简报: what the 分身 is expected to do, in the splitter's own words.
+    # Preset as the child's living doc so the kickoff turn starts informed.
+    brief: str | None = None
 
 
 class ConclusionIn(BaseModel):

@@ -304,7 +304,10 @@ class AgentService:
                 # The cheese skill lives in the mounted ~/.claude/skills (=user
                 # source). "user" reads only the isolated per-topic session dir
                 # in the container, so no host settings leak in.
-                setting_sources=["user"],
+                # "project" makes the CLI natively auto-load the workspace's own
+                # CLAUDE.md / .claude settings, so a user repo's conventions reach
+                # the agent (decision: 方案 A, topic CLAUDE.md处理策略).
+                setting_sources=["user", "project"],
                 skills=["cheese"],
                 env={**eff_env, **sandbox["env"]},
             )

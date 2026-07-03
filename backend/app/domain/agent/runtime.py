@@ -167,6 +167,29 @@ class TurnRunner:
         task.add_done_callback(self._tasks.discard)
         return turn_id
 
+    def submit_kickoff(
+        self, chat_service, topic_id: uuid.UUID, *, prompt: str | None = None
+    ) -> uuid.UUID:
+        """A platform-event turn (spec §8.4): 分身自动开工 after a split/upgrade
+        (default prompt), or the parent digesting a returned conclusion (custom
+        prompt). No human message is posted — the agent speaks for itself; the
+        pre-built kickoff frame stream rides the same _run pipeline (telemetry,
+        timeout, failure events) via the `frames` override."""
+        turn_id = uuid.uuid4()
+        frames = chat_service.kickoff(
+            topic_id=topic_id, turn_id=turn_id, prompt=prompt
+        )
+        task = asyncio.create_task(
+            self._run(
+                chat_service, topic_id, turn_id,
+                author="system", content=prompt or "", summon=True,
+                frames=frames,
+            )
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return turn_id
+
     # What the auto-resumed turn asks 芝士 to do. Its progress is intact: the
     # topic's session pointer was saved on failure (resume, not replay).
     RESUME_PROMPT = (
@@ -252,6 +275,8 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        # Pre-built frame stream (kickoff turns). None → run a converse turn.
+        frames: AsyncIterator[Frame] | None = None,
     ) -> None:
         channel = str(topic_id)
         resume_after: float | None = None
@@ -292,18 +317,23 @@ class TurnRunner:
             # generator → its `async with` blocks unwind → the topic lock releases
             # and the in-container claude process is torn down.
             async with asyncio.timeout(self._timeout):
-                async for frame in chat_service.converse(
-                    topic_id=topic_id,
-                    author=author,
-                    content=content,
-                    summon=summon,
-                    turn_id=turn_id,
-                    reply_to=reply_to,
-                    attachments=attachments,
-                    is_resume=is_resume,
-                    resume_reason=resume_reason,
-                    nudge_event=nudge_event,
-                ):
+                turn_frames = (
+                    frames
+                    if frames is not None
+                    else chat_service.converse(
+                        topic_id=topic_id,
+                        author=author,
+                        content=content,
+                        summon=summon,
+                        turn_id=turn_id,
+                        reply_to=reply_to,
+                        attachments=attachments,
+                        is_resume=is_resume,
+                        resume_reason=resume_reason,
+                        nudge_event=nudge_event,
+                    )
+                )
+                async for frame in turn_frames:
                     kind = frame.get("type")
                     if kind == "resume_hint":
                         # Internal: chat layer says this failure is worth an

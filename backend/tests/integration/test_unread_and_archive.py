@@ -4,6 +4,7 @@ import asyncio
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from tests.conftest import wait_turns_idle
 
 
 def _create_project_and_topic(client, title: str = "话题A") -> tuple[str, str]:
@@ -156,15 +157,21 @@ def test_archive_cascades_to_subtopics(client):
     pid = pr.json()["data"]["id"]
     t = client.post("/api/topics", json={"project_id": pid, "title": "父"})
     parent = t.json()["data"]["id"]
+    # Each split auto-kicks its 分身 (a background turn). On the test DB (one
+    # shared SQLite connection) a running turn races the NEXT write request, so
+    # let each kickoff finish before continuing (prod Postgres doesn't care).
     c1 = client.post(
         f"/api/topics/{parent}/split", json={"title": "子1", "created_by": "u"}
     ).json()["data"]["id"]
+    wait_turns_idle()
     c2 = client.post(
         f"/api/topics/{parent}/split", json={"title": "子2", "created_by": "u"}
     ).json()["data"]["id"]
+    wait_turns_idle()
     g = client.post(
         f"/api/topics/{c1}/split", json={"title": "孙", "created_by": "u"}
     ).json()["data"]["id"]
+    wait_turns_idle()
 
     r = client.post(f"/api/topics/{parent}/archive", json={"by": "u"})
     assert r.status_code == 200
