@@ -132,17 +132,35 @@ async def add_comment(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     quote = (body.get("quote") or "").strip() or None
     if quote and len(quote) > 500:
         quote = quote[:500]
+    author = body.get("author") or "anonymous"
     comment = await repo.add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author=(body.get("author") or "anonymous"),
+        author=author,
         author_type=AuthorType.human,
         content=content,
         kind=BlockKind.comment,
         reply_to=reply_to,
         anchor_quote=quote,
     )
-    return ok(BlockOut.model_validate(comment).model_dump(mode="json"))
+    payload = BlockOut.model_validate(comment).model_dump(mode="json")
+    await db.commit()  # the comment must be visible before the turn reads it
+    # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
+    from app.api.deps import get_chat_service, get_turn_runner
+
+    where = f"「{quote[:80]}」" if quote else "整篇"
+    get_turn_runner().submit(
+        get_chat_service(),
+        topic_id,
+        author="system",
+        content=(
+            f"{author} 在活文档 {where} 处评论：{content}\n"
+            "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
+        ),
+        summon=True,
+        nudge_event=f"💬 {author} 在文档上留了评论，芝士来处理",
+    )
+    return ok(payload)
 
 
 @router.get("/{topic_id}/doc")

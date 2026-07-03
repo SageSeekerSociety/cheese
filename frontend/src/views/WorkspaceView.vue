@@ -68,6 +68,7 @@ const focusMode = ref(false)
 const docRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
+  openFile?: (path: string) => void
 } | null>(null)
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 watch([railWidth, chatPct], () => {
@@ -822,6 +823,7 @@ onUnmounted(() => {
         @tool-used="handleToolUsed"
         @state-changed="handleStateChanged"
         @mention-click="handleMentionClick"
+        @open-file="(p: string) => docRef?.openFile?.(p)"
         @open-resource="handleOpenResource"
         @upgrade-message="handleUpgradeMessage"
         @open-topic="selectTopic"

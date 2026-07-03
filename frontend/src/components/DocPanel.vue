@@ -2,9 +2,13 @@
 import { myHandle } from '../me'
 import { summarizeActions } from '../lib/toolLabels'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { relTime } from '../lib/relTime'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
+import { Extension } from '@tiptap/core'
 import type { Editor as CoreEditor } from '@tiptap/core'
+import { Plugin } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
@@ -74,6 +78,7 @@ const emit = defineEmits<{
   (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
   (e: 'topics-changed'): void
+  (e: 'mention-click', handle: string): void
 }>()
 
 // B1 Phase 2 (cross-view link, panel-level): when a chat action that changed the
@@ -273,7 +278,7 @@ async function pulse() {
     pulsing.value = false
   }, 1200)
 }
-defineExpose({ pulse, highlightTurn })
+defineExpose({ pulse, highlightTurn, openFile: openFileRef })
 
 // ---- 按需打开的工具 (spec §7.1): slide-out tool drawer ----
 interface ToolDef {
@@ -681,9 +686,71 @@ const errorMsg = ref<string | null>(null)
 const lastSavedMarkdown = ref<string>('')
 const dirty = ref(false)
 
+// 结构化 token 装饰 (spec §9.1): decorate our OWN tokens — <@handle> /
+// <#topicId> — as clickable chips in the doc, read-only and edit alike.
+// Deterministic token parsing, never NL guessing.
+const TOKEN_RE = /<@([\w-]+)>|<#([0-9a-fA-F-]{8,})>|<&([\w./\u4e00-\u9fff-]+)>/g
+
+function tokenDecorations(doc: PMNode): DecorationSet {
+  const decos: Decoration[] = []
+  doc.descendants((node, pos) => {
+    if (!node.isText) return
+    const text = node.text ?? ''
+    TOKEN_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = TOKEN_RE.exec(text))) {
+      const attrs: Record<string, string> = m[1]
+        ? { class: 'mention', 'data-handle': m[1] }
+        : m[2]
+          ? { class: 'mention topic-ref', 'data-topic': m[2] }
+          : { class: 'mention file-ref', 'data-file': m[3] }
+      decos.push(Decoration.inline(pos + m.index, pos + m.index + m[0].length, attrs))
+    }
+  })
+  return DecorationSet.create(doc, decos)
+}
+
+const TokenChips = Extension.create({
+  name: 'cheeseTokenChips',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        state: {
+          init: (_cfg, state) => tokenDecorations(state.doc),
+          apply: (tr, old) => (tr.docChanged ? tokenDecorations(tr.doc) : old),
+        },
+        props: {
+          decorations(state) {
+            return this.getState(state)
+          },
+        },
+      }),
+    ]
+  },
+})
+
+// Chip clicks in the doc (delegated — decorations are plain spans).
+function onDocClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement | null)?.closest(
+    '.mention',
+  ) as HTMLElement | null
+  if (!el) return
+  if (el.dataset.topic) emit('open-topic', el.dataset.topic)
+  else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
+  else if (el.dataset.file) void openFileRef(el.dataset.file)
+}
+
+// A <&path> chip opens that file in the 文件 drawer's editor.
+async function openFileRef(path: string) {
+  openTool.value = 'files'
+  drawerOpen.value = true
+  await loadTool('files')
+  await selectFile(path)
+}
+
 const editor = useEditor({
   content: '',
-  extensions: [StarterKit, Markdown],
+  extensions: [StarterKit, Markdown, TokenChips],
   editable: editable.value,
   editorProps: {
     attributes: { class: 'doc-prose' },
@@ -992,7 +1059,7 @@ onBeforeUnmount(() => {
         <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
           <!-- Large document title (Feishu Docs), = the topic title -->
           <h1 class="doc-page__title">{{ topic.title }}</h1>
-          <div class="doc-editor-wrap">
+          <div class="doc-editor-wrap" @click="onDocClick">
             <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
             <!-- B4 Feishu-style: select text in the doc → a floating 评论 button
                  appears over the selection. Click to comment on that span. -->
@@ -1314,7 +1381,12 @@ onBeforeUnmount(() => {
                 还没有评论
               </div>
               <div v-for="c in comments" :key="c.id" class="comment-item mb-3">
-                <div class="text-caption c-muted mb-1">{{ c.author }}</div>
+                <div class="d-flex align-center mb-1">
+                  <span class="text-caption font-weight-medium">{{ c.author }}</span>
+                  <span class="text-caption c-faint ms-2">{{
+                    relTime(c.created_at)
+                  }}</span>
+                </div>
                 <!-- Feishu-style quote: the exact span the comment was made on.
                      Click to scroll + flash the paragraph it lives in (B4). -->
                 <button
@@ -1601,8 +1673,37 @@ onBeforeUnmount(() => {
   background: rgba(var(--v-theme-primary), 0.18);
 }
 .comment-item {
-  border-left: 2px solid rgba(var(--v-border-color), 0.4);
-  padding-left: 10px;
+  background: rgba(20, 22, 26, 0.03);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.comment-item .comment-quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-left: 2px solid var(--accent, #f57f17);
+  background: rgba(245, 127, 23, 0.06);
+  border-radius: 0 6px 6px 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 文档里的 @/话题 chip：和聊天同一视觉词汇，可点。 */
+.doc-editor :deep(.mention) {
+  color: rgb(var(--v-theme-primary));
+  background: var(--fill);
+  border-radius: 4px;
+  padding: 0 3px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.doc-editor :deep(.mention:hover) {
+  text-decoration: underline;
 }
 /* B4 Feishu-style: floating "评论" CTA over a text selection. */
 .doc-comment-cta {

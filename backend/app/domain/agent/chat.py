@@ -422,6 +422,7 @@ class ChatService:
         attachments: list[dict] | None = None,
         is_resume: bool = False,
         resume_reason: str | None = None,
+        nudge_event: str | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
@@ -430,14 +431,14 @@ class ChatService:
         reply_to threads this message under another (B3); attachments are
         uploaded worktree images this message carries (图片输入)."""
         turn_id = turn_id or uuid.uuid4()
-        if is_resume:
-            # Auto-resume (续跑): no human spoke — the opener is a SYSTEM event
-            # in the 现场, and the continuation instruction goes straight to
-            # the agent as the prompt.
-            why = resume_reason or "从上一轮的断点继续"
-            payload = await self.post_system_event(
-                topic_id, f"⏯️ 自动续跑：{why}", turn_id
-            )
+        if is_resume or nudge_event:
+            # System-initiated turn (自动续跑 / 评论叫醒 / 冲突调度…): no human
+            # spoke — the opener is a SYSTEM event in the 现场, and the
+            # instruction goes straight to the agent as the prompt.
+            if not nudge_event:
+                why = resume_reason or "从上一轮的断点继续"
+                nudge_event = f"⏯️ 自动续跑：{why}"
+            payload = await self.post_system_event(topic_id, nudge_event, turn_id)
             if payload is None:
                 raise NotFoundError("Topic not found")
             yield {"type": "event_block", "block": payload}
