@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_chat_service, get_turn_runner
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import ValidationError
+from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -389,6 +389,23 @@ async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
             }
         )
     return ok({"kind": "file", "path": art.content, "mime": art.mime_type})
+
+
+@router.get("/{topic_id}/preview/raw")
+async def get_preview_raw(topic_id: uuid.UUID, db: DbSession) -> Response:
+    """The current file artifact served as a real page — 在新窗口打开 (Claude
+    Artifacts style). CSP `sandbox allow-scripts` keeps it an opaque origin so
+    artifact JS can't call our API as the user."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    art = await BlockRepository(db).latest_artifact(topic_id)
+    if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
+        raise NotFoundError("没有可打开的文件 artifact")
+    data = ws.read_file_bytes(topic.project_id, art.content, topic_id=topic_id)
+    return Response(
+        content=data,
+        media_type=art.mime_type or "text/html",
+        headers={"Content-Security-Policy": "sandbox allow-scripts"},
+    )
 
 
 # ---- 聊天图片附件 (图片输入) -------------------------------------------------

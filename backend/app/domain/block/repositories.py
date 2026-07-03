@@ -30,6 +30,7 @@ class BlockRepository:
         turn_id: uuid.UUID | None = None,
         anchor_quote: str | None = None,
         mime_type: str | None = None,
+        meta: dict | None = None,
     ) -> Block:
         # Cheese-side handlers don't pass turn_id explicitly; fall back to the
         # ambient turn id set from the X-Cheese-Turn header (R4).
@@ -50,6 +51,7 @@ class BlockRepository:
             turn_id=turn_id,
             anchor_quote=anchor_quote,
             mime_type=mime_type,
+            meta=meta,
         )
         self._session.add(block)
         await self._session.flush()

@@ -32,4 +32,7 @@ class BlockOut(BaseModel):
     upgraded_to_topic_id: uuid.UUID | None = None
     # The agent turn that produced this block (R4): groups a turn's blocks.
     turn_id: uuid.UUID | None = None
+    # Structured event payload (kind=event): {"tool", "arg", "platform"} — the
+    # UI translates/classifies from this; `content` is the baked-text fallback.
+    meta: dict | None = None
     created_at: datetime

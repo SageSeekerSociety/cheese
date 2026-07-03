@@ -32,7 +32,7 @@ import type {
   WorkspaceFile,
 } from './types'
 
-const BASE = '/api'
+export const BASE = '/api'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

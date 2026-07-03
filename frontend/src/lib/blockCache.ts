@@ -7,6 +7,16 @@ import type { Block } from '../types'
 
 export const blockCache = new Map<string, Block[]>()
 
+// Dev-only observability hook: lets probe scripts (scripts/probe_flash.py)
+// inspect the REAL cache instance — a dynamic import from the console/probe
+// can resolve to a second module instance under Vite HMR, which lies.
+declare global {
+  interface Window {
+    __blockCache?: Map<string, Block[]>
+  }
+}
+if (import.meta.env.DEV) window.__blockCache = blockCache
+
 export async function refreshBlockCache(topicId: string): Promise<Block[] | null> {
   try {
     const payload = await listBlocks(topicId)

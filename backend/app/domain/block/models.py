@@ -97,6 +97,12 @@ class Block(UuidPk, Timestamps, Base):
     # for traceability / recovery / the collaboration-trajectory dataset. Null for
     # human-authored or pre-R4 blocks.
     turn_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    # Structured event payload (kind=event): {"tool": <name>, "arg": <preview>,
+    # "platform": <bool>} so the UI translates/classifies at DISPLAY time instead
+    # of relying on text baked into `content` (which stays as a human-readable
+    # fallback for old clients / old rows). Null on non-event blocks and on
+    # event rows created before this field existed.
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Citations: which decisions / PRs / files this block leans on.
     refs: Mapped[list[str]] = mapped_column(JSON, default=list)
 

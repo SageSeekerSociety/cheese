@@ -19,6 +19,7 @@ import { TableKit } from '@tiptap/extension-table'
 import CheeseAvatar from './CheeseAvatar.vue'
 import CodeEditor from './CodeEditor.vue'
 import {
+  BASE as API_BASE,
   addComment,
   getComments,
   getDoc,
@@ -543,6 +544,20 @@ const previewNamed = ref(false)
 // live-resolved localhost URL instead of rendering file content.
 const previewAppUrl = ref<string | null>(null)
 const previewAppNote = ref<string>('')
+// 全屏预览 (Claude Artifacts style): the same content, workspace-covering.
+const previewFull = ref(false)
+function openPreviewInNewTab() {
+  if (previewAppUrl.value) {
+    window.open(previewAppUrl.value, '_blank', 'noopener')
+  } else if (previewFile.value && props.topic) {
+    // Served with CSP sandbox (opaque origin) — a real tab, not our origin.
+    window.open(
+      `${API_BASE}/topics/${props.topic.id}/preview/raw`,
+      '_blank',
+      'noopener',
+    )
+  }
+}
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -852,6 +867,7 @@ const editor = useEditor({
     dirty.value = true
     savedAt.value = null
     commentCta.value = null // the doc changed under the selection; drop the CTA
+    queueAutosave()
   },
   onSelectionUpdate: ({ editor: ed }) => updateCommentCta(ed),
 })
@@ -997,6 +1013,24 @@ async function reloadFromActivity(topicId: string) {
   }
 }
 
+// Feishu-style autosave: an explicit 保存 button reads as unfinished software.
+// Debounced from the LAST keystroke (not the dirty flip, which only fires
+// once per dirty cycle); ⌘S still saves immediately.
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+function queueAutosave() {
+  if (autosaveTimer) clearTimeout(autosaveTimer)
+  autosaveTimer = setTimeout(() => {
+    if (dirty.value && editable.value && !saving.value) void save()
+  }, 2500)
+}
+
+function onDocKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault()
+    if (dirty.value && editable.value) void save()
+  }
+}
+
 async function save() {
   const ed = editor.value
   const topic = props.topic
@@ -1107,23 +1141,11 @@ onBeforeUnmount(() => {
         >
           <span class="status-dot status-dot--ok" />已保存
         </span>
-        <span v-else-if="dirty" class="t-meta me-2">未保存</span>
+        <span v-else-if="dirty" class="t-meta me-2">编辑中…</span>
 
         <v-btn size="small" variant="text" class="me-1 c-muted" @click="toggleEditable">
           {{ editable ? '只读' : '编辑' }}
         </v-btn>
-        <v-btn
-          v-if="editable"
-          size="small"
-          color="primary"
-          variant="flat"
-          class="me-2"
-          :disabled="saving || !dirty"
-          @click="save"
-        >
-          保存
-        </v-btn>
-
         <v-divider vertical class="mx-1" />
 
         <!-- 专注模式: 文档占满工作区，隐藏对话栏 (spec §7.1) -->
@@ -1160,7 +1182,7 @@ onBeforeUnmount(() => {
         <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
           <!-- Large document title (Feishu Docs), = the topic title -->
           <h1 class="doc-page__title">{{ topic.title }}</h1>
-          <div class="doc-editor-wrap" @click="onDocClick">
+          <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown">
             <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
             <!-- B4 Feishu-style: select text in the doc → a floating 评论 button
                  appears over the selection. Click to comment on that span. -->
@@ -1240,6 +1262,24 @@ onBeforeUnmount(() => {
           <div class="tool-panel__head">
             <span class="tool-panel__title">{{ activeToolLabel() }}</span>
             <v-spacer />
+            <template v-if="openTool === 'preview' && (previewAppUrl || previewFile)">
+              <v-btn
+                icon="mdi-open-in-new"
+                size="small"
+                variant="text"
+                class="c-muted"
+                title="在新标签页打开"
+                @click="openPreviewInNewTab"
+              />
+              <v-btn
+                icon="mdi-arrow-expand-all"
+                size="small"
+                variant="text"
+                class="c-muted"
+                title="全屏预览"
+                @click="previewFull = true"
+              />
+            </template>
             <v-btn
               :icon="pinned ? 'mdi-pin' : 'mdi-pin-outline'"
               size="small"
@@ -1661,6 +1701,45 @@ onBeforeUnmount(() => {
       </transition>
       </div><!-- /.doc-stage -->
 
+      <!-- 全屏预览 overlay: same artifact, workspace-covering (Esc / ✕ closes). -->
+      <Teleport to="body">
+        <div v-if="previewFull" class="preview-full" @keydown.esc="previewFull = false">
+          <div class="preview-full__bar">
+            <span class="preview-full__title">
+              {{ previewAppUrl ? previewAppNote || '运行中的应用' : previewFile?.path }}
+            </span>
+            <v-spacer />
+            <v-btn
+              icon="mdi-open-in-new"
+              size="small"
+              variant="text"
+              class="c-muted"
+              title="在新标签页打开"
+              @click="openPreviewInNewTab"
+            />
+            <v-btn
+              icon="mdi-close"
+              size="small"
+              variant="text"
+              class="c-muted"
+              @click="previewFull = false"
+            />
+          </div>
+          <iframe
+            v-if="previewAppUrl"
+            class="preview-full__frame"
+            :src="previewAppUrl"
+            sandbox="allow-same-origin allow-scripts allow-forms"
+          />
+          <iframe
+            v-else-if="previewFile"
+            class="preview-full__frame"
+            :srcdoc="previewFile.content"
+            sandbox="allow-scripts"
+          />
+        </div>
+      </Teleport>
+
       <!-- Floating, never clipped: the old flow-layout alert sat below the
            scroll stage and rendered half-hidden at the panel edge. -->
       <v-alert
@@ -1710,8 +1789,8 @@ onBeforeUnmount(() => {
 
 /* Tool icon when its drawer is open — neutral ink, not amber. */
 .tool-btn--active {
-  color: var(--ink) !important;
-  background: var(--fill);
+  color: rgb(var(--v-theme-primary)) !important;
+  background: transparent;
 }
 .doc-editor-wrap {
   position: relative;
@@ -2294,6 +2373,34 @@ onBeforeUnmount(() => {
 .doc-handle__split:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.preview-full {
+  position: fixed;
+  inset: 0;
+  z-index: 2400;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #fff);
+}
+.preview-full__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line-2, #e5e5e5);
+}
+.preview-full__title {
+  font-size: 0.85rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-full__frame {
+  flex: 1;
+  border: 0;
+  width: 100%;
 }
 
 .file-image-view {
