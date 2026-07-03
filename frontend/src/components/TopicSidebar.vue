@@ -649,6 +649,7 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 /* 未读角标 (Feishu-style): a compact red pill with the count. */
 .unread-badge {
   flex: none;
+  pointer-events: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -771,6 +772,15 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
   transition: opacity 0.1s ease;
   color: var(--muted);
 }
+/* 工具条里的每颗按钮要有自己的悬停反馈——否则不像能按的东西。 */
+.row-actions :deep(.v-btn) {
+  border-radius: 5px;
+  cursor: pointer;
+}
+.row-actions :deep(.v-btn:hover) {
+  background: var(--fill, #ececec);
+  color: var(--text, #2b2b2b);
+}
 .topic-row:hover .row-actions,
 .topic-row:focus-within .row-actions {
   opacity: 1;
@@ -788,6 +798,9 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
   color: var(--faint, #b5b5b5);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+  /* 纯展示元素：绝不吃鼠标——hover 时它只是隐形，曾把整个操作工具条挡成
+     "点不动"（playwright 抓的现行：row-time intercepts pointer events）。 */
+  pointer-events: none;
 }
 </style>
 
