@@ -777,13 +777,14 @@ function tokenDecorations(
       const to = from + m[0].length
       const kind = m[1] ? '@' : m[2] ? '#' : '&'
       const id = (m[1] ?? m[2] ?? m[3]) as string
-      // replace(hide the raw token) + widget(show the chip): the doc keeps
-      // `<&path>` verbatim, the reader sees 「📄 name」.
+      // hide the raw token (inline display:none) + widget(show the chip):
+      // the doc keeps `<&path>` verbatim, the reader sees 「📄 name」.
+      // (prosemirror-view has no Decoration.replace — widget/inline/node only.)
       decos.push(
         Decoration.widget(from, () => tokenWidget(kind, id, lookupTopic), {
           side: 1,
         }),
-        Decoration.replace(from, to),
+        Decoration.inline(from, to, { style: 'display: none' }),
       )
     }
   })
