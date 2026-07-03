@@ -114,6 +114,7 @@ class TurnRunner:
         attachments: list[dict] | None = None,
         is_resume: bool = False,
         resume_reason: str | None = None,
+        nudge_event: str | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
@@ -124,7 +125,7 @@ class TurnRunner:
                 chat_service, topic_id, turn_id,
                 author=author, content=content, summon=summon, reply_to=reply_to,
                 attachments=attachments, is_resume=is_resume,
-                resume_reason=resume_reason,
+                resume_reason=resume_reason, nudge_event=nudge_event,
             )
         )
         self._tasks.add(task)
@@ -179,6 +180,7 @@ class TurnRunner:
         attachments: list[dict] | None = None,
         is_resume: bool = False,
         resume_reason: str | None = None,
+        nudge_event: str | None = None,
     ) -> None:
         channel = str(topic_id)
         resume_after: float | None = None
@@ -219,6 +221,7 @@ class TurnRunner:
                     attachments=attachments,
                     is_resume=is_resume,
                     resume_reason=resume_reason,
+                    nudge_event=nudge_event,
                 ):
                     kind = frame.get("type")
                     if kind == "resume_hint":
