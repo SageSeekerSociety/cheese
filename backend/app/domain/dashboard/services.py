@@ -181,7 +181,7 @@ class DashboardService:
         they are, what they're on across projects, and 芝士's understanding of
         them (个人记忆, §8.4). This is the "项目过程即简历" view."""
         from app.domain.memory.models import MemoryScope
-        from app.domain.memory.store import DbMemoryStore
+        from app.domain.memory.store import memory_store
         from app.domain.project.models import Project, ProjectMember
         from app.domain.topic.models import Topic
         from app.domain.user.repositories import UserRepository
@@ -233,7 +233,7 @@ class DashboardService:
                 }
             )
 
-        understanding = await DbMemoryStore(self._s).recall(MemoryScope.user, handle)
+        understanding = await memory_store(self._s).recall(MemoryScope.user, handle)
         return {
             "handle": handle,
             "name": user.name if user else handle,

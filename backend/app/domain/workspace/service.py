@@ -633,6 +633,57 @@ def stop_topic_container(topic_id: uuid.UUID) -> None:
     )
 
 
+GATE_TAIL_CHARS = 4000
+
+
+def run_check_command(
+    cwd: Path,
+    command: str,
+    *,
+    timeout: int = 600,
+    log_path: Path | None = None,
+) -> dict:
+    """机器闸门 (spec §4.4/§9, eval C2): run the project's operator-configured
+    check command in the given worktree. Runs on the HOST — same trust model as
+    the on-dogfood-push hook: the command comes from Project.settings (set by
+    the project's people), never from AI output; and real check commands
+    (uv/pytest/npm) need the host toolchain + network, which exec_in_sandbox's
+    network-less slim image deliberately lacks.
+
+    Full output goes to `log_path` (timestamped header + combined stdout/stderr);
+    the returned `tail` is a bounded summary for the card / nudge message."""
+    from datetime import UTC, datetime
+
+    try:
+        result = subprocess.run(  # noqa: S602 — operator-trusted project config
+            ["sh", "-lc", command],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
+        exit_code = result.returncode
+        output = (result.stdout or "") + (result.stderr or "")
+    except subprocess.TimeoutExpired as exc:
+        exit_code = 124
+        raw = exc.stdout
+        partial = (
+            raw.decode("utf-8", errors="replace")
+            if isinstance(raw, bytes)
+            else (raw or "")
+        )
+        output = f"{partial}\n检查超时（>{timeout}s），已中止。"
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        header = (
+            f"[{datetime.now(UTC).isoformat()}] $ {command}\n"
+            f"(cwd: {cwd}, exit: {exit_code})\n"
+        )
+        log_path.write_text(header + output, encoding="utf-8")
+    return {"exit_code": exit_code, "tail": output[-GATE_TAIL_CHARS:]}
+
+
 def reap_sandbox_containers() -> int:
     """Remove all CheeseX sandbox containers (label cheesex-sandbox=1). Called at
     startup: containers from a previous run hold stale mounts, so we drop them and

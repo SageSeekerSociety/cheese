@@ -10,6 +10,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
+from app.domain.usage.repositories import ComputeGrantRepository
 
 
 class ProjectService:
@@ -18,6 +19,7 @@ class ProjectService:
         self._topics = TopicRepository(session)
         self._tasks = TaskRepository(session)
         self._templates = TaskTemplateRepository(session)
+        self._grants = ComputeGrantRepository(session)
 
     async def create(
         self,
@@ -62,12 +64,27 @@ class ProjectService:
             raise NotFoundError("Task not found")
         if await self._repo.get_link(project_id=project_id, task_id=task_id):
             raise ValidationError("Project already linked to this task")
-        # Inherit the Template's default expert role if the project has none yet
-        # (§4.2: accepting the protocol也继承默认配置).
-        if not project.expert_role:
-            tmpl = await self._templates.get(task.template_id)
-            if tmpl is not None and tmpl.default_role:
+        tmpl = await self._templates.get(task.template_id)
+        if tmpl is not None:
+            # Inherit the Template's default expert role if the project has none
+            # yet (§4.2: accepting the protocol也继承默认配置).
+            if not project.expert_role and tmpl.default_role:
                 project.expert_role = tmpl.default_role
+            # 资源包 made real (spec §9.1 机构提供算力): a compute_credits entry
+            # in the template's resource_pack issues a ComputeGrant. From the
+            # first grant on, the project is metered; unlinked projects stay
+            # unlimited (spec §4 自治).
+            credits = (tmpl.resource_pack or {}).get("compute_credits")
+            if (
+                isinstance(credits, int | float)
+                and not isinstance(credits, bool)
+                and credits > 0
+            ):
+                await self._grants.grant(
+                    project_id=project_id,
+                    source_task_id=task_id,
+                    credits_total=float(credits),
+                )
         return await self._repo.link_task(project_id=project_id, task_id=task_id)
 
     async def unlink_task(

@@ -20,6 +20,7 @@ import TopicSidebar from '../components/TopicSidebar.vue'
 import {
   acceptCard,
   addComment,
+  approveCard,
   archiveTopic,
   attachmentRawUrl,
   createProject,
@@ -453,6 +454,49 @@ const acceptedCard = computed<AcceptCard | null>(
   () => acceptCards.value.find((c) => c.status === 'accepted') ?? null,
 )
 
+// 机器闸门 (eval C2): the newest card while the platform check runs / after it
+// failed. Only the newest card can be in a gate state (one in-flight card per
+// topic is enforced server-side).
+const gateCard = computed<AcceptCard | null>(() => {
+  const c = acceptCards.value[0]
+  return c && (c.status === 'pending_gate' || c.status === 'gate_failed')
+    ? c
+    : null
+})
+const showGateOutput = ref(false)
+
+// While the check runs (it can take minutes), poll the card until it settles.
+let gatePollTimer: number | null = null
+watch(
+  () => gateCard.value?.status === 'pending_gate',
+  (running) => {
+    if (running && gatePollTimer === null) {
+      gatePollTimer = window.setInterval(() => loadAcceptCard(true), 2500)
+    } else if (!running && gatePollTimer !== null) {
+      window.clearInterval(gatePollTimer)
+      gatePollTimer = null
+    }
+  },
+)
+onUnmounted(() => {
+  if (gatePollTimer !== null) window.clearInterval(gatePollTimer)
+})
+
+// 主分支保护 (spec §4.4): my vote toward the pending card's accept.
+async function onApproveCard() {
+  const card = pendingCard.value
+  if (!card) return
+  acceptBusy.value = true
+  try {
+    await approveCard(card.id, AUTHOR)
+    await loadAcceptCard(true)
+  } catch (e) {
+    reportError(e, '批准失败')
+  } finally {
+    acceptBusy.value = false
+  }
+}
+
 // ---- 改验收人 (spec §4.4): project members for the reassign menu ----
 const projectMembers = ref<ProjectMemberRow[]>([])
 
@@ -481,10 +525,15 @@ async function onReassignCard(handle: string) {
   }
 }
 
-async function loadAcceptCard() {
-  acceptCards.value = []
-  showRejectInput.value = false
-  rejectNote.value = ''
+async function loadAcceptCard(silent = false) {
+  // silent = a background refresh (gate polling / after a vote): keep the
+  // current cards on screen instead of blanking the box for a beat.
+  if (!silent) {
+    acceptCards.value = []
+    showRejectInput.value = false
+    rejectNote.value = ''
+    showGateOutput.value = false
+  }
   const tid = selectedTopicId.value
   if (!tid) return
   try {
@@ -946,11 +995,69 @@ onUnmounted(() => {
             v-if="
               selectedTopic &&
               (pendingCard ||
+                gateCard ||
                 (selectedTopic.status === 'archived' && acceptedCard))
             "
             #timeline-end
           >
-            <v-card v-if="pendingCard" variant="outlined" class="merge-box mt-2">
+            <!-- 机器闸门 (eval C2): the platform is running the project's
+                 质量检查 in this topic's workspace — the card reaches the
+                 reviewer only when it's green. -->
+            <v-card
+              v-if="gateCard && gateCard.status === 'pending_gate'"
+              variant="outlined"
+              class="merge-box mt-2"
+            >
+              <div class="merge-box__bar" />
+              <div class="pa-3">
+                <div class="d-flex align-center ga-2 mb-1">
+                  <v-progress-circular indeterminate size="18" width="2" />
+                  <span class="t-title">平台检查进行中…</span>
+                </div>
+                <div class="text-caption text-medium-emphasis">
+                  正在这个话题的工作区里跑项目配置的质量检查，通过后验收卡才会
+                  送到 <strong>@{{ gateCard.reviewer_handle }}</strong> 手上。
+                </div>
+              </div>
+            </v-card>
+
+            <!-- 闸门未过：卡片作废，芝士已被通知去修，修完会重新递卡。 -->
+            <v-card
+              v-else-if="gateCard && gateCard.status === 'gate_failed'"
+              variant="outlined"
+              class="merge-box mt-2"
+            >
+              <div class="merge-box__bar" />
+              <div class="pa-3">
+                <div class="d-flex align-center ga-2 mb-1">
+                  <v-icon color="error" size="19">mdi-close-octagon-outline</v-icon>
+                  <span class="t-title">平台检查未通过</span>
+                </div>
+                <div class="text-caption text-medium-emphasis mb-2">
+                  这张验收卡没有送出。芝士已收到检查结果，会修复后重新递卡。
+                </div>
+                <v-btn
+                  size="small"
+                  variant="text"
+                  :prepend-icon="
+                    showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'
+                  "
+                  @click="showGateOutput = !showGateOutput"
+                >
+                  {{ showGateOutput ? '收起输出' : '查看输出' }}
+                </v-btn>
+                <pre
+                  v-if="showGateOutput"
+                  class="gate-output mt-2"
+                >{{ gateCard.gate_output || '（无输出）' }}</pre>
+              </div>
+            </v-card>
+
+            <v-card
+              v-else-if="pendingCard"
+              variant="outlined"
+              class="merge-box mt-2"
+            >
               <div class="merge-box__bar" />
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
@@ -1025,6 +1132,56 @@ onUnmounted(() => {
                   class="text-caption text-medium-emphasis mb-3"
                 >
                   推荐理由：{{ pendingCard.routing_reason }}
+                </div>
+                <!-- 机器闸门 (eval C2): this card already passed the check. -->
+                <div
+                  v-if="pendingCard.gate_passed_at"
+                  class="d-flex align-center ga-1 text-caption text-medium-emphasis mb-2"
+                >
+                  <v-icon color="success" size="15">mdi-check-decagram</v-icon>
+                  平台检查已通过
+                </div>
+                <!-- 主分支保护 (spec §4.4): N 人批准后采纳才会真正合入。 -->
+                <div
+                  v-if="pendingCard.approvals_required > 1"
+                  class="d-flex align-center flex-wrap ga-2 mb-3"
+                >
+                  <v-chip
+                    size="small"
+                    variant="tonal"
+                    :color="
+                      pendingCard.approvals.length >=
+                      pendingCard.approvals_required
+                        ? 'success'
+                        : undefined
+                    "
+                    prepend-icon="mdi-account-check-outline"
+                  >
+                    {{ pendingCard.approvals.length }}/{{
+                      pendingCard.approvals_required
+                    }}
+                    已批准
+                  </v-chip>
+                  <span
+                    v-if="pendingCard.approvals.length"
+                    class="text-caption text-medium-emphasis"
+                  >
+                    {{ pendingCard.approvals.map((h) => '@' + h).join('、') }}
+                  </span>
+                  <v-btn
+                    v-if="!pendingCard.approvals.includes(AUTHOR)"
+                    size="small"
+                    variant="outlined"
+                    class="btn-secondary"
+                    :disabled="acceptBusy"
+                    prepend-icon="mdi-thumb-up-outline"
+                    @click="onApproveCard"
+                  >
+                    批准
+                  </v-btn>
+                  <span v-else class="text-caption text-medium-emphasis">
+                    你已批准 ✓
+                  </span>
                 </div>
                 <div class="d-flex align-center ga-2">
                   <v-btn
@@ -1300,6 +1457,19 @@ onUnmounted(() => {
   inset: 0 auto 0 0;
   width: 3px;
   background: var(--ok);
+}
+/* 机器闸门: tail of the failed check's output (查看输出). */
+.gate-output {
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.08);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 .col {
   min-width: 0;

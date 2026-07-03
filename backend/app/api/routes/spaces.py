@@ -61,3 +61,25 @@ async def list_space_templates(space_id: uuid.UUID, db: DbSession) -> dict:
         TaskTemplateOut.model_validate(t).model_dump(mode="json") for t in templates
     ]
     return ok(page(items, total))
+
+
+@router.post("/{space_id}/templates/{template_id}/publish")
+async def publish_template(
+    space_id: uuid.UUID, template_id: uuid.UUID, db: DbSession
+) -> dict:
+    """题目发布: list the template on the 匹配市场 (spec §13 阶段 6)."""
+    template = await TaskTemplateService(db).set_published(
+        space_id=space_id, template_id=template_id, published=True
+    )
+    return ok(TaskTemplateOut.model_validate(template).model_dump(mode="json"))
+
+
+@router.post("/{space_id}/templates/{template_id}/unpublish")
+async def unpublish_template(
+    space_id: uuid.UUID, template_id: uuid.UUID, db: DbSession
+) -> dict:
+    """Take the template off the 匹配市场 (existing links are untouched)."""
+    template = await TaskTemplateService(db).set_published(
+        space_id=space_id, template_id=template_id, published=False
+    )
+    return ok(TaskTemplateOut.model_validate(template).model_dump(mode="json"))

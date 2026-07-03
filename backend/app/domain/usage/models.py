@@ -13,6 +13,30 @@ from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
 
 
+class ComputeGrant(UuidPk, Timestamps, Base):
+    """A compute-credit grant issued to a project (spec §9.1 机构提供算力).
+
+    Issued when a project links a Task whose Template's resource_pack carries
+    {"compute_credits": N} — the protocol's 资源包 made real. A project with NO
+    grants is unlimited (spec §4 项目自治: an unlinked personal project is never
+    metered). Turn token usage is folded into credits and deducted oldest grant
+    first; the newest grant may over-run its total so consumption stays truthful.
+    """
+
+    __tablename__ = "compute_grants"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    # The task whose template funded this grant. Kept on task deletion (the
+    # credits were granted; the audit trail should survive the source).
+    source_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
+    )
+    credits_total: Mapped[float] = mapped_column(Float)
+    credits_used: Mapped[float] = mapped_column(Float, default=0.0)
+
+
 class ResourceUsage(UuidPk, Timestamps, Base):
     __tablename__ = "resource_usage"
 

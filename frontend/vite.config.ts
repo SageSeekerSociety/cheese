@@ -13,8 +13,9 @@ export default defineConfig({
     proxy: {
       // Proxy both HTTP REST and WebSocket (`/api/topics/{id}/chat`)
       // to the backend dev server. `ws: true` enables WS upgrade proxying.
+      // BACKEND_URL overrides the target (e.g. a throwaway demo backend).
       '/api': {
-        target: 'http://localhost:8099',
+        target: process.env.BACKEND_URL ?? 'http://localhost:8099',
         changeOrigin: true,
         ws: true,
       },

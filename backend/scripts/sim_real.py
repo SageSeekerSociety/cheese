@@ -31,10 +31,8 @@ from app.core.db import async_session_factory
 # the mapper registry when we flush (milestones→topics, topics→blocks, etc.).
 from app.domain.block.models import Block  # noqa: F401
 from app.domain.memory.models import MemoryEntry, MemoryScope
-from app.domain.notification.models import Notification  # noqa: F401
-from app.domain.review.models import AcceptCard  # noqa: F401
-from app.domain.topic.models import Topic  # noqa: F401
 from app.domain.milestone.models import Milestone, MilestoneStatus
+from app.domain.notification.models import Notification  # noqa: F401
 from app.domain.project.models import (
     AiMode,
     Project,
@@ -42,8 +40,10 @@ from app.domain.project.models import (
     ProjectRole,
     ProjectTaskLink,
 )
+from app.domain.review.models import AcceptCard  # noqa: F401
 from app.domain.space.models import Space, SpaceKind
 from app.domain.task.models import Task, TaskTemplate
+from app.domain.topic.models import Topic  # noqa: F401
 from app.domain.user.models import User
 
 API = "http://127.0.0.1:8099"

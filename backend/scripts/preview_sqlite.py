@@ -13,9 +13,9 @@ Run: cd backend && DATABASE_URL=sqlite+aiosqlite:////work/backend/preview.db \
 
 import asyncio
 
-import scripts.seed_demo as seed_demo
 from sqlalchemy import select
 
+import scripts.seed_demo as seed_demo
 from app.core.db import Base, async_session_factory, engine
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.topic.models import Topic

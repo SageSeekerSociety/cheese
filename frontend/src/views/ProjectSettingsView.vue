@@ -1,21 +1,26 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
+  createRole,
   getComputeProfiles,
   getExecutionProfiles,
   getProject,
   getSandboxImage,
   getUpstream,
+  listRoles,
   setComputeProfile,
   setExecutionProfile,
+  setProjectExpertRole,
   setSandboxImage,
   setUpstream,
   syncUpstream,
 } from '../api'
+import { myHandle } from '../me'
 import type {
   ComputeProfiles,
   ExecProfiles,
+  ExpertRole,
   SandboxImageInfo,
   UpstreamSyncResult,
 } from '../types'
@@ -44,6 +49,69 @@ const savingUpstream = ref(false)
 const syncing = ref(false)
 const syncResult = ref<UpstreamSyncResult | null>(null)
 
+// 专家角色 (spec §8.2): which persona 芝士 loads for this project. The catalog
+// merges built-in library roles with custom ones; '' = generic 芝士.
+const roles = ref<ExpertRole[]>([])
+const roleCurrent = ref('')
+const savingRole = ref(false)
+// 新建角色 dialog: the Claude Code agents-file fields (frontmatter + body).
+const roleDialog = ref(false)
+const newRoleName = ref('')
+const newRoleTitle = ref('')
+const newRoleDescription = ref('')
+const newRoleBody = ref('')
+const creatingRole = ref(false)
+const roleFormError = ref<string | null>(null)
+
+const roleItems = computed(() => [
+  { name: '', title: '不设置（通用芝士）', description: '' },
+  ...roles.value.map((r) => ({
+    name: r.name,
+    title: r.builtin ? r.title : `${r.title || r.name}（自定义）`,
+    description: r.description,
+  })),
+])
+
+async function pickRole(name: string | null) {
+  const next = name ?? ''
+  savingRole.value = true
+  try {
+    const r = await setProjectExpertRole(props.projectId, next)
+    roleCurrent.value = r.current ?? ''
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '切换专家角色失败'
+  } finally {
+    savingRole.value = false
+  }
+}
+
+async function submitNewRole() {
+  roleFormError.value = null
+  creatingRole.value = true
+  try {
+    const created = await createRole({
+      name: newRoleName.value.trim(),
+      title: newRoleTitle.value.trim(),
+      description: newRoleDescription.value.trim(),
+      body: newRoleBody.value.trim(),
+      created_by: myHandle(),
+    })
+    // A custom role shadows its built-in namesake — keep one entry per name.
+    roles.value = [...roles.value.filter((r) => r.name !== created.name), created]
+    roleDialog.value = false
+    newRoleName.value = ''
+    newRoleTitle.value = ''
+    newRoleDescription.value = ''
+    newRoleBody.value = ''
+    // Creating a role from here means "use it": select it right away.
+    await pickRole(created.name)
+  } catch (e) {
+    roleFormError.value = e instanceof Error ? e.message : '创建角色失败'
+  } finally {
+    creatingRole.value = false
+  }
+}
+
 const TIER_LABEL: Record<string, string> = {
   default: '默认',
   included: '包含',
@@ -56,12 +124,13 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, compP, envP, upP] = await Promise.all([
+    const [proj, execP, compP, envP, upP, rolesP] = await Promise.all([
       getProject(props.projectId),
       getExecutionProfiles(props.projectId),
       getComputeProfiles(props.projectId),
       getSandboxImage(props.projectId),
       getUpstream(props.projectId),
+      listRoles(),
     ])
     projectName.value = proj.name
     ai.value = execP
@@ -69,6 +138,8 @@ async function load() {
     env.value = envP
     upstreamSaved.value = upP.url
     upstreamUrl.value = upP.url ?? ''
+    roles.value = rolesP.data
+    roleCurrent.value = proj.expert_role ?? ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载设置失败'
   } finally {
@@ -198,6 +269,50 @@ watch(() => props.projectId, load)
       </v-alert>
 
       <template v-else>
+        <!-- 专家角色 (spec §8.2): which persona 芝士 loads for this project -->
+        <section class="ln-section">
+          <div class="ln-section-head">
+            <v-icon size="18" class="me-1 c-muted">mdi-account-school-outline</v-icon>
+            <span class="ln-section-title">专家角色</span>
+          </div>
+          <div class="ln-body">
+            <div class="d-flex align-center" style="gap: 8px">
+              <v-select
+                :model-value="roleCurrent"
+                :items="roleItems"
+                item-title="title"
+                item-value="name"
+                density="compact"
+                variant="outlined"
+                hide-details
+                :loading="savingRole"
+                :disabled="savingRole"
+                style="flex: 1"
+                @update:model-value="pickRole"
+              >
+                <template #item="{ props: itemProps, item }">
+                  <v-list-item
+                    v-bind="itemProps"
+                    :subtitle="item.description || undefined"
+                  />
+                </template>
+              </v-select>
+              <v-btn
+                size="small"
+                variant="tonal"
+                prepend-icon="mdi-plus"
+                @click="roleDialog = true"
+              >
+                新建角色
+              </v-btn>
+            </div>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              芝士以这个专家身份进驻项目（影响它的口吻和关注点）。平台内置了几个；
+              也可以给机构或自己定义新角色。
+            </p>
+          </div>
+        </section>
+
         <!-- AI 模型池 -->
         <section class="ln-section">
           <div class="ln-section-head">
@@ -400,6 +515,72 @@ watch(() => props.projectId, load)
         </section>
       </template>
     </v-container>
+
+    <!-- 新建角色: the Claude Code agents-file fields — name/title/description
+         (frontmatter) + persona body. -->
+    <v-dialog v-model="roleDialog" max-width="620">
+      <v-card>
+        <v-card-title class="pt-4">新建专家角色</v-card-title>
+        <v-card-text class="pb-0">
+          <v-text-field
+            v-model="newRoleName"
+            label="名称（英文标识）"
+            placeholder="data-science"
+            hint="小写字母、数字和 .-_，作为角色的唯一 ID"
+            persistent-hint
+            density="compact"
+            variant="outlined"
+            class="mb-3"
+          />
+          <v-text-field
+            v-model="newRoleTitle"
+            label="标题"
+            placeholder="数据科学"
+            density="compact"
+            variant="outlined"
+            class="mb-3"
+          />
+          <v-text-field
+            v-model="newRoleDescription"
+            label="描述（一句话，显示在下拉里）"
+            placeholder="统计分析、机器学习与数据可视化"
+            density="compact"
+            variant="outlined"
+            class="mb-3"
+          />
+          <v-textarea
+            v-model="newRoleBody"
+            label="Persona 正文（注入芝士的 system prompt）"
+            placeholder="你是一位数据科学导师，擅长……"
+            rows="6"
+            density="compact"
+            variant="outlined"
+            auto-grow
+          />
+          <v-alert
+            v-if="roleFormError"
+            type="error"
+            density="compact"
+            class="mb-2"
+          >
+            {{ roleFormError }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="roleDialog = false">取消</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="creatingRole"
+            :disabled="!newRoleName.trim() || !newRoleBody.trim()"
+            @click="submitNewRole"
+          >
+            创建并使用
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 

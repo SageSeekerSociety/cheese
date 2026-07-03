@@ -20,11 +20,12 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.text import markdown_preview
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.roles import role_description
+from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
@@ -37,7 +38,7 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.memory.models import MemoryScope
-from app.domain.memory.store import DbMemoryStore
+from app.domain.memory.store import memory_store
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotifKind, NotifLevel
@@ -45,7 +46,8 @@ from app.domain.notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
-from app.domain.usage.repositories import UsageRepository
+from app.domain.usage.credits import tokens_to_credits
+from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
 ACTIVITY_SKILLS = ["conversation-style", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "conversation-style"]
@@ -445,6 +447,9 @@ class ChatService:
         # Per-topic serial queue (spec §9.1): one agent turn per topic at a
         # time, so concurrent messages to the same topic don't race.
         self._topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
+        # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
+        # only keeps weak refs; without this a pending commit could be GC'd).
+        self._memory_tasks: set[asyncio.Task] = set()
 
     @property
     def session_factory(self) -> async_sessionmaker:
@@ -571,6 +576,34 @@ class ChatService:
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
         return payload
+
+    async def turn_policy(self, topic_id: uuid.UUID) -> dict | None:
+        """Admission facts the TurnRunner gates on BEFORE running a turn
+        (spec §9.1 算力额度): the owning project, its concurrency ceiling, and
+        whether its compute credits are exhausted. None when the topic doesn't
+        exist (the turn itself will surface the 404)."""
+        async with self._sessions() as session:
+            topic = await TopicRepository(session).get(topic_id)
+            if topic is None:
+                return None
+            project = await ProjectRepository(session).get(topic.project_id)
+            balance = await ComputeGrantRepository(session).summary(
+                topic.project_id
+            )
+        max_concurrent = settings.max_concurrent_turns
+        override = ((project.settings if project else None) or {}).get(
+            "max_concurrent_turns"
+        )
+        if isinstance(override, int) and override > 0:
+            max_concurrent = override
+        return {
+            "project_id": str(topic.project_id),
+            "max_concurrent_turns": max_concurrent,
+            # A project with no grants is unlimited (spec §4 自治项目不设限).
+            "credits_exhausted": (
+                not balance["unlimited"] and balance["credits_remaining"] <= 0
+            ),
+        }
 
     async def _save_session_pointer(
         self, topic_id: uuid.UUID, session_id: str
@@ -834,7 +867,7 @@ class ChatService:
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
-            memory = DbMemoryStore(session)
+            memory = memory_store(session)
 
             topic = await topics.get(topic_id)
             if topic is None:
@@ -881,7 +914,9 @@ class ChatService:
                 doc_text = doc_root.content if doc_root else None
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
-            role = role_description(project.expert_role if project else None)
+            role = await resolve_role_description(
+                session, project.expert_role if project else None
+            )
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             roster = (
                 []
@@ -1075,6 +1110,12 @@ class ChatService:
                         output_tokens=usage.output_tokens,
                         cost_usd=usage.cost_usd,
                     )
+                    # Even a failed turn burned tokens: fold them into credits
+                    # and deduct from the project's grants (spec §9.1).
+                    await ComputeGrantRepository(session).consume(
+                        project_id,
+                        tokens_to_credits(usage.input_tokens + usage.output_tokens),
+                    )
                 fail_block = await blocks.add(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -1126,6 +1167,13 @@ class ChatService:
                     output_tokens=usage.output_tokens,
                     cost_usd=usage.cost_usd,
                 )
+                # 用量扣减 (spec §9.1): fold this turn's tokens into credits and
+                # deduct from the project's grants, oldest first. A project with
+                # no grants (自治项目) deducts nothing — unlimited.
+                await ComputeGrantRepository(session).consume(
+                    project_id,
+                    tokens_to_credits(usage.input_tokens + usage.output_tokens),
+                )
 
             topic = await topics.get(topic_id)
 
@@ -1171,11 +1219,74 @@ class ChatService:
         # step (R2/R9); it's best-effort and never fails the turn.
         provider.checkpoint(project_id, topic_id)
 
+        # 知识沉淀是副产品 (spec §8.4): hand the finished exchange to OpenViking
+        # for background memory extraction. The extractor's LLM decides what is
+        # memory-worthy (规则4) — fire-and-forget, never delays/fails the turn.
+        if not result_error:
+            self._schedule_memory_extraction(
+                topic_id=topic_id,
+                project_id=project_id,
+                is_private=is_private,
+                private_owner=private_owner,
+                user_text=prompt_text,
+                assistant_text=final_text,
+            )
+
         if assistant_payload is not None:
             yield {"type": "assistant_block", "block": assistant_payload}
         for payload in action_payloads:
             yield {"type": "event_block", "block": payload}
         yield {"type": "done"}
+
+    def _schedule_memory_extraction(
+        self,
+        *,
+        topic_id: uuid.UUID,
+        project_id: uuid.UUID,
+        is_private: bool,
+        private_owner: str | None,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        """Fire the post-turn OpenViking session commit in the background.
+
+        Only active on the openviking backend — the flat DB backend has no
+        extraction pipeline (there, memory grows via explicit `cheese remember`).
+        """
+        if settings.memory_backend != "openviking":
+            return
+        if not settings.openviking_auto_extract:
+            return
+        if not (user_text.strip() or assistant_text.strip()):
+            return
+        if is_private and private_owner:
+            scope, scope_id = MemoryScope.user, private_owner
+        else:
+            scope, scope_id = MemoryScope.project, str(project_id)
+
+        async def _run() -> None:
+            from app.domain.memory.openviking_store import OpenVikingMemoryStore
+
+            await OpenVikingMemoryStore().ingest_turn(
+                scope,
+                scope_id,
+                conversation_key=str(topic_id),
+                exchanges=[("user", user_text), ("assistant", assistant_text)],
+            )
+
+        task = asyncio.create_task(_run())
+        self._memory_tasks.add(task)
+
+        def _log_done(t: asyncio.Task) -> None:
+            self._memory_tasks.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                logger.warning(
+                    "memory extraction commit failed for topic %s: %s",
+                    topic_id,
+                    t.exception(),
+                )
+
+        task.add_done_callback(_log_done)
 
     async def ingest_activity(
         self,
@@ -1194,7 +1305,7 @@ class ChatService:
             projects = ProjectRepository(session)
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
-            memory = DbMemoryStore(session)
+            memory = memory_store(session)
 
             project = await projects.get(project_id)
             if project is None:
@@ -1374,7 +1485,7 @@ class ChatService:
             projects = ProjectRepository(session)
             topics = TopicRepository(session)
             milestones = MilestoneRepository(session)
-            memory = DbMemoryStore(session)
+            memory = memory_store(session)
 
             project = await projects.get(project_id)
             if project is None:
@@ -1382,6 +1493,7 @@ class ChatService:
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
             memories = await memory.recall(MemoryScope.project, str(project_id))
+            role = await resolve_role_description(session, project.expert_role)
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}]"
@@ -1403,7 +1515,7 @@ class ChatService:
             load_skills(["conversation-style"]),
             None,
             [],
-            role_description(project.expert_role),
+            role,
         )
         prompt = (
             "请基于下面的项目状态，写一份『一页纸总结』：3-5 句话，让老师 30 秒读懂"

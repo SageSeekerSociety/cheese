@@ -96,10 +96,58 @@ class Settings(BaseSettings):
             env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = self.agent_opus_model
         return env
 
+    # --- Compute credits (spec §9.1 机构提供算力 → real quotas) ---
+    # Conversion rate: how many tokens one compute credit buys. A turn's token
+    # usage is folded into credits and deducted from the project's grants
+    # (oldest grant first). Default: 1 credit = 10k tokens.
+    compute_credit_tokens: int = 10_000
+    # Project-level concurrency ceiling: at most this many agent turns run at
+    # once per project; turns beyond it queue (visible as a system event).
+    # Overridable per project via project.settings["max_concurrent_turns"].
+    max_concurrent_turns: int = 2
+
     # --- Scheduler (spec §9.1: 确定性调度——定时巡检/生命周期) ---
     # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
     # (manual heartbeat only; default off so dev/tests don't burn model calls).
     scheduler_interval_seconds: int = 0
+
+    # --- Memory backend (spec §8.4 / §15 Q9) ---
+    # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).
+    # "openviking": real layered memory on embedded OpenViking (viking:// FS,
+    # L0/L1/L2 levels, semantic search, LLM extraction). Fully local storage;
+    # needs an OpenAI-compatible chat + embedding endpoint for extraction/vectors.
+    memory_backend: str = "db"
+    # Local storage root for the embedded OpenViking instance (AGFS + vectors).
+    openviking_data_dir: str = "./.viking"
+    # OpenAI-compatible endpoints OpenViking uses internally. These are separate
+    # from anthropic_base_url (the agent gateway speaks the Anthropic protocol;
+    # OpenViking needs the OpenAI protocol). For Zhipu the same API key works on
+    # both gateways. api keys default to anthropic_auth_token when unset.
+    openviking_llm_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
+    openviking_llm_model: str = "glm-4.5-air"
+    openviking_llm_api_key: str | None = None
+    openviking_embedding_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
+    openviking_embedding_model: str = "embedding-3"
+    openviking_embedding_api_key: str | None = None
+    openviking_embedding_dimension: int = 2048
+    # 知识沉淀是副产品 (spec §8.4): commit each finished turn to OpenViking so
+    # memories are extracted in the background. Only effective on "openviking".
+    openviking_auto_extract: bool = True
+    # Memory types OpenViking's extractor may write (built-in taxonomy names).
+    # Curated to the omem-style durable kinds — omem:user→profile/preferences,
+    # omem:feedback→preferences, omem:project→events, omem:reference→entities.
+    # identity/soul are the extractor's anchor files and MUST stay allowed
+    # (verified: without them the extraction loop writes nothing at all).
+    # trajectories/experiences are agent-SOP records that bloat recall: off.
+    openviking_memory_types: list[str] = [
+        "profile",
+        "preferences",
+        "entities",
+        "events",
+        "tools",
+        "identity",
+        "soul",
+    ]
 
     # --- App ---
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]

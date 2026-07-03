@@ -14,6 +14,7 @@
   cheese split "数据清洗"           # 拆出子话题
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
+  cheese recall "技术选型"          # 按需检索记忆(语义搜索)
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
@@ -100,6 +101,9 @@ def main() -> None:
     prem = sub.add_parser("remember", help="记入项目记忆")
     prem.add_argument("fact")
 
+    prec = sub.add_parser("recall", help="按需检索记忆（语义搜索,返回摘要级结果）")
+    prec.add_argument("query")
+
     pn = sub.add_parser("notify", help="发通知")
     pn.add_argument("--title", required=True)
     pn.add_argument("--body", default="")
@@ -168,6 +172,17 @@ def main() -> None:
         else:
             _call("POST", f"/projects/{proj}/memory", body)
             print("已记入项目记忆。")
+    elif a.cmd == "recall":
+        proj = _need("CHEESE_PROJECT", PROJECT)
+        body = {"query": a.query}
+        if MEMORY_SCOPE == "personal" and OWNER:
+            body["scope"] = "user"
+            body["owner"] = OWNER
+        hits = _call("POST", f"/projects/{proj}/memory/search", body).get("data", {}).get("hits", [])
+        if not hits:
+            print("没有找到相关记忆。")
+        for h in hits:
+            print(f"- {h.get('abstract', '')}")
     elif a.cmd == "notify":
         proj = _need("CHEESE_PROJECT", PROJECT)
         payload = {}

@@ -59,9 +59,13 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 | `cheese title "<标题>"` | 给本话题起/改标题(话题没名字「新话题」时,据任务起个 ≤12 字标题) |
 | `cheese decision "<内容>"` | 记一条关键决策到决策记录 |
 | `cheese remember "<事实>"` | 记入项目记忆(任何话题以后可引用) |
+| `cheese recall "<关键词/问题>"` | 按需检索记忆(语义搜索)。开场只注入了记忆**摘要**——需要某条记忆的细节、或怀疑有相关旧记忆没出现在摘要里时,先 recall 再回答 |
 | `cheese split "<标题>" --brief "<任务简报>"` | 把一件值得独立追踪的事拆成子话题。**--brief 必写**:分身开工全靠它(要干什么/关键约束/验收标准);简报预置成子话题活文档,分身自动开工 |
 | `cheese notify --title "<标题>" [--body "..."] [--level silent\|light\|strong] [--kind change_alert\|decision_request] [--to <handle>] [--options "A\|B"]` | 发通知;决策请求带 `--options` 让人一键拍板 |
 | `cheese accept-request <handle> "<理由>"` | 成果做完,把验收卡递给某个具体的人 |
+
+
+> 配了质量闸门（check_command）的项目：递卡后平台会自动跑检查，红了卡片会打回并叫你去修——**递卡前先自己把检查跑绿**，省一个来回。
 | `cheese conclude "<结论>"` | 子话题做完,把结论回流父话题 |
 | `cheese milestone "<标题>" [--due 2026-06-20]` | 把关键节点钉成里程碑 |
 | `cheese members` | 列出项目成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |

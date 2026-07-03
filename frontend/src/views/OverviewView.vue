@@ -10,12 +10,14 @@ import {
   getInbox,
   getOverview,
   getProject,
+  getProjectCredits,
   markRead,
   sendFeedback,
 } from '../api'
 import type {
   Contributions,
   InboxItem,
+  ProjectCredits,
   ProjectOverview,
   TopicRef,
 } from '../types'
@@ -81,6 +83,25 @@ const restMilestones = computed(() => {
   })
 })
 
+// ---- 算力额度 (spec §9.1): grant balance; unlimited when no linked task ----
+const credits = ref<ProjectCredits | null>(null)
+const creditsUsedPct = computed<number>(() => {
+  const c = credits.value
+  if (!c || c.unlimited || c.credits_total <= 0) return 0
+  return Math.min(100, (c.credits_used / c.credits_total) * 100)
+})
+const creditsExhausted = computed<boolean>(() => {
+  const c = credits.value
+  return !!c && !c.unlimited && c.credits_remaining <= 0
+})
+
+function fmtCredits(n: number): string {
+  // Credits are fractional (1 credit = 1万 tokens); show a sensible precision.
+  if (Math.abs(n) >= 100) return n.toFixed(0)
+  if (Math.abs(n) >= 1) return n.toFixed(2)
+  return n.toFixed(4)
+}
+
 // ---- 贡献图 (§10.1): human vs AI split ----
 const contributions = ref<Contributions | null>(null)
 const humanCount = computed<number>(
@@ -115,14 +136,16 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [ov, ib, contrib] = await Promise.all([
+    const [ov, ib, contrib, cred] = await Promise.all([
       getOverview(props.projectId),
       getInbox(props.projectId, ME),
       getContributions(props.projectId).catch(() => null),
+      getProjectCredits(props.projectId).catch(() => null),
     ])
     overview.value = ov
     inbox.value = ib.data
     contributions.value = contrib
+    credits.value = cred
     // The overview extends the project card; if it didn't carry summary, fetch
     // the project to get it.
     if (typeof ov.summary === 'string') {
@@ -332,6 +355,53 @@ onMounted(load)
                   </div>
                   <div class="text-caption text-medium-emphasis mt-2">
                     人指挥、AI 执行，各自统计
+                  </div>
+                </template>
+              </div>
+            </section>
+          </v-col>
+
+          <!-- 算力额度 (spec §9.1): 机构发放的额度余量; 无挂靠 = 不限额 -->
+          <v-col cols="12" md="6">
+            <section class="ln-section h-100">
+              <div class="ln-section-head">
+                <span class="ln-section-title">算力额度</span>
+                <v-spacer />
+                <span v-if="credits && !credits.unlimited" class="ln-num text-medium-emphasis">
+                  1 额度 = 1 万 tokens
+                </span>
+              </div>
+              <div class="ln-body">
+                <div v-if="!credits" class="text-medium-emphasis text-body-2 py-2">
+                  额度信息暂不可用
+                </div>
+                <div v-else-if="credits.unlimited" class="text-medium-emphasis text-body-2 py-2">
+                  不限额 · 自治项目（未挂靠机构任务，链接题目后按资源包计量）
+                </div>
+                <template v-else>
+                  <div class="credit-remaining" :class="{ 'credit-remaining--empty': creditsExhausted }">
+                    {{ fmtCredits(credits.credits_remaining) }}
+                    <span class="credit-remaining__unit">额度剩余</span>
+                  </div>
+                  <div class="credit-bar mb-2">
+                    <div
+                      class="credit-bar__used"
+                      :class="{ 'credit-bar__used--empty': creditsExhausted }"
+                      :style="{ width: creditsUsedPct + '%' }"
+                    />
+                  </div>
+                  <div class="ln-row">
+                    <span class="ln-row-title">已用 / 共发放</span>
+                    <v-spacer />
+                    <span class="ln-num">
+                      {{ fmtCredits(credits.credits_used) }} / {{ fmtCredits(credits.credits_total) }}
+                    </span>
+                  </div>
+                  <div v-if="creditsExhausted" class="credit-exhausted mt-1">
+                    额度已用完——芝士的新一轮会被拒绝，请联系机构续充
+                  </div>
+                  <div v-else class="text-caption text-medium-emphasis mt-2">
+                    来自 {{ credits.grants.length }} 笔机构发放，按发放顺序扣减
                   </div>
                 </template>
               </div>
@@ -569,6 +639,44 @@ onMounted(load)
 .inbox-read {
   opacity: 0.55;
 }
+/* 算力额度: remaining number + used bar. Amber only when actually exhausted. */
+.credit-remaining {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 6px 0 10px;
+}
+.credit-remaining--empty {
+  color: var(--warn);
+}
+.credit-remaining__unit {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--faint);
+  margin-left: 6px;
+}
+.credit-bar {
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--fill);
+}
+.credit-bar__used {
+  height: 100%;
+  background: var(--ink);
+  transition: width 0.3s ease;
+}
+.credit-bar__used--empty {
+  background: var(--warn);
+}
+.credit-exhausted {
+  font-size: 12.5px;
+  color: var(--warn);
+}
+
 /* 贡献图: human vs AI split bar — neutral (ink vs faint), not amber. */
 .contrib-bar {
   display: flex;

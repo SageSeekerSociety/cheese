@@ -8,23 +8,28 @@ import type {
   ComputeProfiles,
   Contributions,
   ExecProfiles,
+  ExpertRole,
   FileContent,
   GitCommit,
   InboxItem,
   ListPayload,
+  MarketNodes,
   MarketPools,
+  MarketTask,
   Me,
   MemberSummary,
   MilestoneFull,
   Notification,
   PreviewInfo,
   Project,
+  ProjectCredits,
   ProjectMemberRow,
   ProjectOverview,
   ReactionAgg,
   SandboxImageInfo,
   Space,
   SpaceDashboard,
+  TaskApplication,
   Topic,
   UpstreamInfo,
   UpstreamSyncResult,
@@ -208,6 +213,59 @@ export function getMarketPools(): Promise<MarketPools> {
   return request<MarketPools>('/market/pools')
 }
 
+// 节点看板: configured compute nodes with liveness + current load.
+export function getMarketNodes(): Promise<MarketNodes> {
+  return request<MarketNodes>('/market/nodes')
+}
+
+// 算力额度: the project's grant balance (unlimited when no grants).
+export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
+  return request<ProjectCredits>(
+    `/projects/${encodeURIComponent(projectId)}/credits`,
+  )
+}
+
+// ---- 题目匹配市场 (spec §13 阶段 6) ----
+
+// Published 题目 (Task Templates), optionally keyword-filtered.
+export function getMarketTasks(q?: string): Promise<ListPayload<MarketTask>> {
+  const query = q ? `?q=${encodeURIComponent(q)}` : ''
+  return request<ListPayload<MarketTask>>(`/market/tasks${query}`)
+}
+
+// 应征: apply with one of your projects. Idempotent per (题目, project).
+export function applyMarketTask(
+  templateId: string,
+  projectId: string,
+  pitch: string,
+): Promise<TaskApplication> {
+  return request<TaskApplication>(
+    `/market/tasks/${encodeURIComponent(templateId)}/apply`,
+    { method: 'POST', body: JSON.stringify({ project_id: projectId, pitch }) },
+  )
+}
+
+// Space side: who applied to this 题目.
+export function listTaskApplications(
+  templateId: string,
+): Promise<ListPayload<TaskApplication>> {
+  return request<ListPayload<TaskApplication>>(
+    `/market/tasks/${encodeURIComponent(templateId)}/applications`,
+  )
+}
+
+// Accept/decline an 应征. Accept creates the Task + link and notifies the team.
+export function decideTaskApplication(
+  applicationId: string,
+  decision: 'accept' | 'decline',
+  decidedBy: string,
+): Promise<TaskApplication> {
+  return request<TaskApplication>(
+    `/market/applications/${encodeURIComponent(applicationId)}/${decision}`,
+    { method: 'POST', body: JSON.stringify({ decided_by: decidedBy }) },
+  )
+}
+
 // AI 模型池: the project's current profile + the ones it may select.
 export function getExecutionProfiles(projectId: string): Promise<ExecProfiles> {
   return request<ExecProfiles>(
@@ -237,6 +295,34 @@ export function setComputeProfile(
   return request(`/projects/${encodeURIComponent(projectId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({ profile }),
+  })
+}
+
+// 专家角色 (spec §8.2): merged catalog — built-in file-library roles + custom
+// (DB) roles; a custom role shadows a built-in with the same name.
+export function listRoles(): Promise<ListPayload<ExpertRole>> {
+  return request<ListPayload<ExpertRole>>('/roles')
+}
+export function createRole(payload: {
+  name: string
+  title: string
+  description: string
+  body: string
+  created_by?: string
+}): Promise<ExpertRole> {
+  return request<ExpertRole>('/roles', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+// Which persona 芝士 loads for this project; empty role clears it.
+export function setProjectExpertRole(
+  projectId: string,
+  role: string,
+): Promise<{ current: string | null }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/expert-role`, {
+    method: 'PUT',
+    body: JSON.stringify({ role }),
   })
 }
 
@@ -604,6 +690,21 @@ export function reassignCard(
         reviewer_handle: reviewerHandle,
         routing_reason: '',
       }),
+    },
+  )
+}
+
+// 主分支保护 (spec §4.4): record one approval toward the card's accept. The
+// backend enforces "AI 不能投票" and per-person uniqueness.
+export function approveCard(
+  cardId: string,
+  approverHandle: string,
+): Promise<AcceptCard> {
+  return request<AcceptCard>(
+    `/accept-cards/${encodeURIComponent(cardId)}/approve`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ approver_handle: approverHandle }),
     },
   )
 }

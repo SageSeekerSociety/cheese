@@ -24,6 +24,51 @@ class TaskTemplateOut(BaseModel):
     resource_pack: dict
     conditions: list[dict]
     default_role: str | None
+    published: bool
+    created_at: datetime
+
+
+# ---- 匹配市场 (spec §13 阶段 6) ----
+
+
+class MarketTaskOut(BaseModel):
+    """A published template as it appears in the market catalog."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    space_id: uuid.UUID
+    space_name: str
+    name: str
+    description: str
+    resource_pack: dict
+    conditions: list[dict]
+    default_role: str | None
+    created_at: datetime
+
+
+class ApplicationCreate(BaseModel):
+    project_id: uuid.UUID
+    pitch: str = Field(default="", max_length=4000)
+
+
+class ApplicationDecide(BaseModel):
+    # Who acts for the Space (no fine-grained Space permissions yet, MVP).
+    decided_by: str | None = Field(default=None, max_length=64)
+
+
+class TaskApplicationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    template_id: uuid.UUID
+    project_id: uuid.UUID
+    project_name: str = ""
+    pitch: str
+    status: str
+    decided_by: str | None
+    decided_at: datetime | None
+    task_id: uuid.UUID | None
     created_at: datetime
 
 

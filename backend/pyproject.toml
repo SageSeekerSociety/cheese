@@ -8,6 +8,7 @@ dependencies = [
     "claude-agent-sdk>=0.2.101",
     "fastapi>=0.137.0",
     "httpx>=0.28.1",
+    "openviking>=0.4.7",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "python-dotenv>=1.2.2",

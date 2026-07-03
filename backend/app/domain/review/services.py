@@ -11,13 +11,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.membership.repositories import MemberRepository
-from app.domain.project.models import AiMode, ProjectRole
+from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.schemas import AcceptCardOut
 from app.domain.task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
+
+
+def approvals_required_of(project: Project | None) -> int:
+    """主分支保护 (spec §4.4): distinct approvals an accept needs. Default 1 —
+    the accepter's own accept counts, so unconfigured projects are unchanged."""
+    if project is None:
+        return 1
+    try:
+        return max(1, int((project.settings or {}).get("approvals_required") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def check_command_of(project: Project | None) -> str | None:
+    """机器闸门 (eval C2): the project's configured check command, or None."""
+    if project is None:
+        return None
+    cmd = str((project.settings or {}).get("check_command") or "").strip()
+    return cmd or None
 
 
 class AcceptService:
@@ -51,19 +71,70 @@ class AcceptService:
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能再递验收卡")
         # One reviewer at a time, not a broadcast (spec §4.4): if a card is
-        # already pending, re-route it (改验收人) instead of stacking a new one.
+        # already pending (or still behind the gate), re-route / wait instead
+        # of stacking a new one.
         existing = await self._repo.list_for_topic(topic_id)
-        if any(c.status == AcceptStatus.pending for c in existing):
+        if any(
+            c.status in (AcceptStatus.pending, AcceptStatus.pending_gate)
+            for c in existing
+        ):
             raise ValidationError("已有待处理的验收卡，请改验收人而不是再递一张")
+        # 机器闸门 (spec §4.4/§9, eval C2): with a check_command configured the
+        # card is born pending_gate; the platform runs the check in the topic's
+        # workspace and only a green result promotes it to pending. The check
+        # runs in the background (it can take minutes) — see review/gate.py.
+        project = await self._projects.get(topic.project_id)
+        status = (
+            AcceptStatus.pending_gate
+            if check_command_of(project)
+            else AcceptStatus.pending
+        )
         return await self._repo.add(
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
+            status=status,
         )
+
+    async def gate_plan(self, topic_id: uuid.UUID) -> tuple[uuid.UUID, str | None]:
+        """(project_id, check_command) for a topic — what the gate should run."""
+        topic = await self._topic_or_404(topic_id)
+        project = await self._projects.get(topic.project_id)
+        return topic.project_id, check_command_of(project)
+
+    async def finish_gate(
+        self, *, card_id: uuid.UUID, passed: bool, output_tail: str
+    ) -> AcceptCard:
+        """Settle a pending_gate card: green → pending (卡片这才递到验收人手上),
+        red → gate_failed (卡片作废，芝士被 nudge 去修)."""
+        card = await self._card_or_404(card_id)
+        if card.status != AcceptStatus.pending_gate:
+            raise ValidationError("只有等待检查的验收卡能记录检查结果")
+        card.gate_output = output_tail
+        if passed:
+            card.status = AcceptStatus.pending
+            card.gate_passed_at = datetime.now(UTC)
+        else:
+            card.status = AcceptStatus.gate_failed
+        await self._session.flush()
+        await self._session.refresh(card)
+        return card
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> tuple[list[AcceptCard], int]:
         cards = await self._repo.list_for_topic(topic_id)
         return cards, len(cards)
+
+    async def describe(self, card: AcceptCard) -> dict:
+        """AcceptCardOut payload enriched with the vote state (approvals live in
+        their own table; the requirement is a project setting)."""
+        data = AcceptCardOut.model_validate(card).model_dump(mode="json")
+        data["approvals"] = await self._repo.list_approver_handles(card.id)
+        topic = await self._topics.get(card.topic_id)
+        project = (
+            await self._projects.get(topic.project_id) if topic is not None else None
+        )
+        data["approvals_required"] = approvals_required_of(project)
+        return data
 
     async def _enforce_protocol(self, topic: Topic, decided_by: str) -> None:
         """Task Template conditions (spec §4.2/§4.4): if a linked template
@@ -114,8 +185,41 @@ class AcceptService:
         await self._session.refresh(card)
         return card
 
+    def _forbid_ai(self, project: Project | None, handle: str, action: str) -> None:
+        """Hard rule (spec §4.4): in collaborative mode AI cannot accept (or
+        vote for) its own work — a human must. Autonomous mode allows it."""
+        if (
+            project is not None
+            and project.ai_mode == AiMode.collaborative
+            and handle == "cheese"
+        ):
+            raise ValidationError(f"AI 不能{action}自己做的东西，必须有人来")
+
+    async def approve(self, *, card_id: uuid.UUID, approver_handle: str) -> AcceptCard:
+        """主分支保护 (spec §4.4): record one vote toward this card's accept.
+        Idempotent per (card, approver); AI cannot vote in collaborative mode."""
+        card = await self._card_or_404(card_id)
+        # Votable while the card is still live (incl. behind the gate / in a
+        # merge-conflict retry); decided or gate-failed cards are closed.
+        if card.status not in (
+            AcceptStatus.pending,
+            AcceptStatus.pending_gate,
+            AcceptStatus.conflict,
+        ):
+            raise ValidationError("验收卡已关闭，不能再批准")
+        topic = await self._topic_or_404(card.topic_id)
+        project = await self._projects.get(topic.project_id)
+        self._forbid_ai(project, approver_handle, "批准")
+        await self._repo.add_approval(card_id, approver_handle)
+        return card
+
     async def accept(self, *, card_id: uuid.UUID, decided_by: str) -> AcceptCard:
         card = await self._card_or_404(card_id)
+        # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
+        if card.status == AcceptStatus.pending_gate:
+            raise ValidationError("平台检查还在进行中，检查通过后才能采纳")
+        if card.status == AcceptStatus.gate_failed:
+            raise ValidationError("平台检查未通过，等芝士修复后重新递卡")
         # pending → first attempt; conflict → retry after 芝士 resolved.
         if card.status not in (AcceptStatus.pending, AcceptStatus.conflict):
             raise ValidationError("验收卡已处理，不能重复验收")
@@ -125,17 +229,21 @@ class AcceptService:
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能重复采纳")
         project = await self._projects.get(topic.project_id)
-        # Hard rule (spec §4.4): in collaborative mode AI cannot accept its
-        # own work — a human must. Autonomous mode allows it.
-        if (
-            project is not None
-            and project.ai_mode == AiMode.collaborative
-            and decided_by == "cheese"
-        ):
-            raise ValidationError("AI 不能验收自己做的东西，必须有人来")
+        self._forbid_ai(project, decided_by, "验收")
 
         # Institution protocol from linked Task Templates (spec §4.2).
         await self._enforce_protocol(topic, decided_by)
+
+        # 主分支保护 (spec §4.4): the accept itself counts as the accepter's
+        # vote (default requirement of 1 ⇒ 现行为不变); short of votes the whole
+        # transaction rolls back and nothing merges.
+        await self._repo.add_approval(card_id, decided_by)
+        votes = len(await self._repo.list_approver_handles(card_id))
+        required = approvals_required_of(project)
+        if votes < required:
+            raise ValidationError(
+                f"批准人数不足，还差 {required - votes} 票（{votes}/{required}）"
+            )
 
         # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
         # conflict must never silently archive the topic while the work is

@@ -15,6 +15,7 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.market import compute_default_name, compute_selectable
 from app.domain.agent.profiles import ProfileRegistry
+from app.domain.agent.roles import resolve_role_description
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -60,6 +61,21 @@ async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
+@router.put("/{project_id}/expert-role")
+async def set_expert_role(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Set which expert persona 芝士 loads for this project (spec §8.2). Any
+    known role name is accepted (custom shadows built-in); empty clears."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    name = str(body.get("role") or "").strip()
+    if name and await resolve_role_description(db, name) is None:
+        raise ValidationError(f"角色 {name!r} 不存在")
+    project.expert_role = name or None
+    await db.flush()
+    return ok({"current": project.expert_role})
+
+
 @router.post("/{project_id}/tasks")
 async def link_task(project_id: uuid.UUID, body: TaskLinkCreate, db: DbSession) -> dict:
     link = await ProjectService(db).link_task(
@@ -102,7 +118,7 @@ async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     (spec §8.4); with scope="user"+owner it writes that member's personal memory
     (private chat, spec §8.4 个人记忆跟着人走)."""
     from app.domain.memory.models import MemoryScope
-    from app.domain.memory.store import DbMemoryStore
+    from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
     content = (body.get("content") or "").strip()
@@ -112,10 +128,34 @@ async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        await DbMemoryStore(db).remember(MemoryScope.user, owner, content)
+        await memory_store(db).remember(MemoryScope.user, owner, content)
     else:
-        await DbMemoryStore(db).remember(MemoryScope.project, str(project_id), content)
+        await memory_store(db).remember(MemoryScope.project, str(project_id), content)
     return ok({"remembered": True})
+
+
+@router.post("/{project_id}/memory/search")
+async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """记忆检索 — used by the `cheese recall` CLI. Defaults to project memory;
+    with scope="user"+owner it searches that member's personal memory. On the
+    OpenViking backend this is semantic search returning L0 abstracts; the flat
+    DB backend falls back to a substring filter."""
+    from app.domain.memory.models import MemoryScope
+    from app.domain.memory.store import memory_store
+
+    await ProjectService(db).get_or_404(project_id)
+    query = (body.get("query") or "").strip()
+    if not query:
+        raise ValidationError("query 不能为空")
+    if (body.get("scope") or "project") == "user":
+        owner = (body.get("owner") or "").strip()
+        if not owner:
+            raise ValidationError("owner 不能为空（个人记忆需要 owner）")
+        scope, scope_id = MemoryScope.user, owner
+    else:
+        scope, scope_id = MemoryScope.project, str(project_id)
+    hits = await memory_store(db).search(scope, scope_id, query)
+    return ok({"hits": [h.as_dict() for h in hits]})
 
 
 @router.get("/{project_id}/private-chat")
@@ -246,6 +286,61 @@ async def set_sandbox_image(project_id: uuid.UUID, body: dict, db: DbSession) ->
     project.settings = new_settings
     await db.flush()
     return ok({"current": current})
+
+
+# --- Quality gate (spec §4.4/§9, eval C2): 平台硬门 configuration -------------
+
+
+@router.get("/{project_id}/quality-gate")
+async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
+    """The project's 硬门 settings: `check_command` (run in the topic workspace
+    before an accept card reaches the reviewer; empty = no gate) and
+    `approvals_required` (distinct approvals an accept needs; default 1)."""
+    from app.domain.review.services import approvals_required_of, check_command_of
+
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    return ok(
+        {
+            "check_command": check_command_of(project) or "",
+            "approvals_required": approvals_required_of(project),
+        }
+    )
+
+
+@router.put("/{project_id}/quality-gate")
+async def set_quality_gate(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Update 硬门 settings. Only the keys present in the body change; an empty
+    check_command removes the gate."""
+    from app.domain.review.services import approvals_required_of, check_command_of
+
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    new_settings = {**(project.settings or {})}
+    if "check_command" in body:
+        command = str(body.get("check_command") or "").strip()
+        if command:
+            new_settings["check_command"] = command
+        else:
+            new_settings.pop("check_command", None)
+    if "approvals_required" in body:
+        try:
+            required = int(body.get("approvals_required") or 0)
+        except (TypeError, ValueError):
+            raise ValidationError("approvals_required 必须是整数") from None
+        if required < 1:
+            raise ValidationError("approvals_required 至少为 1")
+        new_settings["approvals_required"] = required
+    project.settings = new_settings
+    await db.flush()
+    return ok(
+        {
+            "check_command": check_command_of(project) or "",
+            "approvals_required": approvals_required_of(project),
+        }
+    )
 
 
 @router.get("/{project_id}/upstream")

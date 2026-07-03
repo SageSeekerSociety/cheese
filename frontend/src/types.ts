@@ -8,7 +8,22 @@ export interface Project {
   summary?: string
   // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
   root_topic_id?: string
+  // 专家角色 (spec §8.2): which persona 芝士 loads. Null = generic 芝士.
+  expert_role?: string | null
   [key: string]: unknown
+}
+
+// 专家角色 (spec §8.2): one entry of the merged catalog — built-in roles come
+// from the file library (read-only), custom roles from the DB. The body is the
+// persona system prompt.
+export interface ExpertRole {
+  name: string
+  title: string
+  description: string
+  body: string
+  builtin: boolean
+  space_id?: string | null
+  created_by?: string | null
 }
 
 export interface Topic {
@@ -308,6 +323,9 @@ export type AcceptStatus =
   | 'rejected'
   | 'revoked'
   | 'conflict'
+  // 机器闸门 (eval C2): the project's check_command is running / failed.
+  | 'pending_gate'
+  | 'gate_failed'
   | string
 
 // GET /topics/{id}/accept-card (list, newest first).
@@ -321,6 +339,12 @@ export interface AcceptCard {
   decided_at: string | null
   note: string
   created_at: string
+  // 机器闸门: when the check passed + the tail of its output.
+  gate_passed_at: string | null
+  gate_output: string
+  // 主分支保护 (spec §4.4): votes so far / votes needed.
+  approvals: string[]
+  approvals_required: number
 }
 
 // ---- 通知中心 (G2/G3) ----
@@ -382,6 +406,77 @@ export interface PoolListing {
 export interface MarketPools {
   ai: PoolListing[]
   compute: PoolListing[]
+}
+
+// ---- 节点看板 (spec §9.1: where turns physically run) ----
+
+// One configured compute node (local docker / remote cheesed) with liveness.
+export interface MarketNode {
+  id: string
+  label: string
+  kind: 'local' | 'remote'
+  online: boolean
+  // Whether turns currently run on this node (one provider at a time today).
+  current: boolean
+  active_turns: number
+  detail: string
+  description: string
+}
+
+// GET /api/market/nodes
+export interface MarketNodes {
+  nodes: MarketNode[]
+  active_turns_total: number
+  current_provider: string
+}
+
+// ---- 算力额度 (spec §9.1 机构提供算力 → real quotas) ----
+
+// One credit grant (issued when the project linked an institutional task).
+export interface ComputeGrantRow {
+  id: string
+  source_task_id: string | null
+  credits_total: number
+  credits_used: number
+  created_at: string
+}
+
+// GET /projects/{id}/credits — unlimited=true means no grants (自治项目).
+export interface ProjectCredits {
+  unlimited: boolean
+  credits_total: number
+  credits_used: number
+  credits_remaining: number
+  grants: ComputeGrantRow[]
+}
+
+// ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
+
+// GET /api/market/tasks — a published Task Template as a market listing.
+export interface MarketTask {
+  id: string
+  space_id: string
+  space_name: string
+  name: string
+  description: string
+  resource_pack: Record<string, unknown>
+  conditions: Array<Record<string, unknown>>
+  default_role: string | null
+  created_at: string
+}
+
+// An 应征 (team applies with a Project). status: pending → accepted | declined.
+export interface TaskApplication {
+  id: string
+  template_id: string
+  project_id: string
+  project_name: string
+  pitch: string
+  status: 'pending' | 'accepted' | 'declined'
+  decided_by: string | null
+  decided_at: string | null
+  task_id: string | null
+  created_at: string
 }
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).

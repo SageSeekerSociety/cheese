@@ -2,11 +2,15 @@
 import { computed, onMounted, ref } from 'vue'
 import { getMarketPools } from '../api'
 import type { MarketPools, PoolListing } from '../types'
+import NodeBoard from '../components/NodeBoard.vue'
+import TaskMarket from '../components/TaskMarket.vue'
 
-// 市场 (design v3): browse every resource pool on offer — AI models and compute —
-// as a single catalog. AI and compute are symmetric pools; some are included in
-// the platform, others are bring-your-own or paid. A project chooses which pools
-// it runs on in its own 设置.
+// 市场 has two faces (spec §13 阶段 6 + design v3):
+//   题目匹配 — Spaces publish 题目 (Task Templates), teams apply with a project.
+//   算力资源 — the resource-pool catalog (AI models + compute) a project can
+//   select from in its 设置. The compute tab also hosts the 节点状态 board.
+const tab = ref<'tasks' | 'pools'>('tasks')
+
 const pools = ref<MarketPools | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -40,84 +44,113 @@ onMounted(load)
 <template>
   <div class="market-page fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 1080px">
-      <div class="mb-6">
+      <div class="mb-4">
         <div class="t-eyebrow mb-1">市场</div>
-        <h1 class="t-page-title">资源池</h1>
-        <p class="t-body c-muted mt-1" style="max-width: 660px">
-          知是把 <strong>AI 模型</strong> 和 <strong>算力</strong> 都看成资源池。默认的池平台已经补贴，
-          开箱即用；更强的模型、你自己的机器、或带 GPU 的算力也在这里上架。
-          在任意项目的 <strong>设置 → 资源池</strong> 里挑选要用的池。
-        </p>
+        <h1 class="t-page-title">匹配与资源</h1>
       </div>
 
-      <div v-if="loading" class="d-flex justify-center py-10">
-        <v-progress-circular indeterminate color="primary" />
-      </div>
-      <v-alert v-else-if="error" type="error" density="comfortable">
-        {{ error }}
-      </v-alert>
+      <v-tabs v-model="tab" density="comfortable" color="primary" class="mb-5">
+        <v-tab value="tasks">
+          <v-icon size="18" class="me-2">mdi-handshake-outline</v-icon>题目匹配
+        </v-tab>
+        <v-tab value="pools">
+          <v-icon size="18" class="me-2">mdi-server</v-icon>算力资源
+        </v-tab>
+      </v-tabs>
 
-      <template v-else>
-        <div class="market-group">
-          <div class="market-group__head">
-            <v-icon size="20" class="me-2 c-muted">mdi-brain</v-icon>
-            <h2 class="market-group__title">AI 模型</h2>
-            <span class="market-group__hint c-faint">一次对话跑在哪个模型上</span>
-          </div>
-          <div class="market-grid">
-            <article
-              v-for="p in aiPools"
-              :key="p.id"
-              class="pool-card"
-              :class="{ 'pool-card--soon': !p.available }"
-            >
-              <div class="pool-card__top">
-                <span class="pool-card__tier">{{ TIER_LABEL[p.tier] ?? p.tier }}</span>
-                <span v-if="p.default" class="pool-card__default">默认</span>
-              </div>
-              <h3 class="pool-card__title">{{ p.label }}</h3>
-              <div class="pool-card__price">{{ p.price }}</div>
-              <p class="pool-card__desc c-muted">{{ p.description }}</p>
-              <div class="pool-card__foot">
-                <span v-if="p.available" class="pool-card__ok">
-                  <v-icon size="14">mdi-check-circle</v-icon> 可在项目里选用
-                </span>
-                <span v-else class="pool-card__soon-tag">敬请期待 / 按需开通</span>
-              </div>
-            </article>
-          </div>
-        </div>
+      <v-window v-model="tab">
+        <!-- 题目匹配: Space 发布的题目 + 团队应征 (spec §13 阶段 6) -->
+        <v-window-item value="tasks">
+          <p class="t-body c-muted mb-5" style="max-width: 660px">
+            机构（Space）把 <strong>题目</strong> 发布到市场；团队用自己的项目
+            <strong>应征</strong>。应征被接受后，项目自动链接到题目——资源包与条件即刻生效
+            （签下协议）。
+          </p>
+          <TaskMarket />
+        </v-window-item>
 
-        <div class="market-group">
-          <div class="market-group__head">
-            <v-icon size="20" class="me-2 c-muted">mdi-server</v-icon>
-            <h2 class="market-group__title">算力</h2>
-            <span class="market-group__hint c-faint">干活（跑沙箱）用哪台机器</span>
+        <!-- 算力资源: the original resource-pool catalog, moved verbatim. -->
+        <v-window-item value="pools">
+          <p class="t-body c-muted mb-5" style="max-width: 660px">
+            知是把 <strong>AI 模型</strong> 和 <strong>算力</strong> 都看成资源池。默认的池平台已经补贴，
+            开箱即用；更强的模型、你自己的机器、或带 GPU 的算力也在这里上架。
+            在任意项目的 <strong>设置 → 资源池</strong> 里挑选要用的池。
+          </p>
+
+          <!-- 节点状态: live board of compute nodes (local + cheesed remote),
+               self-contained in components/NodeBoard.vue. -->
+          <NodeBoard />
+
+          <div v-if="loading" class="d-flex justify-center py-10">
+            <v-progress-circular indeterminate color="primary" />
           </div>
-          <div class="market-grid">
-            <article
-              v-for="p in computePools"
-              :key="p.id"
-              class="pool-card"
-              :class="{ 'pool-card--soon': !p.available }"
-            >
-              <div class="pool-card__top">
-                <span class="pool-card__tier">{{ TIER_LABEL[p.tier] ?? p.tier }}</span>
-                <span v-if="p.default" class="pool-card__default">默认</span>
+          <v-alert v-else-if="error" type="error" density="comfortable">
+            {{ error }}
+          </v-alert>
+
+          <template v-else>
+            <div class="market-group">
+              <div class="market-group__head">
+                <v-icon size="20" class="me-2 c-muted">mdi-brain</v-icon>
+                <h2 class="market-group__title">AI 模型</h2>
+                <span class="market-group__hint c-faint">一次对话跑在哪个模型上</span>
               </div>
-              <h3 class="pool-card__title">{{ p.label }}</h3>
-              <div class="pool-card__price">{{ p.price }}</div>
-              <p class="pool-card__desc c-muted">{{ p.description }}</p>
-              <div class="pool-card__foot">
-                <span v-if="p.available" class="pool-card__ok">
-                  <v-icon size="14">mdi-check-circle</v-icon> 可在项目里选用
-                </span>
-                <span v-else class="pool-card__soon-tag">敬请期待 / 按需开通</span>
+              <div class="market-grid">
+                <article
+                  v-for="p in aiPools"
+                  :key="p.id"
+                  class="pool-card"
+                  :class="{ 'pool-card--soon': !p.available }"
+                >
+                  <div class="pool-card__top">
+                    <span class="pool-card__tier">{{ TIER_LABEL[p.tier] ?? p.tier }}</span>
+                    <span v-if="p.default" class="pool-card__default">默认</span>
+                  </div>
+                  <h3 class="pool-card__title">{{ p.label }}</h3>
+                  <div class="pool-card__price">{{ p.price }}</div>
+                  <p class="pool-card__desc c-muted">{{ p.description }}</p>
+                  <div class="pool-card__foot">
+                    <span v-if="p.available" class="pool-card__ok">
+                      <v-icon size="14">mdi-check-circle</v-icon> 可在项目里选用
+                    </span>
+                    <span v-else class="pool-card__soon-tag">敬请期待 / 按需开通</span>
+                  </div>
+                </article>
               </div>
-            </article>
-          </div>
-        </div>
-      </template>
+            </div>
+
+            <div class="market-group">
+              <div class="market-group__head">
+                <v-icon size="20" class="me-2 c-muted">mdi-server</v-icon>
+                <h2 class="market-group__title">算力</h2>
+                <span class="market-group__hint c-faint">干活（跑沙箱）用哪台机器</span>
+              </div>
+              <div class="market-grid">
+                <article
+                  v-for="p in computePools"
+                  :key="p.id"
+                  class="pool-card"
+                  :class="{ 'pool-card--soon': !p.available }"
+                >
+                  <div class="pool-card__top">
+                    <span class="pool-card__tier">{{ TIER_LABEL[p.tier] ?? p.tier }}</span>
+                    <span v-if="p.default" class="pool-card__default">默认</span>
+                  </div>
+                  <h3 class="pool-card__title">{{ p.label }}</h3>
+                  <div class="pool-card__price">{{ p.price }}</div>
+                  <p class="pool-card__desc c-muted">{{ p.description }}</p>
+                  <div class="pool-card__foot">
+                    <span v-if="p.available" class="pool-card__ok">
+                      <v-icon size="14">mdi-check-circle</v-icon> 可在项目里选用
+                    </span>
+                    <span v-else class="pool-card__soon-tag">敬请期待 / 按需开通</span>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </template>
+        </v-window-item>
+      </v-window>
     </v-container>
   </div>
 </template>

@@ -19,7 +19,7 @@ import logging
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
@@ -136,6 +136,12 @@ class TurnRunner:
         self._tasks: set[asyncio.Task] = set()
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
         self._recent: deque[dict] = deque(maxlen=100)
+        # Project-level concurrency gate (spec §9.1): at most N turns run at
+        # once per project; excess turns queue on the semaphore (FIFO). The
+        # queue is asyncio-only — a restart drops it, which is accepted; the
+        # queued state is visible as a system event in the topic.
+        self._project_sems: dict[str, asyncio.Semaphore] = {}
+        self._project_waiting: dict[str, int] = {}
 
     def recent_turns(self) -> list[dict]:
         """Newest-first lifecycle summaries for /debug/turns."""
@@ -270,7 +276,181 @@ class TurnRunner:
         task.add_done_callback(self._tasks.discard)
         logger.info("scheduled auto-resume for topic %s in %.0fs", topic_id, after_s)
 
+    # Platform copy for the queue event — structured, never 芝士's own words.
+    @staticmethod
+    def _queued_text(ahead: int) -> str:
+        if ahead <= 0:
+            return "⏳ 项目同时进行的轮次已满，这轮先排队，等前面的轮次结束就开跑。"
+        return f"⏳ 项目同时进行的轮次已满，这轮先排队，前面还有 {ahead} 个在等。"
+
+    async def _post_event(
+        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID, text: str
+    ) -> bool:
+        """Persist + broadcast a platform system event (queue/refusal). Reuses
+        the post_system_event + broker path the nudge mechanism uses."""
+        try:
+            block = await chat_service.post_system_event(topic_id, text, turn_id)
+        except Exception:  # noqa: BLE001 — visibility is best-effort
+            logger.exception("failed to post admission event for %s", topic_id)
+            return False
+        if block is not None:
+            await self._broker.publish(
+                str(topic_id), {"type": "event_block", "block": block}
+            )
+        return block is not None
+
+    async def _admit(
+        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> tuple[str, asyncio.Semaphore | None]:
+        """Admission control (spec §9.1 算力额度真实化), before any execution:
+
+        - credits exhausted → ("reject", None): the caller refuses the turn.
+        - project concurrency full → queue on the project semaphore (FIFO),
+          after posting a visible "排队中" system event. Returns ("ok", sem)
+          with the ACQUIRED semaphore (caller must release).
+        - topic unknown / policy lookup failed → ("ok", None): admit ungated;
+          the turn itself surfaces the real error.
+        """
+        try:
+            policy = await chat_service.turn_policy(topic_id)
+        except Exception:  # noqa: BLE001 — admission must never kill a turn
+            logger.exception("turn_policy failed for %s; admitting", topic_id)
+            policy = None
+        if policy is None:
+            return "ok", None
+        if policy["credits_exhausted"]:
+            logger.info("turn %s rejected: credits exhausted", turn_id)
+            return "reject", None
+        key = policy["project_id"]
+        sem = self._project_sems.get(key)
+        if sem is None:
+            sem = asyncio.Semaphore(policy["max_concurrent_turns"])
+            self._project_sems[key] = sem
+        if sem.locked():
+            ahead = self._project_waiting.get(key, 0)
+            await self._post_event(
+                chat_service, topic_id, turn_id, self._queued_text(ahead)
+            )
+            logger.info("turn %s queued (project=%s ahead=%s)", turn_id, key, ahead)
+        self._project_waiting[key] = self._project_waiting.get(key, 0) + 1
+        try:
+            await sem.acquire()
+        finally:
+            left = self._project_waiting.get(key, 1) - 1
+            if left > 0:
+                self._project_waiting[key] = left
+            else:
+                self._project_waiting.pop(key, None)
+        return "ok", sem
+
+    async def _refuse_exhausted(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        *,
+        author: str,
+        content: str,
+        reply_to: str | None,
+        attachments: list[dict] | None,
+        is_message_turn: bool,
+    ) -> None:
+        """Refuse a turn for exhausted credits. A human's message still lands
+        (speaking is free — only the AI turn is metered): it goes through a
+        summon=False converse pass, then the structured platform event says why
+        芝士 isn't coming. The copy is the PLATFORM's, never the model's."""
+        from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
+
+        channel = str(topic_id)
+        if is_message_turn and (content or attachments):
+            try:
+                async for frame in chat_service.converse(
+                    topic_id=topic_id,
+                    author=author,
+                    content=content,
+                    summon=False,
+                    turn_id=turn_id,
+                    reply_to=reply_to,
+                    attachments=attachments,
+                ):
+                    if frame.get("type") != "done":
+                        await self._broker.publish(channel, frame)
+            except Exception:  # noqa: BLE001 — still surface the refusal
+                logger.exception("failed to land message for refused turn")
+        posted = await self._post_event(
+            chat_service, topic_id, turn_id, CREDITS_EXHAUSTED_EVENT
+        )
+        await self._broker.publish(
+            channel,
+            {
+                "type": "error",
+                "message": CREDITS_EXHAUSTED_EVENT,
+                "persisted": posted,
+            },
+        )
+        self._recent.append(
+            {
+                "turn_id": str(turn_id),
+                "topic_id": str(topic_id),
+                "status": "rejected",
+                "detail": "算力额度已用完，未执行",
+                "started_at": time.time(),
+            }
+        )
+
     async def _run(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        *,
+        author: str,
+        content: str,
+        summon: bool,
+        reply_to: str | None = None,
+        attachments: list[dict] | None = None,
+        is_resume: bool = False,
+        resume_reason: str | None = None,
+        nudge_event: str | None = None,
+        # Pre-built frame stream (kickoff turns). None → run a converse turn.
+        frames: AsyncIterator[Frame] | None = None,
+    ) -> None:
+        # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
+        # project's concurrent-turn ceiling is reached. Both states are posted
+        # into the topic as platform system events, so people SEE why nothing
+        # is streaming yet.
+        verdict, gate = await self._admit(chat_service, topic_id, turn_id)
+        if verdict == "reject":
+            if isinstance(frames, AsyncGenerator):
+                await frames.aclose()  # never-started kickoff stream: close it
+            await self._refuse_exhausted(
+                chat_service,
+                topic_id,
+                turn_id,
+                author=author,
+                content=content,
+                reply_to=reply_to,
+                attachments=attachments,
+                # A human message turn lands its message even when refused;
+                # resume/nudge/kickoff turns have nothing to land.
+                is_message_turn=(
+                    frames is None and not is_resume and nudge_event is None
+                ),
+            )
+            return
+        try:
+            await self._execute(
+                chat_service, topic_id, turn_id,
+                author=author, content=content, summon=summon,
+                reply_to=reply_to, attachments=attachments,
+                is_resume=is_resume, resume_reason=resume_reason,
+                nudge_event=nudge_event, frames=frames,
+            )
+        finally:
+            if gate is not None:
+                gate.release()
+
+    async def _execute(
         self,
         chat_service,
         topic_id: uuid.UUID,

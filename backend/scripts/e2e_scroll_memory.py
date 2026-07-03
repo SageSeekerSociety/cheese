@@ -13,9 +13,9 @@ Run (PG + backend:8099 + frontend:5173 up):
 """
 
 import asyncio
+import json
 import sys
 import urllib.request
-import json
 import uuid
 
 from playwright.async_api import async_playwright

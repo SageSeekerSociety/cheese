@@ -1,48 +1,121 @@
 """Expert roles (spec §8.2).
 
-芝士 isn't one persona — a project loads an expert role = a role description (+
-preset skills). The platform ships presets; a Task Template can name a default
-(e.g. 创研课 → academic-research). The role description is prepended to 芝士's
-system prompt so the same agent behaves like a domain expert.
+芝士 isn't one persona — a project loads an expert role whose description is
+prepended to 芝士's system prompt so the same agent behaves like a domain
+expert.
+
+Roles are defined Claude Code agents-style: a markdown file with YAML
+frontmatter (``name`` / ``title`` / ``description``) whose body is the persona
+system prompt. Built-in roles ship as files in ``role_library/``; custom roles
+(created by an institution or an individual) live in the ``custom_roles``
+table. Resolution order: custom (DB) > built-in file library > None — a custom
+role shadows a built-in with the same name.
 """
 
-PRESET_ROLES: dict[str, dict[str, str]] = {
-    "fullstack-engineer": {
-        "label": "全栈工程",
-        "description": (
-            "你是一位全栈工程专家，擅长系统架构、代码质量、测试与工程实践。"
-            "讨论技术方案时务实、讲权衡，能把复杂技术讲给零基础的同学听懂。"
-        ),
-    },
-    "academic-research": {
-        "label": "学术研究",
-        "description": (
-            "你是一位学术研究导师，熟悉文献检索、研究方法、实验设计与学术规范。"
-            "强调严谨、可复现、引用有据，帮助同学把想法变成扎实的研究。"
-        ),
-    },
-    "product-design": {
-        "label": "产品设计",
-        "description": (
-            "你是一位产品与体验设计专家，擅长用户研究、交互与视觉语言。"
-            "从真实用户需求出发，重视可用性与一致性，能给具体可执行的设计建议。"
-        ),
-    },
-    "startup-founder": {
-        "label": "创业",
-        "description": (
-            "你是一位创业教练，擅长商业模式、用户验证、MVP 与增长。"
-            "鼓励小步快跑、用证据说话，帮团队聚焦最关键的假设。"
-        ),
-    },
-}
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@dataclass(frozen=True)
+class RoleDef:
+    """One role from the file library (Claude Code agents format)."""
+
+    name: str
+    title: str
+    description: str
+    # The markdown body = the persona system prompt injected for 芝士.
+    body: str
+
+
+_LIBRARY_DIR = Path(__file__).resolve().parent / "role_library"
 
 DEFAULT_ROLE = "fullstack-engineer"
 
 
+def parse_role_markdown(text: str) -> tuple[dict[str, str], str]:
+    """Split a role file into (frontmatter, body).
+
+    The frontmatter is the flat ``key: value`` mapping between two ``---``
+    fences — the only shape the library uses — so it's parsed by hand rather
+    than pulling in a YAML dependency. Quoted values are unquoted; comment and
+    blank lines are skipped. Text without a leading fence is all body.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, text.strip()
+    meta: dict[str, str] = {}
+    body_start = len(lines)
+    for i, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            body_start = i + 1
+            break
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        v = value.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            v = v[1:-1]
+        meta[key.strip()] = v
+    return meta, "\n".join(lines[body_start:]).strip()
+
+
+def load_role_library(directory: Path) -> dict[str, RoleDef]:
+    """Load every ``*.md`` role file in *directory*, keyed by role name.
+
+    The frontmatter ``name`` wins; the filename stem is the fallback. A file
+    with an empty body defines no persona and is skipped.
+    """
+    roles: dict[str, RoleDef] = {}
+    if not directory.is_dir():
+        return roles
+    for path in sorted(directory.glob("*.md")):
+        meta, body = parse_role_markdown(path.read_text(encoding="utf-8"))
+        if not body:
+            continue
+        name = meta.get("name") or path.stem
+        roles[name] = RoleDef(
+            name=name,
+            title=meta.get("title", name),
+            description=meta.get("description", ""),
+            body=body,
+        )
+    return roles
+
+
+@lru_cache(maxsize=1)
+def builtin_roles() -> dict[str, RoleDef]:
+    """The built-in role library (read-only, shipped with the platform)."""
+    return load_role_library(_LIBRARY_DIR)
+
+
 def role_description(name: str | None) -> str | None:
-    """Return the role description to inject, or None if unknown/unset."""
+    """Built-in persona prompt for *name*, or None if unknown/unset.
+
+    Sync, file-library only — DB-backed custom roles need a session; use
+    :func:`resolve_role_description` wherever one is available.
+    """
     if not name:
         return None
-    role = PRESET_ROLES.get(name)
-    return role["description"] if role else None
+    role = builtin_roles().get(name)
+    return role.body if role else None
+
+
+async def resolve_role_description(
+    session: AsyncSession, name: str | None
+) -> str | None:
+    """Persona prompt for *name*: custom (DB) > built-in library > None."""
+    if not name:
+        return None
+    # Local import: the expert_role domain imports builtin_roles from here.
+    from app.domain.expert_role.repositories import CustomRoleRepository
+
+    custom = await CustomRoleRepository(session).get_by_name(name)
+    if custom is not None:
+        return custom.body
+    return role_description(name)
