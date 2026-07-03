@@ -449,6 +449,17 @@ export function listFiles(
   )
 }
 
+// <img src=…> URL for a workspace file (binary raw endpoint) — the 文件 panel
+// shows images as images instead of Monaco-mangled bytes.
+export function workspaceFileRawUrl(
+  projectId: string,
+  path: string,
+  topicId?: string,
+): string {
+  const t = topicId ? `&topic=${encodeURIComponent(topicId)}` : ''
+  return `${BASE}/projects/${encodeURIComponent(projectId)}/file/raw?path=${encodeURIComponent(path)}${t}`
+}
+
 export function readFile(
   projectId: string,
   path: string,

@@ -1,10 +1,11 @@
 """Workspace routes — files, git log, git diff (Phase 4 执行面板)."""
 
+import mimetypes
 import uuid
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, page
@@ -51,6 +52,18 @@ async def read_file(
     else:
         content = ws.read_file(project_id, path, topic_id=topic)
     return ok({"path": path, "content": content})
+
+
+@router.get("/{project_id}/file/raw")
+async def read_file_raw(
+    project_id: uuid.UUID, path: str, db: DbSession, topic: uuid.UUID | None = None
+) -> Response:
+    """Raw bytes of a worktree file — the 文件 panel renders images as images
+    (the text endpoint would mangle binary content)."""
+    await ProjectService(db).get_or_404(project_id)
+    data = ws.read_file_bytes(project_id, path, topic_id=topic)
+    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return Response(content=data, media_type=mime)
 
 
 @router.put("/{project_id}/file")

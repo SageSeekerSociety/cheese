@@ -67,6 +67,13 @@ log "merged $BRANCH ($(git rev-parse --short HEAD))"
 if git diff --name-only "$PRE"..HEAD | grep -q "frontend/package-lock.json"; then
   log "package-lock changed — npm ci"
   (cd frontend && npm ci --silent) || { git reset --hard "$PRE"; log "ROLLBACK: npm ci failed"; exit 1; }
+  # A RUNNING vite dev server keeps a stale module graph after deps change and
+  # serves "Failed to resolve import" forever (bit us with @tiptap/extension-table).
+  # Clear its cache and restart it.
+  log "restarting vite (dep graph changed)"
+  pkill -f "vite" || true
+  rm -rf frontend/node_modules/.vite
+  (cd frontend && mkdir -p ../logs && nohup npm run dev >../logs/vite.log 2>&1 &)
 fi
 
 run_checks() {

@@ -32,6 +32,7 @@ import {
   listFiles,
   putDoc,
   readFile,
+  workspaceFileRawUrl,
   writeFile,
   upgradeBlock,
 } from '../api'
@@ -622,10 +623,29 @@ async function loadTool(key: string) {
   }
 }
 
+const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif'])
+function isImagePath(path: string): boolean {
+  return IMAGE_EXT.has(path.split('.').pop()?.toLowerCase() ?? '')
+}
+const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.value))
+const openImageUrl = computed(() =>
+  openPath.value && projectId.value
+    ? workspaceFileRawUrl(projectId.value, openPath.value, props.topic?.id)
+    : '',
+)
+
 async function selectFile(path: string) {
   const pid = projectId.value
   if (!pid) return
   toolError.value = null
+  // Images render as images — Monaco would show mangled bytes.
+  if (isImagePath(path)) {
+    openPath.value = path
+    fileDraft.value = ''
+    fileSaved.value = ''
+    revealInTree(path)
+    return
+  }
   try {
     const f = await readFile(pid, path, props.topic?.id)
     openPath.value = path
@@ -717,7 +737,35 @@ const dirty = ref(false)
 // Deterministic token parsing, never NL guessing.
 const TOKEN_RE = /<@([\w-]+)>|<#([0-9a-fA-F-]{8,})>|<&([\w./\u4e00-\u9fff-]+)>/g
 
-function tokenDecorations(doc: PMNode): DecorationSet {
+// Build the pretty chip element a token renders as. The raw token stays in the
+// document (markdown is the source of truth); the chip is display-only.
+function tokenWidget(
+  kind: '@' | '#' | '&',
+  id: string,
+  lookupTopic: (tid: string) => string | undefined,
+): HTMLElement {
+  const el = document.createElement('span')
+  if (kind === '@') {
+    el.className = 'mention'
+    el.dataset.handle = id
+    el.textContent = `@${id}`
+  } else if (kind === '#') {
+    el.className = 'mention topic-ref'
+    el.dataset.topic = id
+    el.textContent = `#${lookupTopic(id) ?? '话题'}`
+  } else {
+    el.className = 'mention file-ref'
+    el.dataset.file = id
+    el.title = id
+    el.textContent = `📄 ${id.split('/').pop() || id}`
+  }
+  return el
+}
+
+function tokenDecorations(
+  doc: PMNode,
+  lookupTopic: (tid: string) => string | undefined,
+): DecorationSet {
   const decos: Decoration[] = []
   doc.descendants((node, pos) => {
     if (!node.isText) return
@@ -725,15 +773,25 @@ function tokenDecorations(doc: PMNode): DecorationSet {
     TOKEN_RE.lastIndex = 0
     let m: RegExpExecArray | null
     while ((m = TOKEN_RE.exec(text))) {
-      const attrs: Record<string, string> = m[1]
-        ? { class: 'mention', 'data-handle': m[1] }
-        : m[2]
-          ? { class: 'mention topic-ref', 'data-topic': m[2] }
-          : { class: 'mention file-ref', 'data-file': m[3] }
-      decos.push(Decoration.inline(pos + m.index, pos + m.index + m[0].length, attrs))
+      const from = pos + m.index
+      const to = from + m[0].length
+      const kind = m[1] ? '@' : m[2] ? '#' : '&'
+      const id = (m[1] ?? m[2] ?? m[3]) as string
+      // replace(hide the raw token) + widget(show the chip): the doc keeps
+      // `<&path>` verbatim, the reader sees 「📄 name」.
+      decos.push(
+        Decoration.widget(from, () => tokenWidget(kind, id, lookupTopic), {
+          side: 1,
+        }),
+        Decoration.replace(from, to),
+      )
     }
   })
   return DecorationSet.create(doc, decos)
+}
+
+function lookupTopicTitle(tid: string): string | undefined {
+  return props.topicList.find((t) => t.id === tid)?.title
 }
 
 const TokenChips = Extension.create({
@@ -742,8 +800,9 @@ const TokenChips = Extension.create({
     return [
       new Plugin({
         state: {
-          init: (_cfg, state) => tokenDecorations(state.doc),
-          apply: (tr, old) => (tr.docChanged ? tokenDecorations(tr.doc) : old),
+          init: (_cfg, state) => tokenDecorations(state.doc, lookupTopicTitle),
+          apply: (tr, old) =>
+            tr.docChanged ? tokenDecorations(tr.doc, lookupTopicTitle) : old,
         },
         props: {
           decorations(state) {
@@ -888,6 +947,16 @@ function setEditorMarkdown(md: string) {
   loadingFromServer.value = false
 }
 
+// The panel already renders the topic title as the page title (Feishu Docs).
+// A doc whose first line is an H1 EXACTLY equal to that title would show it
+// twice — drop that one line (pure string equality, no guessing).
+function stripDuplicateTitle(md: string): string {
+  const title = props.topic?.title?.trim()
+  if (!title) return md
+  const m = md.match(/^#\s+(.+?)\s*\n+/)
+  return m && m[1].trim() === title ? md.slice(m[0].length) : md
+}
+
 async function loadDoc(topicId: string) {
   errorMsg.value = null
   loading.value = true
@@ -895,7 +964,7 @@ async function loadDoc(topicId: string) {
     const block = await getDoc(topicId)
     // Avoid races on fast topic switching.
     if (props.topic?.id !== topicId) return
-    const md = block?.content ?? ''
+    const md = stripDuplicateTitle(block?.content ?? '')
     lastSavedMarkdown.value = md
     setEditorMarkdown(md)
     dirty.value = false
@@ -915,7 +984,7 @@ async function reloadFromActivity(topicId: string) {
   try {
     const block = await getDoc(topicId)
     if (props.topic?.id !== topicId) return
-    const md = block?.content ?? ''
+    const md = stripDuplicateTitle(block?.content ?? '')
     if (md !== lastSavedMarkdown.value) {
       lastSavedMarkdown.value = md
       setEditorMarkdown(md)
@@ -1130,17 +1199,6 @@ onBeforeUnmount(() => {
               :on-node-change="onDocNodeChange"
               class="doc-handle"
             >
-              <button
-                type="button"
-                class="doc-handle__btn doc-handle__split"
-                title="单独实现（拆成子话题）"
-                draggable="false"
-                :disabled="splitBusy"
-                @dragstart.stop.prevent
-                @click="splitNodeToSubtopic"
-              >
-                🧩
-              </button>
               <button
                 type="button"
                 class="doc-handle__btn doc-handle__add"
@@ -1384,8 +1442,11 @@ onBeforeUnmount(() => {
                   </template>
                 </div>
                 <div class="file-editor">
+                  <div v-if="openPath && openIsImage" class="file-image-view">
+                    <img :src="openImageUrl" :alt="openPath" />
+                  </div>
                   <CodeEditor
-                    v-if="openPath"
+                    v-else-if="openPath"
                     v-model="fileDraft"
                     :filename="openPath"
                     @save="saveFile"
@@ -1599,11 +1660,13 @@ onBeforeUnmount(() => {
       </transition>
       </div><!-- /.doc-stage -->
 
+      <!-- Floating, never clipped: the old flow-layout alert sat below the
+           scroll stage and rendered half-hidden at the panel edge. -->
       <v-alert
         v-if="errorMsg"
         type="error"
         density="compact"
-        class="ma-3 mt-0"
+        class="doc-error-toast"
         closable
         @click:close="errorMsg = null"
       >
@@ -2230,6 +2293,34 @@ onBeforeUnmount(() => {
 .doc-handle__split:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.file-image-view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  overflow: auto;
+  background:
+    conic-gradient(var(--line-2) 0 25%, transparent 0 50%, var(--line-2) 0 75%, transparent 0)
+    0 0 / 16px 16px; /* checkerboard so transparency reads */
+}
+.file-image-view img {
+  max-width: 95%;
+  max-height: 95%;
+  object-fit: contain;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  background: white;
+}
+
+.doc-error-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: min(560px, calc(100% - 32px));
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
 }
 
 /* A2: in-place live-ref badge — a subtopic spawned from this paragraph. Sits at
