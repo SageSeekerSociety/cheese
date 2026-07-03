@@ -36,8 +36,8 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.memory.models import MemoryScope
-from app.domain.mentions import expand_mention_names
 from app.domain.memory.store import DbMemoryStore
+from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotifKind, NotifLevel
 from app.domain.notification.services import NotificationService
@@ -304,6 +304,36 @@ _TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
 # from human input or the agent's output — see CLAUDE.md).
 PLACEHOLDER_TITLE = "新话题"
 
+# 分身开工首轮的内部指令 (split auto-kickoff)。Prompt-only: it never appears as a
+# message; what the humans see is the 分身's own opening, generated from the task
+# brief preset as the topic's living doc (语义内容由 AI 生成 — see CLAUDE.md).
+KICKOFF_PROMPT = (
+    "这个话题刚从父话题拆分/升级出来，由你（分身）负责推进。任务简报在系统提示的"
+    "「当前话题的活文档」里：拆分意图（或被升级的那段讨论）+ 父话题文档快照。"
+    "现在开工：\n"
+    "1. 先发开场白：一两句复述你理解的任务、说明打算怎么推进（给人纠偏的机会）；"
+    "简报信息不足就明确列出缺什么、@ 拆分发起人补充。\n"
+    "2. 把活文档改写成你自己的状态摘要（目标/约束/下一步），别留着简报原文不动。\n"
+    "3. 能直接开始的活就开始干；需要拍板的用决策请求找对的人。"
+)
+
+
+def conclusion_digest_prompt(conclusion_message: str) -> str:
+    """The parent's wake-up instruction when a sub-topic returns its conclusion
+    (结论回流唤醒父话题 — the return leg of the subagent loop: in Claude Code
+    the parent resumes when the Task tool result arrives). Prompt-only; the
+    conclusion text is copied verbatim, nothing is derived from it."""
+    return (
+        "一个子话题刚回流了结论（原文如下，也已织进本话题活文档末尾）。"
+        "请消化它：\n"
+        "1. 把活文档整理成最新状态——结论的要点合并进对应章节，"
+        "别让「子话题结论」堆在文档末尾。\n"
+        "2. 判断下一步：这个结论解锁了什么？需要继续拆活就拆（split 带 --brief），"
+        "需要人拍板/验收就发通知或验收卡，整件事收尾了就说明结论。\n"
+        "3. 在对话里用一两句话向大家报信（结论已在文档里，别复述全文）。\n\n"
+        f"---\n{conclusion_message}"
+    )
+
 
 def _topic_refs(text: str) -> list[str]:
     """`<#topicId>` reference tokens in a message → topic refs (for linkage)."""
@@ -447,6 +477,28 @@ class ChatService:
                 turn_id=turn_id,
                 user_block_id=user_block_id,
                 is_resume=is_resume,
+            ):
+                yield frame
+
+    async def kickoff(
+        self,
+        *,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID | None = None,
+        prompt: str | None = None,
+    ) -> AsyncIterator[dict]:
+        """An agent turn triggered by a PLATFORM EVENT, not a posted message:
+        分身自动开工 after a split/upgrade (default prompt), or the parent
+        digesting a returned conclusion (custom prompt). No fake human block is
+        posted — the instruction is prompt-only, so the visible result is only
+        what the agent itself says/does (语义内容由 AI 生成 — CLAUDE.md)."""
+        turn_id = turn_id or uuid.uuid4()
+        async with self._lock_for(topic_id):
+            async for frame in self._converse_impl(
+                topic_id=topic_id,
+                content=prompt or KICKOFF_PROMPT,
+                turn_id=turn_id,
+                user_block_id=None,
             ):
                 yield frame
 

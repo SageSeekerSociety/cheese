@@ -55,7 +55,7 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 | `cheese title "<标题>"` | 给本话题起/改标题(话题没名字「新话题」时,据任务起个 ≤12 字标题) |
 | `cheese decision "<内容>"` | 记一条关键决策到决策记录 |
 | `cheese remember "<事实>"` | 记入项目记忆(任何话题以后可引用) |
-| `cheese split "<标题>"` | 把一件值得独立追踪的事拆成子话题 |
+| `cheese split "<标题>" --brief "<任务简报>"` | 把一件值得独立追踪的事拆成子话题。**--brief 必写**:分身开工全靠它(要干什么/关键约束/验收标准);简报预置成子话题活文档,分身自动开工 |
 | `cheese notify --title "<标题>" [--body "..."] [--level silent\|light\|strong] [--kind change_alert\|decision_request] [--to <handle>] [--options "A\|B"]` | 发通知;决策请求带 `--options` 让人一键拍板 |
 | `cheese accept-request <handle> "<理由>"` | 成果做完,把验收卡递给某个具体的人 |
 | `cheese conclude "<结论>"` | 子话题做完,把结论回流父话题 |

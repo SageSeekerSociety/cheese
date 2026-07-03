@@ -7,13 +7,16 @@ from fastapi import APIRouter, Depends, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_chat_service, get_turn_runner
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ValidationError
+from app.domain.agent.chat import ChatService, conclusion_digest_prompt
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.mentions import canonicalize_refs
+from app.domain.topic.models import TopicStatus
 from app.domain.topic.schemas import (
     ConclusionIn,
     DocEditIn,
@@ -252,27 +255,62 @@ async def unarchive_topic(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
 
 
 @router.post("/{topic_id}/split")
-async def split_topic(topic_id: uuid.UUID, body: SplitIn, db: DbSession) -> dict:
-    """从上往下拆解：split a todo into a sub-topic (eval A2)."""
+async def split_topic(
+    topic_id: uuid.UUID,
+    body: SplitIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """从上往下拆解：split a todo into a sub-topic (eval A2).
+
+    The child is seeded with a task-brief living doc, then its 分身 is kicked
+    off automatically (spec §8.4 分身异步工作): without this, a freshly split
+    sub-topic just sits idle until a human wanders in and posts a message."""
     topic = await TopicService(db).split_to_subtopic(
-        parent_topic_id=topic_id, title=body.title, created_by=body.created_by
+        parent_topic_id=topic_id,
+        title=body.title,
+        created_by=body.created_by,
+        brief=body.brief,
     )
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+    out = TopicOut.model_validate(topic).model_dump(mode="json")
+    # Commit BEFORE kicking off: the 分身's first turn runs in the background
+    # with its own session and must see the sub-topic + its brief doc.
+    await db.commit()
+    get_turn_runner().submit_kickoff(chat, topic.id)
+    return ok(out)
 
 
 @router.post("/{topic_id}/return-conclusion")
 async def return_conclusion(
-    topic_id: uuid.UUID, body: ConclusionIn, db: DbSession
+    topic_id: uuid.UUID,
+    body: ConclusionIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """结论回流：write a sub-topic's conclusion back to its parent."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    """结论回流：write a sub-topic's conclusion back to its parent — then WAKE
+    the parent to digest it (the return leg of the subagent loop: in Claude
+    Code the parent resumes when the Task result arrives; here the parent 芝士
+    runs a turn to weave the conclusion in and decide what's next)."""
+    service = TopicService(db)
+    topic = await service.get_or_404(topic_id)
+    # Friendly "@名字/@话题名" in the conclusion → structured tokens BEFORE it
+    # lands in the parent (chips render + notifications fire there).
     conclusion = await canonicalize_refs(
         db, topic.project_id, body.conclusion, exclude_topic_id=topic_id
     )
-    block = await TopicService(db).return_conclusion(
+    block = await service.return_conclusion(
         subtopic_id=topic_id, conclusion=conclusion
     )
-    return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+    parent = await service.get_or_404(block.topic_id)
+    out = BlockOut.model_validate(block).model_dump(mode="json")
+    wake = parent.status != TopicStatus.archived
+    # Commit BEFORE waking: the parent's turn runs on its own session.
+    await db.commit()
+    if wake:
+        get_turn_runner().submit_kickoff(
+            chat, parent.id, prompt=conclusion_digest_prompt(block.content)
+        )
+    return ok(out)
 
 
 # 芝士 → UI rendering (spec §9.1): an artifact is a file the AI explicitly points
@@ -441,10 +479,23 @@ block_router = APIRouter(prefix="/api/blocks", tags=["topics"])
 
 @block_router.post("/{block_id}/upgrade")
 async def upgrade_block(
-    block_id: uuid.UUID, body: UpgradeBlockIn, db: DbSession
+    block_id: uuid.UUID,
+    body: UpgradeBlockIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """讨论升级：upgrade a block into its own topic (eval A1)."""
-    topic = await TopicService(db).upgrade_block_to_topic(
+    """讨论升级：upgrade a block into its own topic (eval A1).
+
+    Same mechanics as /split: the upgraded block is preset as the new topic's
+    task-brief doc, and its 分身 kicks off automatically (it also names the
+    topic on that first turn — upgraded topics start untitled)."""
+    topic, created = await TopicService(db).upgrade_block_to_topic(
         block_id=block_id, created_by=body.created_by
     )
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+    out = TopicOut.model_validate(topic).model_dump(mode="json")
+    # Commit BEFORE kicking off (the 分身's turn uses its own session); an
+    # idempotent re-upgrade (created=False) must not kick the 分身 again.
+    await db.commit()
+    if created:
+        get_turn_runner().submit_kickoff(chat, topic.id)
+    return ok(out)

@@ -62,7 +62,10 @@ def test_doc_canonicalizes_friendly_mentions(client):
 
     client.put(
         f"/api/topics/{t['id']}/doc",
-        json={"content": "待办：@user-1 跟进，结论同步到 @分页调研。裸名 user-1 不动", "author": "cheese"},
+        json={
+            "content": "待办：@user-1 跟进，结论同步到 @分页调研。裸名 user-1 不动",
+            "author": "cheese",
+        },
     )
     doc = client.get(f"/api/topics/{t['id']}/doc").json()["data"]
     assert "<@user-1>" in doc["content"]

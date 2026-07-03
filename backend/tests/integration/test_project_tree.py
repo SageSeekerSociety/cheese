@@ -4,6 +4,7 @@ import asyncio
 import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
+from tests.conftest import wait_turns_idle as _wait_turns_idle
 
 
 def _project(client, **kw) -> dict:
@@ -115,20 +116,33 @@ def test_upgrade_block_to_topic(client):
 
     r = client.post(f"/api/blocks/{block_id}/upgrade", json={"created_by": "user-1"})
     assert r.status_code == 200
+    _wait_turns_idle()  # kickoff runs in the background; don't race its writes
     new_topic = r.json()["data"]
     assert new_topic["parent_id"] == topic["id"]
     assert new_topic["kind"] == "subtopic"  # child of a non-root topic
 
-    # New topic opens with 芝士's opening白 (first block, ai author).
+    # The upgraded block IS the task: preset verbatim as the new topic's doc.
+    doc = client.get(f"/api/topics/{new_topic['id']}/doc").json()["data"]
+    assert doc is not None
+    assert "我们要不要单独做一个数据清洗的模块" in doc["content"]
+
+    # Auto-kickoff, same as split: the 分身's own opening is the first message
+    # (the canned "我先确认理解" template is gone).
     blocks = client.get(f"/api/topics/{new_topic['id']}/blocks").json()["data"]["data"]
-    assert len(blocks) >= 1
-    assert blocks[0]["author_type"] == "ai"
+    msgs = [b for b in blocks if b["kind"] == "message"]
+    assert msgs and msgs[0]["author_type"] == "ai"
+    assert "我先确认理解，再开始推进" not in msgs[0]["content"]
 
     # Re-upgrading the same block is idempotent: it returns the topic already
-    # created (so a double-click just navigates), not an error.
+    # created (so a double-click just navigates), not an error — and it does
+    # NOT kick the 分身 off a second time.
     r2 = client.post(f"/api/blocks/{block_id}/upgrade", json={})
     assert r2.status_code == 200
     assert r2.json()["data"]["id"] == new_topic["id"]
+    _wait_turns_idle()
+    blocks2 = client.get(f"/api/topics/{new_topic['id']}/blocks").json()["data"]["data"]
+    msgs2 = [b for b in blocks2 if b["kind"] == "message"]
+    assert len(msgs2) == len(msgs)  # no second kickoff turn
 
 
 def test_upgrade_doc_node_to_subtopic(client):
@@ -155,6 +169,7 @@ def test_upgrade_doc_node_to_subtopic(client):
         f"/api/blocks/{target['id']}/upgrade", json={"created_by": "user-1"}
     )
     assert r.status_code == 200
+    _wait_turns_idle()
     sub = r.json()["data"]
     assert sub["parent_id"] == topic["id"]
     assert sub["kind"] == "subtopic"
@@ -219,8 +234,71 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     topic = client.post(
         f"/api/blocks/{block_id}/upgrade", json={"created_by": "user-1"}
     ).json()["data"]
+    _wait_turns_idle()
     assert topic["parent_id"] == p["root_topic_id"]
     assert topic["kind"] == "topic"
+    # Privacy: the private chat's doc is never copied into the public topic.
+    doc = client.get(f"/api/topics/{topic['id']}/doc").json()["data"]
+    assert doc is not None
+    assert "我们其实该单独做个数据清洗模块" in doc["content"]  # source block
+    assert "父话题当时还没有活文档" in doc["content"]
+
+
+def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
+    # 分身开工带简报: the child is born with a task-brief living doc (splitter's
+    # brief + parent-doc snapshot), the canned opening is gone, and the 分身's
+    # first turn starts by itself (no human message needed).
+    p = _project(client)
+    topic = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "推荐系统"}
+    ).json()["data"]
+    client.put(
+        f"/api/topics/{topic['id']}/doc",
+        json={"content": "## 目标\n\n给校园二手书平台做推荐", "author": "user-1"},
+    )
+
+    sub = client.post(
+        f"/api/topics/{topic['id']}/split",
+        json={
+            "title": "清洗数据",
+            "created_by": "cheese",
+            "brief": "把 10 万条借阅日志去重、去空值，产出干净数据集",
+        },
+    ).json()["data"]
+    _wait_turns_idle()  # kickoff runs in the background; don't race its writes
+
+    # The brief IS the child's living doc, parent doc copied verbatim below it.
+    doc = client.get(f"/api/topics/{sub['id']}/doc").json()["data"]
+    assert doc is not None
+    assert "把 10 万条借阅日志去重" in doc["content"]
+    assert "给校园二手书平台做推荐" in doc["content"]
+    assert "推荐系统" in doc["content"]  # source: parent title
+
+    # Auto-kickoff (spec §8.4): the 分身's own opening shows up without anyone
+    # posting — and it is the FIRST message (no canned template before it).
+    _wait_turns_idle()
+    blocks = client.get(f"/api/topics/{sub['id']}/blocks").json()["data"]["data"]
+    msgs = [b for b in blocks if b["kind"] == "message"]
+    assert msgs, "分身没有自动开工（没等到它的开场白）"
+    assert msgs[0]["author_type"] == "ai"
+    assert "我先确认理解，再开始推进" not in msgs[0]["content"]  # template gone
+
+
+def test_split_without_brief_still_seeds_doc(client):
+    # A human split from the UI carries no brief: the child still gets a doc
+    # (source + parent snapshot + an explicit "no brief" notice).
+    p = _project(client)
+    topic = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "大话题"}
+    ).json()["data"]
+    sub = client.post(
+        f"/api/topics/{topic['id']}/split", json={"title": "小任务"}
+    ).json()["data"]
+    _wait_turns_idle()
+    doc = client.get(f"/api/topics/{sub['id']}/doc").json()["data"]
+    assert doc is not None
+    assert "拆分时没有附说明" in doc["content"]
+    assert "大话题" in doc["content"]
 
 
 def test_split_and_return_conclusion(client):
@@ -235,6 +313,9 @@ def test_split_and_return_conclusion(client):
     ).json()["data"]
     assert sub["parent_id"] == topic["id"]
     assert sub["kind"] == "subtopic"
+    # Let the 分身's auto-kickoff finish before writing more to the shared
+    # in-memory DB (otherwise the two interleave on one SQLite connection).
+    _wait_turns_idle()
 
     # Sub-topic shows up under children.
     children = client.get(f"/api/topics/{topic['id']}/children").json()["data"]["data"]
@@ -246,10 +327,23 @@ def test_split_and_return_conclusion(client):
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
     )
     assert r.status_code == 200
+    _wait_turns_idle()
     parent_blocks = client.get(f"/api/topics/{topic['id']}/blocks").json()["data"][
         "data"
     ]
     assert any("数据清洗完成" in b["content"] for b in parent_blocks)
+
+    # …and the parent is WOKEN to digest it (subagent return leg): the parent
+    # 芝士 runs a turn of its own, so an AI message follows the conclusion.
+    concl_i = next(
+        i for i, b in enumerate(parent_blocks) if "数据清洗完成" in b["content"]
+    )
+    later_ai = [
+        b
+        for b in parent_blocks[concl_i + 1 :]
+        if b["kind"] == "message" and b["author_type"] == "ai"
+    ]
+    assert later_ai, "父话题没有被结论回流唤醒"
 
     # C4: the conclusion is also woven into the parent's living doc …
     doc = client.get(f"/api/topics/{topic['id']}/doc").json()["data"]
