@@ -7,6 +7,7 @@ sub-topic's conclusion flows back to its parent (结论回流).
 
 import difflib
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -136,6 +137,82 @@ class TopicService:
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)
         return await self._repo.list_children(topic_id)
+
+    # ---- 话题级未读 (Feishu-style badges) -------------------------------
+
+    async def unread_counts(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> dict[uuid.UUID, int]:
+        if await self._projects.get(project_id) is None:
+            raise NotFoundError("Project not found")
+        return await self._repo.unread_counts(project_id, user_handle)
+
+    async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
+        await self.get_or_404(topic_id)
+        await self._repo.mark_read(topic_id, user_handle)
+
+    # ---- 手动归档 / 取消归档 (归档去向, spec §6.3 extension) -------------
+
+    async def archive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
+        """Manually archive a topic (idempotent) — CASCADING: a topic's active
+        subtopics go with it (归档整件事，分身是这件事的一部分；漏下的孤儿分身
+        没有父上下文，毫无意义). The root topic (项目本体) can't be archived."""
+        topic = await self.get_or_404(topic_id)
+        if topic.kind == TopicKind.root:
+            raise ValidationError("项目本体不能归档")
+        if topic.status == TopicStatus.archived:
+            return topic
+        await self._archive_one(topic, by=by)
+        await self._archive_children(topic, by=by)
+        await self._session.flush()
+        return topic
+
+    async def _archive_children(self, topic: Topic, *, by: str) -> None:
+        children = await self._repo.list_children(topic.id)
+        for child in children:
+            if child.status == TopicStatus.archived:
+                continue
+            await self._archive_one(child, by=by, cascaded_from=topic.title)
+            await self._archive_children(child, by=by)
+
+    async def _archive_one(
+        self, topic: Topic, *, by: str, cascaded_from: str | None = None
+    ) -> None:
+        topic.status = TopicStatus.archived
+        topic.archived_at = datetime.now(UTC)
+        note = (
+            f"📦 随父话题「{cascaded_from}」一同归档"
+            if cascaded_from
+            else f"📦 {by} 归档了话题"
+        )
+        await self._blocks.add(
+            project_id=topic.project_id,
+            topic_id=topic.id,
+            author=by,
+            author_type=AuthorType.system,
+            content=note,
+            kind=BlockKind.event,
+        )
+
+    async def unarchive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
+        """Bring an archived topic back to active (idempotent). Accept markers
+        are kept — un-archiving doesn't rewrite acceptance history (use 撤回采纳
+        for that)."""
+        topic = await self.get_or_404(topic_id)
+        if topic.status != TopicStatus.archived:
+            return topic
+        topic.status = TopicStatus.active
+        topic.archived_at = None
+        await self._blocks.add(
+            project_id=topic.project_id,
+            topic_id=topic.id,
+            author=by,
+            author_type=AuthorType.system,
+            content=f"📂 {by} 取消归档，话题恢复活跃",
+            kind=BlockKind.event,
+        )
+        await self._session.flush()
+        return topic
 
     async def upgrade_block_to_topic(
         self, *, block_id: uuid.UUID, created_by: str | None = None

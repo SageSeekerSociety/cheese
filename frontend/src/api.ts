@@ -4,6 +4,7 @@ import type {
   AcceptCard,
   ApiEnvelope,
   Block,
+  ChatAttachment,
   ComputeProfiles,
   Contributions,
   ExecProfiles,
@@ -133,6 +134,45 @@ export function createTopic(
   return request<Topic>('/topics', {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+}
+
+// ---- 话题级未读 (Feishu-style badges) ----
+
+// {topic_id: unread_count} for one user; topics with zero unread are omitted.
+export function getTopicUnread(
+  projectId: string,
+  handle: string,
+): Promise<Record<string, number>> {
+  return request<Record<string, number>>(
+    `/projects/${encodeURIComponent(projectId)}/topic-unread?handle=${encodeURIComponent(handle)}`,
+  )
+}
+
+// Opening a topic bumps the user's read cursor (clears its badge).
+export function markTopicRead(
+  topicId: string,
+  handle: string,
+): Promise<Record<string, string>> {
+  return request<Record<string, string>>(
+    `/topics/${encodeURIComponent(topicId)}/read`,
+    { method: 'POST', body: JSON.stringify({ handle }) },
+  )
+}
+
+// ---- 归档去向: manual archive / unarchive ----
+
+export function archiveTopic(topicId: string, by: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/archive`, {
+    method: 'POST',
+    body: JSON.stringify({ by }),
+  })
+}
+
+export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/unarchive`, {
+    method: 'POST',
+    body: JSON.stringify({ by }),
   })
 }
 
@@ -286,6 +326,34 @@ export function listBlocks(topicId: string): Promise<ListPayload<Block>> {
   return request<ListPayload<Block>>(
     `/topics/${encodeURIComponent(topicId)}/blocks`,
   )
+}
+
+// ---- 图片输入 (chat image attachments) ----
+
+// Upload a chat image into the topic's worktree. NOTE: raw fetch, not
+// request() — multipart needs the browser to set the boundary header itself.
+export async function uploadAttachment(
+  topicId: string,
+  file: File,
+): Promise<ChatAttachment> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(
+    `${BASE}/topics/${encodeURIComponent(topicId)}/attachments`,
+    { method: 'POST', body: form },
+  )
+  const envelope = (await res.json().catch(() => null)) as
+    | ApiEnvelope<ChatAttachment>
+    | null
+  if (!res.ok || !envelope || envelope.code !== 200) {
+    throw new Error(envelope?.message || `上传失败（HTTP ${res.status}）`)
+  }
+  return envelope.data
+}
+
+// <img src=…> URL for an uploaded attachment (binary raw endpoint).
+export function attachmentRawUrl(topicId: string, path: string): string {
+  return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}`
 }
 
 // Living-doc helpers (spec §2.2 docs-out/docs-in). `content` is markdown.
@@ -541,6 +609,31 @@ export function getNotifications(
     `/projects/${encodeURIComponent(projectId)}/notifications?target_handle=${encodeURIComponent(
       targetHandle,
     )}`,
+  )
+}
+
+// Server-side bell badge: unread, non-silent, visible to this user.
+export function getNotificationUnreadCount(
+  projectId: string,
+  targetHandle: string,
+): Promise<{ unread: number }> {
+  return request<{ unread: number }>(
+    `/projects/${encodeURIComponent(projectId)}/notifications/unread-count?target_handle=${encodeURIComponent(
+      targetHandle,
+    )}`,
+  )
+}
+
+// 全部标记已读 (Feishu-style).
+export function markAllNotificationsRead(
+  projectId: string,
+  targetHandle: string,
+): Promise<{ marked: number }> {
+  return request<{ marked: number }>(
+    `/projects/${encodeURIComponent(projectId)}/notifications/read-all?target_handle=${encodeURIComponent(
+      targetHandle,
+    )}`,
+    { method: 'POST' },
   )
 }
 

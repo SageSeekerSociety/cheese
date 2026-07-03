@@ -234,6 +234,17 @@ body {
   transform: translateY(0.5px);
 }
 
+/* Raw <button> reset: every hand-rolled button styles itself; without this the
+   UA's default border/background leaks in (the mystery dark boxes around 本体
+   bar / 已归档 / project switcher rows). Vuetify's v-btn is unaffected, and
+   buttons that declare their own border (e.g. .pool-row) override this. */
+button:not(.v-btn) {
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+
 /* Crisp keyboard focus (a11y floor) — soft amber ring. */
 :focus-visible {
   outline: 2px solid rgba(245, 127, 23, 0.55);

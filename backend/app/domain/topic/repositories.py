@@ -1,11 +1,13 @@
 """Topic data access."""
 
 import uuid
+from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.topic.models import Topic, TopicKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.topic.models import Topic, TopicKind, TopicReadState
 
 
 class TopicRepository:
@@ -88,4 +90,62 @@ class TopicRepository:
 
     async def set_session_id(self, topic: Topic, session_id: str) -> None:
         topic.session_id = session_id
+        await self._session.flush()
+
+    # ---- 话题级未读 (Feishu-style badges) -------------------------------
+
+    async def unread_counts(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> dict[uuid.UUID, int]:
+        """Unread message count per topic for one user, in one query.
+
+        Unread = message blocks authored by OTHERS, created after the user's
+        read cursor (no cursor = all of them). Only kind=message counts —
+        doc edits / events / decisions have their own surfaces. Other
+        people's private chats are excluded.
+        """
+        stmt = (
+            select(Block.topic_id, func.count())
+            .join(Topic, Topic.id == Block.topic_id)
+            .outerjoin(
+                TopicReadState,
+                and_(
+                    TopicReadState.topic_id == Block.topic_id,
+                    TopicReadState.user_handle == user_handle,
+                ),
+            )
+            .where(
+                Topic.project_id == project_id,
+                or_(
+                    Topic.is_private.is_(False),
+                    Topic.private_owner == user_handle,
+                ),
+                Block.kind == BlockKind.message,
+                Block.author != user_handle,
+                or_(
+                    TopicReadState.last_read_at.is_(None),
+                    Block.created_at > TopicReadState.last_read_at,
+                ),
+            )
+            .group_by(Block.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: int(count) for topic_id, count in rows}
+
+    async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
+        """Bump the user's read cursor on a topic to now (upsert)."""
+        stmt = select(TopicReadState).where(
+            TopicReadState.topic_id == topic_id,
+            TopicReadState.user_handle == user_handle,
+        )
+        state = (await self._session.scalars(stmt)).first()
+        now = datetime.now(UTC)
+        if state is None:
+            self._session.add(
+                TopicReadState(
+                    topic_id=topic_id, user_handle=user_handle, last_read_at=now
+                )
+            )
+        else:
+            state.last_read_at = now
         await self._session.flush()

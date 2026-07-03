@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { relTime } from '../lib/relTime'
 import type { Project, Topic } from '../types'
 import CheeseAvatar from './CheeseAvatar.vue'
 
@@ -16,6 +17,8 @@ const props = defineProps<{
   activeDocs?: string | null
   // Drawer width (px), made resizable by the parent.
   width?: number
+  // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
+  unreadMap?: Record<string, number>
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +27,9 @@ const emit = defineEmits<{
   (e: 'create-project', name: string): void
   (e: 'create-topic', title: string): void
   (e: 'split-topic', payload: { topicId: string; title: string }): void
+  // 归档去向: manual archive / unarchive from the row's ⋯ actions.
+  (e: 'archive-topic', id: string): void
+  (e: 'unarchive-topic', id: string): void
   // Open the 1:1 private chat with 芝士 in the main area (飞书私聊 conversation).
   (e: 'select-private'): void
   // Open a 项目文档 (章程/决策记录/周报集) in the main area, keeping the rail.
@@ -146,6 +152,34 @@ const tree = computed<TreeRow[]>(() => {
   return rows
 })
 
+// 归档去向: archived topics leave the active tree and live in a collapsed
+// 「已归档」 group at the bottom (newest archived first) — like Feishu's
+// folded conversations. Non-archived children of an archived parent stay in
+// the active list (their work isn't done).
+const activeTree = computed<TreeRow[]>(() =>
+  tree.value.filter((r) => r.topic.status !== 'archived'),
+)
+const archivedRows = computed<Topic[]>(() =>
+  props.topics
+    .filter((t) => t.status === 'archived' && inferKind(t) !== 'root')
+    .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? '')),
+)
+const archivedOpen = ref(false)
+
+// ---- 话题级未读角标 (Feishu-style) ----
+function unreadOf(id: string): number {
+  return props.unreadMap?.[id] ?? 0
+}
+// The badge shows at most 99+ (a runaway count shouldn't stretch the row).
+function unreadLabel(id: string): string {
+  const n = unreadOf(id)
+  return n > 99 ? '99+' : String(n)
+}
+// Unread hiding inside the collapsed archived group still deserves a hint.
+const archivedUnread = computed<number>(() =>
+  archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0),
+)
+
 // The root topic (本体) — represented by the rail header (a selector + a click
 // target), not a list row. And the current project's display name.
 const rootTopic = computed<Topic | null>(
@@ -191,6 +225,10 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
           <v-icon size="18" class="bentai-bar__icon">mdi-hexagon-outline</v-icon>
           <span class="bentai-bar__name">{{ currentProjectName }}</span>
           <span class="chip-neutral">本体</span>
+          <span
+            v-if="rootTopic && unreadOf(rootTopic.id) > 0"
+            class="unread-badge"
+          >{{ unreadLabel(rootTopic.id) }}</span>
         </button>
         <!-- ONLY the caret opens the switcher (clicking the bar opens 本体). -->
         <v-menu v-model="switcherOpen" location="bottom end" :offset="6">
@@ -260,61 +298,142 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 
           <v-list v-else density="compact" nav class="py-0">
             <v-list-item
-              v-for="row in tree"
+              v-for="row in activeTree"
               :key="row.topic.id"
               :active="row.topic.id === selectedTopicId"
               rounded="lg"
               class="topic-row"
-              :class="{ 'is-active': row.topic.id === selectedTopicId }"
-              :style="{ paddingInlineStart: 12 + row.depth * 16 + 'px' }"
+              :class="{
+                'is-active': row.topic.id === selectedTopicId,
+                'is-sub': row.depth > 0,
+              }"
+              :style="{
+                paddingInlineStart: 14 + row.depth * 20 + 'px',
+                '--guide-x': 22 + (row.depth - 1) * 20 + 'px',
+              }"
               @click="emit('select-topic', row.topic.id)"
             >
+              <!-- 干净行 + 前置图标做身份锚（混合版）：图标未读变琥珀，
+                   种类标签仍不要（缩进表达层级），操作 hover 才浮现。 -->
               <template #prepend>
                 <v-icon
-                  size="17"
-                  class="me-1 c-faint"
-                  :icon="
-                    row.depth > 0
-                      ? 'mdi-subdirectory-arrow-right'
-                      : 'mdi-message-text-outline'
-                  "
+                  v-if="row.depth === 0"
+                  size="16"
+                  class="row-glyph"
+                  :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
+                  icon="mdi-message-text-outline"
+                />
+                <!-- 分身不用钩子箭头：树的结构交给缩进 + 竖向引导线，
+                     行内只留一个小圆点做锚（未读转琥珀）。 -->
+                <span
+                  v-else
+                  class="row-glyph row-glyph--dot"
+                  :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
                 />
               </template>
-              <v-list-item-title class="d-flex align-center ga-2 topic-title">
-                <span class="text-truncate">{{ row.topic.title }}</span>
-                <span class="kind-text">{{ kindLabel(row.topic) }}</span>
+              <v-list-item-title class="d-flex align-center topic-title">
+                <span
+                  class="text-truncate"
+                  :class="{ 'title-unread': unreadOf(row.topic.id) > 0 }"
+                >{{ row.topic.title }}</span>
                 <span
                   v-if="statusBadge(row.topic.status)"
-                  class="d-inline-flex align-center ga-1 c-faint topic-status"
+                  class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
                 >
-                  <span
-                    class="status-dot"
-                    :class="
-                      row.topic.status === 'archived'
-                        ? 'status-dot--muted'
-                        : 'status-dot--warn'
-                    "
-                  />
+                  <span class="status-dot status-dot--warn" />
                   {{ statusBadge(row.topic.status) }}
                 </span>
               </v-list-item-title>
               <template #append>
-                <v-btn
-                  icon="mdi-source-branch-plus"
-                  size="x-small"
-                  variant="text"
-                  density="comfortable"
-                  title="拆出子话题"
-                  class="split-btn"
-                  @click.stop="onSplit(row.topic)"
-                />
+                <span
+                  v-if="unreadOf(row.topic.id) > 0"
+                  class="unread-badge"
+                >{{ unreadLabel(row.topic.id) }}</span>
+                <!-- items 感的右锚：没未读时给最后活跃时间（真实信息，非装饰） -->
+                <span v-else class="row-time">{{
+                  relTime(row.topic.updated_at)
+                }}</span>
+                <!-- hover 浮出的操作层：绝对定位覆盖行尾，不占布局宽度 -->
+                <div class="row-actions" @click.stop>
+                  <v-btn
+                    icon="mdi-archive-arrow-down-outline"
+                    size="x-small"
+                    variant="text"
+                    density="comfortable"
+                    title="归档话题"
+                    @click.stop="emit('archive-topic', row.topic.id)"
+                  />
+                  <v-btn
+                    icon="mdi-source-branch-plus"
+                    size="x-small"
+                    variant="text"
+                    density="comfortable"
+                    title="拆出子话题"
+                    @click.stop="onSplit(row.topic)"
+                  />
+                </div>
               </template>
             </v-list-item>
 
-            <v-list-item v-if="tree.length === 0" class="c-faint t-body">
+            <v-list-item v-if="activeTree.length === 0" class="c-faint t-body">
               暂无话题
             </v-list-item>
           </v-list>
+
+          <!-- 归档去向: collapsed 已归档 group at the bottom of the topic list.
+               Archived topics leave the active tree and land here (newest
+               first), so done work stops crowding the rail. -->
+          <template v-if="archivedRows.length">
+            <button
+              type="button"
+              class="archived-toggle"
+              @click="archivedOpen = !archivedOpen"
+            >
+              <v-icon size="15" class="c-faint">
+                {{ archivedOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
+              </v-icon>
+              <span class="t-eyebrow">已归档</span>
+              <span class="archived-count">{{ archivedRows.length }}</span>
+              <span
+                v-if="!archivedOpen && archivedUnread > 0"
+                class="unread-badge unread-badge--dot"
+                title="归档话题里有新消息"
+              />
+            </button>
+            <v-list v-if="archivedOpen" density="compact" nav class="py-0">
+              <v-list-item
+                v-for="t in archivedRows"
+                :key="t.id"
+                :active="t.id === selectedTopicId"
+                rounded="lg"
+                class="topic-row topic-row--archived"
+                :class="{ 'is-active': t.id === selectedTopicId }"
+                @click="emit('select-topic', t.id)"
+              >
+                <template #prepend>
+                  <v-icon size="16" class="me-1 c-faint" icon="mdi-archive-outline" />
+                </template>
+                <v-list-item-title class="d-flex align-center ga-2 topic-title">
+                  <span class="text-truncate">{{ t.title }}</span>
+                  <span class="kind-text">{{ kindLabel(t) }}</span>
+                </v-list-item-title>
+                <template #append>
+                  <span v-if="unreadOf(t.id) > 0" class="unread-badge me-1">
+                    {{ unreadLabel(t.id) }}
+                  </span>
+                  <v-btn
+                    icon="mdi-archive-arrow-up-outline"
+                    size="x-small"
+                    variant="text"
+                    density="comfortable"
+                    title="取消归档"
+                    class="split-btn"
+                    @click.stop="emit('unarchive-topic', t.id)"
+                  />
+                </template>
+              </v-list-item>
+            </v-list>
+          </template>
 
           <v-divider class="mx-3 my-1" />
 
@@ -477,6 +596,11 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
   text-overflow: ellipsis;
 }
 
+/* Unread: the row's title carries the signal. */
+.title-unread {
+  font-weight: 650;
+}
+
 /* Topic / nav rows: title ink, quiet by default. */
 .topic-row :deep(.v-list-item-title),
 .nav-row :deep(.v-list-item-title) {
@@ -522,21 +646,161 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
   font-size: 11.5px;
 }
 
-/* Row split button stays a stable, always-clickable target. It was previously
-   opacity:0 until the whole row was hovered, which made it "run away" — moving
-   the cursor toward it near the row edge flickered the hover state and the
-   button vanished. Keep it faint-but-present, brightening on hover/focus. */
-.topic-row .split-btn {
-  opacity: 0.4;
-  color: var(--faint);
-  transition: opacity 0.12s ease, color 0.12s ease;
+/* 未读角标 (Feishu-style): a compact red pill with the count. */
+.unread-badge {
+  flex: none;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 未读计数 = 裸的琥珀数字（owner 定的醒目色），行里唯一常驻的右对齐元素。
+     形态历经红圆/石墨药丸被否——干净的行 + 一个琥珀数字才是答案。 */
+  background: none;
+  color: var(--accent, #f57f17);
+  margin-left: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
-.topic-row:hover .split-btn,
-.topic-row:focus-within .split-btn,
-.topic-row .split-btn:hover,
-.topic-row .split-btn:focus-visible {
-  opacity: 1;
+/* Collapsed 已归档 header: just a dot hint, not a count. */
+.unread-badge--dot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--muted, #8a8a8a);
+}
+
+/* 已归档 group toggle at the bottom of the topic list. */
+.archived-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 16px);
+  margin: 2px 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.archived-toggle:hover {
+  background: var(--fill);
+}
+.archived-toggle .t-eyebrow {
+  padding: 0;
+}
+.archived-count {
+  font-size: 11px;
+  color: var(--faint);
+  background: var(--fill);
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+/* Archived rows read as "done": slightly dimmed titles. */
+.topic-row--archived :deep(.v-list-item-title) {
   color: var(--muted);
+}
+
+/* Hover-only action overlay (评审处方): absolutely positioned over the row's
+   tail, zero layout width — the title gets the full rail. Hover detection is
+   the WHOLE row (the old flicker came from hovering the buttons themselves),
+   and a gradient shoulder fades the title out under the buttons. */
+.topic-row {
+  position: relative;
+  min-height: 36px;
+  margin-block: 2px;
+}
+.topic-row :deep(.v-list-item__content) {
+  padding-block: 0;
+}
+/* 核心修正：Vuetify 的 prepend spacer 默认 ~32px，把图标和标题隔出一条鸿沟，
+   稀释了一切缩进关系。压到 8px，缩进的台阶才立得起来。 */
+.topic-row :deep(.v-list-item__spacer) {
+  width: 8px !important;
+}
+/* Item 感（混合版）：前置图标做行的身份锚，未读转琥珀。 */
+.row-glyph {
+  color: var(--faint, #b5b5b5);
+}
+.row-glyph--dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-left: 5px;
+  flex: none;
+}
+.row-glyph--unread {
+  color: var(--accent, #f57f17);
+}
+/* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。 */
+.topic-row.is-sub::before {
+  content: '';
+  position: absolute;
+  left: var(--guide-x, 24px);
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--line-2, #e3e3e3);
+}
+.topic-row:hover {
+  background: var(--fill);
+}
+.title-unread {
+  color: var(--text);
+}
+
+.row-actions {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 2px;
+  opacity: 0;
+  pointer-events: none;
+  /* 有意为之的浮动工具条（Linear 手法）：白底+细边+微影，
+     在任何行底色上都成立——不再试图和行底色融为一体。 */
+  background: var(--surface, #fff);
+  border: 1px solid var(--line-2, #e3e3e3);
+  border-radius: 7px;
+  box-shadow: 0 1px 4px rgba(20, 22, 26, 0.07);
+  transition: opacity 0.1s ease;
+  color: var(--muted);
+}
+/* 工具条里的每颗按钮要有自己的悬停反馈——否则不像能按的东西。 */
+.row-actions :deep(.v-btn) {
+  border-radius: 5px;
+  cursor: pointer;
+}
+.row-actions :deep(.v-btn:hover) {
+  background: var(--fill, #ececec);
+  color: var(--text, #2b2b2b);
+}
+.topic-row:hover .row-actions,
+.topic-row:focus-within .row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* While the actions are out, the count steps aside (they share the tail). */
+.topic-row:hover .unread-badge,
+.topic-row:focus-within .unread-badge,
+.topic-row:hover .row-time,
+.topic-row:focus-within .row-time {
+  opacity: 0;
+}
+.row-time {
+  flex: none;
+  color: var(--faint, #b5b5b5);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  /* 纯展示元素：绝不吃鼠标——hover 时它只是隐形，曾把整个操作工具条挡成
+     "点不动"（playwright 抓的现行：row-time intercepts pointer events）。 */
+  pointer-events: none;
 }
 </style>
 

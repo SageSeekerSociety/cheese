@@ -19,6 +19,12 @@ export interface Topic {
   kind: string
   status: string
   created_at: string
+  // Any activity (a turn, a status flip) touches this — the sidebar's 右锚.
+  updated_at?: string
+  // Lifecycle markers (spec §6.3) — used by the 已归档 group ordering.
+  accepted_by?: string | null
+  accepted_at?: string | null
+  archived_at?: string | null
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
@@ -80,6 +86,13 @@ export type WsServerFrame =
   | { type: 'error'; message: string; persisted?: boolean }
   | { type: 'done' }
 
+// 图片输入: an uploaded worktree image the message carries. `path` comes from
+// POST /topics/{id}/attachments; the WS frame only references it (no binary).
+export interface ChatAttachment {
+  path: string
+  mime: string
+}
+
 // WebSocket client -> server frame. `summon` = @芝士: true asks the AI to
 // reply, false (default) just posts the message (spec §7.1 默认不 @).
 export interface WsClientMessage {
@@ -88,6 +101,7 @@ export interface WsClientMessage {
   author: string
   summon: boolean
   reply_to?: string // B3: thread this message under another
+  attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----
@@ -251,8 +265,12 @@ export interface FileContent {
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
 // topic's current preview. Null when 芝士 hasn't set one.
 export interface PreviewInfo {
+  // kind=file → render the file's content; kind=app → iframe straight to the
+  // running app the agent started in its container (url, live-resolved).
+  kind?: 'file' | 'app'
   path: string
   mime: string | null
+  url?: string | null
 }
 
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).
@@ -271,6 +289,7 @@ export type AcceptStatus =
   | 'accepted'
   | 'rejected'
   | 'revoked'
+  | 'conflict'
   | string
 
 // GET /topics/{id}/accept-card (list, newest first).

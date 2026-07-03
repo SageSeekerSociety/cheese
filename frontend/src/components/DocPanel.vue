@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
+import { summarizeActions } from '../lib/toolLabels'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { relTime } from '../lib/relTime'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
+import { Extension } from '@tiptap/core'
 import type { Editor as CoreEditor } from '@tiptap/core'
+import { Plugin } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 import CheeseAvatar from './CheeseAvatar.vue'
 import CodeEditor from './CodeEditor.vue'
 import {
@@ -37,10 +40,6 @@ import type {
   WorkspaceFile,
 } from '../types'
 
-function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
-}
-
 // The living doc is the core interface (spec §2.2): an AI-maintained markdown
 // document the user can also edit ("改文档即指令"). Stored as markdown, so the
 // editor reads markdown in (contentType: 'markdown') and serializes markdown out
@@ -52,14 +51,24 @@ const props = withDefaults(
     // panel reloads the doc 芝士 just wrote. See WorkspaceView activityTick.
     activityTick: number
     // 施工现场: this topic's AI tool-action log, shown in the 现场 drawer.
-    worklog?: string[]
+    worklog?: { label: string; text: string }[]
+    // A turn is in flight — the 现场 live feed's newest line pulses.
+    working?: boolean
+    // Epoch ms when the current turn's first tool ran (drives the ⏱ elapsed).
+    workingSince?: number | null
     // 专注模式 (spec §7.1): the doc spans the whole workspace (chat hidden).
     focus?: boolean
     // Project topics (A2): resolve a doc node's upgraded_to_topic_id to the
     // subtopic's title + live status for the in-place live-ref badge.
     topicList?: Topic[]
   }>(),
-  { worklog: () => [], focus: false, topicList: () => [] },
+  {
+    worklog: () => [],
+    working: false,
+    workingSince: null,
+    focus: false,
+    topicList: () => [],
+  },
 )
 
 // 专注模式 toggle is owned by the parent (it hides the chat pane); we just ask.
@@ -69,6 +78,7 @@ const emit = defineEmits<{
   (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
   (e: 'topics-changed'): void
+  (e: 'mention-click', handle: string): void
 }>()
 
 // B1 Phase 2 (cross-view link, panel-level): when a chat action that changed the
@@ -268,7 +278,7 @@ async function pulse() {
     pulsing.value = false
   }, 1200)
 }
-defineExpose({ pulse, highlightTurn })
+defineExpose({ pulse, highlightTurn, openFile: openFileRef })
 
 // ---- 按需打开的工具 (spec §7.1): slide-out tool drawer ----
 interface ToolDef {
@@ -400,6 +410,27 @@ async function openCommentTool() {
 
 // 现场: read-only transcript timeline.
 const transcript = ref<Block[]>([])
+// Live-turn elapsed seconds (ticks while `working`).
+const nowTick = ref(Date.now())
+let tickTimer: ReturnType<typeof setInterval> | null = null
+watch(
+  () => props.working,
+  (w) => {
+    if (tickTimer) clearInterval(tickTimer)
+    tickTimer = w ? setInterval(() => (nowTick.value = Date.now()), 1000) : null
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => {
+  if (tickTimer) clearInterval(tickTimer)
+})
+const liveElapsed = computed(() => {
+  if (!props.working || !props.workingSince) return null
+  return Math.max(0, Math.round((nowTick.value - props.workingSince) / 1000))
+})
+const liveSummary = computed(() =>
+  summarizeActions(props.worklog.map((w) => w.label)),
+)
 // Git: commit log + working-tree diff.
 const gitCommits = ref<GitCommit[]>([])
 const gitDiff = ref<string>('')
@@ -415,8 +446,8 @@ const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
 
 // 文件树: the backend returns a flat list of full relative paths; build a
 // nested tree out of it (folders first, each level sorted by name), then
-// flatten into render rows — skipping the subtrees of collapsed folders.
-// Default is fully expanded.
+// flatten into render rows — only expanded folders contribute their subtrees.
+// Default is fully COLLAPSED: open exactly what you need.
 interface FileRow {
   type: 'dir' | 'file'
   path: string // full relative path (dir or file)
@@ -424,12 +455,12 @@ interface FileRow {
   depth: number
   bytes: number
 }
-const collapsedDirs = ref(new Set<string>())
+const expandedDirs = ref(new Set<string>())
 function toggleDir(path: string) {
-  const next = new Set(collapsedDirs.value)
+  const next = new Set(expandedDirs.value)
   if (next.has(path)) next.delete(path)
   else next.add(path)
-  collapsedDirs.value = next
+  expandedDirs.value = next
 }
 const fileRows = computed<FileRow[]>(() => {
   interface DirNode {
@@ -455,7 +486,7 @@ const fileRows = computed<FileRow[]>(() => {
     for (const name of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
       const path = prefix ? `${prefix}/${name}` : name
       rows.push({ type: 'dir', path, name, depth, bytes: 0 })
-      if (!collapsedDirs.value.has(path)) {
+      if (expandedDirs.value.has(path)) {
         walk(node.dirs.get(name)!, path, depth + 1)
       }
     }
@@ -482,6 +513,10 @@ const projectUsage = ref<UsageStats | null>(null)
 const previewFile = ref<FileContent | null>(null)
 const previewMime = ref<string>('text/html')
 const previewNamed = ref(false)
+// 运行环境预览: the agent declared a RUNNING app (cheese serve) — iframe its
+// live-resolved localhost URL instead of rendering file content.
+const previewAppUrl = ref<string | null>(null)
+const previewAppNote = ref<string>('')
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -530,21 +565,26 @@ async function loadTool(key: string) {
       projectUsage.value = pu
     } else if (key === 'preview') {
       // 芝士 points at the current preview via `cheese artifact` (render-by-type,
-      // spec §9.1). Fall back to the first *.html only when it hasn't named one.
+      // spec §7.1/§9.1). NO guessing when it hasn't named one: the old
+      // first-*.html fallback proudly served frontend/index.html — an SPA
+      // shell that renders blank — which is exactly why the spec says the
+      // platform never picks the preview itself.
       const art = await getPreview(tid).catch(() => null)
       if (props.topic?.id !== tid) return
-      if (art) {
+      previewAppUrl.value = null
+      previewAppNote.value = ''
+      if (art && art.kind === 'app') {
+        previewNamed.value = true
+        previewAppNote.value = art.path
+        previewAppUrl.value = art.url ?? null
+        previewFile.value = null
+      } else if (art) {
         previewNamed.value = true
         previewMime.value = art.mime || 'text/html'
         previewFile.value = await readFile(pid, art.path, tid).catch(() => null)
       } else {
-        const list = (await listFiles(pid, tid)).data
-        if (props.topic?.id !== tid) return
-        files.value = list
-        const html = list.find((f) => f.path.toLowerCase().endsWith('.html'))
         previewNamed.value = false
-        previewMime.value = 'text/html'
-        previewFile.value = html ? await readFile(pid, html.path, tid) : null
+        previewFile.value = null
       }
     } else if (key === 'comments') {
       await loadComments(tid)
@@ -646,9 +686,71 @@ const errorMsg = ref<string | null>(null)
 const lastSavedMarkdown = ref<string>('')
 const dirty = ref(false)
 
+// 结构化 token 装饰 (spec §9.1): decorate our OWN tokens — <@handle> /
+// <#topicId> — as clickable chips in the doc, read-only and edit alike.
+// Deterministic token parsing, never NL guessing.
+const TOKEN_RE = /<@([\w-]+)>|<#([0-9a-fA-F-]{8,})>|<&([\w./\u4e00-\u9fff-]+)>/g
+
+function tokenDecorations(doc: PMNode): DecorationSet {
+  const decos: Decoration[] = []
+  doc.descendants((node, pos) => {
+    if (!node.isText) return
+    const text = node.text ?? ''
+    TOKEN_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = TOKEN_RE.exec(text))) {
+      const attrs: Record<string, string> = m[1]
+        ? { class: 'mention', 'data-handle': m[1] }
+        : m[2]
+          ? { class: 'mention topic-ref', 'data-topic': m[2] }
+          : { class: 'mention file-ref', 'data-file': m[3] }
+      decos.push(Decoration.inline(pos + m.index, pos + m.index + m[0].length, attrs))
+    }
+  })
+  return DecorationSet.create(doc, decos)
+}
+
+const TokenChips = Extension.create({
+  name: 'cheeseTokenChips',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        state: {
+          init: (_cfg, state) => tokenDecorations(state.doc),
+          apply: (tr, old) => (tr.docChanged ? tokenDecorations(tr.doc) : old),
+        },
+        props: {
+          decorations(state) {
+            return this.getState(state)
+          },
+        },
+      }),
+    ]
+  },
+})
+
+// Chip clicks in the doc (delegated — decorations are plain spans).
+function onDocClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement | null)?.closest(
+    '.mention',
+  ) as HTMLElement | null
+  if (!el) return
+  if (el.dataset.topic) emit('open-topic', el.dataset.topic)
+  else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
+  else if (el.dataset.file) void openFileRef(el.dataset.file)
+}
+
+// A <&path> chip opens that file in the 文件 drawer's editor.
+async function openFileRef(path: string) {
+  openTool.value = 'files'
+  drawerOpen.value = true
+  await loadTool('files')
+  await selectFile(path)
+}
+
 const editor = useEditor({
   content: '',
-  extensions: [StarterKit, Markdown],
+  extensions: [StarterKit, Markdown, TokenChips],
   editable: editable.value,
   editorProps: {
     attributes: { class: 'doc-prose' },
@@ -957,7 +1059,7 @@ onBeforeUnmount(() => {
         <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
           <!-- Large document title (Feishu Docs), = the topic title -->
           <h1 class="doc-page__title">{{ topic.title }}</h1>
-          <div class="doc-editor-wrap">
+          <div class="doc-editor-wrap" @click="onDocClick">
             <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
             <!-- B4 Feishu-style: select text in the doc → a floating 评论 button
                  appears over the selection. Click to comment on that span. -->
@@ -1079,7 +1181,7 @@ onBeforeUnmount(() => {
           <!-- 现场: read-only transcript timeline (芝士 messages + 🔧 events) -->
           <template v-else-if="openTool === 'site'">
             <div
-              v-if="transcript.length === 0"
+              v-if="transcript.length === 0 && worklog.length === 0"
               class="text-center text-medium-emphasis py-6"
             >
               本话题暂无施工记录
@@ -1105,10 +1207,41 @@ onBeforeUnmount(() => {
                       <span class="site-msg__name">{{ authorLabel(b) }}</span>
                       <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
                     </div>
-                    <div class="md-content text-body-2" v-html="renderMarkdown(b.content)" />
+                    <!-- Raw transcript text on purpose (决定: 现场内容改为raw):
+                         现场 shows what 芝士 actually emitted — markdown syntax,
+                         <@handle> tokens and all — like a Claude Code session,
+                         NOT the rendered chat version. -->
+                    <div class="site-msg__raw">{{ b.content }}</div>
                   </div>
                 </div>
               </template>
+
+              <!-- 本轮实时动作 (live feed): what 芝士 is doing RIGHT NOW —
+                   newest line pulses; the list clears when the turn ends and
+                   the persisted transcript above becomes the record. -->
+              <template v-for="(act, i) in worklog" :key="'live-' + i">
+                <div class="site-act">
+                  <span
+                    class="site-act__dot"
+                    :class="{
+                      'site-act__dot--live': working && i === worklog.length - 1,
+                    }"
+                  >●</span>
+                  <div class="site-act__body">
+                    <span class="site-act__verb">{{ act.text }}</span>
+                  </div>
+                </div>
+              </template>
+              <!-- 本轮聚合摘要 (Claude Code 风): deterministic counts + ⏱ -->
+              <div v-if="working && worklog.length" class="site-summary">
+                <span class="site-act__dot site-act__dot--live">●</span>
+                <span>
+                  {{ liveSummary }}
+                  <template v-if="liveElapsed !== null">
+                    （{{ liveElapsed }}s）
+                  </template>
+                </span>
+              </div>
             </div>
           </template>
 
@@ -1197,10 +1330,10 @@ onBeforeUnmount(() => {
                       @click="toggleDir(row.path)"
                     >
                       <v-icon size="13" class="c-muted">
-                        {{ collapsedDirs.has(row.path) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+                        {{ expandedDirs.has(row.path) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
                       </v-icon>
                       <v-icon size="13" class="me-1 c-muted">
-                        {{ collapsedDirs.has(row.path) ? 'mdi-folder-outline' : 'mdi-folder-open-outline' }}
+                        {{ expandedDirs.has(row.path) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}
                       </v-icon>
                       <span class="file-item__name">{{ row.name }}</span>
                     </button>
@@ -1248,7 +1381,12 @@ onBeforeUnmount(() => {
                 还没有评论
               </div>
               <div v-for="c in comments" :key="c.id" class="comment-item mb-3">
-                <div class="text-caption c-muted mb-1">{{ c.author }}</div>
+                <div class="d-flex align-center mb-1">
+                  <span class="text-caption font-weight-medium">{{ c.author }}</span>
+                  <span class="text-caption c-faint ms-2">{{
+                    relTime(c.created_at)
+                  }}</span>
+                </div>
                 <!-- Feishu-style quote: the exact span the comment was made on.
                      Click to scroll + flash the paragraph it lives in (B4). -->
                 <button
@@ -1362,9 +1500,37 @@ onBeforeUnmount(() => {
           </template>
 
           <!-- 预览 (spec §9.1): the artifact 芝士 pointed at (cheese artifact),
-               rendered by its mimeType. Falls back to the first *.html. -->
+               rendered by its mimeType. Never guessed by the platform. -->
           <template v-else-if="openTool === 'preview'">
-            <div v-if="previewFile" class="preview-wrap">
+            <!-- 运行环境预览: live app in the topic's container -->
+            <div v-if="previewAppUrl" class="preview-wrap">
+              <div class="preview-bar text-caption px-3 pt-2">
+                <span class="text-medium-emphasis">{{ previewAppNote }}</span>
+                <v-chip size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
+                <v-chip size="x-small" variant="outlined" class="ms-1">
+                  {{ previewAppUrl }}
+                </v-chip>
+              </div>
+              <!-- The app is on 127.0.0.1:<port> — already a DIFFERENT origin
+                   from the platform, so allow-same-origin only lets the app be
+                   itself (cookies/storage on its own origin), never us. -->
+              <iframe
+                class="preview-frame"
+                :src="previewAppUrl"
+                sandbox="allow-same-origin allow-scripts allow-forms"
+              />
+            </div>
+            <div
+              v-else-if="previewNamed && previewAppNote"
+              class="text-center text-medium-emphasis py-8"
+            >
+              <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
+              <div>应用暂时不在线</div>
+              <div class="text-caption mt-1">
+                芝士声明过一个运行中的应用，但它的容器当前没在跑——再 @ 它一次即可拉起。
+              </div>
+            </div>
+            <div v-else-if="previewFile" class="preview-wrap">
               <div class="preview-bar text-caption px-3 pt-2">
                 <span class="text-medium-emphasis">{{ previewFile.path }}</span>
                 <v-chip
@@ -1378,16 +1544,23 @@ onBeforeUnmount(() => {
                   {{ previewMime }}
                 </v-chip>
               </div>
+              <!-- allow-scripts WITHOUT allow-same-origin (Claude Artifacts
+                   posture): interactive artifacts run their JS, but in an
+                   opaque origin that cannot touch the platform page. -->
               <iframe
                 class="preview-frame"
                 :srcdoc="previewFile.content"
-                sandbox="allow-same-origin"
+                sandbox="allow-scripts"
               />
             </div>
             <div v-else class="text-center text-medium-emphasis py-8">
               <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-              <div>暂无可预览的产物</div>
-              <div class="text-caption mt-1">芝士做出网页/图表后会指定预览</div>
+              <div>芝士还没有指定预览</div>
+              <div class="text-caption mt-1">
+                它做出网页 / 图表等可看的产物时，会把成果放到这里。
+                预览渲染的是自足的单文件产物；要跑整个应用（如 Vue 工程）
+                属于"运行环境预览"，还没做。
+              </div>
             </div>
           </template>
           </div>
@@ -1500,8 +1673,37 @@ onBeforeUnmount(() => {
   background: rgba(var(--v-theme-primary), 0.18);
 }
 .comment-item {
-  border-left: 2px solid rgba(var(--v-border-color), 0.4);
-  padding-left: 10px;
+  background: rgba(20, 22, 26, 0.03);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.comment-item .comment-quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-left: 2px solid var(--accent, #f57f17);
+  background: rgba(245, 127, 23, 0.06);
+  border-radius: 0 6px 6px 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 文档里的 @/话题 chip：和聊天同一视觉词汇，可点。 */
+.doc-editor :deep(.mention) {
+  color: rgb(var(--v-theme-primary));
+  background: var(--fill);
+  border-radius: 4px;
+  padding: 0 3px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.doc-editor :deep(.mention:hover) {
+  text-decoration: underline;
 }
 /* B4 Feishu-style: floating "评论" CTA over a text selection. */
 .doc-comment-cta {
@@ -1702,6 +1904,27 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
   line-height: 1.5;
 }
+.site-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line-2, #e3e3e3);
+  font-size: 12px;
+  color: var(--muted, #777);
+}
+.site-act__dot--live {
+  color: rgb(var(--v-theme-primary));
+  animation: site-pulse 1.2s ease-in-out infinite;
+}
+@keyframes site-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-act__dot--live { animation: none; }
+}
 .site-act__dot {
   color: var(--accent);
   flex: 0 0 auto;
@@ -1725,15 +1948,15 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-family: var(--font-mono);
 }
-/* 现场 is a transcript, not a doc — tame heading sizes inside 芝士 messages so
-   they read like chat, not a document. */
-.site-msg__main :deep(h1),
-.site-msg__main :deep(h2),
-.site-msg__main :deep(h3) {
-  font-size: 1em;
-  font-weight: 600;
-  margin: 6px 0 2px;
-  color: var(--ink);
+/* 现场 is a transcript, not a doc — 芝士's messages are shown RAW (markdown
+   source, <@handle> tokens intact), Claude Code style: mono + pre-wrap. */
+.site-msg__raw {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
 }
 /* Transparent scrim: an outside click dismisses the floating panel. */
 .tool-scrim {

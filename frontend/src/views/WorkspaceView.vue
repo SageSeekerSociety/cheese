@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
-import { computed, inject, nextTick, onMounted, ref, watch, type Ref } from 'vue'
+import { formatToolAction, toolLabel } from '../lib/toolLabels'
+import {
+  computed,
+  inject,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+  type Ref,
+} from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '../components/ChatPanel.vue'
 import DocPanel from '../components/DocPanel.vue'
@@ -8,21 +18,33 @@ import ProjectDocsView from './ProjectDocsView.vue'
 import TopicSidebar from '../components/TopicSidebar.vue'
 import {
   acceptCard,
+  archiveTopic,
+  attachmentRawUrl,
   createProject,
   createTopic,
   getAcceptCards,
   getPrivateChat,
   getTopic,
+  getTopicUnread,
   listProjectMembers,
   listProjects,
   listTopics,
+  markTopicRead,
   reassignCard,
   rejectCard,
   revokeCard,
   splitTopic,
+  unarchiveTopic,
   upgradeBlock,
 } from '../api'
-import type { AcceptCard, Project, ProjectMemberRow, Topic } from '../types'
+import { usePendingAttachments } from '../lib/attachments'
+import type {
+  AcceptCard,
+  ChatAttachment,
+  Project,
+  ProjectMemberRow,
+  Topic,
+} from '../types'
 
 // projectId comes from the route (/project/:projectId). When absent we fall
 // back to the first project so 工作台 is never empty.
@@ -46,6 +68,7 @@ const focusMode = ref(false)
 const docRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
+  openFile?: (path: string) => void
 } | null>(null)
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 watch([railWidth, chatPct], () => {
@@ -144,28 +167,60 @@ const hasError = computed<boolean>({
 
 // ---- Spanning composer (spec §7.1: 输入栏在对话+文档区域底部) ----
 const chatRef = ref<{
-  send: (content: string, summon: boolean) => boolean
+  send: (
+    content: string,
+    summon: boolean,
+    attachments?: ChatAttachment[],
+  ) => boolean
   connected: boolean
 } | null>(null)
 const draft = ref('')
 const summon = ref(false) // @芝士 toggle: default OFF (人与人对话为主)
 const composerReady = computed(() => !!chatRef.value?.connected)
 
-// 施工现场 log for the current topic, fed into DocPanel's 现场 drawer.
-const worklog = ref<string[]>([])
-
-const TOOL_LABELS: Record<string, string> = {
-  create_subtopic: '拆出子话题',
-  update_doc: '更新了文档',
-  remember: '记入项目记忆',
-  notify: '发送通知',
-  request_accept: '递出验收卡',
-  return_conclusion: '回流结论',
+// 图片输入: paste a screenshot / pick images → upload to the topic's worktree,
+// preview above the composer, reference them on send.
+const composerFileInput = ref<HTMLInputElement | null>(null)
+const {
+  pending: pendingAtts,
+  uploading: attsUploading,
+  addFiles: addAttFiles,
+  onPaste: onComposerPaste,
+  removeAt: removePendingAtt,
+  clear: clearPendingAtts,
+} = usePendingAttachments(
+  () => selectedTopic.value?.id,
+  (msg) => {
+    globalError.value = msg
+  },
+)
+function pickAttFiles() {
+  composerFileInput.value?.click()
+}
+function onAttFilePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (input.files?.length) void addAttFiles(input.files)
+  input.value = ''
 }
 
+// 施工现场 live feed for the current topic — DocPanel's 现场 drawer shows it
+// with a pulsing dot while the turn runs; cleared when the turn ends (the
+// persisted transcript takes over as the durable record).
+const worklog = ref<{ label: string; text: string }[]>([])
+const working = ref(false)
+const workingSince = ref<number | null>(null)
+
+
 function sendDraft() {
-  const ok = chatRef.value?.send(expandMentions(draft.value), summon.value)
-  if (ok) draft.value = ''
+  const ok = chatRef.value?.send(
+    expandMentions(draft.value),
+    summon.value,
+    pendingAtts.value.slice(),
+  )
+  if (ok) {
+    draft.value = ''
+    clearPendingAtts()
+  }
 }
 
 // @-autocomplete: the @token currently being typed at the end of the draft, and
@@ -280,6 +335,7 @@ async function loadTopicsFor(id: string) {
   } finally {
     if (selectedProjectId.value === id) loadingTopics.value = false
   }
+  refreshUnread()
 }
 
 // Navigate so the URL carries the project; the route watcher below loads it.
@@ -315,9 +371,14 @@ const acceptBusy = ref(false)
 const rejectNote = ref('')
 const showRejectInput = ref(false)
 
-// Newest pending card (the list comes newest-first).
+// Newest pending card (the list comes newest-first). A card in `conflict`
+// (采纳时合并冲突，芝士被派去解决) keeps the merge box up — as a STATE, with a
+// retry button — instead of pretending the accept went through.
 const pendingCard = computed<AcceptCard | null>(
-  () => acceptCards.value.find((c) => c.status === 'pending') ?? null,
+  () =>
+    acceptCards.value.find(
+      (c) => c.status === 'pending' || c.status === 'conflict',
+    ) ?? null,
 )
 // The accepted card on an archived topic — its presence lets us offer 撤回采纳.
 const acceptedCard = computed<AcceptCard | null>(
@@ -387,7 +448,11 @@ async function onAcceptCard() {
   if (!card) return
   acceptBusy.value = true
   try {
-    await acceptCard(card.id, AUTHOR)
+    const updated = await acceptCard(card.id, AUTHOR)
+    if (updated.status === 'conflict') {
+      globalError.value =
+        '合并冲突，这次没有归档——芝士已被派去解决，它汇报后再点「重试采纳」。'
+    }
     await Promise.all([loadAcceptCard(), refreshSelectedTopic()])
   } catch (e) {
     reportError(e, '采纳失败')
@@ -426,6 +491,57 @@ async function onRejectCard() {
   }
 }
 
+// ---- 话题级未读 (Feishu-style badges, spec 前端体验优化 A) ----
+const unreadMap = ref<Record<string, number>>({})
+
+async function refreshUnread() {
+  const pid = selectedProjectId.value
+  if (!pid || !AUTHOR) return
+  try {
+    const map = await getTopicUnread(pid, AUTHOR)
+    if (selectedProjectId.value !== pid) return
+    // The open topic is being read right now — its badge never shows.
+    if (selectedTopicId.value) delete map[selectedTopicId.value]
+    unreadMap.value = map
+  } catch {
+    // Best-effort; badges just stay as they were.
+  }
+}
+
+// Opening a topic = reading it: bump the server-side cursor and clear the
+// badge locally (optimistic — the next refresh agrees).
+function markSelectedRead(id: string) {
+  if (!AUTHOR) return
+  if (unreadMap.value[id] !== undefined) {
+    const next = { ...unreadMap.value }
+    delete next[id]
+    unreadMap.value = next
+  }
+  markTopicRead(id, AUTHOR).catch(() => {})
+}
+
+// ---- 归档去向: manual archive / unarchive from the sidebar ----
+async function handleArchiveTopic(id: string) {
+  try {
+    await archiveTopic(id, AUTHOR)
+    // Archiving the topic you're looking at closes it — the main panel
+    // returns to the empty state instead of showing a frozen archive.
+    if (selectedTopicId.value === id) selectedTopicId.value = null
+    await refreshTopics()
+  } catch (e) {
+    reportError(e, '归档失败')
+  }
+}
+
+async function handleUnarchiveTopic(id: string) {
+  try {
+    await unarchiveTopic(id, AUTHOR)
+    await refreshTopics()
+  } catch (e) {
+    reportError(e, '取消归档失败')
+  }
+}
+
 // Silent refresh of the current project's topic list (no spinner / selection
 // reset), so newly created sub-topics show up after 芝士 acts.
 async function refreshTopics() {
@@ -440,8 +556,17 @@ async function refreshTopics() {
 }
 
 function handleTurnDone() {
+  // The live feed's job is over — the persisted 现场 transcript is the record.
+  working.value = false
+  workingSince.value = null
+  worklog.value = []
   activityTick.value += 1
   refreshTopics()
+  // 芝士's reply landed after our read cursor — the user is watching this
+  // topic, so re-bump the cursor before refreshing badges (other topics that
+  // got messages in the background DO light up).
+  if (selectedTopicId.value) markSelectedRead(selectedTopicId.value)
+  refreshUnread()
 }
 
 // A `cheese <sub>` command changed a platform resource mid-turn (it runs as Bash,
@@ -503,8 +628,13 @@ function expandMentions(text: string): string {
   return out
 }
 
-function handleToolUsed(name: string) {
-  worklog.value.push(TOOL_LABELS[name] ?? name)
+function handleToolUsed(name: string, input?: Record<string, unknown>) {
+  if (!working.value) workingSince.value = Date.now()
+  working.value = true
+  worklog.value.push({
+    label: toolLabel(name),
+    text: formatToolAction(name, input),
+  })
   if (name === 'update_doc') {
     activityTick.value += 1
   } else if (name === 'create_subtopic') {
@@ -580,9 +710,12 @@ watch(
 )
 
 // Load the accept-card banner whenever the selected topic changes (covers
-// sidebar selection, create/split/upgrade, and route-driven selection).
-watch(selectedTopicId, () => {
+// sidebar selection, create/split/upgrade, and route-driven selection), and
+// mark the newly opened topic read (its unread badge clears, Feishu-style).
+watch(selectedTopicId, (id) => {
   loadAcceptCard()
+  clearPendingAtts() // pending images belong to the topic they were typed in
+  if (id) markSelectedRead(id)
 })
 
 // ?topic=<id> changing while already in the workspace (same project) — e.g. a
@@ -606,6 +739,11 @@ if (activityBump) {
   })
 }
 
+// 实时性 (前端体验优化 C, MVP): poll unread badges so messages landing in
+// OTHER topics light up without a manual refresh. 30s keeps it fresher than
+// "only when I click around" without hammering the backend.
+let unreadTimer: number | undefined
+
 onMounted(async () => {
   await refreshProjects()
   if (props.projectId) {
@@ -616,6 +754,13 @@ onMounted(async () => {
       router.replace({ name: 'workspace-project', params: { projectId: first.id } })
     }
   }
+  unreadTimer = window.setInterval(() => {
+    refreshUnread()
+  }, 30_000)
+})
+
+onUnmounted(() => {
+  if (unreadTimer !== undefined) window.clearInterval(unreadTimer)
 })
 </script>
 
@@ -631,10 +776,13 @@ onMounted(async () => {
       :loading-topics="loadingTopics"
       :private-active="mode === 'private'"
       :active-docs="mode === 'docs' ? docKind : null"
+      :unread-map="unreadMap"
       @select-project="selectProject"
       @select-topic="selectTopic"
       @select-private="selectPrivate"
       @select-docs="selectDocs"
+      @archive-topic="handleArchiveTopic"
+      @unarchive-topic="handleUnarchiveTopic"
       @create-project="handleCreateProject"
       @create-topic="handleCreateTopic"
       @split-topic="handleSplitTopic"
@@ -675,6 +823,7 @@ onMounted(async () => {
         @tool-used="handleToolUsed"
         @state-changed="handleStateChanged"
         @mention-click="handleMentionClick"
+        @open-file="(p: string) => docRef?.openFile?.(p)"
         @open-resource="handleOpenResource"
         @upgrade-message="handleUpgradeMessage"
         @open-topic="selectTopic"
@@ -728,10 +877,30 @@ onMounted(async () => {
               <div class="merge-box__bar" />
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
-                  <v-icon color="success" size="19">
-                    mdi-source-merge
+                  <v-icon
+                    :color="pendingCard.status === 'conflict' ? 'warning' : 'success'"
+                    size="19"
+                  >
+                    {{
+                      pendingCard.status === 'conflict'
+                        ? 'mdi-source-merge'
+                        : 'mdi-source-merge'
+                    }}
                   </v-icon>
-                  <span class="t-title">成果待采纳</span>
+                  <span class="t-title">
+                    {{
+                      pendingCard.status === 'conflict'
+                        ? '合并冲突 · 芝士处理中'
+                        : '成果待采纳'
+                    }}
+                  </span>
+                </div>
+                <div
+                  v-if="pendingCard.status === 'conflict'"
+                  class="text-caption text-medium-emphasis mb-2"
+                >
+                  {{ pendingCard.note || '采纳时合并冲突，芝士正在工作区里解决。' }}
+                  它在对话里汇报解决完之后，点下面重试。
                 </div>
                 <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
                   <span>等</span>
@@ -789,7 +958,9 @@ onMounted(async () => {
                     prepend-icon="mdi-check"
                     @click="onAcceptCard"
                   >
-                    采纳并归档
+                    {{
+                      pendingCard.status === 'conflict' ? '重试采纳' : '采纳并归档'
+                    }}
                   </v-btn>
                   <v-btn
                     variant="text"
@@ -865,6 +1036,8 @@ onMounted(async () => {
           :topic="selectedTopic"
           :activity-tick="activityTick"
           :worklog="worklog"
+          :working="working"
+          :working-since="workingSince"
           :focus="focusMode"
           :topic-list="topics"
           @toggle-focus="focusMode = !focusMode"
@@ -915,6 +1088,29 @@ onMounted(async () => {
               <span v-if="i === 0" class="mention-menu-hint">Enter</span>
             </button>
           </div>
+          <!-- 图片输入: images waiting to go with the next send. -->
+          <div v-if="pendingAtts.length || attsUploading" class="att-strip">
+            <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
+              <img
+                :src="attachmentRawUrl(selectedTopic.id, a.path)"
+                :alt="a.path"
+              />
+              <button
+                type="button"
+                class="att-remove"
+                title="移除"
+                @click="removePendingAtt(i)"
+              >
+                ×
+              </button>
+            </div>
+            <v-progress-circular
+              v-if="attsUploading"
+              indeterminate
+              size="18"
+              width="2"
+            />
+          </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
               v-model="draft"
@@ -927,20 +1123,39 @@ onMounted(async () => {
               class="composer-input flex-grow-1"
               :placeholder="
                 summon
-                  ? '让芝士做点什么…（Enter 发送，Shift+Enter 换行）'
+                  ? '让芝士做点什么…（Enter 发送，Shift+Enter 换行，可粘贴图片）'
                   : '发条消息…（默认不 @ 芝士；点 @芝士 让它回复）'
               "
               :disabled="!composerReady"
               @keydown="onComposerKey"
+              @paste="onComposerPaste"
               @compositionstart="onCompositionStart"
               @compositionend="onCompositionEnd"
+            />
+            <input
+              ref="composerFileInput"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              class="d-none"
+              @change="onAttFilePicked"
+            />
+            <v-btn
+              icon="mdi-image-plus-outline"
+              variant="text"
+              size="small"
+              title="发送图片"
+              :disabled="!composerReady"
+              @click="pickAttFiles"
             />
             <v-btn
               color="primary"
               variant="flat"
               icon="mdi-send"
               size="small"
-              :disabled="!composerReady || !draft.trim()"
+              :disabled="
+                !composerReady || (!draft.trim() && !pendingAtts.length)
+              "
               @click="sendDraft"
             />
           </div>
@@ -991,6 +1206,43 @@ onMounted(async () => {
 }
 .composer {
   background: var(--surface);
+}
+/* 图片输入: pending images above the composer, each with a remove button. */
+.att-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 2px;
+}
+.att-thumb {
+  position: relative;
+  line-height: 0;
+}
+.att-thumb img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--fill);
+}
+.att-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.att-remove:hover {
+  color: var(--ink);
 }
 /* @-autocomplete dropdown (§3.1.1) */
 .mention-menu {

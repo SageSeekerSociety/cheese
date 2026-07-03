@@ -16,10 +16,13 @@ the durable lease is the documented multi-instance upgrade.
 import asyncio
 import contextlib
 import logging
+import time
 import uuid
+from collections import deque
 from collections.abc import AsyncIterator
 
 from app.core.errors import AppError
+from app.core.obs import bind_context, clear_context
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -87,6 +90,12 @@ class TurnRunner:
         self._timeout = turn_timeout_s
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
+        # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
+        self._recent: deque[dict] = deque(maxlen=100)
+
+    def recent_turns(self) -> list[dict]:
+        """Newest-first lifecycle summaries for /debug/turns."""
+        return list(reversed(self._recent))
 
     def active_turns(self) -> int:
         """How many turns are currently in flight — /health exposes this so a
@@ -102,80 +111,216 @@ class TurnRunner:
         content: str,
         summon: bool,
         reply_to: str | None = None,
+        attachments: list[dict] | None = None,
+        is_resume: bool = False,
+        resume_reason: str | None = None,
+        nudge_event: str | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
         submit queues behind the first)."""
         turn_id = uuid.uuid4()
-        frames = chat_service.converse(
-            topic_id=topic_id,
-            author=author,
-            content=content,
-            summon=summon,
-            turn_id=turn_id,
-            reply_to=reply_to,
+        task = asyncio.create_task(
+            self._run(
+                chat_service, topic_id, turn_id,
+                author=author, content=content, summon=summon, reply_to=reply_to,
+                attachments=attachments, is_resume=is_resume,
+                resume_reason=resume_reason, nudge_event=nudge_event,
+            )
         )
-        return self._spawn(chat_service, topic_id, turn_id, frames)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return turn_id
 
     def submit_kickoff(
         self, chat_service, topic_id: uuid.UUID, *, prompt: str | None = None
     ) -> uuid.UUID:
         """A platform-event turn (spec §8.4): 分身自动开工 after a split/upgrade
         (default prompt), or the parent digesting a returned conclusion (custom
-        prompt). No human message is posted — the agent speaks for itself."""
+        prompt). No human message is posted — the agent speaks for itself; the
+        pre-built kickoff frame stream rides the same _run pipeline (telemetry,
+        timeout, failure events) via the `frames` override."""
         turn_id = uuid.uuid4()
         frames = chat_service.kickoff(
             topic_id=topic_id, turn_id=turn_id, prompt=prompt
         )
-        return self._spawn(chat_service, topic_id, turn_id, frames)
-
-    def _spawn(
-        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID, frames
-    ) -> uuid.UUID:
-        task = asyncio.create_task(self._run(chat_service, topic_id, turn_id, frames))
+        task = asyncio.create_task(
+            self._run(
+                chat_service, topic_id, turn_id,
+                author="system", content=prompt or "", summon=True,
+                frames=frames,
+            )
+        )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return turn_id
+
+    # What the auto-resumed turn asks 芝士 to do. Its progress is intact: the
+    # topic's session pointer was saved on failure (resume, not replay).
+    RESUME_PROMPT = (
+        "上一轮在中途断了（原因见上一条系统事件）。你的工作区和已完成的进度都在，"
+        "请从断点接着完成原任务；如果其实已经完成了，就直接收尾汇报。"
+    )
+
+    def _schedule_resume(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        after_s: float,
+        reason: str = "从上一轮的断点继续",
+    ):
+        """One bounded auto-resume: wait, then run a system-nudged turn that
+        continues the saved session. Resumed turns never schedule another
+        resume (is_resume=True), so a persistent failure stops after one shot."""
+
+        async def _later() -> None:
+            await asyncio.sleep(after_s)
+            self.submit(
+                chat_service,
+                topic_id,
+                author="system",
+                content=self.RESUME_PROMPT,
+                summon=True,
+                is_resume=True,
+                resume_reason=reason,
+            )
+
+        task = asyncio.create_task(_later())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        logger.info("scheduled auto-resume for topic %s in %.0fs", topic_id, after_s)
 
     async def _run(
         self,
         chat_service,
         topic_id: uuid.UUID,
         turn_id: uuid.UUID,
-        frames,
+        *,
+        author: str,
+        content: str,
+        summon: bool,
+        reply_to: str | None = None,
+        attachments: list[dict] | None = None,
+        is_resume: bool = False,
+        resume_reason: str | None = None,
+        nudge_event: str | None = None,
+        # Pre-built frame stream (kickoff turns). None → run a converse turn.
+        frames: AsyncIterator[Frame] | None = None,
     ) -> None:
         channel = str(topic_id)
+        resume_after: float | None = None
+        resume_why = "上一轮异常中断，接着跑"
+        # Correlate: every log line anywhere inside this turn carries these ids.
+        bind_context(turn=str(turn_id)[:8], topic=str(topic_id)[:8])
+        t0 = time.monotonic()
+        rec = {
+            "turn_id": str(turn_id),
+            "topic_id": str(topic_id),
+            "author": author,
+            "summon": summon,
+            "is_resume": is_resume,
+            "status": "running",
+            "started_at": time.time(),
+            "first_output_s": None,
+            "tools": 0,
+            "duration_s": None,
+            "detail": None,
+        }
+        self._recent.append(rec)
+        logger.info(
+            "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
+        )
         try:
             # Wall-clock ceiling (R8): a wedged turn must not hold the topic lock
             # forever. On timeout the async-for exits, closing the converse
             # generator → its `async with` blocks unwind → the topic lock releases
             # and the in-container claude process is torn down.
             async with asyncio.timeout(self._timeout):
-                async for frame in frames:
+                turn_frames = (
+                    frames
+                    if frames is not None
+                    else chat_service.converse(
+                        topic_id=topic_id,
+                        author=author,
+                        content=content,
+                        summon=summon,
+                        turn_id=turn_id,
+                        reply_to=reply_to,
+                        attachments=attachments,
+                        is_resume=is_resume,
+                        resume_reason=resume_reason,
+                        nudge_event=nudge_event,
+                    )
+                )
+                async for frame in turn_frames:
+                    kind = frame.get("type")
+                    if kind == "resume_hint":
+                        # Internal: chat layer says this failure is worth an
+                        # automatic continuation (e.g. rate-limit reset time).
+                        resume_after = float(frame.get("after_s", 5))
+                        resume_why = str(frame.get("reason") or resume_why)
+                        rec["detail"] = resume_why
+                        continue
+                    if kind in ("delta", "tool") and rec["first_output_s"] is None:
+                        rec["first_output_s"] = round(time.monotonic() - t0, 2)
+                    if kind == "tool":
+                        rec["tools"] += 1
+                    if kind == "error":
+                        rec["status"] = "error"
+                        rec["detail"] = str(frame.get("message", ""))[:200]
                     await self._broker.publish(channel, frame)
+            if rec["status"] == "running":
+                rec["status"] = "done"
+            rec["duration_s"] = round(time.monotonic() - t0, 1)
+            logger.info(
+                "turn done: status=%s tools=%s first_output=%ss duration=%ss",
+                rec["status"], rec["tools"], rec["first_output_s"], rec["duration_s"],
+            )
         except TimeoutError:
+            rec["status"] = "timeout"
+            rec["duration_s"] = round(time.monotonic() - t0, 1)
             logger.warning(
                 "turn %s timed out (>%ss) for topic %s; interrupted",
                 turn_id, self._timeout, topic_id,
             )
+            text = (
+                "⚠️ 芝士这轮超时被中断了（可能卡在某步）。已完成的改动都在；"
+                "马上自动接着跑一次。"
+            )
+            block = None
+            try:
+                block = await chat_service.post_system_event(topic_id, text, turn_id)
+            except Exception:  # noqa: BLE001 — best effort
+                logger.exception("failed to persist timeout event")
+            if block is not None:
+                await self._broker.publish(
+                    channel, {"type": "event_block", "block": block}
+                )
             await self._broker.publish(
                 channel,
-                {
-                    "type": "error",
-                    "message": "芝士这轮超时被中断了（可能卡在某步）。"
-                    "已完成的改动已保存，再 @ 它一次就会接着来。",
-                },
+                {"type": "error", "message": text, "persisted": block is not None},
             )
+            if not is_resume:
+                resume_after = 10.0
+                resume_why = "上一轮超时中断，接着跑"
         except AppError as exc:
+            rec["status"] = "error"
+            rec["detail"] = exc.message
+            rec["duration_s"] = round(time.monotonic() - t0, 1)
             await self._broker.publish(
                 channel, {"type": "error", "message": exc.message}
             )
         except Exception:  # noqa: BLE001 — surface agent/runtime failures (spec H4)
+            rec["status"] = "crashed"
+            rec["duration_s"] = round(time.monotonic() - t0, 1)
             logger.exception("turn %s failed for topic %s", turn_id, topic_id)
             # The failure goes into the 现场 timeline as a persisted system event
             # (scrolls with the flow, survives reload) — not just a transient
             # banner. No invented cause: the log has the real traceback.
-            text = "⚠️ 芝士这轮中断了。已完成的改动都在；再 @ 它一次会接着做。"
+            text = (
+                "⚠️ 芝士这轮中断了。已完成的改动都在；马上自动接着跑一次，"
+                "若再失败就需要你再 @ 它。"
+            )
             block = None
             try:
                 block = await chat_service.post_system_event(topic_id, text, turn_id)
@@ -189,3 +334,9 @@ class TurnRunner:
                 channel,
                 {"type": "error", "message": text, "persisted": block is not None},
             )
+            if not is_resume:
+                resume_after = 5.0
+        if resume_after is not None and not is_resume:
+            rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
+            self._schedule_resume(chat_service, topic_id, resume_after, resume_why)
+        clear_context("turn", "topic")

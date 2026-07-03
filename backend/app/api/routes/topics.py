@@ -3,7 +3,8 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_chat_service, get_turn_runner
@@ -25,6 +26,7 @@ from app.domain.topic.schemas import (
 )
 from app.domain.topic.services import TopicService
 from app.domain.usage.repositories import UsageRepository
+from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
 
@@ -71,14 +73,9 @@ async def topic_transcript(topic_id: uuid.UUID, db: DbSession) -> dict:
     tool/event actions, read-only."""
     await TopicService(db).get_or_404(topic_id)
     blocks = await BlockRepository(db).list_for_topic(topic_id)
-    # 现场 = what 芝士 said (ai messages) + what it did (tool events). Exclude the
-    # doc/decision artifacts (author_type is also ai) — those have their own views.
-    site = [
-        b
-        for b in blocks
-        if (b.author_type == AuthorType.ai and b.kind == BlockKind.message)
-        or b.kind == BlockKind.event
-    ]
+    # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
+    # to the conversation pane — mirroring them here just duplicates the chat.
+    site = [b for b in blocks if b.kind == BlockKind.event]
     items = [BlockOut.model_validate(b).model_dump(mode="json") for b in site]
     return ok(page(items, len(items)))
 
@@ -138,17 +135,35 @@ async def add_comment(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     quote = (body.get("quote") or "").strip() or None
     if quote and len(quote) > 500:
         quote = quote[:500]
+    author = body.get("author") or "anonymous"
     comment = await repo.add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author=(body.get("author") or "anonymous"),
+        author=author,
         author_type=AuthorType.human,
         content=content,
         kind=BlockKind.comment,
         reply_to=reply_to,
         anchor_quote=quote,
     )
-    return ok(BlockOut.model_validate(comment).model_dump(mode="json"))
+    payload = BlockOut.model_validate(comment).model_dump(mode="json")
+    await db.commit()  # the comment must be visible before the turn reads it
+    # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
+    from app.api.deps import get_chat_service, get_turn_runner
+
+    where = f"「{quote[:80]}」" if quote else "整篇"
+    get_turn_runner().submit(
+        get_chat_service(),
+        topic_id,
+        author="system",
+        content=(
+            f"{author} 在活文档 {where} 处评论：{content}\n"
+            "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
+        ),
+        summon=True,
+        nudge_event=f"💬 {author} 在文档上留了评论，芝士来处理",
+    )
+    return ok(payload)
 
 
 @router.get("/{topic_id}/doc")
@@ -198,6 +213,33 @@ async def set_title(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
         raise ValidationError("title 不能为空")
     topic.title = title[:80]
     await db.flush()
+    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
+@router.post("/{topic_id}/read")
+async def mark_topic_read(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """话题级已读位: bump the user's read cursor (opening a topic clears its
+    unread badge, Feishu-style)."""
+    handle = (body.get("handle") or "").strip()
+    if not handle:
+        raise ValidationError("handle 不能为空")
+    await TopicService(db).mark_read(topic_id, handle)
+    return ok({"topic_id": str(topic_id), "handle": handle})
+
+
+@router.post("/{topic_id}/archive")
+async def archive_topic(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """手动归档 (归档去向): explicit archive, independent of 采纳."""
+    by = (body.get("by") or "anonymous").strip() or "anonymous"
+    topic = await TopicService(db).archive(topic_id, by=by)
+    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
+@router.post("/{topic_id}/unarchive")
+async def unarchive_topic(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """取消归档: bring an archived topic back to active."""
+    by = (body.get("by") or "anonymous").strip() or "anonymous"
+    topic = await TopicService(db).unarchive(topic_id, by=by)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
@@ -260,6 +302,10 @@ async def return_conclusion(
 _ARTIFACT_MIME = {
     "html": "text/html",
     "svg": "image/svg+xml",
+    # 运行环境预览: the artifact is a RUNNING app inside the topic's container,
+    # listening on the conventional $CHEESE_APP_PORT. HOW to run it is the AI's
+    # judgment (per-project); the platform only proxies the published port.
+    "app": "application/x-cheesex-app",
 }
 
 
@@ -280,8 +326,13 @@ async def set_artifact(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     """芝士 marks a worktree file as a renderable artifact (spec §9.1) — used by
     `cheese artifact`. With no anchor it becomes the topic's current preview."""
     topic = await TopicService(db).get_or_404(topic_id)
-    path = _clean_artifact_path(body.get("path") or "")
     as_ = (body.get("as") or "html").strip().lower()
+    # An app artifact points at the running server, not a file — the stored
+    # content is a human note ("Vue dev server"), not a path.
+    if as_ == "app":
+        path = (body.get("path") or "app").strip()[:120]
+    else:
+        path = _clean_artifact_path(body.get("path") or "")
     mime = _ARTIFACT_MIME.get(as_)
     if mime is None:
         allowed = "、".join(_ARTIFACT_MIME)
@@ -308,7 +359,101 @@ async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
     art = await BlockRepository(db).latest_artifact(topic_id)
     if art is None:
         return ok(None)
-    return ok({"path": art.content, "mime": art.mime_type})
+    if art.mime_type == _ARTIFACT_MIME["app"]:
+        # Resolve the container's published port LIVE — the mapping only exists
+        # while the topic's container is up.
+        url = ws.app_preview_url(topic_id)
+        return ok(
+            {
+                "kind": "app",
+                "path": art.content,
+                "mime": art.mime_type,
+                "url": url,
+            }
+        )
+    return ok({"kind": "file", "path": art.content, "mime": art.mime_type})
+
+
+# ---- 聊天图片附件 (图片输入) -------------------------------------------------
+# An attachment is a REAL file in the topic's worktree (所有产出都是 git): the
+# upload writes bytes under uploads/, the message references it as an
+# attachment block, and 芝士 sees it by Read-ing the file in its sandbox.
+
+# Images only for now; the mime comes from the upload's content-type and the
+# raw reader re-derives it from the extension (never from file sniffing).
+_IMAGE_MIME_EXT = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+_EXT_IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024  # 10MB per image
+
+
+@router.post("/{topic_id}/attachments")
+async def upload_attachment(
+    topic_id: uuid.UUID, file: UploadFile, db: DbSession
+) -> dict:
+    """Upload a chat image into the topic's worktree (uploads/…). Returns the
+    {path, mime} the client then references when sending the message."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    ext = _IMAGE_MIME_EXT.get(mime)
+    if ext is None:
+        allowed = "、".join(sorted(_IMAGE_MIME_EXT))
+        raise ValidationError(f"只支持图片（{allowed}）")
+    data = await file.read(MAX_ATTACHMENT_BYTES + 1)
+    if not data:
+        raise ValidationError("空文件")
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise ValidationError("图片太大（上限 10MB）")
+    # Structural name only (uuid + extension) — nothing derived from content.
+    path = f"uploads/img-{uuid.uuid4().hex[:12]}{ext}"
+    ws.write_file_bytes(topic.project_id, path, data, topic_id=topic_id)
+    return ok({"path": path, "mime": mime, "bytes": len(data)})
+
+
+@router.get("/{topic_id}/attachments/raw")
+async def attachment_raw(topic_id: uuid.UUID, path: str, db: DbSession) -> Response:
+    """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
+    to images so this can never serve executable HTML from the worktree."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    clean = _clean_artifact_path(path)
+    suffix = "." + clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
+    mime = _EXT_IMAGE_MIME.get(suffix)
+    if mime is None:
+        raise ValidationError("只能读取图片附件")
+    data = ws.read_file_bytes(topic.project_id, clean, topic_id=topic_id)
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+# Per-project unread map lives under /api/projects (a "/unread" path under
+# /api/topics would be shadowed by the /{topic_id} route). Separate router.
+project_router = APIRouter(prefix="/api/projects", tags=["topics"])
+
+
+@project_router.get("/{project_id}/topic-unread")
+async def project_topic_unread(
+    project_id: uuid.UUID, handle: str, db: DbSession
+) -> dict:
+    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for one
+    user, one query. Topics with zero unread are omitted."""
+    counts = await TopicService(db).unread_counts(project_id, handle)
+    return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 
 # Block upgrade lives here (it produces a topic). Separate router prefix.

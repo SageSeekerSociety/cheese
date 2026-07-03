@@ -1,27 +1,15 @@
 """Project expansion + topic tree (spec §4, §6; evals A1/A2/A4)."""
 
 import asyncio
-import time
 import uuid
 
-from app.api.deps import get_turn_runner
 from app.domain.block.models import AuthorType, Block, BlockKind
+from tests.conftest import wait_turns_idle as _wait_turns_idle
 
 
 def _project(client, **kw) -> dict:
     body = {"name": "P", **kw}
     return client.post("/api/projects", json=body).json()["data"]
-
-
-def _wait_turns_idle() -> None:
-    """Wait for background turns (the 分身 kickoff a /split submits) to finish,
-    so in-test asserts and later writes don't race the kickoff's DB writes on
-    the shared in-memory SQLite connection."""
-    runner = get_turn_runner()
-    for _ in range(250):
-        if runner.active_turns() == 0:
-            return
-        time.sleep(0.02)
 
 
 def test_project_create_autocreates_root_topic(client):
@@ -128,6 +116,7 @@ def test_upgrade_block_to_topic(client):
 
     r = client.post(f"/api/blocks/{block_id}/upgrade", json={"created_by": "user-1"})
     assert r.status_code == 200
+    _wait_turns_idle()  # kickoff runs in the background; don't race its writes
     new_topic = r.json()["data"]
     assert new_topic["parent_id"] == topic["id"]
     assert new_topic["kind"] == "subtopic"  # child of a non-root topic
@@ -139,7 +128,6 @@ def test_upgrade_block_to_topic(client):
 
     # Auto-kickoff, same as split: the 分身's own opening is the first message
     # (the canned "我先确认理解" template is gone).
-    _wait_turns_idle()
     blocks = client.get(f"/api/topics/{new_topic['id']}/blocks").json()["data"]["data"]
     msgs = [b for b in blocks if b["kind"] == "message"]
     assert msgs and msgs[0]["author_type"] == "ai"
@@ -277,6 +265,7 @@ def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
             "brief": "把 10 万条借阅日志去重、去空值，产出干净数据集",
         },
     ).json()["data"]
+    _wait_turns_idle()  # kickoff runs in the background; don't race its writes
 
     # The brief IS the child's living doc, parent doc copied verbatim below it.
     doc = client.get(f"/api/topics/{sub['id']}/doc").json()["data"]

@@ -11,14 +11,17 @@ Key SDK facts (verified against installed claude-agent-sdk 0.2.x):
 - `ResultMessage.session_id` is the token used to resume the conversation.
 """
 
+import base64
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    RateLimitEvent,
     ResultMessage,
     StreamEvent,
     TextBlock,
@@ -63,15 +66,35 @@ class AgentUsage:
 
 
 @dataclass
+class AgentSessionInfo:
+    """Yielded as soon as the CLI announces the session id — BEFORE the final
+    result — so even a turn that dies mid-stream can persist the pointer, and
+    '再 @ 一次接着做' truly RESUMES the partial work instead of replaying."""
+
+    session_id: str
+
+
+@dataclass
 class AgentResult:
-    """Authoritative final reply plus the session id to resume next time."""
+    """Authoritative final reply plus the session id to resume next time.
+
+    is_error mirrors the SDK ResultMessage's structured flag: the run ended in a
+    provider/infra failure (e.g. seat rate-limit) and `text` is that failure's
+    detail — NOT something 芝士 said."""
 
     text: str
     session_id: str | None
     usage: AgentUsage | None = None
+    is_error: bool = False
+    # Structured failure context (no text sniffing): the failing API call's HTTP
+    # status, the CLI's error strings, and — when the seat rate-limit tripped —
+    # the RateLimitInfo dict (status / resets_at unix timestamp / type).
+    api_error_status: int | None = None
+    errors: list[str] | None = None
+    rate_limit: dict | None = None
 
 
-AgentEvent = AgentDelta | AgentToolUse | AgentResult
+AgentEvent = AgentDelta | AgentToolUse | AgentSessionInfo | AgentResult
 
 
 def event_to_dict(event: AgentEvent) -> dict:
@@ -80,11 +103,17 @@ def event_to_dict(event: AgentEvent) -> dict:
         return {"t": "delta", "text": event.text}
     if isinstance(event, AgentToolUse):
         return {"t": "tool", "name": event.name, "input": event.input}
+    if isinstance(event, AgentSessionInfo):
+        return {"t": "session", "session_id": event.session_id}
     usage = event.usage
     return {
         "t": "result",
         "text": event.text,
         "session_id": event.session_id,
+        "is_error": event.is_error,
+        "api_error_status": event.api_error_status,
+        "errors": event.errors,
+        "rate_limit": event.rate_limit,
         "usage": None
         if usage is None
         else {
@@ -103,11 +132,17 @@ def event_from_dict(d: dict) -> AgentEvent:
         return AgentDelta(text=d.get("text", ""))
     if kind == "tool":
         return AgentToolUse(name=d.get("name", ""), input=d.get("input") or {})
+    if kind == "session":
+        return AgentSessionInfo(session_id=d.get("session_id", ""))
     u = d.get("usage")
     return AgentResult(
         text=d.get("text", ""),
         session_id=d.get("session_id"),
         usage=None if u is None else AgentUsage(**u),
+        is_error=bool(d.get("is_error", False)),
+        api_error_status=d.get("api_error_status"),
+        errors=d.get("errors"),
+        rate_limit=d.get("rate_limit"),
     )
 
 
@@ -126,6 +161,67 @@ def _assistant_text(message: AssistantMessage) -> str:
     return "".join(
         block.text for block in message.content if isinstance(block, TextBlock)
     )
+
+
+# Per-image ceiling for NATIVE image input (图片输入): the Anthropic API rejects
+# images over ~5MB base64, and base64 inflates raw bytes by 4/3 — so cap raw
+# size at 3.75MB. Bigger files fall back to a text note pointing at the
+# worktree path (sandbox Read is image-capable, so 芝士 can still open it).
+_IMAGE_MAX_BYTES = 3_750_000
+
+
+def _image_content_block(cwd: str, path: str, media_type: str) -> dict | None:
+    """Base64 image block for one worktree image, or None if the file is
+    missing, escapes the worktree, or exceeds the API's per-image size cap."""
+    try:
+        root = Path(cwd).resolve()
+        target = (root / path).resolve()
+        if not target.is_relative_to(root) or not target.is_file():
+            return None
+        if target.stat().st_size > _IMAGE_MAX_BYTES:
+            return None
+        data = base64.standard_b64encode(target.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": media_type, "data": data},
+    }
+
+
+def build_query_input(
+    prompt: str, images: list[dict] | None, cwd: str
+) -> str | list[dict]:
+    """What we hand to `client.query()`: the plain prompt string, or — when the
+    turn carries images (图片输入) — Anthropic-style content blocks with each
+    image embedded natively (base64), so 芝士 SEES them in the message itself
+    (Claude Code native image input) instead of having to Read files.
+
+    Images that can't be embedded (too big / unreadable) degrade to a text note
+    pointing at the worktree path."""
+    if not images:
+        return prompt
+    image_blocks: list[dict] = []
+    notes: list[str] = []
+    for img in images:
+        path = str(img.get("path") or "")
+        media_type = str(img.get("media_type") or "") or "image/png"
+        block = _image_content_block(cwd, path, media_type)
+        if block is not None:
+            image_blocks.append(block)
+        elif path:
+            notes.append(
+                f"（图片 {path} 未能随消息附上——太大或暂不可读；"
+                "可用 Read 工具打开这个工作区文件查看）"
+            )
+    if not image_blocks and not notes:
+        return prompt
+    text = "\n".join(s for s in (prompt, *notes) if s)
+    blocks: list[dict] = []
+    if text:
+        blocks.append({"type": "text", "text": text})
+    blocks.extend(image_blocks)
+    return blocks
 
 
 # Claude Code's built-in tools. 芝士 must act only through platform (cheese) MCP
@@ -164,9 +260,15 @@ class AgentService:
         sandbox: dict[str, Any] | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
+        images: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Yield AgentDelta chunks (and AgentToolUse events) live, then a final
         AgentResult.
+
+        `images` (图片输入): worktree images this turn carries, each
+        {"path": <cwd-relative>, "media_type": <mime>} — embedded NATIVELY as
+        base64 image blocks in the user message (see build_query_input), so the
+        model sees them without any tool round-trip.
 
         - sandbox given: run `claude` INSIDE a per-topic container via the cli_path
           shim, with NATIVE tools (Bash/Read/Write/Edit jailed by the container)
@@ -226,9 +328,29 @@ class AgentService:
         final_text = ""
         session_id = resume_session_id
         usage = AgentUsage(model=eff_model)
+        result_error = False
+        api_error_status: int | None = None
+        cli_errors: list[str] | None = None
+        rate_limit: dict | None = None
+
+        query_input = build_query_input(prompt, images, cwd)
+        if isinstance(query_input, str):
+            request: Any = query_input
+        else:
+            # Streaming-input form: one user message whose content is a block
+            # list (text + native base64 image blocks) — the SDK/CLI accept
+            # Anthropic-style content arrays here.
+            async def _one_message() -> AsyncIterator[dict]:
+                yield {
+                    "type": "user",
+                    "message": {"role": "user", "content": query_input},
+                    "parent_tool_use_id": None,
+                }
+
+            request = _one_message()
 
         async with ClaudeSDKClient(options=options) as client:
-            await client.query(prompt)
+            await client.query(request)
             async for message in client.receive_response():
                 if isinstance(message, StreamEvent):
                     text = _extract_text_delta(message.event)
@@ -245,9 +367,24 @@ class AgentService:
                             )
                     final_text = _assistant_text(message) or final_text
                     if message.session_id:
+                        if message.session_id != session_id:
+                            yield AgentSessionInfo(session_id=message.session_id)
                         session_id = message.session_id
+                elif isinstance(message, RateLimitEvent):
+                    # Emitted on status transitions; `rejected` + resets_at is
+                    # the structured form of "You've hit your session limit".
+                    info = message.rate_limit_info
+                    rate_limit = {
+                        "status": info.status,
+                        "resets_at": info.resets_at,
+                        "type": info.rate_limit_type,
+                        "utilization": info.utilization,
+                    }
                 elif isinstance(message, ResultMessage):
                     session_id = message.session_id or session_id
+                    result_error = bool(message.is_error)
+                    api_error_status = message.api_error_status
+                    cli_errors = message.errors
                     if not final_text and message.result:
                         final_text = message.result
                     if message.total_cost_usd:
@@ -257,4 +394,12 @@ class AgentService:
                         usage.input_tokens = int(u.get("input_tokens", 0) or 0)
                         usage.output_tokens = int(u.get("output_tokens", 0) or 0)
 
-        yield AgentResult(text=final_text, session_id=session_id, usage=usage)
+        yield AgentResult(
+            text=final_text,
+            session_id=session_id,
+            usage=usage,
+            is_error=result_error,
+            api_error_status=api_error_status,
+            errors=cli_errors,
+            rate_limit=rate_limit,
+        )

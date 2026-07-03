@@ -167,16 +167,26 @@ def _safe_path(repo: Path, rel: str) -> Path:
     return target
 
 
+# Never listed (nor descended into): VCS internals + dependency/cache dirs a
+# turn may create in the worktree (npm ci → 13k node_modules entries).
+_SKIP_DIRS = {
+    ".git", ".jj", "node_modules", ".venv", "__pycache__",
+    ".pytest_cache", ".ruff_cache", ".cache", "dist", ".next",
+}
+
+
 def list_files(
     project_id: uuid.UUID, topic_id: uuid.UUID | None = None
 ) -> list[dict]:
     tree = _tree(project_id, topic_id)
     files: list[dict] = []
-    for p in sorted(tree.rglob("*")):
-        if ".git" in p.parts or ".jj" in p.parts or p.is_dir():
-            continue
-        rel = p.relative_to(tree)
-        files.append({"path": str(rel), "bytes": p.stat().st_size})
+    for root, dirnames, filenames in os.walk(tree):
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        for name in sorted(filenames):
+            p = Path(root) / name
+            rel = p.relative_to(tree)
+            files.append({"path": str(rel), "bytes": p.stat().st_size})
+    files.sort(key=lambda f: f["path"])
     return files
 
 
@@ -199,6 +209,29 @@ def write_file(
     target = _safe_path(tree, path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
+
+
+def read_file_bytes(
+    project_id: uuid.UUID, path: str, topic_id: uuid.UUID | None = None
+) -> bytes:
+    """Raw bytes of a worktree file (binary-safe — images/attachments; the text
+    reader would mangle them). Same traversal guard as read_file."""
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
+    if not target.is_file():
+        raise ValidationError("file not found")
+    return target.read_bytes()
+
+
+def write_file_bytes(
+    project_id: uuid.UUID, path: str, data: bytes, topic_id: uuid.UUID | None = None
+) -> None:
+    """Binary-safe write into the topic's worktree (聊天图片等附件落盘 — 进版本库，
+    文件面板可见，沙箱里芝士可直接 Read). Same guards as write_file."""
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
 
 
 def git_log(project_id: uuid.UUID, limit: int = 50) -> list[dict]:
@@ -274,10 +307,19 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         )
     except ValidationError as exc:
         try:
+            conflicts = _git(
+                repo, "diff", "--name-only", "--diff-filter=U"
+            ).strip().splitlines()
+        except ValidationError:
+            conflicts = []
+        try:
             _git(repo, "merge", "--abort")
         except ValidationError:
             pass
-        return {"merged": False, "reason": str(exc)}
+        reason = (
+            "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
+        )
+        return {"merged": False, "reason": reason, "conflicts": conflicts}
     return {"merged": True, "branch": branch, "into": base}
 
 
@@ -393,6 +435,31 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
         )
         return {"synced": False, "reason": reason, "conflicts": conflicts}
     return {"synced": True, "commits": behind}
+
+
+def prepare_conflict_resolution(
+    project_id: uuid.UUID, topic_id: uuid.UUID
+) -> list[str]:
+    """采纳冲突 → 派芝士解决的前置：在话题的 jj workspace 里创建 branch×base 的
+    合并提交，冲突以标记形式materialize 在文件里；返回冲突文件列表。芝士改完文件、
+    平台照常快照（merge commit 连同解决一起入 bookmark），重试采纳即可干净合并。"""
+    branch = branch_for_topic(topic_id)
+    wt = _ensure_worktree(project_id, branch)
+    base = _base_branch(ensure_repo(project_id))
+    # The workspace's jj view lags the git side — pull the base branch's latest
+    # commits in first, or the merge would use a stale bookmark (and possibly
+    # see no conflict at all).
+    try:
+        _jj(wt, "git", "import")
+    except ValidationError:
+        pass
+    _jj(wt, "new", branch, base)
+    out = _jj(wt, "resolve", "--list")
+    files = [line.split()[0] for line in out.splitlines() if line.strip()]
+    # Move the bookmark onto the (conflicted) merge so the snapshot/export path
+    # keeps working; the resolution edits amend this same commit.
+    _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
+    return files
 
 
 def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
@@ -523,6 +590,30 @@ def exec_in_sandbox(
         "stdout": result.stdout[:8000],
         "stderr": result.stderr[:4000],
     }
+
+
+# 运行环境预览: every topic container publishes this in-container port to a
+# random localhost port at creation (claude-sbx). The AI starts whatever server
+# the project needs on 0.0.0.0:$CHEESE_APP_PORT and declares it (cheese serve).
+APP_PORT = 3000
+
+
+def app_preview_url(topic_id: uuid.UUID) -> str | None:
+    """http://127.0.0.1:<host-port> for the topic container's published app
+    port, or None (container down / mapping missing — old container)."""
+    if not sandbox_available():
+        return None
+    result = subprocess.run(
+        ["docker", "port", container_name(topic_id), str(APP_PORT)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    # e.g. "127.0.0.1:55007" (possibly one line per address family).
+    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    port = line.rsplit(":", 1)[-1]
+    return f"http://127.0.0.1:{port}" if port.isdigit() else None
 
 
 def container_name(topic_id: uuid.UUID) -> str:

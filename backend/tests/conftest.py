@@ -28,6 +28,17 @@ from app.domain.agent.service import (
 from app.main import app
 
 
+def wait_turns_idle() -> None:
+    """Block until background turns (e.g. the 分身 kickoff a /split submits)
+    finish: they run on the TestClient portal loop and write to the shared
+    in-memory SQLite — racing them with further requests makes flakes."""
+    runner = get_turn_runner()
+    for _ in range(250):
+        if runner.active_turns() == 0:
+            return
+        time.sleep(0.02)
+
+
 class StubAgent(AgentService):
     """Deterministic agent: streams two deltas then a final result.
 
@@ -115,14 +126,9 @@ def client(stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
         # Expose the factory so tests can seed data (e.g. memory entries).
         c.test_factory = test_factory  # type: ignore[attr-defined]
         yield c
-        # Drain background turns (e.g. the 分身 kickoff a /split submits) BEFORE
-        # leaving the TestClient context: they run on the portal loop and write
-        # to this test's DB — disposing the engine under them makes flakes.
-        runner = get_turn_runner()
-        for _ in range(250):
-            if runner.active_turns() == 0:
-                break
-            time.sleep(0.02)
+        # Drain background turns BEFORE leaving the TestClient context:
+        # disposing the engine under a running kickoff turn makes flakes.
+        wait_turns_idle()
 
     app.dependency_overrides.clear()
     asyncio.run(engine.dispose())

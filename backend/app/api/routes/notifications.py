@@ -71,6 +71,33 @@ async def project_inbox(
     return ok(page([_dump(n) for n in items], total))
 
 
+@router.get("/api/projects/{project_id}/notifications/unread-count")
+async def notifications_unread_count(
+    project_id: uuid.UUID,
+    db: DbSession,
+    target_handle: str | None = None,
+) -> dict:
+    """Badge count for the bell: unread, non-silent, visible to this user.
+    Server-side so the client never has to fetch the full list just to count."""
+    count = await NotificationService(db).unread_count(
+        project_id, target_handle=target_handle
+    )
+    return ok({"unread": count})
+
+
+@router.post("/api/projects/{project_id}/notifications/read-all")
+async def mark_all_notifications_read(
+    project_id: uuid.UUID,
+    db: DbSession,
+    target_handle: str | None = None,
+) -> dict:
+    """全部标记已读 (Feishu-style)."""
+    marked = await NotificationService(db).mark_all_read(
+        project_id, target_handle=target_handle
+    )
+    return ok({"marked": marked})
+
+
 @router.post("/api/notifications/{notification_id}/read")
 async def mark_notification_read(notification_id: uuid.UUID, db: DbSession) -> dict:
     notification = await NotificationService(db).mark_read(notification_id)

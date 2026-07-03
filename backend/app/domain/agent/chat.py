@@ -10,10 +10,12 @@ never hold a transaction open across the model round-trip.
 """
 
 import asyncio
+import logging
 import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -26,6 +28,7 @@ from app.domain.agent.service import (
     AgentDelta,
     AgentResult,
     AgentService,
+    AgentSessionInfo,
     AgentToolUse,
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_skills
@@ -47,6 +50,8 @@ HEARTBEAT_SKILLS = ["heartbeat", "conversation-style"]
 PRIVATE_SKILLS = ["private-chat", "conversation-style"]
 
 CHEESE_AUTHOR = "cheese"
+
+logger = logging.getLogger(__name__)
 
 # 施工现场: render each tool call like a Claude Code action line — a Chinese verb
 # plus a short preview of its most telling argument. Stored in the event block as
@@ -75,12 +80,49 @@ _TOOL_ARG = {
 }
 
 
-# Native tools (sandbox mode) → 现场 labels.
+# Native Claude Code tools (sandbox mode) → 现场 labels. Systematic: every tool
+# the agent can invoke has a Chinese verb + its most telling argument as the
+# preview; an unmapped (future) tool falls back to its raw name, which is the
+# signal to extend this table.
 _TOOL_VERB.update(
-    {"Bash": "执行命令", "Write": "写文件", "Edit": "改文件", "Read": "读文件"}
+    {
+        "Bash": "执行命令",
+        "Write": "写文件",
+        "Edit": "改文件",
+        "Read": "读文件",
+        "Glob": "找文件",
+        "Grep": "搜内容",
+        "WebSearch": "搜网页",
+        "WebFetch": "看网页",
+        "Agent": "派分身去查",
+        "Task": "派分身去查",  # older CLI name for Agent
+        "NotebookEdit": "改笔记本",
+        "TodoWrite": "更新任务清单",
+        "BashOutput": "看命令输出",
+        "KillShell": "停掉命令",
+        "KillBash": "停掉命令",
+        "ExitPlanMode": "提交方案待确认",
+        "AskUserQuestion": "向用户提问",
+        "Skill": "调用技能",
+        "ToolSearch": "查找工具",
+    }
 )
 _TOOL_ARG.update(
-    {"Bash": "command", "Write": "file_path", "Edit": "file_path", "Read": "file_path"}
+    {
+        "Bash": "command",
+        "Write": "file_path",
+        "Edit": "file_path",
+        "Read": "file_path",
+        "Glob": "pattern",
+        "Grep": "pattern",
+        "WebSearch": "query",
+        "WebFetch": "url",
+        "Agent": "description",
+        "Task": "description",
+        "NotebookEdit": "notebook_path",
+        "Skill": "skill",
+        "ToolSearch": "query",
+    }
 )
 
 
@@ -147,6 +189,20 @@ _ACTION_LABEL = {
 }
 
 
+# HTTP statuses worth an automatic re-run: timeouts, throttling, server-side
+# blips. Anything else (or a rejected seat rate-limit) surfaces immediately.
+_TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
+
+
+def _transient_provider_error(result: AgentResult) -> bool:
+    rl = result.rate_limit or {}
+    if rl.get("status") == "rejected":
+        return False  # seat limit — resets hours later, retrying just burns turns
+    if result.api_error_status is not None:
+        return result.api_error_status in _TRANSIENT_HTTP
+    return True  # unclassified error result with zero output — one more try is cheap
+
+
 def _parse_uuid(raw: str | None) -> uuid.UUID | None:
     if not raw:
         return None
@@ -178,17 +234,22 @@ def _build_system_prompt(
     untitled: bool = False,
 ) -> str:
     parts = [base]
+    if untitled:
+        # First in the prompt on purpose: naming the topic is the FIRST action
+        # of the session — before the opening reply, before any other tool —
+        # so the rail never shows a working-but-unnamed 「新话题」.
+        parts.append(
+            "## 本轮第一件事：先给本话题起名（先于一切）\n"
+            "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
+            "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
+            "`cheese title \"<标题>\"` 起个 ≤12 字简短标题，然后再照常回应、干活。"
+            "这条优先于「先回应，再干活」：起标题只是一条命令，几乎不花时间。"
+            "（只起一次，定了别反复改。）"
+        )
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if skills:
         parts.append(skills)
-    if untitled:
-        parts.append(
-            "## 第一步：先给本话题起名\n"
-            "本话题还叫「新话题」（未命名）。**在做用户要求的事之前，第一步先**根据"
-            "用户的需求执行 `cheese title \"<标题>\"` 起个 ≤12 字简短标题，再继续。"
-            "（只起一次，定了别反复改。）"
-        )
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         parts.append(
@@ -323,6 +384,19 @@ def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
 
 
+def _prompt_line(b) -> str:
+    """One speaker-labelled prompt line per pending human block. An attachment
+    block is a worktree image — embedded NATIVELY in this turn's user message
+    (base64 image block, see service.build_query_input), so the line just says
+    who sent it and where the file lives."""
+    if b.kind == BlockKind.attachment:
+        return (
+            f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
+            f"它同时存在你工作目录的 {b.content}）"
+        )
+    return f"[{b.author}]: {b.content}"
+
+
 class ChatService:
     def __init__(
         self,
@@ -375,26 +449,46 @@ class ChatService:
         summon: bool = True,
         turn_id: uuid.UUID | None = None,
         reply_to: str | None = None,
+        attachments: list[dict] | None = None,
+        is_resume: bool = False,
+        resume_reason: str | None = None,
+        nudge_event: str | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
         block persists + broadcasts BEFORE the lock, so a post never queues
         behind a running agent turn. turn_id groups this turn's blocks (R4);
-        reply_to threads this message under another (B3)."""
+        reply_to threads this message under another (B3); attachments are
+        uploaded worktree images this message carries (图片输入)."""
         turn_id = turn_id or uuid.uuid4()
-        user_payload, user_block_id = await self._post_user_message(
-            topic_id,
-            author=author,
-            content=content,
-            turn_id=turn_id,
-            reply_to=reply_to,
-        )
-        yield {"type": "user_block", "block": user_payload}
+        if is_resume or nudge_event:
+            # System-initiated turn (自动续跑 / 评论叫醒 / 冲突调度…): no human
+            # spoke — the opener is a SYSTEM event in the 现场, and the
+            # instruction goes straight to the agent as the prompt.
+            if not nudge_event:
+                why = resume_reason or "从上一轮的断点继续"
+                nudge_event = f"⏯️ 自动续跑：{why}"
+            payload = await self.post_system_event(topic_id, nudge_event, turn_id)
+            if payload is None:
+                raise NotFoundError("Topic not found")
+            yield {"type": "event_block", "block": payload}
+            user_block_id = None
+        else:
+            user_payloads, user_block_id = await self._post_user_message(
+                topic_id,
+                author=author,
+                content=content,
+                turn_id=turn_id,
+                reply_to=reply_to,
+                attachments=attachments,
+            )
+            for payload in user_payloads:
+                yield {"type": "user_block", "block": payload}
 
-        # Default human-to-human: post and stay quiet (spec C3 / §7.1).
-        if not summon:
-            yield {"type": "done"}
-            return
+            # Default human-to-human: post and stay quiet (spec C3 / §7.1).
+            if not summon:
+                yield {"type": "done"}
+                return
 
         async with self._lock_for(topic_id):
             async for frame in self._converse_impl(
@@ -402,6 +496,7 @@ class ChatService:
                 content=content,
                 turn_id=turn_id,
                 user_block_id=user_block_id,
+                is_resume=is_resume,
             ):
                 yield frame
 
@@ -452,6 +547,21 @@ class ChatService:
             await session.commit()
         return payload
 
+    async def _save_session_pointer(
+        self, topic_id: uuid.UUID, session_id: str
+    ) -> None:
+        """Best-effort: point the topic at the (possibly partial) session so the
+        next summon resumes it. Never raises — used on failure paths."""
+        try:
+            async with self._sessions() as session:
+                topics = TopicRepository(session)
+                topic = await topics.get(topic_id)
+                if topic is not None:
+                    await topics.set_session_id(topic, session_id)
+                    await session.commit()
+        except Exception:  # noqa: BLE001 — never mask the original failure
+            logger.exception("failed to save session pointer for %s", topic_id)
+
     async def _post_user_message(
         self,
         topic_id: uuid.UUID,
@@ -460,41 +570,70 @@ class ChatService:
         content: str,
         turn_id: uuid.UUID,
         reply_to: str | None,
-    ) -> tuple[dict, uuid.UUID]:
-        """Persist the human message + its @mention notifications in one short
-        transaction, outside any turn lock. Returns (payload, block_id)."""
+        attachments: list[dict] | None = None,
+    ) -> tuple[list[dict], uuid.UUID]:
+        """Persist the human message (+ its image attachment blocks) and the
+        @mention notifications in one short transaction, outside any turn lock.
+        Returns (payloads, anchor_block_id) — the anchor is what 芝士's reply
+        threads under (the text block, or the first attachment when image-only)."""
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
             topic = await topics.get(topic_id)
             if topic is None:
                 raise NotFoundError("Topic not found")
-            user_block = await blocks.add(
-                project_id=topic.project_id,
-                topic_id=topic.id,
-                author=author,
-                author_type=AuthorType.human,
-                content=content,
-                kind=BlockKind.message,
-                turn_id=turn_id,
-                reply_to=_parse_uuid(reply_to),  # B3: thread under another message
-            )
-            # Resolve <@handle> mentions in the human message → strong notify.
-            roster = (
-                []
-                if topic.is_private
-                else await ProjectRepository(session).list_members(topic.project_id)
-            )
-            resolved, _unresolved = await self._notify_mentions(
-                session, topic, author, content, roster
-            )
-            refs = [f"user:{h}" for h in resolved] + _topic_refs(content)
-            if refs:
-                user_block.refs = refs
-            block_id = user_block.id
-            payload = _block_payload(BlockOut.model_validate(user_block))
+            payloads: list[dict] = []
+            anchor_id: uuid.UUID | None = None
+            if content:
+                user_block = await blocks.add(
+                    project_id=topic.project_id,
+                    topic_id=topic.id,
+                    author=author,
+                    author_type=AuthorType.human,
+                    content=content,
+                    kind=BlockKind.message,
+                    turn_id=turn_id,
+                    reply_to=_parse_uuid(reply_to),  # B3: thread under another
+                )
+                # Resolve <@handle> mentions in the human message → strong notify.
+                roster = (
+                    []
+                    if topic.is_private
+                    else await ProjectRepository(session).list_members(
+                        topic.project_id
+                    )
+                )
+                resolved, _unresolved = await self._notify_mentions(
+                    session, topic, author, content, roster
+                )
+                refs = [f"user:{h}" for h in resolved] + _topic_refs(content)
+                if refs:
+                    user_block.refs = refs
+                anchor_id = user_block.id
+                payloads.append(_block_payload(BlockOut.model_validate(user_block)))
+            # 图片输入: each image = an attachment block. content = the worktree
+            # path (a REAL file, uploaded before this message), mime_type = how
+            # to render it — structured fields, never parsed out of prose.
+            for att in attachments or []:
+                att_block = await blocks.add(
+                    project_id=topic.project_id,
+                    topic_id=topic.id,
+                    author=author,
+                    author_type=AuthorType.human,
+                    content=str(att.get("path") or ""),
+                    kind=BlockKind.attachment,
+                    mime_type=str(att.get("mime") or "") or None,
+                    turn_id=turn_id,
+                    # An image-only send still honors the reply thread (B3).
+                    reply_to=None if content else _parse_uuid(reply_to),
+                )
+                if anchor_id is None:
+                    anchor_id = att_block.id
+                payloads.append(_block_payload(BlockOut.model_validate(att_block)))
+            if anchor_id is None:  # guarded by the route, but never crash a turn
+                raise NotFoundError("empty message")
             await session.commit()
-        return payload, block_id
+        return payloads, anchor_id
 
     async def _model_kwargs(self, project_id: uuid.UUID) -> dict:
         """Per-turn overrides for the agent call, resolved from project.settings:
@@ -520,21 +659,39 @@ class ChatService:
     async def _stream_with_retry(self, provider, **kwargs):
         """Run a streaming turn via the compute provider, retrying transient
         failures with backoff — but ONLY before any output is produced (cold-start
-        / SDK exit-1 races). If it fails mid-stream, re-raise so the partial turn
-        surfaces rather than replaying. Backoff: 0.5s → 1s → 2s, up to 3 attempts."""
+        / SDK exit-1 races). Two failure shapes are retried: exceptions, and a
+        run whose RESULT is a transient provider error (structured
+        api_error_status 408/429/5xx — e.g. a momentary overload). A rejected
+        seat rate-limit is NOT transient (resets hours later) and surfaces
+        immediately. If a turn fails mid-stream, re-raise / surface so the
+        partial turn shows rather than replaying work."""
         delay = 0.5
         for attempt in range(3):
             produced = False
+            retry_result = False
             try:
                 async for event in provider.run_turn(**kwargs):
+                    if (
+                        isinstance(event, AgentResult)
+                        and event.is_error
+                        and not produced
+                        and attempt < 2
+                        and _transient_provider_error(event)
+                    ):
+                        retry_result = True
+                        break  # swallow the error result and re-run the turn
                     produced = True
                     yield event
-                return
+                if not retry_result:
+                    return
+                # Provider-side hiccup: back off a little longer than the
+                # cold-start schedule before asking again.
+                await asyncio.sleep(max(delay, 2.0))
             except Exception:  # noqa: BLE001 — transient sandbox/model errors
                 if produced or attempt == 2:
                     raise
                 await asyncio.sleep(delay)
-                delay *= 2
+            delay *= 2
 
     async def _notify_mentions(
         self, session, topic, author: str, text: str, roster: list[dict]
@@ -567,6 +724,7 @@ class ChatService:
         content: str,
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID | None,
+        is_resume: bool = False,
     ) -> AsyncIterator[dict]:
         """Run the AGENT part of a turn (the human block was already posted by
         _post_user_message), yielding WS frames as JSON-ready dicts. Runs under
@@ -594,11 +752,20 @@ class ChatService:
             pending = [
                 b
                 for b in history[last_ai + 1 :]
-                if b.kind == BlockKind.message and b.author_type == AuthorType.human
+                if b.kind in (BlockKind.message, BlockKind.attachment)
+                and b.author_type == AuthorType.human
             ]
             prompt_text = (
-                "\n".join(f"[{b.author}]: {b.content}" for b in pending) or content
+                "\n".join(_prompt_line(b) for b in pending) or content
             )
+            # 图片输入: every pending image rides this turn's user message as a
+            # NATIVE base64 image block (Claude Code native image input) — the
+            # provider side that has the file does the embedding.
+            turn_images = [
+                {"path": b.content, "media_type": b.mime_type or "image/png"}
+                for b in pending
+                if b.kind == BlockKind.attachment and b.content
+            ]
 
             is_private = topic.is_private
             private_owner = topic.private_owner
@@ -647,6 +814,9 @@ class ChatService:
         )
         final_text = ""
         new_session_id = resume_session_id
+        result_error = False
+        api_error_status: int | None = None
+        rate_limit: dict | None = None
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
@@ -658,42 +828,156 @@ class ChatService:
         todo: list[dict] = []
         actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None
-        async for event in self._stream_with_retry(
-            provider,
-            project_id=project_id,
-            topic_id=topic_id,
-            prompt=prompt_text,
-            system_prompt=system_prompt,
-            resume_session_id=resume_session_id,
-            memory_scope="personal" if is_private else None,
-            owner=private_owner if is_private else None,
-            turn_id=turn_id,
-            **model_kwargs,
-        ):
-            if isinstance(event, AgentDelta):
-                yield {"type": "delta", "text": event.text}
-            elif isinstance(event, AgentToolUse):
-                name = event.name.replace("mcp__cheese__", "")
-                args = event.input or {}
-                # Task tools → live working-log todo (process, not 现场).
-                if name in _TASK_TOOLS:
-                    if _apply_task_event(todo, name, args):
-                        yield {"type": "todo", "items": [dict(t) for t in todo]}
-                    continue
-                tool_events.append((name, args))
-                yield {"type": "tool", "name": event.name, "input": args}
-                # cheese <sub> ran as Bash → tell the UI which panel changed, so it
-                # refreshes mid-turn (doc/decisions/...), non-disruptively.
-                if name == "Bash":
-                    resource = _cheese_resource(str(args.get("command", "")))
-                    if resource:
-                        yield {"type": "state", "resource": resource}
-                        if resource in _ACTION_LABEL and resource not in actions:
-                            actions.append(resource)
-            elif isinstance(event, AgentResult):
-                final_text = event.text
-                new_session_id = event.session_id
-                usage = event.usage
+        try:
+            async for event in self._stream_with_retry(
+                provider,
+                project_id=project_id,
+                topic_id=topic_id,
+                prompt=prompt_text,
+                system_prompt=system_prompt,
+                resume_session_id=resume_session_id,
+                memory_scope="personal" if is_private else None,
+                owner=private_owner if is_private else None,
+                turn_id=turn_id,
+                images=turn_images or None,
+                **model_kwargs,
+            ):
+                if isinstance(event, AgentSessionInfo):
+                    # Announced early so even a failed turn persists it below.
+                    new_session_id = event.session_id
+                elif isinstance(event, AgentDelta):
+                    yield {"type": "delta", "text": event.text}
+                elif isinstance(event, AgentToolUse):
+                    name = event.name.replace("mcp__cheese__", "")
+                    args = event.input or {}
+                    # Task tools → live working-log todo (process, not 现场).
+                    if name in _TASK_TOOLS:
+                        if _apply_task_event(todo, name, args):
+                            yield {
+                                "type": "todo",
+                                "items": [dict(t) for t in todo],
+                            }
+                        continue
+                    tool_events.append((name, args))
+                    yield {"type": "tool", "name": event.name, "input": args}
+                    # cheese <sub> ran as Bash → tell the UI which panel changed,
+                    # so it refreshes mid-turn (doc/decisions/...), quietly.
+                    if name == "Bash":
+                        resource = _cheese_resource(str(args.get("command", "")))
+                        if resource:
+                            yield {"type": "state", "resource": resource}
+                            if (
+                                resource in _ACTION_LABEL
+                                and resource not in actions
+                            ):
+                                actions.append(resource)
+                elif isinstance(event, AgentResult):
+                    final_text = event.text
+                    new_session_id = event.session_id
+                    usage = event.usage
+                    result_error = event.is_error
+                    api_error_status = event.api_error_status
+                    rate_limit = event.rate_limit
+        except BaseException:
+            # The turn died mid-stream (error, timeout-cancel, crash). Persist
+            # the session pointer FIRST — the partial work lives in that session
+            # file, and "再 @ 一次接着做" is only true if the next turn RESUMES
+            # it (resume, not replay — replaying repeats side effects).
+            if new_session_id and new_session_id != resume_session_id:
+                await asyncio.shield(
+                    self._save_session_pointer(topic_id, new_session_id)
+                )
+            raise
+
+        if result_error:
+            # Provider/infra failure surfaced as the run's result. NEVER
+            # ventriloquize it as 芝士's message — it goes into the 现场 as a
+            # system event, platform-worded from STRUCTURED fields (rate-limit
+            # resets_at → 北京时间; api_error_status → HTTP code), with the raw
+            # provider detail quoted for the record.
+            logger.warning(
+                "turn %s provider error topic=%s rate_limit=%s api_status=%s",
+                turn_id, topic_id, rate_limit, api_error_status,
+            )
+            detail = final_text.strip()
+            quoted = f"（服务原话：{detail}）" if detail else ""
+            resume_after_s: float | None = None
+            if (
+                rate_limit
+                and rate_limit.get("status") == "rejected"
+                and rate_limit.get("resets_at")
+            ):
+                resets = datetime.fromtimestamp(
+                    rate_limit["resets_at"], tz=ZoneInfo("Asia/Shanghai")
+                )
+                recover = (
+                    "恢复后我会自动接着跑" if not is_resume else "到点再 @ 它"
+                )
+                fail_text = (
+                    f"⚠️ 芝士的 AI 座位额度用完了，北京时间 "
+                    f"{resets:%m-%d %H:%M} 恢复，{recover}。{quoted}"
+                )
+                if not is_resume:
+                    # Resume ~2min after the window opens (clock skew buffer).
+                    wait_s = rate_limit["resets_at"] - datetime.now(UTC).timestamp()
+                    resume_after_s = max(60.0, wait_s + 120.0)
+            elif api_error_status:
+                fail_text = (
+                    f"⚠️ 芝士这轮没能完成——AI 接口错误（HTTP {api_error_status}）。"
+                    f"稍后再 @ 它重试。{quoted}"
+                )
+            else:
+                fail_text = (
+                    "⚠️ 芝士这轮没能完成——AI 服务返回错误"
+                    + (f"：{detail}" if detail else "")
+                    + "。稍后再 @ 它重试。"
+                )
+            async with self._sessions() as session:
+                blocks = BlockRepository(session)
+                for name, tool_input in tool_events:
+                    await blocks.add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        author=CHEESE_AUTHOR,
+                        author_type=AuthorType.ai,
+                        content=_format_tool_event(name, tool_input),
+                        kind=BlockKind.event,
+                        turn_id=turn_id,
+                    )
+                if usage is not None:
+                    await UsageRepository(session).add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        model=usage.model,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        cost_usd=usage.cost_usd,
+                    )
+                fail_block = await blocks.add(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    author="system",
+                    author_type=AuthorType.system,
+                    content=fail_text,
+                    kind=BlockKind.event,
+                    turn_id=turn_id,
+                )
+                fail_payload = _block_payload(BlockOut.model_validate(fail_block))
+                await session.commit()
+            if new_session_id and new_session_id != resume_session_id:
+                await self._save_session_pointer(topic_id, new_session_id)
+            provider.checkpoint(project_id, topic_id)
+            yield {"type": "event_block", "block": fail_payload}
+            yield {"type": "error", "message": fail_text, "persisted": True}
+            if resume_after_s is not None:
+                # Internal frame: the runner schedules the auto-resume.
+                yield {
+                    "type": "resume_hint",
+                    "after_s": resume_after_s,
+                    "reason": "座位额度已恢复，继续之前的任务",
+                }
+            yield {"type": "done"}
+            return
 
         # Canonicalize friendly "@名字 / @话题名" → tokens so they render as chips
         # and notify, even when 芝士 didn't emit the exact <@handle> form.

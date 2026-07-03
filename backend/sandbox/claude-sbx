@@ -19,12 +19,23 @@ NAME="${SBX_CONTAINER:?SBX_CONTAINER not set}"
 # Mounts are fixed at creation (the worktree + session dirs are stable per
 # topic); it idles on `sleep infinity`. Containers survive backend restarts and
 # are only recreated when the project's env image changed.
+# 运行环境预览: publish the conventional app port (random host port, localhost
+# only). The agent starts the project's server on 0.0.0.0:$CHEESE_APP_PORT and
+# declares it with `cheese serve`; the platform reads the mapping via
+# `docker port` and proxies the preview iframe straight to it.
+APP_PORT=3000
+# The cheese CLI is MOUNTED from the host (not baked): CLI changes reach every
+# container instantly — no image rebuild, no stale-binary class of bugs.
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 create_container() {
   docker run -d --name "$NAME" --user node \
     -e HOME=/home/node \
+    -e CHEESE_APP_PORT="$APP_PORT" \
+    -p "127.0.0.1:0:$APP_PORT" \
     --add-host host.docker.internal:host-gateway \
     -v "${SBX_SESSION}":/home/node/.claude \
     -v "${SBX_WORKTREE}":/work -w /work \
+    -v "$SELF_DIR/cheese":/usr/local/bin/cheese:ro \
     --network bridge \
     --memory 2g --cpus 2 --pids-limit 512 \
     --label cheesex-sandbox=1 \
@@ -36,6 +47,15 @@ if [ -z "$CUR_IMAGE" ]; then
   create_container
 elif [ "$CUR_IMAGE" != "$SBX_IMAGE" ]; then
   # 环境镜像 changed in project settings → rebuild this topic's box on the spot.
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  create_container
+elif ! docker port "$NAME" "$APP_PORT" >/dev/null 2>&1; then
+  # Pre-app-port container (no published port) → recreate with the mapping.
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  create_container
+elif ! docker inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' "$NAME" \
+    | grep -q '^/usr/local/bin/cheese$'; then
+  # Pre-mounted-CLI container (baked cheese) → recreate with the host mount.
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   create_container
 elif [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" != "true" ]; then
