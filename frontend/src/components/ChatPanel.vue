@@ -11,6 +11,7 @@ const BOTTOM_THRESHOLD = 80
 import { myHandle } from '../me'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { attachmentRawUrl, chatWsUrl, listBlocks } from '../api'
+import { blockCache } from '../lib/blockCache'
 import { usePendingAttachments } from '../lib/attachments'
 import {
   renderMarkdown as renderMarkdownWith,
@@ -340,6 +341,11 @@ function handleFrame(frame: WsServerFrame) {
       emit('turn-done')
       autoScroll()
       break
+    case 'turn_active':
+      // Re-entered a topic whose turn is mid-stream: show 正在思考 until the
+      // replayed/live frames take over (they clear it via delta/done).
+      awaitingReply.value = true
+      break
   }
 }
 
@@ -349,15 +355,27 @@ async function loadTopic(topic: Topic) {
   awaitingReply.value = false
   todoItems.value = []
   clearPendingAtts() // pending images belong to the topic they were typed in
-  messages.value = []
-  loadingHistory.value = true
   closeSocket()
+  const cached = blockCache.get(topic.id)
+  if (cached) {
+    messages.value = cached
+    restoreScroll(topic.id)
+  } else {
+    messages.value = []
+    loadingHistory.value = true
+  }
   try {
     const payload = await listBlocks(topic.id)
     // Only apply if still the active topic (avoid race on fast switching).
     if (props.topic?.id !== topic.id) return
+    // Blocks that landed while we were away append at the tail; if the user
+    // was parked at the bottom, follow them so the newest message is visible
+    // without a manual scroll.
+    const grew = cached !== undefined && payload.data.length > cached.length
     messages.value = payload.data
-    restoreScroll(topic.id)
+    blockCache.set(topic.id, payload.data)
+    if (!cached) restoreScroll(topic.id)
+    else if (grew && atBottom.value) autoScroll()
     openSocket(topic.id)
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'

@@ -251,3 +251,88 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
     assert "断" in resumed["content"]  # the continuation instruction
     # The failure surfaced first, then the resumed turn's reply.
     assert "error" in seen and seen[-1] == "assistant_block"
+
+
+@pytest.mark.anyio
+async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
+    """A turn that was RUNNING when the process died must be swept up on the
+    next startup: ⚠️ event posted + an auto-resume scheduled — never silently
+    vanish (the deploy-kills-a-turn hole)."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "t1": {
+                "topic_id": str(topic),
+                "started_at": _time.time() - 60,
+                "is_resume": False,
+            },
+            # a resume must never chain another resume, even across restarts
+            "t2": {
+                "topic_id": str(uuid.uuid4()),
+                "started_at": _time.time() - 60,
+                "is_resume": True,
+            },
+            # stale (>2h) entries are dropped, not resurrected
+            "t3": {
+                "topic_id": str(uuid.uuid4()),
+                "started_at": _time.time() - 7300,
+                "is_resume": False,
+            },
+        }
+    )
+
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+    scheduled: list[tuple[uuid.UUID, float, str]] = []
+    monkeypatch.setattr(
+        runner,
+        "_schedule_resume",
+        lambda _chat, tid, after, why: scheduled.append((tid, after, why)),
+    )
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            return {"id": "b1", "content": text}
+
+    n = await runner.resume_orphans(_Chat())
+    assert n == 1
+    assert [s[0] for s in scheduled] == [topic]
+    # registry cleared: a second sweep is a no-op
+    assert await runner.resume_orphans(_Chat()) == 0
+
+
+@pytest.mark.anyio
+async def test_turn_registers_and_clears_inflight(tmp_path, monkeypatch):
+    """While a turn runs it is in the durable registry; after it ends it is
+    gone — so only genuinely orphaned turns survive to the next startup."""
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+    chat = _FakeChat([{"type": "done"}])
+    runner.submit(chat, uuid.uuid4(), author="u", content="hi", summon=True)
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if chat.ran and not rt._load_inflight():
+            break
+    assert chat.ran
+    assert rt._load_inflight() == {}
+
+
+@pytest.mark.anyio
+async def test_in_flight_reflects_replay_buffer():
+    """in_flight is true from first published frame until done/error clears
+    the buffer — the WS route uses it to tell re-entering clients a turn is
+    mid-stream (rebuild 正在思考 instead of showing a dead topic)."""
+    broker = InProcessBroker()
+    assert broker.in_flight("t") is False
+    await broker.publish("t", {"type": "delta", "text": "hi"})
+    assert broker.in_flight("t") is True
+    await broker.publish("t", {"type": "done"})
+    assert broker.in_flight("t") is False

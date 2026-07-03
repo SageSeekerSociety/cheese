@@ -12,6 +12,10 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
+// Without the table nodes registered, @tiptap/markdown silently DROPS every GFM
+// table on parse (the token has no fallback), and a later save would write the
+// table-less doc back — data loss, not just a display bug.
+import { TableKit } from '@tiptap/extension-table'
 import CheeseAvatar from './CheeseAvatar.vue'
 import CodeEditor from './CodeEditor.vue'
 import {
@@ -462,6 +466,27 @@ function toggleDir(path: string) {
   else next.add(path)
   expandedDirs.value = next
 }
+// 定位: when a file is opened by path (e.g. clicking a <&path> chip in chat or
+// the doc), expand every ancestor folder so the tree shows where it lives,
+// then scroll the highlighted row into view.
+const fileListEl = ref<HTMLElement | null>(null)
+function revealInTree(path: string) {
+  const parts = path.split('/')
+  if (parts.length > 1) {
+    const next = new Set(expandedDirs.value)
+    let prefix = ''
+    for (const part of parts.slice(0, -1)) {
+      prefix = prefix ? `${prefix}/${part}` : part
+      next.add(prefix)
+    }
+    expandedDirs.value = next
+  }
+  void nextTick(() => {
+    fileListEl.value
+      ?.querySelector('.file-item--active')
+      ?.scrollIntoView({ block: 'nearest' })
+  })
+}
 const fileRows = computed<FileRow[]>(() => {
   interface DirNode {
     dirs: Map<string, DirNode>
@@ -606,6 +631,7 @@ async function selectFile(path: string) {
     openPath.value = path
     fileDraft.value = f.content
     fileSaved.value = f.content
+    revealInTree(path)
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '读取文件失败'
   }
@@ -750,7 +776,12 @@ async function openFileRef(path: string) {
 
 const editor = useEditor({
   content: '',
-  extensions: [StarterKit, Markdown, TokenChips],
+  extensions: [
+    StarterKit,
+    Markdown,
+    TableKit.configure({ table: { resizable: false } }),
+    TokenChips,
+  ],
   editable: editable.value,
   editorProps: {
     attributes: { class: 'doc-prose' },
@@ -1311,7 +1342,7 @@ onBeforeUnmount(() => {
                 </v-btn>
               </div>
               <div class="file-body">
-                <div v-if="fileListOpen" class="file-list">
+                <div v-if="fileListOpen" ref="fileListEl" class="file-list">
                   <div
                     v-if="files.length === 0"
                     class="text-center c-faint py-6"
@@ -2140,6 +2171,29 @@ onBeforeUnmount(() => {
 }
 .doc-editor :deep(.doc-prose:focus) {
   outline: none;
+}
+
+/* GFM tables (TableKit). tiptap emits div.tableWrapper > table; browsers give
+   tables no borders by default, so without this the table renders "naked". */
+.doc-editor :deep(.doc-prose .tableWrapper) {
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.doc-editor :deep(.doc-prose table) {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+.doc-editor :deep(.doc-prose th),
+.doc-editor :deep(.doc-prose td) {
+  border: 1px solid var(--line, #dcdfe6);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.doc-editor :deep(.doc-prose th) {
+  background: var(--bg-2, #f7f8fa);
+  font-weight: 600;
 }
 
 /* Feishu-style left gutter block handles — REAL controls, not decoration.

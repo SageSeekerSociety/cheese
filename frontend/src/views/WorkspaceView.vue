@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
 import { formatToolAction, toolLabel } from '../lib/toolLabels'
+import { refreshBlockCache } from '../lib/blockCache'
 import {
   computed,
   inject,
@@ -347,17 +348,20 @@ function selectProject(id: string) {
 function selectTopic(id: string) {
   // Selecting a work topic switches back to the normal topic+doc view.
   mode.value = 'topic'
+  const previous = selectedTopicId.value
   selectedTopicId.value = id
   worklog.value = []
   // Keep the URL's ?topic= in sync with what's open, so refresh, share, and
-  // back-navigation (e.g. returning from a member page) land on this topic and
-  // not whatever was in the URL when the workspace first mounted. `replace` —
-  // switching topics is a view change, not a new history entry to walk back
-  // through. Guard avoids a redundant navigation when the query already matches
-  // (e.g. this call came from the route.query.topic watcher).
+  // back-navigation land on this topic. Topic→topic changes PUSH a history
+  // entry — jumping into a topic via a #chip must be walkable back with the
+  // browser's back button ("跳转进一个话题后怎么返回"). The very first
+  // selection (page load picking a default) replaces instead, so back doesn't
+  // dead-end on a bare project URL. Guard avoids a redundant navigation when
+  // the query already matches (e.g. this call came from the route watcher).
   const pid = selectedProjectId.value ?? props.projectId
   if (pid && route.query.topic !== id) {
-    router.replace({
+    const nav = previous && previous !== id ? router.push : router.replace
+    nav({
       name: 'workspace-project',
       params: { projectId: pid },
       query: { topic: id },
@@ -502,6 +506,12 @@ async function refreshUnread() {
     if (selectedProjectId.value !== pid) return
     // The open topic is being read right now — its badge never shows.
     if (selectedTopicId.value) delete map[selectedTopicId.value]
+    // Background-refresh the timeline cache of topics whose unread count grew:
+    // by the time the user switches back, the reply that landed while they
+    // were away is already rendered on the first frame (no late pop-in).
+    for (const [tid, n] of Object.entries(map)) {
+      if (n > (unreadMap.value[tid] ?? 0)) void refreshBlockCache(tid)
+    }
     unreadMap.value = map
   } catch {
     // Best-effort; badges just stay as they were.
@@ -860,6 +870,7 @@ onUnmounted(() => {
           @tool-used="handleToolUsed"
           @state-changed="handleStateChanged"
           @mention-click="handleMentionClick"
+          @open-file="(p: string) => docRef?.openFile?.(p)"
           @open-resource="handleOpenResource"
           @upgrade-message="handleUpgradeMessage"
           @open-topic="selectTopic"
