@@ -347,17 +347,20 @@ function selectProject(id: string) {
 function selectTopic(id: string) {
   // Selecting a work topic switches back to the normal topic+doc view.
   mode.value = 'topic'
+  const previous = selectedTopicId.value
   selectedTopicId.value = id
   worklog.value = []
   // Keep the URL's ?topic= in sync with what's open, so refresh, share, and
-  // back-navigation (e.g. returning from a member page) land on this topic and
-  // not whatever was in the URL when the workspace first mounted. `replace` —
-  // switching topics is a view change, not a new history entry to walk back
-  // through. Guard avoids a redundant navigation when the query already matches
-  // (e.g. this call came from the route.query.topic watcher).
+  // back-navigation land on this topic. Topic→topic changes PUSH a history
+  // entry — jumping into a topic via a #chip must be walkable back with the
+  // browser's back button ("跳转进一个话题后怎么返回"). The very first
+  // selection (page load picking a default) replaces instead, so back doesn't
+  // dead-end on a bare project URL. Guard avoids a redundant navigation when
+  // the query already matches (e.g. this call came from the route watcher).
   const pid = selectedProjectId.value ?? props.projectId
   if (pid && route.query.topic !== id) {
-    router.replace({
+    const nav = previous && previous !== id ? router.push : router.replace
+    nav({
       name: 'workspace-project',
       params: { projectId: pid },
       query: { topic: id },

@@ -37,15 +37,23 @@ configure_logging()
 async def lifespan(_: FastAPI):
     # Schema is managed by Alembic migrations. Start the deterministic scheduler
     # loop (定期巡检 / lifecycle, spec §9.1) — no-op unless the interval is set.
-    from app.api.deps import get_chat_service
-    from app.domain.scheduler.service import SchedulerRunner, SchedulerService
-
     # Per-topic sandbox containers are long-lived and REUSED across backend
     # restarts: their mounts are stable host paths (worktree + session dirs), so
     # a redeploy must NOT reap them — that killed in-flight work and raced the
     # first turns after a restart. The claude-sbx shim validates each container
     # against the project's current image and recreates it only when the image
     # changed. (reap_sandbox_containers stays available as an ops tool.)
+    # Orphan sweep: resume turns the previous process died with (see
+    # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
+    from app.api.deps import get_chat_service, get_turn_runner
+    from app.domain.scheduler.service import SchedulerRunner, SchedulerService
+
+    try:
+        n = await get_turn_runner().resume_orphans(get_chat_service())
+        if n:
+            get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)
+    except Exception:  # noqa: BLE001 — never block startup
+        get_logger("cheesex.runtime").exception("orphan sweep failed")
 
     scheduler = SchedulerService(chat_service=get_chat_service())
     runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
