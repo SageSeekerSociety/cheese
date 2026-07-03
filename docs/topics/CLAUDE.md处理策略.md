@@ -56,8 +56,9 @@ CLAUDE.md 在我们这儿出现在**三个不同层面**，只有第一个真正
 
 改动文件：`topic/services.py`（预置简报文档）、`topic/schemas.py` + `api/routes/topics.py`（brief 参数 + 拆分后提交 kickoff 轮）、`agent/chat.py`（kickoff 首轮，无假消息）、`agent/runtime.py`（submit_kickoff）、`sandbox/cheese` + `SKILL.md`（--brief）。测试：新增 3 个用例（简报落文档 / 无简报兜底 / 自动开工且无模板开场白），全量 216 过 ×5 次，ruff/pyright 零错误。
 
+**升级路径已一并治了**（张衡在文档评论里拍板"一起做了"）：讨论升级（upgrade）出来的话题同样预置简报文档（被升级的那段讨论就是任务书 + 父文档快照）、删模板开场白、自动开工；新话题未命名，分身首轮会先起标题（顺带覆盖了「子话题自动起标题」在升级路径上的诉求）。细节：幂等重复升级不会二次开工；从私聊升级时不拷贝私聊文档（隐私）。模板开场白代码（_add_opening/_opening_text）已整体删除。
+
 遗留（不在本次范围）：
-- 讨论升级（upgrade）出来的话题仍是模板开场白、不自动开工——和 split 同病，待一并治。
 - market 有一个测试因沙箱没配网关凭证而失败，与本改动无关。
 
 ## 与 Claude Code subagent 逻辑的对照（张衡问，已核对本地 Agent SDK 定义）

@@ -300,10 +300,23 @@ block_router = APIRouter(prefix="/api/blocks", tags=["topics"])
 
 @block_router.post("/{block_id}/upgrade")
 async def upgrade_block(
-    block_id: uuid.UUID, body: UpgradeBlockIn, db: DbSession
+    block_id: uuid.UUID,
+    body: UpgradeBlockIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """讨论升级：upgrade a block into its own topic (eval A1)."""
-    topic = await TopicService(db).upgrade_block_to_topic(
+    """讨论升级：upgrade a block into its own topic (eval A1).
+
+    Same mechanics as /split: the upgraded block is preset as the new topic's
+    task-brief doc, and its 分身 kicks off automatically (it also names the
+    topic on that first turn — upgraded topics start untitled)."""
+    topic, created = await TopicService(db).upgrade_block_to_topic(
         block_id=block_id, created_by=body.created_by
     )
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+    out = TopicOut.model_validate(topic).model_dump(mode="json")
+    # Commit BEFORE kicking off (the 分身's turn uses its own session); an
+    # idempotent re-upgrade (created=False) must not kick the 分身 again.
+    await db.commit()
+    if created:
+        get_turn_runner().submit_kickoff(chat, topic.id)
+    return ok(out)

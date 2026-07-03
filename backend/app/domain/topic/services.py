@@ -33,18 +33,6 @@ def _child_kind(parent: Topic) -> TopicKind:
     return TopicKind.topic if parent.kind == TopicKind.root else TopicKind.subtopic
 
 
-def _opening_text(title: str, *, from_discussion: bool) -> str:
-    origin = (
-        "我们把这段讨论升级成一个独立话题"
-        if from_discussion
-        else "我们把这个待办拆成一个独立话题"
-    )
-    return (
-        f"收到。{origin}：「{title}」。\n"
-        "我先确认理解，再开始推进。下一步：明确目标和约束 → 动手 → 完成后回报结论。"
-    )
-
-
 def _brief_doc(
     *,
     child_title: str,
@@ -52,23 +40,33 @@ def _brief_doc(
     brief: str | None,
     parent_doc: str | None,
     created_by: str | None,
+    source_block: str | None = None,
 ) -> str:
     """The newborn sub-topic's initial living doc: a task brief.
 
-    Pure assembly of EXISTING text — the splitter's brief (AI- or human-written)
-    and the parent's living doc, both copied verbatim under fixed structural
-    headings. No semantics are derived from prose and nothing speaks as 芝士
-    (CLAUDE.md red line); the 分身 rewrites this into its own status summary on
-    its kickoff turn."""
+    Pure assembly of EXISTING text — the splitter's brief (AI- or human-written),
+    the upgraded block (for 讨论升级), and the parent's living doc, all copied
+    verbatim under fixed structural headings. No semantics are derived from
+    prose and nothing speaks as 芝士 (CLAUDE.md red line); the 分身 rewrites
+    this into its own status summary on its kickoff turn."""
     by = f"由 {created_by} " if created_by else ""
+    origin = "升级" if source_block is not None else "拆出"
     parts = [
         f"# {child_title}",
-        f"> 任务简报（{by}从「{parent_title}」拆出时自动预置；"
+        f"> 任务简报（{by}从「{parent_title}」{origin}时自动预置；"
         "分身开工后会把这份文档改写成状态摘要）",
-        "## 拆分意图",
-        brief.strip()
-        if brief and brief.strip()
-        else "（拆分时没有附说明——任务以标题和下面的父话题文档为准）",
+    ]
+    if source_block is not None:
+        # 讨论升级: the upgraded block IS the task statement.
+        parts += ["## 升级来源（这段讨论就是任务）", source_block.strip() or "（空）"]
+    else:
+        parts += [
+            "## 拆分意图",
+            brief.strip()
+            if brief and brief.strip()
+            else "（拆分时没有附说明——任务以标题和下面的父话题文档为准）",
+        ]
+    parts += [
         "## 父话题当时的活文档（快照，供参考）",
         parent_doc.strip()
         if parent_doc and parent_doc.strip()
@@ -139,22 +137,17 @@ class TopicService:
         await self.get_or_404(topic_id)
         return await self._repo.list_children(topic_id)
 
-    async def _add_opening(self, topic: Topic, *, from_discussion: bool) -> None:
-        await self._blocks.add(
-            project_id=topic.project_id,
-            topic_id=topic.id,
-            author=CHEESE_AUTHOR,
-            author_type=AuthorType.ai,
-            content=_opening_text(topic.title, from_discussion=from_discussion),
-            kind=BlockKind.message,
-        )
-
     async def upgrade_block_to_topic(
         self, *, block_id: uuid.UUID, created_by: str | None = None
-    ) -> Topic:
+    ) -> tuple[Topic, bool]:
         """讨论升级 (eval A1): turn a block into its own topic; the original
-        position becomes a live link, and the new topic opens with 芝士's
-        opening白 (复述任务 + 下一步)."""
+        position becomes a live link. The upgraded block itself is the task
+        statement, preset (with a parent-doc snapshot) as the new topic's
+        living doc; the 分身's auto-kickoff writes its own opening — same
+        mechanics as split, no canned template.
+
+        Returns (topic, created): created=False on an idempotent re-upgrade,
+        so the caller doesn't kick the 分身 off twice."""
         block = await self._blocks.get(block_id)
         if block is None:
             raise NotFoundError("Block not found")
@@ -163,7 +156,7 @@ class TopicService:
         if block.upgraded_to_topic_id is not None:
             existing = await self._repo.get(block.upgraded_to_topic_id)
             if existing is not None:
-                return existing
+                return existing, False
         parent = await self._repo.get(block.topic_id)
         if parent is None:
             raise NotFoundError("Parent topic not found")
@@ -192,8 +185,37 @@ class TopicService:
             upgraded_from_block_id=block.id,
         )
         await self._blocks.set_upgraded_to_topic(block, new_topic.id)
-        await self._add_opening(new_topic, from_discussion=True)
-        return new_topic
+        # Parent doc snapshot only from a real topic — never copy a private
+        # chat's doc into a public topic.
+        parent_doc = (
+            None if parent.is_private else await self._blocks.doc_root(parent.id)
+        )
+        await self._seed_brief_doc(
+            new_topic,
+            _brief_doc(
+                child_title=PLACEHOLDER_TITLE,
+                parent_title=parent.title,
+                brief=None,
+                parent_doc=parent_doc.content if parent_doc else None,
+                created_by=created_by,
+                source_block=block.content,
+            ),
+        )
+        return new_topic, True
+
+    async def _seed_brief_doc(self, topic: Topic, content: str) -> None:
+        """Preset a newborn topic's living doc with its task brief. Author is
+        `system`: the platform assembled it from existing text — nothing here
+        speaks as 芝士 (the 分身's kickoff turn writes the real opening)."""
+        doc = await self._blocks.add(
+            project_id=topic.project_id,
+            topic_id=topic.id,
+            author="system",
+            author_type=AuthorType.system,
+            content=content,
+            kind=BlockKind.doc,
+        )
+        await self._sync_doc_nodes(doc, content)
 
     async def split_to_subtopic(
         self,
@@ -223,24 +245,16 @@ class TopicService:
             created_by=created_by,
         )
         parent_doc = await self._blocks.doc_root(parent.id)
-        content = _brief_doc(
-            child_title=title,
-            parent_title=parent.title,
-            brief=brief,
-            parent_doc=parent_doc.content if parent_doc else None,
-            created_by=created_by,
+        await self._seed_brief_doc(
+            new_topic,
+            _brief_doc(
+                child_title=title,
+                parent_title=parent.title,
+                brief=brief,
+                parent_doc=parent_doc.content if parent_doc else None,
+                created_by=created_by,
+            ),
         )
-        # Author is `system`: the platform assembled this doc from existing
-        # text; it is 分身's starting state, not anyone's message.
-        doc = await self._blocks.add(
-            project_id=new_topic.project_id,
-            topic_id=new_topic.id,
-            author="system",
-            author_type=AuthorType.system,
-            content=content,
-            kind=BlockKind.doc,
-        )
-        await self._sync_doc_nodes(doc, content)
         return new_topic
 
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:

@@ -132,16 +132,29 @@ def test_upgrade_block_to_topic(client):
     assert new_topic["parent_id"] == topic["id"]
     assert new_topic["kind"] == "subtopic"  # child of a non-root topic
 
-    # New topic opens with 芝士's opening白 (first block, ai author).
+    # The upgraded block IS the task: preset verbatim as the new topic's doc.
+    doc = client.get(f"/api/topics/{new_topic['id']}/doc").json()["data"]
+    assert doc is not None
+    assert "我们要不要单独做一个数据清洗的模块" in doc["content"]
+
+    # Auto-kickoff, same as split: the 分身's own opening is the first message
+    # (the canned "我先确认理解" template is gone).
+    _wait_turns_idle()
     blocks = client.get(f"/api/topics/{new_topic['id']}/blocks").json()["data"]["data"]
-    assert len(blocks) >= 1
-    assert blocks[0]["author_type"] == "ai"
+    msgs = [b for b in blocks if b["kind"] == "message"]
+    assert msgs and msgs[0]["author_type"] == "ai"
+    assert "我先确认理解，再开始推进" not in msgs[0]["content"]
 
     # Re-upgrading the same block is idempotent: it returns the topic already
-    # created (so a double-click just navigates), not an error.
+    # created (so a double-click just navigates), not an error — and it does
+    # NOT kick the 分身 off a second time.
     r2 = client.post(f"/api/blocks/{block_id}/upgrade", json={})
     assert r2.status_code == 200
     assert r2.json()["data"]["id"] == new_topic["id"]
+    _wait_turns_idle()
+    blocks2 = client.get(f"/api/topics/{new_topic['id']}/blocks").json()["data"]["data"]
+    msgs2 = [b for b in blocks2 if b["kind"] == "message"]
+    assert len(msgs2) == len(msgs)  # no second kickoff turn
 
 
 def test_upgrade_doc_node_to_subtopic(client):
@@ -168,6 +181,7 @@ def test_upgrade_doc_node_to_subtopic(client):
         f"/api/blocks/{target['id']}/upgrade", json={"created_by": "user-1"}
     )
     assert r.status_code == 200
+    _wait_turns_idle()
     sub = r.json()["data"]
     assert sub["parent_id"] == topic["id"]
     assert sub["kind"] == "subtopic"
@@ -232,8 +246,14 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     topic = client.post(
         f"/api/blocks/{block_id}/upgrade", json={"created_by": "user-1"}
     ).json()["data"]
+    _wait_turns_idle()
     assert topic["parent_id"] == p["root_topic_id"]
     assert topic["kind"] == "topic"
+    # Privacy: the private chat's doc is never copied into the public topic.
+    doc = client.get(f"/api/topics/{topic['id']}/doc").json()["data"]
+    assert doc is not None
+    assert "我们其实该单独做个数据清洗模块" in doc["content"]  # source block
+    assert "父话题当时还没有活文档" in doc["content"]
 
 
 def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
