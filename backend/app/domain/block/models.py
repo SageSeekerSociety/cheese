@@ -12,8 +12,18 @@ both trees at once. Phase 0 stores the structure; richer views come later.
 
 import enum
 import uuid
+from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Enum, Float, ForeignKey, String, Text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -110,4 +120,27 @@ class Block(UuidPk, Timestamps, Base):
     # position becomes a live link to the new topic.
     upgraded_to_topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class BlockReaction(UuidPk, Base):
+    """An emoji reaction on a block — Slack semantics (协作平台的消息表情).
+
+    One row per (block, emoji, author); reacting again with the same emoji
+    removes the row (toggle). Both humans and 芝士 react through this table —
+    e.g. the platform's deterministic ✅ receipt on a summoning message."""
+
+    __tablename__ = "block_reactions"
+    __table_args__ = (
+        UniqueConstraint("block_id", "emoji", "author", name="uq_block_reaction"),
+    )
+
+    block_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("blocks.id", ondelete="CASCADE"), index=True
+    )
+    emoji: Mapped[str] = mapped_column(String(32))
+    # Free-form author handle, same convention as Block.author ("cheese" = AI).
+    author: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

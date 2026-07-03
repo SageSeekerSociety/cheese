@@ -64,7 +64,14 @@ async def list_topic_blocks(topic_id: uuid.UUID, db: DbSession) -> dict:
     repo = BlockRepository(db)
     blocks = await repo.list_for_topic(topic_id)
     total = await repo.count_for_topic(topic_id)
-    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
+    # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
+    reactions = await repo.reactions_for_blocks([b.id for b in blocks])
+    items = []
+    for b in blocks:
+        item = BlockOut.model_validate(b).model_dump(mode="json")
+        if b.id in reactions:
+            item["reactions"] = reactions[b.id]
+        items.append(item)
     return ok(page(items, total))
 
 

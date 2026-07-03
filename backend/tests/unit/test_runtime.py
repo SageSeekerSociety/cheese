@@ -35,6 +35,22 @@ async def test_broker_fans_out_then_stops_on_unsubscribe():
 
 
 @pytest.mark.anyio
+async def test_reaction_frames_fan_out_but_never_buffer():
+    # Reactions are standalone state updates (they can fire between turns):
+    # delivered live, but never buffered — otherwise an idle channel would look
+    # in_flight forever and dead reactions would replay to late subscribers.
+    broker = InProcessBroker()
+    async with broker.subscribe("c") as q:
+        await broker.publish(
+            "c", {"type": "reaction", "block_id": "b1", "reactions": []}
+        )
+        assert (await asyncio.wait_for(q.get(), 1))["type"] == "reaction"
+    assert broker.in_flight("c") is False
+    async with broker.subscribe("c", replay=True) as q:
+        assert q.empty()
+
+
+@pytest.mark.anyio
 async def test_replay_catches_up_a_mid_turn_subscriber():
     # R3: a connection that subscribes mid-turn gets the in-progress frames.
     broker = InProcessBroker()

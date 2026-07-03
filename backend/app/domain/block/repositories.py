@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.turn_context import current_turn_id
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import AuthorType, Block, BlockKind, BlockReaction
 
 
 class BlockRepository:
@@ -156,6 +156,72 @@ class BlockRepository:
             .order_by(Block.created_at.desc())
         )
         return (await self._session.scalars(stmt)).first()
+
+    # ---- Emoji reactions (Slack semantics) ----
+
+    async def _get_reaction(
+        self, block_id: uuid.UUID, emoji: str, author: str
+    ) -> BlockReaction | None:
+        stmt = select(BlockReaction).where(
+            BlockReaction.block_id == block_id,
+            BlockReaction.emoji == emoji,
+            BlockReaction.author == author,
+        )
+        return (await self._session.scalars(stmt)).first()
+
+    async def toggle_reaction(
+        self, block_id: uuid.UUID, emoji: str, author: str
+    ) -> bool:
+        """Slack-style toggle: add the (emoji, author) reaction, or remove it if
+        it already exists. Returns True when added, False when removed."""
+        existing = await self._get_reaction(block_id, emoji, author)
+        if existing is not None:
+            await self._session.delete(existing)
+            await self._session.flush()
+            return False
+        self._session.add(BlockReaction(block_id=block_id, emoji=emoji, author=author))
+        await self._session.flush()
+        return True
+
+    async def add_reaction_if_absent(
+        self, block_id: uuid.UUID, emoji: str, author: str
+    ) -> bool:
+        """Idempotent add (never removes) — for platform receipts like 芝士's ✅
+        on the message that summoned it. Returns True when a row was created."""
+        if await self._get_reaction(block_id, emoji, author) is not None:
+            return False
+        self._session.add(BlockReaction(block_id=block_id, emoji=emoji, author=author))
+        await self._session.flush()
+        return True
+
+    async def reactions_for_blocks(
+        self, block_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[dict]]:
+        """Aggregated reactions for many blocks in ONE query (no N+1):
+        block_id → [{"emoji", "count", "authors"}], groups ordered by the emoji's
+        first appearance on the block, authors by reaction time (Slack)."""
+        if not block_ids:
+            return {}
+        stmt = (
+            select(BlockReaction)
+            .where(BlockReaction.block_id.in_(block_ids))
+            .order_by(BlockReaction.created_at, BlockReaction.id)
+        )
+        rows = (await self._session.scalars(stmt)).all()
+        grouped: dict[uuid.UUID, dict[str, dict]] = {}
+        for r in rows:
+            per_block = grouped.setdefault(r.block_id, {})
+            agg = per_block.setdefault(
+                r.emoji, {"emoji": r.emoji, "count": 0, "authors": []}
+            )
+            agg["count"] += 1
+            agg["authors"].append(r.author)
+        return {bid: list(per.values()) for bid, per in grouped.items()}
+
+    async def reactions_for_block(self, block_id: uuid.UUID) -> list[dict]:
+        """Aggregated reactions of one block (same shape as the batch form)."""
+        agg = await self.reactions_for_blocks([block_id])
+        return agg.get(block_id, [])
 
     async def list_by_kind_for_project(
         self, project_id: uuid.UUID, kind: BlockKind

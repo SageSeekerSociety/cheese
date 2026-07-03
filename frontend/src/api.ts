@@ -21,6 +21,7 @@ import type {
   Project,
   ProjectMemberRow,
   ProjectOverview,
+  ReactionAgg,
   SandboxImageInfo,
   Space,
   SpaceDashboard,
@@ -325,6 +326,20 @@ export function getSpaceDashboard(spaceId: string): Promise<SpaceDashboard> {
 export function listBlocks(topicId: string): Promise<ListPayload<Block>> {
   return request<ListPayload<Block>>(
     `/topics/${encodeURIComponent(topicId)}/blocks`,
+  )
+}
+
+// Emoji reactions (Slack semantics): toggles (emoji, author) on a block and
+// returns the block's fresh aggregate. Other clients get the same aggregate
+// pushed as a `reaction` WS frame on the topic channel.
+export function toggleReaction(
+  blockId: string,
+  emoji: string,
+  author: string,
+): Promise<{ toggled: 'added' | 'removed'; reactions: ReactionAgg[] }> {
+  return request<{ toggled: 'added' | 'removed'; reactions: ReactionAgg[] }>(
+    `/blocks/${encodeURIComponent(blockId)}/reactions`,
+    { method: 'POST', body: JSON.stringify({ emoji, author }) },
   )
 }
 

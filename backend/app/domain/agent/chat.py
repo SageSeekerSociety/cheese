@@ -2,8 +2,9 @@
 
 This is the platform "shell" around 芝士: it persists the conversation as
 blocks (append-only history, spec H1), injects project memory into the agent's
-context (spec §8.4 带记忆回答), streams the reply, and stores the resumable
-session id on the topic.
+context (spec §8.4 带记忆回答), lands each completed assistant message as its
+own block (Slack-style discrete messages, no token streaming), and stores the
+resumable session id on the topic.
 
 DB writes happen in short transactions around the (long) streaming call so we
 never hold a transaction open across the model round-trip.
@@ -25,7 +26,7 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import role_description
 from app.domain.agent.service import (
-    AgentDelta,
+    AgentMessage,
     AgentResult,
     AgentService,
     AgentSessionInfo,
@@ -506,6 +507,14 @@ class ChatService:
                 yield {"type": "done"}
                 return
 
+            # Slack-style receipt: the PLATFORM (not the model) puts 芝士's ✅
+            # on the summoning message the moment its turn is underway — a
+            # deterministic ack. Only a real human summon gets it: a resume /
+            # nudge / kickoff turn has no user block and skips this branch.
+            ack = await self._ack_summon(user_block_id)
+            if ack is not None:
+                yield {"type": "reaction", **ack}
+
         async with self._lock_for(topic_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
@@ -651,6 +660,76 @@ class ChatService:
             await session.commit()
         return payloads, anchor_id
 
+    async def _ack_summon(self, user_block_id: uuid.UUID) -> dict | None:
+        """Add 芝士's ✅ receipt to the summoning user message (idempotent) and
+        return the WS reaction payload. Best-effort: a failed receipt must
+        never kill the turn."""
+        try:
+            async with self._sessions() as session:
+                blocks = BlockRepository(session)
+                await blocks.add_reaction_if_absent(
+                    user_block_id, "✅", CHEESE_AUTHOR
+                )
+                reactions = await blocks.reactions_for_block(user_block_id)
+                await session.commit()
+            return {"block_id": str(user_block_id), "reactions": reactions}
+        except Exception:  # noqa: BLE001 — the turn matters more than the ack
+            logger.exception("failed to ✅-ack block %s", user_block_id)
+            return None
+
+    async def _persist_assistant_message(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        text: str,
+        turn_id: uuid.UUID,
+        reply_to: uuid.UUID | None,
+        roster: list[dict],
+        topic_refs: list[dict],
+    ) -> dict:
+        """Persist ONE discrete 芝士 message (Slack-style): committed the moment
+        the SDK reports the AssistantMessage complete, so a turn lands as
+        several complete messages instead of one growing streamed bubble.
+        Handles the same mention canonicalization / notify / refs as before."""
+        text = _expand_mention_names(text, roster, topic_refs)
+        async with self._sessions() as session:
+            blocks = BlockRepository(session)
+            block = await blocks.add(
+                project_id=project_id,
+                topic_id=topic_id,
+                author=CHEESE_AUTHOR,
+                author_type=AuthorType.ai,
+                content=text,
+                kind=BlockKind.message,
+                reply_to=reply_to,
+                turn_id=turn_id,
+            )
+            topic = await TopicRepository(session).get(topic_id)
+            # <@handle> mentions in 芝士's message → strong notify (the token is
+            # the single source of truth: what's shown = who's notified).
+            # Hallucinated handles get flagged in 现场, never silently no-op.
+            if topic is not None:
+                resolved, unresolved = await self._notify_mentions(
+                    session, topic, CHEESE_AUTHOR, text, roster
+                )
+                refs = [f"user:{h}" for h in resolved] + _topic_refs(text)
+                if refs:
+                    block.refs = refs
+                for bad in unresolved:
+                    await blocks.add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        author=CHEESE_AUTHOR,
+                        author_type=AuthorType.ai,
+                        content=f"⚠️ @了 <@{bad}>，但项目里没有这个成员，没能通知到",
+                        kind=BlockKind.event,
+                        turn_id=turn_id,
+                    )
+            payload = _block_payload(BlockOut.model_validate(block))
+            await session.commit()
+        return payload
+
     async def _model_kwargs(self, project_id: uuid.UUID) -> dict:
         """Per-turn overrides for the agent call, resolved from project.settings:
         the ExecutionProfile → model+env (design §2), and the sandbox image (spec
@@ -746,6 +825,11 @@ class ChatService:
         _post_user_message), yielding WS frames as JSON-ready dicts. Runs under
         the per-topic lock; the prompt is built from history at lock time so a
         queued turn picks up every message posted while it waited."""
+        # 正在思考 for EVERYONE: with discrete messages there are no deltas to
+        # make a running turn visible, so the working indicator is announced
+        # explicitly to every open client (not just the submitter / late
+        # re-connectors, who get it from the WS-connect in_flight check).
+        yield {"type": "turn_active"}
         # --- tx1: load topic + history, load memory ---
         async with self._sessions() as session:
             topics = TopicRepository(session)
@@ -844,6 +928,7 @@ class ChatService:
         todo: list[dict] = []
         actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None
+        assistant_count = 0  # discrete 芝士 messages landed this turn
         try:
             async for event in self._stream_with_retry(
                 provider,
@@ -861,8 +946,25 @@ class ChatService:
                 if isinstance(event, AgentSessionInfo):
                     # Announced early so even a failed turn persists it below.
                     new_session_id = event.session_id
-                elif isinstance(event, AgentDelta):
-                    yield {"type": "delta", "text": event.text}
+                elif isinstance(event, AgentMessage):
+                    # Slack-style discrete message: one completed SDK
+                    # AssistantMessage = one chat block, persisted + broadcast
+                    # NOW (mid-turn), not at turn end. A turn with tool calls
+                    # lands several of these. Token deltas are no longer
+                    # forwarded to the chat — the message IS the unit.
+                    payload = await self._persist_assistant_message(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        text=event.text,
+                        turn_id=turn_id,
+                        # The first message threads under the summoning message;
+                        # follow-ups stand alone (Slack-style consecutive sends).
+                        reply_to=user_block_id if assistant_count == 0 else None,
+                        roster=roster,
+                        topic_refs=topic_refs,
+                    )
+                    assistant_count += 1
+                    yield {"type": "assistant_block", "block": payload}
                 elif isinstance(event, AgentToolUse):
                     name = event.name.replace("mcp__cheese__", "")
                     args = event.input or {}
@@ -999,11 +1101,7 @@ class ChatService:
             yield {"type": "done"}
             return
 
-        # Canonicalize friendly "@名字 / @话题名" → tokens so they render as chips
-        # and notify, even when 芝士 didn't emit the exact <@handle> form.
-        final_text = _expand_mention_names(final_text, roster, topic_refs)
-
-        # --- tx2: persist tool events (施工现场) + assistant block + usage ---
+        # --- tx2: persist tool events (施工现场) + usage + session pointer ---
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
@@ -1029,38 +1127,7 @@ class ChatService:
                     cost_usd=usage.cost_usd,
                 )
 
-            assistant_block = await blocks.add(
-                project_id=project_id,
-                topic_id=topic_id,
-                author=CHEESE_AUTHOR,
-                author_type=AuthorType.ai,
-                content=final_text,
-                kind=BlockKind.message,
-                reply_to=user_block_id,
-                turn_id=turn_id,
-            )
             topic = await topics.get(topic_id)
-            # <@handle> mentions in 芝士's reply → strong notify (the token is the
-            # single source of truth: what's shown = who's notified). Hallucinated
-            # handles get flagged in 现场 so a wrong @ never silently no-ops.
-            if topic is not None:
-                resolved, unresolved = await self._notify_mentions(
-                    session, topic, CHEESE_AUTHOR, final_text, roster
-                )
-                refs = [f"user:{h}" for h in resolved] + _topic_refs(final_text)
-                if refs:
-                    assistant_block.refs = refs
-                for bad in unresolved:
-                    await blocks.add(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        author=CHEESE_AUTHOR,
-                        author_type=AuthorType.ai,
-                        content=f"⚠️ @了 <@{bad}>，但项目里没有这个成员，没能通知到",
-                        kind=BlockKind.event,
-                        turn_id=turn_id,
-                    )
-            assistant_payload = _block_payload(BlockOut.model_validate(assistant_block))
 
             # Persistent, clickable action cards for the cheese actions this turn
             # (system events show in the conversation; refs tag the resource).
@@ -1083,12 +1150,29 @@ class ChatService:
                 await topics.set_session_id(topic, new_session_id)
             await session.commit()
 
+        # Fallback single message: 芝士's messages normally landed one-by-one at
+        # each AgentMessage boundary above. A provider that never announced a
+        # boundary (plain non-SDK stub turn, an older remote cheesed node) still
+        # lands its reply from the final result text.
+        assistant_payload: dict | None = None
+        if assistant_count == 0 and final_text.strip():
+            assistant_payload = await self._persist_assistant_message(
+                project_id=project_id,
+                topic_id=topic_id,
+                text=final_text,
+                turn_id=turn_id,
+                reply_to=user_block_id,
+                roster=roster,
+                topic_refs=topic_refs,
+            )
+
         # Snapshot whatever the agent changed in its worktree this turn (native
         # edits → version history). The provider owns this workspace lifecycle
         # step (R2/R9); it's best-effort and never fails the turn.
         provider.checkpoint(project_id, topic_id)
 
-        yield {"type": "assistant_block", "block": assistant_payload}
+        if assistant_payload is not None:
+            yield {"type": "assistant_block", "block": assistant_payload}
         for payload in action_payloads:
             yield {"type": "event_block", "block": payload}
         yield {"type": "done"}

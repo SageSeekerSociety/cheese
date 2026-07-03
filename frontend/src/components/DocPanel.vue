@@ -7,7 +7,8 @@ import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { Extension } from '@tiptap/core'
 import type { Editor as CoreEditor } from '@tiptap/core'
-import { Plugin } from '@tiptap/pm/state'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { CellSelection } from '@tiptap/pm/tables'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
@@ -86,6 +87,9 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'topics-changed'): void
   (e: 'mention-click', handle: string): void
+  // 段落评论复用底部主输入框: a selection's 评论 CTA was clicked — the parent
+  // flips its composer into comment mode, carrying the anchor + quoted span.
+  (e: 'comment-intent', payload: { anchorId: string | null; quote: string }): void
 }>()
 
 // B1 Phase 2 (cross-view link, panel-level): when a chat action that changed the
@@ -183,17 +187,11 @@ async function highlightNode(nodeId: string) {
 }
 
 // --- A2 自上而下拆解: a doc paragraph becomes a nested subtopic, and stays in
-// place as a live-ref that shows the subtopic's live status. Same positional
-// overlay technique as the highlight — we anchor a badge beside the paragraph
-// without mutating ProseMirror's DOM. ---
-interface LiveRef {
-  nodeId: string
-  topicId: string
-  top: number
-  title: string
-  status: string
-}
-const liveRefs = ref<LiveRef[]>([])
+// place as a live-ref that shows the subtopic's live status. The badge is a
+// ProseMirror WIDGET decoration appended at the end of the upgraded paragraph:
+// it lives in the document flow, so it can never float over (and swallow clicks
+// meant for) neighbouring text — unlike the old absolutely-positioned overlay
+// track, which created cursor dead zones. ---
 
 const STATUS_LABEL: Record<string, string> = {
   open: '进行中',
@@ -207,32 +205,92 @@ function statusLabel(s: string): string {
   return STATUS_LABEL[s] ?? s
 }
 
-// Recompute the live-ref badge positions from the current doc render. Called after
-// (re)loads and on AI activity, so a badge tracks its paragraph and its status
-// stays fresh. Positions are relative to .doc-editor-wrap, which scrolls with the
-// content — so no scroll listener is needed.
-async function positionLiveRefs() {
-  const aligned = await alignedDocBlocks()
-  const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
-  if (!wrap) {
-    liveRefs.value = []
-    return
-  }
-  const wrapRect = wrap.getBoundingClientRect()
-  liveRefs.value = aligned
-    .filter((a) => a.node.upgraded_to_topic_id)
-    .map((a) => {
-      const sub = props.topicList.find(
-        (t) => t.id === a.node.upgraded_to_topic_id,
-      )
-      return {
-        nodeId: a.node.id,
-        topicId: a.node.upgraded_to_topic_id as string,
-        top: a.el.getBoundingClientRect().top - wrapRect.top,
-        title: sub?.title ?? '子话题',
-        status: sub?.status ?? '',
-      }
-    })
+// Top-level doc-node index → the subtopic id that paragraph was upgraded into.
+// Refreshed from GET /docs (loadComments); the decoration plugin reads it when
+// (re)building. Positional zip: server node i ↔ ProseMirror doc.child(i), same
+// alignment contract as alignedDocBlocks.
+let liveRefIndex = new Map<number, string>()
+const liveRefKey = new PluginKey('cheeseLiveRefBadges')
+
+// Build the badge element a live-ref widget renders as. Title/status are looked
+// up from props.topicList at build time; a topicList change rebuilds the set.
+function liveRefWidget(topicId: string): HTMLElement {
+  const sub = props.topicList.find((t) => t.id === topicId)
+  const status = sub?.status ?? ''
+  const el = document.createElement('span')
+  el.className = 'doc-liveref'
+  el.dataset.topic = topicId
+  el.contentEditable = 'false'
+  el.setAttribute('role', 'button')
+  el.title = `子话题「${sub?.title ?? '子话题'}」· ${statusLabel(status)} — 点击打开`
+  const dot = document.createElement('span')
+  dot.className = `doc-liveref__dot is-${status}`
+  const label = document.createElement('span')
+  label.className = 'doc-liveref__label'
+  label.textContent = `🧩 ${sub?.title ?? '子话题'}`
+  const st = document.createElement('span')
+  st.className = 'doc-liveref__status'
+  st.textContent = statusLabel(status)
+  el.append(dot, label, st)
+  return el
+}
+
+function liveRefDecorations(doc: PMNode): DecorationSet {
+  const decos: Decoration[] = []
+  doc.forEach((node, offset, index) => {
+    const topicId = liveRefIndex.get(index)
+    if (!topicId) return
+    // End of the block's content (just inside its closing token) — the badge
+    // renders after the paragraph's last character, in flow.
+    const pos = offset + Math.max(node.nodeSize - 1, 1)
+    decos.push(
+      Decoration.widget(pos, () => liveRefWidget(topicId), {
+        side: 1,
+        key: `liveref-${topicId}`,
+      }),
+    )
+  })
+  return DecorationSet.create(doc, decos)
+}
+
+const LiveRefBadges = Extension.create({
+  name: 'cheeseLiveRefBadges',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: liveRefKey,
+        state: {
+          init: (_cfg, state) => liveRefDecorations(state.doc),
+          apply: (tr, old) => {
+            // Explicit poke (fresh /docs data or topicList change) → rebuild.
+            if (tr.getMeta(liveRefKey)) return liveRefDecorations(tr.doc)
+            // Local edits: map the existing widgets along, so a badge stays
+            // glued to its paragraph while the user types (indices may shift
+            // until the next server refresh; mapping avoids mis-attachment).
+            return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
+          },
+        },
+        props: {
+          decorations(state) {
+            return this.getState(state)
+          },
+        },
+      }),
+    ]
+  },
+})
+
+// Rebuild the index from fresh server nodes and poke the plugin. Nodes align
+// positionally with the editor's top-level blocks (trailing tiptap filler
+// paragraphs sit past nodes.length and simply never get an entry).
+function refreshLiveRefBadges(nodes: Block[]) {
+  const next = new Map<number, string>()
+  nodes.forEach((n, i) => {
+    if (n.upgraded_to_topic_id) next.set(i, n.upgraded_to_topic_id)
+  })
+  liveRefIndex = next
+  const view = editor.value?.view
+  if (view) view.dispatch(view.state.tr.setMeta(liveRefKey, true))
 }
 
 // "单独实现" on a doc block (A2): upgrade that paragraph's node into a nested
@@ -285,7 +343,13 @@ async function pulse() {
     pulsing.value = false
   }, 1200)
 }
-defineExpose({ pulse, highlightTurn, openFile: openFileRef })
+// refreshComments: the parent composer posts comments in comment mode and asks
+// the panel to refresh its lists (drawer + in-doc 常驻评论区).
+async function refreshComments() {
+  const tid = props.topic?.id
+  if (tid) await loadComments(tid).catch(() => {})
+}
+defineExpose({ pulse, highlightTurn, openFile: openFileRef, refreshComments })
 
 // ---- 按需打开的工具 (spec §7.1): slide-out tool drawer ----
 interface ToolDef {
@@ -357,9 +421,6 @@ const anchorNodes = ref<Block[]>([])
 const anchorId = ref<string | null>(null)
 const newComment = ref('')
 const commentBusy = ref(false)
-// The text span the current draft is quoting (set from a doc selection, B4).
-const pendingQuote = ref<string | null>(null)
-const commentInputRef = ref<{ focus?: () => void } | null>(null)
 
 // A short label for a doc node, used in the anchor picker and comment chips. The
 // node's own content is either AI- or human-authored text; we only ever truncate
@@ -381,6 +442,8 @@ async function loadComments(tid: string) {
   const [cs, ns] = await Promise.all([getComments(tid), getDocNodes(tid)])
   comments.value = cs.data
   anchorNodes.value = ns.data
+  // Same fetch feeds the in-doc live-ref badges (widget decorations).
+  refreshLiveRefBadges(ns.data)
 }
 
 async function submitComment() {
@@ -389,16 +452,9 @@ async function submitComment() {
   if (!tid || !text) return
   commentBusy.value = true
   try {
-    await addComment(
-      tid,
-      text,
-      AUTHOR,
-      anchorId.value ?? undefined,
-      pendingQuote.value ?? undefined,
-    )
+    await addComment(tid, text, AUTHOR, anchorId.value ?? undefined)
     await loadComments(tid)
     newComment.value = ''
-    pendingQuote.value = null
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '评论失败'
   } finally {
@@ -406,14 +462,33 @@ async function submitComment() {
   }
 }
 
-// Open the 评论 drawer (used by the selection CTA). Loads comments the same way
-// toggling the tool does.
-async function openCommentTool() {
-  openTool.value = 'comments'
-  drawerOpen.value = true
+// 飞书 docs 风常驻评论区: page-level comments (no paragraph anchor) live at the
+// bottom of the document itself, with an always-there composer row.
+const pageComments = computed(() => comments.value.filter((c) => !c.reply_to))
+const pageCommentDraft = ref('')
+const pageCommentBusy = ref(false)
+async function submitPageComment() {
   const tid = props.topic?.id
-  if (tid) await loadComments(tid)
+  const text = pageCommentDraft.value.trim()
+  if (!tid || !text || pageCommentBusy.value) return
+  pageCommentBusy.value = true
+  try {
+    await addComment(tid, text, AUTHOR)
+    pageCommentDraft.value = ''
+    await loadComments(tid)
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '评论失败'
+  } finally {
+    pageCommentBusy.value = false
+  }
 }
+function onPageCommentKey(e: KeyboardEvent) {
+  // IME 上屏的回车不算发送 (same guard family as the main composer).
+  if (e.isComposing || e.keyCode === 229) return
+  e.preventDefault()
+  void submitPageComment()
+}
+
 
 // 现场: read-only transcript timeline.
 const transcript = ref<Block[]>([])
@@ -844,9 +919,14 @@ const TokenChips = Extension.create({
 
 // Chip clicks in the doc (delegated — decorations are plain spans).
 function onDocClick(e: MouseEvent) {
-  const el = (e.target as HTMLElement | null)?.closest(
-    '.mention',
-  ) as HTMLElement | null
+  const target = e.target as HTMLElement | null
+  // Live-ref badge widget → open its subtopic.
+  const lr = target?.closest('.doc-liveref') as HTMLElement | null
+  if (lr?.dataset.topic) {
+    emit('open-topic', lr.dataset.topic)
+    return
+  }
+  const el = target?.closest('.mention') as HTMLElement | null
   if (!el) return
   if (el.dataset.topic) emit('open-topic', el.dataset.topic)
   else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
@@ -868,6 +948,7 @@ const editor = useEditor({
     Markdown,
     TableKit.configure({ table: { resizable: false } }),
     TokenChips,
+    LiveRefBadges,
   ],
   editable: editable.value,
   editorProps: {
@@ -897,27 +978,59 @@ interface CommentCta {
 const commentCta = ref<CommentCta | null>(null)
 
 function updateCommentCta(ed: CoreEditor) {
-  const { from, to, empty } = ed.state.selection
-  if (empty || !editable.value) {
-    commentCta.value = null
-    return
-  }
-  const quote = ed.state.doc.textBetween(from, to, ' ').trim()
-  if (!quote) {
+  const sel = ed.state.selection
+  if (sel.empty || !editable.value) {
     commentCta.value = null
     return
   }
   const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
   if (!wrap) return
+  let quote: string
+  let startCoords: { top: number; left: number }
+  let endRight: number
+  let nodeIndex: number
+  try {
+    if (sel instanceof CellSelection) {
+      // TableKit: dragging across cells yields a CellSelection, not a
+      // TextSelection. Its from/to are cell-boundary positions — textBetween
+      // and coordsAtPos on them give garbage (empty quote / border coords),
+      // which is what broke commenting inside tables. Read the selected CELLS
+      // instead: quote = their text, coords = the anchor/head cells' insides,
+      // and the paragraph anchor = the table's own top-level node index.
+      const parts: string[] = []
+      sel.forEachCell((cell) => {
+        const t = cell.textContent.trim()
+        if (t) parts.push(t)
+      })
+      quote = parts.join(' ')
+      const a = ed.view.coordsAtPos(sel.$anchorCell.pos + 1)
+      const h = ed.view.coordsAtPos(sel.$headCell.pos + 1)
+      startCoords = a.top < h.top || (a.top === h.top && a.left <= h.left) ? a : h
+      endRight = Math.max(a.right, h.right)
+      nodeIndex = sel.$anchorCell.index(0)
+    } else {
+      quote = ed.state.doc.textBetween(sel.from, sel.to, ' ').trim()
+      startCoords = ed.view.coordsAtPos(sel.from)
+      endRight = ed.view.coordsAtPos(sel.to).right
+      // depth-0 index = the top-level block the selection starts in (inside a
+      // table cell this still resolves to the table's index — correct anchor).
+      nodeIndex = sel.$from.index(0)
+    }
+  } catch {
+    // coordsAtPos can throw on transient positions mid-edit; just hide the CTA.
+    commentCta.value = null
+    return
+  }
+  if (!quote) {
+    commentCta.value = null
+    return
+  }
   const wrapRect = wrap.getBoundingClientRect()
-  const start = ed.view.coordsAtPos(from)
-  const end = ed.view.coordsAtPos(to)
   commentCta.value = {
-    top: start.top - wrapRect.top - 38,
-    left: Math.min(end.right, start.left + 240) - wrapRect.left,
+    top: startCoords.top - wrapRect.top - 38,
+    left: Math.min(endRight, startCoords.left + 240) - wrapRect.left,
     quote,
-    // depth-0 index = the top-level block the selection starts in.
-    nodeIndex: ed.state.selection.$from.index(0),
+    nodeIndex,
   }
 }
 
@@ -927,19 +1040,16 @@ async function commentOnSelection() {
   const cta = commentCta.value
   if (!ed || !tid || !cta) return
   const nodes = (await getDocNodes(tid)).data
-  // Same filler-tolerant alignment as split/highlight.
-  if (cta.nodeIndex >= nodes.length || nodes.length !== contentBlocks().length) {
-    // Fall back to a whole-doc comment if the structure can't be mapped.
-    anchorId.value = null
-  } else {
-    anchorId.value = nodes[cta.nodeIndex].id
-  }
-  pendingQuote.value = cta.quote
+  // Same filler-tolerant alignment as split/highlight. Falls back to a
+  // whole-doc comment if the structure can't be mapped.
+  const anchor =
+    cta.nodeIndex >= nodes.length || nodes.length !== contentBlocks().length
+      ? null
+      : nodes[cta.nodeIndex].id
   commentCta.value = null
-  // Open the comments drawer and focus the composer.
-  await openCommentTool()
-  await nextTick()
-  commentInputRef.value?.focus?.()
+  // 复用底部主输入框: hand the anchor + quote to the parent composer, which
+  // flips into comment mode (quote chip + Esc/✕ to exit).
+  emit('comment-intent', { anchorId: anchor, quote: cta.quote })
 }
 
 // Guard: when we programmatically setContent from a server reload we don't want
@@ -998,7 +1108,8 @@ async function loadDoc(topicId: string) {
     setEditorMarkdown(md)
     dirty.value = false
     savedAt.value = null
-    positionLiveRefs() // A2: place in-place subtopic badges for the new doc
+    // A2 badges + 常驻评论区: refresh nodes/comments for the new doc.
+    void loadComments(topicId).catch(() => {})
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载文档失败'
   } finally {
@@ -1019,7 +1130,8 @@ async function reloadFromActivity(topicId: string) {
       setEditorMarkdown(md)
       savedAt.value = null
     }
-    positionLiveRefs() // A2: refresh subtopic badges + their live status
+    // A2 badges + 常驻评论区: refresh alongside the doc content.
+    void loadComments(topicId).catch(() => {})
   } catch {
     // Silent: activity-driven refresh is best-effort.
   }
@@ -1102,23 +1214,18 @@ watch(
 )
 
 // A2: when the sidebar's topics change (a subtopic's status moved, or a new one
-// was spawned), refresh the badges' titles/status without a full doc reload.
+// was spawned), refetch the doc nodes and rebuild the badge widgets so titles /
+// status stay live. (No resize listener needed anymore — widgets are in flow.)
 watch(
   () => props.topicList,
   () => {
-    if (props.topic?.id) positionLiveRefs()
+    const tid = props.topic?.id
+    if (tid) void loadComments(tid).catch(() => {})
   },
   { deep: true },
 )
 
-// Keep badge positions correct when the panel is resized.
-function onResize() {
-  if (props.topic?.id) positionLiveRefs()
-}
-if (typeof window !== 'undefined') window.addEventListener('resize', onResize)
-
 onBeforeUnmount(() => {
-  if (typeof window !== 'undefined') window.removeEventListener('resize', onResize)
   editor.value?.destroy()
 })
 </script>
@@ -1210,22 +1317,10 @@ onBeforeUnmount(() => {
               <v-icon size="14">mdi-comment-plus-outline</v-icon>
               评论
             </button>
-            <!-- A2 in-place live-refs: a badge beside any paragraph that was
-                 upgraded into a subtopic, showing its live status. Click to open
-                 the subtopic. Positioned over the doc without touching the editor. -->
-            <button
-              v-for="lr in liveRefs"
-              :key="lr.nodeId"
-              type="button"
-              class="doc-liveref"
-              :style="{ top: `${lr.top}px` }"
-              :title="`子话题「${lr.title}」· ${statusLabel(lr.status)} — 点击打开`"
-              @click="emit('open-topic', lr.topicId)"
-            >
-              <span class="doc-liveref__dot" :class="`is-${lr.status}`" />
-              🧩 {{ lr.title }}
-              <span class="doc-liveref__status">{{ statusLabel(lr.status) }}</span>
-            </button>
+            <!-- A2 in-place live-refs are ProseMirror widget decorations now —
+                 rendered in the document flow at the end of their paragraph by
+                 the LiveRefBadges extension (no overlay, no cursor dead zone).
+                 Clicks are delegated through onDocClick above. -->
             <!-- Real block handles: 🧩 splits the block into a subtopic, ⠿ drags to
                  reorder, ＋ inserts a block below. Only in edit mode. -->
             <DragHandle
@@ -1249,6 +1344,50 @@ onBeforeUnmount(() => {
             <p v-if="editor && editor.isEmpty && !loading" class="placeholder">
               {{ PLACEHOLDER }}
             </p>
+          </div>
+
+          <!-- 飞书 docs 风常驻评论区: page-level comments (no paragraph anchor)
+               live at the bottom of the document, with an always-there
+               "写评论…" row. Paragraph-anchored comments stay in the drawer. -->
+          <div class="doc-comments">
+            <div class="doc-comments__head">
+              <v-icon size="15" class="c-faint">mdi-comment-text-outline</v-icon>
+              评论
+              <span v-if="pageComments.length" class="doc-comments__count">
+                {{ pageComments.length }}
+              </span>
+            </div>
+            <div v-for="c in pageComments" :key="c.id" class="doc-comments__item">
+              <span class="doc-comments__avatar">
+                {{ (c.author || '?').slice(0, 1).toUpperCase() }}
+              </span>
+              <div class="doc-comments__main">
+                <div class="doc-comments__meta">
+                  <span class="doc-comments__author">{{ c.author }}</span>
+                  <span class="t-meta">{{ relTime(c.created_at) }}</span>
+                </div>
+                <div class="doc-comments__text">{{ c.content }}</div>
+              </div>
+            </div>
+            <div class="doc-comments__composer">
+              <input
+                v-model="pageCommentDraft"
+                class="doc-comments__input"
+                placeholder="写评论…"
+                :disabled="pageCommentBusy"
+                @keydown.enter="onPageCommentKey"
+              />
+              <v-btn
+                size="small"
+                variant="flat"
+                color="primary"
+                :loading="pageCommentBusy"
+                :disabled="!pageCommentDraft.trim()"
+                @click="submitPageComment"
+              >
+                发表
+              </v-btn>
+            </div>
           </div>
         </div>
       </div>
@@ -1559,20 +1698,10 @@ onBeforeUnmount(() => {
                 </button>
                 <div class="text-body-2">{{ c.content }}</div>
               </div>
-              <!-- draft quote: the selected span this comment will attach to -->
-              <div v-if="pendingQuote" class="comment-quote-draft mt-2">
-                <span class="comment-quote-draft__text">{{ pendingQuote }}</span>
-                <v-icon
-                  size="14"
-                  class="comment-quote-draft__x"
-                  title="取消引用"
-                  @click="pendingQuote = null"
-                >mdi-close</v-icon>
-              </div>
-              <!-- anchor picker: only for whole-doc / paragraph comments made
-                   without a text selection (a selection sets the quote instead). -->
+              <!-- anchor picker: whole-doc / paragraph comments made without a
+                   text selection (selection comments go through the main
+                   composer's comment mode instead). -->
               <v-select
-                v-if="!pendingQuote"
                 v-model="anchorId"
                 :items="anchorOptions"
                 item-title="label"
@@ -1584,9 +1713,8 @@ onBeforeUnmount(() => {
                 class="mt-2"
               />
               <v-textarea
-                ref="commentInputRef"
                 v-model="newComment"
-                :placeholder="pendingQuote ? '对选中内容评论…' : '写条评论…'"
+                placeholder="写条评论…"
                 rows="2"
                 auto-grow
                 variant="outlined"
@@ -1862,10 +1990,14 @@ onBeforeUnmount(() => {
 .comment-anchor:hover {
   background: rgba(var(--v-theme-primary), 0.18);
 }
+/* 评论卡片 (drawer): surface card with a hairline border + soft shadow, matching
+   the in-doc 常驻评论区 cards. */
 .comment-item {
-  background: rgba(20, 22, 26, 0.03);
+  background: var(--surface);
+  border: 1px solid var(--line-2, #ececec);
   border-radius: 10px;
   padding: 10px 12px;
+  box-shadow: 0 1px 3px rgba(16, 18, 22, 0.04);
 }
 .comment-item .comment-quote {
   display: block;
@@ -1935,32 +2067,6 @@ onBeforeUnmount(() => {
 .comment-quote:hover {
   background: rgba(var(--v-theme-primary), 0.14);
 }
-/* B4: the draft quote in the composer, with a clear button. */
-.comment-quote-draft {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 5px 8px;
-  border-left: 2px solid rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.07);
-  border-radius: 0 4px 4px 0;
-}
-.comment-quote-draft__text {
-  flex: 1;
-  font-size: 0.76rem;
-  color: var(--muted);
-  line-height: 1.5;
-  max-height: 3em;
-  overflow: hidden;
-}
-.comment-quote-draft__x {
-  cursor: pointer;
-  color: var(--faint);
-}
-.comment-quote-draft__x:hover {
-  color: var(--muted);
-}
-
 /* B1 Phase 2: a brief highlight when a chat action points at the doc. */
 .doc-pulse {
   animation: docPulse 1.2s ease-out;
@@ -2039,14 +2145,25 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 48px;
-  padding: 0 6px 0 14px;
+  height: 44px;
+  padding: 0 8px 0 16px;
   flex: 0 0 auto;
+  background: var(--surface);
 }
 .tool-panel__title {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--ink);
+}
+/* Quiet the head's icon buttons until hovered (图钉/关闭 shouldn't shout). */
+.tool-panel__head .v-btn {
+  opacity: 0.75;
+  transition: opacity 0.12s ease;
+}
+.tool-panel__head .v-btn:hover,
+.tool-panel__head .tool-btn--active {
+  opacity: 1;
 }
 .tool-content {
   flex: 1 1 auto;
@@ -2355,6 +2472,19 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   text-align: left;
   vertical-align: top;
+  /* anchor for the .selectedCell::after overlay */
+  position: relative;
+}
+/* CellSelection feedback: prosemirror-tables marks selected cells with
+   .selectedCell but ships no styling — without this, dragging across cells
+   looked like the selection was lost (it wasn't). */
+.doc-editor :deep(.doc-prose .selectedCell::after) {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: rgba(var(--v-theme-primary), 0.1);
 }
 .doc-editor :deep(.doc-prose th) {
   background: var(--bg-2, #f7f8fa);
@@ -2453,50 +2583,148 @@ onBeforeUnmount(() => {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
 }
 
-/* A2: in-place live-ref badge — a subtopic spawned from this paragraph. Sits at
-   the right edge of the doc column, anchored to the paragraph's vertical
-   position; scrolls with the content (it lives inside .doc-editor-wrap). */
-.doc-liveref {
-  position: absolute;
-  right: -6px;
-  transform: translateY(-2px);
-  z-index: 4;
+/* A2: in-place live-ref badge — a subtopic spawned from this paragraph. It's a
+   ProseMirror widget decoration rendered IN the document flow, right after the
+   paragraph's last character — no overlay, so it can never block the caret.
+   :deep because the widget span is created imperatively by the extension. */
+.doc-editor :deep(.doc-liveref) {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  max-width: 220px;
-  padding: 2px 9px;
-  border-radius: 12px;
+  vertical-align: baseline;
+  margin-left: 8px;
+  max-width: 240px;
+  padding: 1px 9px;
+  border-radius: 10px;
   font-size: 0.72rem;
   line-height: 1.6;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: rgb(var(--v-theme-primary));
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-primary), 0.35);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, var(--surface));
+  border: 1px solid rgba(var(--v-theme-primary), 0.3);
+  box-shadow: 0 1px 3px rgba(16, 18, 22, 0.06);
   cursor: pointer;
+  user-select: none;
   transition: background 0.15s, box-shadow 0.15s;
 }
-.doc-liveref:hover {
-  background: rgba(var(--v-theme-primary), 0.08);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+.doc-editor :deep(.doc-liveref:hover) {
+  background: rgba(var(--v-theme-primary), 0.1);
+  box-shadow: 0 2px 8px rgba(16, 18, 22, 0.1);
 }
-.doc-liveref__dot {
+.doc-editor :deep(.doc-liveref__label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-editor :deep(.doc-liveref__dot) {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   flex: 0 0 auto;
   background: #f5a623; /* 进行中 default (amber) */
 }
-.doc-liveref__dot.is-archived,
-.doc-liveref__dot.is-completed {
+.doc-editor :deep(.doc-liveref__dot.is-archived),
+.doc-editor :deep(.doc-liveref__dot.is-completed) {
   background: #35b37e; /* 已完成 (green) */
 }
-.doc-liveref__status {
+.doc-editor :deep(.doc-liveref__status) {
   color: var(--muted);
   font-size: 0.66rem;
+}
+
+/* 飞书 docs 风常驻评论区 at the bottom of the document column. */
+.doc-comments {
+  max-width: 720px;
+  margin: 40px auto 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-2, #ececec);
+}
+.doc-comments__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.doc-comments__count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--fill);
+}
+.doc-comments__item {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-2, #ececec);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(16, 18, 22, 0.04);
+  margin-bottom: 8px;
+}
+.doc-comments__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+  background: #8a94a3;
+}
+.doc-comments__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.doc-comments__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 1px;
+}
+.doc-comments__author {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.doc-comments__text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.doc-comments__composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.doc-comments__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2, #ececec);
+  border-radius: 8px;
+  background: var(--fill);
+  font-size: 13.5px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.doc-comments__input:focus {
+  border-color: rgba(var(--v-theme-primary), 0.5);
+  background: var(--surface);
+}
+.doc-comments__input::placeholder {
+  color: var(--faint);
 }
 .doc-handle__grip {
   cursor: grab;

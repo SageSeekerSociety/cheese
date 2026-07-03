@@ -3,9 +3,24 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.block.models import AuthorType, BlockKind
+
+
+class ReactionOut(BaseModel):
+    """One aggregated emoji reaction group on a block (Slack-style chip)."""
+
+    emoji: str
+    count: int
+    authors: list[str]
+
+
+class ReactionToggleIn(BaseModel):
+    """POST /blocks/{id}/reactions — Slack semantics: toggles (emoji, author)."""
+
+    emoji: str = Field(min_length=1, max_length=32)
+    author: str = Field(min_length=1, max_length=128)
 
 
 class BlockOut(BaseModel):
@@ -35,4 +50,7 @@ class BlockOut(BaseModel):
     # Structured event payload (kind=event): {"tool", "arg", "platform"} — the
     # UI translates/classifies from this; `content` is the baked-text fallback.
     meta: dict | None = None
+    # Aggregated emoji reactions (Slack chips). Not a model attribute — list
+    # endpoints fill it from one batch query (see reactions_for_blocks).
+    reactions: list[ReactionOut] = []
     created_at: datetime

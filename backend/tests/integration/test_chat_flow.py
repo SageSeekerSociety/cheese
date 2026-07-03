@@ -63,10 +63,13 @@ def test_blocks_empty_then_populated_after_chat(client):
         frames = _drain_until_done(ws)
 
     types = [f["type"] for f in frames]
-    assert types == ["user_block", "delta", "delta", "assistant_block", "done"]
+    # Slack-style: no token deltas — the platform ✅-acks the summoning message,
+    # announces the working turn (正在思考 for every open client), then 芝士's
+    # reply lands as one complete message block.
+    assert types == ["user_block", "reaction", "turn_active", "assistant_block", "done"]
 
-    deltas = "".join(f["text"] for f in frames if f["type"] == "delta")
-    assert deltas == "Hello world"
+    ack = next(f for f in frames if f["type"] == "reaction")
+    assert ack["reactions"] == [{"emoji": "✅", "count": 1, "authors": ["cheese"]}]
 
     assistant = next(f for f in frames if f["type"] == "assistant_block")["block"]
     assert assistant["content"] == "Hello world"
@@ -144,7 +147,7 @@ def test_message_without_summon_does_not_invoke_cheese(client):
         frames = _drain_until_done(ws)
 
     types = [f["type"] for f in frames]
-    assert types == ["user_block", "done"]  # no delta / assistant_block
+    assert types == ["user_block", "done"]  # no ✅ ack / assistant_block
 
     blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
     assert [b["author_type"] for b in blocks] == ["human"]  # only the human msg
@@ -214,4 +217,4 @@ def test_debug_turns_records_lifecycle(client):
     assert t["topic_id"] == topic_id
     assert t["status"] == "done"
     assert t["duration_s"] is not None
-    assert t["first_output_s"] is not None  # streamed deltas were observed
+    assert t["first_output_s"] is not None  # the assistant message was observed

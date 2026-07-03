@@ -2,6 +2,7 @@
 
 from app.domain.agent.service import (
     AgentDelta,
+    AgentMessage,
     AgentResult,
     AgentToolUse,
     AgentUsage,
@@ -17,6 +18,13 @@ def _roundtrip(event):
 def test_delta_roundtrip():
     r = _roundtrip(AgentDelta(text="你好"))
     assert isinstance(r, AgentDelta) and r.text == "你好"
+
+
+def test_message_roundtrip():
+    # The discrete-message boundary must survive the wire (a remote cheesed
+    # node's turns land Slack-style messages just like local ones).
+    r = _roundtrip(AgentMessage(text="第一条完整消息"))
+    assert isinstance(r, AgentMessage) and r.text == "第一条完整消息"
 
 
 def test_tool_roundtrip():

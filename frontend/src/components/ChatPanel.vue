@@ -15,7 +15,12 @@ const BOTTOM_THRESHOLD = 80
 <script setup lang="ts">
 import { myHandle } from '../me'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { attachmentRawUrl, chatWsUrl, listBlocks } from '../api'
+import {
+  attachmentRawUrl,
+  chatWsUrl,
+  listBlocks,
+  toggleReaction as apiToggleReaction,
+} from '../api'
 import { blockCache } from '../lib/blockCache'
 import { usePendingAttachments } from '../lib/attachments'
 import {
@@ -26,6 +31,7 @@ import type {
   Block,
   ChatAttachment,
   ProjectMemberRow,
+  ReactionAgg,
   TodoItem,
   Topic,
   WsClientMessage,
@@ -124,10 +130,9 @@ const loadingHistory = ref(false)
 const connected = ref(false)
 const errorMsg = ref<string | null>(null)
 
-// In-progress assistant message being streamed via `delta` frames.
-// Held separately and rendered after `messages`; replaced by the final
-// `assistant_block` when the turn completes.
-const streaming = ref<string | null>(null)
+// Slack-style discrete messages: 芝士 doesn't stream tokens — each complete
+// message lands as an `assistant_block` frame. `awaitingReply` drives the
+// 正在看… indicator from summon until the FIRST message of the turn arrives.
 const awaitingReply = ref(false)
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
@@ -148,6 +153,33 @@ function todoMark(status: string): string {
   return status === 'completed' ? '✓' : status === 'in_progress' ? '◐' : '○'
 }
 
+// ---- Emoji reactions (Slack semantics, 协作平台的消息表情) ----
+// MVP picker: a fixed strip of the 8 most common reactions.
+const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
+// Which message's picker is open (one at a time).
+const reactionPickerFor = ref<string | null>(null)
+
+function applyReactions(blockId: string, reactions: ReactionAgg[]) {
+  const m = messages.value.find((x) => x.id === blockId)
+  if (m) m.reactions = reactions
+}
+
+function myReacted(r: ReactionAgg): boolean {
+  return r.authors.includes(AUTHOR)
+}
+
+async function onReact(m: Block, emoji: string) {
+  reactionPickerFor.value = null
+  try {
+    // The response carries the fresh aggregate; the `reaction` WS frame the
+    // backend broadcasts is idempotent with this local apply.
+    const out = await apiToggleReaction(m.id, emoji, AUTHOR)
+    applyReactions(m.id, out.reactions)
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '表情操作失败'
+  }
+}
+
 // A system event block tagged refs=["action:<resource>"] is a clickable action
 // card (decision/doc/...); returns the resource, or null for a plain event line.
 function actionResource(b: Block): string | null {
@@ -158,7 +190,12 @@ function actionResource(b: Block): string | null {
 // @mention chips are rendered via v-html; delegate clicks so the parent can
 // resolve the name (person → member page, topic/doc → open it).
 function onMessagesClick(e: MouseEvent) {
-  const el = (e.target as HTMLElement | null)?.closest('.mention') as HTMLElement | null
+  const target = e.target as HTMLElement | null
+  // Click-away closes the emoji picker (clicks inside it are handled there).
+  if (reactionPickerFor.value && !target?.closest('.rx-picker, .rx-toggle')) {
+    reactionPickerFor.value = null
+  }
+  const el = target?.closest('.mention') as HTMLElement | null
   if (!el) return
   if (el.dataset.handle) emit('mention-click', el.dataset.handle)
   else if (el.dataset.topic) emit('open-topic', el.dataset.topic)
@@ -171,18 +208,11 @@ function onMessagesClick(e: MouseEvent) {
 // the burst we apply frames quietly and do ONE scroll when it goes idle.
 let catchingUp = false
 let catchUpTimer: ReturnType<typeof setTimeout> | null = null
-// Deltas buffered during catch-up: re-rendering the whole markdown per replayed
-// delta is O(n²) on a long turn — buffer, then flush once.
-let catchUpDeltas = ''
 function noteCatchUpFrame() {
   if (!catchingUp) return
   if (catchUpTimer) clearTimeout(catchUpTimer)
   catchUpTimer = setTimeout(() => {
     catchingUp = false
-    if (catchUpDeltas) {
-      streaming.value = (streaming.value ?? '') + catchUpDeltas
-      catchUpDeltas = ''
-    }
     autoScroll()
   }, 200)
 }
@@ -279,7 +309,6 @@ function closeSocket() {
 
 function openSocket(topicId: string) {
   catchingUp = true
-  catchUpDeltas = ''
   noteCatchUpFrame()
   closeSocket()
   const ws = new WebSocket(chatWsUrl(topicId))
@@ -323,13 +352,10 @@ function handleFrame(frame: WsServerFrame) {
       pushBlock(frame.block)
       autoScroll()
       break
-    case 'delta':
-      if (catchingUp) {
-        catchUpDeltas += frame.text
-      } else {
-        streaming.value = (streaming.value ?? '') + frame.text
-      }
-      autoScroll()
+    case 'reaction':
+      // Someone toggled an emoji / 芝士's ✅ receipt landed — update the chip
+      // row in place (the frame carries the block's full fresh aggregate).
+      applyReactions(frame.block_id, frame.reactions)
       break
     case 'tool':
       // 工作细节不进对话流 — the live feed belongs to the 现场 drawer. Hand
@@ -352,28 +378,29 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'assistant_block':
+      // One complete 芝士 message (Slack-style) — a turn may land several.
+      // The first one retires the 正在看… indicator; the working-log todo
+      // stays visible until the turn actually finishes.
       pushBlock(frame.block)
-      streaming.value = null
-      catchUpDeltas = ''
-      todoItems.value = [] // working-log done; the final message is the summary
+      awaitingReply.value = false
       autoScroll()
       break
     case 'error':
       // A persisted turn failure is already in the timeline as an event block
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
-      streaming.value = null
       awaitingReply.value = false
+      todoItems.value = []
       break
     case 'done':
-      streaming.value = null
       awaitingReply.value = false
+      todoItems.value = [] // working-log done; the messages are the record
       emit('turn-done')
       autoScroll()
       break
     case 'turn_active':
       // Re-entered a topic whose turn is mid-stream: show 正在思考 until the
-      // replayed/live frames take over (they clear it via delta/done).
+      // replayed/live frames take over (cleared by assistant_block/done).
       awaitingReply.value = true
       break
   }
@@ -381,9 +408,9 @@ function handleFrame(frame: WsServerFrame) {
 
 async function loadTopic(topic: Topic) {
   errorMsg.value = null
-  streaming.value = null
   awaitingReply.value = false
   todoItems.value = []
+  reactionPickerFor.value = null
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
   const cached = blockCache.get(topic.id)
@@ -473,13 +500,9 @@ function send(
   }
   replyTarget.value = null
   socket.send(JSON.stringify(msg))
-  // Only show the "awaiting reply" affordances when 芝士 was summoned. Setting
-  // streaming='' immediately renders the 芝士 bubble + "正在看…" placeholder —
-  // an instant ack (秒回) even before the model's first token / cold start.
-  if (summon) {
-    awaitingReply.value = true
-    streaming.value = ''
-  }
+  // Only show the "awaiting reply" indicator when 芝士 was summoned — an
+  // instant local ack (正在看…) even before the backend's ✅ receipt lands.
+  if (summon) awaitingReply.value = true
   todoItems.value = []
   scrollToBottom()
   return true
@@ -782,11 +805,41 @@ onBeforeUnmount(() => {
                 <v-icon size="13">mdi-arrow-top-right</v-icon>
                 已升级为话题，点击查看
               </button>
+              <!-- Emoji reaction chips (Slack): count per emoji, own reactions
+                   highlighted; click toggles. 芝士's ✅ receipt lands here too. -->
+              <div v-if="m.reactions?.length" class="rx-row">
+                <button
+                  v-for="r in m.reactions"
+                  :key="r.emoji"
+                  type="button"
+                  class="rx-chip"
+                  :class="{ 'rx-chip--mine': myReacted(r) }"
+                  :title="r.authors.join('、')"
+                  @click="onReact(m, r.emoji)"
+                >
+                  <span class="rx-emoji">{{ r.emoji }}</span>
+                  <span class="rx-count">{{ r.count }}</span>
+                </button>
+              </div>
             </div>
 
-            <!-- hover action bar, top-right of the row (Feishu). Only the action
-                 we actually implement — 升级为话题 — is shown (no dead buttons). -->
-            <div class="im-actions">
+            <!-- hover action bar, top-right of the row (Feishu). Only actions
+                 we actually implement are shown (no dead buttons). -->
+            <div
+              class="im-actions"
+              :class="{ 'im-actions--open': reactionPickerFor === m.id }"
+            >
+              <v-btn
+                icon="mdi-emoticon-happy-outline"
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                class="rx-toggle"
+                title="加表情"
+                @click="
+                  reactionPickerFor = reactionPickerFor === m.id ? null : m.id
+                "
+              />
               <v-btn
                 icon="mdi-reply"
                 size="x-small"
@@ -803,12 +856,26 @@ onBeforeUnmount(() => {
                 title="升级为话题"
                 @click="emit('upgrade-message', m.id)"
               />
+              <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
+              <div v-if="reactionPickerFor === m.id" class="rx-picker">
+                <button
+                  v-for="e in QUICK_EMOJIS"
+                  :key="e"
+                  type="button"
+                  class="rx-pick"
+                  @click="onReact(m, e)"
+                >
+                  {{ e }}
+                </button>
+              </div>
             </div>
           </div>
         </template>
 
-        <!-- Live-streaming assistant message (always a run start) -->
-        <div v-if="streaming !== null" class="im-row">
+        <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
+             from summon until the turn's FIRST message lands; the live
+             working-log checklist stays visible for the whole turn. -->
+        <div v-if="awaitingReply || todoItems.length" class="im-row">
           <div class="im-gutter">
             <CheeseAvatar :size="28" />
           </div>
@@ -830,14 +897,10 @@ onBeforeUnmount(() => {
               </li>
             </ul>
 
-            <div class="im-text">
-              <!-- Instant ack before the first token / during cold start -->
-              <span
-                v-if="awaitingReply && !streaming"
-                class="text-medium-emphasis"
-              >芝士 正在看…</span>
-              <span v-else class="md-content" v-html="renderMarkdown(streaming || '')" />
-              <span v-if="awaitingReply" class="caret" />
+            <!-- Instant ack before the first message / during cold start -->
+            <div v-if="awaitingReply" class="im-text">
+              <span class="text-medium-emphasis">芝士 正在看…</span>
+              <span class="caret" />
             </div>
           </div>
         </div>
@@ -965,20 +1028,37 @@ onBeforeUnmount(() => {
 .chat {
   background: var(--surface);
 }
-/* Action cards (§3.1.1 控件) — 芝士's cheese actions as clickable affordances. */
+/* Action cards (§3.1.1 控件) — 芝士's cheese actions as clickable affordances.
+   Same visual language as the reaction chips / event pills: quiet fill, hairline
+   border, an amber platform dot marking "the platform recorded this". */
 .action-card {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 2px 16px 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--border, #e0e0e0);
-  border-radius: 6px;
-  background: var(--surface);
+  padding: 5px 10px;
+  border: 1px solid var(--line-2, #e0e0e0);
+  border-radius: 8px;
+  background: var(--fill);
   font-size: 0.85rem;
+  transition: border-color 0.12s ease;
+}
+.action-card:hover {
+  border-color: var(--accent);
 }
 .action-verb {
-  color: var(--text-muted, #666);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted, #666);
+}
+.action-verb::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
 }
 /* Live working-log checklist (§3.1.1) — process, sits above the streaming text. */
 .todo-list {
@@ -1288,9 +1368,78 @@ onBeforeUnmount(() => {
   transition: opacity 0.12s ease;
   pointer-events: none;
 }
-.im-row:hover .im-actions {
+.im-row:hover .im-actions,
+.im-actions--open {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* ---- Emoji reactions (Slack) ---- */
+/* MVP picker: a strip of the 8 common emoji, floating under the action bar. */
+.rx-picker {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(25, 26, 28, 0.12);
+  z-index: 5;
+}
+.rx-pick {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.rx-pick:hover {
+  background: var(--fill);
+}
+/* Reaction chips under a message: emoji + count; own reactions get the amber
+   outline (Slack's "you reacted" affordance). */
+.rx-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.rx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 11px;
+  background: var(--fill);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+.rx-chip:hover {
+  border-color: var(--accent);
+}
+.rx-chip--mine {
+  border-color: var(--accent);
+  background: var(--surface);
+  color: var(--ink);
+}
+.rx-emoji {
+  font-size: 13px;
+}
+.rx-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 /* system / event line: centered, faint, small */

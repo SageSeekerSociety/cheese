@@ -44,6 +44,16 @@ class AgentDelta:
 
 
 @dataclass
+class AgentMessage:
+    """One COMPLETED top-level assistant message (the SDK's AssistantMessage
+    boundary — a STRUCTURAL event, never parsed out of prose). A turn with tool
+    calls yields several of these; each becomes its own chat message block
+    (Slack-style discrete messages instead of one growing streamed bubble)."""
+
+    text: str
+
+
+@dataclass
 class AgentToolUse:
     """A platform tool 芝士 invoked (for 施工现场 observability)."""
 
@@ -94,13 +104,15 @@ class AgentResult:
     rate_limit: dict | None = None
 
 
-AgentEvent = AgentDelta | AgentToolUse | AgentSessionInfo | AgentResult
+AgentEvent = AgentDelta | AgentMessage | AgentToolUse | AgentSessionInfo | AgentResult
 
 
 def event_to_dict(event: AgentEvent) -> dict:
     """Serialize an AgentEvent for the wire (backend ⇄ cheesed node, design v2 R2)."""
     if isinstance(event, AgentDelta):
         return {"t": "delta", "text": event.text}
+    if isinstance(event, AgentMessage):
+        return {"t": "message", "text": event.text}
     if isinstance(event, AgentToolUse):
         return {"t": "tool", "name": event.name, "input": event.input}
     if isinstance(event, AgentSessionInfo):
@@ -130,6 +142,8 @@ def event_from_dict(d: dict) -> AgentEvent:
     kind = d.get("t")
     if kind == "delta":
         return AgentDelta(text=d.get("text", ""))
+    if kind == "message":
+        return AgentMessage(text=d.get("text", ""))
     if kind == "tool":
         return AgentToolUse(name=d.get("name", ""), input=d.get("input") or {})
     if kind == "session":
@@ -365,7 +379,16 @@ class AgentService:
                                 if isinstance(block.input, dict)
                                 else {},
                             )
-                    final_text = _assistant_text(message) or final_text
+                    # Only TOP-LEVEL messages are 芝士 speaking to the user; a
+                    # subagent's messages (parent_tool_use_id set) are internal
+                    # work — their tool calls surface above, their prose doesn't.
+                    if message.parent_tool_use_id is None:
+                        text = _assistant_text(message)
+                        if text.strip():
+                            # Structured message boundary (Slack-style): one
+                            # completed AssistantMessage = one chat message.
+                            yield AgentMessage(text=text)
+                        final_text = text or final_text
                     if message.session_id:
                         if message.session_id != session_id:
                             yield AgentSessionInfo(session_id=message.session_id)

@@ -29,6 +29,14 @@ export interface Topic {
 
 export type AuthorType = 'human' | 'ai' | 'system'
 
+// One aggregated emoji reaction group on a block (Slack-style chip):
+// e.g. {emoji: '✅', count: 2, authors: ['cheese', 'alice']}.
+export interface ReactionAgg {
+  emoji: string
+  count: number
+  authors: string[]
+}
+
 export interface Block {
   id: string
   topic_id: string
@@ -50,6 +58,8 @@ export interface Block {
   // Structured event payload (kind=event): {tool, arg, platform} — the UI
   // translates/classifies from this; content is the baked-text fallback.
   meta?: { tool?: string; arg?: string; platform?: boolean } | null
+  // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
+  reactions?: ReactionAgg[]
   upgraded_to_topic_id?: string | null
   created_at: string
 }
@@ -75,10 +85,12 @@ export interface TodoItem {
   status: 'pending' | 'in_progress' | 'completed'
 }
 
-// WebSocket server -> client frames.
+// WebSocket server -> client frames. No token streaming: 芝士 speaks in
+// discrete assistant_block messages (one per completed SDK message boundary).
 export type WsServerFrame =
   | { type: 'user_block'; block: Block }
-  | { type: 'delta'; text: string }
+  // A block's reactions changed (someone toggled / 芝士's ✅ receipt landed).
+  | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
   | { type: 'tool'; name: string; input: Record<string, unknown> }
   | { type: 'todo'; items: TodoItem[] }
   | { type: 'state'; resource: string }

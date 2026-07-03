@@ -73,6 +73,15 @@ class InProcessBroker:
         self._replay_size = replay_size
 
     async def publish(self, channel: str, frame: Frame) -> None:
+        # Reaction frames are standalone state updates, not turn progress: they
+        # can fire on an idle channel (a human reacting between turns) and are
+        # rebuilt from GET /blocks on (re)connect — so they are fanned out live
+        # but never buffered (buffering would also make an idle channel look
+        # in_flight forever).
+        if frame.get("type") == "reaction":
+            for q in list(self._subs.get(channel, ())):
+                q.put_nowait(frame)
+            return
         buf = self._buffer.setdefault(channel, [])
         buf.append(frame)
         if frame.get("type") in ("done", "error"):
@@ -342,7 +351,10 @@ class TurnRunner:
                         resume_why = str(frame.get("reason") or resume_why)
                         rec["detail"] = resume_why
                         continue
-                    if kind in ("delta", "tool") and rec["first_output_s"] is None:
+                    if (
+                        kind in ("tool", "assistant_block")
+                        and rec["first_output_s"] is None
+                    ):
                         rec["first_output_s"] = round(time.monotonic() - t0, 2)
                     if kind == "tool":
                         rec["tools"] += 1

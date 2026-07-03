@@ -10,8 +10,10 @@ and multiple connections to the same topic all see the live stream.
 Protocol (unchanged frontend contract):
   client → {"type":"message","content": str, "author": str, "summon": bool,
             "attachments"?: [{"path": str, "mime": str}]}
-  server → user_block / delta / tool / todo / state / event_block /
+  server → user_block / reaction / tool / todo / state / event_block /
            assistant_block / error / done
+(No token streaming: 芝士 speaks in discrete assistant_block messages — one per
+completed SDK AssistantMessage — Slack-style.)
 
 Attachments are uploaded FIRST via POST /api/topics/{id}/attachments (the file
 lands in the topic's worktree); the WS message then references them by path —

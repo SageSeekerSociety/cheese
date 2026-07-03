@@ -19,6 +19,7 @@ import ProjectDocsView from './ProjectDocsView.vue'
 import TopicSidebar from '../components/TopicSidebar.vue'
 import {
   acceptCard,
+  addComment,
   archiveTopic,
   attachmentRawUrl,
   createProject,
@@ -73,6 +74,7 @@ const docRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
   openFile?: (path: string) => void
+  refreshComments?: () => Promise<void>
 } | null>(null)
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 watch([railWidth, chatPct], () => {
@@ -216,7 +218,44 @@ const working = ref(false)
 const workingSince = ref<number | null>(null)
 
 
-function sendDraft() {
+// ---- 评论模式 (飞书 docs 风): the doc panel's selection CTA hands the anchor +
+// quoted span here; the SAME composer then posts a comment instead of a chat
+// message. A quote chip above the input shows the target; Esc/✕ exits. ----
+const commentIntent = ref<{ anchorId: string | null; quote: string } | null>(null)
+const commentSending = ref(false)
+const composerInput = ref<{ focus?: () => void } | null>(null)
+
+function onCommentIntent(payload: { anchorId: string | null; quote: string }) {
+  commentIntent.value = payload
+  void nextTick(() => composerInput.value?.focus?.())
+}
+
+async function sendDraft() {
+  // Comment mode: the composer's send posts a doc comment (existing comments
+  // API, same anchor/quote the drawer flow used), then returns to message mode.
+  if (commentIntent.value) {
+    const tid = selectedTopic.value?.id
+    const text = draft.value.trim()
+    if (!tid || !text || commentSending.value) return
+    commentSending.value = true
+    try {
+      await addComment(
+        tid,
+        text,
+        AUTHOR,
+        commentIntent.value.anchorId ?? undefined,
+        commentIntent.value.quote,
+      )
+      draft.value = ''
+      commentIntent.value = null
+      void docRef.value?.refreshComments?.()
+    } catch (e) {
+      reportError(e, '评论失败')
+    } finally {
+      commentSending.value = false
+    }
+    return
+  }
   const ok = chatRef.value?.send(
     expandMentions(draft.value),
     summon.value,
@@ -294,6 +333,12 @@ function isImeKey(e: KeyboardEvent) {
 }
 
 function onComposerKey(e: KeyboardEvent) {
+  // Esc leaves comment mode, back to the normal message composer.
+  if (e.key === 'Escape' && commentIntent.value) {
+    e.preventDefault()
+    commentIntent.value = null
+    return
+  }
   if (e.key !== 'Enter' || e.shiftKey) return
   // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
   if (isImeKey(e)) return
@@ -303,12 +348,13 @@ function onComposerKey(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
   e.preventDefault()
-  // While the @-menu is open, Enter picks the first match instead of sending.
-  if (mentionMatches.value.length) {
+  // While the @-menu is open, Enter picks the first match instead of sending
+  // (@-mentions don't apply to doc comments, so comment mode skips this).
+  if (!commentIntent.value && mentionMatches.value.length) {
     pickMention(mentionMatches.value[0].label)
     return
   }
-  sendDraft()
+  void sendDraft()
 }
 
 function reportError(e: unknown, fallback: string) {
@@ -744,6 +790,7 @@ watch(
 watch(selectedTopicId, (id) => {
   loadAcceptCard()
   clearPendingAtts() // pending images belong to the topic they were typed in
+  commentIntent.value = null // a comment target belongs to its topic's doc
   if (id) markSelectedRead(id)
 })
 
@@ -1073,6 +1120,7 @@ onUnmounted(() => {
           @toggle-focus="focusMode = !focusMode"
           @open-topic="selectTopic"
           @topics-changed="refreshTopics"
+          @comment-intent="onCommentIntent"
         />
       </div>
 
@@ -1104,8 +1152,25 @@ onUnmounted(() => {
             </button>
             <v-spacer />
           </div>
+          <!-- 评论模式: quote chip above the input — what this send will
+               comment on. ✕ / Esc exits back to normal message mode. -->
+          <div v-if="commentIntent" class="comment-mode-chip">
+            <v-icon size="14" class="comment-mode-chip__icon">
+              mdi-comment-quote-outline
+            </v-icon>
+            <span class="comment-mode-chip__label">评论</span>
+            <span class="comment-mode-chip__quote">{{ commentIntent.quote }}</span>
+            <button
+              type="button"
+              class="comment-mode-chip__x"
+              title="退出评论模式（Esc）"
+              @click="commentIntent = null"
+            >
+              ✕
+            </button>
+          </div>
           <!-- @-autocomplete: pick a teammate / topic while typing @ -->
-          <div v-if="mentionMatches.length" class="mention-menu">
+          <div v-if="mentionMatches.length && !commentIntent" class="mention-menu">
             <button
               v-for="(mm, i) in mentionMatches"
               :key="mm.kind + mm.label"
@@ -1152,6 +1217,7 @@ onUnmounted(() => {
           </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
+              ref="composerInput"
               v-model="draft"
               variant="plain"
               rows="1"
@@ -1161,11 +1227,13 @@ onUnmounted(() => {
               density="comfortable"
               class="composer-input flex-grow-1"
               :placeholder="
-                summon
-                  ? '让芝士做点什么…（Enter 发送，Shift+Enter 换行，可粘贴图片）'
-                  : '发条消息…（默认不 @ 芝士；点 @芝士 让它回复）'
+                commentIntent
+                  ? '写评论…（Enter 发送，Esc 退出评论模式）'
+                  : summon
+                    ? '让芝士做点什么…（Enter 发送，Shift+Enter 换行，可粘贴图片）'
+                    : '发条消息…（默认不 @ 芝士；点 @芝士 让它回复）'
               "
-              :disabled="!composerReady"
+              :disabled="!composerReady && !commentIntent"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
               @compositionstart="onCompositionStart"
@@ -1192,8 +1260,11 @@ onUnmounted(() => {
               variant="flat"
               icon="mdi-send"
               size="small"
+              :loading="commentSending"
               :disabled="
-                !composerReady || (!draft.trim() && !pendingAtts.length)
+                commentIntent
+                  ? !draft.trim()
+                  : !composerReady || (!draft.trim() && !pendingAtts.length)
               "
               @click="sendDraft"
             />
@@ -1283,6 +1354,52 @@ onUnmounted(() => {
 .att-remove:hover {
   color: var(--ink);
 }
+/* 评论模式 quote chip: the doc span this composer send will comment on. */
+.comment-mode-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 5px 8px 5px 10px;
+  border-left: 2px solid rgb(var(--v-theme-primary));
+  border-radius: 0 8px 8px 0;
+  background: rgba(var(--v-theme-primary), 0.07);
+}
+.comment-mode-chip__icon {
+  color: rgb(var(--v-theme-primary));
+  flex: 0 0 auto;
+}
+.comment-mode-chip__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(var(--v-theme-primary));
+  flex: 0 0 auto;
+}
+.comment-mode-chip__quote {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comment-mode-chip__x {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.comment-mode-chip__x:hover {
+  color: var(--muted);
+  background: rgba(var(--v-theme-primary), 0.1);
+}
+
 /* @-autocomplete dropdown (§3.1.1) */
 .mention-menu {
   display: flex;
