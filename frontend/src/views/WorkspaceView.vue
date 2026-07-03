@@ -523,6 +523,9 @@ function markSelectedRead(id: string) {
 async function handleArchiveTopic(id: string) {
   try {
     await archiveTopic(id, AUTHOR)
+    // Archiving the topic you're looking at closes it — the main panel
+    // returns to the empty state instead of showing a frozen archive.
+    if (selectedTopicId.value === id) selectedTopicId.value = null
     await refreshTopics()
   } catch (e) {
     reportError(e, '归档失败')
