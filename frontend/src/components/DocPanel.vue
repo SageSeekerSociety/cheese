@@ -1348,14 +1348,14 @@ onBeforeUnmount(() => {
                 </span>
               </button>
               <v-spacer />
-              <button
-                type="button"
-                class="doc-comments__write"
+              <v-btn
+                icon="mdi-plus"
+                size="x-small"
+                variant="tonal"
+                color="primary"
+                title="写评论"
                 @click="emit('comment-intent', { anchorId: null, quote: '' })"
-              >
-                <v-icon size="14">mdi-comment-plus-outline</v-icon>
-                写评论
-              </button>
+              />
             </div>
             <template v-if="!commentsFolded">
               <div v-for="c in pageComments" :key="c.id" class="doc-comments__item">
