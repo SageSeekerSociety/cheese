@@ -462,6 +462,27 @@ function toggleDir(path: string) {
   else next.add(path)
   expandedDirs.value = next
 }
+// 定位: when a file is opened by path (e.g. clicking a <&path> chip in chat or
+// the doc), expand every ancestor folder so the tree shows where it lives,
+// then scroll the highlighted row into view.
+const fileListEl = ref<HTMLElement | null>(null)
+function revealInTree(path: string) {
+  const parts = path.split('/')
+  if (parts.length > 1) {
+    const next = new Set(expandedDirs.value)
+    let prefix = ''
+    for (const part of parts.slice(0, -1)) {
+      prefix = prefix ? `${prefix}/${part}` : part
+      next.add(prefix)
+    }
+    expandedDirs.value = next
+  }
+  void nextTick(() => {
+    fileListEl.value
+      ?.querySelector('.file-item--active')
+      ?.scrollIntoView({ block: 'nearest' })
+  })
+}
 const fileRows = computed<FileRow[]>(() => {
   interface DirNode {
     dirs: Map<string, DirNode>
@@ -606,6 +627,7 @@ async function selectFile(path: string) {
     openPath.value = path
     fileDraft.value = f.content
     fileSaved.value = f.content
+    revealInTree(path)
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '读取文件失败'
   }
@@ -1311,7 +1333,7 @@ onBeforeUnmount(() => {
                 </v-btn>
               </div>
               <div class="file-body">
-                <div v-if="fileListOpen" class="file-list">
+                <div v-if="fileListOpen" ref="fileListEl" class="file-list">
                   <div
                     v-if="files.length === 0"
                     class="text-center c-faint py-6"

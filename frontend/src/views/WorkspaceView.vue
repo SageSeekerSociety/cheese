@@ -870,6 +870,7 @@ onUnmounted(() => {
           @tool-used="handleToolUsed"
           @state-changed="handleStateChanged"
           @mention-click="handleMentionClick"
+          @open-file="(p: string) => docRef?.openFile?.(p)"
           @open-resource="handleOpenResource"
           @upgrade-message="handleUpgradeMessage"
           @open-topic="selectTopic"
