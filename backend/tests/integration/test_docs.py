@@ -46,3 +46,25 @@ def test_doc_edit_emits_conversation_event(client):
     blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
     # An append-only event block records the edit (spec H1 / eval B2).
     assert any(b["kind"] == "event" and "编辑了文档" in b["content"] for b in blocks)
+
+
+def test_doc_canonicalizes_friendly_mentions(client):
+    """A + backstop: friendly "@handle / @话题名" in doc content is rewritten to
+    structured tokens on PUT, same as chat replies (裸名 stays untouched)."""
+    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    client.post(f"/api/projects/{p['id']}/members", json={"user_handle": "user-1"})
+    t = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "主话题"}
+    ).json()["data"]
+    other = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "分页调研"}
+    ).json()["data"]
+
+    client.put(
+        f"/api/topics/{t['id']}/doc",
+        json={"content": "待办：@user-1 跟进，结论同步到 @分页调研。裸名 user-1 不动", "author": "cheese"},
+    )
+    doc = client.get(f"/api/topics/{t['id']}/doc").json()["data"]
+    assert "<@user-1>" in doc["content"]
+    assert f"<#{other['id']}>" in doc["content"]
+    assert "裸名 user-1 不动" in doc["content"]
