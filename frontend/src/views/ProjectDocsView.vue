@@ -166,6 +166,9 @@ function topicTo(topicId: string | null | undefined) {
 
 watch(() => [props.projectId, route.name], load)
 onMounted(load)
+// Embedded in the workspace the component persists across 章程/决策/周报/记忆
+// switches — each switch must refetch or the new page shows stale/empty data.
+watch([kind, () => props.projectId], load)
 </script>
 
 <template>
@@ -188,7 +191,7 @@ onMounted(load)
         <div class="d-flex align-center flex-wrap ga-3">
           <h1 class="t-page-title" style="font-size: 27px">{{ TITLES[kind] }}</h1>
           <span v-if="projectName" class="t-meta">{{ projectName }}</span>
-          <template v-else-if="kind === 'charter'">
+          <template v-if="kind === 'charter'">
             <v-spacer />
             <span v-if="saving" class="t-meta">保存中…</span>
             <span
@@ -255,7 +258,7 @@ onMounted(load)
         </template>
 
         <!-- ===== 章程: project root doc, read/edit ===== -->
-        <template v-if="kind === 'charter'">
+        <template v-else-if="kind === 'charter'">
           <v-card class="charter-card">
             <div class="charter-body">
               <v-textarea

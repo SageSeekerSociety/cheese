@@ -465,29 +465,8 @@ async function submitComment() {
 // 飞书 docs 风常驻评论区: page-level comments (no paragraph anchor) live at the
 // bottom of the document itself, with an always-there composer row.
 const pageComments = computed(() => comments.value.filter((c) => !c.reply_to))
-const pageCommentDraft = ref('')
-const pageCommentBusy = ref(false)
-async function submitPageComment() {
-  const tid = props.topic?.id
-  const text = pageCommentDraft.value.trim()
-  if (!tid || !text || pageCommentBusy.value) return
-  pageCommentBusy.value = true
-  try {
-    await addComment(tid, text, AUTHOR)
-    pageCommentDraft.value = ''
-    await loadComments(tid)
-  } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '评论失败'
-  } finally {
-    pageCommentBusy.value = false
-  }
-}
-function onPageCommentKey(e: KeyboardEvent) {
-  // IME 上屏的回车不算发送 (same guard family as the main composer).
-  if (e.isComposing || e.keyCode === 229) return
-  e.preventDefault()
-  void submitPageComment()
-}
+// 页级评论折叠态 (Feishu-style, collapsed head keeps the doc quiet).
+const commentsFolded = ref(false)
 
 
 // 现场: read-only transcript timeline.
@@ -1350,44 +1329,48 @@ onBeforeUnmount(() => {
                live at the bottom of the document, with an always-there
                "写评论…" row. Paragraph-anchored comments stay in the drawer. -->
           <div class="doc-comments">
+            <!-- Collapsible head; ONE 写评论 action that reuses the main
+                 composer in comment mode — the doc never grows its own input. -->
             <div class="doc-comments__head">
-              <v-icon size="15" class="c-faint">mdi-comment-text-outline</v-icon>
-              评论
-              <span v-if="pageComments.length" class="doc-comments__count">
-                {{ pageComments.length }}
-              </span>
-            </div>
-            <div v-for="c in pageComments" :key="c.id" class="doc-comments__item">
-              <span class="doc-comments__avatar">
-                {{ (c.author || '?').slice(0, 1).toUpperCase() }}
-              </span>
-              <div class="doc-comments__main">
-                <div class="doc-comments__meta">
-                  <span class="doc-comments__author">{{ c.author }}</span>
-                  <span class="t-meta">{{ relTime(c.created_at) }}</span>
-                </div>
-                <div class="doc-comments__text">{{ c.content }}</div>
-              </div>
-            </div>
-            <div class="doc-comments__composer">
-              <input
-                v-model="pageCommentDraft"
-                class="doc-comments__input"
-                placeholder="写评论…"
-                :disabled="pageCommentBusy"
-                @keydown.enter="onPageCommentKey"
-              />
-              <v-btn
-                size="small"
-                variant="flat"
-                color="primary"
-                :loading="pageCommentBusy"
-                :disabled="!pageCommentDraft.trim()"
-                @click="submitPageComment"
+              <button
+                type="button"
+                class="doc-comments__fold"
+                :title="commentsFolded ? '展开评论' : '收起评论'"
+                @click="commentsFolded = !commentsFolded"
               >
-                发表
-              </v-btn>
+                <v-icon size="15" class="c-faint">
+                  {{ commentsFolded ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+                </v-icon>
+                <v-icon size="15" class="c-faint">mdi-comment-text-outline</v-icon>
+                评论
+                <span v-if="pageComments.length" class="doc-comments__count">
+                  {{ pageComments.length }}
+                </span>
+              </button>
+              <v-spacer />
+              <button
+                type="button"
+                class="doc-comments__write"
+                @click="emit('comment-intent', { anchorId: null, quote: '' })"
+              >
+                <v-icon size="14">mdi-comment-plus-outline</v-icon>
+                写评论
+              </button>
             </div>
+            <template v-if="!commentsFolded">
+              <div v-for="c in pageComments" :key="c.id" class="doc-comments__item">
+                <span class="doc-comments__avatar">
+                  {{ (c.author || '?').slice(0, 1).toUpperCase() }}
+                </span>
+                <div class="doc-comments__main">
+                  <div class="doc-comments__meta">
+                    <span class="doc-comments__author">{{ c.author }}</span>
+                    <span class="t-meta">{{ relTime(c.created_at) }}</span>
+                  </div>
+                  <div class="doc-comments__text">{{ c.content }}</div>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </div>

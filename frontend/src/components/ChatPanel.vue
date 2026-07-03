@@ -829,33 +829,28 @@ onBeforeUnmount(() => {
               class="im-actions"
               :class="{ 'im-actions--open': reactionPickerFor === m.id }"
             >
-              <v-btn
-                icon="mdi-emoticon-happy-outline"
-                size="x-small"
-                variant="text"
-                density="comfortable"
-                class="rx-toggle"
+              <button
+                type="button"
+                class="im-act"
+                :class="{ 'im-act--on': reactionPickerFor === m.id }"
                 title="加表情"
                 @click="
                   reactionPickerFor = reactionPickerFor === m.id ? null : m.id
                 "
-              />
-              <v-btn
-                icon="mdi-reply"
-                size="x-small"
-                variant="text"
-                density="comfortable"
-                title="回复"
-                @click="setReply(m)"
-              />
-              <v-btn
-                icon="mdi-arrow-up-bold-box-outline"
-                size="x-small"
-                variant="text"
-                density="comfortable"
+              >
+                <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
+              </button>
+              <button type="button" class="im-act" title="回复" @click="setReply(m)">
+                <v-icon size="15">mdi-reply-outline</v-icon>
+              </button>
+              <button
+                type="button"
+                class="im-act"
                 title="升级为话题"
                 @click="emit('upgrade-message', m.id)"
-              />
+              >
+                <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
+              </button>
               <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
               <div v-if="reactionPickerFor === m.id" class="rx-picker">
                 <button
@@ -1355,18 +1350,41 @@ onBeforeUnmount(() => {
 /* per-row hover action bar (Feishu), floats at the row's top-right */
 .im-actions {
   position: absolute;
-  top: -10px;
+  top: -12px;
   right: 12px;
   display: flex;
-  gap: 1px;
-  padding: 1px;
+  gap: 2px;
+  padding: 3px;
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(25, 26, 28, 0.08);
+  box-shadow: 0 3px 10px rgba(25, 26, 28, 0.09);
   opacity: 0;
   transition: opacity 0.12s ease;
   pointer-events: none;
+}
+/* One quiet square button per action: muted ink, fill on hover — the harsh
+   default round icon-buttons inside a rounded pill read as unfinished. */
+.im-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.im-act:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+.im-act--on {
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
 }
 .im-row:hover .im-actions,
 .im-actions--open {
