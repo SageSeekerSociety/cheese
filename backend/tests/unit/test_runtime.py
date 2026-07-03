@@ -84,8 +84,9 @@ class _FakeKickoffChat:
     def __init__(self):
         self.ran = False
 
-    async def kickoff(self, *, topic_id, turn_id=None):
+    async def kickoff(self, *, topic_id, turn_id=None, prompt=None):
         self.ran = True
+        self.prompt = prompt
         await asyncio.sleep(0)
         yield {"type": "delta", "text": "开场白"}
         yield {"type": "done"}

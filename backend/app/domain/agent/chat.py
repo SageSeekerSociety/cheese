@@ -243,6 +243,23 @@ KICKOFF_PROMPT = (
 )
 
 
+def conclusion_digest_prompt(conclusion_message: str) -> str:
+    """The parent's wake-up instruction when a sub-topic returns its conclusion
+    (结论回流唤醒父话题 — the return leg of the subagent loop: in Claude Code
+    the parent resumes when the Task tool result arrives). Prompt-only; the
+    conclusion text is copied verbatim, nothing is derived from it."""
+    return (
+        "一个子话题刚回流了结论（原文如下，也已织进本话题活文档末尾）。"
+        "请消化它：\n"
+        "1. 把活文档整理成最新状态——结论的要点合并进对应章节，"
+        "别让「子话题结论」堆在文档末尾。\n"
+        "2. 判断下一步：这个结论解锁了什么？需要继续拆活就拆（split 带 --brief），"
+        "需要人拍板/验收就发通知或验收卡，整件事收尾了就说明结论。\n"
+        "3. 在对话里用一两句话向大家报信（结论已在文档里，别复述全文）。\n\n"
+        f"---\n{conclusion_message}"
+    )
+
+
 def _topic_refs(text: str) -> list[str]:
     """`<#topicId>` reference tokens in a message → topic refs (for linkage)."""
     return [f"topic:{tid}" for tid in dict.fromkeys(_TOPIC_REF_RE.findall(text or ""))]
@@ -393,19 +410,18 @@ class ChatService:
         *,
         topic_id: uuid.UUID,
         turn_id: uuid.UUID | None = None,
+        prompt: str | None = None,
     ) -> AsyncIterator[dict]:
-        """分身自动开工 (spec §8.4): the first turn of a freshly split sub-topic.
-
-        No fake human block is posted — the instruction below is prompt-only, so
-        the first VISIBLE message in the topic is the 分身's own opening
-        (复述确认, in its own words; the canned template is gone). The task
-        brief is already the topic's living doc, which _converse_impl injects
-        into the system prompt."""
+        """An agent turn triggered by a PLATFORM EVENT, not a posted message:
+        分身自动开工 after a split/upgrade (default prompt), or the parent
+        digesting a returned conclusion (custom prompt). No fake human block is
+        posted — the instruction is prompt-only, so the visible result is only
+        what the agent itself says/does (语义内容由 AI 生成 — CLAUDE.md)."""
         turn_id = turn_id or uuid.uuid4()
         async with self._lock_for(topic_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
-                content=KICKOFF_PROMPT,
+                content=prompt or KICKOFF_PROMPT,
                 turn_id=turn_id,
                 user_block_id=None,
             ):

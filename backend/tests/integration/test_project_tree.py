@@ -338,10 +338,23 @@ def test_split_and_return_conclusion(client):
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
     )
     assert r.status_code == 200
+    _wait_turns_idle()
     parent_blocks = client.get(f"/api/topics/{topic['id']}/blocks").json()["data"][
         "data"
     ]
     assert any("数据清洗完成" in b["content"] for b in parent_blocks)
+
+    # …and the parent is WOKEN to digest it (subagent return leg): the parent
+    # 芝士 runs a turn of its own, so an AI message follows the conclusion.
+    concl_i = next(
+        i for i, b in enumerate(parent_blocks) if "数据清洗完成" in b["content"]
+    )
+    later_ai = [
+        b
+        for b in parent_blocks[concl_i + 1 :]
+        if b["kind"] == "message" and b["author_type"] == "ai"
+    ]
+    assert later_ai, "父话题没有被结论回流唤醒"
 
     # C4: the conclusion is also woven into the parent's living doc …
     doc = client.get(f"/api/topics/{topic['id']}/doc").json()["data"]

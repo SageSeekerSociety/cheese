@@ -66,7 +66,7 @@ CLAUDE.md 在我们这儿出现在**三个不同层面**，只有第一个真正
 Claude Code 的 subagent：父写任务 prompt → Task 工具当场拉起子 agent（无待机态）→ 子 agent 全新上下文只靠 prompt → 干完最后一条消息**自动**作为工具结果返回父 → 父被唤醒继续推理；每类 subagent 可定义人格/工具/模型（AgentDefinition：description/prompt/tools/model/skills/maxTurns/background…）。
 
 对照结论：
-- ✅ 去程已对齐（本次修复）：brief=任务 prompt、拆分即开工、全新上下文靠预置文档携带信息。
-- ⚠️ 回程半对齐：结论回流靠分身自觉 conclude，不是结构性保证。
-- ❌ 回程缺一块：conclude 只落消息+通知，**父话题不会被自动唤醒**消化结论（Claude Code 里父 agent 拿到工具结果会继续干）。建议：return-conclusion 端点复用 kickoff 机制，自动触发父话题一轮。待张衡拍板是否本分支顺手补。
+- ✅ 去程已对齐（本次修复）：brief=任务 prompt、拆分/升级即开工、全新上下文靠预置文档携带信息。
+- ✅ 回程已对齐（张衡评论拍板"做了"，已落地）：conclude 回流后**自动唤醒父话题一轮**——父芝士把结论合并进活文档、判断下一步（继续拆/找人拍板/收尾）、在对话里报信。归档的父话题不唤醒；分身首轮 kickoff 指令里也要求干完回报，降低"忘了 conclude"的概率。
+- ⚠️ 仍是约定而非结构保证：分身忘了 conclude 就没有回程（Claude Code 里 final message 自动返回）。兜底可以靠巡检催办，暂不做。
 - 我们强于它的：分身持久可插话、过程对人透明、结论织进父文档；它是黑盒一次性。

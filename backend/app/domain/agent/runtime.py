@@ -117,12 +117,16 @@ class TurnRunner:
         )
         return self._spawn(chat_service, topic_id, turn_id, frames)
 
-    def submit_kickoff(self, chat_service, topic_id: uuid.UUID) -> uuid.UUID:
-        """分身自动开工 (spec §8.4): start a freshly split sub-topic's first turn
-        in the background. No human message is posted — the 分身 opens in its
-        own words from the task brief (its preset living doc)."""
+    def submit_kickoff(
+        self, chat_service, topic_id: uuid.UUID, *, prompt: str | None = None
+    ) -> uuid.UUID:
+        """A platform-event turn (spec §8.4): 分身自动开工 after a split/upgrade
+        (default prompt), or the parent digesting a returned conclusion (custom
+        prompt). No human message is posted — the agent speaks for itself."""
         turn_id = uuid.uuid4()
-        frames = chat_service.kickoff(topic_id=topic_id, turn_id=turn_id)
+        frames = chat_service.kickoff(
+            topic_id=topic_id, turn_id=turn_id, prompt=prompt
+        )
         return self._spawn(chat_service, topic_id, turn_id, frames)
 
     def _spawn(

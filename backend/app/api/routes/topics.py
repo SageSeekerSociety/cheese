@@ -10,10 +10,11 @@ from app.api.deps import get_chat_service, get_turn_runner
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ValidationError
-from app.domain.agent.chat import ChatService
+from app.domain.agent.chat import ChatService, conclusion_digest_prompt
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.topic.models import TopicStatus
 from app.domain.topic.schemas import (
     ConclusionIn,
     DocEditIn,
@@ -228,13 +229,29 @@ async def split_topic(
 
 @router.post("/{topic_id}/return-conclusion")
 async def return_conclusion(
-    topic_id: uuid.UUID, body: ConclusionIn, db: DbSession
+    topic_id: uuid.UUID,
+    body: ConclusionIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """结论回流：write a sub-topic's conclusion back to its parent."""
-    block = await TopicService(db).return_conclusion(
+    """结论回流：write a sub-topic's conclusion back to its parent — then WAKE
+    the parent to digest it (the return leg of the subagent loop: in Claude
+    Code the parent resumes when the Task result arrives; here the parent 芝士
+    runs a turn to weave the conclusion in and decide what's next)."""
+    service = TopicService(db)
+    block = await service.return_conclusion(
         subtopic_id=topic_id, conclusion=body.conclusion
     )
-    return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+    parent = await service.get_or_404(block.topic_id)
+    out = BlockOut.model_validate(block).model_dump(mode="json")
+    wake = parent.status != TopicStatus.archived
+    # Commit BEFORE waking: the parent's turn runs on its own session.
+    await db.commit()
+    if wake:
+        get_turn_runner().submit_kickoff(
+            chat, parent.id, prompt=conclusion_digest_prompt(block.content)
+        )
+    return ok(out)
 
 
 # 芝士 → UI rendering (spec §9.1): an artifact is a file the AI explicitly points
