@@ -234,17 +234,31 @@ const mentionQuery = computed(() => {
   const m = draft.value.match(/@([^\s@]*)$/)
   return m ? m[1] : null
 })
-const mentionMatches = computed(() => {
+interface MentionItem {
+  label: string
+  kind: 'member' | 'topic'
+  // Secondary line: @handle for people, status for topics.
+  sub: string
+  agent: boolean
+}
+const mentionMatches = computed<MentionItem[]>(() => {
   const q = mentionQuery.value
   if (q === null) return []
-  const items = [
+  const items: MentionItem[] = [
     ...projectMembers.value.map((m) => ({
       label: m.name || m.user_handle,
-      kind: '成员',
+      kind: 'member' as const,
+      sub: `@${m.user_handle}`,
+      agent: m.user_handle === 'cheese',
     })),
     ...topics.value
       .filter((t) => t.kind !== 'root')
-      .map((t) => ({ label: t.title, kind: '话题' })),
+      .map((t) => ({
+        label: t.title,
+        kind: 'topic' as const,
+        sub: t.status === 'archived' ? '已归档' : '进行中',
+        agent: false,
+      })),
   ]
   const ql = q.toLowerCase()
   return items
@@ -1099,8 +1113,17 @@ onUnmounted(() => {
               class="mention-menu-item"
               @click="pickMention(mm.label)"
             >
-              <span class="mention-menu-kind">{{ mm.kind }}</span>
-              <span>@{{ mm.label }}</span>
+              <span
+                v-if="mm.kind === 'member'"
+                class="mention-avatar"
+                :class="{ 'mention-avatar--agent': mm.agent }"
+              >{{ mm.label.slice(0, 1).toUpperCase() }}</span>
+              <span v-else class="mention-avatar mention-avatar--topic">
+                <v-icon size="13">mdi-pound</v-icon>
+              </span>
+              <span class="mention-menu-name">{{ mm.label }}</span>
+              <span v-if="mm.agent" class="mention-agent-badge">Agent</span>
+              <span class="mention-menu-sub">{{ mm.sub }}</span>
               <span v-if="i === 0" class="mention-menu-hint">Enter</span>
             </button>
           </div>
@@ -1275,7 +1298,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 7px 12px;
+  min-height: 36px;
   text-align: left;
   font-size: 0.85rem;
   cursor: pointer;
@@ -1283,12 +1307,40 @@ onUnmounted(() => {
 .mention-menu-item:hover {
   background: var(--fill, #f5f5f5);
 }
-.mention-menu-kind {
+.mention-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
   font-size: 0.7rem;
-  color: var(--text-muted, #888);
-  border: 1px solid var(--border, #e0e0e0);
+  font-weight: 700;
+  color: #fff;
+  background: #8a94a3;
+  flex: none;
+}
+.mention-avatar--agent {
+  background: var(--accent, #f57f17);
+}
+.mention-avatar--topic {
+  background: var(--fill, #f0f1f3);
+  color: var(--muted, #6b6b6b);
+}
+.mention-menu-name {
+  font-weight: 500;
+}
+.mention-agent-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0 5px;
   border-radius: 4px;
-  padding: 0 4px;
+  color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.12);
+}
+.mention-menu-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted, #999);
 }
 .mention-menu-hint {
   margin-left: auto;

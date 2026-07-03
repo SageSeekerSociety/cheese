@@ -535,21 +535,15 @@ function isRunStart(i: number): boolean {
   return prev.author !== cur.author || prev.author_type !== cur.author_type
 }
 
-// ---- GitHub-PR-style header (Fix 4) ----
+// ---- Topic header state — product language, not git's (去 PR 化). The
+// branch/merge machinery is real underneath, but a normal user shouldn't
+// need to read git to know where a topic stands.
 const prShortId = computed(() => props.topic?.id.slice(0, 6) ?? '')
-// GitHub PR state: Open = green (semantic), Merged = muted, Draft = faint.
 const prState = computed(() => {
   const s = props.topic?.status
-  if (s === 'archived') return { label: 'Merged', cls: 'pr-state--merged' }
-  if (s === 'draft') return { label: 'Draft', cls: 'pr-state--draft' }
-  return { label: 'Open', cls: 'pr-state--open' }
-})
-const prBranch = computed<string>(() => {
-  const t = props.topic
-  if (!t) return ''
-  const branch = (t as unknown as Record<string, unknown>).branch_name
-  if (typeof branch === 'string' && branch) return branch
-  return `topic/${t.id.slice(0, 8)}`
+  if (s === 'archived') return { label: '已采纳', cls: 'pr-state--merged' }
+  if (s === 'draft') return { label: '草稿', cls: 'pr-state--draft' }
+  return { label: '进行中', cls: 'pr-state--open' }
 })
 
 // ---- Self-contained composer (only when showComposer) ----
@@ -665,21 +659,12 @@ onBeforeUnmount(() => {
           <span class="pr-title t-title">{{ topic.title }}</span>
           <span class="pr-num t-meta">#{{ prShortId }}</span>
           <v-spacer />
+          <span class="pr-state ms-1" :class="prState.cls">{{ prState.label }}</span>
           <span
             class="status-dot"
             :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
             :title="connected ? '已连接' : '未连接'"
           />
-        </div>
-        <div class="d-flex align-center ga-2 mt-2">
-          <span class="pr-state" :class="prState.cls">
-            <v-icon size="12" class="me-1">mdi-source-pull</v-icon>
-            {{ prState.label }}
-          </span>
-          <span class="t-meta" style="color: var(--muted)">
-            芝士 想把 <span class="pr-branch">{{ prBranch }}</span> 合并到
-            <span class="pr-branch">main</span>
-          </span>
         </div>
       </div>
 
