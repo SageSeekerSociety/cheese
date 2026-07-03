@@ -747,25 +747,27 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
 .topic-row:hover {
   background: var(--fill);
 }
-.topic-row:hover .row-actions {
-  background: linear-gradient(90deg, transparent, var(--fill) 22%);
-}
 .title-unread {
   color: var(--text);
 }
 
 .row-actions {
   position: absolute;
-  right: 4px;
+  right: 5px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;
   align-items: center;
   gap: 0;
-  padding-left: 18px;
+  padding: 0 2px;
   opacity: 0;
   pointer-events: none;
-  background: linear-gradient(90deg, transparent, var(--surface) 22%);
+  /* 有意为之的浮动工具条（Linear 手法）：白底+细边+微影，
+     在任何行底色上都成立——不再试图和行底色融为一体。 */
+  background: var(--surface, #fff);
+  border: 1px solid var(--line-2, #e3e3e3);
+  border-radius: 7px;
+  box-shadow: 0 1px 4px rgba(20, 22, 26, 0.07);
   transition: opacity 0.1s ease;
   color: var(--muted);
 }
