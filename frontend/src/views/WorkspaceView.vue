@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
 import { formatToolAction, toolLabel } from '../lib/toolLabels'
+import { refreshBlockCache } from '../lib/blockCache'
 import {
   computed,
   inject,
@@ -505,6 +506,12 @@ async function refreshUnread() {
     if (selectedProjectId.value !== pid) return
     // The open topic is being read right now — its badge never shows.
     if (selectedTopicId.value) delete map[selectedTopicId.value]
+    // Background-refresh the timeline cache of topics whose unread count grew:
+    // by the time the user switches back, the reply that landed while they
+    // were away is already rendered on the first frame (no late pop-in).
+    for (const [tid, n] of Object.entries(map)) {
+      if (n > (unreadMap.value[tid] ?? 0)) void refreshBlockCache(tid)
+    }
     unreadMap.value = map
   } catch {
     // Best-effort; badges just stay as they were.

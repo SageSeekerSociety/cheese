@@ -11,6 +11,7 @@ const BOTTOM_THRESHOLD = 80
 import { myHandle } from '../me'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { attachmentRawUrl, chatWsUrl, listBlocks } from '../api'
+import { blockCache } from '../lib/blockCache'
 import { usePendingAttachments } from '../lib/attachments'
 import {
   renderMarkdown as renderMarkdownWith,
@@ -348,11 +349,6 @@ function handleFrame(frame: WsServerFrame) {
   }
 }
 
-// Per-topic message cache: switching BACK to a topic renders instantly from
-// the last known blocks (no blank flash — the heaviest topics made the old
-// clear-then-refetch visibly blink), then the fresh fetch patches in place.
-const blockCache = new Map<string, Block[]>()
-
 async function loadTopic(topic: Topic) {
   errorMsg.value = null
   streaming.value = null
@@ -372,9 +368,14 @@ async function loadTopic(topic: Topic) {
     const payload = await listBlocks(topic.id)
     // Only apply if still the active topic (avoid race on fast switching).
     if (props.topic?.id !== topic.id) return
+    // Blocks that landed while we were away append at the tail; if the user
+    // was parked at the bottom, follow them so the newest message is visible
+    // without a manual scroll.
+    const grew = cached !== undefined && payload.data.length > cached.length
     messages.value = payload.data
     blockCache.set(topic.id, payload.data)
     if (!cached) restoreScroll(topic.id)
+    else if (grew && atBottom.value) autoScroll()
     openSocket(topic.id)
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
