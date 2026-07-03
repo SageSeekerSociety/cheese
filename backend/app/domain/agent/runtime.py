@@ -26,6 +26,34 @@ from app.core.obs import bind_context, clear_context
 
 logger = logging.getLogger("cheesex.runtime")
 
+
+def _inflight_path():
+    from pathlib import Path
+
+    from app.core.config import settings
+
+    return Path(settings.workspace_root) / ".turns-inflight.json"
+
+
+def _load_inflight() -> dict:
+    import json
+
+    try:
+        return json.loads(_inflight_path().read_text())
+    except Exception:  # noqa: BLE001 — missing/corrupt file = empty registry
+        return {}
+
+
+def _save_inflight(reg: dict) -> None:
+    import json
+
+    try:
+        path = _inflight_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(reg))
+    except Exception:  # noqa: BLE001 — registry is best-effort
+        logger.exception("failed to persist in-flight turn registry")
+
 # Channel = the topic id (str). Frames are the same dicts converse yields.
 Frame = dict
 
@@ -55,6 +83,13 @@ class InProcessBroker:
             del buf[: len(buf) - self._replay_size]
         for q in list(self._subs.get(channel, ())):
             q.put_nowait(frame)
+
+    def in_flight(self, channel: str) -> bool:
+        """True while a turn is mid-stream on this channel: the replay buffer
+        holds frames from turn start until its done/error clears it. Lets a
+        (re)connecting client rebuild the 正在思考 indicator instead of showing
+        a silent, seemingly-dead topic."""
+        return bool(self._buffer.get(channel))
 
     @contextlib.asynccontextmanager
     async def subscribe(
@@ -139,6 +174,42 @@ class TurnRunner:
         "请从断点接着完成原任务；如果其实已经完成了，就直接收尾汇报。"
     )
 
+    async def resume_orphans(self, chat_service) -> int:
+        """Startup sweep: turns that were RUNNING when the previous process
+        died (deploy past the drain ceiling, crash) get a ⚠️ event and one
+        auto-resume — their sessions were checkpointed, so they continue
+        instead of silently vanishing. Stale entries (>2h) are dropped."""
+        import time as _time
+
+        reg = _load_inflight()
+        if not reg:
+            return 0
+        _save_inflight({})
+        resumed = 0
+        for turn_id, info in reg.items():
+            if _time.time() - float(info.get("started_at", 0)) > 7200:
+                continue
+            if info.get("is_resume"):
+                continue  # never chain resumes, even across restarts
+            topic_id = uuid.UUID(info["topic_id"])
+            try:
+                block = await chat_service.post_system_event(
+                    topic_id,
+                    "⚠️ 上一轮在平台重启时被打断。已完成的进度都在；马上自动接着跑。",
+                )
+                if block is not None:
+                    await self._broker.publish(
+                        str(topic_id), {"type": "event_block", "block": block}
+                    )
+            except Exception:  # noqa: BLE001 — the resume matters more
+                logger.exception("orphan event failed for %s", topic_id)
+            self._schedule_resume(
+                chat_service, topic_id, 3.0, "上一轮被平台重启打断，接着跑"
+            )
+            resumed += 1
+            logger.info("orphan turn %s scheduled for resume", turn_id)
+        return resumed
+
     def _schedule_resume(
         self,
         chat_service,
@@ -202,6 +273,16 @@ class TurnRunner:
             "detail": None,
         }
         self._recent.append(rec)
+        # Durable in-flight registry: if the PROCESS dies (deploy past the drain
+        # ceiling, crash), startup finds the orphan and auto-resumes it — a
+        # killed turn must never just vanish.
+        reg = _load_inflight()
+        reg[str(turn_id)] = {
+            "topic_id": str(topic_id),
+            "started_at": rec["started_at"],
+            "is_resume": is_resume,
+        }
+        _save_inflight(reg)
         logger.info(
             "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
         )
@@ -309,4 +390,7 @@ class TurnRunner:
         if resume_after is not None and not is_resume:
             rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
             self._schedule_resume(chat_service, topic_id, resume_after, resume_why)
+        reg = _load_inflight()
+        if reg.pop(str(turn_id), None) is not None:
+            _save_inflight(reg)
         clear_context("turn", "topic")

@@ -85,6 +85,9 @@ export type WsServerFrame =
   // block; the client must not double-show it as a floating banner.
   | { type: 'error'; message: string; persisted?: boolean }
   | { type: 'done' }
+  // Sent once on WS connect when a turn is already mid-stream on this topic,
+  // so a re-entering client rebuilds the 正在思考 indicator.
+  | { type: 'turn_active' }
 
 // 图片输入: an uploaded worktree image the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
