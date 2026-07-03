@@ -340,8 +340,18 @@ function handleFrame(frame: WsServerFrame) {
       emit('turn-done')
       autoScroll()
       break
+    case 'turn_active':
+      // Re-entered a topic whose turn is mid-stream: show 正在思考 until the
+      // replayed/live frames take over (they clear it via delta/done).
+      awaitingReply.value = true
+      break
   }
 }
+
+// Per-topic message cache: switching BACK to a topic renders instantly from
+// the last known blocks (no blank flash — the heaviest topics made the old
+// clear-then-refetch visibly blink), then the fresh fetch patches in place.
+const blockCache = new Map<string, Block[]>()
 
 async function loadTopic(topic: Topic) {
   errorMsg.value = null
@@ -349,15 +359,22 @@ async function loadTopic(topic: Topic) {
   awaitingReply.value = false
   todoItems.value = []
   clearPendingAtts() // pending images belong to the topic they were typed in
-  messages.value = []
-  loadingHistory.value = true
   closeSocket()
+  const cached = blockCache.get(topic.id)
+  if (cached) {
+    messages.value = cached
+    restoreScroll(topic.id)
+  } else {
+    messages.value = []
+    loadingHistory.value = true
+  }
   try {
     const payload = await listBlocks(topic.id)
     // Only apply if still the active topic (avoid race on fast switching).
     if (props.topic?.id !== topic.id) return
     messages.value = payload.data
-    restoreScroll(topic.id)
+    blockCache.set(topic.id, payload.data)
+    if (!cached) restoreScroll(topic.id)
     openSocket(topic.id)
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'

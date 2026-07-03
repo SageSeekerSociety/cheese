@@ -84,6 +84,13 @@ class InProcessBroker:
         for q in list(self._subs.get(channel, ())):
             q.put_nowait(frame)
 
+    def in_flight(self, channel: str) -> bool:
+        """True while a turn is mid-stream on this channel: the replay buffer
+        holds frames from turn start until its done/error clears it. Lets a
+        (re)connecting client rebuild the 正在思考 indicator instead of showing
+        a silent, seemingly-dead topic."""
+        return bool(self._buffer.get(channel))
+
     @contextlib.asynccontextmanager
     async def subscribe(
         self, channel: str, *, replay: bool = False

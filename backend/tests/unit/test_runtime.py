@@ -287,3 +287,16 @@ async def test_turn_registers_and_clears_inflight(tmp_path, monkeypatch):
             break
     assert chat.ran
     assert rt._load_inflight() == {}
+
+
+@pytest.mark.anyio
+async def test_in_flight_reflects_replay_buffer():
+    """in_flight is true from first published frame until done/error clears
+    the buffer — the WS route uses it to tell re-entering clients a turn is
+    mid-stream (rebuild 正在思考 instead of showing a dead topic)."""
+    broker = InProcessBroker()
+    assert broker.in_flight("t") is False
+    await broker.publish("t", {"type": "delta", "text": "hi"})
+    assert broker.in_flight("t") is True
+    await broker.publish("t", {"type": "done"})
+    assert broker.in_flight("t") is False

@@ -59,6 +59,12 @@ async def chat(
             while True:
                 await send(await queue.get())
 
+    # A turn already mid-stream? Tell the client BEFORE the replay starts, so
+    # re-entering a topic during the silent thinking phase (no deltas yet)
+    # still shows 正在思考 instead of nothing.
+    if broker.in_flight(channel):
+        await send({"type": "turn_active"})
+
     relay_task = asyncio.create_task(relay())
     try:
         while True:
