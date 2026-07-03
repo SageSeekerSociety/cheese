@@ -36,6 +36,7 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.memory.models import MemoryScope
+from app.domain.mentions import expand_mention_names
 from app.domain.memory.store import DbMemoryStore
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.models import NotifKind, NotifLevel
@@ -223,6 +224,19 @@ def _cheese_resource(command: str) -> str | None:
 
 
 
+# B2 (引用语法遵循): a bare "backend/app/x.py" inside an injected memory fact is
+# a bad few-shot example — the model imitates whatever shape the prompt shows,
+# so bare paths in memories beget bare paths in docs/replies. Wrap path-looking
+# tokens as <&path> before injection so the prompt itself models the correct
+# form. Conservative on purpose: needs ≥1 slash + an extension; a leading "/",
+# "://" or "&" (already-wrapped / absolute / URL) disqualifies via lookbehind.
+_BARE_PATH_RE = re.compile(r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8})(?![\w/])")
+
+
+def _chipify_paths(fact: str) -> str:
+    return _BARE_PATH_RE.sub(r"<&\1>", fact)
+
+
 def _build_system_prompt(
     base: str,
     skills: str,
@@ -272,7 +286,7 @@ def _build_system_prompt(
             "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n" + doc
         )
     if memories:
-        facts = "\n".join(f"- {m}" for m in memories)
+        facts = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
         parts.append(f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}")
     return "\n\n".join(parts)
 
@@ -296,44 +310,10 @@ def _topic_refs(text: str) -> list[str]:
     return [f"topic:{tid}" for tid in dict.fromkeys(_TOPIC_REF_RE.findall(text or ""))]
 
 
-# After an ASCII-word-ending @name/@handle, the next char must not continue the
-# word — so roster handle "andy" never eats the front of a literal "@andyl".
-# ASCII-only on purpose: Python's \w matches CJK, and "@张衡来负责" must still
-# resolve 张衡 even though 来 follows without a space.
-_ASCII_WORD = re.compile(r"[A-Za-z0-9_-]$")
-_ASCII_BOUNDARY = r"(?![A-Za-z0-9_-])"
-
-
-def _expand_mention_names(
-    text: str, roster: list[dict], topics: list[dict] | None = None
-) -> str:
-    """Canonicalize a friendly "@名字 / @handle / @话题名" into the structured
-    token (<@handle> / <#id>) — deterministic exact-match against the
-    roster/topics, longest first. Both the display name AND the handle work:
-    in chat people are labeled by handle, so "@andyl" must resolve even when
-    andyl's display name differs. Tokens already present are untouched (they
-    don't match the @name patterns)."""
-    subs: list[tuple[str, str]] = []
-    for m in roster:
-        tok = f"<@{m['handle']}>"
-        for key in (m.get("name"), m.get("handle")):
-            if key:  # an empty pattern ("@") would swallow every @ in the text
-                subs.append((f"@{key}", tok))
-    subs += [(f"@{t['title']}", f"<#{t['id']}>") for t in (topics or []) if t["title"]]
-    subs.sort(key=lambda s: len(s[0]), reverse=True)
-    seen: set[str] = set()
-    for pat, tok in subs:
-        if pat in seen:  # name == handle yields the same pattern twice
-            continue
-        seen.add(pat)
-        boundary = _ASCII_BOUNDARY if _ASCII_WORD.search(pat) else ""
-        # (?<!<) keeps already-encoded tokens intact: the "@handle" inside a
-        # produced "<@handle>" must not be re-wrapped by a later pattern.
-        # bind tok per-iteration (B023): a bare closure would see the last tok
-        text = re.sub(
-            r"(?<!<)" + re.escape(pat) + boundary, lambda _m, t=tok: t, text
-        )
-    return text
+# Canonicalization of friendly "@名字 / @话题名" now lives in app.domain.mentions
+# so non-chat write paths (doc PUT, decision, conclusion) share the exact same
+# rewrite. Re-exported under the old private name for existing callers/tests.
+_expand_mention_names = expand_mention_names
 
 
 def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[str]]:
@@ -1234,7 +1214,7 @@ class ChatService:
             f"- {m.title} 截止 {m.due_date.isoformat() if m.due_date else '未定'}"
             for m in upcoming
         )
-        mem_lines = "\n".join(f"- {m}" for m in memories)
+        mem_lines = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"

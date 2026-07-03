@@ -13,6 +13,7 @@ from app.core.errors import ValidationError
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.mentions import canonicalize_refs
 from app.domain.topic.schemas import (
     ConclusionIn,
     DocEditIn,
@@ -175,8 +176,15 @@ async def get_topic_doc(topic_id: uuid.UUID, db: DbSession) -> dict:
 @router.put("/{topic_id}/doc")
 async def edit_topic_doc(topic_id: uuid.UUID, body: DocEditIn, db: DbSession) -> dict:
     """改文档即指令 (eval B2): edit the living doc; emits a conversation event."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    # Same backstop as chat replies: friendly "@名字 / @话题名" → structured
+    # token, so refs in the doc render as clickable chips (docs used to skip
+    # this and stayed plain text).
+    content = await canonicalize_refs(
+        db, topic.project_id, body.content, exclude_topic_id=topic_id
+    )
     doc = await TopicService(db).edit_doc(
-        topic_id=topic_id, content=body.content, author=body.author
+        topic_id=topic_id, content=content, author=body.author
     )
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
 
@@ -188,6 +196,9 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
     decision = (body.get("decision") or "").strip()
     if not decision:
         raise ValidationError("decision 不能为空")
+    decision = await canonicalize_refs(
+        db, topic.project_id, decision, exclude_topic_id=topic_id
+    )
     block = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
@@ -254,8 +265,12 @@ async def return_conclusion(
     topic_id: uuid.UUID, body: ConclusionIn, db: DbSession
 ) -> dict:
     """结论回流：write a sub-topic's conclusion back to its parent."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    conclusion = await canonicalize_refs(
+        db, topic.project_id, body.conclusion, exclude_topic_id=topic_id
+    )
     block = await TopicService(db).return_conclusion(
-        subtopic_id=topic_id, conclusion=body.conclusion
+        subtopic_id=topic_id, conclusion=conclusion
     )
     return ok(BlockOut.model_validate(block).model_dump(mode="json"))
 

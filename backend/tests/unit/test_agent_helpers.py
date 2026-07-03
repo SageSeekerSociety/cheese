@@ -48,3 +48,25 @@ def test_role_description_lookup():
     assert role_description(None) is None
     assert role_description("unknown-role") is None
     assert "学术" in (role_description("academic-research") or "")
+
+
+def test_chipify_paths_wraps_bare_relative_paths():
+    """B2 (引用语法遵循): memory facts injected into the prompt must model the
+    correct <&path> form; URLs / absolute paths / already-wrapped stay put."""
+    from app.domain.agent.chat import _chipify_paths
+
+    assert (
+        _chipify_paths("根因在 backend/app/domain/agent/chat.py 第 932 行")
+        == "根因在 <&backend/app/domain/agent/chat.py> 第 932 行"
+    )
+    assert (
+        _chipify_paths("frontend/src/components/DocPanel.vue:753 的问题")
+        == "<&frontend/src/components/DocPanel.vue>:753 的问题"
+    )
+    for untouched in (
+        "已包 <&backend/app/main.py> 不动",
+        "见 http://a.com/b/c.py 链接",
+        "绝对路径 /usr/bin/python3.13 不包",
+        "DocPanel.vue:753 无斜杠不包",
+    ):
+        assert _chipify_paths(untouched) == untouched

@@ -12,6 +12,10 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from '@tiptap/markdown'
+// Without the table nodes registered, @tiptap/markdown silently DROPS every GFM
+// table on parse (the token has no fallback), and a later save would write the
+// table-less doc back — data loss, not just a display bug.
+import { TableKit } from '@tiptap/extension-table'
 import CheeseAvatar from './CheeseAvatar.vue'
 import CodeEditor from './CodeEditor.vue'
 import {
@@ -750,7 +754,12 @@ async function openFileRef(path: string) {
 
 const editor = useEditor({
   content: '',
-  extensions: [StarterKit, Markdown, TokenChips],
+  extensions: [
+    StarterKit,
+    Markdown,
+    TableKit.configure({ table: { resizable: false } }),
+    TokenChips,
+  ],
   editable: editable.value,
   editorProps: {
     attributes: { class: 'doc-prose' },
@@ -2140,6 +2149,29 @@ onBeforeUnmount(() => {
 }
 .doc-editor :deep(.doc-prose:focus) {
   outline: none;
+}
+
+/* GFM tables (TableKit). tiptap emits div.tableWrapper > table; browsers give
+   tables no borders by default, so without this the table renders "naked". */
+.doc-editor :deep(.doc-prose .tableWrapper) {
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.doc-editor :deep(.doc-prose table) {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+.doc-editor :deep(.doc-prose th),
+.doc-editor :deep(.doc-prose td) {
+  border: 1px solid var(--line, #dcdfe6);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.doc-editor :deep(.doc-prose th) {
+  background: var(--bg-2, #f7f8fa);
+  font-weight: 600;
 }
 
 /* Feishu-style left gutter block handles — REAL controls, not decoration.
