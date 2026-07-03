@@ -127,13 +127,49 @@ _TOOL_ARG.update(
 )
 
 
-def _format_tool_event(name: str, args: dict) -> str:
-    verb = _TOOL_VERB.get(name, name)
+def _tool_arg_preview(name: str, args: dict) -> str:
+    """Whitespace-collapsed preview of the tool's most telling argument."""
     key = _TOOL_ARG.get(name)
-    preview = ""
     if key and isinstance(args, dict) and args.get(key) is not None:
-        preview = " ".join(str(args[key]).split())[:120]
+        return " ".join(str(args[key]).split())[:120]
+    return ""
+
+
+def _format_tool_event(name: str, args: dict) -> str:
+    """Human-readable FALLBACK text for an event block (old clients / old rows).
+
+    The UI renders from the structured meta (see _tool_event_meta); this baked
+    string only shows when meta is absent."""
+    verb = _TOOL_VERB.get(name, name)
+    preview = _tool_arg_preview(name, args)
     return f"{verb}\n{preview}" if preview else verb
+
+
+# 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).
+# Deterministic by construction — tool-name prefix, or a literal `cheese <sub>`
+# word pair inside a Bash command. NEVER inferred from natural language.
+_CHEESE_CMD_RE = re.compile(r"\bcheese\s+\w+")
+
+
+def _is_platform_tool(raw_name: str, args: dict) -> bool:
+    """True when the tool call is a platform action: a cheese MCP tool, or a
+    Bash command that invokes the in-sandbox `cheese` CLI."""
+    if raw_name.startswith("mcp__cheese__"):
+        return True
+    if raw_name == "Bash" and isinstance(args, dict):
+        return _CHEESE_CMD_RE.search(str(args.get("command", ""))) is not None
+    return False
+
+
+def _tool_event_meta(name: str, args: dict, *, platform: bool) -> dict:
+    """Structured payload persisted on an event block: the UI translates the
+    tool name and colors the dot from these fields at DISPLAY time, so a verb
+    missing from today's table is never baked in untranslated forever."""
+    meta: dict = {"tool": name, "platform": platform}
+    preview = _tool_arg_preview(name, args)
+    if preview:
+        meta["arg"] = preview
+    return meta
 
 
 # Claude Code's structured Task tools → a live working-log todo (§3.1.1). These
@@ -804,7 +840,7 @@ class ChatService:
         provider = self._compute.select()
         model_kwargs = await self._model_kwargs(project_id)
 
-        tool_events: list[tuple[str, dict]] = []
+        tool_events: list[tuple[str, dict, bool]] = []  # (name, args, platform)
         todo: list[dict] = []
         actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None
@@ -838,7 +874,10 @@ class ChatService:
                                 "items": [dict(t) for t in todo],
                             }
                         continue
-                    tool_events.append((name, args))
+                    # Platform vs plain work, decided on the RAW name (prefix
+                    # rule) + full command string — before any truncation.
+                    platform = _is_platform_tool(event.name, args)
+                    tool_events.append((name, args, platform))
                     yield {"type": "tool", "name": event.name, "input": args}
                     # cheese <sub> ran as Bash → tell the UI which panel changed,
                     # so it refreshes mid-turn (doc/decisions/...), quietly.
@@ -914,7 +953,7 @@ class ChatService:
                 )
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
-                for name, tool_input in tool_events:
+                for name, tool_input, platform in tool_events:
                     await blocks.add(
                         project_id=project_id,
                         topic_id=topic_id,
@@ -923,6 +962,7 @@ class ChatService:
                         content=_format_tool_event(name, tool_input),
                         kind=BlockKind.event,
                         turn_id=turn_id,
+                        meta=_tool_event_meta(name, tool_input, platform=platform),
                     )
                 if usage is not None:
                     await UsageRepository(session).add(
@@ -968,7 +1008,7 @@ class ChatService:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
 
-            for name, tool_input in tool_events:
+            for name, tool_input, platform in tool_events:
                 await blocks.add(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -977,6 +1017,7 @@ class ChatService:
                     content=_format_tool_event(name, tool_input),
                     kind=BlockKind.event,
                     turn_id=turn_id,
+                    meta=_tool_event_meta(name, tool_input, platform=platform),
                 )
             if usage is not None:
                 await UsageRepository(session).add(
@@ -1034,6 +1075,7 @@ class ChatService:
                     kind=BlockKind.event,
                     refs=[f"action:{resource}"],
                     turn_id=turn_id,
+                    meta={"platform": True},
                 )
                 action_payloads.append(_block_payload(BlockOut.model_validate(blk)))
 

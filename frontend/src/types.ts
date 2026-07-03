@@ -47,6 +47,9 @@ export interface Block {
   mime_type?: string | null
   turn_id?: string | null
   refs?: string[]
+  // Structured event payload (kind=event): {tool, arg, platform} — the UI
+  // translates/classifies from this; content is the baked-text fallback.
+  meta?: { tool?: string; arg?: string; platform?: boolean } | null
   upgraded_to_topic_id?: string | null
   created_at: string
 }

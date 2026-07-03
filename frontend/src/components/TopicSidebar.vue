@@ -33,7 +33,7 @@ const emit = defineEmits<{
   // Open the 1:1 private chat with 芝士 in the main area (飞书私聊 conversation).
   (e: 'select-private'): void
   // Open a 项目文档 (章程/决策记录/周报集) in the main area, keeping the rail.
-  (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies'): void
+  (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
   // Live drawer width while dragging the right edge.
   (e: 'update:width', w: number): void
 }>()
@@ -203,6 +203,7 @@ function onSplit(t: Topic) {
 const onCharter = computed(() => props.activeDocs === 'charter')
 const onDecisions = computed(() => props.activeDocs === 'decisions')
 const onWeeklies = computed(() => props.activeDocs === 'weeklies')
+const onMemory = computed(() => props.activeDocs === 'memory')
 </script>
 
 <template>
@@ -469,6 +470,16 @@ const onWeeklies = computed(() => props.activeDocs === 'weeklies')
               prepend-icon="mdi-calendar-week-outline"
               title="周报集"
               @click="emit('select-docs', 'weeklies')"
+            />
+            <v-list-item
+              :active="onMemory"
+              :disabled="!selectedProjectId"
+              rounded="lg"
+              class="nav-row"
+              :class="{ 'is-active': onMemory }"
+              prepend-icon="mdi-brain"
+              title="记忆"
+              @click="emit('select-docs', 'memory')"
             />
           </v-list>
 

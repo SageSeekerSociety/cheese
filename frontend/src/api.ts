@@ -416,6 +416,29 @@ export function getProjectDecisions(
   )
 }
 
+// ---- 记忆 (spec §8.4: 记忆可见) ----
+export interface MemoryEntryOut {
+  id: string
+  scope: string
+  scope_id: string
+  content: string
+  created_at: string
+}
+export function listMemory(
+  projectId: string,
+  userHandle?: string,
+): Promise<ListPayload<MemoryEntryOut>> {
+  const u = userHandle ? `&user_handle=${encodeURIComponent(userHandle)}` : ''
+  return request<ListPayload<MemoryEntryOut>>(
+    `/memory?project_id=${encodeURIComponent(projectId)}${u}`,
+  )
+}
+export function deleteMemory(entryId: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/memory/${encodeURIComponent(entryId)}`, {
+    method: 'DELETE',
+  })
+}
+
 // ---- 执行面板 (Phase 4 tool drawers) ----
 
 // 现场 (施工现场): 芝士's messages + 🔧 event lines for a topic (read-only).

@@ -1,11 +1,26 @@
-"""Repro probe for: "switch back to a topic -> the LAST message misses the
-first frame and pops in one frame later".
+"""Repro + regression probe for: "switch back to a topic -> the LAST message
+misses the first frame and pops in a beat later".
 
-Technique: intercept GET /topics/*/blocks and inject a delay, stretching the
-"first frame" (cache-only render) into a seconds-long window we can screenshot
-and inspect. A rAF logger inside the page records, per rendered frame, the
-visible row count + last row identity + scroll geometry, so we can tell
-DOM-missing apart from scrolled-out-of-view.
+Root cause (found with this probe): on switch-back the first frame restored a
+STALE pixel scrollTop while the timeline's height differs from when we left —
+(a) blocks that landed while away are already in blockCache (unread-poll
+prefetch) but sat below the fold, and (b) the timeline-end slot (merge box)
+fills in async one frame later. The correction only came from later async
+scrolls (fetch completion + the 200ms catch-up timer), so the tail visibly
+popped in late, on every switch.
+
+Technique: intercept GET /topics/*/blocks with an injected delay, stretching
+the "first frame" (cache-only render) into a window we can screenshot and
+assert on. A rAF logger inside the page records per rendered frame the row
+count, last row identity, scroll geometry and last-row visibility.
+
+Scenarios:
+  A: switch back to a long topic whose timeline-end slot holds a merge box
+     (last block = system event 通知块).
+  B: switch back to a short topic (last block = 芝士 message).
+  C: a new message lands in the away topic (real WS post + cache refresh the
+     way the unread poll does) -> switch back: the new last message must be
+     visible on the very first frame.
 
 Run:  uv run --with playwright python scripts/probe_flash.py
 """
@@ -28,9 +43,8 @@ def _get(path: str):
 
 
 # rAF logger: one entry per rendered frame. Counts every timeline row kind
-# (.im-row message rows, .im-event system lines, .action-card cards) and, for
-# height forensics, records every row's offsetTop/offsetHeight so a frame-to-
-# frame diff pinpoints WHICH element grew late.
+# (.im-row message rows, .im-event system lines, .action-card cards) and
+# records geometry so a frame-to-frame diff pinpoints late layout changes.
 FRAME_LOGGER = """
 () => {
   window.__frames = [];
@@ -40,23 +54,24 @@ FRAME_LOGGER = """
       ? [...scroll.querySelectorAll('.im-row, .im-event, .action-card')]
       : [];
     const last = rows[rows.length - 1];
-    const slotEnd = scroll ? scroll.lastElementChild : null;
+    const slotEnd = scroll
+      ? scroll.querySelector(':scope > div > div:last-child')
+      : null;
     window.__frames.push({
       t: Math.round(performance.now()),
       n: rows.length,
       lastMid: last?.dataset?.mid ?? null,
-      lastText: last ? last.textContent.trim().slice(0, 50) : null,
+      lastText: last ? last.textContent.trim().slice(0, 40) : null,
+      lastVisible: last && scroll
+        ? last.getBoundingClientRect().bottom
+          <= scroll.getBoundingClientRect().bottom + 2
+        : null,
       scrollTop: scroll ? Math.round(scroll.scrollTop) : -1,
       scrollHeight: scroll ? Math.round(scroll.scrollHeight) : -1,
       scrollBottomGap: scroll
         ? Math.round(scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight)
         : -1,
       slotEndH: slotEnd ? Math.round(slotEnd.getBoundingClientRect().height) : -1,
-      rows: rows.map((r) => [
-        r.dataset?.mid?.slice(0, 8) ?? r.textContent.trim().slice(0, 16),
-        Math.round(r.offsetTop),
-        Math.round(r.offsetHeight),
-      ]),
     });
     requestAnimationFrame(snap);
   };
@@ -79,7 +94,7 @@ READ_CACHE = """
     lastId: last?.id ?? null,
     lastKind: last?.kind ?? null,
     lastAuthorType: last?.author_type ?? null,
-    lastContent: (last?.content ?? '').slice(0, 50),
+    lastContent: (last?.content ?? '').slice(0, 40),
   };
 }
 """
@@ -94,7 +109,11 @@ DOM_STATE = """
   return {
     n: rows.length,
     lastMid: last?.dataset?.mid ?? null,
-    lastText: last ? last.textContent.trim().slice(0, 50) : null,
+    lastText: last ? last.textContent.trim().slice(0, 40) : null,
+    lastVisible: last && scroll
+      ? last.getBoundingClientRect().bottom
+        <= scroll.getBoundingClientRect().bottom + 2
+      : null,
     scrollTop: scroll ? Math.round(scroll.scrollTop) : -1,
     scrollBottomGap: scroll
       ? Math.round(scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight)
@@ -103,16 +122,55 @@ DOM_STATE = """
 }
 """
 
+# Post a message into a topic over the chat WS (summon=false: persist only, no
+# AI turn) — a real "message landed while the user was in another topic".
+POST_MESSAGE = """
+async ({ topicId, content }) => {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/api/topics/${topicId}/chat`);
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  ws.send(JSON.stringify({ type: 'message', content, author: 'user-1', summon: false }));
+  // Wait for the persisted user_block echo so we know it's in the DB.
+  const echoed = await new Promise((res) => {
+    const timer = setTimeout(() => res(false), 4000);
+    ws.onmessage = (ev) => {
+      try {
+        const f = JSON.parse(ev.data);
+        if (f.type === 'user_block' && f.block?.content === content) {
+          clearTimeout(timer); res(true);
+        }
+      } catch {}
+    };
+  });
+  ws.close();
+  return echoed;
+}
+"""
+
+# Refresh a topic's blockCache entry exactly the way the unread poll does
+# (fetch fresh blocks, replace the cache array).
+REFRESH_CACHE = """
+async (topicId) => {
+  const r = await fetch(`/api/topics/${topicId}/blocks`);
+  const payload = (await r.json()).data;
+  window.__blockCache.set(topicId, payload.data);
+  return payload.data.length;
+}
+"""
+
 
 async def main() -> None:
     projects = _get("/api/projects")["data"]
     proj = next(p for p in projects if p.get("name") == "AI 课程推荐系统")
     topics = _get(f"/api/topics?project_id={proj['id']}")["data"]
-    # A: last block is a system event (通知块); B: last block is an AI message.
+    # A: long topic, merge box in the timeline-end slot, last block = event.
+    # B: short topic, last block = 芝士 message.
     topic_a = next(t for t in topics if t["title"] == "搭建推荐算法原型")
     topic_b = next(t for t in topics if t["title"] == "远程节点跑通")
     print(f"[setup] A={topic_a['id']} ({topic_a['title']})")
     print(f"[setup] B={topic_b['id']} ({topic_b['title']})")
+
+    failures: list[str] = []
 
     async with async_playwright() as p:
         b = await p.chromium.launch()
@@ -141,22 +199,27 @@ async def main() -> None:
         await switch_to(topic_b["title"])
         await pg.wait_for_timeout(1500)
 
-        # Inject the delay on the blocks fetch from now on.
-        async def delayed(route):
-            await asyncio.sleep(DELAY_MS / 1000)
+        # Delay the blocks fetch only while a flag is up, so scenario setup
+        # (cache refresh fetch) isn't slowed down.
+        delay_on = False
+
+        async def maybe_delay(route):
+            if delay_on:
+                await asyncio.sleep(DELAY_MS / 1000)
             await route.continue_()
 
-        await pg.route("**/api/topics/*/blocks*", delayed)
+        await pg.route("**/api/topics/*/blocks*", maybe_delay)
 
         async def probe_switch(target, label: str) -> None:
-            """Switch to `target` and record what the first frames show."""
+            """Switch to `target`; assert the first content frame shows the
+            cache's last block inside the viewport."""
             cache = await pg.evaluate(READ_CACHE, target["id"])
             await pg.evaluate(FRAME_LOGGER)
             await switch_to(target["title"])
             await pg.wait_for_timeout(600)  # well inside the delay window
             during = await pg.evaluate(DOM_STATE)
             await pg.screenshot(path=f"{SHOT_DIR}/flash-{label}-during.png")
-            await pg.wait_for_timeout(DELAY_MS + 1500)  # fetch landed
+            await pg.wait_for_timeout(DELAY_MS + 1500)  # fetch + catch-up done
             after = await pg.evaluate(DOM_STATE)
             await pg.screenshot(path=f"{SHOT_DIR}/flash-{label}-after.png")
             frames = await pg.evaluate("() => window.__frames")
@@ -165,40 +228,68 @@ async def main() -> None:
             print(f"[cache before click] {json.dumps(cache, ensure_ascii=False)}")
             print(f"[DOM during delay]   {json.dumps(during, ensure_ascii=False)}")
             print(f"[DOM after fetch]    {json.dumps(after, ensure_ascii=False)}")
-            # Print frames where geometry changed, and diff row heights between
-            # consecutive changed frames to name the element that grew late.
             prev = None
-            prev_frame = None
             for f in frames:
-                key = (f["n"], f["lastMid"], f["scrollHeight"], f["slotEndH"])
+                key = (f["n"], f["lastMid"], f["scrollHeight"], f["slotEndH"], f["lastVisible"])
                 if key != prev:
-                    slim = {k: v for k, v in f.items() if k != "rows"}
-                    print(f"[frame] {json.dumps(slim, ensure_ascii=False)}")
-                    if (
-                        prev_frame is not None
-                        and prev_frame["n"] == f["n"]
-                        and prev_frame["scrollHeight"] != f["scrollHeight"]
-                    ):
-                        for a, c in zip(prev_frame["rows"], f["rows"]):
-                            if a[1] != c[1] or a[2] != c[2]:
-                                print(
-                                    f"  [row-diff] {c[0]!r}: top {a[1]}->{c[1]}, "
-                                    f"height {a[2]}->{c[2]}"
-                                )
+                    print(f"[frame] {json.dumps(f, ensure_ascii=False)}")
                     prev = key
-                    prev_frame = f
-            verdict = (
-                "FIRST FRAME MISSING LAST BLOCK"
-                if during["n"] < after["n"] or during["lastText"] != after["lastText"]
-                else "first frame complete"
-            )
-            print(f"[verdict {label}] {verdict}  (during n={during['n']} after n={after['n']})")
 
-        # B -> A (last block: system event) then A -> B (last block: AI message).
+            # The first frame that shows the target topic's content.
+            first = next(
+                (
+                    f
+                    for f in frames
+                    if f["n"] and (f["lastMid"] or f["lastText"]) and f["lastText"] == during["lastText"]
+                ),
+                None,
+            )
+            checks = {
+                # Cache's last block is what the DOM shows during the delay
+                # window (no missing tail row on the cache-only render).
+                "tail row present in first paint": bool(
+                    cache.get("cached")
+                    and during["lastText"]
+                    and cache["lastContent"][:20] in during["lastText"]
+                ),
+                # ...and it sits inside the viewport from the first content
+                # frame on (the reported bug: it didn't).
+                "tail visible in first content frame": bool(first and first["lastVisible"]),
+                "tail visible during delay window": bool(during["lastVisible"]),
+                "tail visible after fetch": bool(after["lastVisible"]),
+            }
+            for name, ok in checks.items():
+                print(f"[check {label}] {'PASS' if ok else 'FAIL'}  {name}")
+                if not ok:
+                    failures.append(f"{label}: {name}")
+
+        # --- Scenario A/B: plain bounce with height-shifting slot content ---
+        delay_on = True
         await probe_switch(topic_a, "A")
         await probe_switch(topic_b, "B")
+        delay_on = False
+
+        # --- Scenario C: a message lands in A while we sit in B (we are in B
+        # now after scenario B). Post for real over WS, refresh the cache the
+        # way the unread poll does, then switch back under delay. ---
+        marker = f"探针消息 probe-flash {int(asyncio.get_event_loop().time() * 1000)}"
+        echoed = await pg.evaluate(POST_MESSAGE, {"topicId": topic_a["id"], "content": marker})
+        print(f"\n[C setup] posted new message to A over WS, echoed={echoed}")
+        n = await pg.evaluate(REFRESH_CACHE, topic_a["id"])
+        print(f"[C setup] refreshed A's blockCache (unread-poll style), len={n}")
+        delay_on = True
+        await probe_switch(topic_a, "C-newtail")
+        delay_on = False
 
         await b.close()
+
+    print()
+    if failures:
+        print("RESULT: FAIL")
+        for f in failures:
+            print("  -", f)
+        raise SystemExit(1)
+    print("RESULT: PASS — first frame shows the complete tail in every scenario")
 
 
 asyncio.run(main())

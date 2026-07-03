@@ -638,7 +638,13 @@ provide('activityBump', activityBump)
     <v-main class="app-main">
       <!-- 登录门 (Phase 0): the workspace only mounts when signed in, so every
            component reads a real author handle at setup. -->
-      <router-view v-if="me" />
+      <!-- keep-alive: leaving to 设置 etc. and coming back must NOT remount
+           the workspace (it reloaded everything and read as a full-page flash). -->
+      <router-view v-if="me" v-slot="{ Component }">
+        <keep-alive include="WorkspaceView">
+          <component :is="Component" />
+        </keep-alive>
+      </router-view>
       <div v-else class="login-gate fill-height d-flex align-center justify-center">
         <v-card rounded="lg" width="380" class="pa-6" elevation="2">
           <div class="d-flex align-center ga-2 mb-1">

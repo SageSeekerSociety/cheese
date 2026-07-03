@@ -5,18 +5,22 @@ import { useRoute } from 'vue-router'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
+  deleteMemory,
   getDoc,
   getProject,
   getProjectDecisions,
+  listMemory,
   listTopics,
   putDoc,
 } from '../api'
+import type { MemoryEntryOut } from '../api'
+import { relTime } from '../lib/relTime'
 import type { Block, Topic } from '../types'
 
 // 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集. Shown either as a standalone
 // route or embedded inside the 工作台 (keeping the left rail) — `kind`/`embedded`
 // override the route when embedded.
-type Kind = 'charter' | 'decisions' | 'weeklies'
+type Kind = 'charter' | 'decisions' | 'weeklies' | 'memory'
 const props = defineProps<{
   projectId: string
   kind?: Kind
@@ -38,11 +42,13 @@ const TITLES: Record<Kind, string> = {
   charter: '章程 · 项目根文档',
   decisions: '决策记录',
   weeklies: '周报集',
+  memory: '记忆',
 }
 const OVERLINES: Record<Kind, string> = {
   charter: '项目文档',
   decisions: '项目文档',
   weeklies: '项目文档',
+  memory: '芝士记住的事',
 }
 
 const projectName = ref<string>('')
@@ -73,6 +79,17 @@ function fmtDate(d: string | null): string {
   return d.length >= 10 ? d.slice(0, 10) : d
 }
 
+// ---- 记忆 (spec §8.4 记忆可见): entries 芝士 remembered, human-prunable ----
+const memoryEntries = ref<MemoryEntryOut[]>([])
+async function loadMemory() {
+  const payload = await listMemory(props.projectId, AUTHOR)
+  memoryEntries.value = payload.data
+}
+async function removeMemory(id: string) {
+  await deleteMemory(id)
+  memoryEntries.value = memoryEntries.value.filter((e) => e.id !== id)
+}
+
 async function load() {
   loading.value = true
   error.value = null
@@ -97,6 +114,8 @@ async function load() {
     } else if (kind.value === 'decisions') {
       const payload = await getProjectDecisions(props.projectId)
       decisions.value = payload.data
+    } else if (kind.value === 'memory') {
+      await loadMemory()
     } else {
       const payload = await listTopics(props.projectId)
       weeklies.value = payload.data.filter((t) => t.title.includes('周报'))
@@ -169,7 +188,7 @@ onMounted(load)
         <div class="d-flex align-center flex-wrap ga-3">
           <h1 class="t-page-title" style="font-size: 27px">{{ TITLES[kind] }}</h1>
           <span v-if="projectName" class="t-meta">{{ projectName }}</span>
-          <template v-if="kind === 'charter'">
+          <template v-else-if="kind === 'charter'">
             <v-spacer />
             <span v-if="saving" class="t-meta">保存中…</span>
             <span
@@ -205,6 +224,36 @@ onMounted(load)
       </v-alert>
 
       <template v-else>
+        <!-- ===== 记忆: what 芝士 remembers, human-prunable ===== -->
+        <template v-if="kind === 'memory'">
+          <div v-if="memoryEntries.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
+            <v-icon size="28" class="text-disabled mb-2">mdi-brain</v-icon>
+            <div>芝士还没有记下任何事</div>
+            <div class="text-caption mt-1">对话里说「记住……」，或它自己判断重要时，会写进这里。</div>
+          </div>
+          <v-card v-for="e in memoryEntries" :key="e.id" class="memory-card mb-2" variant="flat">
+            <div class="d-flex align-start ga-3 pa-3">
+              <v-icon size="16" class="c-muted mt-1">
+                {{ e.scope === 'user' ? 'mdi-account-outline' : 'mdi-source-repository' }}
+              </v-icon>
+              <div class="flex-grow-1">
+                <div class="memory-card__content">{{ e.content }}</div>
+                <div class="t-meta c-muted mt-1">
+                  {{ e.scope === 'user' ? '个人记忆' : '项目记忆' }} · {{ relTime(e.created_at) }}
+                </div>
+              </div>
+              <v-btn
+                icon="mdi-delete-outline"
+                size="x-small"
+                variant="text"
+                class="c-muted memory-card__del"
+                title="删除这条记忆"
+                @click="removeMemory(e.id)"
+              />
+            </div>
+          </v-card>
+        </template>
+
         <!-- ===== 章程: project root doc, read/edit ===== -->
         <template v-if="kind === 'charter'">
           <v-card class="charter-card">
@@ -434,5 +483,24 @@ onMounted(load)
   padding-left: 12px;
   border-left: 2px solid var(--line-2);
   color: var(--muted);
+}
+</style>
+
+<style scoped>
+.memory-card {
+  border: 1px solid var(--line-2, #e8e8e8);
+  border-radius: 10px;
+}
+.memory-card__content {
+  font-size: 0.9rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.memory-card__del {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.memory-card:hover .memory-card__del {
+  opacity: 1;
 }
 </style>

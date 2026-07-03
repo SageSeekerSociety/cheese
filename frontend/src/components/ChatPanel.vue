@@ -2,7 +2,12 @@
 // Per-topic scroll position, kept at module scope so it survives this component
 // unmounting (e.g. navigating to another view) and remounting — come back to a
 // topic and you land where you left off, not yanked to the bottom.
-const scrollMemory = new Map<string, number>()
+// `atBottom` is stored alongside the raw offset because "at the bottom" is a
+// SEMANTIC position: the timeline's height changes between visits (blocks that
+// landed while away are already in the cache, the merge box fills in async),
+// so restoring a stale pixel offset would leave the newest message below the
+// fold — the "last message pops in a frame late" bug.
+const scrollMemory = new Map<string, { top: number; atBottom: boolean }>()
 // How close to the bottom still counts as "at the bottom" (px).
 const BOTTOM_THRESHOLD = 80
 </script>
@@ -184,6 +189,27 @@ function noteCatchUpFrame() {
 
 let socket: WebSocket | null = null
 const scrollRef = ref<HTMLElement | null>(null)
+const contentRef = ref<HTMLElement | null>(null)
+
+// Keep the pane glued to the bottom while the user is parked there. Timeline
+// height changes AFTER the first frame of a topic switch (the merge box /
+// accept card fills in async, images decode, streaming re-renders) — without
+// this, the correction only came from later async scrolls (fetch completion,
+// the catch-up idle timer), so the tail visibly popped in a beat late.
+// ResizeObserver callbacks run after layout but before paint: the re-pin lands
+// in the SAME frame as the growth, so no flash is ever painted.
+let contentObserver: ResizeObserver | null = null
+watch(contentRef, (el) => {
+  contentObserver?.disconnect()
+  contentObserver = null
+  if (!el) return
+  contentObserver = new ResizeObserver(() => {
+    const sc = scrollRef.value
+    if (!sc) return
+    if (atBottom.value && !isAtBottom(sc)) sc.scrollTop = sc.scrollHeight
+  })
+  contentObserver.observe(el)
+})
 
 // Whether the user is parked at (or near) the bottom — drives whether incoming
 // messages auto-follow or leave the user's scroll position alone.
@@ -215,18 +241,22 @@ function autoScroll() {
 function rememberScroll() {
   const el = scrollRef.value
   if (!el || !props.topic) return
-  scrollMemory.set(props.topic.id, el.scrollTop)
   atBottom.value = isAtBottom(el)
+  scrollMemory.set(props.topic.id, { top: el.scrollTop, atBottom: atBottom.value })
 }
 
-// Restore a topic's saved scroll position, or land at the bottom if none.
+// Restore a topic's saved scroll position. "At the bottom" (and no memory at
+// all) restores to the CURRENT bottom rather than the remembered offset — the
+// timeline may be taller than when we left (background cache refresh already
+// holds the messages that landed while away), and the newest message must be
+// visible on the very first frame.
 function restoreScroll(topicId: string) {
   nextTick(() => {
     const el = scrollRef.value
     if (!el) return
     const saved = scrollMemory.get(topicId)
-    if (saved !== undefined) {
-      el.scrollTop = saved
+    if (saved && !saved.atBottom) {
+      el.scrollTop = saved.top
       atBottom.value = isAtBottom(el)
     } else {
       el.scrollTop = el.scrollHeight
@@ -594,7 +624,10 @@ watch(
   () => props.topic,
   (t, oldT) => {
     // Save where we were in the topic we're leaving, so coming back restores it.
-    if (oldT && scrollRef.value) scrollMemory.set(oldT.id, scrollRef.value.scrollTop)
+    if (oldT && scrollRef.value) {
+      const el = scrollRef.value
+      scrollMemory.set(oldT.id, { top: el.scrollTop, atBottom: isAtBottom(el) })
+    }
     if (t) loadTopic(t)
     else {
       messages.value = []
@@ -606,6 +639,8 @@ watch(
 
 onBeforeUnmount(() => {
   rememberScroll() // persist position across an unmount (e.g. leaving the view)
+  contentObserver?.disconnect()
+  contentObserver = null
   closeSocket()
 })
 </script>
@@ -670,6 +705,9 @@ onBeforeUnmount(() => {
         @scroll="rememberScroll"
         @click="onMessagesClick"
       >
+        <!-- Single wrapper so a ResizeObserver can watch the timeline's total
+             content height (rows + streaming bubble + timeline-end slot). -->
+        <div ref="contentRef">
         <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">
           加载历史…
         </div>
@@ -822,6 +860,7 @@ onBeforeUnmount(() => {
         <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
         <div class="px-4">
           <slot name="timeline-end" />
+        </div>
         </div>
       </div>
 

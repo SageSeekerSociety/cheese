@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
-import { formatToolAction, toolLabel } from '../lib/toolLabels'
+import { formatToolAction, isPlatformAction, toolLabel } from '../lib/toolLabels'
 import { refreshBlockCache } from '../lib/blockCache'
 import {
   computed,
@@ -49,6 +49,9 @@ import type {
 
 // projectId comes from the route (/project/:projectId). When absent we fall
 // back to the first project so 工作台 is never empty.
+// Named so App.vue's <keep-alive include> can pin this view.
+defineOptions({ name: 'WorkspaceView' })
+
 const props = defineProps<{ projectId?: string }>()
 const router = useRouter()
 const route = useRoute()
@@ -125,8 +128,8 @@ const selectedTopic = computed<Topic | null>(
 // normal chat in the main area — no document, no PR header, no accept box.
 const mode = ref<'topic' | 'private' | 'docs'>('topic')
 // 项目文档 shown in the main area (keeping the rail) instead of a separate page.
-const docKind = ref<'charter' | 'decisions' | 'weeklies'>('charter')
-function selectDocs(kind: 'charter' | 'decisions' | 'weeklies') {
+const docKind = ref<'charter' | 'decisions' | 'weeklies' | 'memory'>('charter')
+function selectDocs(kind: 'charter' | 'decisions' | 'weeklies' | 'memory') {
   if (!selectedProjectId.value) return
   mode.value = 'docs'
   docKind.value = kind
@@ -207,7 +210,8 @@ function onAttFilePicked(e: Event) {
 // 施工现场 live feed for the current topic — DocPanel's 现场 drawer shows it
 // with a pulsing dot while the turn runs; cleared when the turn ends (the
 // persisted transcript takes over as the durable record).
-const worklog = ref<{ label: string; text: string }[]>([])
+// platform: amber dot (cheese platform action) vs neutral dot (plain work).
+const worklog = ref<{ label: string; text: string; platform: boolean }[]>([])
 const working = ref(false)
 const workingSince = ref<number | null>(null)
 
@@ -644,6 +648,7 @@ function handleToolUsed(name: string, input?: Record<string, unknown>) {
   worklog.value.push({
     label: toolLabel(name),
     text: formatToolAction(name, input),
+    platform: isPlatformAction(name, input),
   })
   if (name === 'update_doc') {
     activityTick.value += 1

@@ -192,6 +192,7 @@ class TopicService:
             author_type=AuthorType.system,
             content=note,
             kind=BlockKind.event,
+            meta={"platform": True},
         )
 
     async def unarchive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
@@ -210,6 +211,7 @@ class TopicService:
             author_type=AuthorType.system,
             content=f"📂 {by} 取消归档，话题恢复活跃",
             kind=BlockKind.event,
+            meta={"platform": True},
         )
         await self._session.flush()
         return topic
@@ -372,6 +374,7 @@ class TopicService:
             content=f"📝 {author} 编辑了文档",
             kind=BlockKind.event,
             refs=[str(doc.id)],
+            meta={"platform": True},
         )
         return doc
 

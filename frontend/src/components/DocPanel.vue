@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { myHandle } from '../me'
-import { summarizeActions } from '../lib/toolLabels'
+import { isPlatformEvent, summarizeActions, toolLabel } from '../lib/toolLabels'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { relTime } from '../lib/relTime'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
@@ -57,7 +57,8 @@ const props = withDefaults(
     // panel reloads the doc 芝士 just wrote. See WorkspaceView activityTick.
     activityTick: number
     // 施工现场: this topic's AI tool-action log, shown in the 现场 drawer.
-    worklog?: { label: string; text: string }[]
+    // platform: amber dot (cheese action) vs neutral dot (plain work).
+    worklog?: { label: string; text: string; platform?: boolean }[]
     // A turn is in flight — the 现场 live feed's newest line pulses.
     working?: boolean
     // Epoch ms when the current turn's first tool ran (drives the ⏱ elapsed).
@@ -723,13 +724,24 @@ const LEGACY_VERB: Record<string, string> = {
   write_file: '写文件',
   record_decision: '记录决策',
 }
-function eventVerb(content: string): string {
-  const first = (content.split('\n')[0] || '').replace(/^🔧\s*/, '')
+// Meta-first rendering: an event block with structured meta ({tool, arg}) is
+// translated at DISPLAY time via the full toolLabels table — so a verb missing
+// from the table at write time is never frozen untranslated. Rows without meta
+// (pre-meta data) fall back to the baked content text.
+function eventVerb(b: Block): string {
+  if (b.meta?.tool) return toolLabel(b.meta.tool)
+  const first = (b.content.split('\n')[0] || '').replace(/^🔧\s*/, '')
   return LEGACY_VERB[first] ?? first
 }
-function eventArg(content: string): string {
-  const nl = content.indexOf('\n')
-  return nl >= 0 ? content.slice(nl + 1).trim() : ''
+function eventArg(b: Block): string {
+  if (b.meta?.tool) return b.meta.arg ?? ''
+  const nl = b.content.indexOf('\n')
+  return nl >= 0 ? b.content.slice(nl + 1).trim() : ''
+}
+// 圆点分级: amber = platform action, neutral = plain work (structured fields
+// only — never guessed from the content text).
+function eventPlatform(b: Block): boolean {
+  return isPlatformEvent(b.meta, b.refs)
 }
 
 const AUTHOR = myHandle()
@@ -1320,11 +1332,14 @@ onBeforeUnmount(() => {
               <template v-for="b in transcript" :key="b.id">
                 <!-- Tool action — Claude Code style: ● verb + ⎿ arg preview -->
                 <div v-if="b.kind === 'event'" class="site-act">
-                  <span class="site-act__dot">●</span>
+                  <span
+                    class="site-act__dot"
+                    :class="{ 'site-act__dot--platform': eventPlatform(b) }"
+                  >●</span>
                   <div class="site-act__body">
-                    <span class="site-act__verb">{{ eventVerb(b.content) }}</span>
-                    <div v-if="eventArg(b.content)" class="site-act__arg">
-                      ⎿ {{ eventArg(b.content) }}
+                    <span class="site-act__verb">{{ eventVerb(b) }}</span>
+                    <div v-if="eventArg(b)" class="site-act__arg">
+                      ⎿ {{ eventArg(b) }}
                     </div>
                   </div>
                   <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
@@ -1354,6 +1369,7 @@ onBeforeUnmount(() => {
                   <span
                     class="site-act__dot"
                     :class="{
+                      'site-act__dot--platform': act.platform,
                       'site-act__dot--live': working && i === worklog.length - 1,
                     }"
                   >●</span>
@@ -2088,10 +2104,6 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--muted, #777);
 }
-.site-act__dot--live {
-  color: rgb(var(--v-theme-primary));
-  animation: site-pulse 1.2s ease-in-out infinite;
-}
 @keyframes site-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
@@ -2099,9 +2111,19 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .site-act__dot--live { animation: none; }
 }
+/* 圆点分级: neutral = plain work (read/search/run), amber = platform action
+   (cheese tool / cheese CLI / doc edit). --live (pulse) overrides both. */
 .site-act__dot {
-  color: var(--accent);
+  color: var(--faint);
   flex: 0 0 auto;
+}
+.site-act__dot--platform {
+  color: var(--accent);
+}
+/* Declared last so the live pulse wins over both dot tiers. */
+.site-act__dot--live {
+  color: rgb(var(--v-theme-primary));
+  animation: site-pulse 1.2s ease-in-out infinite;
 }
 .site-act__body {
   flex: 1 1 auto;
