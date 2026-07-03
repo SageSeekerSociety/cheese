@@ -366,12 +366,20 @@ class TopicService:
         # doc's blocks get stable ids for cross-view highlight / comments later.
         await self._sync_doc_nodes(doc, content)
         # Append-only conversation event (spec H1): the doc edit is visible.
+        # Display name, not raw handle — system lines read as product copy.
+        display = "芝士" if author == "cheese" else author
+        if author != "cheese":
+            from app.domain.user.repositories import UserRepository
+
+            user = await UserRepository(self._session).get_by_handle(author)
+            if user is not None and user.name:
+                display = user.name
         await self._blocks.add(
             project_id=topic.project_id,
             topic_id=topic_id,
             author=author,
             author_type=AuthorType.system,
-            content=f"📝 {author} 编辑了文档",
+            content=f"{display} 编辑了文档",
             kind=BlockKind.event,
             refs=[str(doc.id)],
             meta={"platform": True},

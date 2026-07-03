@@ -721,19 +721,20 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-for="(m, i) in visible" :key="m.id">
-          <!-- action card: 芝士's cheese action this turn, a clickable link -->
+          <!-- action row: 芝士's cheese action this turn — a quiet system line
+               (amber dot = platform act) with an inline amber link, no box. -->
           <div v-if="m.kind === 'event' && actionResource(m)" class="action-card">
-            <span class="action-verb">芝士 {{ m.content }}</span>
-            <v-btn
+            <span class="action-verb">芝士{{ m.content }}</span>
+            <button
               v-if="ACTION_META[actionResource(m)!]?.btn"
-              size="x-small"
-              variant="tonal"
+              type="button"
+              class="action-link"
               @click="
                 emit('open-resource', actionResource(m)!, m.turn_id ?? undefined)
               "
             >
               {{ ACTION_META[actionResource(m)!].btn }}
-            </v-btn>
+            </button>
           </div>
           <!-- system / event blocks: centered, gray, small (Feishu 系统提示) -->
           <div v-else-if="m.kind === 'event'" class="im-event text-caption">
@@ -1029,17 +1030,21 @@ onBeforeUnmount(() => {
 .action-card {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 2px 16px 6px;
-  padding: 5px 10px;
-  border: 1px solid var(--line-2, #e0e0e0);
-  border-radius: 8px;
-  background: var(--fill);
-  font-size: 0.85rem;
-  transition: border-color 0.12s ease;
+  gap: 10px;
+  margin: 2px 16px 4px;
+  padding: 2px 0;
+  font-size: 0.8rem;
 }
-.action-card:hover {
-  border-color: var(--accent);
+.action-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 0.8rem;
+  color: rgb(var(--v-theme-primary));
+  cursor: pointer;
+}
+.action-link:hover {
+  text-decoration: underline;
 }
 .action-verb {
   display: inline-flex;
@@ -1469,10 +1474,8 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 .im-event span {
-  background: var(--fill);
-  border-radius: 10px;
-  padding: 2px 10px;
   display: inline-block;
+  padding: 0 10px;
 }
 
 .caret {
