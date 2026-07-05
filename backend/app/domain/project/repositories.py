@@ -4,7 +4,13 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.project.models import Project, ProjectMemberRole, ProjectMembership
+from app.domain.project.models import (
+    Project,
+    ProjectAiMode,
+    ProjectApprovalPolicy,
+    ProjectMemberRole,
+    ProjectMembership,
+)
 
 
 class ProjectRepository:
@@ -64,6 +70,25 @@ class ProjectRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def set_ai_config(
+        self,
+        project: Project,
+        *,
+        ai_mode: ProjectAiMode | None = None,
+        approval_policy: ProjectApprovalPolicy | None = None,
+        root_thread_id: int | None = None,
+    ) -> Project:
+        """Set the project's 2.0 agent-orchestration config (partial update)."""
+        if ai_mode is not None:
+            project.ai_mode = ai_mode.value
+        if approval_policy is not None:
+            project.approval_policy = approval_policy.value
+        if root_thread_id is not None:
+            project.root_thread_id = root_thread_id
+        project.updated_at = datetime.now(UTC)
+        await self._session.flush()
+        return project
 
     async def save(self, project: Project) -> Project:
         project.updated_at = datetime.now(UTC)
