@@ -15,6 +15,7 @@ from app.domain.knowledge import models as _knowledge  # noqa: F401
 from app.domain.llm import call_logger as _call_logger  # noqa: F401
 from app.domain.llm import models as _llm  # noqa: F401
 from app.domain.materials import models as _materials  # noqa: F401
+from app.domain.milestone import models as _milestone  # noqa: F401
 from app.domain.notification import models as _notification  # noqa: F401
 from app.domain.oauth import models as _oauth  # noqa: F401
 from app.domain.passkey import models as _passkey  # noqa: F401
