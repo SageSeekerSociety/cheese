@@ -2480,7 +2480,13 @@ onBeforeUnmount(() => {
 .doc-handle {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
+  /* The DragHandle plugin pins this element's RIGHT edge to the text's left
+     edge — without the padding the ⠿ glyph literally touches the first
+     character. The padding is the breathing room (Feishu keeps ~14px). */
+  padding-right: 14px;
+  /* Nudge down so the 22px buttons center on the ~29px first text line. */
+  transform: translateY(3px);
 }
 .doc-handle__btn {
   width: 20px;
