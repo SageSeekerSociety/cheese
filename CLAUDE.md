@@ -1,6 +1,19 @@
 # Project Conventions
 
-Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright). See `README.md` for setup and commands.
+Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright) + `connector/` (client-machine components). See `README.md` for setup and commands.
+
+## Cheese Agent Layer
+
+The platform embeds an AI teammate (芝士) that participates in every project through a coding agent running on client machines. Full design: **`docs/design/cheese-agent-layer.md`** (self-contained). Non-negotiable rules when working on this layer:
+
+- Platform senses the agent **only through structured tool calls**. Never regex-parse the agent's natural-language output.
+- The agent's natural output belongs to "现场" (hidden by default). All outward communication goes through tools.
+- A tool = an annotated Python function on the backend; schema/CLI/permission/validation all project from the function. Keep **agent-supplied args separate from injected context** (`actor`/`topic`/`session`) — the actor never comes from an agent arg.
+- Authorize every tool RPC at the **orchestrator → business-function** boundary, against the agent actor's real permissions. `session_token` = identity only, sent in a header, scoped + short-TTL. Never trust a valid token alone.
+- `connector/` is a thin, generic, **versioned** client host: keep all volatile logic (tools, prompts, roles, models, detection rules) fetched from the backend; the connector↔backend protocol is a **frozen public API** — additive-only, backward-compatible. Avoid changes that force clients to update.
+- Orchestrator ↔ business layer communicate by **direct function calls** (no event bus). One **serial queue per topic** — the same topic never runs two agent turns concurrently.
+- Blocks are **append-only**; editing a doc = issuing an instruction; results **require human acceptance**.
+- New topic model is **namespace-isolated** from the existing tag-style `topic`.
 
 ## .claude/ Directory Structure
 
