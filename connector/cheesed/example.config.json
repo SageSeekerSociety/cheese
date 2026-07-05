@@ -1,0 +1,22 @@
+{
+  "backend_ws_url": "ws://127.0.0.1:8099/connector/agent",
+  "backend_http_url": "http://127.0.0.1:8099",
+  "session_token": "demo-token",
+  "local_api_port": 47615,
+  "tmux_path": "",
+  "agent": {
+    "path": "claude",
+    "args": ["--permission-mode", "bypassPermissions"],
+    "cwd": "/home/agent/workspace",
+    "env": ["TERM=xterm-256color"]
+  },
+  "cols": 200,
+  "rows": 50,
+  "quiescence_n": 3,
+  "poll_interval_ms": 1000,
+  "heartbeat_interval_ms": 15000,
+  "prompt_rules": [
+    { "match_substring": "trust", "keys": ["Enter"] },
+    { "match_substring": "Bypass Permissions", "keys": ["Down", "Enter"] }
+  ]
+}

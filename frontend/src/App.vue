@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 
@@ -75,7 +75,31 @@ const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar
 })
 
-const navItems: NavGenericItem[] = [
+// --- Experimental mode ------------------------------------------------
+// Toggled via `?experimental=true` in the URL, persisted so it survives
+// navigation away from that query string. Currently only gates the
+// experimental "项目" (workspace/terminal) nav entry.
+const EXPERIMENTAL_STORAGE_KEY = 'cheese_experimental'
+
+function readPersistedExperimental(): boolean {
+  return window.localStorage.getItem(EXPERIMENTAL_STORAGE_KEY) === 'true'
+}
+
+const experimentalMode = ref(readPersistedExperimental())
+
+const experimentalQueryParam = computed(() => currentRoute.query.experimental)
+watch(
+  experimentalQueryParam,
+  (value) => {
+    if (value === undefined) return
+    const enabled = value === 'true'
+    experimentalMode.value = enabled
+    window.localStorage.setItem(EXPERIMENTAL_STORAGE_KEY, String(enabled))
+  },
+  { immediate: true }
+)
+
+const baseNavItems: NavGenericItem[] = [
   {
     key: 'Home',
     type: 'item',
@@ -110,6 +134,21 @@ const navItems: NavGenericItem[] = [
     icon: 'mdi-assistant',
   },
 ]
+
+const navItems = computed<NavGenericItem[]>(() => {
+  if (!experimentalMode.value) return baseNavItems
+
+  return [
+    ...baseNavItems,
+    {
+      key: 'Workspace',
+      type: 'item',
+      title: '项目',
+      to: '/workspace',
+      icon: 'mdi-folder-multiple',
+    },
+  ]
+})
 </script>
 
 <style lang="scss" scoped>
