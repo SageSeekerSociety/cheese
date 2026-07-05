@@ -18,6 +18,20 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
+from app.auth.core import Action, Resource
+
+
+@dataclass(frozen=True)
+class ToolPermission:
+    """An RBAC requirement a tool declares: it may run only if the actor is
+    authorized to ``action`` the ``resource`` identified by the agent argument
+    named ``resource_arg``. Tools that touch only 2.0-native objects (blocks)
+    declare none — their containment is structural (project from the actor)."""
+
+    action: Action
+    resource: Resource
+    resource_arg: str
+
 _PY_TYPE_TO_JSON_TYPE: dict[type, str] = {
     str: "string",
     int: "integer",
@@ -71,6 +85,8 @@ class ToolDefinition:
     func: Callable[..., Any]
     injected: dict[str, type]
     """Map of parameter name -> injected type (ProjectActor, ToolContext, ...)."""
+    permission: ToolPermission | None = None
+    """Optional RBAC requirement enforced by the invoker before dispatch."""
 
 
 def project_signature(
@@ -117,11 +133,19 @@ class ToolRegistry:
         *,
         name: str | None = None,
         description: str | None = None,
+        permission: ToolPermission | None = None,
     ) -> ToolDefinition:
         tool_name = name or func.__name__
         if tool_name in self._tools:
             raise ValueError(f"tool {tool_name!r} is already registered")
         parameters, injected = project_signature(func, self._injected_types)
+        if permission is not None and permission.resource_arg not in parameters.get(
+            "properties", {}
+        ):
+            raise ValueError(
+                f"tool {tool_name!r} permission references unknown arg "
+                f"{permission.resource_arg!r}"
+            )
         doc = description or (inspect.getdoc(func) or "").strip()
         definition = ToolDefinition(
             name=tool_name,
@@ -129,6 +153,7 @@ class ToolRegistry:
             parameters=parameters,
             func=func,
             injected=injected,
+            permission=permission,
         )
         self._tools[tool_name] = definition
         return definition
@@ -185,12 +210,13 @@ def tool(
     *,
     name: str | None = None,
     description: str | None = None,
+    permission: ToolPermission | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator: registers ``func`` into ``registry``. The function is returned
     unchanged so it stays a plain, directly-callable/testable Python function."""
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        registry.register(func, name=name, description=description)
+        registry.register(func, name=name, description=description, permission=permission)
         return func
 
     return decorator

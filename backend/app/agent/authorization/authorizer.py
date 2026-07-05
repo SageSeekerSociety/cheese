@@ -53,6 +53,17 @@ class ProjectAuthorizer:
         self._projects = project_repo
         self._checker = checker
 
+    async def _agent_gate_open(self, db: AsyncSession, project_id: int) -> bool:
+        project = await self._projects.get_by_id(project_id)
+        return project is not None and project.ai_mode != ProjectAiMode.OFF.value
+
+    async def ensure_agent_gate(self, db: AsyncSession, actor: ProjectActor) -> None:
+        """The universal agent gate: a project with AI off lets no agent act,
+        for ANY action (even 2.0-native ones outside the RBAC engine). No-op for
+        user actors. Raises PermissionDeniedError when closed."""
+        if actor.kind == "agent" and not await self._agent_gate_open(db, actor.project_id):
+            raise PermissionDeniedError(f"project {actor.project_id} has AI turned off")
+
     async def is_allowed(
         self,
         db: AsyncSession,
@@ -62,10 +73,8 @@ class ProjectAuthorizer:
         resource_id: int,
     ) -> bool:
         # Agent gate: AI off => no agent may act, whatever permissions say.
-        if actor.kind == "agent":
-            project = await self._projects.get_by_id(actor.project_id)
-            if project is None or project.ai_mode == ProjectAiMode.OFF.value:
-                return False
+        if actor.kind == "agent" and not await self._agent_gate_open(db, actor.project_id):
+            return False
 
         # Human identities whose real permission counts.
         candidates: list[int] = []
