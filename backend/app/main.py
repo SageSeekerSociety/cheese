@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.routes import (
+    agent_tools,
     ai,
     answers,
     attachments,
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(knowledge.router)
     app.include_router(recruitment.router)
     app.include_router(recruitment.team_recruitment_router)
+    app.include_router(agent_tools.router)
 
     # Mount uploads directory for serving images and other static files
     import os
