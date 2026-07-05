@@ -11,6 +11,7 @@ from app.domain.oauth.services import (
     OAuthProviderConfig,
     OAuthService,
     OAuthUserInfo,
+    RUCProvider,
 )
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -395,6 +396,130 @@ class TestGoogleProviderGetUserInfo:
 
         assert info.email is None
         assert info.username is None
+
+
+# ---------------------------------------------------------------------------
+# RUCProvider (微人大)
+# ---------------------------------------------------------------------------
+
+
+def _ruc_config():
+    return OAuthProviderConfig(
+        id="ruc",
+        name="微人大",
+        client_id="ruc-client-id",
+        client_secret="ruc-secret",
+        authorization_url="https://v.ruc.edu.cn/oauth2/authorize",
+        token_url="https://v.ruc.edu.cn/oauth2/token",
+        redirect_url="https://example.com/callback/ruc",
+        scope=["profile", "userinfo"],
+    )
+
+
+class TestRUCProviderAuthorizationUrl:
+    def test_authorization_url(self):
+        provider = RUCProvider(_ruc_config())
+        url = provider.get_authorization_url("state-xyz")
+        assert url.startswith("https://v.ruc.edu.cn/oauth2/authorize?")
+        assert "client_id=ruc-client-id" in url
+        assert "response_type=code" in url
+        assert "scope=profile+userinfo" in url
+        assert "state=state-xyz" in url
+
+
+class TestRUCProviderExchangeCode:
+    @pytest.mark.anyio
+    async def test_exchange_code(self):
+        provider = RUCProvider(_ruc_config())
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "ruc-tok"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+            result = await provider.exchange_code("ruc-code")
+
+        assert result == {"access_token": "ruc-tok"}
+        call_kwargs = mock_client.post.call_args
+        assert call_kwargs[1]["data"]["grant_type"] == "authorization_code"
+        assert call_kwargs[1]["data"]["code"] == "ruc-code"
+        assert call_kwargs[1]["data"]["client_secret"] == "ruc-secret"
+
+
+class TestRUCProviderGetUserInfo:
+    @pytest.mark.anyio
+    async def test_maps_profile_with_primary_identity(self):
+        provider = RUCProvider(_ruc_config())
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "uid": 100123,
+            "name": "张三",
+            "email": "zhangsan@ruc.edu.cn",
+            "profiles": [
+                {"isprimary": False, "stno": "0000"},
+                {"isprimary": True, "stno": "2021201234"},
+            ],
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+            info = await provider.get_user_info("ruc-token")
+
+        # uid coerced to str; primary identity's stno used as username
+        assert info.id == "100123"
+        assert info.name == "张三"
+        assert info.email == "zhangsan@ruc.edu.cn"
+        assert info.username == "2021201234"
+        assert info.preferred_username == "2021201234"
+
+    @pytest.mark.anyio
+    async def test_falls_back_to_name_without_primary_identity(self):
+        provider = RUCProvider(_ruc_config())
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"uid": "u-9", "name": "李四"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+            info = await provider.get_user_info("ruc-token")
+
+        assert info.id == "u-9"
+        assert info.email is None
+        assert info.username == "李四"
+
+    @pytest.mark.anyio
+    async def test_missing_uid_raises(self):
+        provider = RUCProvider(_ruc_config())
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"name": "无学号"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(BadRequestError),
+        ):
+            await provider.get_user_info("ruc-token")
 
 
 # ---------------------------------------------------------------------------

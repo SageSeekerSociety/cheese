@@ -156,9 +156,59 @@ class GoogleProvider(OAuthProvider):
             )
 
 
+class RUCProvider(OAuthProvider):
+    """微人大 (Renmin University of China) OAuth2 provider.
+
+    Ported from the legacy NestJS plugin (plugins/oauth/ruc.js). Uses the base
+    class authorization-URL builder unchanged; only the token exchange and the
+    profile-to-OAuthUserInfo mapping are provider-specific.
+    """
+
+    async def exchange_code(self, code: str) -> dict[str, Any]:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                self.config.token_url,
+                data={
+                    "client_id": self.config.client_id,
+                    "client_secret": self.config.client_secret,
+                    "grant_type": "authorization_code",
+                    "code": code,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_user_info(self, access_token: str) -> OAuthUserInfo:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://v.ruc.edu.cn/apis/oauth2/v1/profile",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            resp.raise_for_status()
+            profile = resp.json()
+
+            uid = profile.get("uid")
+            if not uid:
+                raise BadRequestError("RUC profile response missing unique user id (uid)")
+
+            profiles = profile.get("profiles") or []
+            primary = next((p for p in profiles if p.get("isprimary") is True), {})
+            student_no = primary.get("stno") or profile.get("name")
+
+            return OAuthUserInfo(
+                id=str(uid),
+                email=profile.get("email") or None,
+                name=profile.get("name"),
+                username=student_no,
+                preferred_username=student_no,
+            )
+
+
 PROVIDER_CLASSES = {
     "github": GitHubProvider,
     "google": GoogleProvider,
+    "ruc": RUCProvider,
 }
 
 
@@ -216,6 +266,17 @@ class OAuthService:
                 token_url="https://oauth2.googleapis.com/token",
                 redirect_url=redirect_url,
                 scope=["openid", "email", "profile"],
+            )
+        elif provider_id == "ruc":
+            return OAuthProviderConfig(
+                id=provider_id,
+                name="微人大",
+                client_id=client_id,
+                client_secret=client_secret,
+                authorization_url="https://v.ruc.edu.cn/oauth2/authorize",
+                token_url="https://v.ruc.edu.cn/oauth2/token",
+                redirect_url=redirect_url,
+                scope=["profile", "userinfo"],
             )
 
         return None
@@ -290,6 +351,7 @@ class OAuthService:
         provider_names = {
             "github": "GitHub",
             "google": "Google",
+            "ruc": "微人大",
         }
         return [
             {

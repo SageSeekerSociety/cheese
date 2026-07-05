@@ -1,4 +1,5 @@
 import asyncio
+import secrets
 from collections.abc import Sequence
 
 import bcrypt
@@ -180,6 +181,41 @@ class UserAuthService:
         profile = await self._profile_repo.create_profile(
             user_id=user.id,
             nickname=nickname,
+            intro="",
+            avatar_id=default_avatar_id,
+        )
+        return user, profile
+
+    async def register_from_oauth(
+        self,
+        *,
+        email: str,
+        nickname: str,
+        preferred_username: str | None = None,
+        default_avatar_id: int = 1,
+    ) -> tuple[User, UserProfile]:
+        """Provision a password-less account for a first-time OAuth login.
+
+        The account has no password (hashed_password stays NULL); the user
+        authenticates solely through the linked OAuth provider. A unique
+        username is derived from the provider identity and de-duplicated.
+        """
+        base = "".join(
+            ch for ch in (preferred_username or email.split("@", 1)[0]) if ch.isalnum() or ch in "_-"
+        )
+        base = base or "ruc_user"
+        username = base
+        while await self._user_repo.is_username_taken(username):
+            username = f"{base}_{secrets.token_hex(3)}"
+
+        user = await self._user_repo.create_user(
+            username=username,
+            email=email,
+            hashed_password=None,
+        )
+        profile = await self._profile_repo.create_profile(
+            user_id=user.id,
+            nickname=nickname or username,
             intro="",
             avatar_id=default_avatar_id,
         )

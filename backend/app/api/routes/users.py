@@ -1,7 +1,9 @@
 import asyncio
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -161,6 +163,8 @@ class CreateInviteCodeRequest(BaseModel):
 
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+logger = logging.getLogger(__name__)
 
 
 async def get_user_auth_service(
@@ -2922,113 +2926,128 @@ async def get_oauth_providers(
     }
 
 
+def _oauth_frontend_url(path: str, **params: str | None) -> str:
+    """Build a frontend landing URL (success/error) for the browser redirect."""
+    from urllib.parse import urlencode
+
+    query = urlencode({k: v for k, v in params.items() if v is not None})
+    return f"{settings.frontend_url}{path}" + (f"?{query}" if query else "")
+
+
 @router.get(
     "/auth/oauth/login/{providerId}",
-    summary="Get OAuth authorization URL",
+    summary="Redirect to the OAuth provider's authorization page",
 )
 async def get_oauth_login_url(
     provider_id: Annotated[str, Path(alias="providerId")],
-    redirect: str | None = Query(default=None),
+    state: str | None = Query(default=None),
     oauth_service: OAuthService = Depends(get_oauth_service),
-) -> dict:
-    import secrets
-
-    state = secrets.token_urlsafe(32)
-
-    if redirect:
-        await oauth_service.store_oauth_state(state, {"redirect": redirect})
-
+) -> RedirectResponse:
+    # The frontend navigates the browser straight to this endpoint, so we
+    # 302-redirect to the provider's authorization page. `state` is generated
+    # by the frontend (CSRF) and passed through to the provider unchanged.
     try:
         auth_url = oauth_service.generate_authorization_url(provider_id, state)
     except NotFoundError:
         raise NotFoundError(f"OAuth provider '{provider_id}' not found or not enabled") from None
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "authorizationUrl": auth_url,
-            "state": state,
-        },
-    }
+    return RedirectResponse(auth_url, status_code=302)
 
 
 @router.get(
     "/auth/oauth/callback/{providerId}",
-    summary="Handle OAuth callback",
+    summary="Handle OAuth callback and log the user in",
 )
 async def handle_oauth_callback(
     provider_id: Annotated[str, Path(alias="providerId")],
     code: str = Query(...),
     state: str | None = Query(default=None),
-    response: Response = None,
+    session: AsyncSession = Depends(get_db),
     oauth_service: OAuthService = Depends(get_oauth_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
-) -> dict:
-    state_data = (await oauth_service.get_oauth_state(state)) if state else None
-    redirect_url = state_data.get("redirect") if state_data else None
-
+) -> RedirectResponse:
+    # Step 1: exchange the code and fetch the provider profile. Any failure here
+    # is an authentication problem — bounce to the frontend error page.
     try:
-        access_token, user_info = await oauth_service.handle_callback(
+        _access_token, user_info = await oauth_service.handle_callback(
             provider_id=provider_id,
             code=code,
             state=state,
         )
-    except Exception as e:
-        raise BadRequestError(f"OAuth authentication failed: {e!s}") from e
+    except Exception:
+        logger.exception("OAuth callback: provider exchange failed for %s", provider_id)
+        return RedirectResponse(
+            _oauth_frontend_url(
+                settings.frontend_oauth_error_path, message="oauth_failed", provider=provider_id
+            ),
+            status_code=302,
+        )
 
-    existing = await oauth_service.get_connection_by_provider(
-        provider_id=provider_id,
-        provider_user_id=user_info.id,
-    )
+    # Step 2: resolve the local account — existing binding, else match by email,
+    # else auto-provision a password-less account — then link and issue tokens.
+    # oauth_service and auth_service share this request's session, so a rollback
+    # here undoes any partial user/connection writes.
+    try:
+        existing = await oauth_service.get_connection_by_provider(
+            provider_id=provider_id,
+            provider_user_id=user_info.id,
+        )
 
-    if existing:
-        user_id = existing["userId"]
-        user, profile = await auth_service.get_user_with_profile(user_id)
+        linked: str | None = None
+        if existing:
+            user_id = existing["userId"]
+        else:
+            user = None
+            if user_info.email:
+                user = await auth_service.get_user_by_email(user_info.email)
+            if user is None:
+                email = user_info.email or f"ruc-{user_info.id}@oauth.ruc.local"
+                user, _profile = await auth_service.register_from_oauth(
+                    email=email,
+                    nickname=user_info.name or user_info.preferred_username or email.split("@")[0],
+                    preferred_username=user_info.preferred_username or user_info.username,
+                )
+            user_id = user.id
+            await oauth_service.create_connection(
+                user_id=user_id,
+                provider_id=provider_id,
+                provider_user_id=user_info.id,
+                raw_profile={"email": user_info.email, "name": user_info.name},
+            )
+            linked = "true"
 
+        user_obj, _profile = await auth_service.get_user_with_profile(user_id)
         access_token_jwt = create_access_token(user_id)
         refresh_token = create_refresh_token(user_id)
-
-        response.set_cookie(
-            "REFRESH_TOKEN",
-            refresh_token,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-            path="/",
+    except Exception:
+        await session.rollback()
+        logger.exception("OAuth callback: account resolution failed for %s", provider_id)
+        return RedirectResponse(
+            _oauth_frontend_url(
+                settings.frontend_oauth_error_path, message="account_error", provider=provider_id
+            ),
+            status_code=302,
         )
 
-        user_dto = await auth_service.build_user_dto(
-            user=user,
-            profile=profile,
-            viewer_id=user_id,
-        )
-        return {
-            "code": 200,
-            "message": "Login successfully.",
-            "data": {
-                "user": user_dto,
-                "accessToken": access_token_jwt,
-                "isNewUser": False,
-                "redirectUrl": redirect_url,
-            },
-        }
-    else:
-        return {
-            "code": 200,
-            "message": "OAuth user info retrieved. Link to existing account or register.",
-            "data": {
-                "userInfo": {
-                    "providerId": provider_id,
-                    "providerUserId": user_info.id,
-                    "email": user_info.email,
-                    "name": user_info.name,
-                    "username": user_info.username,
-                },
-                "isNewUser": True,
-                "redirectUrl": redirect_url,
-            },
-        }
+    redirect = RedirectResponse(
+        _oauth_frontend_url(
+            settings.frontend_oauth_success_path,
+            token=access_token_jwt,
+            email=user_obj.email,
+            provider=provider_id,
+            linked=linked,
+        ),
+        status_code=302,
+    )
+    redirect.set_cookie(
+        "REFRESH_TOKEN",
+        refresh_token,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        path="/",
+    )
+    return redirect
 
 
 @router.post(

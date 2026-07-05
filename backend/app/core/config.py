@@ -116,6 +116,18 @@ class Settings(BaseSettings):
     oauth_google_client_id: str = Field(default="", alias="OAUTH_GOOGLE_CLIENT_ID")
     oauth_google_client_secret: str = Field(default="", alias="OAUTH_GOOGLE_CLIENT_SECRET")
     oauth_google_redirect_url: str = Field(default="", alias="OAUTH_GOOGLE_REDIRECT_URL")
+    # 微人大 (Renmin University of China) OAuth
+    oauth_ruc_client_id: str = Field(default="", alias="OAUTH_RUC_CLIENT_ID")
+    oauth_ruc_client_secret: str = Field(default="", alias="OAUTH_RUC_CLIENT_SECRET")
+    oauth_ruc_redirect_url: str = Field(default="", alias="OAUTH_RUC_REDIRECT_URL")
+    # Frontend landing pages the OAuth callback redirects the browser to.
+    # Combined with FRONTEND_URL; differ only per environment via .env.
+    frontend_oauth_success_path: str = Field(
+        default="/account/oauth/success", alias="FRONTEND_OAUTH_SUCCESS_PATH"
+    )
+    frontend_oauth_error_path: str = Field(
+        default="/account/oauth/error", alias="FRONTEND_OAUTH_ERROR_PATH"
+    )
 
 
 @lru_cache(maxsize=1)

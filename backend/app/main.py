@@ -86,6 +86,16 @@ def create_app() -> FastAPI:
     app.include_router(teams.router)
     app.include_router(tasks.router)
     app.include_router(users.router)
+    # 微人大 OAuth 的回调在其平台登记为 .../api/legacy/users/auth/oauth/callback/ruc。
+    # 上游 API 网关只剥掉 /api/ 前缀，后端因此收到 /legacy/users/auth/oauth/callback/ruc，
+    # 与常规路由 /users/auth/oauth/callback/ruc 不匹配。复用同一处理函数在该 legacy
+    # 前缀路径上再注册一次，让回调无需改网关或微人大白名单即可到达后端。
+    app.add_api_route(
+        "/legacy/users/auth/oauth/callback/{providerId}",
+        users.handle_oauth_callback,
+        methods=["GET"],
+        include_in_schema=False,
+    )
     app.include_router(projects.router)
     app.include_router(spaces.router)
     app.include_router(questions.router)

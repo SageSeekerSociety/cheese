@@ -60,7 +60,7 @@ class UserRepository:
         *,
         username: str,
         email: str,
-        hashed_password: str,
+        hashed_password: str | None = None,
     ) -> User:
         now = datetime.now(UTC)
         email_domain = email.split("@", 1)[1].lower() if "@" in email else None
