@@ -61,9 +61,23 @@ async def main() -> None:
             handlePos: styles ? {position: styles.position, left: styles.left, top: styles.top} : null,
             paraText: p?.textContent?.slice(0, 30),
             phText: ph?.textContent?.slice(0, 30),
+            paraLineHeight: p ? getComputedStyle(p).lineHeight : null,
+            paraFontSize: p ? getComputedStyle(p).fontSize : null,
           }
         }""")
         print(json.dumps(geo, ensure_ascii=False, indent=1))
+        # focus the empty paragraph — caret vs ghost-text left edge
+        await para.click()
+        await pg.wait_for_timeout(300)
+        caret = await pg.evaluate("""() => {
+          const view = document.querySelector('.doc-editor .ProseMirror')
+          const sel = window.getSelection()
+          if (!sel || !sel.rangeCount) return null
+          const r = sel.getRangeAt(0).getBoundingClientRect()
+          const p = view?.querySelector('p')?.getBoundingClientRect()
+          return {caretX: Math.round(r.x), paraX: Math.round(p?.x ?? -1)}
+        }""")
+        print("caret vs ghost-left:", caret)
         # close-up clips
         if geo["para"]:
             y = geo["para"]["y"]

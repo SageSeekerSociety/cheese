@@ -799,7 +799,6 @@ function eventPlatform(b: Block): boolean {
 }
 
 const AUTHOR = myHandle()
-const PLACEHOLDER = '芝士会在这里维护文档，你也可以直接编辑'
 
 const editable = ref(true)
 const loading = ref(false)
@@ -1320,9 +1319,7 @@ onBeforeUnmount(() => {
               </button>
               <span class="doc-handle__btn doc-handle__grip" title="拖动以排序">⠿</span>
             </DragHandle>
-            <p v-if="editor && editor.isEmpty && !loading" class="placeholder">
-              {{ PLACEHOLDER }}
-            </p>
+
           </div>
 
           <!-- 飞书 docs 风常驻评论区: page-level comments (no paragraph anchor)
@@ -1922,13 +1919,16 @@ onBeforeUnmount(() => {
 .doc-editor-wrap {
   position: relative;
 }
-.placeholder {
-  position: absolute;
-  top: 0;
-  left: 0;
-  color: rgba(var(--v-theme-on-surface), 0.4);
+/* Placeholder as ::before INSIDE the empty first paragraph: the ghost text
+   shares the paragraph's exact font metrics, so the caret sits cleanly at
+   its left edge instead of cutting through a misaligned overlay. PM renders
+   an empty doc as <p><br class="ProseMirror-trailingBreak"></p>. */
+.doc-editor :deep(.doc-prose > p:first-child:last-child:has(> br.ProseMirror-trailingBreak:only-child))::before {
+  content: '芝士会在这里维护文档，你也可以直接编辑';
+  color: rgba(var(--v-theme-on-surface), 0.38);
   pointer-events: none;
-  margin: 0;
+  float: left;
+  height: 0;
 }
 /* B1 Phase 2: flash the exact paragraph(s) a turn produced. Rendered as an
    overlay (not a class on the paragraph) because ProseMirror reverts foreign
@@ -2486,7 +2486,7 @@ onBeforeUnmount(() => {
      character. The padding is the breathing room (Feishu keeps ~14px). */
   padding-right: 14px;
   /* Nudge down so the 22px buttons center on the ~29px first text line. */
-  transform: translateY(3px);
+  transform: translateY(3.4px);
 }
 .doc-handle__btn {
   width: 20px;
