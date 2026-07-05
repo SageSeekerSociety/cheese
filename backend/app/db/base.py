@@ -1,6 +1,7 @@
 """Import all model modules so Base.metadata is fully populated for Alembic."""
 
 from app.db.base_class import Base  # noqa: F401
+from app.domain.agent import models as _agent  # noqa: F401
 from app.domain.answers import models as _answers  # noqa: F401
 from app.domain.attachment import models as _attachment  # noqa: F401
 from app.domain.avatars import models as _avatars  # noqa: F401
