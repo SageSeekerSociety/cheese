@@ -21,5 +21,6 @@ from app.domain.questions import models as _questions  # noqa: F401
 from app.domain.space import models as _space  # noqa: F401
 from app.domain.task import models as _task  # noqa: F401
 from app.domain.team import models as _team  # noqa: F401
+from app.domain.thread import models as _thread  # noqa: F401
 from app.domain.topics import models as _topics  # noqa: F401
 from app.domain.user import models as _user  # noqa: F401
