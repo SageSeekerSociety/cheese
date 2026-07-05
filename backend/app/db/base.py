@@ -4,6 +4,7 @@ from app.db.base_class import Base  # noqa: F401
 from app.domain.answers import models as _answers  # noqa: F401
 from app.domain.attachment import models as _attachment  # noqa: F401
 from app.domain.avatars import models as _avatars  # noqa: F401
+from app.domain.block import models as _block  # noqa: F401
 from app.domain.comments import models as _comments  # noqa: F401
 from app.domain.discussion import models as _discussion  # noqa: F401
 from app.domain.groups import models as _groups  # noqa: F401
