@@ -1313,29 +1313,10 @@ function onSlashExit(p: SuggestionProps<SlashItem, SlashItem>) {
   }
 }
 
-// While the ＋-planted "/" is pending, hide that single character via an
-// inline decoration (recomputed per transaction from the live suggestion
-// range) — the plugin still sees it, the reader doesn't.
-function slashScaffoldDecos(state: EditorState): DecorationSet {
-  if (!plusSlashPending || !slashProps) return DecorationSet.empty
-  const { from } = slashProps.range
-  if (from < 0 || from + 1 > state.doc.content.size) return DecorationSet.empty
-  return DecorationSet.create(state.doc, [
-    Decoration.inline(from, from + 1, { class: 'slash-scaffold' }),
-  ])
-}
-
 const SlashCommands = Extension.create({
   name: 'cheeseSlashCommands',
   addProseMirrorPlugins() {
     return [
-      new Plugin({
-        props: {
-          decorations(state) {
-            return slashScaffoldDecos(state)
-          },
-        },
-      }),
       Suggestion<SlashItem, SlashItem>({
         editor: this.editor,
         pluginKey: slashPluginKey,
@@ -1506,12 +1487,21 @@ function onDocNodeChange(data: { node: PMNode | null; pos: number }) {
 function addBlockBelow() {
   const ed = editor.value
   if (!ed || hoverPos.value == null) return
-  const insertAt = hoverPos.value + hoverNodeSize.value
-  // Notion behaviour: ＋ = "new block + immediately ask what it should be".
-  // Inserting a literal "/" arms the same slash suggestion the user would get
-  // by typing it; onSlashExit removes the "/" again if the menu closes with
-  // it still alone in the paragraph.
+  // Notion behaviour: ＋ = "在此块下方插入新块并问它是什么" — a VISIBLE "/"
+  // typed into the new block arms the same slash suggestion typing would
+  // (the slash is real content; typing filters; onSlashExit removes an
+  // orphaned one). Nuance Notion gets right: if the hovered block is ALREADY
+  // an empty paragraph, ask in place — spawning another blank line below an
+  // empty line reads as a bug.
   plusSlashPending = true
+  const hovered = ed.state.doc.nodeAt(hoverPos.value)
+  const emptyPara =
+    hovered?.type.name === 'paragraph' && hovered.content.size === 0
+  if (emptyPara) {
+    ed.chain().focus().setTextSelection(hoverPos.value + 1).insertContent('/').run()
+    return
+  }
+  const insertAt = hoverPos.value + hoverNodeSize.value
   ed.chain()
     .focus()
     .insertContentAt(insertAt, { type: 'paragraph' })
@@ -3172,12 +3162,6 @@ onBeforeUnmount(() => {
   max-width: min(560px, calc(100% - 32px));
   overflow-wrap: anywhere;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
-}
-/* The ＋ handle plants a real "/" to drive the suggestion plugin — but the
-   scaffold char must not READ as content (user: 点+号出现/很怪). font-size:0
-   keeps it in the doc (plugin + caret anchored) while invisible. */
-.doc-editor :deep(.slash-scaffold) {
-  font-size: 0;
 }
 
 /* A2: in-place live-ref badge — a subtopic spawned from this paragraph. It's a
