@@ -15,29 +15,18 @@ from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes._shared import require_project_access
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.block.models import AuthorKind, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.services import BlockService
-from app.domain.project.repositories import ProjectMembershipRepository, ProjectRepository
 from app.domain.thread.models import Thread, ThreadKind
 from app.domain.thread.repositories import ThreadRepository
 from app.domain.thread.services import ThreadService
 
 router = APIRouter(prefix="/threads", tags=["Threads"])
-
-
-async def _require_project_access(db: AsyncSession, user_id: int, project_id: int) -> None:
-    project = await ProjectRepository(db).get_by_id(project_id)
-    if project is None:
-        raise NotFoundError(f"Project {project_id} not found")
-    if project.leader_id == user_id:
-        return
-    if await ProjectMembershipRepository(db).get_relation(project_id, user_id) is None:
-        raise ForbiddenError("not a member of this project")
 
 
 def _thread_service(db: AsyncSession) -> ThreadService:
@@ -87,7 +76,7 @@ async def create_thread(
     db: AsyncSession = Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
-    await _require_project_access(db, auth_user.user_id, payload.project_id)
+    await require_project_access(db, auth_user.user_id, payload.project_id)
     thread = await _thread_service(db).create_thread(
         project_id=payload.project_id,
         created_by_id=auth_user.user_id,
@@ -104,7 +93,7 @@ async def list_threads(
     db: AsyncSession = Depends(get_db),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
-    await _require_project_access(db, auth_user.user_id, project_id)
+    await require_project_access(db, auth_user.user_id, project_id)
     threads = await _thread_service(db).list_by_project(project_id)
     return {
         "code": 200,
@@ -121,7 +110,7 @@ async def post_message(
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     thread = await _thread_service(db).get_thread(thread_id)
-    await _require_project_access(db, auth_user.user_id, thread.project_id)
+    await require_project_access(db, auth_user.user_id, thread.project_id)
     block = await BlockService(BlockRepository(db)).create_block(
         project_id=thread.project_id,
         content=payload.content,
@@ -142,7 +131,7 @@ async def list_messages(
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     thread = await _thread_service(db).get_thread(thread_id)
-    await _require_project_access(db, auth_user.user_id, thread.project_id)
+    await require_project_access(db, auth_user.user_id, thread.project_id)
     after_id = int(page_start) if page_start and page_start.isdigit() else 0
     blocks = await BlockService(BlockRepository(db)).list_thread(
         thread_id, after_id=after_id, limit=page_size

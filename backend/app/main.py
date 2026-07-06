@@ -10,6 +10,7 @@ from app.api.routes import (
     answers,
     attachments,
     avatars,
+    blocks,
     comments,
     discussions,
     groups,
@@ -116,6 +117,7 @@ def create_app() -> FastAPI:
     app.include_router(recruitment.team_recruitment_router)
     app.include_router(agent_tools.router)
     app.include_router(threads.router)
+    app.include_router(blocks.router)
 
     # Mount uploads directory for serving images and other static files
     import os
