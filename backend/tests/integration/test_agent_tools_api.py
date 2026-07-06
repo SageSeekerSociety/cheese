@@ -89,6 +89,32 @@ class TestAgentToolsApi:
         )
         assert resp.status_code == 401
 
+    def test_wrong_typed_arg_returns_400_not_500(self):
+        project_id, _ = self._seed_project(ProjectAiMode.ASSISTED)
+        token = mint_agent_session(
+            ProjectActor(kind="agent", actor_id=55, project_id=project_id)
+        )
+        # thread_id must be an integer; a string must be rejected cleanly (400),
+        # never reach asyncpg as a 500.
+        resp = self.client.post(
+            "/agent/tools/call",
+            headers={"X-Agent-Session": token},
+            json={"tool": "post_message", "args": {"thread_id": "abc", "content": "hi"}},
+        )
+        assert resp.status_code == 400
+
+    def test_null_content_returns_400_not_500(self):
+        project_id, thread_id = self._seed_project(ProjectAiMode.ASSISTED)
+        token = mint_agent_session(
+            ProjectActor(kind="agent", actor_id=55, project_id=project_id)
+        )
+        resp = self.client.post(
+            "/agent/tools/call",
+            headers={"X-Agent-Session": token},
+            json={"tool": "post_message", "args": {"thread_id": thread_id, "content": None}},
+        )
+        assert resp.status_code == 400
+
     def test_agent_gate_blocks_when_ai_off(self):
         project_id, thread_id = self._seed_project(ProjectAiMode.OFF)
         token = mint_agent_session(

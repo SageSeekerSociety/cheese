@@ -43,10 +43,16 @@ def decode_agent_session(token: str) -> ProjectActor:
     kind = payload.get("kind")
     if kind not in ("user", "agent"):
         raise AuthenticationRequiredError("invalid actor kind in agent session token")
-    on_behalf = payload.get("on_behalf_of")
+    try:
+        actor_id = int(payload["actor_id"])
+        project_id = int(payload["project_id"])
+        on_behalf = payload.get("on_behalf_of")
+        on_behalf_id = int(on_behalf) if on_behalf is not None else None
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AuthenticationRequiredError("malformed agent session token") from exc
     return ProjectActor(
         kind=kind,
-        actor_id=int(payload["actor_id"]),
-        project_id=int(payload["project_id"]),
-        on_behalf_of_user_id=int(on_behalf) if on_behalf is not None else None,
+        actor_id=actor_id,
+        project_id=project_id,
+        on_behalf_of_user_id=on_behalf_id,
     )

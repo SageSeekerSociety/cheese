@@ -122,6 +122,28 @@ def project_signature(
     return schema, injected
 
 
+def _matches_type(value: Any, fragment: dict[str, Any]) -> bool:
+    """Whether ``value`` conforms to a projected JSON-Schema fragment. ``bool``
+    is rejected where an integer/number is expected (Python's bool-is-int trap).
+    Fragments without a concrete ``type`` (Any / anyOf) are not constrained."""
+    if value is None:
+        return bool(fragment.get("nullable", False))
+    expected = fragment.get("type")
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "object":
+        return isinstance(value, dict)
+    return True  # unconstrained fragment ({} / anyOf) — cannot type-check
+
+
 class ToolRegistry:
     def __init__(self, injected_types: tuple[type, ...] = ()) -> None:
         self._injected_types = injected_types
@@ -168,16 +190,23 @@ class ToolRegistry:
         ]
 
     def validate_args(self, definition: ToolDefinition, args: dict[str, Any]) -> None:
-        """Every required property present, no unknown properties. Raises
-        ``ValueError`` on failure."""
+        """Every required property present, no unknown properties, and each
+        value matching its projected JSON-Schema type. Raises ``ValueError`` on
+        failure — the invoker maps that to a 400 so bad agent input never
+        reaches the DB layer as a 500."""
+        properties: dict[str, Any] = definition.parameters.get("properties", {})
         required = definition.parameters.get("required", [])
         missing = [key for key in required if key not in args]
         if missing:
             raise ValueError(f"missing required argument(s): {', '.join(sorted(missing))}")
-        allowed = set(definition.parameters.get("properties", {}))
-        unknown = [key for key in args if key not in allowed]
+        unknown = [key for key in args if key not in properties]
         if unknown:
             raise ValueError(f"unexpected argument(s): {', '.join(sorted(unknown))}")
+        for key, value in args.items():
+            fragment = properties[key]
+            if not _matches_type(value, fragment):
+                expected = fragment.get("type", "the declared type")
+                raise ValueError(f"argument {key!r} must be {expected}")
 
     async def invoke(
         self, name: str, args: dict[str, Any], injected: dict[type, Any]

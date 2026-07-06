@@ -60,7 +60,12 @@ class ProjectAuthorizer:
     async def ensure_agent_gate(self, db: AsyncSession, actor: ProjectActor) -> None:
         """The universal agent gate: a project with AI off lets no agent act,
         for ANY action (even 2.0-native ones outside the RBAC engine). No-op for
-        user actors. Raises PermissionDeniedError when closed."""
+        user actors. Raises PermissionDeniedError when closed.
+
+        NOTE: this enforces ai_mode only. The ASSISTED ``approval_policy``
+        (per-action human approval) is enforced orchestrator-side — it gates
+        whether an action is dispatched / a token minted — not here.
+        """
         if actor.kind == "agent" and not await self._agent_gate_open(db, actor.project_id):
             raise PermissionDeniedError(f"project {actor.project_id} has AI turned off")
 
@@ -93,6 +98,10 @@ class ProjectAuthorizer:
                 candidates.append(granter)
 
         # Live re-check: a share is only worth what its granter currently holds.
+        # NOTE: called without a permission `context`, so a context-dependent
+        # PermissionRule (e.g. owner_only) evaluates False here — this only ever
+        # fails CLOSED (never over-grants). Thread a resource context through
+        # once a permission-declaring tool targets such a resource.
         for uid in candidates:
             info = AuthUserInfo(user_id=uid)
             if await self._checker.check_permission(db, info, action, resource, resource_id):

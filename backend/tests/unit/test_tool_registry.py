@@ -67,3 +67,20 @@ async def test_invoke_unknown_tool_raises():
     reg, actor, ctx = _registry()
     with pytest.raises(KeyError):
         await reg.invoke("nope", {}, injected={_Actor: actor, _Ctx: ctx})
+
+
+def test_validate_rejects_wrong_types():
+    reg, _, _ = _registry()
+    definition = reg.get("sample")
+    assert definition is not None
+    # a: int given a string
+    with pytest.raises(ValueError):
+        reg.validate_args(definition, {"a": "not-int", "c": None})
+    # c: int | None given a non-int, non-None
+    with pytest.raises(ValueError):
+        reg.validate_args(definition, {"a": 1, "c": "nope"})
+    # bool is rejected where integer is expected (Python bool-is-int trap)
+    with pytest.raises(ValueError):
+        reg.validate_args(definition, {"a": True, "c": None})
+    # valid types (including nullable None) pass
+    reg.validate_args(definition, {"a": 1, "c": None, "b": "ok"})
