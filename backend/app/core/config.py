@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     )
     ai_daily_quota: float = Field(default=10.0, alias="AI_DAILY_QUOTA")
 
+    # Proxmox VE (compute machine manager). Empty defaults so no secret is
+    # committed; the running instance supplies these via env.
+    pve_api_url: str = Field(default="", alias="PVE_API_URL")
+    pve_token_id: str = Field(default="", alias="PVE_TOKEN_ID")
+    pve_token_secret: str = Field(default="", alias="PVE_TOKEN_SECRET")
+    pve_verify_ssl: bool = Field(default=True, alias="PVE_VERIFY_SSL")
+
     # WebAuthn / Passkey configuration
     webauthn_rp_id: str = Field(default="localhost", alias="WEBAUTHN_RP_ID")
     webauthn_rp_name: str = Field(default="Cheese Community", alias="WEBAUTHN_RP_NAME")
