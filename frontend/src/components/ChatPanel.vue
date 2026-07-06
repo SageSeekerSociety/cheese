@@ -915,7 +915,7 @@ onBeforeUnmount(() => {
         v-if="errorMsg"
         type="error"
         density="compact"
-        class="ma-3 mt-0 flex-shrink-0"
+        class="chat-error-toast"
         closable
         @click:close="errorMsg = null"
       >
@@ -1030,13 +1030,27 @@ onBeforeUnmount(() => {
 /* Action cards (§3.1.1 控件) — 芝士's cheese actions as clickable affordances.
    Same visual language as the reaction chips / event pills: quiet fill, hairline
    border, an amber platform dot marking "the platform recorded this". */
+/* System lines are ONE visual family: centered, small, muted — whether they
+   carry an action link (amber dot = platform act) or are plain notices. */
 .action-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 2px 16px 4px;
-  padding: 2px 0;
-  font-size: 0.8rem;
+  justify-content: center;
+  gap: 8px;
+  margin: 8px 16px;
+  padding: 0;
+  font-size: 12px;
+  color: var(--faint);
+}
+.chat-error-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: min(560px, calc(100% - 32px));
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
 }
 .action-link {
   border: none;

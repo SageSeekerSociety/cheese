@@ -254,6 +254,58 @@ function liveRefDecorations(doc: PMNode): DecorationSet {
   return DecorationSet.create(doc, decos)
 }
 
+// ---- 评论下划线 (Feishu): each anchored comment's quote gets a clickable
+// dashed underline in the doc. Deterministic: the stored quote is OUR
+// structured field; we locate it by exact substring inside its anchored
+// block (positional node↔block alignment, same as live-refs). No match →
+// no mark (the paragraph changed; the bottom card already says so). ----
+let commentMarkIndex = new Map<number, { id: string; quote: string }[]>()
+const commentMarkKey = new PluginKey('cheeseCommentMarks')
+
+function commentMarkDecorations(doc: PMNode): DecorationSet {
+  const decos: Decoration[] = []
+  doc.forEach((node, offset, index) => {
+    const anchored = commentMarkIndex.get(index)
+    if (!anchored?.length) return
+    const text = node.textContent
+    for (const c of anchored) {
+      const at = text.indexOf(c.quote)
+      if (at < 0) continue
+      // +1: past the block's opening token into its text content.
+      decos.push(
+        Decoration.inline(offset + 1 + at, offset + 1 + at + c.quote.length, {
+          class: 'comment-anchor',
+          'data-comment': c.id,
+        }),
+      )
+    }
+  })
+  return DecorationSet.create(doc, decos)
+}
+
+const CommentMarks = Extension.create({
+  name: 'cheeseCommentMarks',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: commentMarkKey,
+        state: {
+          init: (_cfg, state) => commentMarkDecorations(state.doc),
+          apply: (tr, old) => {
+            if (tr.getMeta(commentMarkKey)) return commentMarkDecorations(tr.doc)
+            return tr.docChanged ? old.map(tr.mapping, tr.doc) : old
+          },
+        },
+        props: {
+          decorations(state) {
+            return this.getState(state)
+          },
+        },
+      }),
+    ]
+  },
+})
+
 const LiveRefBadges = Extension.create({
   name: 'cheeseLiveRefBadges',
   addProseMirrorPlugins() {
@@ -437,6 +489,23 @@ async function loadComments(tid: string) {
   anchorNodes.value = ns.data
   // Same fetch feeds the in-doc live-ref badges (widget decorations).
   refreshLiveRefBadges(ns.data)
+  // …and the comment underlines: node id → top-level index, then group the
+  // anchored comments (with usable quotes) under their block's index.
+  const idToIndex = new Map(ns.data.map((n, i) => [n.id, i]))
+  const nextMarks = new Map<number, { id: string; quote: string }[]>()
+  for (const c of cs.data) {
+    const anchorId = c.reply_to
+    const quote = (c.anchor_quote || '').trim()
+    if (!anchorId || !quote) continue
+    const idx = idToIndex.get(anchorId)
+    if (idx === undefined) continue
+    const list = nextMarks.get(idx) ?? []
+    list.push({ id: c.id, quote })
+    nextMarks.set(idx, list)
+  }
+  commentMarkIndex = nextMarks
+  const cmView = editor.value?.view
+  if (cmView) cmView.dispatch(cmView.state.tr.setMeta(commentMarkKey, true))
 }
 
 // 飞书 docs 风常驻评论区: ALL comments live at the bottom of the document —
@@ -915,6 +984,12 @@ function onDocClick(e: MouseEvent) {
     emit('open-topic', lr.dataset.topic)
     return
   }
+  // Comment underline → scroll to its card at the doc bottom.
+  const ca = target?.closest('.comment-anchor') as HTMLElement | null
+  if (ca?.dataset.comment) {
+    scrollToCommentCard(ca.dataset.comment)
+    return
+  }
   // Links: in READ mode the rendered <a target=_blank> navigates natively; in
   // EDIT mode a plain click places the caret and ⌘/Ctrl-click opens the link
   // (the editor-standard gesture, same as VS Code / Feishu).
@@ -1032,6 +1107,18 @@ async function copyCodeBlock() {
   } catch {
     errorMsg.value = '复制失败'
   }
+}
+
+// An underlined quote scrolls to its comment card at the doc bottom and
+// pulses it (the reverse jump — card→paragraph — already exists via the chip).
+function scrollToCommentCard(commentId: string) {
+  commentsFolded.value = false
+  void nextTick(() => {
+    const card = document.querySelector(`[data-comment-card="${commentId}"]`)
+    card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    card?.classList.add('comment-card--pulse')
+    window.setTimeout(() => card?.classList.remove('comment-card--pulse'), 1600)
+  })
 }
 
 // A <&path> chip opens that file in the 文件 drawer's editor.
@@ -1226,10 +1313,29 @@ function onSlashExit(p: SuggestionProps<SlashItem, SlashItem>) {
   }
 }
 
+// While the ＋-planted "/" is pending, hide that single character via an
+// inline decoration (recomputed per transaction from the live suggestion
+// range) — the plugin still sees it, the reader doesn't.
+function slashScaffoldDecos(state: EditorState): DecorationSet {
+  if (!plusSlashPending || !slashProps) return DecorationSet.empty
+  const { from } = slashProps.range
+  if (from < 0 || from + 1 > state.doc.content.size) return DecorationSet.empty
+  return DecorationSet.create(state.doc, [
+    Decoration.inline(from, from + 1, { class: 'slash-scaffold' }),
+  ])
+}
+
 const SlashCommands = Extension.create({
   name: 'cheeseSlashCommands',
   addProseMirrorPlugins() {
     return [
+      new Plugin({
+        props: {
+          decorations(state) {
+            return slashScaffoldDecos(state)
+          },
+        },
+      }),
       Suggestion<SlashItem, SlashItem>({
         editor: this.editor,
         pluginKey: slashPluginKey,
@@ -1273,6 +1379,7 @@ const editor = useEditor({
     ...docExtensions({ resolveImageSrc }),
     TokenChips,
     LiveRefBadges,
+    CommentMarks,
     SlashCommands,
   ],
   editable: editable.value,
@@ -1929,7 +2036,7 @@ onBeforeUnmount(() => {
               />
             </div>
             <template v-if="!commentsFolded">
-              <div v-for="c in comments" :key="c.id" class="doc-comments__item">
+              <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
                 <span class="doc-comments__avatar">
                   {{ (c.author || '?').slice(0, 1).toUpperCase() }}
                 </span>
@@ -3039,6 +3146,23 @@ onBeforeUnmount(() => {
   background: white;
 }
 
+/* Feishu-style comment anchor: quiet dashed amber underline; hover lifts. */
+.doc-editor :deep(.comment-anchor) {
+  border-bottom: 1.5px dashed rgba(var(--v-theme-primary), 0.55);
+  padding-bottom: 1px;
+  cursor: pointer;
+}
+.doc-editor :deep(.comment-anchor:hover) {
+  background: rgba(var(--v-theme-primary), 0.08);
+}
+.comment-card--pulse {
+  animation: comment-pulse 1.5s ease;
+}
+@keyframes comment-pulse {
+  0% { background: rgba(var(--v-theme-primary), 0.16); }
+  100% { background: transparent; }
+}
+
 .doc-error-toast {
   position: absolute;
   left: 50%;
@@ -3046,7 +3170,14 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
   z-index: 30;
   max-width: min(560px, calc(100% - 32px));
+  overflow-wrap: anywhere;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+/* The ＋ handle plants a real "/" to drive the suggestion plugin — but the
+   scaffold char must not READ as content (user: 点+号出现/很怪). font-size:0
+   keeps it in the doc (plugin + caret anchored) while invisible. */
+.doc-editor :deep(.slash-scaffold) {
+  font-size: 0;
 }
 
 /* A2: in-place live-ref badge — a subtopic spawned from this paragraph. It's a
