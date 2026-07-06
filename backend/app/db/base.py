@@ -21,6 +21,7 @@ from app.domain.oauth import models as _oauth  # noqa: F401
 from app.domain.passkey import models as _passkey  # noqa: F401
 from app.domain.project import models as _project  # noqa: F401
 from app.domain.questions import models as _questions  # noqa: F401
+from app.domain.review import models as _review  # noqa: F401
 from app.domain.space import models as _space  # noqa: F401
 from app.domain.task import models as _task  # noqa: F401
 from app.domain.team import models as _team  # noqa: F401
