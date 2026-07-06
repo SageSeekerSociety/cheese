@@ -11,12 +11,12 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import StarterKit from '@tiptap/starter-kit'
-import { Markdown } from '@tiptap/markdown'
-// Without the table nodes registered, @tiptap/markdown silently DROPS every GFM
-// table on parse (the token has no fallback), and a later save would write the
-// table-less doc back — data loss, not just a display bug.
-import { TableKit } from '@tiptap/extension-table'
+// The editor schema + round-trip fidelity machinery live in docMarkdown.ts —
+// ONE extension list shared with the corpus tests, so "what the tests prove"
+// and "what the editor runs" can never drift apart. (History: TipTap without
+// the table extension silently DROPPED every GFM table on parse, and a later
+// save wrote the table-less doc back — data loss. 军规 1.)
+import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
 import CheeseAvatar from './CheeseAvatar.vue'
 import CodeEditor from './CodeEditor.vue'
 import {
@@ -812,6 +812,43 @@ const errorMsg = ref<string | null>(null)
 const lastSavedMarkdown = ref<string>('')
 const dirty = ref(false)
 
+// ---- 军规 1: never silently drop content. ----
+// The raw doc exactly as stored on the server (the git-tracked markdown file).
+const rawDoc = ref<string>('')
+// The `# title\n` line stripped for display (the panel shows the topic title
+// itself); re-prepended on save so the FILE keeps its heading.
+const titlePrefix = ref<string>('')
+// Lossy load detected: parse→serialize differs from the file beyond the
+// tolerances documented in docMarkdown.ts. Autosave pauses; manual save asks.
+const lossy = ref(false)
+const lossyConfirmOpen = ref(false)
+// 源码模式: edit the raw markdown in Monaco — the lossless escape hatch.
+const sourceMode = ref(false)
+const sourceDraft = ref('')
+
+// Full markdown the file should contain if we saved right now.
+function currentFullMarkdown(): string {
+  if (sourceMode.value) return sourceDraft.value
+  const ed = editor.value
+  if (!ed) return rawDoc.value
+  return titlePrefix.value + serializeDoc(ed)
+}
+
+// Compare the loaded markdown against its immediate parse→serialize round
+// trip. Runs on every load/reload; result drives the banner + autosave pause.
+function checkFidelity(md: string) {
+  const ed = editor.value
+  if (!ed) return
+  const report = compareRoundTrip(md, serializeDoc(ed))
+  lossy.value = !report.clean
+  if (!report.clean) {
+    console.debug(
+      '[doc] lossy load detected — visual edit would rewrite these lines:\n' +
+        report.diff,
+    )
+  }
+}
+
 // 结构化 token 装饰 (spec §9.1): decorate our OWN tokens — <@handle> /
 // <#topicId> — as clickable chips in the doc, read-only and edit alike.
 // Deterministic token parsing, never NL guessing.
@@ -904,11 +941,59 @@ function onDocClick(e: MouseEvent) {
     emit('open-topic', lr.dataset.topic)
     return
   }
+  // Links: in READ mode the rendered <a target=_blank> navigates natively; in
+  // EDIT mode a plain click places the caret and ⌘/Ctrl-click opens the link
+  // (the editor-standard gesture, same as VS Code / Feishu).
+  const a = target?.closest('.doc-editor a[href]') as HTMLAnchorElement | null
+  if (a && editable.value) {
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault()
+      window.open(a.href, '_blank', 'noopener')
+    }
+    return
+  }
   const el = target?.closest('.mention') as HTMLElement | null
   if (!el) return
   if (el.dataset.topic) emit('open-topic', el.dataset.topic)
   else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
   else if (el.dataset.file) void openFileRef(el.dataset.file)
+}
+
+// ---- Code block copy (hover, like the chat's quiet .im-act buttons). The
+// button is an overlay OUTSIDE the editable DOM (ProseMirror reverts foreign
+// children), positioned over the hovered <pre>'s top-right corner. ----
+const codeCopy = ref<{ top: number; left: number; done: boolean } | null>(null)
+let codeCopyPre: HTMLElement | null = null
+
+function onDocMouseOver(e: MouseEvent) {
+  const t = e.target as HTMLElement | null
+  if (t?.closest('.doc-codecopy')) return // hovering the button itself
+  const pre = t?.closest('.doc-editor pre') as HTMLElement | null
+  if (!pre) {
+    codeCopy.value = null
+    codeCopyPre = null
+    return
+  }
+  if (pre === codeCopyPre && codeCopy.value) return
+  const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
+  if (!wrap) return
+  const wr = wrap.getBoundingClientRect()
+  const pr = pre.getBoundingClientRect()
+  codeCopyPre = pre
+  codeCopy.value = { top: pr.top - wr.top + 6, left: pr.right - wr.left - 34, done: false }
+}
+
+async function copyCodeBlock() {
+  if (!codeCopyPre || !codeCopy.value) return
+  try {
+    await navigator.clipboard.writeText(codeCopyPre.innerText.replace(/\n$/, ''))
+    codeCopy.value = { ...codeCopy.value, done: true }
+    window.setTimeout(() => {
+      if (codeCopy.value) codeCopy.value = { ...codeCopy.value, done: false }
+    }, 1200)
+  } catch {
+    errorMsg.value = '复制失败'
+  }
 }
 
 // A <&path> chip opens that file in the 文件 drawer's editor.
@@ -919,12 +1004,21 @@ async function openFileRef(path: string) {
   await selectFile(path)
 }
 
+// Display-time image src resolution: workspace-relative paths (uploads/x.png)
+// render through the raw-file API; absolute http(s)/data URLs pass through.
+// The node attr keeps the ORIGINAL path — serialization writes it back
+// verbatim, so a localhost URL never leaks into the markdown file.
+function resolveImageSrc(src: string): string {
+  if (/^(https?:|data:|blob:|\/)/i.test(src)) return src
+  const pid = projectId.value
+  if (!pid) return src
+  return workspaceFileRawUrl(pid, src.replace(/^\.\//, ''), props.topic?.id)
+}
+
 const editor = useEditor({
   content: '',
   extensions: [
-    StarterKit,
-    Markdown,
-    TableKit.configure({ table: { resizable: false } }),
+    ...docExtensions({ resolveImageSrc }),
     TokenChips,
     LiveRefBadges,
   ],
@@ -1066,12 +1160,28 @@ function setEditorMarkdown(md: string) {
 
 // The panel already renders the topic title as the page title (Feishu Docs).
 // A doc whose first line is an H1 EXACTLY equal to that title would show it
-// twice — drop that one line (pure string equality, no guessing).
-function stripDuplicateTitle(md: string): string {
+// twice — strip it for DISPLAY but remember the exact prefix: save() prepends
+// it again, so the file never loses its heading (pure string equality, no
+// guessing, no loss).
+function splitDuplicateTitle(md: string): { prefix: string; body: string } {
   const title = props.topic?.title?.trim()
-  if (!title) return md
+  if (!title) return { prefix: '', body: md }
   const m = md.match(/^#\s+(.+?)\s*\n+/)
-  return m && m[1].trim() === title ? md.slice(m[0].length) : md
+  return m && m[1].trim() === title
+    ? { prefix: m[0], body: md.slice(m[0].length) }
+    : { prefix: '', body: md }
+}
+
+// Install fresh server content into the panel state (editor + source draft +
+// fidelity check). The one place load & reload share.
+function installDoc(full: string) {
+  const { prefix, body } = splitDuplicateTitle(full)
+  rawDoc.value = full
+  titlePrefix.value = prefix
+  lastSavedMarkdown.value = body
+  sourceDraft.value = full
+  setEditorMarkdown(body)
+  checkFidelity(body)
 }
 
 async function loadDoc(topicId: string) {
@@ -1081,9 +1191,7 @@ async function loadDoc(topicId: string) {
     const block = await getDoc(topicId)
     // Avoid races on fast topic switching.
     if (props.topic?.id !== topicId) return
-    const md = stripDuplicateTitle(block?.content ?? '')
-    lastSavedMarkdown.value = md
-    setEditorMarkdown(md)
+    installDoc(block?.content ?? '')
     dirty.value = false
     savedAt.value = null
     // A2 badges + 常驻评论区: refresh nodes/comments for the new doc.
@@ -1102,10 +1210,9 @@ async function reloadFromActivity(topicId: string) {
   try {
     const block = await getDoc(topicId)
     if (props.topic?.id !== topicId) return
-    const md = stripDuplicateTitle(block?.content ?? '')
-    if (md !== lastSavedMarkdown.value) {
-      lastSavedMarkdown.value = md
-      setEditorMarkdown(md)
+    const full = block?.content ?? ''
+    if (full !== rawDoc.value) {
+      installDoc(full)
       savedAt.value = null
     }
     // A2 badges + 常驻评论区: refresh alongside the doc content.
@@ -1118,10 +1225,14 @@ async function reloadFromActivity(topicId: string) {
 // Feishu-style autosave: an explicit 保存 button reads as unfinished software.
 // Debounced from the LAST keystroke (not the dirty flip, which only fires
 // once per dirty cycle); ⌘S still saves immediately.
+// 军规 1: when a lossy load was detected, VISUAL-mode autosave is paused —
+// writing the round-tripped doc back would destroy the unsupported syntax.
+// Source mode edits the raw text, so its autosave is always safe.
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null
 function queueAutosave() {
   if (autosaveTimer) clearTimeout(autosaveTimer)
   autosaveTimer = setTimeout(() => {
+    if (lossy.value && !sourceMode.value) return
     if (dirty.value && editable.value && !saving.value) void save()
   }, 2500)
 }
@@ -1133,22 +1244,30 @@ function onDocKeydown(e: KeyboardEvent) {
   }
 }
 
-async function save() {
-  const ed = editor.value
+async function save(force = false) {
   const topic = props.topic
-  if (!ed || !topic) return
-  const md = ed.getMarkdown()
-  if (md === lastSavedMarkdown.value) {
+  if (!topic || saving.value) return
+  // Lossy visual save needs explicit confirmation (源码模式 is the safe path).
+  if (lossy.value && !sourceMode.value && !force) {
+    lossyConfirmOpen.value = true
+    return
+  }
+  const full = currentFullMarkdown()
+  if (full === rawDoc.value) {
     dirty.value = false
     return
   }
   saving.value = true
   errorMsg.value = null
   try {
-    await putDoc(topic.id, md, AUTHOR)
-    lastSavedMarkdown.value = md
+    await putDoc(topic.id, full, AUTHOR)
+    rawDoc.value = full
+    lastSavedMarkdown.value = splitDuplicateTitle(full).body
+    if (!sourceMode.value) sourceDraft.value = full
     dirty.value = false
     savedAt.value = Date.now()
+    // A confirmed lossy overwrite: what's on disk now IS the editor's view.
+    if (force) lossy.value = false
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '保存失败'
   } finally {
@@ -1156,8 +1275,14 @@ async function save() {
   }
 }
 
+// The lossy-confirm dialog's 「仍要保存」.
+function confirmLossySave() {
+  lossyConfirmOpen.value = false
+  void save(true)
+}
+
 function onBlur() {
-  if (dirty.value) save()
+  if (dirty.value && !(lossy.value && !sourceMode.value)) save()
 }
 
 function toggleEditable() {
@@ -1165,13 +1290,68 @@ function toggleEditable() {
   editor.value?.setEditable(editable.value)
 }
 
+// ---- 源码模式: raw markdown in Monaco. Entering shows the exact file
+// content (or the current unsaved visual edits, serialized); leaving parses
+// the draft back into the visual editor and re-runs the fidelity check. ----
+function enterSourceMode() {
+  lossyConfirmOpen.value = false
+  if (lossy.value) {
+    // 军规 1: on a lossy doc the source view must show the FILE, never the
+    // degraded serialization — otherwise the escape hatch itself corrupts.
+    // Unsaved visual edits (autosave was paused) are not carried over; say so.
+    if (dirty.value) {
+      errorMsg.value = '源码模式已载入磁盘原文；可视化模式下未保存的改动未带入'
+    }
+    sourceDraft.value = rawDoc.value
+    dirty.value = false
+  } else {
+    sourceDraft.value = dirty.value ? currentFullMarkdown() : rawDoc.value
+  }
+  sourceMode.value = true
+}
+
+function exitSourceMode() {
+  sourceMode.value = false
+  const { prefix, body } = splitDuplicateTitle(sourceDraft.value)
+  titlePrefix.value = prefix
+  setEditorMarkdown(body)
+  checkFidelity(body)
+  dirty.value = sourceDraft.value !== rawDoc.value
+  if (dirty.value) queueAutosave()
+}
+
+function toggleSourceMode() {
+  if (sourceMode.value) exitSourceMode()
+  else enterSourceMode()
+}
+
+// Typing in the source editor: same dirty + autosave contract as the visual
+// editor (source autosave is never paused — raw text can't be lossy).
+function onSourceInput(v: string) {
+  sourceDraft.value = v
+  if (loadingFromServer.value) return
+  dirty.value = v !== rawDoc.value
+  if (dirty.value) {
+    savedAt.value = null
+    queueAutosave()
+  }
+}
+
 // Topic switch: full reload.
 watch(
   () => props.topic?.id,
   (id) => {
+    // Doc fidelity state is per-topic — reset before the new doc loads.
+    sourceMode.value = false
+    lossy.value = false
+    lossyConfirmOpen.value = false
+    codeCopy.value = null
     if (id) loadDoc(id)
     else {
       lastSavedMarkdown.value = ''
+      rawDoc.value = ''
+      titlePrefix.value = ''
+      sourceDraft.value = ''
       dirty.value = false
       setEditorMarkdown('')
     }
@@ -1240,8 +1420,26 @@ onBeforeUnmount(() => {
         </span>
         <span v-else-if="dirty" class="t-meta me-2">编辑中…</span>
 
-        <v-btn size="small" variant="text" class="me-1 c-muted" @click="toggleEditable">
+        <v-btn
+          size="small"
+          variant="text"
+          class="me-1 c-muted"
+          :disabled="sourceMode"
+          @click="toggleEditable"
+        >
           {{ editable ? '只读' : '编辑' }}
+        </v-btn>
+        <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
+             syntax the visual editor can't fully represent (军规 1). -->
+        <v-btn
+          size="small"
+          variant="text"
+          class="me-1"
+          :class="sourceMode ? 'tool-btn--active' : 'c-muted'"
+          title="源码模式（直接编辑 markdown 原文）"
+          @click="toggleSourceMode"
+        >
+          源码
         </v-btn>
         <v-divider vertical class="mx-1" />
 
@@ -1270,16 +1468,46 @@ onBeforeUnmount(() => {
 
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
+      <!-- 源码模式: the raw markdown file in Monaco. Full-bleed (no page
+           column) — this is the file itself, not the document view. -->
+      <div v-if="sourceMode" class="doc-source" @keydown="onDocKeydown">
+        <CodeEditor
+          :model-value="sourceDraft"
+          filename="doc.md"
+          :readonly="!editable"
+          @update:model-value="onSourceInput"
+          @save="save()"
+        />
+      </div>
       <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
       <div
+        v-else
         class="doc-body overflow-y-auto"
         :class="{ readonly: !editable }"
         @focusout="onBlur"
+        @scroll.passive="codeCopy = null"
       >
         <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
           <!-- Large document title (Feishu Docs), = the topic title -->
           <h1 class="doc-page__title">{{ topic.title }}</h1>
-          <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown">
+          <!-- 军规 1 banner: this doc uses syntax the visual editor can't
+               fully represent — autosave is paused, source mode is lossless. -->
+          <div v-if="lossy" class="doc-lossy-banner">
+            <v-icon size="16" class="doc-lossy-banner__icon">mdi-alert-outline</v-icon>
+            <div class="doc-lossy-banner__text">
+              此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。
+              自动保存已暂停——建议用源码模式编辑。
+            </div>
+            <button type="button" class="doc-lossy-banner__btn" @click="enterSourceMode">
+              源码模式
+            </button>
+          </div>
+          <div
+            class="doc-editor-wrap"
+            @click="onDocClick"
+            @keydown="onDocKeydown"
+            @mouseover="onDocMouseOver"
+          >
             <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
             <!-- B4 Feishu-style: select text in the doc → a floating 评论 button
                  appears over the selection. Click to comment on that span. -->
@@ -1294,6 +1522,22 @@ onBeforeUnmount(() => {
             >
               <v-icon size="14">mdi-comment-plus-outline</v-icon>
               评论
+            </button>
+            <!-- Code-block copy: quiet hover button (chat .im-act language),
+                 an overlay so it never lives inside ProseMirror's DOM. -->
+            <button
+              v-if="codeCopy"
+              type="button"
+              class="doc-codecopy"
+              :class="{ 'doc-codecopy--done': codeCopy.done }"
+              :style="{ top: `${codeCopy.top}px`, left: `${codeCopy.left}px` }"
+              :title="codeCopy.done ? '已复制' : '复制代码'"
+              @mousedown.prevent
+              @click="copyCodeBlock"
+            >
+              <v-icon size="14">
+                {{ codeCopy.done ? 'mdi-check' : 'mdi-content-copy' }}
+              </v-icon>
             </button>
             <!-- A2 in-place live-refs are ProseMirror widget decorations now —
                  rendered in the document flow at the end of their paragraph by
@@ -1868,6 +2112,32 @@ onBeforeUnmount(() => {
           />
         </div>
       </Teleport>
+
+      <!-- 军规 1: manual save of a lossy-loaded doc needs explicit consent. -->
+      <v-dialog v-model="lossyConfirmOpen" max-width="440">
+        <v-card rounded="lg">
+          <v-card-title class="text-subtitle-1 d-flex align-center ga-2">
+            <v-icon size="20" color="warning">mdi-alert-outline</v-icon>
+            确认覆盖保存？
+          </v-card-title>
+          <v-card-text class="text-body-2 pt-0">
+            此文档包含可视化编辑器暂不完全支持的语法。直接保存会按编辑器的理解重写文件，
+            不支持的格式将丢失。用源码模式编辑可以完整保留原文。
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn size="small" variant="text" @click="lossyConfirmOpen = false">
+              取消
+            </v-btn>
+            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode">
+              用源码模式
+            </v-btn>
+            <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave">
+              仍要保存
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
       <!-- Floating, never clipped: the old flow-layout alert sat below the
            scroll stage and rendered half-hidden at the panel edge. -->
@@ -2730,21 +3000,39 @@ onBeforeUnmount(() => {
   background: var(--fill);
   color: var(--muted);
 }
+/* ---- Document typography: Feishu-quiet rhythm. Heading sizes step down
+   evenly; vertical space leans UP (more before than after) so headings bind
+   to their section. ---- */
 .doc-editor :deep(h1) {
   font-size: 1.6em;
-  font-weight: 600;
+  font-weight: 650;
   letter-spacing: -0.015em;
-  margin: 0.4em 0 0.45em;
+  line-height: 1.35;
+  margin: 1.1em 0 0.4em;
 }
 .doc-editor :deep(h2) {
-  font-size: 1.28em;
+  font-size: 1.32em;
   font-weight: 600;
-  margin: 1.1em 0 0.3em;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  margin: 1.15em 0 0.35em;
 }
 .doc-editor :deep(h3) {
-  font-size: 1.1em;
+  font-size: 1.13em;
   font-weight: 600;
-  margin: 0.9em 0 0.3em;
+  line-height: 1.45;
+  margin: 1em 0 0.3em;
+}
+.doc-editor :deep(h4) {
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 0.9em 0 0.25em;
+  color: var(--ink);
+}
+/* The doc starts flush: no phantom gap above a leading heading. */
+.doc-editor :deep(.doc-prose > :first-child) {
+  margin-top: 0;
 }
 .doc-editor :deep(p) {
   margin: 0 0 0.75em;
@@ -2752,13 +3040,13 @@ onBeforeUnmount(() => {
 .doc-editor :deep(ul),
 .doc-editor :deep(ol) {
   margin: 0.4em 0 0.75em;
-  padding-left: 1.4em;
+  padding-left: 1.5em;
 }
 .doc-editor :deep(li) {
   margin: 0.25em 0;
 }
 .doc-editor :deep(li::marker) {
-  color: var(--faint);
+  color: var(--muted);
 }
 .doc-editor :deep(li p) {
   margin: 0;
@@ -2766,11 +3054,58 @@ onBeforeUnmount(() => {
 .doc-editor :deep(strong) {
   font-weight: 600;
 }
+/* 任务列表 (GFM `- [ ]`): checkbox row, marker-less. Checked items fade —
+   done work goes quiet, not struck through. */
+.doc-editor :deep(ul[data-type='taskList']) {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.doc-editor :deep(ul[data-type='taskList'] li) {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.doc-editor :deep(ul[data-type='taskList'] li > label) {
+  flex: 0 0 auto;
+  user-select: none;
+}
+.doc-editor :deep(ul[data-type='taskList'] li > div) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.doc-editor :deep(ul[data-type='taskList'] input[type='checkbox']) {
+  width: 15px;
+  height: 15px;
+  accent-color: rgb(var(--v-theme-primary));
+  cursor: pointer;
+  vertical-align: middle;
+  margin: 0;
+}
+.readonly .doc-editor :deep(ul[data-type='taskList'] input[type='checkbox']) {
+  cursor: default;
+}
+.doc-editor :deep(ul[data-type='taskList'] li[data-checked='true'] > div) {
+  color: var(--muted);
+}
+/* Nested task lists indent under the checkbox column. */
+.doc-editor :deep(ul[data-type='taskList'] ul[data-type='taskList']) {
+  padding-left: 1.6em;
+  margin: 0.25em 0 0;
+}
 .doc-editor :deep(blockquote) {
   margin: 0.7em 0;
-  padding: 0.1em 0 0.1em 16px;
-  border-left: 2px solid rgba(var(--v-theme-on-surface), 0.2);
-  color: rgba(var(--v-theme-on-surface), 0.7);
+  padding: 6px 14px;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  color: rgba(var(--v-theme-on-surface), 0.72);
+}
+.doc-editor :deep(blockquote blockquote) {
+  margin: 0.4em 0;
+  background: transparent;
+}
+.doc-editor :deep(blockquote p:last-child) {
+  margin-bottom: 0;
 }
 .doc-editor :deep(code) {
   font-family: var(--font-mono);
@@ -2779,27 +3114,187 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   font-size: 0.87em;
 }
+/* 代码块: light ground + hairline, language tag in the top-right corner
+   (hidden while hovered — the copy button takes that spot). */
 .doc-editor :deep(pre) {
-  background: var(--fill);
+  position: relative;
+  background: var(--bg-2, #f7f8fa);
+  border: 1px solid var(--line-2, #ececec);
   padding: 13px 15px;
   border-radius: 8px;
   overflow-x: auto;
   margin: 0.7em 0;
+  font-size: 0.855em;
+  line-height: 1.6;
+}
+.doc-editor :deep(pre[data-language])::before {
+  content: attr(data-language);
+  position: absolute;
+  top: 5px;
+  right: 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  text-transform: lowercase;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.doc-editor :deep(pre:hover)::before {
+  opacity: 0;
 }
 .doc-editor :deep(pre) code {
   background: none;
   padding: 0;
+  font-size: inherit;
+}
+/* lowlight token colors — same palette as CodeEditor's cheesex-light Monaco
+   theme (light ground, low saturation), so 文档里的代码和文件编辑器一个气质. */
+.doc-editor :deep(.hljs-comment),
+.doc-editor :deep(.hljs-quote) {
+  color: #8a8f98;
+  font-style: italic;
+}
+.doc-editor :deep(.hljs-keyword),
+.doc-editor :deep(.hljs-selector-tag),
+.doc-editor :deep(.hljs-literal),
+.doc-editor :deep(.hljs-doctag),
+.doc-editor :deep(.hljs-meta) {
+  color: #0b5cad;
+}
+.doc-editor :deep(.hljs-string),
+.doc-editor :deep(.hljs-regexp),
+.doc-editor :deep(.hljs-addition) {
+  color: #a8471c;
+}
+.doc-editor :deep(.hljs-number),
+.doc-editor :deep(.hljs-symbol),
+.doc-editor :deep(.hljs-bullet) {
+  color: #0a7a52;
+}
+.doc-editor :deep(.hljs-title),
+.doc-editor :deep(.hljs-section),
+.doc-editor :deep(.hljs-name),
+.doc-editor :deep(.hljs-function) {
+  color: #8a6d1b;
+}
+.doc-editor :deep(.hljs-type),
+.doc-editor :deep(.hljs-class),
+.doc-editor :deep(.hljs-built_in),
+.doc-editor :deep(.hljs-attr),
+.doc-editor :deep(.hljs-attribute),
+.doc-editor :deep(.hljs-variable),
+.doc-editor :deep(.hljs-template-variable) {
+  color: #267f99;
+}
+.doc-editor :deep(.hljs-deletion) {
+  color: #b3403a;
+}
+.doc-editor :deep(.hljs-emphasis) {
+  font-style: italic;
+}
+.doc-editor :deep(.hljs-strong) {
+  font-weight: 600;
 }
 .doc-editor :deep(hr) {
   border: none;
-  border-top: 1px solid var(--line);
-  margin: 1.2em 0;
+  border-top: 1px solid var(--line-2, #ececec);
+  margin: 1.6em 0;
 }
+/* 链接: 主题琥珀 ink, quiet until hover. */
 .doc-editor :deep(a) {
   color: var(--accent-ink);
   text-decoration: none;
+  cursor: pointer;
 }
 .doc-editor :deep(a:hover) {
   text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* 图片: soft corners, never wider than the column. */
+.doc-editor :deep(img) {
+  max-width: 100%;
+  border-radius: 8px;
+  display: block;
+  margin: 0.6em 0;
+}
+.doc-editor :deep(img.ProseMirror-selectednode) {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
+}
+/* Table rows breathe on hover (body only, not the header). */
+.doc-editor :deep(.doc-prose tbody tr:hover td) {
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+}
+
+/* ---- 军规 1 UI ---- */
+/* Lossy-load banner: amber, quiet, right above the doc. */
+.doc-lossy-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 720px;
+  margin: 0 auto 16px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.doc-lossy-banner__icon {
+  color: var(--accent);
+  margin-top: 2px;
+}
+.doc-lossy-banner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.doc-lossy-banner__btn {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--surface);
+  color: var(--accent-ink);
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.doc-lossy-banner__btn:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+/* 源码模式: Monaco fills the stage (it scrolls itself). */
+.doc-source {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+/* Code-block copy button: the chat hover-action language — surface ground,
+   hairline border, muted icon, only present while hovering the block. */
+.doc-codecopy {
+  position: absolute;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border: 1px solid var(--line-2, #ececec);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(16, 18, 22, 0.08);
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.doc-codecopy:hover {
+  color: var(--ink);
+  border-color: var(--line);
+}
+.doc-codecopy--done {
+  color: #35b37e;
+  border-color: color-mix(in srgb, #35b37e 40%, transparent);
 }
 </style>
