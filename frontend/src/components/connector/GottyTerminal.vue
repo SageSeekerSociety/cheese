@@ -227,6 +227,11 @@ function connect() {
   socket.onopen = () => {
     connected.value = true
     reconnectDelayMs = 500
+    // The session is live once the socket opens. Fine-grained phase
+    // (idle/prompt) is reported by the backend via {"t":"status"} — the thin
+    // client no longer detects it — so default to "running" here and let a
+    // real status message refine it if/when one arrives.
+    if (phase.value === 'connecting') phase.value = 'running'
     fitAndNotify()
     pingTimer = setInterval(() => sendFrame('2', ''), 15000)
   }
