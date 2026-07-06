@@ -10,6 +10,7 @@ from app.api.routes import (
     attachments,
     avatars,
     comments,
+    connector,
     discussions,
     documents,
     groups,
@@ -119,6 +120,8 @@ def create_app() -> FastAPI:
     app.include_router(threads.router)
     app.include_router(documents.router)
     app.include_router(workitems.router)
+    # 知是 2.0 agent plane (connector): tool schema + callback + 现场 relay.
+    app.include_router(connector.router)
 
     # Mount uploads directory for serving images and other static files
     import os
