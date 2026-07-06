@@ -1374,7 +1374,12 @@ function onBlur() {
 
 function toggleEditable() {
   editable.value = !editable.value
-  editor.value?.setEditable(editable.value)
+  // emitUpdate=false: tiptap v3's setEditable fires a synthetic 'update' by
+  // default (no doc change!) — our onUpdate would mark the doc dirty and,
+  // in readonly, autosave never runs, so 「编辑中…」 stuck forever.
+  editor.value?.setEditable(editable.value, false)
+  // Leaving edit mode with unsaved content = save now (飞书 semantics).
+  if (!editable.value && dirty.value) void save()
 }
 
 // ---- 源码模式: raw markdown in Monaco. Entering shows the exact file
