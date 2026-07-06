@@ -962,7 +962,7 @@ function onDocClick(e: MouseEvent) {
 // ---- Code block copy (hover, like the chat's quiet .im-act buttons). The
 // button is an overlay OUTSIDE the editable DOM (ProseMirror reverts foreign
 // children), positioned over the hovered <pre>'s top-right corner. ----
-const codeCopy = ref<{ top: number; left: number; done: boolean } | null>(null)
+const codeCopy = ref<{ top: number; right: number; done: boolean } | null>(null)
 let codeCopyPre: HTMLElement | null = null
 
 function onDocMouseOver(e: MouseEvent) {
@@ -984,7 +984,7 @@ function onDocMouseOver(e: MouseEvent) {
   const wr = wrap.getBoundingClientRect()
   const pr = pre.getBoundingClientRect()
   codeCopyPre = pre
-  codeCopy.value = { top: pr.top - wr.top + 6, left: pr.right - wr.left - 34, done: false }
+  codeCopy.value = { top: pr.top - wr.top + 6, right: pr.right - wr.left - 8, done: false }
 }
 
 // Curated language choices for the picker (all present in lowlight common).
@@ -993,6 +993,30 @@ const CODE_LANGS = [
   'html', 'css', 'go', 'rust', 'java', 'c', 'cpp', 'markdown', 'plaintext',
 ]
 const codeLangOpen = ref(false)
+
+// The open language menu must dismiss on ANY outside interaction, including
+// clicks far outside the editor — document-level capture listener while open.
+function onGlobalPointerDown(e: MouseEvent) {
+  if (!(e.target as HTMLElement | null)?.closest('.doc-codelang')) {
+    codeLangOpen.value = false
+  }
+}
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') codeLangOpen.value = false
+}
+watch(codeLangOpen, (open) => {
+  if (open) {
+    document.addEventListener('mousedown', onGlobalPointerDown, true)
+    document.addEventListener('keydown', onGlobalKeydown, true)
+  } else {
+    document.removeEventListener('mousedown', onGlobalPointerDown, true)
+    document.removeEventListener('keydown', onGlobalKeydown, true)
+  }
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onGlobalPointerDown, true)
+  document.removeEventListener('keydown', onGlobalKeydown, true)
+})
 
 function currentCodeLang(): string {
   return codeCopyPre?.getAttribute('data-language') || '语言'
@@ -1586,45 +1610,44 @@ onBeforeUnmount(() => {
               <v-icon size="14">mdi-comment-plus-outline</v-icon>
               评论
             </button>
-            <!-- Code-block language picker: the corner tag becomes a real
-                 control while hovering (editable mode only). -->
+            <!-- Code-block hover toolbar: ONE right-anchored flex bar
+                 ([language ∨][copy]) growing leftward — the two controls can
+                 no longer overlap however long the language name gets. -->
             <div
-              v-if="codeCopy && editable"
-              class="doc-codelang"
-              :style="{ top: `${codeCopy.top}px`, left: `${codeCopy.left - 74}px` }"
-            >
-              <button type="button" class="doc-codelang__chip" @click="codeLangOpen = !codeLangOpen">
-                {{ currentCodeLang() }}
-                <v-icon size="12">mdi-chevron-down</v-icon>
-              </button>
-              <div v-if="codeLangOpen" class="doc-codelang__menu">
-                <button
-                  v-for="l in CODE_LANGS"
-                  :key="l"
-                  type="button"
-                  class="doc-codelang__item"
-                  @click="setCodeBlockLang(l)"
-                >
-                  {{ l }}
-                </button>
-              </div>
-            </div>
-            <!-- Code-block copy: quiet hover button (chat .im-act language),
-                 an overlay so it never lives inside ProseMirror's DOM. -->
-            <button
               v-if="codeCopy"
-              type="button"
-              class="doc-codecopy"
-              :class="{ 'doc-codecopy--done': codeCopy.done }"
-              :style="{ top: `${codeCopy.top}px`, left: `${codeCopy.left}px` }"
-              :title="codeCopy.done ? '已复制' : '复制代码'"
-              @mousedown.prevent
-              @click="copyCodeBlock"
+              class="doc-codebar"
+              :style="{ top: `${codeCopy.top}px`, left: `${codeCopy.right}px` }"
             >
-              <v-icon size="14">
-                {{ codeCopy.done ? 'mdi-check' : 'mdi-content-copy' }}
-              </v-icon>
-            </button>
+              <div v-if="editable" class="doc-codelang">
+                <button type="button" class="doc-codelang__chip" @click="codeLangOpen = !codeLangOpen">
+                  {{ currentCodeLang() }}
+                  <v-icon size="12">mdi-chevron-down</v-icon>
+                </button>
+                <div v-if="codeLangOpen" class="doc-codelang__menu">
+                  <button
+                    v-for="l in CODE_LANGS"
+                    :key="l"
+                    type="button"
+                    class="doc-codelang__item"
+                    @click="setCodeBlockLang(l)"
+                  >
+                    {{ l }}
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="doc-codecopy"
+                :class="{ 'doc-codecopy--done': codeCopy.done }"
+                :title="codeCopy.done ? '已复制' : '复制代码'"
+                @mousedown.prevent
+                @click="copyCodeBlock"
+              >
+                <v-icon size="14">
+                  {{ codeCopy.done ? 'mdi-check' : 'mdi-content-copy' }}
+                </v-icon>
+              </button>
+            </div>
             <!-- A2 in-place live-refs are ProseMirror widget decorations now —
                  rendered in the document flow at the end of their paragraph by
                  the LiveRefBadges extension (no overlay, no cursor dead zone).
@@ -3357,9 +3380,16 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
 }
-.doc-codelang {
+.doc-codebar {
   position: absolute;
   z-index: 6;
+  transform: translateX(-100%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.doc-codelang {
+  position: relative;
 }
 .doc-codelang__chip {
   display: inline-flex;
@@ -3410,7 +3440,6 @@ onBeforeUnmount(() => {
 /* Code-block copy button: the chat hover-action language — surface ground,
    hairline border, muted icon, only present while hovering the block. */
 .doc-codecopy {
-  position: absolute;
   z-index: 5;
   display: inline-flex;
   align-items: center;

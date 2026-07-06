@@ -61,6 +61,22 @@ async def main() -> None:
         await pg.wait_for_timeout(300)
         lang = await pg.locator(".doc-editor pre").first.get_attribute("data-language")
         print("language after pick:", lang)
+        # long language name must not overlap the copy button
+        await pg.locator(".doc-editor pre").first.hover()
+        await pg.wait_for_timeout(300)
+        rects = await pg.evaluate("""() => {
+          const chip = document.querySelector('.doc-codelang__chip')?.getBoundingClientRect()
+          const copy = document.querySelector('.doc-codecopy')?.getBoundingClientRect()
+          return chip && copy ? {overlap: chip.right > copy.left, gap: Math.round(copy.left - chip.right)} : null
+        }""")
+        print("chip/copy overlap check:", rects)
+        # open menu, click far outside (chat panel) → must dismiss
+        await pg.click(".doc-codelang__chip")
+        await pg.wait_for_timeout(200)
+        await pg.mouse.click(500, 400)
+        await pg.wait_for_timeout(200)
+        menu_open = await pg.locator(".doc-codelang__menu").count()
+        print("menu after outside click:", menu_open)
         await pg.screenshot(path="tmp_review/codeblock-tab-lang.png",
             clip={"x": 930, "y": 100, "width": 560, "height": 400})
         # autosave (2.5s debounce) must persist the language change even
