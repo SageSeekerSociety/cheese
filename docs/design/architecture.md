@@ -266,20 +266,21 @@ connector/          客户机组件(Go;受冻结原则约束,见 §7)
 
 ### 实现进度(分支 `design/cheese-agent-layer`)
 
-**已建成**(每项迁移可回滚、ruff/pyright 零、测试通过;整仓 2809 tests 绿):
+**已建成**(每项迁移可回滚、ruff/pyright 零、测试通过;整仓 2821 tests 绿;安全关键路径经独立对抗式评审,无授权绕过):
 
 - 数据地基:`domain/block`(双树+refs)、`domain/thread`(群聊+成员+关注策略 schema)、`domain/document`(活文档投影)。
 - 聚合根:`domain/agent`(项目所属 actor 注册表)、`domain/project` 扩展(ai_mode/审批/根话题)。
 - 权限(一等公民):`domain/grant`(能力委托给项目,可撤回)、`agent/authorization`(ProjectAuthorizer:活委托 + agent 门 + 复用 permission_checker)、`agent_session` JWT。
-- AI→平台工具链:`agent/tools`(注册表 + 注入式上下文 + ToolInvoker + block 工具)、`api/routes/agent_tools`(可达的 `/agent/tools` RPC,已挂进 main)。
+- AI→平台工具链:`agent/tools`(注册表 + 注入式上下文 + 参数类型校验 + ToolInvoker + block 工具)、`api/routes/agent_tools`(可达的 `/agent/tools` RPC,已挂进 main)。
 - 芝士引擎接口:`agent/interfaces`(抽象 Agent)、`agent/adapters/{recording,naive_api}`。
+- 业务域:`domain/review`(验收:accept/reject)、`domain/milestone`(deadline/日历)。
 
 **未建**(下一步):
 
 - 平台→AI 编排运行时(`agent/orchestration`):每群串行队列、关注唤醒、事项/triage/对话锁/抢占 —— **待 §14 拍板**。
 - `cheesed_codex` 适配器 + 连接器传输(交互式 Claude Code;客户机 Go 产物在 `archive/connector-debug-slice`)。
-- naive_api 的真实 ChatModel 绑定(AsyncOpenAI 工具调用)。
-- `domain/{review,milestone}`、notification 扩展(agent 决策请求)、`compute/*`、`agent/{memory,skills,roles}`。
+- naive_api 的真实 ChatModel 绑定(AsyncOpenAI 工具调用);采纳=merge 的 git 落地。
+- notification 扩展(agent 决策请求)、`compute/*`(PVE provisioning)、`agent/{memory,skills,roles}`。
 
 ---
 
