@@ -11,6 +11,7 @@ from app.api.routes import (
     avatars,
     comments,
     discussions,
+    documents,
     groups,
     health,
     knowledge,
@@ -23,8 +24,10 @@ from app.api.routes import (
     spaces,
     tasks,
     teams,
+    threads,
     topics_legacy,
     users,
+    workitems,
 )
 from app.auth.domains import (
     register_knowledge_permissions,
@@ -112,6 +115,10 @@ def create_app() -> FastAPI:
     app.include_router(knowledge.router)
     app.include_router(recruitment.router)
     app.include_router(recruitment.team_recruitment_router)
+    # 知是 2.0 workspace (Phase-A mock contract): 群聊 / 文档 / 事项
+    app.include_router(threads.router)
+    app.include_router(documents.router)
+    app.include_router(workitems.router)
 
     # Mount uploads directory for serving images and other static files
     import os
