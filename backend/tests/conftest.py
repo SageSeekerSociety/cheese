@@ -1,3 +1,10 @@
+from app.core.config import settings
+
+# Tests always run on the DB memory backend: the openviking backend holds an
+# exclusive data-dir lock (owned by the dev server when it's running), and
+# tests must not depend on — or corrupt — the live memory store.
+settings.memory_backend = "db"
+
 """Test fixtures.
 
 Uses an in-memory SQLite database (StaticPool so every connection shares the
