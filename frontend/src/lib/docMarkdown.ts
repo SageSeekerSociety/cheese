@@ -52,6 +52,46 @@ const DocImage = Image.extend<DocImageOptions & ImageOptions>({
 // ---- Code block: lowlight highlighting + a data-language attribute on <pre>
 // so CSS can show the language corner tag (content: attr(data-language)).
 const DocCodeBlock = CodeBlockLowlight.extend({
+  addKeyboardShortcuts() {
+    return {
+      ...this.parent?.(),
+      // Tab must INDENT inside a code block, not throw focus out of the
+      // editor. Single caret inserts \t; a multi-line selection indents
+      // every touched line. Shift-Tab dedents (one \t or up to 2 spaces).
+      Tab: () => {
+        if (!this.editor.isActive(this.name)) return false
+        const { state } = this.editor
+        const { from, to } = state.selection
+        const multiline = state.doc.textBetween(from, to, '\n').includes('\n')
+        if (!multiline) return this.editor.commands.insertContent('\t')
+        const text = state.doc.textBetween(from, to, '\n')
+        const indented = text
+          .split('\n')
+          .map((l) => '\t' + l)
+          .join('\n')
+        return this.editor.commands.insertContentAt({ from, to }, indented)
+      },
+      'Shift-Tab': () => {
+        if (!this.editor.isActive(this.name)) return false
+        const { state } = this.editor
+        const { from, to } = state.selection
+        const $from = state.doc.resolve(from)
+        const lineStart = from - $from.parentOffset
+        const blockText = $from.parent.textContent
+        // Locate the current line's start inside the block.
+        const beforeCaret = blockText.slice(0, $from.parentOffset)
+        const relLineStart = beforeCaret.lastIndexOf('\n') + 1
+        const absLineStart = lineStart + relLineStart
+        const line = blockText.slice(relLineStart)
+        const m = line.match(/^(\t| {1,2})/)
+        if (!m) return true // nothing to dedent — swallow the key anyway
+        return this.editor.commands.deleteRange({
+          from: absLineStart,
+          to: absLineStart + m[1].length,
+        })
+      },
+    }
+  },
   renderHTML({ node, HTMLAttributes }) {
     return [
       'pre',

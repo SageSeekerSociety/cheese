@@ -967,20 +967,60 @@ let codeCopyPre: HTMLElement | null = null
 
 function onDocMouseOver(e: MouseEvent) {
   const t = e.target as HTMLElement | null
-  if (t?.closest('.doc-codecopy')) return // hovering the button itself
+  // Hovering the overlay controls themselves must not unmount them.
+  if (t?.closest('.doc-codecopy') || t?.closest('.doc-codelang')) return
   const pre = t?.closest('.doc-editor pre') as HTMLElement | null
   if (!pre) {
-    codeCopy.value = null
-    codeCopyPre = null
+    if (!codeLangOpen.value) {
+      codeCopy.value = null
+      codeCopyPre = null
+    }
     return
   }
   if (pre === codeCopyPre && codeCopy.value) return
+  codeLangOpen.value = false
   const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
   if (!wrap) return
   const wr = wrap.getBoundingClientRect()
   const pr = pre.getBoundingClientRect()
   codeCopyPre = pre
   codeCopy.value = { top: pr.top - wr.top + 6, left: pr.right - wr.left - 34, done: false }
+}
+
+// Curated language choices for the picker (all present in lowlight common).
+const CODE_LANGS = [
+  'python', 'typescript', 'javascript', 'bash', 'json', 'yaml', 'sql',
+  'html', 'css', 'go', 'rust', 'java', 'c', 'cpp', 'markdown', 'plaintext',
+]
+const codeLangOpen = ref(false)
+
+function currentCodeLang(): string {
+  return codeCopyPre?.getAttribute('data-language') || '语言'
+}
+
+function setCodeBlockLang(lang: string) {
+  codeLangOpen.value = false
+  const ed = editor.value
+  if (!ed || !codeCopyPre) return
+  try {
+    const pos = ed.view.posAtDOM(codeCopyPre, 0)
+    const $pos = ed.state.doc.resolve(pos)
+    // Walk up to the codeBlock node and rewrite its language attr.
+    for (let d = $pos.depth; d >= 0; d--) {
+      const node = $pos.node(d)
+      if (node.type.name === 'codeBlock') {
+        const at = d > 0 ? $pos.before(d) : 0
+        const tr = ed.state.tr.setNodeMarkup(at, undefined, {
+          ...node.attrs,
+          language: lang === 'plaintext' ? null : lang,
+        })
+        ed.view.dispatch(tr)
+        return
+      }
+    }
+  } catch {
+    // best-effort — the block may have moved; the next hover re-anchors
+  }
 }
 
 async function copyCodeBlock() {
@@ -1015,6 +1055,16 @@ function resolveImageSrc(src: string): string {
   return workspaceFileRawUrl(pid, src.replace(/^\.\//, ''), props.topic?.id)
 }
 
+// Dev-only probe hook: lets Playwright inspect serialization/dirty state
+// without guessing at DOM classes (observability rule).
+if (import.meta.env.DEV) {
+  ;(window as unknown as Record<string, unknown>).__docPanel = {
+    getMarkdown: () => (editor.value ? serializeDoc(editor.value) : null),
+    isDirty: () => dirty.value,
+    updates: 0,
+  }
+}
+
 const editor = useEditor({
   content: '',
   extensions: [
@@ -1027,6 +1077,10 @@ const editor = useEditor({
     attributes: { class: 'doc-prose' },
   },
   onUpdate: () => {
+    if (import.meta.env.DEV) {
+      const hook = (window as unknown as Record<string, { updates?: number }>).__docPanel
+      if (hook) hook.updates = (hook.updates ?? 0) + 1
+    }
     // User typing marks the doc dirty; saved indicator clears.
     if (loadingFromServer.value) return
     dirty.value = true
@@ -1264,8 +1318,17 @@ async function save(force = false) {
     rawDoc.value = full
     lastSavedMarkdown.value = splitDuplicateTitle(full).body
     if (!sourceMode.value) sourceDraft.value = full
-    dirty.value = false
     savedAt.value = Date.now()
+    // Lost-update guard: an edit that landed WHILE this save was in flight
+    // (e.g. a code-block language pick right after typing) must not have its
+    // dirty flag wiped by our completion — compare against what we actually
+    // shipped, and re-queue if the doc moved on.
+    if (currentFullMarkdown() === full) {
+      dirty.value = false
+    } else {
+      dirty.value = true
+      queueAutosave()
+    }
     // A confirmed lossy overwrite: what's on disk now IS the editor's view.
     if (force) lossy.value = false
   } catch (e) {
@@ -1523,6 +1586,29 @@ onBeforeUnmount(() => {
               <v-icon size="14">mdi-comment-plus-outline</v-icon>
               评论
             </button>
+            <!-- Code-block language picker: the corner tag becomes a real
+                 control while hovering (editable mode only). -->
+            <div
+              v-if="codeCopy && editable"
+              class="doc-codelang"
+              :style="{ top: `${codeCopy.top}px`, left: `${codeCopy.left - 74}px` }"
+            >
+              <button type="button" class="doc-codelang__chip" @click="codeLangOpen = !codeLangOpen">
+                {{ currentCodeLang() }}
+                <v-icon size="12">mdi-chevron-down</v-icon>
+              </button>
+              <div v-if="codeLangOpen" class="doc-codelang__menu">
+                <button
+                  v-for="l in CODE_LANGS"
+                  :key="l"
+                  type="button"
+                  class="doc-codelang__item"
+                  @click="setCodeBlockLang(l)"
+                >
+                  {{ l }}
+                </button>
+              </div>
+            </div>
             <!-- Code-block copy: quiet hover button (chat .im-act language),
                  an overlay so it never lives inside ProseMirror's DOM. -->
             <button
@@ -3271,6 +3357,56 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
 }
+.doc-codelang {
+  position: absolute;
+  z-index: 6;
+}
+.doc-codelang__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.doc-codelang__chip:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+.doc-codelang__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  min-width: 120px;
+}
+.doc-codelang__item {
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  color: var(--ink);
+  padding: 5px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.doc-codelang__item:hover {
+  background: var(--fill);
+}
+
 /* Code-block copy button: the chat hover-action language — surface ground,
    hairline border, muted icon, only present while hovering the block. */
 .doc-codecopy {
