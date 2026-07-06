@@ -62,6 +62,13 @@ elif [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" != "true"
   docker start "$NAME" >/dev/null
 fi
 
+# Forensics: snapshot what each invocation actually received (models/urls only,
+# no secrets) — ground truth for "which model did the turn ask for".
+{
+  echo "=== $(date '+%F %T') args: $*"
+  env | grep -E '^ANTHROPIC_(BASE_URL|DEFAULT_[A-Z]+_MODEL)=' | sort
+} >> "$(dirname "$0")/../../logs/sbx-debug.log" 2>/dev/null || true
+
 # Per-turn env is passed on the exec (it can vary turn to turn, e.g. token rotation).
 exec docker exec -i \
   -e ANTHROPIC_BASE_URL -e ANTHROPIC_AUTH_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN \

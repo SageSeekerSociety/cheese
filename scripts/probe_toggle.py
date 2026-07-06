@@ -10,11 +10,16 @@ API = "http://127.0.0.1:8099"
 BASE = "http://localhost:5173"
 
 
+# No system proxy for localhost: urllib picks up the macOS proxy (Clash) and
+# 127.0.0.1 requests get swallowed with a 404.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _req(url, method="GET", body=None):
     r = urllib.request.Request(url, method=method,
         data=json.dumps(body).encode() if body is not None else None,
         headers={"Content-Type": "application/json"})
-    return json.load(urllib.request.urlopen(r))["data"]
+    return json.load(_OPENER.open(r))["data"]
 
 
 async def main() -> None:

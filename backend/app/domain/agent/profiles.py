@@ -158,12 +158,16 @@ def build_registry(settings) -> ProfileRegistry:  # type: ignore[no-untyped-def]
         sonnet_model=settings.agent_sonnet_model,
         opus_model=settings.agent_opus_model,
     )
+    # Anthropic-bound profiles pin their base_url explicitly: leaving it None
+    # let a leaked ANTHROPIC_BASE_URL from the process env (the GLM gateway)
+    # hijack the route — claude-* model names then 400 at the wrong provider.
+    anthropic_url = settings.claude_base_url or "https://api.anthropic.com"
     claude = AgentProfile(
         name="claude-opus",
         label="Claude Opus（测试·仅 dogfooding）",
         tier=TIER_TESTING,
         model=settings.claude_model,
-        base_url=settings.claude_base_url,
+        base_url=anthropic_url,
         auth_token=settings.claude_auth_token,
         haiku_model=settings.claude_model,
         sonnet_model=settings.claude_model,
@@ -178,7 +182,7 @@ def build_registry(settings) -> ProfileRegistry:  # type: ignore[no-untyped-def]
         label="Claude Fable（测试·仅 dogfooding）",
         tier=TIER_TESTING,
         model=settings.fable_model,
-        base_url=settings.claude_base_url,
+        base_url=anthropic_url,
         auth_token=settings.claude_auth_token,
         haiku_model=settings.fable_model,
         sonnet_model=settings.fable_model,

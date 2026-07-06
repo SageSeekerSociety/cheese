@@ -398,6 +398,9 @@ function handleFrame(frame: WsServerFrame) {
       emit('turn-done')
       autoScroll()
       break
+    case 'retract_block':
+      messages.value = messages.value.filter((m) => m.id !== frame.block_id)
+      break
     case 'turn_active':
       // Re-entered a topic whose turn is mid-stream: show 正在思考 until the
       // replayed/live frames take over (cleared by assistant_block/done).

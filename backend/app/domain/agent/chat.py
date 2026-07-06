@@ -950,6 +950,8 @@ class ChatService:
         final_text = ""
         new_session_id = resume_session_id
         result_error = False
+        last_assistant_text: str | None = None
+        last_assistant_block_id: str | None = None
         api_error_status: int | None = None
         rate_limit: dict | None = None
 
@@ -987,6 +989,7 @@ class ChatService:
                     # NOW (mid-turn), not at turn end. A turn with tool calls
                     # lands several of these. Token deltas are no longer
                     # forwarded to the chat — the message IS the unit.
+                    last_assistant_text = event.text
                     payload = await self._persist_assistant_message(
                         project_id=project_id,
                         topic_id=topic_id,
@@ -998,6 +1001,11 @@ class ChatService:
                         roster=roster,
                         topic_refs=topic_refs,
                     )
+                    last_assistant_block_id = (
+                        payload.get("block", {}).get("id")
+                        if isinstance(payload, dict)
+                        else None
+                    ) or last_assistant_block_id
                     assistant_count += 1
                     yield {"type": "assistant_block", "block": payload}
                 elif isinstance(event, AgentToolUse):
@@ -1057,6 +1065,26 @@ class ChatService:
             )
             detail = final_text.strip()
             quoted = f"（服务原话：{detail}）" if detail else ""
+            # The CLI sometimes emits the SAME error string as a final
+            # AssistantMessage before the error result — the discrete-message
+            # path already persisted it as 芝士's reply. Exact-equality match
+            # against the result text identifies that echo; retract it so the
+            # error lives ONLY in the system event below.
+            if (
+                last_assistant_block_id
+                and last_assistant_text is not None
+                and last_assistant_text.strip() == detail
+            ):
+                try:
+                    async with self._sessions() as session:
+                        blocks_repo = BlockRepository(session)
+                        blk = await blocks_repo.get(uuid.UUID(last_assistant_block_id))
+                        if blk is not None:
+                            await session.delete(blk)
+                            await session.commit()
+                    yield {"type": "retract_block", "block_id": last_assistant_block_id}
+                except Exception:  # noqa: BLE001 — retraction is best-effort
+                    logger.exception("error-echo retraction failed")
             resume_after_s: float | None = None
             if (
                 rate_limit
