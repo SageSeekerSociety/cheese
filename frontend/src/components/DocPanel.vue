@@ -1307,6 +1307,9 @@ onBeforeUnmount(() => {
               :on-node-change="onDocNodeChange"
               class="doc-handle"
             >
+              <!-- mdi icons, not text glyphs: "+" (18px font) and "⠿"
+                   (braille, 16px) center on different baselines and read as
+                   non-parallel; icons share one geometric grid. -->
               <button
                 type="button"
                 class="doc-handle__btn doc-handle__add"
@@ -1315,9 +1318,11 @@ onBeforeUnmount(() => {
                 @dragstart.stop.prevent
                 @click="addBlockBelow"
               >
-                +
+                <v-icon size="15">mdi-plus</v-icon>
               </button>
-              <span class="doc-handle__btn doc-handle__grip" title="拖动以排序">⠿</span>
+              <span class="doc-handle__btn doc-handle__grip" title="拖动以排序">
+                <v-icon size="15">mdi-drag-vertical</v-icon>
+              </span>
             </DragHandle>
 
           </div>
@@ -2505,7 +2510,6 @@ onBeforeUnmount(() => {
 }
 .doc-handle__add {
   cursor: pointer;
-  font-size: 18px;
 }
 .doc-handle__split {
   cursor: pointer;
