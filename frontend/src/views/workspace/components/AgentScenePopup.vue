@@ -1,8 +1,12 @@
 <!-- 现场: a floating popup onto a working agent's live Claude Code session. It
      does not occupy a layout zone — it opens over the workspace when you click a
-     working agent's avatar. The live terminal (xterm.js/webtty over the
-     connector) and the read-only→takeover switch are wired in Phase D; for now
-     this is the framed placeholder that fixes the interaction and the space. -->
+     working agent's avatar. The live terminal is a real xterm.js bound to the
+     agent's connector session over the /connector/session/{id}/screen websocket
+     (GottyTerminal); it is read-only until you flip takeover in the terminal's
+     own toolbar (逻辑只读, arbitrated by the backend). Session discovery (agent
+     → connector session id/token) is stubbed until the agent/session login
+     lands; for now it accepts ?session=&?token= and falls back to the demo
+     session so the experimental view works standalone. -->
 <template>
   <div class="wa-scene" @click.self="ws.closeScene">
     <v-card class="wa-scene__card" elevation="12">
@@ -13,41 +17,37 @@
           <div class="wa-scene__sub">{{ agent.agentStatus === 'working' ? '工作中' : '空闲' }}</div>
         </div>
         <v-spacer />
-        <v-switch
-          v-model="takeover"
-          density="compact"
-          hide-details
-          color="warning"
-          :label="takeover ? '已接管' : '只读'"
-          class="mr-2"
-        />
         <v-btn size="small" variant="text" icon="mdi-close" @click="ws.closeScene" />
       </div>
       <div class="wa-scene__term">
-        <div class="wa-scene__term-inner">
-          <div class="wa-scene__line"><span class="wa-scene__prompt">cheese@{{ agent.username }}</span>:~$ claude</div>
-          <div class="wa-scene__line wa-scene__dim">● 正在处理群消息…（Phase D 接入实时终端）</div>
-          <div class="wa-scene__line wa-scene__dim">  逻辑只读：滚动查看真实终端，接管后编排命令暂停。</div>
-          <div class="wa-scene__cursor" />
-        </div>
-      </div>
-      <div class="wa-scene__foot text-caption text-medium-emphasis">
-        实时终端将通过 connector (cheesed + ttyd/xterm.js) 接入，此处为占位。
+        <GottyTerminal :session-id="sessionId" :token="token" />
       </div>
     </v-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 
 import type { UserSummary } from '@/network/api/workspace'
 
+import GottyTerminal from '@/components/connector/GottyTerminal.vue'
+
 import { useWorkspace } from '../useWorkspace'
+
+import AgentAvatar from './AgentAvatar.vue'
 
 defineProps<{ agent: UserSummary }>()
 const ws = useWorkspace()
-const takeover = ref(false)
+const route = useRoute()
+
+// The connector session this agent is bound to. Until agent/session login maps
+// an agent user -> its live session, accept ?session= and fall back to the
+// seeded demo session; ?token= likewise, else GottyTerminal uses the logged-in
+// user's access token (the backend authorizes per real actor regardless).
+const sessionId = computed(() => (route.query.session as string | undefined) ?? 'demo-session')
+const token = computed(() => route.query.token as string | undefined)
 </script>
 
 <style scoped>
@@ -61,9 +61,12 @@ const takeover = ref(false)
   justify-content: center;
 }
 .wa-scene__card {
-  width: min(760px, 92vw);
+  width: min(860px, 94vw);
+  height: min(560px, 88vh);
   border-radius: 14px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .wa-scene__bar {
   display: flex;
@@ -71,6 +74,7 @@ const takeover = ref(false)
   gap: 10px;
   padding: 10px 14px;
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  flex: none;
 }
 .wa-scene__name {
   font-weight: 700;
@@ -80,34 +84,7 @@ const takeover = ref(false)
   color: rgba(var(--v-theme-on-surface), 0.55);
 }
 .wa-scene__term {
-  background: #0d1117;
-  padding: 16px;
-  min-height: 260px;
-}
-.wa-scene__term-inner {
-  font-family: monospace;
-  font-size: 13px;
-  color: #c9d1d9;
-  line-height: 1.7;
-}
-.wa-scene__prompt {
-  color: #7ee787;
-}
-.wa-scene__dim {
-  color: #8b949e;
-}
-.wa-scene__cursor {
-  width: 8px;
-  height: 15px;
-  background: #c9d1d9;
-  animation: wa-blink 1s step-end infinite;
-}
-@keyframes wa-blink {
-  50% {
-    opacity: 0;
-  }
-}
-.wa-scene__foot {
-  padding: 8px 14px;
+  flex: 1;
+  min-height: 0;
 }
 </style>
