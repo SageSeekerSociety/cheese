@@ -89,6 +89,8 @@ def test_build_registry_has_fable_channel():
         agent_model="glm-5.2",
         anthropic_base_url="https://gw/anthropic",
         anthropic_auth_token="pool-key",
+        agent_sonnet_model="glm-5.2",
+        agent_opus_model="glm-5.2",
         agent_haiku_model="glm-4.5-air",
         claude_model="claude-opus-4-8",
         claude_base_url=None,

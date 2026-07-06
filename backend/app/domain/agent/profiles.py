@@ -28,6 +28,8 @@ class AgentProfile:
     base_url: str | None
     auth_token: str | None
     haiku_model: str | None = None
+    sonnet_model: str | None = None
+    opus_model: str | None = None
     # Subscription OAuth token (from `claude setup-token`). When set, the CLI runs
     # on the subscription seat instead of an API key — see config.claude_oauth_token.
     oauth_token: str | None = None
@@ -51,8 +53,15 @@ class AgentProfile:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = self.oauth_token
         elif self.auth_token:
             env["ANTHROPIC_AUTH_TOKEN"] = self.auth_token
+        # Map ALL alias tiers: a newer claude CLI reaches for sonnet/opus
+        # aliases (subagent defaults etc.) — an unmapped alias hits the GLM
+        # gateway as a claude-* name and 400s the whole turn ([1211]).
         if self.haiku_model:
             env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = self.haiku_model
+        if self.sonnet_model:
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = self.sonnet_model
+        if self.opus_model:
+            env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = self.opus_model
         # Subagents resolve via the sonnet/opus aliases — pin them to this
         # profile's model so 分身 never silently run a different provider.
         env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = self.model
@@ -146,6 +155,8 @@ def build_registry(settings) -> ProfileRegistry:  # type: ignore[no-untyped-def]
         base_url=settings.anthropic_base_url,
         auth_token=settings.anthropic_auth_token,
         haiku_model=settings.agent_haiku_model,
+        sonnet_model=settings.agent_sonnet_model,
+        opus_model=settings.agent_opus_model,
     )
     claude = AgentProfile(
         name="claude-opus",
@@ -155,6 +166,8 @@ def build_registry(settings) -> ProfileRegistry:  # type: ignore[no-untyped-def]
         base_url=settings.claude_base_url,
         auth_token=settings.claude_auth_token,
         haiku_model=settings.claude_model,
+        sonnet_model=settings.claude_model,
+        opus_model=settings.claude_model,
         oauth_token=settings.claude_oauth_token,
     )
     # Second dogfooding channel: the Fable frontier model on the same seat —
@@ -168,6 +181,8 @@ def build_registry(settings) -> ProfileRegistry:  # type: ignore[no-untyped-def]
         base_url=settings.claude_base_url,
         auth_token=settings.claude_auth_token,
         haiku_model=settings.fable_model,
+        sonnet_model=settings.fable_model,
+        opus_model=settings.fable_model,
         oauth_token=settings.claude_oauth_token,
     )
     return ProfileRegistry(
