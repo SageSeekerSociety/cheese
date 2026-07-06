@@ -183,8 +183,18 @@ async function onReact(m: Block, emoji: string) {
 // A system event block tagged refs=["action:<resource>"] is a clickable action
 // card (decision/doc/...); returns the resource, or null for a plain event line.
 function actionResource(b: Block): string | null {
+  // Structured meta.action (shared events like 编辑了文档) wins; legacy
+  // action:<resource> refs (cheese-only cards) still resolve.
+  const metaAction = (b.meta as Record<string, unknown> | null)?.action
+  if (typeof metaAction === 'string') return metaAction
   const r = (b.refs || []).find((x) => x.startsWith('action:'))
   return r ? r.slice('action:'.length) : null
+}
+// meta.action events carry the actor in their content (张衡/芝士 编辑了文档);
+// legacy cards need the 芝士 prefix prepended.
+function actionText(b: Block): string {
+  const metaAction = (b.meta as Record<string, unknown> | null)?.action
+  return typeof metaAction === 'string' ? b.content : `芝士${b.content}`
 }
 
 // @mention chips are rendered via v-html; delegate clicks so the parent can
@@ -727,7 +737,7 @@ onBeforeUnmount(() => {
           <!-- action row: 芝士's cheese action this turn — a quiet system line
                (amber dot = platform act) with an inline amber link, no box. -->
           <div v-if="m.kind === 'event' && actionResource(m)" class="action-card">
-            <span class="action-verb">芝士{{ m.content }}</span>
+            <span class="action-verb">{{ actionText(m) }}</span>
             <button
               v-if="ACTION_META[actionResource(m)!]?.btn"
               type="button"

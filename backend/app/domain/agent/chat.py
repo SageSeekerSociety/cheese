@@ -219,13 +219,15 @@ _CHEESE_RESOURCE = {
 # Persistent, clickable action cards (§3.1.1 控件): each cheese action 芝士 takes
 # is recorded as a system event block (shown in the conversation) tagged
 # refs=["action:<resource>"], which the UI renders as a card linking to it.
+# NOTE: no "doc" entry — a doc edit already lands the SAME 「编辑了文档」
+# event every human edit gets (via the save path). One fact, one line,
+# whoever the author is (用户拍板: 芝士不需要专属提示行).
 _ACTION_LABEL = {
-    "decision": "📌 记录了一条决策",
-    "doc": "📄 更新了活文档",
-    "topics": "🌿 更新了子话题",
-    "milestone": "📌 钉了一个里程碑",
-    "accept": "✅ 递出了验收卡",
-    "notify": "🔔 发了一条通知",
+    "decision": "记录了一条决策",
+    "topics": "更新了子话题",
+    "milestone": "钉了一个里程碑",
+    "accept": "递出了验收卡",
+    "notify": "发了一条通知",
 }
 
 

@@ -382,7 +382,9 @@ class TopicService:
             content=f"{display} 编辑了文档",
             kind=BlockKind.event,
             refs=[str(doc.id)],
-            meta={"platform": True},
+            # action:"doc" → the client renders the 看文档 link on this SAME
+            # line — one event vocabulary for humans and 芝士 alike.
+            meta={"platform": True, "action": "doc"},
         )
         return doc
 
