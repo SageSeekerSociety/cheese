@@ -18,6 +18,10 @@ class NotificationType(str, Enum):
     PROJECT_INVITE = "PROJECT_INVITE"
     DEADLINE_REMIND = "DEADLINE_REMIND"
 
+    # 2.0 agent notifications (type column is a plain varchar — no migration).
+    AGENT_DECISION_REQUEST = "AGENT_DECISION_REQUEST"  # an agent asks a human to decide
+    AGENT_UPDATE = "AGENT_UPDATE"  # an agent reports a change / progress
+
     TEAM_JOIN_REQUEST = "TEAM_JOIN_REQUEST"
     TEAM_INVITATION = "TEAM_INVITATION"
     TEAM_REQUEST_APPROVED = "TEAM_REQUEST_APPROVED"

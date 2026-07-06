@@ -1,8 +1,11 @@
 """Integration tests for the built-in agent tools (DB-backed), invoked through
 the registry with an injected ProjectActor + ToolContext."""
 
+from datetime import UTC, datetime
+
 import pytest
 from anyio.from_thread import BlockingPortal
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.authorization.authorizer import ProjectActor
@@ -11,8 +14,11 @@ from app.agent.tools.context import ToolContext
 from app.core.errors import ForbiddenError
 from app.domain.block.models import AuthorKind, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.notification.models import Notification, NotificationType
+from app.domain.project.repositories import ProjectRepository
 from app.domain.thread.models import ThreadKind
 from app.domain.thread.repositories import ThreadRepository
+from tests.integration.conftest import unique_int
 
 PROJECT = 94001
 OTHER_PROJECT = 94002
@@ -62,6 +68,37 @@ class TestBuiltinTools:
 
         with pytest.raises(ForbiddenError):
             self.portal.call(_run)
+
+    def test_request_human_decision_notifies_leader(self):
+        leader_id = unique_int(1_000_000, 9_000_000)  # unique receiver avoids dedup
+
+        async def _run():
+            now = datetime.now(UTC)
+            project = await ProjectRepository(self.db).create_project(
+                name="p",
+                description="d",
+                color_code="#ffffff",
+                team_id=1,
+                leader_id=leader_id,
+                start_date=now,
+                end_date=now,
+            )
+            actor = ProjectActor(kind="agent", actor_id=77, project_id=project.id)
+            out = await builtin_registry.invoke(
+                "request_human_decision",
+                {"question": "should we ship?"},
+                injected={ProjectActor: actor, ToolContext: self.ctx},
+            )
+            rows = (
+                await self.db.execute(
+                    select(Notification).where(Notification.receiver_id == leader_id)
+                )
+            ).scalars().all()
+            return out, list(rows)
+
+        out, rows = self.portal.call(_run)
+        assert out["notified_user_id"] == leader_id
+        assert any(r.type == NotificationType.AGENT_DECISION_REQUEST for r in rows)
 
     def test_write_document_uses_actor_project(self):
         async def _run():

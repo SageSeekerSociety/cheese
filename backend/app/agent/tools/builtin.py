@@ -10,10 +10,13 @@ tree (architecture doc §5).
 from app.agent.authorization.authorizer import ProjectActor
 from app.agent.tools.context import ToolContext
 from app.agent.tools.registry import ToolRegistry
-from app.core.errors import ForbiddenError
+from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.block.models import AuthorKind, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.services import BlockService
+from app.domain.notification.models import NotificationType
+from app.domain.notification.publisher import publish_notification_event
+from app.domain.project.repositories import ProjectRepository
 from app.domain.thread.repositories import ThreadRepository
 from app.domain.thread.services import ThreadService
 
@@ -64,5 +67,24 @@ async def write_document(
     return {"block_id": block.id}
 
 
+async def request_human_decision(
+    ctx: ToolContext, actor: ProjectActor, question: str
+) -> dict[str, int]:
+    """Ask the project's lead human to make a decision you should not make alone.
+    Keep the question to one clear sentence. Notifies the project leader."""
+    project = await ProjectRepository(ctx.session).get_by_id(actor.project_id)
+    if project is None:
+        raise NotFoundError(f"project {actor.project_id} not found")
+    await publish_notification_event(
+        ctx.session,
+        recipient_ids=[project.leader_id],
+        type_=NotificationType.AGENT_DECISION_REQUEST,
+        payload={"question": question, "projectId": actor.project_id},
+        actor_id=actor.actor_id,
+    )
+    return {"notified_user_id": project.leader_id}
+
+
 builtin_registry.register(post_message)
 builtin_registry.register(write_document)
+builtin_registry.register(request_human_decision)
