@@ -44,12 +44,20 @@ class AgentProfile:
         """Provider env for the `claude` CLI/SDK. Replaces (not merges) the
         default provider env so a Claude profile never inherits the GLM gateway's
         base_url or model aliases."""
-        env: dict[str, str] = {}
-        if self.base_url:
-            env["ANTHROPIC_BASE_URL"] = self.base_url
+        # Every key is set EXPLICITLY — unused ones to "" — because the CLI
+        # subprocess inherits the backend's os.environ, and a leaked
+        # ANTHROPIC_AUTH_TOKEN/BASE_URL from another provider silently hijacks
+        # routing or auth (Zhipu bearer at api.anthropic.com → 401; GLM URL for
+        # a claude-* model → 400). Empty string reads as unset to the CLI but
+        # MASKS any inherited value.
+        env: dict[str, str] = {
+            "ANTHROPIC_BASE_URL": self.base_url or "",
+            "ANTHROPIC_AUTH_TOKEN": "",
+            "CLAUDE_CODE_OAUTH_TOKEN": "",
+        }
         if self.oauth_token:
-            # Subscription (走订阅): OAuth token drives auth; do NOT also set an
-            # ANTHROPIC_AUTH_TOKEN (that would switch the CLI to API-key mode).
+            # Subscription (走订阅): OAuth token drives auth; ANTHROPIC_AUTH_TOKEN
+            # stays blanked (setting it would switch the CLI to API-key mode).
             env["CLAUDE_CODE_OAUTH_TOKEN"] = self.oauth_token
         elif self.auth_token:
             env["ANTHROPIC_AUTH_TOKEN"] = self.auth_token
