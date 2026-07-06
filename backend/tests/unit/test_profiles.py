@@ -73,7 +73,9 @@ def test_full_env_replaces_provider_and_pins_subagent_models():
     )
     env = opus.full_env()
     assert env["ANTHROPIC_AUTH_TOKEN"] == "k"
-    assert "ANTHROPIC_BASE_URL" not in env  # None base_url → Anthropic default
+    # None base_url now yields an explicit EMPTY value: unset to the CLI, but
+    # masking any inherited gateway URL (leak-hijack fix).
+    assert env["ANTHROPIC_BASE_URL"] == ""
     assert env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "claude-opus-4-8"
     assert env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "claude-opus-4-8"
 
