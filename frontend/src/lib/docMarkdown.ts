@@ -191,6 +191,8 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
 //   6. Bullet markers `*` / `+` normalize to `-` (same list, different pen).
 //   7. Blockquote markers normalize to `> ` per nesting level.
 //   8. "Empty" ATX heading trailing #s are NOT normalized (rare, keep strict).
+//  11. Intraword `\_` unescapes to `_` outside inline code (CommonMark:
+//      intraword underscores never toggle emphasis — escape is pure noise).
 //
 // Everything else — dropped constructs, reordered content, lost alignment,
 // lost language tags, escaped-away tokens — fails the comparison.
@@ -267,6 +269,19 @@ function decodeBasicEntities(s: string): string {
     .replace(/&amp;/g, '&')
 }
 
+// Rule 11: `proj\_id` ≡ `proj_id` between word characters — CommonMark says
+// intraword underscores never open/close emphasis, so the serializer's escape
+// there is pure noise (bare identifiers in prose are everywhere in our docs).
+// Inline code spans are left untouched (split on backtick segments).
+function unescapeIntrawordUnderscores(line: string): string {
+  return line
+    .split('`')
+    .map((seg, i) =>
+      i % 2 === 0 ? seg.replace(/(?<=[\w\u4e00-\u9fff])\\_(?=[\w\u4e00-\u9fff])/g, '_') : seg,
+    )
+    .join('`')
+}
+
 function normalizeTableRow(line: string): string {
   // Split naïvely on '|': escaped pipes are rare and both sides of the
   // comparison get the same treatment, so equality is still meaningful.
@@ -314,7 +329,7 @@ export function normalizeMarkdown(md: string): string {
     }
     // Bullet markers * / + → - (preserve indentation).
     raw = raw.replace(/^(\s*)[*+](\s)/, '$1-$2')
-    out.push({ text: decodeBasicEntities(raw), literal: false })
+    out.push({ text: decodeBasicEntities(unescapeIntrawordUnderscores(raw)), literal: false })
   }
   // Collapse blank-line runs (never inside fences); trim document edges.
   const collapsed: string[] = []

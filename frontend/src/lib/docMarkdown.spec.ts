@@ -212,3 +212,14 @@ describe('known-lossy constructs are detected', () => {
     expectDetected('看[这里][1]。\n\n[1]: https://example.com')
   })
 })
+
+describe('rule 11: intraword underscores', () => {
+  it('bare identifiers in prose do not flag lossy', () => {
+    const md = '索引只在 project_id 等外键上，补 (project_id, created_at, id)。\n'
+    expect(compareRoundTrip(md, roundTrip(md)).clean).toBe(true)
+  })
+  it('inline-code identifiers stay strict', () => {
+    const md = '用 `project_id` 查询。\n'
+    expect(compareRoundTrip(md, roundTrip(md)).clean).toBe(true)
+  })
+})
