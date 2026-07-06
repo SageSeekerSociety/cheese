@@ -105,3 +105,21 @@ async def test_http_error_raises_pve_error():
     pve = _pve(lambda r: httpx.Response(403, text="permission denied"))
     with pytest.raises(PveError):
         await pve.version()
+
+
+async def test_next_vmid_null_data_fails_closed():
+    pve = _pve(lambda r: httpx.Response(200, json={"data": None}))
+    with pytest.raises(PveError):
+        await pve.next_vmid()
+
+
+async def test_non_json_body_fails_closed():
+    pve = _pve(lambda r: httpx.Response(200, text="not json at all"))
+    with pytest.raises(PveError):
+        await pve.version()
+
+
+async def test_clone_null_upid_fails_closed():
+    pve = _pve(lambda r: httpx.Response(200, json={"data": None}))
+    with pytest.raises(PveError):
+        await pve.clone(node="n", vmid=1, newid=2, name="x", kind="lxc")

@@ -79,7 +79,11 @@ class PveClient:
             raise PveError(f"PVE request failed: {exc}") from exc
         if resp.status_code >= 400:
             raise PveError(f"PVE {method} {path} -> {resp.status_code}: {resp.text[:200]}")
-        return resp.json().get("data")
+        try:
+            body = resp.json()
+        except ValueError as exc:  # non-JSON 2xx body
+            raise PveError(f"PVE {method} {path}: non-JSON response") from exc
+        return body.get("data")
 
     async def version(self) -> dict[str, Any]:
         return await self._request("GET", "/version") or {}
@@ -103,7 +107,10 @@ class PveClient:
         return await self._request("GET", f"/pools/{poolid}") or {}
 
     async def next_vmid(self) -> int:
-        return int(await self._request("GET", "/cluster/nextid"))
+        data = await self._request("GET", "/cluster/nextid")
+        if data is None:
+            raise PveError("PVE /cluster/nextid returned no data")
+        return int(data)
 
     async def clone(
         self,
@@ -130,6 +137,8 @@ class PveClient:
         if target:
             data["target"] = target
         upid = await self._request("POST", f"/nodes/{node}/{kind}/{vmid}/clone", data=data)
+        if upid is None:
+            raise PveError("PVE clone returned no task id")
         return str(upid)
 
     async def task_status(self, node: str, upid: str) -> dict[str, Any]:

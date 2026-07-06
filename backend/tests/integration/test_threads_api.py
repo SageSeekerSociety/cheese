@@ -75,6 +75,45 @@ class TestThreadsApi:
         assert resp.status_code == 200
         assert [t["id"] for t in resp.json()["data"]["threads"]] == [thread_id]
 
+    def test_pagination_hasmore_is_exact(self):
+        project_id = self._make_project(self.user.user_id)
+        resp = self.client.post(
+            "/threads", headers=self.headers, json={"projectId": project_id}
+        )
+        thread_id = resp.json()["data"]["thread"]["id"]
+        for i in range(3):
+            self.client.post(
+                f"/threads/{thread_id}/messages",
+                headers=self.headers,
+                json={"content": f"m{i}"},
+            )
+
+        # exact boundary: 3 messages, pageSize=3 -> hasMore must be False
+        resp = self.client.get(
+            f"/threads/{thread_id}/messages", headers=self.headers, params={"pageSize": 3}
+        )
+        page = resp.json()["data"]["page"]
+        assert page["hasMore"] is False
+        assert page["nextStart"] is None
+
+        # pageSize=2 -> hasMore True, then the next page has the last one
+        resp = self.client.get(
+            f"/threads/{thread_id}/messages", headers=self.headers, params={"pageSize": 2}
+        )
+        data = resp.json()["data"]
+        assert len(data["blocks"]) == 2
+        assert data["page"]["hasMore"] is True
+        next_start = data["page"]["nextStart"]
+
+        resp = self.client.get(
+            f"/threads/{thread_id}/messages",
+            headers=self.headers,
+            params={"pageSize": 2, "pageStart": next_start},
+        )
+        data = resp.json()["data"]
+        assert len(data["blocks"]) == 1
+        assert data["page"]["hasMore"] is False
+
     def test_non_member_forbidden(self):
         # a project whose leader is someone else, and the user has no membership
         project_id = self._make_project(self.user.user_id + 9_999_999)

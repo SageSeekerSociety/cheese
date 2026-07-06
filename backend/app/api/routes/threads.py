@@ -133,10 +133,14 @@ async def list_messages(
     thread = await _thread_service(db).get_thread(thread_id)
     await require_project_access(db, auth_user.user_id, thread.project_id)
     after_id = int(page_start) if page_start and page_start.isdigit() else 0
-    blocks = await BlockService(BlockRepository(db)).list_thread(
-        thread_id, after_id=after_id, limit=page_size
+    # Fetch one extra to decide hasMore exactly (avoids a wasted empty page at
+    # the exact-page-size boundary).
+    fetched = await BlockService(BlockRepository(db)).list_thread(
+        thread_id, after_id=after_id, limit=page_size + 1
     )
-    next_start = str(blocks[-1].id) if len(blocks) == page_size else None
+    has_more = len(fetched) > page_size
+    blocks = fetched[:page_size]
+    next_start = str(blocks[-1].id) if has_more else None
     return {
         "code": 200,
         "message": "success",
@@ -145,7 +149,7 @@ async def list_messages(
             "page": {
                 "pageStart": page_start or "0",
                 "pageSize": len(blocks),
-                "hasMore": next_start is not None,
+                "hasMore": has_more,
                 "nextStart": next_start,
             },
         },
