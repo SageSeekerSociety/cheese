@@ -7,11 +7,12 @@ from fastapi import APIRouter, Depends, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_chat_service, get_turn_runner
+from app.api.deps import get_broker, get_chat_service, get_turn_runner
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
+from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -123,7 +124,13 @@ async def list_comments(topic_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.post("/{topic_id}/comments")
-async def add_comment(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def add_comment(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+) -> dict:
     """Add an inline comment anchored to a doc node (eval B4). Dual-use like the
     doc panel — a human selects text and comments; not cheese-gated."""
     topic = await TopicService(db).get_or_404(topic_id)
@@ -157,11 +164,10 @@ async def add_comment(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     payload = BlockOut.model_validate(comment).model_dump(mode="json")
     await db.commit()  # the comment must be visible before the turn reads it
     # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
-    from app.api.deps import get_chat_service, get_turn_runner
 
     where = f"「{quote[:80]}」" if quote else "整篇"
-    get_turn_runner().submit(
-        get_chat_service(),
+    runner.submit(
+        chat,
         topic_id,
         author="system",
         content=(
@@ -197,6 +203,82 @@ async def edit_topic_doc(topic_id: uuid.UUID, body: DocEditIn, db: DbSession) ->
         topic_id=topic_id, content=content, author=body.author
     )
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
+
+
+@router.post("/{topic_id}/ask")
+async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """芝士 asks an option question IN the chat (cheese ask): a message block
+    whose meta.options renders as one-click buttons. Structured interaction —
+    the answer comes back as data, never parsed from prose (spec §14.5)."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    question = (body.get("question") or "").strip()
+    options = [str(o).strip() for o in (body.get("options") or []) if str(o).strip()]
+    if not question:
+        raise ValidationError("question is required")
+    if not 2 <= len(options) <= 4:
+        raise ValidationError("需要 2-4 个选项")
+    blk = await BlockRepository(db).add(
+        project_id=topic.project_id,
+        topic_id=topic_id,
+        author="cheese",
+        author_type=AuthorType.ai,
+        content=question,
+        kind=BlockKind.message,
+        meta={"options": options},
+    )
+    await db.commit()
+    payload = BlockOut.model_validate(blk).model_dump(mode="json")
+    await get_broker().publish(
+        str(topic_id), {"type": "assistant_block", "block": payload}
+    )
+    return ok(payload)
+
+
+@router.post("/blocks/{block_id}/answer")
+async def answer_options(
+    block_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+) -> dict:
+    """One-click answer to an option question: validates the choice against the
+    ask block's own options, records it on the block (meta.answered), and posts
+    the choice as the answerer's message with summon — 芝士 continues."""
+    author = (body.get("author") or "").strip()
+    option = (body.get("option") or "").strip()
+    if not author or not option:
+        raise ValidationError("author 和 option 都要有")
+    repo = BlockRepository(db)
+    blk = await repo.get(block_id)
+    if blk is None:
+        raise NotFoundError("问题不存在")
+    meta = dict(blk.meta or {})
+    options = meta.get("options") or []
+    if option not in options:
+        raise ValidationError("不在选项里")
+    if meta.get("answered"):
+        raise ValidationError(
+            f"已由 {meta.get('answered_by')} 选过：{meta.get('answered')}"
+        )
+    meta["answered"] = option
+    meta["answered_by"] = author
+    blk.meta = meta
+    await db.flush()
+    updated = BlockOut.model_validate(blk).model_dump(mode="json")
+    await db.commit()
+    await get_broker().publish(
+        str(blk.topic_id), {"type": "block_updated", "block": updated}
+    )
+    # The choice lands as the answerer's own message + summons 芝士 to continue.
+    runner.submit(
+        chat,
+        blk.topic_id,
+        author=author,
+        content=option,
+        summon=True,
+    )
+    return ok(updated)
 
 
 @router.post("/{topic_id}/decision")

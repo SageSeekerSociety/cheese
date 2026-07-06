@@ -112,6 +112,11 @@ def main() -> None:
     pn.add_argument("--to", default=None, help="target handle（不填=广播）")
     pn.add_argument("--options", default=None, help="决策选项,用 | 分隔")
 
+    pask = sub.add_parser("ask", help="在对话里问一个带选项的问题（用户点按钮回答）")
+    pask.add_argument("question")
+    pask.add_argument("--option", action="append", required=True,
+                      help="一个选项,可重复 2-4 次")
+
     pa = sub.add_parser("accept-request", help="递验收卡给某人")
     pa.add_argument("reviewer")
     pa.add_argument("reason", nargs="?", default="")
@@ -183,6 +188,15 @@ def main() -> None:
             print("没有找到相关记忆。")
         for h in hits:
             print(f"- {h.get('abstract', '')}")
+    elif a.cmd == "ask":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        opts = [o.strip() for o in a.option if o.strip()]
+        if not 2 <= len(opts) <= 4:
+            print("[cheese] ask 需要 2-4 个 --option", file=sys.stderr)
+            sys.exit(2)
+        _call("POST", f"/topics/{topic}/ask", {"question": a.question, "options": opts})
+        print(f"[cheese] 已发出选项问题（{len(opts)} 个选项）")
+
     elif a.cmd == "notify":
         proj = _need("CHEESE_PROJECT", PROJECT)
         payload = {}

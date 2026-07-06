@@ -517,6 +517,18 @@ export function getProjectDecisions(
   )
 }
 
+// 选项问题 (cheese ask): one-click answer.
+export function answerOptions(
+  blockId: string,
+  option: string,
+  author: string,
+): Promise<Block> {
+  return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
+    method: 'POST',
+    body: JSON.stringify({ option, author }),
+  })
+}
+
 // ---- 记忆 (spec §8.4: 记忆可见) ----
 export interface MemoryEntryOut {
   id: string

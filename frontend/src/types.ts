@@ -120,6 +120,9 @@ export type WsServerFrame =
   | { type: 'turn_active' }
   // A just-persisted block turned out to be a provider-error echo — remove it.
   | { type: 'retract_block'; block_id: string }
+  // An existing block's data changed in place (e.g. an option question got
+  // answered) — replace it in the timeline.
+  | { type: 'block_updated'; block: Block }
 
 // 图片输入: an uploaded worktree image the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).

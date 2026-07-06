@@ -1216,11 +1216,13 @@ class ChatService:
                     topic_id=topic_id,
                     author=CHEESE_AUTHOR,
                     author_type=AuthorType.system,
-                    content=_ACTION_LABEL[resource],
+                    content=f"芝士 {_ACTION_LABEL[resource]}",
                     kind=BlockKind.event,
-                    refs=[f"action:{resource}"],
+                    # Same structured shape as every shared event (meta.action)
+                    # — no cheese-private encoding (refs=action:* is legacy,
+                    # still rendered for old blocks).
                     turn_id=turn_id,
-                    meta={"platform": True},
+                    meta={"platform": True, "action": resource},
                 )
                 action_payloads.append(_block_payload(BlockOut.model_validate(blk)))
 

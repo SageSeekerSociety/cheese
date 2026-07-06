@@ -16,6 +16,7 @@ const BOTTOM_THRESHOLD = 80
 import { myHandle } from '../me'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import {
+  answerOptions,
   attachmentRawUrl,
   chatWsUrl,
   listBlocks,
@@ -809,6 +810,26 @@ onBeforeUnmount(() => {
                 class="im-text im-text--verbatim"
                 v-html="renderPlain(m.content)"
               />
+              <!-- 选项问题 (cheese ask): one-click answer buttons; answered
+                   state shows the pick + who made it (everyone sees it). -->
+              <div v-if="askOptions(m)" class="ask-row">
+                <template v-if="!askAnswered(m)">
+                  <button
+                    v-for="opt in askOptions(m)"
+                    :key="opt"
+                    type="button"
+                    class="ask-option"
+                    :disabled="askBusy === m.id"
+                    @click="pickOption(m, opt)"
+                  >
+                    {{ opt }}
+                  </button>
+                </template>
+                <div v-else class="ask-answered">
+                  <v-icon size="13" color="primary">mdi-check-circle</v-icon>
+                  {{ askAnswered(m)!.by }} 选了「{{ askAnswered(m)!.option }}」
+                </div>
+              </div>
               <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
               <button
                 v-if="m.upgraded_to_topic_id"
@@ -1452,6 +1473,38 @@ onBeforeUnmount(() => {
 .rx-pick:hover {
   background: var(--fill);
 }
+/* 选项问题 buttons (cheese ask): quiet outlined pills, amber on hover. */
+.ask-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ask-option {
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 5px 14px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ask-option:hover {
+  border-color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.06);
+}
+.ask-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ask-answered {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
 /* Reaction chips under a message: emoji + count; own reactions get the amber
    outline (Slack's "you reacted" affordance). */
 .rx-row {

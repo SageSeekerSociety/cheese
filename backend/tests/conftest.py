@@ -1,10 +1,3 @@
-from app.core.config import settings
-
-# Tests always run on the DB memory backend: the openviking backend holds an
-# exclusive data-dir lock (owned by the dev server when it's running), and
-# tests must not depend on — or corrupt — the live memory store.
-settings.memory_backend = "db"
-
 """Test fixtures.
 
 Uses an in-memory SQLite database (StaticPool so every connection shares the
@@ -23,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401  (registers all tables on Base.metadata)
 from app.api.deps import get_chat_service, get_turn_runner
+from app.core.config import settings
 from app.core.db import Base, get_db
 from app.core.sandbox_auth import SANDBOX_TOKEN
 from app.domain.agent.chat import ChatService
@@ -33,6 +27,11 @@ from app.domain.agent.service import (
     AgentUsage,
 )
 from app.main import app
+
+# Tests always run on the DB memory backend: the openviking backend holds an
+# exclusive data-dir lock (owned by the dev server when it's running), and
+# tests must not depend on — or corrupt — the live memory store.
+settings.memory_backend = "db"
 
 
 def wait_turns_idle() -> None:
