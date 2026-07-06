@@ -43,11 +43,12 @@ const ws = useWorkspace()
 const route = useRoute()
 
 // The connector session this agent is bound to. Until agent/session login maps
-// an agent user -> its live session, accept ?session= and fall back to the
-// seeded demo session; ?token= likewise, else GottyTerminal uses the logged-in
-// user's access token (the backend authorizes per real actor regardless).
+// an agent user -> its live connector session (and a viewer auth model lands),
+// this is a demo stopgap: default to the seeded demo session/token so clicking
+// a working agent's avatar connects with no manual URL params, overridable via
+// ?session=&?token=. Replaced when agent/session login + viewer authz arrive.
 const sessionId = computed(() => (route.query.session as string | undefined) ?? 'demo-session')
-const token = computed(() => route.query.token as string | undefined)
+const token = computed(() => (route.query.token as string | undefined) ?? 'demo-token')
 </script>
 
 <style scoped>

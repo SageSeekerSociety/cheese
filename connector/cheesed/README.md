@@ -72,5 +72,60 @@ token is minted by the backend's `agent/session` login — never commit it):
 ./cheesed run --config config.json
 ```
 
-It runs in the foreground; use a supervisor (systemd/tmux) to keep it alive.
-On shutdown it kills its private tmux session.
+It runs in the foreground and, on shutdown, kills its private tmux session
+(taking the agent with it). Keep it alive with `screen`, `tmux`, or systemd.
+
+## Deploy on a client machine (persistent)
+
+One-time setup — three things on the client:
+
+1. the `cheesed` binary (build on the build machine, `scp` it over),
+2. a `client.config.json` (see above — `backend_ws_url` points at our backend,
+   `session_token` is the agent's minted token), and
+3. `tmux` + the agent binary (`claude`) installed.
+
+Then run cheesed in a **detached `screen`** so it survives your SSH logout:
+
+```bash
+screen -dmS cheesed ~/cheesed run --config ~/client.config.json
+```
+
+- `-dmS cheesed` starts it detached in a named session "cheesed".
+- Reattach to watch its logs: `screen -r cheesed`  (detach again: Ctrl-a d).
+- Check it's running: `screen -ls`.
+- Stop it: `screen -XS cheesed quit`.
+
+Verify it connected to the backend (one established TCP conn to the backend host):
+
+```bash
+ss -tnp | grep <backend-host>:<port>
+```
+
+**After a machine reboot**, screen sessions do not survive — just re-run the one
+`screen -dmS …` line above. For true auto-start on boot, install a systemd user
+unit instead:
+
+```ini
+# ~/.config/systemd/user/cheesed.service
+[Unit]
+Description=cheese connector daemon
+After=network-online.target
+
+[Service]
+ExecStart=%h/cheesed run --config %h/client.config.json
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now cheesed
+loginctl enable-linger $USER   # so it starts at boot without an active login
+```
+
+> Note: `session_token` is currently a demo stopgap (a fixed token the backend
+> has seeded). Once `agent/session` login lands, the token is minted per agent
+> and this config field is filled from that.
