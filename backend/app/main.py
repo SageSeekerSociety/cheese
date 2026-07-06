@@ -24,6 +24,7 @@ from app.api.routes import (
     spaces,
     tasks,
     teams,
+    threads,
     topics_legacy,
     users,
 )
@@ -114,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(recruitment.router)
     app.include_router(recruitment.team_recruitment_router)
     app.include_router(agent_tools.router)
+    app.include_router(threads.router)
 
     # Mount uploads directory for serving images and other static files
     import os
