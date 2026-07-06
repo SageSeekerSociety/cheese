@@ -1,0 +1,14 @@
+{
+  "backend_ws_url": "ws://127.0.0.1:8080/connector/agent",
+  "session_token": "REPLACE_WITH_SESSION_TOKEN",
+  "tmux_path": "",
+  "agent": {
+    "path": "claude",
+    "args": ["--permission-mode", "bypassPermissions"],
+    "cwd": "/home/agent/workspace",
+    "env": ["TERM=xterm-256color"]
+  },
+  "cols": 200,
+  "rows": 50,
+  "heartbeat_interval_ms": 15000
+}
