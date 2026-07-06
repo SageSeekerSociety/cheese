@@ -984,7 +984,7 @@ function onDocMouseOver(e: MouseEvent) {
   const wr = wrap.getBoundingClientRect()
   const pr = pre.getBoundingClientRect()
   codeCopyPre = pre
-  codeCopy.value = { top: pr.top - wr.top + 6, right: pr.right - wr.left - 8, done: false }
+  codeCopy.value = { top: pr.top - wr.top + 4, right: pr.right - wr.left - 10, done: false }
 }
 
 // Curated language choices for the picker (all present in lowlight common).
@@ -3235,6 +3235,12 @@ onBeforeUnmount(() => {
   margin: 0.7em 0;
   font-size: 0.855em;
   line-height: 1.6;
+}
+/* The static corner tag yields whenever the interactive code bar is up —
+   two things must never occupy the corner at once. The bar anchors on the
+   same spot, so the swap reads as the tag becoming interactive. */
+.doc-editor-wrap:has(.doc-codebar) .doc-editor :deep(pre[data-language])::before {
+  opacity: 0;
 }
 .doc-editor :deep(pre[data-language])::before {
   content: attr(data-language);
