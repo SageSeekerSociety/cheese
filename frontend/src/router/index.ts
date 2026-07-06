@@ -10,6 +10,7 @@ import QuestionRoutes from './question'
 import SpacesRoutes from './spaces'
 import TeamsRoutes from './teams'
 import UserRoutes from './user'
+import WorkspaceRoutes from './workspace'
 
 import { usePageTitleStore } from '@/stores/title'
 
@@ -22,6 +23,7 @@ const routes: RouteRecordRaw[] = [
   QuestionRoutes,
   SpacesRoutes,
   TeamsRoutes,
+  WorkspaceRoutes,
   {
     name: 'Search',
     path: '/search',
