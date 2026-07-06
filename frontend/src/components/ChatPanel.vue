@@ -154,6 +154,33 @@ function todoMark(status: string): string {
   return status === 'completed' ? '✓' : status === 'in_progress' ? '◐' : '○'
 }
 
+// ---- 选项问题 (cheese ask): buttons under the message; one click answers
+// and summons 芝士 to continue. Answered state renders for everyone. ----
+function askOptions(m: Block): string[] | null {
+  const opts = (m.meta as Record<string, unknown> | null)?.options
+  return Array.isArray(opts) && opts.length ? (opts as string[]) : null
+}
+function askAnswered(m: Block): { option: string; by: string } | null {
+  const meta = m.meta as Record<string, unknown> | null
+  return meta?.answered
+    ? { option: String(meta.answered), by: String(meta.answered_by ?? '') }
+    : null
+}
+const askBusy = ref<string | null>(null)
+async function pickOption(m: Block, option: string) {
+  if (askBusy.value) return
+  askBusy.value = m.id
+  try {
+    const updated = await answerOptions(m.id, option, AUTHOR)
+    const bi = messages.value.findIndex((x) => x.id === m.id)
+    if (bi >= 0) messages.value.splice(bi, 1, updated)
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '选择失败'
+  } finally {
+    askBusy.value = null
+  }
+}
+
 // ---- Emoji reactions (Slack semantics, 协作平台的消息表情) ----
 // MVP picker: a fixed strip of the 8 most common reactions.
 const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
