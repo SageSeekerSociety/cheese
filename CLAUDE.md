@@ -2,6 +2,29 @@
 
 Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright). See `README.md` for setup and commands.
 
+## Agent Layer (知是 2.0)
+
+The AI-teammate layer on top of this backend is specified in
+[`docs/design/architecture.md`](docs/design/architecture.md) — the single source of
+truth for the data model, actor model, orchestration, connector plane and frontend.
+Rules that MUST be followed when working on it:
+
+- **一个 agent 就是一个用户.** One identity type (`user`). Authorship, work-item
+  ownership and document edits are all `user_id`. Human vs agent differ only in login
+  method (password/passkey vs a connector-minted session token). Business/domain code
+  never branches on human-vs-agent.
+- **一套业务服务,三个前门.** Humans (REST), agents (tool/callback RPC) and the
+  orchestrator all call the *same* domain services. The actor is injected at the trust
+  boundary, never read from a request body. A valid session token is necessary, not
+  sufficient — always authorize against the actor's real permissions.
+- **Thin client.** `connector/` binaries (`cheesed`, `cheese`) carry zero business
+  logic; command emission, the triage lock, attention policy and prompts live in the
+  backend, so updates never require a client reinstall.
+- **万物皆块.** Chat and documents share one append-only `block` substrate with two
+  trees (`reply_to_id`, `struct_parent_id`) + `block_ref`.
+- New business domains anchor to `project_id`; name them to avoid the legacy `task` /
+  `topics` domains (事项 is `domain/workitem`).
+
 ## .claude/ Directory Structure
 
 ```
