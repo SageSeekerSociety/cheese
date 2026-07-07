@@ -16,8 +16,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/config"
@@ -25,6 +28,7 @@ import (
 	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/runtime"
 	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/terminal"
+	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/update"
 )
 
 // LoadConfig reads this machine's config from path.
@@ -35,6 +39,7 @@ type Host struct {
 	conn    *link.Conn
 	tm      *terminal.Manager
 	cfgPath string // for the shared screen-count state file ("" disables)
+	base    string // server origin, for self-update downloads
 
 	ctx      context.Context
 	mu       sync.Mutex
@@ -42,6 +47,8 @@ type Host struct {
 
 	execMu sync.Mutex
 	execs  map[string]context.CancelFunc // in-flight exec id -> cancel
+
+	updating atomic.Bool // guards against concurrent / re-entrant self-updates
 }
 
 type sess struct {
@@ -68,6 +75,7 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 		conn:     link.New(ctrlURL, cfg.Token),
 		tm:       tm,
 		cfgPath:  cfgPath,
+		base:     cfg.Base,
 		sessions: map[string]*sess{},
 		execs:    map[string]context.CancelFunc{},
 	}, nil
@@ -80,7 +88,76 @@ func (h *Host) Run(ctx context.Context) error {
 	defer h.clearState()
 	defer h.closeAll()
 	defer h.tm.KillServer()
+
+	// A manual `cheese update` signals the running service with SIGUSR2 so the
+	// update happens INSIDE this process (which then hands off via syscall.Exec,
+	// preserving the private tmux + its tasks). Handle it here for the lifetime of
+	// the run. Note: a successful update never returns from performUpdate — it
+	// replaces the process image — so none of the deferred teardown above runs.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGUSR2)
+	defer signal.Stop(sig)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sig:
+				go h.performUpdate()
+			}
+		}
+	}()
+
 	return h.conn.Run(ctx, h.onMsg)
+}
+
+// performUpdate updates the `cheese` binary in place and hands this process off to
+// it, WITHOUT tearing down the private tmux (so the hosted tasks survive). It runs
+// inside the live service process: download + verify + atomic replace, then
+// syscall.Exec into the new binary — which REPLACES the process image, so the
+// deferred KillServer never runs and tmux + tasks live on; the new binary
+// reconnects and re-adopts the surviving screens. Any failure keeps the current
+// process running unchanged (a failed update must never kill live tasks).
+func (h *Host) performUpdate() {
+	if !h.updating.CompareAndSwap(false, true) {
+		return // an update is already in flight
+	}
+	defer h.updating.Store(false)
+
+	if h.base == "" {
+		fmt.Fprintln(os.Stderr, "cheese: update requested but no server base is configured")
+		return
+	}
+	self, err := update.SelfPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cheese: update: cannot locate self: %v\n", err)
+		return
+	}
+	tmp, err := update.Fetch(h.ctx, h.base)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cheese: update aborted (kept running current build): %v\n", err)
+		return
+	}
+	if err := update.Replace(tmp, self); err != nil {
+		fmt.Fprintf(os.Stderr, "cheese: update aborted (kept running current build): %v\n", err)
+		return
+	}
+	// Detach any live viewer pty clients (but NOT the tmux sessions) before the exec.
+	// syscall.Exec skips the deferred closeAll, so an attached viewer's tmux client
+	// (a child process) would otherwise survive as an ORPHAN still attached to the
+	// session — and with `window-size latest` it fights the fresh viewer the new
+	// binary attaches, leaving 现场 garbled/unopenable. Closing the client here only
+	// tears down the viewer relay; the program/task in the tmux session lives on and
+	// the new binary re-adopts it, then a re-subscribe attaches a clean single viewer.
+	h.closeViewerClients()
+	fmt.Fprintln(os.Stderr, "cheese: binary updated in place; handing off to the new build (tasks preserved)…")
+	// syscall.Exec replaces the process image: deferred functions (KillServer!) do
+	// NOT run, so the private tmux and every hosted task survive; the new image
+	// reconnects and re-adopts them. If exec fails we deliberately do NOT exit —
+	// the tasks must live on; the already-replaced binary applies on next restart.
+	if err := syscall.Exec(self, os.Args, os.Environ()); err != nil {
+		fmt.Fprintf(os.Stderr, "cheese: exec into new binary failed (applies on next restart): %v\n", err)
+	}
 }
 
 func (h *Host) publishState() {
@@ -139,6 +216,8 @@ func (h *Host) onMsg(m link.Msg) {
 		go h.runExec(m)
 	case "exec.cancel": // stop an in-flight exec (e.g. the caller's timeout fired)
 		h.cancelExec(m.ID)
+	case "update": // server-pushed forced update: update in place and re-exec
+		go h.performUpdate()
 	case "screen.resize":
 		if s := h.session(m.Sid); s != nil {
 			// Viewers re-send their size continuously (and on a timer) to keep the
@@ -163,7 +242,14 @@ func (h *Host) session(sid string) *sess {
 }
 
 func (h *Host) createSession(m link.Msg) {
-	if h.session(m.Sid) != nil {
+	if existing := h.session(m.Sid); existing != nil {
+		// Same-process reconnect: the screen is already live locally. An adopt
+		// create carries the current driver source — hot-reload it into the live
+		// runtime (this is how a backend restart pushes the latest cheeselet into
+		// already-running screens). A non-adopt duplicate is a harmless no-op.
+		if m.Adopt && m.Source != "" {
+			existing.rt.LoadScript(m.Source)
+		}
 		return
 	}
 	// The server owns the screen's identity: it hands down an opaque token in
@@ -177,10 +263,21 @@ func (h *Host) createSession(m link.Msg) {
 		env = append(env, k+"="+v)
 	}
 
-	term, err := h.tm.Spawn(m.Sid, m.Command, env, m.Cols, m.Rows)
-	if err != nil {
-		_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: err.Error()})
-		return
+	// If a tmux session for this sid already exists (it survived a `cheese update`
+	// re-exec or a server restart), ADOPT it: re-establish the runtime + driver +
+	// polling around the still-running program instead of spawning a new session.
+	// Otherwise spawn a fresh tmux session + program as usual. The server sets
+	// m.Adopt on the re-provision path; HasSession is the ground truth we act on.
+	var term *terminal.Session
+	if h.tm.HasSession(m.Sid) {
+		term = h.tm.Adopt(m.Sid)
+	} else {
+		var err error
+		term, err = h.tm.Spawn(m.Sid, m.Command, env, m.Cols, m.Rows)
+		if err != nil {
+			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: err.Error()})
+			return
+		}
 	}
 	rt := runtime.New(term, &busAdapter{conn: h.conn, sid: m.Sid})
 	ctx, cancel := context.WithCancel(h.ctx)
@@ -238,6 +335,23 @@ func (h *Host) closeSession(sid string) {
 	h.mu.Unlock()
 	h.teardown(s)
 	h.publishState()
+}
+
+// closeViewerClients detaches every live viewer pty (s.client) WITHOUT touching the
+// tmux sessions/tasks — used before a self-update exec so no viewer client orphans.
+func (h *Host) closeViewerClients() {
+	h.mu.Lock()
+	clients := make([]*terminal.Client, 0, len(h.sessions))
+	for _, s := range h.sessions {
+		if s.client != nil {
+			clients = append(clients, s.client)
+			s.client, s.lastCols, s.lastRows = nil, 0, 0
+		}
+	}
+	h.mu.Unlock()
+	for _, c := range clients {
+		c.Close()
+	}
 }
 
 func (h *Host) closeAll() {

@@ -19,6 +19,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -28,6 +30,7 @@ import (
 	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/service"
 	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/ui"
+	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/update"
 )
 
 // Commands returns every lifecycle command to add to the `cheese` root.
@@ -43,6 +46,7 @@ func Commands() []*cobra.Command {
 		linkCmd(&cfgPath, withConfig),
 		statusCmd(&cfgPath, withConfig),
 		runCmd(&cfgPath, withConfig),
+		updateCmd(&cfgPath, withConfig),
 		uninstallCmd(&cfgPath, withConfig),
 	}
 }
@@ -232,7 +236,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 		Short: "Disconnect from the server",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if n := state.Screens(*cfgPath); n > 0 && !force {
-				fmt.Printf("This machine is hosting %d running screen(s); disconnecting will kill them.\n", n)
+				fmt.Printf("This machine is running %d session(s); disconnecting will stop them.\n", n)
 				if !confirm("Disconnect anyway?") {
 					fmt.Println("Aborted. (Use --force to skip this prompt.)")
 					return nil
@@ -262,7 +266,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 		Short: "Disconnect and stop reconnecting on boot",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if n := state.Screens(*cfgPath); n > 0 && !force {
-				fmt.Printf("This machine is hosting %d running screen(s); this will kill them.\n", n)
+				fmt.Printf("This machine is running %d session(s); this will stop them.\n", n)
 				if !confirm("Continue?") {
 					fmt.Println("Aborted. (Use --force to skip this prompt.)")
 					return nil
@@ -295,7 +299,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 func statusCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
 	return withConfig(&cobra.Command{
 		Use:   "status",
-		Short: "Show login, connection, and running screens",
+		Short: "Show login, connection, and running sessions",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			ui.Heading("cheese")
 			cfg, err := config.Load(*cfgPath)
@@ -348,14 +352,73 @@ func runCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *co
 	})
 }
 
+// updateCmd updates the `cheese` binary to the latest published build. If the
+// background service is running it merely SIGNALS it (SIGUSR2): the update must
+// happen inside that process so its private tmux — and the tasks running in it —
+// survive the binary swap and the in-place hand-off (syscall.Exec). Only when no
+// service is running (nothing to preserve) does it download + replace directly.
+func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
+	return withConfig(&cobra.Command{
+		Use:   "update",
+		Short: "Update the cheese binary to the latest published build",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if pid := state.PID(*cfgPath); pid > 0 {
+				// A live service owns the tmux + tasks: let it update itself in-process
+				// and hand off, so nothing running is killed.
+				if err := syscall.Kill(pid, syscall.SIGUSR2); err != nil {
+					return fmt.Errorf("signal running service (pid %d): %w", pid, err)
+				}
+				ui.OK("Update signalled to the running service (pid %d).", pid)
+				ui.Hint("it downloads, verifies and hands off in place — running screens are preserved")
+				return nil
+			}
+			// No running service: nothing to preserve — download + replace directly.
+			cfg, err := config.Load(*cfgPath)
+			if err != nil || cfg.Base == "" {
+				return fmt.Errorf("no server configured — run `cheese auth login` first")
+			}
+			fmt.Println("Downloading the latest cheese…")
+			tmp, err := update.Fetch(context.Background(), cfg.Base)
+			if err != nil {
+				return err
+			}
+			self, err := update.SelfPath()
+			if err != nil {
+				return err
+			}
+			if err := update.Replace(tmp, self); err != nil {
+				return err
+			}
+			ui.OK("cheese updated.")
+			ui.Hint("no service was running; the new binary is in place and used from now on")
+			return nil
+		},
+	})
+}
+
 func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
 	return withConfig(&cobra.Command{
 		Use:   "uninstall",
 		Short: "Remove the cheese CLI from this machine (service, config, and binary)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			warnScreens(*cfgPath)
+			// Capture the live connector's pid (recorded by `cheese run`) BEFORE anything,
+			// so we can guarantee it is actually stopped.
+			pid := state.RawPID(*cfgPath)
 			_ = service.Control(*cfgPath, "stop")
 			_ = service.Control(*cfgPath, "uninstall")
+			// A running connector whose config+binary were deleted is the worst possible
+			// state: it keeps using stale in-memory credentials, can't be managed, and
+			// looks "connected" while the server sees it offline. So guarantee the process
+			// is gone before deleting anything. `systemctl stop` of a *system* unit needs
+			// root and silently no-ops otherwise — but the process itself runs as this
+			// user, so we can stop it directly. If we truly cannot (a root-owned process),
+			// fail loudly and leave every file intact so nothing is orphaned.
+			if err := stopProcess(pid); err != nil {
+				return fmt.Errorf(
+					"the cheese connector is still running (pid %d) and could not be stopped; "+
+						"nothing was removed — re-run as: sudo cheese uninstall", pid)
+			}
 			if err := os.RemoveAll(config.Dir()); err != nil {
 				return fmt.Errorf("remove config %s: %w", config.Dir(), err)
 			}
@@ -378,8 +441,43 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 
 func warnScreens(cfgPath string) {
 	if n := state.Screens(cfgPath); n > 0 {
-		fmt.Printf("Note: %d running screen(s) will be killed.\n", n)
+		fmt.Printf("Note: %d running session(s) will be stopped.\n", n)
 	}
+}
+
+// procAlive reports whether pid names a live process. EPERM means it exists but we may
+// not signal it (a differently-owned process) — still alive; ESRCH means it is gone.
+func procAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// stopProcess ensures pid is no longer running: SIGTERM (so the host tears its tmux
+// down cleanly), then SIGKILL as a backstop, polling briefly between. Returns nil once
+// the process is gone (or was never there), or an error if it is still alive after both
+// — e.g. we lack the privilege to signal a differently-owned process.
+func stopProcess(pid int) error {
+	if !procAlive(pid) {
+		return nil
+	}
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	for range 30 {
+		if !procAlive(pid) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+	for range 20 {
+		if !procAlive(pid) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("process %d still alive", pid)
 }
 
 func confirm(q string) bool {

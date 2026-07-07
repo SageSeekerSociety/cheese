@@ -92,13 +92,15 @@ func Setup(version string) *cobra.Command {
 	// Rebrand the root off Restish's "generic REST client" identity, and hide its
 	// low-level --rsh-* transport flags, so `cheese --help` reads like our own CLI.
 	cli.Root.Use = "cheese"
-	cli.Root.Short = "Attach this machine to a server and host the screens it opens"
-	cli.Root.Long = "cheese attaches this machine to a server that can open and drive terminal\n" +
-		"screens on it — log in once, stay connected, host whatever the server runs.\n\n" +
-		"  cheese auth login <server>   log this machine in\n" +
-		"  cheese link connect          connect now\n" +
-		"  cheese status                show login, connection and screens\n" +
-		"  cheese api <operation>       call the server's generated API"
+	cli.Root.Short = "Connect this machine so your cheese sessions can run on it"
+	// Prose only — the help template word-wraps Long, which collapses manual
+	// newlines, so a hand-formatted command list here gets mashed onto one line.
+	// The commands render correctly in the auto-generated sections below. Keep the
+	// wording plain and reassuring — no "the server runs/drives things on your machine".
+	cli.Root.Long = "cheese connects this machine to your cheese workspace so your " +
+		"sessions can run here and you can use them from the web. Log in once and it " +
+		"stays connected in the background. Run `cheese <command> -h` for any command; " +
+		"`cheese api` calls your workspace's API."
 	cli.Root.Example = ""
 	cli.Root.SilenceErrors = true
 	cli.Root.CompletionOptions.DisableDefaultCmd = true

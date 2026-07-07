@@ -40,6 +40,11 @@ type Msg struct {
 	Cols    int               `json:"cols,omitempty"`
 	Rows    int               `json:"rows,omitempty"`
 	Source  string            `json:"source,omitempty"`
+	// Adopt marks a session.create that re-drives a screen whose tmux session
+	// already survives on the device (after a server restart or a `cheese update`
+	// re-exec): the host re-establishes the runtime + driver around the existing
+	// tmux instead of spawning a new session. Unknown to older peers (ignored).
+	Adopt bool `json:"adopt,omitempty"`
 	// Data carries base64-encoded raw terminal bytes for the direct screen
 	// channel (screen.data downstream, screen.input upstream).
 	Data string `json:"data,omitempty"`
