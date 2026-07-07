@@ -58,8 +58,13 @@ func NewManager() (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "cheese")
-	if err != nil {
+	// A STABLE per-user runtime dir — NOT a fresh MkdirTemp each start. The tmux
+	// server daemonizes and outlives the cheese process; a restarted or self-updated
+	// (syscall.Exec) cheese must reconnect to the SAME socket to find and re-adopt the
+	// surviving sessions. A random dir per process would strand them on an orphan
+	// socket (which is exactly what broke in-place update before this).
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("cheese-%d", os.Getuid()))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("terminal: runtime dir: %w", err)
 	}
 	conf := filepath.Join(dir, "tmux.conf")
@@ -78,6 +83,21 @@ func (m *Manager) tmux(args ...string) *exec.Cmd {
 
 // KillServer tears down the whole private tmux server (and every session).
 func (m *Manager) KillServer() { _ = m.tmux("kill-server").Run() }
+
+// HasSession reports whether a tmux session named `name` already exists in this
+// private server — used to re-adopt a surviving session after the cheese process
+// re-execs itself (e.g. `cheese update`) without ever tearing down tmux.
+func (m *Manager) HasSession(name string) bool {
+	return m.tmux("has-session", "-t", name).Run() == nil
+}
+
+// Adopt wraps an already-existing tmux session (one that survived a process
+// re-exec) as a Session, without spawning anything. The caller must have checked
+// HasSession; the session's program keeps running untouched — only screen
+// polling/relay is (re)established around it.
+func (m *Manager) Adopt(name string) *Session {
+	return &Session{m: m, name: name, stop: make(chan struct{})}
+}
 
 // Session is one hosted program: a tmux session polled for screen changes.
 type Session struct {

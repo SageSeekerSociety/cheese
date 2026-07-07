@@ -153,6 +153,23 @@ func (r *Runtime) Resolve(id string, result any, errStr string) {
 
 func (r *Runtime) LoadScript(source string) {
 	r.enqueue(func() {
+		// Hot-reload in a FRESH VM. Re-running a new script in the old vm re-declares
+		// its top-level `const`/`let` in the same global scope → "Identifier X has
+		// already been declared" → the reload aborts and leaves the driver corrupted.
+		// A new vm (with the API re-installed and the per-script state cleared) lets a
+		// normal, well-formed driver be reloaded cleanly, and drops the previous
+		// script's watch listeners / exposed fns instead of leaking them. Runs on the
+		// loop goroutine, the only place vm is touched, so the swap is safe.
+		r.vm = goja.New()
+		r.vm.SetFieldNameMapper(goja.TagFieldNameMapper("json", true))
+		r.owned = map[string]any{}
+		r.watched = map[string]*watchedVar{}
+		r.exposed = map[string]goja.Callable{}
+		r.pending = map[string]*pendingCall{}
+		if err := r.installAPI(); err != nil {
+			r.logf("reload installAPI: %v", err)
+			return
+		}
 		if _, err := r.vm.RunString(source); err != nil {
 			r.logf("script error: %v", err)
 		}
