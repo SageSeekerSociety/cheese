@@ -15,7 +15,12 @@
               :subtitle="admin.role === 'OWNER' ? t('spaces.detail.owner') : t('spaces.detail.admin')"
             >
               <template #prepend>
-                <v-avatar size="36" :image="getAvatarUrl(admin.user.avatarId)" />
+                <UserAvatar
+                  :user-id="admin.user.id"
+                  :avatar-id="admin.user.avatarId"
+                  :nickname="admin.user.nickname"
+                  :size="36"
+                />
               </template>
               <template #append>
                 <div class="d-flex align-center">
@@ -129,11 +134,11 @@ import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
-import { getAvatarUrl } from '@/utils/materials'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { AvatarsApi } from '@/network/api/avatars'
 import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'

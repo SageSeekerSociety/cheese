@@ -11,8 +11,10 @@ from app.api.routes import (
     avatars,
     comments,
     discussions,
+    documents,
     groups,
     health,
+    installer,
     knowledge,
     materialbundles,
     materials,
@@ -25,6 +27,7 @@ from app.api.routes import (
     teams,
     topics_legacy,
     users,
+    workitems,
 )
 from app.auth.domains import (
     register_knowledge_permissions,
@@ -112,6 +115,22 @@ def create_app() -> FastAPI:
     app.include_router(knowledge.router)
     app.include_router(recruitment.router)
     app.include_router(recruitment.team_recruitment_router)
+    # 知是 2.0 workspace (Phase-A mock contract): 文档 / 事项. 群聊 (threads) now
+    # lives under the connector plane (build_thread_router), included below.
+    app.include_router(documents.router)
+    app.include_router(workitems.router)
+    # 知是 2.0 connector plane (frozen link.Msg): device flow + /agent control
+    # channel + 现场 viewer, with real project-member viewer authz.
+    from app.agent.connector_plane import agent_api_app, build_connector_routers
+
+    for connector_router in build_connector_routers():
+        app.include_router(connector_router)
+    # 知是 2.0 agent tool door: the tiny API an agent's `cheese api` calls (its own
+    # OpenAPI), mounted as a sub-app so CHEESE_API points here.
+    app.mount("/agent-api", agent_api_app())
+    # 知是 2.0 convenient installer: served install.sh + prebuilt cli/ artifacts.
+    app.include_router(installer.router)
+    app.include_router(installer.root_router)  # also <origin>/install.sh
 
     # Mount uploads directory for serving images and other static files
     import os

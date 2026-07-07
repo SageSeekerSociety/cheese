@@ -64,9 +64,13 @@
                 class="member-item mb-1"
               >
                 <template #prepend>
-                  <v-avatar size="36" class="mr-3">
-                    <v-img :src="getAvatarUrl(member.user.avatarId)" />
-                  </v-avatar>
+                  <UserAvatar
+                    :user-id="member.user.id"
+                    :avatar-id="member.user.avatarId"
+                    :nickname="member.user.nickname"
+                    :size="36"
+                    class="mr-3"
+                  />
                 </template>
                 <v-list-item-title class="text-subtitle-2">{{ member.user.nickname }}</v-list-item-title>
                 <v-list-item-subtitle class="text-caption text-medium-emphasis">
@@ -119,7 +123,7 @@ import { computed, defineProps, inject } from 'vue'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 
-import { getAvatarUrl } from '@/utils/materials'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 // 定义 props
 const props = defineProps<{

@@ -129,9 +129,12 @@
 
               <!-- 底部信息 -->
               <v-card-actions class="pa-4 pt-0">
-                <v-avatar size="24" color="grey-lighten-2">
-                  <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
-                </v-avatar>
+                <UserAvatar
+                  :user-id="resource.creator.id"
+                  :avatar-id="resource.creator.avatarId"
+                  :nickname="resource.creator.nickname"
+                  :size="24"
+                />
                 <span class="text-caption ml-2">{{ resource.creator.nickname }}</span>
                 <v-spacer></v-spacer>
                 <v-btn
@@ -184,9 +187,13 @@
             <td>{{ getResourceTypeName(resource.type, resource.material?.type) }}</td>
             <td>
               <div class="d-flex align-center">
-                <v-avatar size="24" color="grey-lighten-2" class="mr-2">
-                  <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
-                </v-avatar>
+                <UserAvatar
+                  :user-id="resource.creator.id"
+                  :avatar-id="resource.creator.avatarId"
+                  :nickname="resource.creator.nickname"
+                  :size="24"
+                  class="mr-2"
+                />
                 <span>{{ resource.creator.nickname }}</span>
               </div>
             </td>
@@ -399,9 +406,13 @@
             <div class="d-flex resource-info-row">
               <div class="resource-info-label">添加者</div>
               <div class="d-flex align-center">
-                <v-avatar size="24" color="grey-lighten-2" class="mr-2">
-                  <v-img :src="getAvatarUrl(selectedResource.creator.avatarId)"></v-img>
-                </v-avatar>
+                <UserAvatar
+                  :user-id="selectedResource.creator.id"
+                  :avatar-id="selectedResource.creator.avatarId"
+                  :nickname="selectedResource.creator.nickname"
+                  :size="24"
+                  class="mr-2"
+                />
                 <span>{{ selectedResource.creator.nickname }}</span>
               </div>
             </div>
@@ -438,9 +449,13 @@
             <div class="text-subtitle-1 font-weight-medium mb-2">原始讨论</div>
             <div v-if="selectedResource.originalMessage" class="original-message-context">
               <div class="d-flex">
-                <v-avatar size="36" color="grey-lighten-2" class="mt-1">
-                  <v-img :src="getAvatarUrl(selectedResource.originalMessage.sender.avatarId)"></v-img>
-                </v-avatar>
+                <UserAvatar
+                  :user-id="selectedResource.originalMessage.sender.id"
+                  :avatar-id="selectedResource.originalMessage.sender.avatarId"
+                  :nickname="selectedResource.originalMessage.sender.nickname"
+                  :size="36"
+                  class="mt-1"
+                />
                 <div class="ml-3">
                   <div class="d-flex align-center">
                     <span class="font-weight-medium">{{ selectedResource.originalMessage.sender.nickname }}</span>
@@ -692,9 +707,8 @@ import { VForm } from 'vuetify/lib/components/index.mjs'
 import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
 
-import { getAvatarUrl } from '@/utils/materials'
-
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { KnowledgesApi } from '@/network/api/knowledges'
 import { MaterialsApi } from '@/network/api/materials'
 import { useDialog } from '@/plugins/dialog'

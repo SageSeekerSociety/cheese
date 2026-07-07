@@ -2,9 +2,7 @@
   <v-container class="pa-0">
     <v-card-text class="py-1">
       <v-container class="pl-0 d-flex flex-row align-center">
-        <v-avatar>
-          <v-img :src="getAvatarUrl(item.author.avatarId)" />
-        </v-avatar>
+        <UserAvatar :user-id="item.author.id" :avatar-id="item.author.avatarId" :nickname="item.author.nickname" />
         <v-container class="py-0 pl-0 ml-2 my-auto d-flex flex-column">
           <div class="text-body-1 font-weight-bold author-nickname">{{ item.author.nickname }}</div>
           <div class="text-body-2 text-medium-emphasis font-weight-regular author-intro">
@@ -57,8 +55,7 @@ import type { Insight } from '@/types'
 import { ref } from 'vue'
 import { computed } from 'vue'
 
-import { getAvatarUrl } from '@/utils/materials'
-
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { NewAttitudeType } from '@/constants'
 const viewerOptions = {
   url: 'data-src',

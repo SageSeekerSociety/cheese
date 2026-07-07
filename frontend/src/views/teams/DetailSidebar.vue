@@ -206,15 +206,15 @@
       <p class="text-caption text-medium-emphasis mb-2">管理员</p>
       <div class="d-flex align-center">
         <div class="admin-avatars">
-          <v-avatar
+          <UserAvatar
             v-for="admin in ownerAndAdminExamples"
             :key="admin.id"
-            size="28"
-            color="grey-lighten-2"
+            :user-id="admin.id"
+            :avatar-id="admin.avatarId"
+            :nickname="admin.nickname"
+            :size="28"
             class="admin-avatar"
-          >
-            <v-img :src="getAvatarUrl(admin.avatarId)" />
-          </v-avatar>
+          />
         </div>
         <div class="text-caption text-medium-emphasis ml-2">{{ ownerAndAdminsText }}</div>
       </div>
@@ -231,6 +231,7 @@ import { useRoute } from 'vue-router'
 import { getAvatarUrl } from '@/utils/materials'
 
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import AccountService from '@/services/account'
 
 interface Props {

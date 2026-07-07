@@ -22,7 +22,13 @@
 
       <div class="d-flex flex-wrap align-center justify-space-between mt-3">
         <div class="d-flex align-center text-caption text-medium-emphasis creator-info">
-          <v-avatar size="20" class="me-2" :image="getAvatarUrl(task.creator.avatarId)"></v-avatar>
+          <UserAvatar
+            :user-id="task.creator.id"
+            :avatar-id="task.creator.avatarId"
+            :nickname="task.creator.nickname"
+            :size="20"
+            class="me-2"
+          />
           <span>{{ task.creator.nickname }} 发布</span>
           <v-icon size="12" class="mx-1">mdi-circle-small</v-icon>
           <span>{{ dayjs(task.createdAt).format('MM-DD HH:mm') }}</span>
@@ -82,9 +88,9 @@ import type { Task } from '@/types'
 import { computed, toRefs } from 'vue'
 import dayjs from 'dayjs'
 
-import { getAvatarUrl } from '@/utils/materials'
 import { getTaskStatusText, getTaskStatusType } from '@/utils/tasks'
 
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import AccountService from '@/services/account'
 
 const props = defineProps<{

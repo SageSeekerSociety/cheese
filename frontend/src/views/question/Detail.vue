@@ -37,7 +37,12 @@
               </template>
             </div>
             <div class="d-flex align-center mb-2">
-              <user-avatar :avatar="getAvatarUrl(questionData.author.avatarId)" :size="24" />
+              <UserAvatar
+                :user-id="questionData.author.id"
+                :avatar-id="questionData.author.avatarId"
+                :nickname="questionData.author.nickname"
+                :size="24"
+              />
               <span class="ms-2">{{ questionData.author.nickname }}</span>
             </div>
             <div class="d-flex align-center flex-wrap" style="gap: 8px">
@@ -247,7 +252,6 @@ import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
 
 import { DEFAULT_CONFIG } from '@/utils/editor'
-import { getAvatarUrl } from '@/utils/materials'
 import { parse } from '@/utils/parser'
 
 import { usePageTitle } from '@/composables/usePageTitle'

@@ -34,7 +34,13 @@
 
             <div class="d-flex flex-wrap align-center justify-space-between mt-3">
               <div class="d-flex align-center text-caption text-medium-emphasis creator-info">
-                <v-avatar size="20" class="me-2" :image="getAvatarUrl(task.creator.avatarId)"></v-avatar>
+                <UserAvatar
+                  :user-id="task.creator.id"
+                  :avatar-id="task.creator.avatarId"
+                  :nickname="task.creator.nickname"
+                  :size="20"
+                  class="me-2"
+                />
                 <span>{{ task.creator.nickname }} {{ t('spaces.detail.auditTasks.published') }}</span>
                 <v-icon size="12" class="mx-1">mdi-circle-small</v-icon>
                 <span>{{ dayjs(task.createdAt).format('MM-DD HH:mm') }}</span>
@@ -156,10 +162,10 @@ import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
 import { storeToRefs } from 'pinia'
 
-import { getAvatarUrl } from '@/utils/materials'
 import { createEmptyResult, usePaging } from '@/utils/paging'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { TasksApi } from '@/network/api/tasks'
 import { CancelError, useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'

@@ -12,6 +12,20 @@ import { prismjsPlugin } from 'vite-plugin-prismjs'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 
+// Forward the browser's original Host to the backend so it can reconstruct the public
+// origin (scheme+host) the request actually came in on — the backend derives the cli
+// `base` and the device-approve link from this, keeping the code independent of how the
+// site is reached (host/port/proxy). Mirrors what a prod ingress sets as X-Forwarded-*.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const forwardOriginalHost = (proxy: any) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  proxy.on('proxyReq', (proxyReq: any, req: any) => {
+    const host = req.headers?.host
+    if (host) proxyReq.setHeader('x-forwarded-host', host)
+    proxyReq.setHeader('x-forwarded-proto', 'http')
+  })
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
@@ -55,7 +69,38 @@ export default defineConfig({
     extensions: ['.js', '.json', '.jsx', '.mjs', '.ts', '.tsx', '.vue'],
   },
   server: {
+    host: true,
     port: 3000,
+    allowedHosts: true,
+    proxy: {
+      // Standard API edge (dev mirror of the prod ingress): <origin>/api/* → backend
+      // root. Covers the REST API *and* every cli-facing connector endpoint the frozen
+      // cli reaches with its <origin>/api base — device flow (/api/auth/device/*),
+      // control WS (/api/agent), tool door (/api/agent-api/*), client artifacts
+      // (/api/connector/latest/*) and the OpenAPI spec (/api/openapi.json). ws:true so
+      // the /api/agent upgrade reaches the backend.
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        ws: true,
+        rewrite: (p) => p.replace(/^\/api/, ''),
+        configure: forwardOriginalHost,
+      },
+      // Browser-side connector calls (group chat, agents list) + 现场 viewer WS still
+      // address the backend directly at /connector (they don't go through /api).
+      '/connector': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        ws: true,
+        configure: forwardOriginalHost,
+      },
+      // Memorable installer: `curl <origin>/install.sh | sh`.
+      '/install.sh': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        configure: forwardOriginalHost,
+      },
+    },
   },
   build: {
     minify: 'terser',

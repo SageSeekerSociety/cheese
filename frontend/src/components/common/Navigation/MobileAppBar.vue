@@ -129,6 +129,12 @@
                 </template>
                 <v-list-item-title>个人中心</v-list-item-title>
               </v-list-item>
+              <v-list-item v-if="experimental" :to="{ name: 'MyAgents' }" rounded="lg" class="mb-1" color="primary">
+                <template #prepend>
+                  <v-icon icon="mdi-robot-happy-outline" class="me-2"></v-icon>
+                </template>
+                <v-list-item-title>我的 Agent</v-list-item-title>
+              </v-list-item>
               <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
                 <template #prepend>
                   <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>
@@ -150,6 +156,7 @@
 import { ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 
+import { useExperimental } from '@/composables/useExperimental'
 import { useNotifications } from '@/composables/useNotifications'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
@@ -162,6 +169,9 @@ import { usePageTitleStore } from '@/stores/title'
 // 使用 composables
 const userMenu = useUserMenu()
 const notifications = useNotifications()
+
+// 内测开关：「我的 Agent」仅在带 ?exp=true 的内测态下显示（镜像 App.vue 的「聊天」入口）。
+const experimental = useExperimental()
 
 const navigationStore = useNavigationStore()
 const { updateTrigger } = usePageTitleStore()

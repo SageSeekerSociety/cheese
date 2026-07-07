@@ -50,9 +50,13 @@
         <!-- 成员信息列 -->
         <template #[`item.user`]="{ item }">
           <div class="d-flex align-center">
-            <v-avatar size="40" class="mr-3">
-              <v-img :src="getAvatarUrl(item.user.avatarId)" />
-            </v-avatar>
+            <UserAvatar
+              :user-id="item.user.id"
+              :avatar-id="item.user.avatarId"
+              :nickname="item.user.nickname"
+              :size="40"
+              class="mr-3"
+            />
             <div>
               <div class="font-weight-medium">{{ item.user.nickname }}</div>
               <!-- <div class="text-caption text-medium-emphasis user-email">{{ item.user.email }}</div> -->
@@ -198,9 +202,13 @@
         </v-card-title>
         <v-card-text class="px-4">
           <div v-if="selectedMember" class="d-flex align-center mb-4">
-            <v-avatar size="44" class="mr-4">
-              <v-img :src="getAvatarUrl(selectedMember.user.avatarId)" />
-            </v-avatar>
+            <UserAvatar
+              :user-id="selectedMember.user.id"
+              :avatar-id="selectedMember.user.avatarId"
+              :nickname="selectedMember.user.nickname"
+              :size="44"
+              class="mr-4"
+            />
             <div>
               <div class="text-h6">{{ selectedMember.user.nickname }}</div>
               <div class="text-caption text-medium-emphasis">
@@ -250,6 +258,7 @@ import dayjs from 'dayjs'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { ProjectsApi } from '@/network/api/projects'
 import { currentUserId } from '@/services/account'
 

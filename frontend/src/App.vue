@@ -34,6 +34,9 @@
         </div>
       </div>
     </v-main>
+
+    <!-- The one app-global 现场 (live agent screen) viewer, opened by any agent avatar. -->
+    <AgentSceneDialog />
   </my-app>
 </template>
 
@@ -42,8 +45,10 @@ import { computed, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 
+import { useExperimental } from '@/composables/useExperimental'
 import { usePageTitle } from '@/composables/usePageTitle'
 
+import AgentSceneDialog from './components/common/AgentSceneDialog.vue'
 import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
@@ -75,41 +80,56 @@ const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar
 })
 
-const navItems: NavGenericItem[] = [
-  {
-    key: 'Home',
-    type: 'item',
-    title: '首页',
-    to: '/',
-    icon: 'cheese',
-    visibleOnMobile: false,
-  },
-  {
-    key: 'Spaces',
-    type: 'item',
-    title: '空间',
-    to: '/spaces',
-    icon: 'mdi-view-dashboard',
-    visibleOnMobile: true,
-    visibleOnPC: false,
-  },
-  {
-    key: 'Teams',
-    type: 'item',
-    title: '小队',
-    to: '/teams',
-    icon: 'mdi-account-group',
-    visibleOnMobile: true,
-    visibleOnPC: false,
-  },
-  {
-    key: 'Assistant',
-    type: 'item',
-    title: '元思',
-    to: '/assistant',
-    icon: 'mdi-assistant',
-  },
-]
+const experimental = useExperimental()
+
+const navItems = computed<NavGenericItem[]>(() => {
+  const items: NavGenericItem[] = [
+    {
+      key: 'Home',
+      type: 'item',
+      title: '首页',
+      to: '/',
+      icon: 'cheese',
+      visibleOnMobile: false,
+    },
+    {
+      key: 'Spaces',
+      type: 'item',
+      title: '空间',
+      to: '/spaces',
+      icon: 'mdi-view-dashboard',
+      visibleOnMobile: true,
+      visibleOnPC: false,
+    },
+    {
+      key: 'Teams',
+      type: 'item',
+      title: '小队',
+      to: '/teams',
+      icon: 'mdi-account-group',
+      visibleOnMobile: true,
+      visibleOnPC: false,
+    },
+    {
+      key: 'Assistant',
+      type: 'item',
+      title: '元思',
+      to: '/assistant',
+      icon: 'mdi-assistant',
+    },
+  ]
+  // 内测态下，主滑轨上多出「聊天」入口（全局、与项目无关；未来文档、待办也挂到这条滑轨上）。
+  if (experimental.value) {
+    items.push({
+      key: 'Chat',
+      type: 'item',
+      title: '聊天',
+      to: '/chat?exp=true',
+      icon: 'mdi-forum-outline',
+    })
+  }
+  return items
+})
 </script>
 
 <style lang="scss" scoped>

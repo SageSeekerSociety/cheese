@@ -92,14 +92,15 @@
             <!-- 底部区域 -->
             <v-card-actions class="pa-4 pt-0">
               <div class="member-avatars">
-                <v-avatar
+                <UserAvatar
                   v-for="member in subproject.members.examples.slice(0, 3)"
                   :key="member.id"
-                  size="28"
+                  :user-id="member.user.id"
+                  :avatar-id="member.user.avatarId"
+                  :nickname="member.user.nickname"
+                  :size="28"
                   class="member-avatar"
-                >
-                  <v-img :src="getAvatarUrl(member.user.avatarId)" />
-                </v-avatar>
+                />
                 <v-avatar v-if="subproject.members.count > 3" size="28" class="member-avatar more-members">
                   <span class="text-caption">+{{ subproject.members.count - 3 }}</span>
                 </v-avatar>
@@ -251,6 +252,7 @@ import dayjs from 'dayjs'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { ProjectsApi } from '@/network/api/projects'
 import { TeamsApi } from '@/network/api/teams'
 import { currentUserId } from '@/services/account'

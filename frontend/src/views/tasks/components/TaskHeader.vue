@@ -18,14 +18,13 @@
                   </div>
                   <div class="text-medium-emphasis d-flex align-center flex-wrap gap-x-2">
                     <span class="d-flex align-center">
-                      <v-avatar size="24" class="mr-1">
-                        <v-img
-                          v-if="taskData.creator.avatarId"
-                          :src="getAvatarUrl(taskData.creator.avatarId)"
-                          alt="创建者头像"
-                        ></v-img>
-                        <v-icon v-else>mdi-account</v-icon>
-                      </v-avatar>
+                      <UserAvatar
+                        :user-id="taskData.creator.id"
+                        :avatar-id="taskData.creator.avatarId"
+                        :nickname="taskData.creator.nickname"
+                        :size="24"
+                        class="mr-1"
+                      />
                       {{ taskData.creator.nickname }}
                     </span>
                     <v-icon size="small" class="mx-1">mdi-circle-small</v-icon>
@@ -80,7 +79,7 @@ import type { Task } from '@/types'
 import { computed } from 'vue'
 import dayjs from 'dayjs'
 
-import { getAvatarUrl } from '@/utils/materials'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 const props = defineProps<{
   taskData: Task

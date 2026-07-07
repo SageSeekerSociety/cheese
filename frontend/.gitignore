@@ -30,3 +30,5 @@ pnpm-debug.log*
 .env.production
 
 .npmrc
+# connector daemon binaries (cross-compiled by scripts/build-connector.mjs)
+/public/connector/

@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     # Base URL for avatars (can be this backend or CDN)
     avatar_base_url: str = Field(default="http://localhost:8081", alias="AVATAR_BASE_URL")
 
+    # Connector (cli/) distribution. `connector_dist_dir` holds prebuilt client
+    # artifacts laid out as <dir>/<os>-<arch>/{cheese,tmux}, published by CI from
+    # the frozen cli/ source; the installer route serves them. `connector_origin`,
+    # when set, overrides the origin baked into the served install.sh (use it when
+    # a proxy hides the public URL); empty means derive it from the request.
+    connector_dist_dir: str = Field(default="", alias="CONNECTOR_DIST_DIR")
+    connector_origin: str = Field(default="", alias="CONNECTOR_ORIGIN")
+
     # Database
     database_url: str = Field(
         default="postgresql+psycopg2://postgres:postgres@localhost:5432/cheese",

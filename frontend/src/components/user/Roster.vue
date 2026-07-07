@@ -10,7 +10,7 @@
     >
       <v-row>
         <v-col cols="1">
-          <user-avatar :avatar="getAvatarUrl(user.avatarId)" size="40" />
+          <UserAvatar :user-id="user.id" :avatar-id="user.avatarId" :nickname="user.nickname" :size="40" />
         </v-col>
         <v-col cols="3">
           <v-list-item-title>{{ user.nickname }}</v-list-item-title>
@@ -31,8 +31,6 @@ import type { User } from '@/types/users'
 
 import { defineProps } from 'vue'
 import { useI18n } from 'vue-i18n'
-
-import { getAvatarUrl } from '@/utils/materials'
 
 import BlankPage from '@/components/common/BlankPage.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'

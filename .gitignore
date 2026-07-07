@@ -35,3 +35,7 @@ srp_rs/target/
 
 # Misc
 new.md
+
+# Connector client artifacts (built by frontend/scripts/tmux + frontend/scripts/build-connector.mjs).
+# Binaries are never committed — rebuild with the scripts. See frontend/scripts/tmux/README.md.
+.connector-dist/

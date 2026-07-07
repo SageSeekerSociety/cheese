@@ -16,7 +16,13 @@
     <div class="user-info-container">
       <!-- 头像区域 -->
       <div class="avatar-wrapper">
-        <user-avatar :avatar="getAvatarUrl(profile.avatarId)" :size="110" class="user-avatar" :rounded="8" />
+        <UserAvatar
+          :user-id="profile.id"
+          :avatar-id="profile.avatarId"
+          :nickname="profile.nickname"
+          :size="110"
+          class="user-avatar"
+        />
       </div>
 
       <div class="info-action-container">
@@ -96,8 +102,6 @@ import type { User } from '@/types/users'
 
 import { computed, inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-
-import { getAvatarUrl } from '@/utils/materials'
 
 import UserAvatar from '../common/UserAvatar.vue'
 

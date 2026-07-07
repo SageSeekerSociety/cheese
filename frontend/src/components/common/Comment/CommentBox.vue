@@ -4,7 +4,13 @@
       <VSlideXReverseTransition>
         <v-sheet v-if="typeof comment.tag === 'undefined'" class="mb-3 mx-4 pa-3" rounded="lg" border>
           <div class="d-flex flex-row">
-            <user-avatar :avatar="getAvatarUrl(comment.user.avatarId)" size="40" class="me-3 mt-3" />
+            <UserAvatar
+              :user-id="comment.user.id"
+              :avatar-id="comment.user.avatarId"
+              :nickname="comment.user.nickname"
+              :size="40"
+              class="me-3 mt-3"
+            />
             <div class="flex-grow-1">
               <div class="d-flex justify-space-between align-center mb-2">
                 <div class="d-flex flex-column">
@@ -47,7 +53,13 @@
                 <div v-for="subComment in comment.sub_comments" :key="subComment.id">
                   <v-sheet class="pa-3" rounded="lg">
                     <div class="d-flex flex-row">
-                      <user-avatar :avatar="getAvatarUrl(subComment.user.avatarId)" size="40" class="me-3 mt-3" />
+                      <UserAvatar
+                        :user-id="subComment.user.id"
+                        :avatar-id="subComment.user.avatarId"
+                        :nickname="subComment.user.nickname"
+                        :size="40"
+                        class="me-3 mt-3"
+                      />
                       <div class="flex-grow-1">
                         <div class="d-flex justify-space-between align-center mb-2">
                           <div class="d-flex flex-column">
@@ -94,8 +106,6 @@ import type { Comment } from '@/types'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
-
-import { getAvatarUrl } from '@/utils/materials'
 
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { CommentableType } from '@/constants'

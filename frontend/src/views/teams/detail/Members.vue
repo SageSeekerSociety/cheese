@@ -80,9 +80,13 @@
           <v-list>
             <v-list-item v-for="member in teamMembers" :key="member.user.id" class="member-item">
               <template #prepend>
-                <v-avatar size="40" color="grey-lighten-2" class="mr-3">
-                  <v-img :src="getAvatarUrl(member.user.avatarId)" />
-                </v-avatar>
+                <UserAvatar
+                  :user-id="member.user.id"
+                  :avatar-id="member.user.avatarId"
+                  :nickname="member.user.nickname"
+                  :size="40"
+                  class="mr-3"
+                />
               </template>
               <v-list-item-title class="font-weight-medium">
                 {{ member.user.nickname }}
@@ -169,9 +173,13 @@
               :class="{ 'pending-request': request.status === 'PENDING' }"
             >
               <template #prepend>
-                <v-avatar size="40" color="grey-lighten-2" class="mr-3">
-                  <v-img :src="getAvatarUrl(request.user.avatarId)" />
-                </v-avatar>
+                <UserAvatar
+                  :user-id="request.user.id"
+                  :avatar-id="request.user.avatarId"
+                  :nickname="request.user.nickname"
+                  :size="40"
+                  class="mr-3"
+                />
               </template>
               <v-list-item-title class="font-weight-medium">
                 {{ request.user.nickname }}
@@ -241,9 +249,13 @@
               :class="{ 'pending-invitation': invitation.status === 'PENDING' }"
             >
               <template #prepend>
-                <v-avatar size="40" color="grey-lighten-2" class="mr-3">
-                  <v-img :src="getAvatarUrl(invitation.user.avatarId)" />
-                </v-avatar>
+                <UserAvatar
+                  :user-id="invitation.user.id"
+                  :avatar-id="invitation.user.avatarId"
+                  :nickname="invitation.user.nickname"
+                  :size="40"
+                  class="mr-3"
+                />
               </template>
               <v-list-item-title class="font-weight-medium">
                 {{ invitation.user.nickname }}
@@ -283,8 +295,7 @@ import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
-import { getAvatarUrl } from '@/utils/materials'
-
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { teamDataInjectionKey } from '@/keys'
 import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'

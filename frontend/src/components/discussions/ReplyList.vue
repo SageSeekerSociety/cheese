@@ -31,9 +31,13 @@
     <!-- 回复内容 -->
     <div v-for="reply in displayedReplies" :key="reply.id" class="reply-item pa-2 rounded-lg">
       <div class="d-flex">
-        <v-avatar size="32" color="grey-lighten-2" class="mt-1 flex-shrink-0">
-          <v-img :src="getAvatarUrl(reply.sender.avatarId)" />
-        </v-avatar>
+        <UserAvatar
+          :user-id="reply.sender.id"
+          :avatar-id="reply.sender.avatarId"
+          :nickname="reply.sender.nickname"
+          :size="32"
+          class="mt-1 flex-shrink-0"
+        />
 
         <div class="ml-3 reply-content">
           <div class="d-flex align-center">
@@ -113,9 +117,8 @@ import type { DiscussionWithUI } from '@/types'
 import { computed } from 'vue'
 import dayjs from 'dayjs'
 
-import { getAvatarUrl } from '@/utils/materials'
-
 import TipTapViewer from '@/components/common/Editor/TipTapViewer.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { currentUserId } from '@/services/account'
 
 const props = defineProps<{

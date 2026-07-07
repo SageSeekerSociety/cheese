@@ -38,9 +38,13 @@
             <!-- 访问者 -->
             <div class="table-cell accessor">
               <div class="d-flex align-center">
-                <v-avatar size="32" class="mr-2">
-                  <v-img :src="getAvatarUrl(item.accessor.avatarId)" />
-                </v-avatar>
+                <UserAvatar
+                  :user-id="item.accessor.id"
+                  :avatar-id="item.accessor.avatarId"
+                  :nickname="item.accessor.nickname"
+                  :size="32"
+                  class="mr-2"
+                />
                 <span>{{ item.accessor.nickname }}</span>
               </div>
             </div>
@@ -144,10 +148,10 @@ import type {
 import { onMounted } from 'vue'
 import dayjs from 'dayjs'
 
-import { getAvatarUrl } from '@/utils/materials'
 import { usePaging } from '@/utils/paging'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { UserApi } from '@/network/api/users'
 import { currentUserId } from '@/services/account'
 

@@ -2,7 +2,7 @@
   <v-list>
     <v-list-item v-for="(user, index) in data" :key="user.id" :title="user.nickname" :subtitle="user.intro">
       <template #prepend>
-        <user-avatar :avatar="getAvatarUrl(user.avatarId)" />
+        <UserAvatar :user-id="user.id" :avatar-id="user.avatarId" :nickname="user.nickname" />
       </template>
       <template #append>
         <v-btn :variant="isInvited[index] ? 'text' : 'outlined'" :disabled="isInvited[index]" @click="invite(index)">
@@ -26,7 +26,6 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
 import { getErrorMessage } from '@/utils/errors'
-import { getAvatarUrl } from '@/utils/materials'
 
 import UserAvatar from '../common/UserAvatar.vue'
 

@@ -3,13 +3,16 @@ import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
 import AccountRoutes from './account'
+import AgentsRoutes from './agents'
 import AssistantRoutes from './assistant'
+import ConnectRoutes from './connect'
 import HomeRoutes from './home'
 import ProjectsRoutes from './projects'
 import QuestionRoutes from './question'
 import SpacesRoutes from './spaces'
 import TeamsRoutes from './teams'
 import UserRoutes from './user'
+import WorkspaceRoutes from './workspace'
 
 import { usePageTitleStore } from '@/stores/title'
 
@@ -22,6 +25,9 @@ const routes: RouteRecordRaw[] = [
   QuestionRoutes,
   SpacesRoutes,
   TeamsRoutes,
+  ...WorkspaceRoutes,
+  ...AgentsRoutes,
+  ...ConnectRoutes,
   {
     name: 'Search',
     path: '/search',
@@ -46,6 +52,13 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to, from, next) => {
+  // 内测态（?exp=true）粘性：从带该参数的页面导航到不带的页面时自动补上，让内测态
+  // 在应用内「弹来弹去」保持；用不带该参数的普通链接直接访问则不补，回到非内测态。
+  if (to.query.exp !== 'true' && from.query.exp === 'true') {
+    next({ ...to, query: { ...to.query, exp: 'true' } })
+    return
+  }
+
   const store = usePageTitleStore()
   to.matched.forEach((record) => {
     const meta = record.meta

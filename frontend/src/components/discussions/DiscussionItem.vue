@@ -3,9 +3,13 @@
     <!-- 主消息 -->
     <div class="message-container pa-2 rounded-lg">
       <div class="d-flex">
-        <v-avatar size="40" color="grey-lighten-2" class="mt-1 flex-shrink-0">
-          <v-img :src="getAvatarUrl(discussion.sender.avatarId)" />
-        </v-avatar>
+        <UserAvatar
+          :user-id="discussion.sender.id"
+          :avatar-id="discussion.sender.avatarId"
+          :nickname="discussion.sender.nickname"
+          :size="40"
+          class="mt-1 flex-shrink-0"
+        />
 
         <div class="ml-3 message-content">
           <div class="d-flex align-center">
@@ -166,9 +170,8 @@ import type { DiscussionWithUI, ReactionType } from '@/types'
 import { computed, ref } from 'vue'
 import dayjs from 'dayjs'
 
-import { getAvatarUrl } from '@/utils/materials'
-
 import TipTapViewer from '@/components/common/Editor/TipTapViewer.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { currentUserId } from '@/services/account'
 
 const props = defineProps<{

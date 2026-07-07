@@ -57,9 +57,13 @@
                 </div>
 
                 <div class="d-flex align-center mt-3">
-                  <v-avatar size="28" class="mr-2">
-                    <v-img :src="getAvatarUrl(discussion.sender.avatarId)"></v-img>
-                  </v-avatar>
+                  <UserAvatar
+                    :user-id="discussion.sender.id"
+                    :avatar-id="discussion.sender.avatarId"
+                    :nickname="discussion.sender.nickname"
+                    :size="28"
+                    class="mr-2"
+                  />
                   <span class="xiaohongshu-username">{{ discussion.sender.nickname }}</span>
                   <v-spacer></v-spacer>
                   <div class="d-flex align-center">
@@ -135,12 +139,13 @@ import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 
-import { getAvatarUrl, getFullAttachmentUrl } from '@/utils/materials'
+import { getFullAttachmentUrl } from '@/utils/materials'
 
 import { useWindowSize } from '@/composables/useWindowSize'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import DiscussionCardSkeleton from '@/components/discussions/DiscussionCardSkeleton.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { AttachmentsApi } from '@/network/api/attachments'
 import { DiscussionsApi } from '@/network/api/discussions'
 

@@ -85,9 +85,12 @@
               :class="index < recentLogs.length - 1 ? 'border-b' : ''"
             >
               <template #prepend>
-                <v-avatar size="36">
-                  <v-img :src="getAvatarUrl(log.accessor.avatarId)" />
-                </v-avatar>
+                <UserAvatar
+                  :user-id="log.accessor.id"
+                  :avatar-id="log.accessor.avatarId"
+                  :nickname="log.accessor.nickname"
+                  :size="36"
+                />
               </template>
 
               <v-list-item-title>
@@ -184,8 +187,7 @@ import type { UserIdentityAccessLog } from '@/network/api/users/types'
 
 import { computed, onMounted, ref } from 'vue'
 
-import { getAvatarUrl } from '@/utils/materials'
-
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { UserApi } from '@/network/api/users'
 import { currentUserId } from '@/services/account'
 

@@ -5,7 +5,7 @@
       <v-card-title>{{ answer.author.nickname }}</v-card-title>
       <v-card-subtitle>{{ answer.author.intro }}</v-card-subtitle>
       <template #prepend>
-        <user-avatar :avatar="getAvatarUrl(answer.author.avatarId)" />
+        <UserAvatar :user-id="answer.author.id" :avatar-id="answer.author.avatarId" :nickname="answer.author.nickname" />
       </template>
     </v-card-item>
     <v-card-text class="text-body-1 font-weight-regular answer-body-text pb-1 px-3">
@@ -53,7 +53,6 @@ import { computed, inject, toRefs } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
-import { getAvatarUrl } from '@/utils/materials'
 import { parse } from '@/utils/parser'
 
 import CollapsibleContent from '../common/CollapsibleContent.vue'
