@@ -33,3 +33,7 @@ node_modules/
 dist/
 dist-ssr/
 .porkbun-state.json
+
+# Server-only proxy config — contains the personal airport subscription URL
+# (a secret). Lives at etrip:/etc/mihomo/config.yaml (root 600), never in git.
+scripts/ops/etrip-proxy.yaml
