@@ -37,7 +37,6 @@ import {
   readFile,
   workspaceFileRawUrl,
   writeFile,
-  upgradeBlock,
 } from '../api'
 import type {
   Block,
@@ -346,46 +345,6 @@ function refreshLiveRefBadges(nodes: Block[]) {
   if (view) view.dispatch(view.state.tr.setMeta(liveRefKey, true))
 }
 
-// "单独实现" on a doc block (A2): upgrade that paragraph's node into a nested
-// subtopic. The node keeps its text and gains a live-ref link; we open the new
-// subtopic and ask the parent to refresh the sidebar.
-const splitBusy = ref(false)
-async function splitNodeToSubtopic() {
-  const ed = editor.value
-  const tid = props.topic?.id
-  if (!ed || !tid || hoverPos.value == null || splitBusy.value) return
-  // The server node list must line up with what's on screen; unsaved edits would
-  // desync the positional map, so require a clean doc first.
-  if (dirty.value) {
-    errorMsg.value = '请先保存文档，再拆解段落'
-    return
-  }
-  // Map the hovered ProseMirror position → the top-level child index.
-  let index = -1
-  ed.state.doc.forEach((_node, offset, i) => {
-    if (offset === hoverPos.value) index = i
-  })
-  if (index < 0 || index !== Math.round(index)) return
-  splitBusy.value = true
-  try {
-    const nodes = (await getDocNodes(tid)).data
-    // Compare against the content blocks (raw PM children minus tiptap's trailing
-    // filler paragraph). hoverPos's child index counts from the top, so it lines
-    // up with the server nodes for every real block; hovering the filler gives
-    // index === nodes.length, which the `index >= nodes.length` check rejects.
-    if (index >= nodes.length || nodes.length !== contentBlocks().length) {
-      errorMsg.value = '文档结构已变化，请重试'
-      return
-    }
-    const sub = await upgradeBlock(nodes[index].id, AUTHOR)
-    emit('topics-changed')
-    emit('open-topic', sub.id)
-  } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '拆解失败'
-  } finally {
-    splitBusy.value = false
-  }
-}
 
 async function pulse() {
   document.querySelector('.doc-body')?.scrollTo({ top: 0, behavior: 'smooth' })

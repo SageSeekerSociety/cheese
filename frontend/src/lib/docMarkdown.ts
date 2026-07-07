@@ -36,7 +36,9 @@ export interface DocImageOptions {
 const DocImage = Image.extend<DocImageOptions & ImageOptions>({
   addOptions() {
     return {
-      ...this.parent?.(),
+      // parent always exists for an .extend()ed extension; `!` keeps the
+      // strict production build honest about the non-optional base options.
+      ...this.parent!(),
       resolveSrc: (src: string) => src,
     }
   },
@@ -74,7 +76,7 @@ const DocCodeBlock = CodeBlockLowlight.extend({
       'Shift-Tab': () => {
         if (!this.editor.isActive(this.name)) return false
         const { state } = this.editor
-        const { from, to } = state.selection
+        const { from } = state.selection
         const $from = state.doc.resolve(from)
         const lineStart = from - $from.parentOffset
         const blockText = $from.parent.textContent
