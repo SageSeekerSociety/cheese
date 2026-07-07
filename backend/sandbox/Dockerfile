@@ -19,7 +19,7 @@ RUN pip3 install --no-cache-dir --break-system-packages uv && uv --version
 
 # jujutsu (jj) — auto-snapshotting VCS, git-compatible
 ARG JJ_VERSION=0.42.0
-RUN curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-aarch64-unknown-linux-musl.tar.gz" \
+RUN curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
       | tar xz -C /usr/local/bin ./jj \
     && jj --version
 
