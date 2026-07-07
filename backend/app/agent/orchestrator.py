@@ -28,6 +28,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.hub import DeviceHub, HubScreen
+from app.agent.identity import build_member_dicts
 from app.agent.models import AgentScreenRow
 from app.core.errors import ConflictError, NotFoundError, PreconditionFailedError
 from app.domain.device.service import DeviceService
@@ -230,15 +231,86 @@ class AgentService:
         )
         await self._hub.call_screen(device_id, sid, "say", [prompt])
 
-    def _thread_prompt(self, *, thread_id: int, speaker: str, text: str, mentioned: bool) -> str:
+    def _thread_prompt(
+        self,
+        *,
+        thread_id: int,
+        messages: list[tuple[str, str]],
+        mentioned: bool,
+        truncated: bool = False,
+    ) -> str:
+        """Render one or more thread messages into a single prompt. ``messages`` is the
+        agent's unread backlog in chronological order (speaker, text); the triggering
+        message is the last one. When more than one message is unread we deliver the
+        whole backlog at once so the agent has the full context it missed, not just the
+        latest line."""
         mention_hint = "【有人 @你】请务必查看并回应本条消息。\n" if mentioned else ""
+        head = ""
+        if truncated:
+            head += "（未读消息较多，仅显示最近的一部分）\n"
+        elif len(messages) > 1:
+            head += "（以下是你未读的群聊消息，最后一条是刚到的）\n"
+        body = "".join(f"[thread:{thread_id}] {speaker}：{text}\n" for speaker, text in messages)
         return (
-            f"[thread:{thread_id}] {speaker}：{text}\n"
+            f"{head}{body}"
             f"{mention_hint}"
             f"（这是群聊消息。请用命令 cheese api post-note 'text: 你的回复' 把回复发回本群"
             f"（如需指定群可加 'thread_id: {thread_id}'）——群里的人只看得到你用 post-note "
             "发出的话；不需要回复就忽略。）"
         )
+
+    # Cap on how many unread messages we feed at once, so a long-neglected thread can't
+    # blow up the prompt; older-than-cap unread messages are dropped with a note.
+    _UNREAD_CAP = 50
+
+    async def _collect_unread(
+        self,
+        *,
+        thread_id: int,
+        agent_user_id: int,
+        block_id: int,
+        fallback_speaker: str,
+        fallback_text: str,
+    ) -> tuple[list[tuple[str, str]], bool]:
+        """Gather the agent's unread backlog for a thread — every message after its read
+        watermark up to and including the triggering block — as (speaker, text) pairs in
+        chronological order, plus whether the list was truncated to ``_UNREAD_CAP``. The
+        agent's own messages and deleted tombstones are skipped. Best-effort: any failure
+        (or an empty backlog, e.g. a re-delivery whose watermark already passed the block)
+        falls back to the single triggering message so delivery never breaks."""
+        from app.domain.block.repositories import BlockRepository
+        from app.domain.thread.repositories import ThreadMembershipRepository
+
+        try:
+            async with self._sf() as session:
+                membership = await ThreadMembershipRepository(session).get(thread_id, agent_user_id)
+                watermark = (membership.last_read_block_id or 0) if membership is not None else 0
+                blocks = await BlockRepository(session).messages_since(thread_id, watermark)
+                backlog = [
+                    b
+                    for b in blocks
+                    if b.id <= block_id and b.deleted_at is None and b.author_id != agent_user_id
+                ]
+                if not backlog:
+                    return [(fallback_speaker, fallback_text)], False
+                truncated = len(backlog) > self._UNREAD_CAP
+                backlog = backlog[-self._UNREAD_CAP :]
+                author_ids = list({b.author_id for b in backlog})
+                members = await build_member_dicts(session, self._hub, author_ids)
+                names = {int(m["user_id"]): str(m["nickname"]) for m in members}  # type: ignore[call-overload]
+                messages = [
+                    (names.get(b.author_id, f"user{b.author_id}"), b.content) for b in backlog
+                ]
+                return messages, truncated
+        except Exception:  # backlog assembly must never break delivery
+            logging.getLogger(__name__).warning(
+                "failed to collect unread backlog (thread=%s agent=%s block=%s)",
+                thread_id,
+                agent_user_id,
+                block_id,
+                exc_info=True,
+            )
+            return [(fallback_speaker, fallback_text)], False
 
     async def _say_to_agent(
         self,
@@ -260,8 +332,15 @@ class AgentService:
         )
         if screen is None:
             return False
+        messages, truncated = await self._collect_unread(
+            thread_id=thread_id,
+            agent_user_id=agent_user_id,
+            block_id=block_id,
+            fallback_speaker=speaker,
+            fallback_text=text,
+        )
         prompt = self._thread_prompt(
-            thread_id=thread_id, speaker=speaker, text=text, mentioned=mentioned
+            thread_id=thread_id, messages=messages, mentioned=mentioned, truncated=truncated
         )
         await self._hub.call_screen(screen.device_id, screen.sid, "say", [prompt])
         self._last_thread_by_agent[agent_user_id] = thread_id
@@ -478,7 +557,20 @@ class AgentService:
 
     async def readopt_device_screens(self, device_id: str) -> int:
         """After a server restart, re-register the screens the (still-running) cli
-        has on this device — the tmux sessions survived the connection drop."""
+        has on this device — the tmux sessions survived the connection drop.
+
+        Each re-adopted screen is then re-provisioned with an ``adopt``
+        ``session.create`` carrying the CURRENT cheeselet source: a *fresh* client
+        process (after a ``cheese update`` re-exec) re-drives the surviving tmux
+        session from it, while a same-process reconnect treats it as a driver
+        hot-reload — so a driver fix reaches already-running agents, and a re-exec'd
+        client re-adopts its tasks. Without it a fresh client would never re-drive
+        the surviving tmux, and a live screen would keep forever the driver it was
+        opened with."""
+        source = self._cheeselet() if callable(self._cheeselet) else self._cheeselet
+        env: dict[str, str] = {}
+        if self._agent_api_base:
+            env["CHEESE_API"] = self._agent_api_base
         async with self._sf() as session:
             rows = (
                 await session.execute(
@@ -487,6 +579,11 @@ class AgentService:
             ).scalars()
             adopted = 0
             for row in rows:
+                # Register the screen in the hub if it isn't already. It WILL already
+                # be there after a client-side `cheese update` re-exec (the server
+                # never restarted, so detach_device only nulled the transport and left
+                # _screens intact); it will be absent after a *server* restart. Both
+                # cases must still re-provision below.
                 if self._hub.screen(row.sid) is None:
                     self._hub.adopt_screen(
                         sid=row.sid,
@@ -495,5 +592,19 @@ class AgentService:
                         project_id=row.project_id,
                         agent_user_id=row.agent_user_id,
                     )
-                    adopted += 1
+                # ALWAYS send the adopt session.create, regardless of whether the hub
+                # already knew this screen. After a `cheese update` re-exec the fresh
+                # client process starts with an EMPTY local sessions map and needs this
+                # message to re-adopt its surviving tmux session — even though the
+                # server-side hub state persisted across the client's reconnect. It is
+                # idempotent: a same-process reconnect treats it as a driver hot-reload.
+                try:
+                    await self._hub.readopt_screen(
+                        device_id, row.sid, self._command, source, env=env or None
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "screen re-provision failed for screen %s", row.sid, exc_info=True
+                    )
+                adopted += 1
         return adopted

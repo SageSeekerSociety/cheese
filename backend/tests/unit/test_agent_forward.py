@@ -7,6 +7,7 @@ and an ``AsyncMock`` ``call_screen``. Timers are driven deterministically — we
 never sleep out the ~30s triage timeout; ``finish_triage`` releases it early.
 """
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -279,6 +280,116 @@ async def test_new_message_flushes_pending_triage() -> None:
     )
     # Everyone got at least one wake across the two rounds.
     assert _delivered_agent_ids(svc) == {1, 2, 3}
+
+
+# ---------------------------------------------------------------------------
+# Unread backlog: an agent that missed messages gets the whole backlog, not just
+# the latest line (from its read watermark up to and including the triggering block).
+# ---------------------------------------------------------------------------
+
+
+def test_thread_prompt_renders_full_backlog() -> None:
+    svc, _ = _make_service([])
+    prompt = svc._thread_prompt(
+        thread_id=THREAD_ID,
+        messages=[("alice", "first"), ("bob", "second"), ("alice", "third")],
+        mentioned=True,
+    )
+    # Every unread line is present, in order.
+    assert f"[thread:{THREAD_ID}] alice：first" in prompt
+    assert f"[thread:{THREAD_ID}] bob：second" in prompt
+    assert f"[thread:{THREAD_ID}] alice：third" in prompt
+    assert prompt.index("first") < prompt.index("second") < prompt.index("third")
+    # Multi-message header + the mention hint both show.
+    assert "未读的群聊消息" in prompt
+    assert "有人 @你" in prompt
+
+
+def test_thread_prompt_single_message_has_no_backlog_header() -> None:
+    svc, _ = _make_service([])
+    prompt = svc._thread_prompt(
+        thread_id=THREAD_ID, messages=[("alice", "hi")], mentioned=False
+    )
+    assert f"[thread:{THREAD_ID}] alice：hi" in prompt
+    assert "未读的群聊消息" not in prompt  # single message → no backlog banner
+    assert "有人 @你" not in prompt
+
+
+def _fake_sf(session: object):
+    @asynccontextmanager
+    async def factory():
+        yield session
+
+    return factory
+
+
+async def test_collect_unread_gathers_backlog_skipping_own_and_deleted(monkeypatch) -> None:
+    """From watermark 100 up to the trigger 104: include others' live messages in
+    order, skip the agent's own message and deleted tombstones."""
+    svc, _ = _make_service([])
+    agent_id = 1
+    svc._sf = _fake_sf(SimpleNamespace())  # type: ignore[assignment]
+
+    blocks = [
+        SimpleNamespace(id=101, author_id=5, content="a", deleted_at=None),
+        SimpleNamespace(id=102, author_id=agent_id, content="mine", deleted_at=None),  # own → skip
+        SimpleNamespace(id=103, author_id=6, content="gone", deleted_at=datetime.now(UTC)),  # skip
+        SimpleNamespace(id=104, author_id=6, content="b", deleted_at=None),  # the trigger
+        SimpleNamespace(id=105, author_id=6, content="future", deleted_at=None),  # > block_id → skip
+    ]
+
+    membership_repo = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(last_read_block_id=100))
+    )
+    block_repo = SimpleNamespace(messages_since=AsyncMock(return_value=blocks))
+    monkeypatch.setattr(
+        "app.domain.thread.repositories.ThreadMembershipRepository", lambda _s: membership_repo
+    )
+    monkeypatch.setattr(
+        "app.domain.block.repositories.BlockRepository", lambda _s: block_repo
+    )
+
+    async def _members(_session, _hub, ids):
+        return [{"user_id": uid, "nickname": f"u{uid}"} for uid in ids]
+
+    monkeypatch.setattr("app.agent.orchestrator.build_member_dicts", _members)
+
+    messages, truncated = await svc._collect_unread(
+        thread_id=THREAD_ID,
+        agent_user_id=agent_id,
+        block_id=104,
+        fallback_speaker="x",
+        fallback_text="y",
+    )
+    assert messages == [("u5", "a"), ("u6", "b")]
+    assert truncated is False
+    block_repo.messages_since.assert_awaited_once_with(THREAD_ID, 100)
+
+
+async def test_collect_unread_falls_back_to_trigger_when_empty(monkeypatch) -> None:
+    """Watermark already past the block (a re-delivery) → empty backlog → fall back to
+    the single triggering message so delivery never sends an empty prompt."""
+    svc, _ = _make_service([])
+    svc._sf = _fake_sf(SimpleNamespace())  # type: ignore[assignment]
+
+    membership_repo = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(last_read_block_id=999))
+    )
+    block_repo = SimpleNamespace(messages_since=AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "app.domain.thread.repositories.ThreadMembershipRepository", lambda _s: membership_repo
+    )
+    monkeypatch.setattr("app.domain.block.repositories.BlockRepository", lambda _s: block_repo)
+
+    messages, truncated = await svc._collect_unread(
+        thread_id=THREAD_ID,
+        agent_user_id=1,
+        block_id=104,
+        fallback_speaker="alice",
+        fallback_text="just this",
+    )
+    assert messages == [("alice", "just this")]
+    assert truncated is False
 
 
 async def test_last_thread_recorded_on_delivery() -> None:

@@ -3,6 +3,12 @@
 // All domain knowledge lives here, derived from what Claude Code actually paints
 // (verified against real v2.1.x screens). The hosting `cheese` CLI has no idea it
 // is watching an AI; it only offers a terminal, variables, and functions.
+//
+// 热重载安全：hub.reload_driver 把这份源码发给 `script.load`，而 runtime.LoadScript
+// 每次重载都会新建一个全新的 goja VM（重装 API，清空 owned/watched/exposed/pending），
+// 然后再 vm.RunString 这份源码。因此顶层 const/let 每次都在一个干净的全局作用域里执行，
+// 绝不会出现「Identifier X has already been declared」。所以这里用干净的顶层写法即可，
+// 不再需要 IIFE 外壳，也不需要任何为了规避重定义而绕开 const 的怪写法。
 
 // A-class variables (this script owns; the server mirrors):
 const status = cheese.own('status', 'starting')       // starting|busy|waiting|idle|dead
@@ -12,6 +18,7 @@ const question = cheese.own('question', '')            // dialog prompt when wai
 const choices = cheese.own('choices', [])              // [{n, label}] when waiting on a choice
 const compact = cheese.own('compact', '')              // '' | 'running' | 'done'
 const compactPct = cheese.own('compactPct', 0)         // 0..100 while compacting
+const subagents = cheese.own('subagents', 0)           // # of running Task/Agent subagents in the bottom band
 
 // B-class variables (server owns; we observe):
 const label = cheese.watch('label')                    // human label for the screen
@@ -31,6 +38,10 @@ const isFull = () => viewerLevel.get() === 'full'
 // --- keystrokes ------------------------------------------------------------
 const ESC = '\x1b'
 const UP = ESC + '[A', DOWN = ESC + '[B', ENTER = '\r', PGDN = ESC + '[6~'
+// Bracketed-paste markers: wrap a body so the TUI ingests it as one atomic paste
+// (a long/multiline body pasted raw can have its embedded newlines interpreted as
+// submits). See say() / the deferred-submit countdown for why the Enter is separate.
+const PASTE_START = ESC + '[200~', PASTE_END = ESC + '[201~'
 
 function pickOption(n) {
   for (let i = 0; i < 9; i++) cheese.term.write(UP)   // go firmly to the top
@@ -76,10 +87,31 @@ function observe(screen) {
     }
   }
 
-  // The orange signature line: Claude shows "esc to interrupt" only while working.
+  // The orange signature line: Claude shows "esc to interrupt" only while the
+  // FOREGROUND turn is working.
   const orange = /esc to interrupt/.test(tailStr)
+
+  // --- active work = an animated spinner AT THE START OF A ROW ---------------
+  // A row that is actively working leads with an animated braille SPINNER frame
+  // (U+2801–U+28FF). This is the ONLY reliable "in-progress" glyph:
+  //   * U+2800 (blank braille) is EXCLUDED — TUIs paint it as an invisible spacer, so
+  //     matching it (as the old anywhere-in-tail check did) reported busy forever;
+  //   * completed tool results lead with a STATIC ⏺ (U+23FA), not braille, and often
+  //     carry a "(5s)" duration — the old band check matched those and reported busy
+  //     after every finished tool call;
+  //   * an idle prompt has NO spinner at all.
+  // Match ONLY at line start (never mid-line) so stray braille / durations sitting in
+  // scrollback can't trip it. The foreground turn spins on its own row; each RUNNING
+  // subagent in the bottom band spins on its own row too — so counting spinner rows
+  // that are NOT the foreground "esc to interrupt" line gives the running-subagent
+  // count. Reads structural UI state (a spinner), not any natural-language meaning.
+  const spins = (c) => /^\s*[⠁-⣿]/.test(c)
+  const anySpinner = tail.some((l) => spins(clean(l)))
+  const bandRows = tail.filter((l) => { const c = clean(l); return spins(c) && !/esc to interrupt/.test(c) }).length
+  const working = orange || anySpinner
+
   const hasUI = /\? for shortcuts|for agents/.test(tailStr) || tail.filter((l) => l.trim()).length > 3
-  return { kind: 'open', orange, hasUI }
+  return { kind: 'open', orange, bandRows, working, hasUI }
 }
 
 // --- busy/idle state machine ------------------------------------------------
@@ -90,11 +122,22 @@ let trustFrames = 0
 let autoModeDone = false // Claude switched into auto-accept (⏵⏵) mode
 let tabTries = 0
 let frame = 0
+let submitIn = 0         // frames to wait after a paste before pressing Enter (0 = disarmed)
 
 cheese.term.onChange(() => {
   frame++
   const screen = cheese.term.read()
   const tailStr = screen.split('\n').slice(-16).join('\n')
+
+  // Deferred submit — the bracketed-paste vs Enter race (see say()). After a paste,
+  // Claude Code ingests the body asynchronously; a CR written too soon is swallowed
+  // into the paste and never submits. So say() only arms this counter and the Enter
+  // is pressed here, a few frames later, once the paste has settled. onChange is fed
+  // by terminal changes AND a ~1.2s heartbeat, so this fires even on a static screen.
+  // Guarded by !isFull() so we never fight a human who has grabbed the keyboard.
+  if (submitIn > 0 && !isFull()) {
+    if (--submitIn === 0) cheese.term.write(ENTER)
+  }
 
   // Auto-trust the "Do you trust this folder?" gate. It can sit static, so lean
   // on the heartbeat to retry pressing the default (Yes) until it's gone.
@@ -117,7 +160,10 @@ cheese.term.onChange(() => {
     let busy
     if (!active) {
       // Passive: the footer is trustworthy — this is the ground-truth sample.
-      busy = o.orange
+      // `working` is true for foreground activity ("esc to interrupt") AND for a
+      // running subagent/background task (bottom band rows / spinner frame), so a
+      // quiet foreground with live subagents still reads as busy.
+      busy = o.working
       stableBusy = busy
       cmdSince = false
     } else {
@@ -143,6 +189,8 @@ cheese.term.onChange(() => {
   status.set(st)
   question.set(o.kind === 'waiting' ? (o.question || '') : '')
   choices.set(o.kind === 'waiting' ? (o.choices || []) : [])
+  // Report how many subagents the bottom band is showing (0 when none / not open).
+  subagents.set(o.kind === 'open' ? o.bandRows : 0)
 
   // While working, Claude shows "…(6m 45s · ↓ 19.2k tokens)" — the genuinely
   // useful reassurance: how long it's been going and how many tokens it's used.
@@ -186,10 +234,18 @@ viewerLevel.onChange(() => {
 
 // --- functions the server may call -----------------------------------------
 cheese.expose('snapshot', () => cheese.term.read())
-cheese.expose('say', gated((text) => { cheese.term.write(text); cheese.term.write(ENTER); return true }))
+// Paste the body as ONE atomic bracketed paste, then arm a deferred Enter (pressed
+// by the onChange loop once the paste settles). Never write the CR in this same step:
+// for a long/multiline paste the TUI is still ingesting and the CR gets swallowed,
+// leaving the message stuck at the "[Pasted text #N +L lines]" placeholder, un-submitted.
+cheese.expose('say', gated((text) => {
+  cheese.term.write(PASTE_START + text + PASTE_END)
+  submitIn = 2
+  return true
+}))
 cheese.expose('choose', gated((n) => { pickOption(parseInt(n, 10) || 1); return true }))
 cheese.expose('compact', gated(() => { cheese.term.write('/compact'); cheese.term.write(ENTER); return true }))
 
-cheese.call('screenReady', { driver: 'claude', version: 5 }).then((ack) => {
+cheese.call('screenReady', { driver: 'claude', version: 11 }).then((ack) => {
   cheese.log('server acked screenReady: ' + JSON.stringify(ack))
 })

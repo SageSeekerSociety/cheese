@@ -1,10 +1,12 @@
 """DB-backed test for the orchestrator's open-agent flow (Act 4).
 
 Proves the whole chain on real Postgres: opening an agent creates a real user, joins
-it to the project, mints a session token, and opens a screen with that token injected
-as CHEESE_TOKEN — so the agent's cheese api would authenticate as its own user. Self-
-contained: its own engine + a temporary project + full row cleanup. No WebSocket, no
-real device (a fake device transport records what the hub sends).
+it to the project, and opens a screen carrying a per-screen token (CHEESE_SCREEN) that
+resolves server-side back to the agent user. Also guards the `cheese update` re-exec
+path: a fresh client reconnecting must be re-provisioned with an `adopt` session.create
+even though the server-side hub still knows the screen. Self-contained: its own engine +
+a temporary project + full row cleanup. No WebSocket, no real device (a fake device
+transport records what the hub sends).
 """
 
 import uuid
@@ -17,7 +19,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.agent.hub import DeviceHub
 from app.agent.orchestrator import AgentService
-from app.common.auth import decode_token
 from app.db.session import async_url
 from app.domain.device import DeviceService, SqlDeviceRepository
 from app.domain.device.models import DeviceProjectRow, DeviceRow
@@ -103,18 +104,36 @@ async def test_open_agent_creates_user_joins_project_injects_token() -> None:
             ).first()
             assert profile is not None  # joined to the project → inherits shared perms
 
-        # The screen opened for this agent, with the session token injected as CHEESE_TOKEN.
+        # The screen opened for this agent, identified by its per-screen token. No
+        # CHEESE_TOKEN is injected any more: the agent's `cheese api` authenticates via
+        # the device token + CHEESE_SCREEN (the screen token), resolved server-side to
+        # this agent user — so the screen token maps back to the right agent.
         create = fake.last("session.create")
         assert create["sid"] == opened.sid
-        token = create["env"]["CHEESE_TOKEN"]
-        payload = decode_token(token)
-        assert payload["type"] == "access"
-        assert int(payload["sub"]) == agent_user_id  # the agent authenticates as itself
+        assert create["screen"]  # the per-screen secret is shipped as CHEESE_SCREEN
+        screen = hub.screen(opened.sid)
+        assert screen is not None and screen.agent_user_id == agent_user_id
+
+        # Simulate a client-side `cheese update` re-exec: the old WS drops (the hub
+        # keeps the screen, only nulls the transport) and a FRESH client process
+        # reconnects. readopt_device_screens MUST re-provision the surviving screen
+        # with an `adopt` session.create even though the hub still knew it — otherwise
+        # the fresh client (empty local sessions map) never re-adopts its tmux and the
+        # 现场 goes black (screens: 0). Regression guard for that bug.
+        await hub.detach_device(device_id, fake)  # old process image's WS closes
+        fresh = FakeDevice()
+        await hub.attach_device(device_id, fresh)  # re-exec'd binary reconnects
+        assert hub.screen(opened.sid) is not None  # server never restarted; screen persists
+        adopted = await agent_service.readopt_device_screens(device_id)
+        assert adopted == 1
+        readopt = fresh.last("session.create")
+        assert readopt["sid"] == opened.sid
+        assert readopt["adopt"] is True  # adopt (re-drive surviving tmux), not a fresh spawn
 
         # Destroy the agent: its screen closes and its user is recycled (soft-deleted).
         recycled = await agent_service.close_agent(device_id=device_id, sid=opened.sid)
         assert recycled == agent_user_id
-        assert fake.last("session.close")["sid"] == opened.sid
+        assert fresh.last("session.close")["sid"] == opened.sid  # goes to the re-exec'd transport
         assert hub.screen(opened.sid) is None
         async with factory() as session:
             user = await session.get(User, agent_user_id)
