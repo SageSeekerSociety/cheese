@@ -108,8 +108,14 @@ else
 fi
 
 # --- 3. remember the server --------------------------------------------------
-# The cli base is the connector base minus its trailing /connector segment.
-base="${CONNECTOR_BASE%/connector}"
+# The cli base is normally the connector base minus its trailing /connector segment.
+# A deployment whose edge strips the WebSocket Upgrade can bake __CLI_BASE__ (via the
+# backend's CONNECTOR_BASE_OVERRIDES) to point the cli's control channel at a WS-capable
+# endpoint; empty (the default) keeps the derived base, unchanged. The binary downloads
+# above always use CONNECTOR_BASE (the install origin), so they are unaffected here.
+# CHEESE_CLI_BASE overrides both, for manual use.
+base="${CHEESE_CLI_BASE:-__CLI_BASE__}"
+[ -n "$base" ] || base="${CONNECTOR_BASE%/connector}"
 mkdir -p "$CFG_DIR"
 if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
   python3 - "$CFG" "$base" <<'PY'

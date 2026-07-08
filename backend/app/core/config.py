@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     # a proxy hides the public URL); empty means derive it from the request.
     connector_dist_dir: str = Field(default="", alias="CONNECTOR_DIST_DIR")
     connector_origin: str = Field(default="", alias="CONNECTOR_ORIGIN")
+    # Optional per-install-origin override for the cli's *runtime* base (the WS
+    # control-channel endpoint), keyed by the origin the installer was fetched from
+    # (with a trailing slash), e.g.
+    # {"https://cheese.ruc.edu.cn/": "https://119pve.ghg.org.cn/api"}.
+    # Empty (the default) → no change: install.sh derives the base itself, exactly as
+    # before. Use it when the friendly public origin sits behind an edge that strips
+    # the WebSocket Upgrade (so the cli's control channel can't traverse it): users
+    # still install from that origin (binary downloads keep using it), while the cli
+    # connects to the mapped WS-capable endpoint. Does not affect binary downloads.
+    connector_base_overrides: dict[str, str] = Field(
+        default_factory=dict, alias="CONNECTOR_BASE_OVERRIDES"
+    )
 
     # Database
     database_url: str = Field(

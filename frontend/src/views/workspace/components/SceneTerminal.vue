@@ -31,6 +31,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 
 import { authFetch } from '@/network/api/connectorFetch'
+import { CONNECTOR_WS_BASE } from '@/network/utils'
 import AccountService from '@/services/account'
 
 const props = defineProps<{ sessionId: string; deviceId: string }>()
@@ -86,8 +87,13 @@ async function compact(): Promise<void> {
 }
 
 function connect(): void {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  const url = new URL(`/connector/session/${encodeURIComponent(props.sessionId)}/screen`, `${proto}://${location.host}`)
+  // A configured CONNECTOR_WS_BASE routes the socket to a WebSocket-capable origin when
+  // the page origin sits behind an edge that strips the WS Upgrade; empty (the default)
+  // uses the page origin, unchanged. Only its origin matters — /connector is absolute.
+  const fallback = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
+  const url = new URL(`/connector/session/${encodeURIComponent(props.sessionId)}/screen`, CONNECTOR_WS_BASE || fallback)
+  if (url.protocol === 'https:') url.protocol = 'wss:'
+  else if (url.protocol === 'http:') url.protocol = 'ws:'
   const token = AccountService.accessToken
   if (token) url.searchParams.set('token', token)
   ws = new WebSocket(url.toString())

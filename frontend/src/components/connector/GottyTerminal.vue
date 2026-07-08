@@ -33,7 +33,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal } from '@xterm/xterm'
 
-import { API_BASE_URL } from '@/network/utils'
+import { API_BASE_URL, CONNECTOR_WS_BASE } from '@/network/utils'
 import AccountService from '@/services/account'
 
 type SessionPhase = 'running' | 'idle' | 'prompt' | 'exited' | 'connecting' | 'disconnected'
@@ -146,7 +146,11 @@ function wsUrl(): string {
   // (e.g. "/api-proxy" behind the vite/ingress dev proxy). Resolve against the
   // page origin so both forms work; a bare relative value would otherwise make
   // `new URL()` throw.
-  const base = API_BASE_URL || window.location.origin
+  // A configured CONNECTOR_WS_BASE routes the screen socket to a WebSocket-capable
+  // origin when the page origin sits behind an edge that strips the WS Upgrade; empty
+  // (the default) uses the API/page origin, unchanged. Only its origin matters — the
+  // /connector path below is absolute.
+  const base = CONNECTOR_WS_BASE || API_BASE_URL || window.location.origin
   const httpUrl = new URL(base, window.location.origin)
   const wsProtocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:'
   const url = new URL(`/connector/session/${encodeURIComponent(props.sessionId)}/screen`, httpUrl)

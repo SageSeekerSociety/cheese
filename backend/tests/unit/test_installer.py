@@ -52,6 +52,39 @@ def test_install_script_base_follows_the_forwarded_origin(client: TestClient) ->
     assert "testserver" not in body
 
 
+def test_cli_base_default_empty_leaves_derivation_unchanged(client: TestClient) -> None:
+    # With no override configured (the default), __CLI_BASE__ is baked empty, so install.sh
+    # falls back to deriving the base from CONNECTOR_BASE — byte-for-byte the old behaviour.
+    body = client.get("/connector/install.sh").text
+    assert "__CLI_BASE__" not in body
+    assert 'base="${CHEESE_CLI_BASE:-}"' in body
+    assert 'base="${CONNECTOR_BASE%/connector}"' in body  # the fallback derivation is intact
+
+
+def test_cli_base_override_applies_only_to_matching_origin(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        settings,
+        "connector_base_overrides",
+        {"https://cheese.ruc.edu.cn/": "https://119pve.ghg.org.cn/api"},
+    )
+    # A matching install origin remaps the cli's runtime (WS control-channel) base, while the
+    # binary-download CONNECTOR_BASE stays on the install origin (valid cert, HTTP works).
+    body = client.get(
+        "/connector/install.sh",
+        headers={"X-Forwarded-Host": "cheese.ruc.edu.cn", "X-Forwarded-Proto": "https"},
+    ).text
+    assert 'base="${CHEESE_CLI_BASE:-https://119pve.ghg.org.cn/api}"' in body
+    assert 'CONNECTOR_BASE="${CHEESE_CONNECTOR_BASE:-https://cheese.ruc.edu.cn/api/connector}"' in body
+    # A non-matching origin gets no override — derivation unchanged.
+    other = client.get(
+        "/connector/install.sh",
+        headers={"X-Forwarded-Host": "other.example.com", "X-Forwarded-Proto": "https"},
+    ).text
+    assert 'base="${CHEESE_CLI_BASE:-}"' in other
+
+
 def test_artifact_rejects_unknown_target(client: TestClient) -> None:
     resp = client.get("/connector/latest/windows-amd64/cheese")
     assert resp.status_code == 400
@@ -93,4 +126,6 @@ def test_served_script_matches_the_repo_file(client: TestClient) -> None:
     here = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     repo_script = os.path.join(here, "app", "agent", "install", "install.sh")
     with open(repo_script) as f:
-        assert "__CONNECTOR_BASE__" in f.read()
+        script = f.read()
+    assert "__CONNECTOR_BASE__" in script
+    assert "__CLI_BASE__" in script

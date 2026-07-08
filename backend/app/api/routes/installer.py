@@ -53,6 +53,20 @@ def _connector_base(request: Request) -> str:
     return public_origin(request) + "/api/connector"
 
 
+def _cli_base_override(request: Request) -> str:
+    """A configured override for the cli's *runtime* base (its WebSocket control-channel
+    endpoint), keyed by the public origin the installer was fetched from. Empty (the
+    default, and whenever nothing matches) → install.sh derives the base itself, exactly
+    as before. Set via ``CONNECTOR_BASE_OVERRIDES`` when the friendly origin sits behind
+    an edge that strips the WebSocket Upgrade: users still install from that origin (the
+    binary download keeps using it), while the cli connects to the mapped WS-capable
+    endpoint. Behaviour is unchanged unless an override is both configured and matches."""
+    overrides = settings.connector_base_overrides
+    if not overrides:
+        return ""
+    return overrides.get(public_origin(request).rstrip("/") + "/", "")
+
+
 # Also served at the origin root so `curl <origin>/install.sh | sh` works (the
 # short, memorable form). The binary base is still resolved from connector_origin,
 # so artifacts keep coming from `<origin>/connector/latest/...`.
@@ -63,6 +77,7 @@ async def _serve_install_sh(request: Request) -> Response:
     async with aiofiles.open(_INSTALL_SH) as f:
         script = await f.read()
     script = script.replace("__CONNECTOR_BASE__", _connector_base(request))
+    script = script.replace("__CLI_BASE__", _cli_base_override(request))
     # text/x-shellscript so `curl … | sh` and a browser both do the sane thing.
     return PlainTextResponse(script, media_type="text/x-shellscript")
 
