@@ -110,14 +110,17 @@ const navItems = computed<NavGenericItem[]>(() => {
       visibleOnMobile: true,
       visibleOnPC: false,
     },
-    {
+  ]
+  // 非内测态下才显示「元思」入口；内测态下「元思」已不再需要。
+  if (!experimental.value) {
+    items.push({
       key: 'Assistant',
       type: 'item',
       title: '元思',
       to: '/assistant',
       icon: 'mdi-assistant',
-    },
-  ]
+    })
+  }
   // 内测态下，主滑轨上多出「聊天」入口（全局、与项目无关；未来文档、待办也挂到这条滑轨上）。
   if (experimental.value) {
     items.push({
@@ -126,6 +129,13 @@ const navItems = computed<NavGenericItem[]>(() => {
       title: '聊天',
       to: '/chat?exp=true',
       icon: 'mdi-forum-outline',
+    })
+    items.push({
+      key: 'ProjectDocs',
+      type: 'item',
+      title: '项目',
+      to: '/documents?exp=true',
+      icon: 'mdi-file-tree-outline',
     })
   }
   return items

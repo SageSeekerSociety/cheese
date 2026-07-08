@@ -36,6 +36,15 @@ class CreateProjectRequest(BaseModel):
     github_repo: str | None = Field(default=None, alias="githubRepo")
 
 
+class CreatePersonalProjectRequest(BaseModel):
+    """知是 2.0 独立项目: created from the workspace onboarding, no team/schedule."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1)
+    description: str = ""
+
+
 class PatchProjectRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -102,7 +111,7 @@ async def _project_to_api_model(project: Project, *, db: AsyncSession) -> dict:
     profile_repo = UserProfileRepository(session=db)
     membership_repo = ProjectMembershipRepository(session=db)
 
-    team = await team_repo.get_by_id(project.team_id)
+    team = await team_repo.get_by_id(project.team_id) if project.team_id else None
     leader = await user_repo.get_by_id(project.leader_id)
     leader_profile = (
         await profile_repo.get_profile_by_user_id(project.leader_id) if leader is not None else None
@@ -208,6 +217,36 @@ async def create_project(
         "message": "Created",
         "data": {"project": await _project_to_api_model(project, db=db)},
     }
+
+
+@router.post("/mine", summary="Create a personal project", status_code=status.HTTP_201_CREATED)
+async def create_my_project(
+    payload: CreatePersonalProjectRequest,
+    service: ProjectService = Depends(get_project_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await service.create_personal_project(
+        name=payload.name.strip(),
+        description=payload.description,
+        leader_id=auth_user.user_id,
+    )
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {"project": await _project_to_api_model(project, db=db)},
+    }
+
+
+@router.get("/mine", summary="List my projects (member of)")
+async def list_my_projects(
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: ProjectService = Depends(get_project_service),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    projects = await service.list_projects_for_member(auth_user.user_id)
+    data = [await _project_to_api_model(p, db=db) for p in projects]
+    return {"code": 200, "message": "success", "data": {"projects": data, "total": len(data)}}
 
 
 @router.get(

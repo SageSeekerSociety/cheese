@@ -176,6 +176,47 @@ class DeviceHub:
         CLI context (``script.load``)."""
         await self._device(device_id).send({"t": "script.load", "sid": sid, "source": source})
 
+    async def readopt_screen(
+        self,
+        device_id: str,
+        sid: str,
+        command: list[str],
+        cheeselet_source: str,
+        *,
+        env: dict[str, str] | None = None,
+        cols: int = 120,
+        rows: int = 32,
+    ) -> None:
+        """Re-provision an already-adopted screen after the cli reconnects: send an
+        ``adopt`` ``session.create`` so the client re-drives the *surviving* tmux
+        session (re-establish runtime + driver, no new tmux, no re-spawn). The
+        payload mirrors ``open_screen`` (command / screen token / env / current
+        driver source) plus ``adopt: True``; the screen must already be registered
+        (via ``adopt_screen``) so its token is known. A fresh client process
+        (after ``cheese update``) re-adopts from this; a same-process reconnect
+        treats it as a driver hot-reload (both are correct and idempotent)."""
+        screen = self._screens.get(sid)
+        if screen is None:
+            return
+        message: dict[str, Any] = {
+            "t": "session.create",
+            "sid": sid,
+            "command": command,
+            "screen": screen.token,
+            "cols": cols,
+            "rows": rows,
+            "source": cheeselet_source,
+            "adopt": True,
+        }
+        if env:
+            message["env"] = env
+        await self._device(device_id).send(message)
+
+    async def send_update(self, device_id: str) -> None:
+        """Push a forced self-update to a device: it downloads the latest binary,
+        verifies it, replaces itself in place and hands off (preserving its tmux)."""
+        await self._device(device_id).send({"t": "update"})
+
     async def call_screen(self, device_id: str, sid: str, name: str, args: list[Any]) -> None:
         """Server→cheeselet function call (say / choose / compact …). Fire-and-forget;
         the cheeselet's ``rpc.result`` is not awaited here."""

@@ -19,14 +19,26 @@ human approves — matching CLAUDE.md.
 
 from collections.abc import Awaitable, Callable
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agent.hub import DeviceHub
+from app.agent.identity import build_member_dicts
 from app.agent.orchestrator import AgentService
 from app.common.auth import get_current_user_id
 from app.common.origin import public_origin
-from app.core.errors import AuthenticationRequiredError, ForbiddenError, NotFoundError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+    PreconditionFailedError,
+)
 from app.domain.device.service import DeviceService
+from app.domain.project.repositories import ProjectMembershipRepository, ProjectRepository
+from app.domain.project.services import ProjectService
+from app.domain.user.models import User, UserProfile
 
 MembershipChecker = Callable[[int, int], Awaitable[bool]]  # (project_id, user_id) -> bool
 OperateChecker = Callable[[str, str, int], Awaitable[bool]]  # (device_id, sid, user_id) -> bool
@@ -136,8 +148,46 @@ def build_device_admin_router(
     return router
 
 
+def build_device_update_router(
+    device_service: DeviceService, hub: DeviceHub, is_member: MembershipChecker
+) -> APIRouter:
+    """Push a forced client self-update to a device. Authorized like device admin:
+    the device **owner**, or a member of any project the device is assigned to
+    (mirrors ``build_device_admin_router``). The device downloads + verifies the
+    latest binary and hands off in place, so its running screens survive."""
+    router = APIRouter(prefix="/connector/devices", tags=["connector"])
+
+    @router.post("/{device_id}/update")
+    async def update_device(
+        device_id: str, user_id: int = Depends(get_current_user_id)
+    ) -> dict[str, object]:
+        device = await device_service.get_device(device_id)
+        if device is None:
+            raise NotFoundError("Unknown device")
+        allowed = device.owner_user_id == user_id
+        if not allowed:
+            for project_id in await device_service.list_projects(device_id):
+                if await is_member(project_id, user_id):
+                    allowed = True
+                    break
+        if not allowed:
+            raise ForbiddenError("not allowed to update this device")
+        if not hub.is_online(device_id):
+            raise PreconditionFailedError("device is not connected")
+        await hub.send_update(device_id)
+        return {"ok": True}
+
+    return router
+
+
 class OpenProjectAgentBody(BaseModel):
     nickname: str | None = None
+
+
+class RecreateInProjectBody(BaseModel):
+    resume: bool = False  # True → continue the old Claude conversation (claude --resume)
+    force: bool = False  # True → replace a still-live screen (caller warned the human)
+    cwd: str | None = None
 
 
 def build_agent_list_router(agent_service: AgentService, is_member: MembershipChecker) -> APIRouter:
@@ -168,6 +218,32 @@ def build_agent_list_router(agent_service: AgentService, is_member: MembershipCh
             "sid": opened.sid,
         }
 
+    @router.post("/{project_id}/agents/{agent_user_id}/recreate")
+    async def recreate_agent_in_project(
+        project_id: int,
+        agent_user_id: int,
+        body: RecreateInProjectBody,
+        user_id: int = Depends(get_current_user_id),
+    ) -> dict[str, object]:
+        """Recreate a project agent, auto-picking a device (works when the agent is
+        offline). ``resume`` continues its old Claude conversation; ``force`` replaces a
+        still-live screen — the service raises 412 on live-and-not-forced so the UI warns."""
+        if not await is_member(project_id, user_id):
+            raise ForbiddenError("must be a member of the project to recreate its agent")
+        opened = await agent_service.recreate_agent_in_project(
+            project_id=project_id,
+            agent_user_id=agent_user_id,
+            resume=body.resume,
+            force=body.force,
+            cwd=body.cwd,
+        )
+        return {
+            "agent_user_id": opened.agent_user_id,
+            "agent_username": opened.agent_username,
+            "sid": opened.sid,
+            "resumed": body.resume,
+        }
+
     return router
 
 
@@ -178,6 +254,14 @@ class OpenAgentBody(BaseModel):
 
 class SayBody(BaseModel):
     text: str
+
+
+class RecreateAgentBody(BaseModel):
+    agent_user_id: int
+    project_id: int
+    resume: bool = False  # True → continue the old Claude conversation (claude --resume)
+    force: bool = False  # True → replace a still-live screen (caller warned the human)
+    cwd: str | None = None
 
 
 def build_agent_open_router(
@@ -203,6 +287,30 @@ def build_agent_open_router(
             "agent_user_id": opened.agent_user_id,
             "agent_username": opened.agent_username,
             "sid": opened.sid,
+        }
+
+    @router.post("/{device_id}/agents/recreate")
+    async def recreate_agent(
+        device_id: str, body: RecreateAgentBody, user_id: int = Depends(get_current_user_id)
+    ) -> dict[str, object]:
+        """Recreate an agent reusing its user. ``resume`` continues the old Claude
+        conversation; ``force`` replaces a still-live screen. On a live-and-not-forced
+        agent the service raises 412 so the UI can warn and re-call with force=True."""
+        if not await is_member(body.project_id, user_id):
+            raise ForbiddenError("must be a member of the project to recreate its agent")
+        opened = await agent_service.recreate_agent(
+            device_id=device_id,
+            agent_user_id=body.agent_user_id,
+            resume=body.resume,
+            force=body.force,
+            project_id=body.project_id,
+            cwd=body.cwd,
+        )
+        return {
+            "agent_user_id": opened.agent_user_id,
+            "agent_username": opened.agent_username,
+            "sid": opened.sid,
+            "resumed": body.resume,
         }
 
     @router.post("/{device_id}/agents/{sid}/say")
@@ -237,5 +345,111 @@ def build_agent_open_router(
             raise ForbiddenError("not allowed to operate this agent")
         agent_user_id = await agent_service.close_agent(device_id=device_id, sid=sid)
         return {"ok": True, "agent_user_id": agent_user_id}
+
+    return router
+
+
+class AddProjectMemberBody(BaseModel):
+    user_id: int
+
+
+def build_project_members_router(
+    hub: DeviceHub,
+    session_factory: async_sessionmaker[AsyncSession],
+    is_member: MembershipChecker,
+) -> APIRouter:
+    """项目成员管理（知是 2.0 工作区）。忽略角色/权限差异：任何项目成员都拥有项目的
+    全部权限（扁平、无角色区分），因此列出 / 添加 / 移除成员、搜索候选人，都只要求调用者
+    是本项目成员即可。成员列表通过 ``build_member_dicts`` 附带「是否为在线 agent」及其
+    device/screen 现场信息，供前端渲染头像徽标并打开现场。"""
+    router = APIRouter(prefix="/connector/projects", tags=["connector"])
+
+    def _service(session: AsyncSession) -> ProjectService:
+        return ProjectService(ProjectRepository(session), ProjectMembershipRepository(session))
+
+    @router.get("/{project_id}/members")
+    async def list_members(
+        project_id: int, user_id: int = Depends(get_current_user_id)
+    ) -> dict[str, object]:
+        if not await is_member(project_id, user_id):
+            raise ForbiddenError("must be a member of the project to view its members")
+        async with session_factory() as session:
+            memberships, total = await ProjectMembershipRepository(session).list_members(
+                project_id, limit=200, offset=0
+            )
+            roles = {m.user_id: m.role for m in memberships}
+            members = await build_member_dicts(
+                session, hub, [m.user_id for m in memberships], roles=roles
+            )
+        return {"members": members, "total": total}
+
+    @router.post("/{project_id}/members")
+    async def add_member(
+        project_id: int, body: AddProjectMemberBody, user_id: int = Depends(get_current_user_id)
+    ) -> dict[str, object]:
+        if not await is_member(project_id, user_id):
+            raise ForbiddenError("must be a member of the project to add members")
+        async with session_factory() as session:
+            # 忽略角色/权限：所有新成员一律以 MEMBER 身份加入（扁平）。
+            await _service(session).add_member(
+                project_id=project_id, user_id=body.user_id, role="MEMBER"
+            )
+            members = await build_member_dicts(session, hub, [body.user_id])
+            await session.commit()
+        return {"member": members[0]}
+
+    @router.delete("/{project_id}/members/{target_user_id}")
+    async def remove_member(
+        project_id: int, target_user_id: int, user_id: int = Depends(get_current_user_id)
+    ) -> dict[str, object]:
+        if not await is_member(project_id, user_id):
+            raise ForbiddenError("must be a member of the project to remove members")
+        async with session_factory() as session:
+            await _service(session).remove_member(
+                project_id=project_id, user_id=target_user_id
+            )
+            await session.commit()
+        return {"ok": True}
+
+    @router.get("/{project_id}/member-candidates")
+    async def member_candidates(
+        project_id: int,
+        q: str = Query(default=""),
+        user_id: int = Depends(get_current_user_id),
+    ) -> dict[str, object]:
+        """搜索可加入项目的用户（按昵称或用户名模糊匹配），排除已是成员的人。"""
+        if not await is_member(project_id, user_id):
+            raise ForbiddenError("must be a member of the project to search candidates")
+        needle = q.strip()
+        if not needle:
+            return {"candidates": []}
+        async with session_factory() as session:
+            member_ids = {
+                m.user_id
+                for m in (
+                    await ProjectMembershipRepository(session).list_members(
+                        project_id, limit=1000, offset=0
+                    )
+                )[0]
+            }
+            like = f"%{needle}%"
+            rows = (
+                await session.execute(
+                    select(UserProfile.user_id)
+                    .join(User, User.id == UserProfile.user_id)
+                    .where(
+                        or_(
+                            UserProfile.nickname.ilike(like),
+                            User.username.ilike(like),
+                        ),
+                        UserProfile.deleted_at.is_(None),
+                        User.deleted_at.is_(None),
+                    )
+                    .limit(20)
+                )
+            ).scalars()
+            candidate_ids = [uid for uid in rows if uid not in member_ids]
+            candidates = await build_member_dicts(session, hub, candidate_ids)
+        return {"candidates": candidates}
 
     return router

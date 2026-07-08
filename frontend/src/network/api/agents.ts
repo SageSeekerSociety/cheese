@@ -42,7 +42,14 @@ export const listMyDevices = () =>
   request<{ devices: Device[] }>('/connector/my/devices')
 
 /** 在某设备上创建一个 agent；创建后按 nickname/avatar_id 更新其 profile。 */
-export const createAgent = (body: { device_id: string; nickname?: string; avatar_id?: number }) =>
+export const createAgent = (body: {
+  device_id: string
+  nickname?: string
+  avatar_id?: number
+  copy_from_agent_user_id?: number
+  // 「复制自」时可选的目标工作目录：不填则沿用源 agent 的 cwd。
+  target_cwd?: string
+}) =>
   request<{ agent: Member }>('/connector/my/agents', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -62,6 +69,19 @@ export const updateAgent = (
 export const deleteAgent = (sid: string) =>
   request<{ closed: boolean }>(`/connector/my/agents/${sid}`, {
     method: 'DELETE',
+  })
+
+/**
+ * 重建 agent（复用原用户，身份与历史不变），以 user_id 定位。默认 resume=true 用原先的
+ * Claude 会话恢复对话。现场仍存活时后端返回 412，UI 提示确认后带 force=true 再调一次。
+ */
+export const recreateAgent = (
+  agentUserId: number,
+  opts: { resume?: boolean; force?: boolean } = {},
+) =>
+  request<{ agent: Member; resumed: boolean }>(`/connector/my/agents/${agentUserId}/recreate`, {
+    method: 'POST',
+    body: JSON.stringify({ resume: opts.resume ?? true, force: opts.force ?? false }),
   })
 
 /** 重命名设备。 */

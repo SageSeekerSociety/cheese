@@ -25,6 +25,14 @@ const WorkspaceRoutes: RouteRecordRaw[] = [
     meta: { title: '聊天' },
     beforeEnter: expOnly,
   },
+  {
+    // 项目文档工作区：左侧文档树、右侧 markdown 编辑器。projectId 可选，缺省时先选项目。
+    path: '/documents/:projectId?',
+    name: 'ProjectDocuments',
+    component: () => import('@/views/workspace/ProjectView.vue'),
+    meta: { title: '项目文档' },
+    beforeEnter: expOnly,
+  },
 ]
 
 export default WorkspaceRoutes

@@ -50,11 +50,35 @@ class _Store:
     threads: dict[int, SimpleNamespace] = field(default_factory=dict)
     memberships: list[SimpleNamespace] = field(default_factory=list)
     applications: list[SimpleNamespace] = field(default_factory=list)
+    blocks: list[SimpleNamespace] = field(default_factory=list)
     # user_id -> owner_user_id. A user_id present here is treated as an agent.
     agents: dict[int, int | None] = field(default_factory=dict)
     _thread_seq: int = 100
     _member_seq: int = 1000
     _app_seq: int = 5000
+    _block_seq: int = 8000
+
+    def next_block_id(self) -> int:
+        self._block_seq += 1
+        return self._block_seq
+
+    def add_block(
+        self, *, thread_id: int, author_id: int, content: str, reply_to_id: int | None = None
+    ) -> SimpleNamespace:
+        block = SimpleNamespace(
+            id=self.next_block_id(),
+            thread_id=thread_id,
+            author_id=author_id,
+            content=content,
+            reply_to_id=reply_to_id,
+            refs=None,
+            deleted_at=None,
+            pinned_at=None,
+            kind=0,
+            created_at=_NOW,
+        )
+        self.blocks.append(block)
+        return block
 
     def next_thread_id(self) -> int:
         self._thread_seq += 1
@@ -267,6 +291,60 @@ class _FakeBlockRepo:
 
     async def latest(self, thread_id: int) -> None:
         return None
+
+    async def add_message(
+        self,
+        *,
+        thread_id: int,
+        project_id: int | None,
+        author_id: int,
+        text: str,
+        reply_to_id: int | None = None,
+        refs: list | None = None,
+    ) -> SimpleNamespace:
+        block = self._s.add_block(
+            thread_id=thread_id, author_id=author_id, content=text, reply_to_id=reply_to_id
+        )
+        block.refs = refs
+        return block
+
+    async def get_message_in_thread(
+        self, thread_id: int | None, block_id: int
+    ) -> SimpleNamespace | None:
+        return next(
+            (
+                b
+                for b in self._s.blocks
+                if b.id == block_id and b.thread_id == thread_id and b.kind == 0
+            ),
+            None,
+        )
+
+    async def messages_since(self, thread_id: int, after_id: int = 0) -> list[SimpleNamespace]:
+        return [
+            b
+            for b in self._s.blocks
+            if b.thread_id == thread_id and b.kind == 0 and b.id > after_id
+        ]
+
+    async def set_deleted(
+        self, block: SimpleNamespace, *, deleted: bool = True
+    ) -> SimpleNamespace:
+        block.deleted_at = _NOW if deleted else None
+        return block
+
+    async def set_pinned(
+        self, block: SimpleNamespace, *, pinned: bool = True
+    ) -> SimpleNamespace:
+        block.pinned_at = _NOW if pinned else None
+        return block
+
+    async def list_pinned(self, thread_id: int) -> list[SimpleNamespace]:
+        return [
+            b
+            for b in self._s.blocks
+            if b.thread_id == thread_id and b.kind == 0 and b.pinned_at is not None
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -695,3 +773,271 @@ class TestCandidates:
 
         with pytest.raises(ForbiddenError):
             await ctx.svc.candidates(actor_id=99, thread_id=1, q="user")
+
+
+# ---------------------------------------------------------------------------
+# post_message — 引用消息 (reply_to_id + quoted preview)
+# ---------------------------------------------------------------------------
+
+
+class TestPostMessageReply:
+    async def test_reply_to_id_persisted(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 1, ThreadMemberRole.OWNER)
+        original = ctx.store.add_block(thread_id=1, author_id=1, content="hello there")
+
+        await ctx.svc.post_message(
+            actor_id=1, thread_id=1, text="a reply", reply_to_id=original.id
+        )
+
+        reply = next(b for b in ctx.store.blocks if b.content == "a reply")
+        assert reply.reply_to_id == original.id
+
+    async def test_returned_message_carries_quoted_preview(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 1, ThreadMemberRole.OWNER)
+        original = ctx.store.add_block(thread_id=1, author_id=7, content="the original text")
+
+        result = await ctx.svc.post_message(
+            actor_id=1, thread_id=1, text="a reply", reply_to_id=original.id
+        )
+
+        message = result["message"]
+        assert isinstance(message, dict)
+        assert message["reply_to_id"] == original.id
+        quoted = message["quoted"]
+        assert isinstance(quoted, dict)
+        assert quoted["id"] == original.id
+        assert quoted["author_id"] == 7
+        assert quoted["excerpt"] == "the original text"
+        assert quoted["deleted"] is False
+
+    async def test_long_excerpt_is_truncated(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 1, ThreadMemberRole.OWNER)
+        original = ctx.store.add_block(thread_id=1, author_id=1, content="x" * 300)
+
+        result = await ctx.svc.post_message(
+            actor_id=1, thread_id=1, text="r", reply_to_id=original.id
+        )
+
+        message = result["message"]
+        assert isinstance(message, dict)
+        quoted = message["quoted"]
+        assert isinstance(quoted, dict)
+        excerpt = quoted["excerpt"]
+        assert isinstance(excerpt, str)
+        assert len(excerpt) == 141  # 140 chars + ellipsis
+        assert excerpt.endswith("…")
+
+    async def test_reply_to_missing_block_marked_deleted(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 1, ThreadMemberRole.OWNER)
+
+        result = await ctx.svc.post_message(
+            actor_id=1, thread_id=1, text="a reply", reply_to_id=999999
+        )
+
+        message = result["message"]
+        assert isinstance(message, dict)
+        quoted = message["quoted"]
+        assert isinstance(quoted, dict)
+        assert quoted["deleted"] is True
+        assert quoted["author_id"] is None
+        assert quoted["excerpt"] is None
+
+    async def test_reply_to_block_in_another_thread_marked_deleted(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_thread(2)
+        ctx.store.add_membership(1, 1, ThreadMemberRole.OWNER)
+        # block lives in thread 2; replying from thread 1 must not leak it
+        foreign = ctx.store.add_block(thread_id=2, author_id=5, content="other thread")
+
+        result = await ctx.svc.post_message(
+            actor_id=1, thread_id=1, text="a reply", reply_to_id=foreign.id
+        )
+
+        message = result["message"]
+        assert isinstance(message, dict)
+        quoted = message["quoted"]
+        assert isinstance(quoted, dict)
+        assert quoted["deleted"] is True
+
+    async def test_plain_message_has_no_quoted(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 1, ThreadMemberRole.OWNER)
+
+        result = await ctx.svc.post_message(actor_id=1, thread_id=1, text="hi")
+
+        message = result["message"]
+        assert isinstance(message, dict)
+        assert message["reply_to_id"] is None
+        assert "quoted" not in message
+
+
+# ---------------------------------------------------------------------------
+# delete_message — 删除 (soft delete / tombstone)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteMessage:
+    async def test_author_can_delete(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.MEMBER)
+        msg = ctx.store.add_block(thread_id=1, author_id=5, content="mine")
+
+        result = await ctx.svc.delete_message(actor_id=5, thread_id=1, block_id=msg.id)
+
+        assert msg.deleted_at is not None
+        message = result["message"]
+        assert isinstance(message, dict)
+        assert message["deleted"] is True
+        assert message["text"] == ""
+
+    async def test_admin_can_delete_others_message(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.ADMIN)
+        ctx.store.add_membership(1, 6, ThreadMemberRole.MEMBER)
+        msg = ctx.store.add_block(thread_id=1, author_id=6, content="theirs")
+
+        await ctx.svc.delete_message(actor_id=5, thread_id=1, block_id=msg.id)
+
+        assert msg.deleted_at is not None
+
+    async def test_non_author_non_admin_rejected(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.MEMBER)
+        ctx.store.add_membership(1, 6, ThreadMemberRole.MEMBER)
+        msg = ctx.store.add_block(thread_id=1, author_id=6, content="theirs")
+
+        with pytest.raises(ForbiddenError):
+            await ctx.svc.delete_message(actor_id=5, thread_id=1, block_id=msg.id)
+        assert msg.deleted_at is None
+
+    async def test_deleted_message_still_listed_as_tombstone(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.MEMBER)
+        original = ctx.store.add_block(thread_id=1, author_id=5, content="first")
+        msg = ctx.store.add_block(
+            thread_id=1, author_id=5, content="reply", reply_to_id=original.id
+        )
+
+        await ctx.svc.delete_message(actor_id=5, thread_id=1, block_id=msg.id)
+        result = await ctx.svc.list_messages(actor_id=5, thread_id=1)
+
+        messages = result["messages"]
+        assert isinstance(messages, list)
+        tombstone = next(m for m in messages if m["id"] == msg.id)
+        assert tombstone["deleted"] is True
+        assert tombstone["text"] == ""
+        # a deleted message drops its quoted preview
+        assert "quoted" not in tombstone
+
+
+# ---------------------------------------------------------------------------
+# pin / unpin / list_pins — 置顶
+# ---------------------------------------------------------------------------
+
+
+class TestPinMessage:
+    async def test_member_can_pin_and_unpin(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.MEMBER)
+        msg = ctx.store.add_block(thread_id=1, author_id=5, content="hi")
+
+        pinned = await ctx.svc.pin_message(actor_id=5, thread_id=1, block_id=msg.id)
+        assert msg.pinned_at is not None
+        message = pinned["message"]
+        assert isinstance(message, dict)
+        assert message["pinned"] is True
+
+        await ctx.svc.unpin_message(actor_id=5, thread_id=1, block_id=msg.id)
+        assert msg.pinned_at is None
+
+    async def test_non_member_cannot_pin(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        msg = ctx.store.add_block(thread_id=1, author_id=5, content="hi")
+
+        with pytest.raises(ForbiddenError):
+            await ctx.svc.pin_message(actor_id=99, thread_id=1, block_id=msg.id)
+
+    async def test_list_pins_returns_only_pinned(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.MEMBER)
+        a = ctx.store.add_block(thread_id=1, author_id=5, content="a")
+        ctx.store.add_block(thread_id=1, author_id=5, content="b")
+
+        await ctx.svc.pin_message(actor_id=5, thread_id=1, block_id=a.id)
+        result = await ctx.svc.list_pins(actor_id=5, thread_id=1)
+
+        messages = result["messages"]
+        assert isinstance(messages, list)
+        ids = {m["id"] for m in messages}
+        assert ids == {a.id}
+
+
+# ---------------------------------------------------------------------------
+# forward_message — 转发
+# ---------------------------------------------------------------------------
+
+
+class TestForwardMessage:
+    async def test_forward_copies_text_with_provenance(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_thread(2)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.MEMBER)
+        ctx.store.add_membership(2, 5, ThreadMemberRole.MEMBER)
+        src = ctx.store.add_block(thread_id=1, author_id=9, content="please forward me")
+
+        result = await ctx.svc.forward_message(
+            actor_id=5, from_thread_id=1, block_id=src.id, to_thread_id=2
+        )
+
+        message = result["message"]
+        assert isinstance(message, dict)
+        assert message["thread_id"] == 2
+        assert message["author_id"] == 5
+        assert message["text"] == "please forward me"
+        created = next(b for b in ctx.store.blocks if b.id == message["id"])
+        assert created.refs == [f"forwarded_from:1:{src.id}"]
+
+    async def test_forward_requires_membership_in_source(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_thread(2)
+        ctx.store.add_membership(2, 5, ThreadMemberRole.MEMBER)
+        src = ctx.store.add_block(thread_id=1, author_id=9, content="x")
+
+        with pytest.raises(ForbiddenError):
+            await ctx.svc.forward_message(
+                actor_id=5, from_thread_id=1, block_id=src.id, to_thread_id=2
+            )
+
+    async def test_forward_requires_membership_in_target(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_thread(2)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.MEMBER)
+        src = ctx.store.add_block(thread_id=1, author_id=9, content="x")
+
+        with pytest.raises(ForbiddenError):
+            await ctx.svc.forward_message(
+                actor_id=5, from_thread_id=1, block_id=src.id, to_thread_id=2
+            )
+
+
+class TestPostMessageForwarding:
+    async def test_excludes_author_from_forward(self, ctx: _Ctx) -> None:
+        """An agent's own message is never forwarded back to itself — otherwise post-note
+        (which runs this same pipeline) would self-notify in an infinite loop at 立即."""
+        author, other = 9001, 9002
+        ctx.store.agents[author] = 1  # both members are agents (owner id present)
+        ctx.store.agents[other] = 1
+        ctx.store.add_thread(50)
+        ctx.store.add_membership(50, author, ThreadMemberRole.MEMBER)
+        ctx.store.add_membership(50, other, ThreadMemberRole.MEMBER)
+
+        await ctx.svc.post_message(actor_id=author, thread_id=50, text="hi from author")
+
+        forward = ctx.svc._agents.forward_message_to_thread_agents
+        forward.assert_awaited_once()
+        policies = forward.await_args.kwargs["agent_policies"]
+        assert {p.user_id for p in policies} == {other}  # author excluded, other included

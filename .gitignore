@@ -39,3 +39,6 @@ new.md
 # Connector client artifacts (built by frontend/scripts/tmux + frontend/scripts/build-connector.mjs).
 # Binaries are never committed — rebuild with the scripts. See frontend/scripts/tmux/README.md.
 .connector-dist/
+
+# 准生产验证档密钥（本机、勿提交）
+.env.preprod

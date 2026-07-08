@@ -182,11 +182,12 @@ async def test_mentioned_agent_delivered_regardless_of_policy() -> None:
 
 
 async def test_triage_wakes_highest_role_and_defers_rest() -> None:
+    # Triage 降噪只作用于 INTERVAL 广播；ALL 恒立即，不参与「只唤醒最高 role 一个」。
     svc, call_screen = _make_service([1, 2, 3])
     policies = [
-        ThreadAgentPolicy(user_id=1, mode="ALL", interval_minutes=None, role=0),
-        ThreadAgentPolicy(user_id=2, mode="ALL", interval_minutes=None, role=2),  # highest
-        ThreadAgentPolicy(user_id=3, mode="ALL", interval_minutes=None, role=1),
+        ThreadAgentPolicy(user_id=1, mode="INTERVAL", interval_minutes=1, role=0),
+        ThreadAgentPolicy(user_id=2, mode="INTERVAL", interval_minutes=1, role=2),  # highest
+        ThreadAgentPolicy(user_id=3, mode="INTERVAL", interval_minutes=1, role=1),
     ]
 
     reached = await svc.forward_message_to_thread_agents(
@@ -252,12 +253,59 @@ async def test_single_eligible_agent_not_deferred() -> None:
     assert _delivered_agent_ids(svc) == {1}
 
 
+async def test_all_agents_all_delivered_immediately_no_triage() -> None:
+    """回归：ALL(「立即」) 语义是每条都立即送达，多个 ALL agent 全部立即唤醒，
+    不因非最高 role 被 triage defer ~30s。"""
+    svc, call_screen = _make_service([1, 2, 3])
+    policies = [
+        ThreadAgentPolicy(user_id=1, mode="ALL", interval_minutes=None, role=0),
+        ThreadAgentPolicy(user_id=2, mode="ALL", interval_minutes=None, role=2),
+        ThreadAgentPolicy(user_id=3, mode="ALL", interval_minutes=None, role=1),
+    ]
+
+    reached = await svc.forward_message_to_thread_agents(
+        thread_id=THREAD_ID,
+        block_id=BLOCK_ID,
+        text="没有 @ 的普通消息",
+        speaker="alice",
+        agent_policies=policies,
+        mentioned_ids=set(),
+    )
+    assert reached == 3
+    assert call_screen.await_count == 3
+    assert _delivered_agent_ids(svc) == {1, 2, 3}
+    # ALL 不参与 triage 降噪 → 无 defer。
+    assert THREAD_ID not in svc._triage
+
+
+async def test_all_agent_immediate_even_with_higher_role_interval_peer() -> None:
+    """回归重点场景：群里另有 role 更高的 INTERVAL agent 时，ALL agent 仍立即送达
+    （而不是被那个更高 role 的 broadcast 抑制成 defer）。"""
+    svc, _ = _make_service([1, 2])
+    policies = [
+        ThreadAgentPolicy(user_id=1, mode="ALL", interval_minutes=None, role=0),
+        ThreadAgentPolicy(user_id=2, mode="INTERVAL", interval_minutes=1, role=9),  # 更高 role
+    ]
+
+    await svc.forward_message_to_thread_agents(
+        thread_id=THREAD_ID,
+        block_id=BLOCK_ID,
+        text="hi",
+        speaker="alice",
+        agent_policies=policies,
+        mentioned_ids=set(),
+    )
+    # ALL agent(1) 立即；INTERVAL agent(2) 作为唯一 broadcast-eligible 也立即。
+    assert _delivered_agent_ids(svc) == {1, 2}
+    assert THREAD_ID not in svc._triage
+
+
 async def test_new_message_flushes_pending_triage() -> None:
     svc, call_screen = _make_service([1, 2, 3])
     policies = [
-        ThreadAgentPolicy(user_id=1, mode="ALL", interval_minutes=None, role=2),
-        ThreadAgentPolicy(user_id=2, mode="ALL", interval_minutes=None, role=1),
-        ThreadAgentPolicy(user_id=3, mode="ALL", interval_minutes=None, role=0),
+        ThreadAgentPolicy(user_id=1, mode="INTERVAL", interval_minutes=1, role=2),
+        ThreadAgentPolicy(user_id=2, mode="INTERVAL", interval_minutes=1, role=1),
+        ThreadAgentPolicy(user_id=3, mode="INTERVAL", interval_minutes=1, role=0),
     ]
     await svc.forward_message_to_thread_agents(
         thread_id=THREAD_ID,
@@ -313,6 +361,17 @@ def test_thread_prompt_single_message_has_no_backlog_header() -> None:
     assert f"[thread:{THREAD_ID}] alice：hi" in prompt
     assert "未读的群聊消息" not in prompt  # single message → no backlog banner
     assert "有人 @你" not in prompt
+
+
+def test_claude_command_fresh_vs_resume_and_cwd() -> None:
+    svc, _ = _make_service([])
+    fresh = svc._claude_command(session_id="abc-123", cwd=None, resume=False)
+    assert fresh == ["bash", "-lc", "exec claude --session-id abc-123"]
+    resume = svc._claude_command(session_id="abc-123", cwd=None, resume=True)
+    assert resume == ["bash", "-lc", "exec claude --resume abc-123"]
+    # cwd is prepended (Claude resolves a session by cwd) and shell-quoted.
+    with_cwd = svc._claude_command(session_id="abc-123", cwd="/home/me/my repo", resume=True)
+    assert with_cwd[-1] == "cd '/home/me/my repo' && exec claude --resume abc-123"
 
 
 def _fake_sf(session: object):

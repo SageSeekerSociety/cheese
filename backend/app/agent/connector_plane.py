@@ -22,14 +22,17 @@ from fastapi import APIRouter, FastAPI, WebSocket
 from app.agent.hub import DeviceHub
 from app.agent.orchestrator import AgentService
 from app.agent.viewer_authz import project_member_authorizer
-from app.api.routes.agent_api import build_agent_api
+from app.api.routes.agent_api import build_agent_api, build_agent_tool_router
 from app.api.routes.connector_agent import build_agent_router
 from app.api.routes.connector_device import (
     build_agent_list_router,
     build_agent_open_router,
     build_device_admin_router,
     build_device_flow_router,
+    build_device_update_router,
+    build_project_members_router,
 )
+from app.api.routes.connector_documents import build_document_connector_router
 from app.api.routes.connector_myagent import build_myagent_router
 from app.api.routes.connector_presence import build_presence_router
 from app.api.routes.connector_viewer import build_viewer_router
@@ -52,19 +55,34 @@ from app.domain.thread.services import ThreadService
 _device_service = DeviceService(SqlDeviceRepository(AsyncSessionLocal))
 _hub = DeviceHub()
 _CHEESELET = (Path(__file__).parent / "cheeselets" / "claude.js").read_text()
-# Where an agent's `cheese api` points (the tool door sub-app). Must be reachable
-# from the client machine; defaults to this host for the local dev client.
-_AGENT_API_BASE = (settings.connector_origin or "http://127.0.0.1:8080").rstrip("/") + "/agent-api"
+# The backend base reachable from the client machine (defaults to this host for the
+# local dev client). New screens point `cheese api` (CHEESE_API) at this root, so it
+# lists the WHOLE server API — agents are first-class API clients (一个 agent 就是一个
+# user), authorized per-actor by the device+screen token (see app.common.auth). The
+# tool-door routes (post-note/…) are reached under `/agent-tool` in the main app.
+_CONNECTOR_BASE = (settings.connector_origin or "http://127.0.0.1:8080").rstrip("/")
+# Legacy sub-app base — kept so already-running screens (CHEESE_API=<base>/agent-api)
+# keep their exact endpoint after a restart.
+_AGENT_API_BASE = _CONNECTOR_BASE + "/agent-api"
 _agent_service = AgentService(
-    AsyncSessionLocal, _hub, _device_service, _CHEESELET, agent_api_base=_AGENT_API_BASE
+    AsyncSessionLocal, _hub, _device_service, _CHEESELET, agent_api_base=_CONNECTOR_BASE
 )
 _thread_service = ThreadService(AsyncSessionLocal, _hub, _agent_service)
 
 
 def agent_api_app() -> FastAPI:
-    """The agent tool-door sub-app; ``main.py`` mounts it at ``/agent-api``."""
+    """The agent tool-door sub-app; ``main.py`` mounts it at ``/agent-api`` (legacy
+    surface for already-running screens)."""
     return build_agent_api(
         AsyncSessionLocal, _agent_service, _hub, _device_service, public_base=_AGENT_API_BASE
+    )
+
+
+def agent_tool_router() -> APIRouter:
+    """The agent tool-door routes for the main app's OpenAPI, included at ``/agent-tool``
+    so a screen pointed at the site root sees ``post-note`` alongside the full API."""
+    return build_agent_tool_router(
+        AsyncSessionLocal, _agent_service, _hub, _device_service, _thread_service
     )
 
 
@@ -141,8 +159,11 @@ def build_connector_routers() -> list[APIRouter]:
     return [
         build_device_flow_router(_device_service),
         build_device_admin_router(_device_service, _is_member),
+        build_device_update_router(_device_service, _hub, _is_member),
         build_agent_open_router(_agent_service, _is_member, _can_operate_agent),
         build_agent_list_router(_agent_service, _is_member),
+        build_project_members_router(_hub, AsyncSessionLocal, _is_member),
+        build_document_connector_router(AsyncSessionLocal),
         build_thread_router(_thread_service),
         build_presence_router(_hub, AsyncSessionLocal),
         build_myagent_router(_agent_service, _device_service, _hub, AsyncSessionLocal),

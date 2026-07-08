@@ -21,10 +21,10 @@ class ProjectService:
         name: str,
         description: str,
         color_code: str,
-        team_id: int,
+        team_id: int | None,
         leader_id: int,
-        start_date: int,
-        end_date: int,
+        start_date: int | None,
+        end_date: int | None,
         content: str | None = None,
         parent_id: int | None = None,
         external_task_id: int | None = None,
@@ -32,9 +32,9 @@ class ProjectService:
     ) -> Project:
         from datetime import datetime
 
-        start_dt = datetime.fromtimestamp(start_date / 1000, tz=UTC)
-        end_dt = datetime.fromtimestamp(end_date / 1000, tz=UTC)
-        return await self._repo.create_project(
+        start_dt = datetime.fromtimestamp(start_date / 1000, tz=UTC) if start_date is not None else None
+        end_dt = datetime.fromtimestamp(end_date / 1000, tz=UTC) if end_date is not None else None
+        project = await self._repo.create_project(
             name=name,
             description=description,
             color_code=color_code,
@@ -47,6 +47,39 @@ class ProjectService:
             external_task_id=external_task_id,
             github_repo=github_repo,
         )
+        # The creator is a member (OWNER) of their own project, so membership-gated
+        # access (documents, agents, 现场) works immediately — without this the leader
+        # could not even open the project they just made.
+        if self._membership_repo is not None:
+            await self._membership_repo.add_member(
+                project_id=project.id, user_id=leader_id, role=ProjectMemberRole.OWNER
+            )
+        return project
+
+    async def create_personal_project(
+        self, *, name: str, description: str, leader_id: int, color_code: str = "#5B8FF9"
+    ) -> Project:
+        """A 知是 2.0 independent project created from the workspace onboarding: owned by
+        the creator, no team, no fixed schedule. The creator is added as OWNER."""
+        return await self.create_project(
+            name=name,
+            description=description,
+            color_code=color_code,
+            team_id=None,
+            leader_id=leader_id,
+            start_date=None,
+            end_date=None,
+        )
+
+    async def list_projects_for_member(self, user_id: int) -> list[Project]:
+        """Every non-deleted project the user is a member of (includes teamless personal
+        projects, which team-scoped listing would miss)."""
+        repo = self._require_membership_repo()
+        project_ids = await repo.list_project_ids_for_user(user_id)
+        if not project_ids:
+            return []
+        by_id = await self._repo.get_by_ids(project_ids)
+        return [by_id[pid] for pid in project_ids if pid in by_id and not by_id[pid].archived]
 
     async def get_projects_by_ids(self, ids: Sequence[int]) -> dict[int, Project]:
         return await self._repo.get_by_ids(ids)

@@ -44,6 +44,15 @@ export interface Thread {
   last_message?: LastMessage | null
 }
 
+// 引用消息预览：一条消息回复的目标块的结构化摘要（作者 + 截断的正文摘录），
+// 或当目标块缺失/属于其它 thread 时标记 deleted。纯结构、不做语义解析。
+export interface QuotedPreview {
+  id: number
+  author_id: number | null
+  excerpt: string | null
+  deleted: boolean
+}
+
 export interface Message {
   id: number
   thread_id: number
@@ -52,6 +61,27 @@ export interface Message {
   text: string
   ts: string
   reply_to_id?: number | null
+  quoted?: QuotedPreview | null
+  // 软删除后成为墓碑（text 置空、quoted 丢弃），仍随轮询到达以便就地更新。
+  deleted?: boolean
+  // 置顶标记（GET /pins 列出所有置顶消息）。
+  pinned?: boolean
+}
+
+// 一枚表情回应聚合：emoji + 人数 + 都有谁 + 我是否也点了（点击 chip 时据此 toggle）。
+export interface ReactionSummary {
+  emoji: string
+  count: number
+  userIds: number[]
+  me: boolean
+}
+
+// 导出到文档返回的文档摘要（camelCase，经 model_dump(by_alias=True)）。
+export interface DocumentSummary {
+  id: number
+  projectId: number
+  parentId: number | null
+  title: string
 }
 
 export interface ThreadApplication {
@@ -119,10 +149,11 @@ export const ThreadsApi = {
   listMessages: (tid: number, after = 0) =>
     get<{ messages: Message[] }>(`/connector/threads/${tid}/messages?after=${after}`),
 
-  postMessage: (tid: number, text: string, mention_user_ids?: number[]) =>
+  postMessage: (tid: number, text: string, mention_user_ids?: number[], reply_to_id?: number | null) =>
     send<{ message: Message; forwarded_to_agents: number }>('POST', `/connector/threads/${tid}/messages`, {
       text,
       ...(mention_user_ids && mention_user_ids.length ? { mention_user_ids } : {}),
+      ...(reply_to_id != null ? { reply_to_id } : {}),
     }),
 
   // Advance the caller's read high-water mark (Feishu 已阅). Monotonic server-side.
@@ -171,6 +202,52 @@ export const ThreadsApi = {
 
   rejectApplication: (id: number) =>
     send<{ application: ThreadApplication }>('POST', `/connector/thread-applications/${id}/reject`),
+
+  // ── 表情回应 (reactions) ──
+  // toggle：me 为 true 则调 unreact，否则 react。emoji 走 body（避免 URL 编码问题）。
+  addReaction: (tid: number, blockId: number, emoji: string) =>
+    send<{ ok: boolean }>('PUT', `/connector/threads/${tid}/messages/${blockId}/reactions`, { emoji }),
+
+  removeReaction: (tid: number, blockId: number, emoji: string) =>
+    send<{ ok: boolean }>('DELETE', `/connector/threads/${tid}/messages/${blockId}/reactions`, { emoji }),
+
+  // 批量查询可见消息的回应：空回应的块被服务端省略。
+  queryReactions: (tid: number, blockIds: number[]) =>
+    send<{ reactions: Record<string, ReactionSummary[]> }>(
+      'POST',
+      `/connector/threads/${tid}/reactions:query`,
+      { block_ids: blockIds },
+    ),
+
+  // ── 转发 (forward) ──
+  forwardMessage: (tid: number, blockId: number, targetThreadId: number) =>
+    send<{ message: Message }>('POST', `/connector/threads/${tid}/messages/${blockId}/forward`, {
+      targetThreadId,
+    }),
+
+  // ── 置顶 (pin) ──
+  pinMessage: (tid: number, blockId: number) =>
+    send<{ message: Message }>('POST', `/connector/threads/${tid}/messages/${blockId}/pin`),
+
+  unpinMessage: (tid: number, blockId: number) =>
+    send<{ message: Message }>('DELETE', `/connector/threads/${tid}/messages/${blockId}/pin`),
+
+  listPins: (tid: number) => get<{ messages: Message[] }>(`/connector/threads/${tid}/pins`),
+
+  // ── 删除 (soft delete) ──
+  deleteMessage: (tid: number, blockId: number) =>
+    send<{ message: Message }>('DELETE', `/connector/threads/${tid}/messages/${blockId}`),
+
+  // ── 导出到文档 ──
+  exportToDocument: (
+    tid: number,
+    body: { project_id: number; block_ids: number[]; title?: string; document_id?: number },
+  ) =>
+    send<{ data: { document: DocumentSummary } }>(
+      'POST',
+      `/connector/threads/${tid}/export-to-document`,
+      body,
+    ),
 }
 
 // Helpers shared by chat UI.

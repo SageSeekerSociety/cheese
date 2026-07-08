@@ -319,3 +319,39 @@ async def test_hello_records_proto_and_skew_hook() -> None:
     assert seen == []  # matching version: no skew
     await hub.on_device_message("d1", {"t": "hello", "v": 999})
     assert seen == [999]  # skew reported, not fatal
+
+
+async def test_readopt_screen_ships_adopt_session_create() -> None:
+    hub = DeviceHub()
+    dev = FakeDevice()
+    await hub.attach_device("d1", dev)
+    # Re-register a surviving screen (server-restart path), then re-provision it.
+    screen = hub.adopt_screen(
+        sid="s1", device_id="d1", token="tok123", project_id=7, agent_user_id=42
+    )
+    await hub.readopt_screen(
+        "d1", "s1", ["bash", "-lc", "exec claude"], "NEW_SRC", env={"CHEESE_API": "http://x"}
+    )
+    msg = dev.last("session.create")
+    assert msg["sid"] == "s1"
+    assert msg["adopt"] is True
+    assert msg["screen"] == screen.token == "tok123"
+    assert msg["source"] == "NEW_SRC"
+    assert msg["command"] == ["bash", "-lc", "exec claude"]
+    assert msg["env"] == {"CHEESE_API": "http://x"}
+
+
+async def test_readopt_screen_unknown_sid_is_noop() -> None:
+    hub = DeviceHub()
+    dev = FakeDevice()
+    await hub.attach_device("d1", dev)
+    await hub.readopt_screen("d1", "ghost", ["x"], "src")
+    assert all(m.get("t") != "session.create" for m in dev.sent)
+
+
+async def test_send_update_pushes_update_message() -> None:
+    hub = DeviceHub()
+    dev = FakeDevice()
+    await hub.attach_device("d1", dev)
+    await hub.send_update("d1")
+    assert dev.last("update") == {"t": "update"}

@@ -20,6 +20,8 @@ at the route (a member of the project).
 import asyncio
 import logging
 import secrets
+import shlex
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -27,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agent.clone import clone_session
 from app.agent.hub import DeviceHub, HubScreen
 from app.agent.identity import build_member_dicts
 from app.agent.models import AgentScreenRow
@@ -118,14 +121,108 @@ class AgentService:
         # How long a non-mentioned lower-priority agent's wake is deferred.
         self._triage_defer_seconds: float = 30.0
 
+    # Marks a directory trusted in ~/.claude.json so Claude's "Do you trust this folder?"
+    # gate never appears (run on the device via exec, in the screen's cwd). Mirrors
+    # misc/web-claude PRETRUST_PY; the cheeselet's auto-Enter stays as a fallback.
+    _PRETRUST_PY = (
+        "import json,os\n"
+        "p=os.path.expanduser('~/.claude.json')\n"
+        "try:\n d=json.load(open(p))\n"
+        "except Exception:\n d={}\n"
+        "proj=d.setdefault('projects',{})\n"
+        "proj.setdefault(os.getcwd(),{})['hasTrustDialogAccepted']=True\n"
+        "json.dump(d,open(p,'w'))\n"
+        "print(os.getcwd())\n"
+    )
+
+    async def _pretrust(self, device_id: str, cwd: str | None) -> None:
+        """Pre-trust the screen's cwd on the device so Claude doesn't open its
+        "Do you trust this folder?" gate at startup (deterministic — no keystroke
+        racing). Best-effort: a failure just means the gate may appear and the
+        cheeselet's auto-Enter handles it."""
+        try:
+            await self._hub.exec(
+                device_id, ["python3", "-c", self._PRETRUST_PY], cwd=cwd, timeout=15
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "pre-trust cwd failed (device=%s cwd=%s)", device_id, cwd, exc_info=True
+            )
+
+    def _claude_command(self, *, session_id: str, cwd: str | None, resume: bool) -> list[str]:
+        """Build the launch argv for a claudecode screen. We ALWAYS control Claude's
+        session id — ``--session-id <uuid>`` for a fresh agent, ``--resume <uuid>`` to
+        continue an existing conversation — so the id is a source of truth we minted, not
+        something reverse-derived from the device. ``cwd`` is prepended because Claude
+        resolves a session's transcript by the cwd's slug, so a resume must run there."""
+        flag = "--resume" if resume else "--session-id"
+        inner = f"exec claude {flag} {session_id}"
+        if cwd:
+            inner = f"cd {shlex.quote(cwd)} && {inner}"
+        return ["bash", "-lc", inner]
+
+    async def _open_screen_for_user(
+        self,
+        *,
+        device_id: str,
+        agent_user_id: int,
+        project_id: int | None,
+        session_id: str,
+        cwd: str | None,
+        resume: bool,
+    ) -> HubScreen:
+        """Open (and persist) a claudecode screen for an EXISTING agent user — the shared
+        core of ``open_agent`` (fresh user) and ``recreate_agent`` (reused user). Records
+        the Claude session id + cwd so a later recreate can ``--resume`` it."""
+        source = self._cheeselet() if callable(self._cheeselet) else self._cheeselet
+        # No CHEESE_TOKEN is injected: the agent's `cheese api` authenticates with the
+        # device's durable token (its config fallback) + the screen token (CHEESE_SCREEN,
+        # a 128-bit secret) — resolved server-side to this agent. Nothing to expire.
+        env: dict[str, str] = {}
+        if self._agent_api_base:
+            env["CHEESE_API"] = self._agent_api_base
+        # Pre-trust the cwd so Claude's trust gate never blocks startup.
+        await self._pretrust(device_id, cwd)
+        command = self._claude_command(session_id=session_id, cwd=cwd, resume=resume)
+        screen = await self._hub.open_screen(
+            device_id,
+            command,
+            source,
+            project_id=project_id,
+            agent_user_id=agent_user_id,
+            env=env,
+        )
+        async with self._sf() as session:  # persist so a restart can re-adopt it
+            session.add(
+                AgentScreenRow(
+                    sid=screen.sid,
+                    device_id=device_id,
+                    token=screen.token,
+                    project_id=project_id,
+                    agent_user_id=agent_user_id,
+                    claude_session_id=session_id,
+                    cwd=cwd,
+                    created_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+        return screen
+
     async def open_agent(
-        self, *, device_id: str, project_id: int | None = None, nickname: str | None = None
+        self,
+        *,
+        device_id: str,
+        project_id: int | None = None,
+        nickname: str | None = None,
+        cwd: str | None = None,
     ) -> OpenedAgent:
-        """Create an agent user and open its screen with an injected session token.
+        """Create an agent user and open its claudecode screen (with a freshly minted
+        Claude session id).
 
         Agents are project-independent (project is a future wrapper): ``project_id`` is
         optional. When given, the agent is joined to that project and the device must
-        serve it; when ``None`` the agent simply runs, owned by the device's owner."""
+        serve it; when ``None`` the agent simply runs, owned by the device's owner.
+        ``cwd`` is the working directory to launch Claude from (for a project checkout)."""
         if not self._hub.is_online(device_id):
             raise PreconditionFailedError("device is not connected")
         if project_id is not None and not await self._device_service.serves_project(
@@ -133,6 +230,28 @@ class AgentService:
         ):
             raise PreconditionFailedError("device is not assigned to this project")
 
+        agent_user_id, username, secret = await self._create_agent_user(
+            nickname=nickname, project_id=project_id
+        )
+        session_id = str(uuid.uuid4())  # we mint Claude's session id (source of truth)
+        screen = await self._open_screen_for_user(
+            device_id=device_id,
+            agent_user_id=agent_user_id,
+            project_id=project_id,
+            session_id=session_id,
+            cwd=cwd,
+            resume=False,
+        )
+        return OpenedAgent(
+            agent_user_id=agent_user_id, agent_username=username, agent_secret=secret, sid=screen.sid
+        )
+
+    async def _create_agent_user(
+        self, *, nickname: str | None, project_id: int | None
+    ) -> tuple[int, str, str]:
+        """Create a fresh agent user (一个 agent 就是一个用户), optionally joining it to a
+        project. Returns ``(agent_user_id, username, secret)``. Shared by ``open_agent``
+        and ``clone_agent``."""
         username = "agent-" + secrets.token_hex(6)
         secret = secrets.token_urlsafe(18)
         async with self._sf() as session:
@@ -157,38 +276,221 @@ class AgentService:
                     project_id=project_id, user_id=user.id, role=ProjectMemberRole.MEMBER
                 )
             await session.commit()
-            agent_user_id = user.id
+            return user.id, username, secret
 
-        source = self._cheeselet() if callable(self._cheeselet) else self._cheeselet
-        # No CHEESE_TOKEN is injected: the agent's `cheese api` authenticates with the
-        # device's durable token (its config fallback) + the screen token (CHEESE_SCREEN,
-        # a 128-bit secret) — resolved server-side to this agent. Nothing to expire.
-        env: dict[str, str] = {}
-        if self._agent_api_base:
-            env["CHEESE_API"] = self._agent_api_base
-        screen = await self._hub.open_screen(
-            device_id,
-            self._command,
-            source,
-            project_id=project_id,
-            agent_user_id=agent_user_id,
-            env=env,
-        )
-        async with self._sf() as session:  # persist so a restart can re-adopt it
-            session.add(
-                AgentScreenRow(
-                    sid=screen.sid,
-                    device_id=device_id,
-                    token=screen.token,
-                    project_id=project_id,
-                    agent_user_id=agent_user_id,
-                    created_at=datetime.now(UTC),
+    async def clone_agent(
+        self,
+        *,
+        source_agent_user_id: int,
+        target_device_id: str,
+        project_id: int | None = None,
+        nickname: str | None = None,
+        target_cwd: str | None = None,
+    ) -> OpenedAgent:
+        """Create a NEW agent on ``target_device_id`` whose Claude conversation is FORKED
+        from an existing agent's — the「复制自」template. Copies the source agent's
+        transcript across machines (via the device exec RPC), rewrites its session id, and
+        launches ``claude --resume`` on the target. The source agent must have a recorded
+        Claude session and its device must be online. ``target_cwd`` defaults to the
+        source's cwd (the same checkout path on the target machine)."""
+        if not self._hub.is_online(target_device_id):
+            raise PreconditionFailedError("target device is not connected")
+        if project_id is not None and not await self._device_service.serves_project(
+            target_device_id, project_id
+        ):
+            raise PreconditionFailedError("target device is not assigned to this project")
+
+        async with self._sf() as session:
+            src = (
+                (
+                    await session.execute(
+                        select(AgentScreenRow)
+                        .where(AgentScreenRow.agent_user_id == source_agent_user_id)
+                        .order_by(AgentScreenRow.created_at.desc())
+                    )
                 )
+                .scalars()
+                .first()
             )
-            await session.commit()
+        if src is None or not src.claude_session_id:
+            raise PreconditionFailedError("source agent has no recorded Claude session to copy")
+        if not src.cwd:
+            raise PreconditionFailedError("source agent has no recorded working directory")
+        if not self._hub.is_online(src.device_id):
+            raise PreconditionFailedError(
+                "source agent's device is offline; bring it online to copy from"
+            )
+
+        effective_target_cwd = target_cwd or src.cwd  # default: same checkout path on target
+        new_session_id = str(uuid.uuid4())
+        await clone_session(
+            self._hub,
+            source_device_id=src.device_id,
+            source_cwd=src.cwd,
+            source_session_id=src.claude_session_id,
+            target_device_id=target_device_id,
+            target_cwd=effective_target_cwd,
+            new_session_id=new_session_id,
+        )
+        agent_user_id, username, secret = await self._create_agent_user(
+            nickname=nickname, project_id=project_id
+        )
+        screen = await self._open_screen_for_user(
+            device_id=target_device_id,
+            agent_user_id=agent_user_id,
+            project_id=project_id,
+            session_id=new_session_id,
+            cwd=effective_target_cwd,
+            resume=True,
+        )
         return OpenedAgent(
             agent_user_id=agent_user_id, agent_username=username, agent_secret=secret, sid=screen.sid
         )
+
+    async def recreate_agent(
+        self,
+        *,
+        device_id: str,
+        agent_user_id: int,
+        resume: bool = False,
+        force: bool = False,
+        project_id: int | None = None,
+        cwd: str | None = None,
+    ) -> OpenedAgent:
+        """Recreate an agent REUSING its existing user — identity, memberships and all
+        authored history are preserved (unlike open_agent, which mints a new user).
+
+        - manual (``resume=False``): open a brand-new Claude session for the same user.
+        - restore (``resume=True``): relaunch ``claude --resume <recorded session id>``
+          from the recorded cwd, continuing the exact conversation — e.g. after the
+          client machine rebooted and the live Claude process died.
+
+        A still-live screen for this agent is only replaced when ``force=True`` (the
+        caller is expected to warn the human first); otherwise ``PreconditionFailed``."""
+        if not self._hub.is_online(device_id):
+            raise PreconditionFailedError("device is not connected")
+        if project_id is not None and not await self._device_service.serves_project(
+            device_id, project_id
+        ):
+            raise PreconditionFailedError("device is not assigned to this project")
+
+        # The agent's most recent recorded screen (survives a device disconnect) carries
+        # the Claude session id + cwd to resume, and the project default.
+        async with self._sf() as session:
+            prior = (
+                (
+                    await session.execute(
+                        select(AgentScreenRow)
+                        .where(AgentScreenRow.agent_user_id == agent_user_id)
+                        .order_by(AgentScreenRow.created_at.desc())
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            user = await session.get(User, agent_user_id)
+        if user is None or user.deleted_at is not None:
+            raise NotFoundError("agent user not found")
+
+        # A still-live screen must be explicitly replaced (the caller warns the human).
+        live = next(
+            (s for s in self._hub.all_online_screens() if s.agent_user_id == agent_user_id), None
+        )
+        if live is not None and not force:
+            raise PreconditionFailedError("agent still active; confirm to replace it")
+        if live is not None:
+            await self._close_screen_keep_user(live.device_id, live.sid)
+        # Drop any stale recorded rows so we don't leave orphan re-adopts pointing at a
+        # dead tmux; the fresh screen re-records below.
+        await self._forget_agent_screens(agent_user_id)
+
+        if resume:
+            if prior is None or not prior.claude_session_id:
+                raise PreconditionFailedError(
+                    "no recorded Claude session to resume; recreate without resume"
+                )
+            session_id = prior.claude_session_id
+        else:
+            session_id = str(uuid.uuid4())
+        effective_cwd = cwd if cwd is not None else (prior.cwd if prior is not None else None)
+        effective_project = (
+            project_id if project_id is not None else (prior.project_id if prior is not None else None)
+        )
+
+        screen = await self._open_screen_for_user(
+            device_id=device_id,
+            agent_user_id=agent_user_id,
+            project_id=effective_project,
+            session_id=session_id,
+            cwd=effective_cwd,
+            resume=resume,
+        )
+        return OpenedAgent(
+            agent_user_id=agent_user_id,
+            agent_username=user.username,
+            agent_secret="",  # user unchanged — no new secret is minted
+            sid=screen.sid,
+        )
+
+    async def recreate_agent_in_project(
+        self,
+        *,
+        project_id: int,
+        agent_user_id: int,
+        resume: bool = False,
+        force: bool = False,
+        cwd: str | None = None,
+    ) -> OpenedAgent:
+        """Recreate an agent, auto-picking an online device assigned to the project — so
+        the website need not choose a device (used e.g. to bring an offline agent back
+        after its client machine rebooted). Prefers the device the agent last ran on."""
+        # Prefer the agent's last device if it is online and still serves the project.
+        async with self._sf() as session:
+            prior = (
+                (
+                    await session.execute(
+                        select(AgentScreenRow)
+                        .where(AgentScreenRow.agent_user_id == agent_user_id)
+                        .order_by(AgentScreenRow.created_at.desc())
+                    )
+                )
+                .scalars()
+                .first()
+            )
+        candidates: list[str] = []
+        if prior is not None:
+            candidates.append(prior.device_id)
+        candidates.extend(d for d in self._hub.online_device_ids() if d not in candidates)
+        for device_id in candidates:
+            if self._hub.is_online(device_id) and await self._device_service.serves_project(
+                device_id, project_id
+            ):
+                return await self.recreate_agent(
+                    device_id=device_id,
+                    agent_user_id=agent_user_id,
+                    resume=resume,
+                    force=force,
+                    project_id=project_id,
+                    cwd=cwd,
+                )
+        raise PreconditionFailedError("no online device is assigned to this project")
+
+    async def _close_screen_keep_user(self, device_id: str, sid: str) -> None:
+        """End a screen on the device and forget its row, WITHOUT recycling the agent
+        user (unlike ``close_agent``) — used by recreate, which reuses the same user."""
+        await self._hub.close_screen(device_id, sid)
+        async with self._sf() as session:
+            await session.execute(delete(AgentScreenRow).where(AgentScreenRow.sid == sid))
+            await session.commit()
+
+    async def _forget_agent_screens(self, agent_user_id: int) -> None:
+        """Delete all recorded screen rows for an agent user (recreate clears stale rows
+        before opening the fresh one)."""
+        async with self._sf() as session:
+            await session.execute(
+                delete(AgentScreenRow).where(AgentScreenRow.agent_user_id == agent_user_id)
+            )
+            await session.commit()
 
     async def open_agent_in_project(
         self, *, project_id: int, nickname: str | None = None
@@ -384,36 +686,37 @@ class AgentService:
         attention policy and @-mentions, with a basic triage lock.
 
         Per-agent eligibility:
-          * @mentioned  → always delivered (ignores policy);
-          * ALL         → always delivered;
+          * @mentioned  → always delivered now (ignores policy);
+          * ALL         → always delivered now (真正的「立即」);
           * INTERVAL(n) → delivered iff ≥ n minutes since its last delivery here;
           * MENTION     → only when @mentioned.
 
-        Triage (BASIC — no reminder / timeout-escalation): a mentioned agent is woken
-        immediately; among the *non-mentioned* eligible agents only the highest-role one
-        is woken now, the rest are deferred ~30s (``finish_triage`` releases them early).
+        Triage (BASIC — no reminder / timeout-escalation): 只对 INTERVAL 广播降噪。
+        @mentioned 与 ALL 的 agent 都立即唤醒（ALL 语义就是「每条都立即给我」，用户
+        既已显式开启就不该被 triage 抑制）。在剩下的 *非 @* 的 INTERVAL 合格 agent 中
+        只立即唤醒最高 role 的一个，其余 defer ~30s（``finish_triage`` 可提前释放）。
         Returns how many agents were (or will be) forwarded to."""
         now = datetime.now(UTC)
         # Basic version: a new message flushes any still-pending deferral for the thread.
         await self._flush_triage(thread_id)
 
         immediate: list[tuple[int, bool]] = []  # (agent_user_id, mentioned)
-        broadcast_eligible: list[ThreadAgentPolicy] = []  # non-mentioned & eligible
+        broadcast_eligible: list[ThreadAgentPolicy] = []  # 非 @ 的 INTERVAL 合格者，参与降噪
         for p in agent_policies:
             if p.user_id in mentioned_ids:
                 immediate.append((p.user_id, True))
                 continue
             if p.mode == "ALL":
-                eligible = True
+                # ALL = 真正的「立即」：不参与 triage 的「只唤醒最高 role 一个」降噪，
+                # 始终立即投递，避免非最高 role 的 ALL agent 被误 defer ~30s。
+                immediate.append((p.user_id, False))
             elif p.mode == "INTERVAL":
                 last = self._last_delivery.get((thread_id, p.user_id))
-                eligible = last is None or (now - last) >= timedelta(
+                if last is None or (now - last) >= timedelta(
                     minutes=p.interval_minutes or 0
-                )
-            else:  # MENTION
-                eligible = False
-            if eligible:
-                broadcast_eligible.append(p)
+                ):
+                    broadcast_eligible.append(p)
+            # else MENTION: 非 @ 不投
 
         deferred: list[ThreadAgentPolicy] = []
         if broadcast_eligible:

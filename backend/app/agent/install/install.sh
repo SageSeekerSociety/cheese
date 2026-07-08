@@ -102,7 +102,7 @@ else
   else
     warn "no tmux on this machine and none could be downloaded for $target."
     warn "please install tmux after setup (e.g. apt/dnf/brew install tmux);"
-    warn "screens won't start until a tmux is on PATH or at $CFG_DIR/bin/tmux."
+    warn "sessions won't start until a tmux is on PATH or at $CFG_DIR/bin/tmux."
   fi
   rm -f "$tmp"
 fi

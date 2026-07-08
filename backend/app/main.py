@@ -47,16 +47,21 @@ setup_logging()
 
 
 def create_app() -> FastAPI:
-    # Expose API docs / OpenAPI schema only in development & test. In other
-    # environments openapi_url=None also disables /docs and /redoc (both depend
-    # on the schema), avoiding leaking the API surface in production.
-    docs_enabled = settings.environment in ("development", "test")
+    # The interactive docs UI (/docs, /redoc) is exposed only in development & test —
+    # it is an unnecessary attack surface in production. The OpenAPI *schema*
+    # (/openapi.json), however, MUST stay available in every environment: the agent
+    # tool client (`cheese api`) fetches it at runtime to discover operations
+    # (post-note, connector, documents, …). Disabling it under ENVIRONMENT=production
+    # would leave every hosted agent online but unable to act (it could no longer emit
+    # `cheese api post-note`). The schema exposes only endpoint shapes, never secrets;
+    # restrict it at the edge (internal-only) if a deployment needs to.
+    docs_ui_enabled = settings.environment in ("development", "test")
     app = FastAPI(
         title="Cheese Backend (Python)",
         version="0.1.0",
-        docs_url="/docs" if docs_enabled else None,
-        redoc_url="/redoc" if docs_enabled else None,
-        openapi_url="/openapi.json" if docs_enabled else None,
+        docs_url="/docs" if docs_ui_enabled else None,
+        redoc_url="/redoc" if docs_ui_enabled else None,
+        openapi_url="/openapi.json",
     )
 
     # Middleware
@@ -121,13 +126,27 @@ def create_app() -> FastAPI:
     app.include_router(workitems.router)
     # 知是 2.0 connector plane (frozen link.Msg): device flow + /agent control
     # channel + 现场 viewer, with real project-member viewer authz.
-    from app.agent.connector_plane import agent_api_app, build_connector_routers
+    from app.agent.connector_plane import (
+        agent_api_app,
+        agent_tool_router,
+        build_connector_routers,
+    )
 
     for connector_router in build_connector_routers():
         app.include_router(connector_router)
-    # 知是 2.0 agent tool door: the tiny API an agent's `cheese api` calls (its own
-    # OpenAPI), mounted as a sub-app so CHEESE_API points here.
+    # 知是 2.0 agent tool door. Two surfaces for one set of routes:
+    #  * the legacy sub-app mounted at /agent-api (its own tiny OpenAPI) — kept so
+    #    already-running screens (CHEESE_API=<base>/agent-api) keep their exact endpoint;
+    #  * the same routes included at /agent-tool in THIS app's OpenAPI — so a screen
+    #    pointed at the site root (new screens) sees post-note alongside the full API.
     app.mount("/agent-api", agent_api_app())
+    app.include_router(agent_tool_router(), prefix="/agent-tool")
+    # 知是 2.0 飞书式消息动作: 表情回应 + 导出到文档 (forward/pin/delete ride the thread router).
+    from app.api.routes.message_export import build_message_export_router
+    from app.api.routes.reactions import build_reactions_router
+
+    app.include_router(build_reactions_router())
+    app.include_router(build_message_export_router())
     # 知是 2.0 convenient installer: served install.sh + prebuilt cli/ artifacts.
     app.include_router(installer.router)
     app.include_router(installer.root_router)  # also <origin>/install.sh

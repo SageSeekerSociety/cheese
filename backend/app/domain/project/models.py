@@ -30,14 +30,16 @@ class Project(Base):
     color_code: Mapped[str] = mapped_column("color_code", String(7), nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
 
-    team_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Nullable for 知是 2.0 independent/personal projects (no team, no fixed schedule);
+    # legacy team-scoped projects still set them.
+    team_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     leader_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     parent_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     external_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 

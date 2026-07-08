@@ -70,6 +70,8 @@ def _block(
         content=text,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         reply_to_id=None,
+        deleted_at=None,
+        pinned_at=None,
     )
 
 
@@ -169,81 +171,76 @@ _AGENT_UID = 42
 _HEADERS = {"Authorization": "Bearer dev-token", "X-Cheese-Screen": "screen-secret"}
 
 
-class _Recorder:
-    """Captures the add_message kwargs so the test can assert the written block."""
-
-    def __init__(self) -> None:
-        self.add_message = AsyncMock(return_value=SimpleNamespace(id=777))
-
-
 def _wire_agent_door(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    thread: object | None,
+    post_result: dict[str, object] | None = None,
+    post_error: Exception | None = None,
     last_thread: int | None = None,
-) -> tuple[TestClient, _Recorder, MagicMock]:
-    """Build a post-note client whose auth resolves to an in-screen agent user."""
+) -> tuple[TestClient, AsyncMock, MagicMock]:
+    """Build a post-note client whose auth resolves to an in-screen agent user. post-note
+    now delegates to ``ThreadService.post_message`` (the SAME path as a human message, so
+    @-mentions forward), so we mock that instead of the old direct block write."""
     monkeypatch.setattr(
         agent_api,
         "resolve_actor",
         AsyncMock(return_value=SimpleNamespace(inside_screen=True, actor_user_id=_AGENT_UID)),
     )
-    recorder = _Recorder()
-    thread_repo = SimpleNamespace(get=AsyncMock(return_value=thread), touch=AsyncMock())
-    monkeypatch.setattr(agent_api, "ThreadRepository", lambda _s: thread_repo)
-    monkeypatch.setattr(agent_api, "BlockRepository", lambda _s: recorder)
+    post_message = AsyncMock(
+        side_effect=post_error,
+        return_value=post_result or {"message": {"id": 777, "thread_id": 5}, "forwarded_to_agents": 0},
+    )
+    monkeypatch.setattr(agent_api, "ThreadService", lambda *a, **k: SimpleNamespace(post_message=post_message))
 
-    session = SimpleNamespace(commit=AsyncMock())
     agent_service = SimpleNamespace(last_thread_for_agent=MagicMock(return_value=last_thread))
     device_service = SimpleNamespace()
     api = build_agent_api(
-        _session_factory(session),  # type: ignore[arg-type]
+        _session_factory(SimpleNamespace(commit=AsyncMock())),  # type: ignore[arg-type]
         agent_service,  # type: ignore[arg-type]
         DeviceHub(),
         device_service,  # type: ignore[arg-type]
     )
-    return TestClient(api), recorder, agent_service.last_thread_for_agent
+    return TestClient(api), post_message, agent_service.last_thread_for_agent
 
 
-async def test_post_note_writes_message_authored_by_agent(monkeypatch: pytest.MonkeyPatch) -> None:
-    client, recorder, _ = _wire_agent_door(
-        monkeypatch, thread=SimpleNamespace(id=5, project_id=7)
+async def test_post_note_delegates_to_post_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, post_message, _ = _wire_agent_door(
+        monkeypatch, post_result={"message": {"id": 777, "thread_id": 5}, "forwarded_to_agents": 2}
     )
     r = client.post("/notes", json={"text": "hello thread", "thread_id": 5}, headers=_HEADERS)
 
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "id": 777, "thread_id": 5}
-    recorder.add_message.assert_awaited_once()
-    kwargs = recorder.add_message.await_args.kwargs
-    assert kwargs["author_id"] == _AGENT_UID
-    assert kwargs["thread_id"] == 5
-    assert kwargs["project_id"] == 7
-    assert kwargs["text"] == "hello thread"
+    assert r.json() == {"ok": True, "id": 777, "thread_id": 5, "forwarded_to_agents": 2}
+    # Goes through the unified pipeline (mention scan + forward), authored by the agent.
+    post_message.assert_awaited_once_with(actor_id=_AGENT_UID, thread_id=5, text="hello thread")
 
 
 async def test_post_note_falls_back_to_last_thread(monkeypatch: pytest.MonkeyPatch) -> None:
-    client, recorder, last_thread = _wire_agent_door(
-        monkeypatch, thread=SimpleNamespace(id=9, project_id=None), last_thread=9
+    client, post_message, last_thread = _wire_agent_door(
+        monkeypatch, post_result={"message": {"id": 1, "thread_id": 9}}, last_thread=9
     )
     r = client.post("/notes", json={"text": "no explicit thread"}, headers=_HEADERS)
 
     assert r.status_code == 200
     assert r.json()["thread_id"] == 9
     last_thread.assert_called_once_with(_AGENT_UID)
-    assert recorder.add_message.await_args.kwargs["thread_id"] == 9
+    assert post_message.await_args.kwargs["thread_id"] == 9
 
 
 async def test_post_note_no_target_thread_is_bad_request(monkeypatch: pytest.MonkeyPatch) -> None:
-    client, recorder, _ = _wire_agent_door(monkeypatch, thread=None, last_thread=None)
+    client, post_message, _ = _wire_agent_door(monkeypatch, last_thread=None)
     r = client.post("/notes", json={"text": "orphan"}, headers=_HEADERS)
 
     assert r.status_code == 400
-    recorder.add_message.assert_not_awaited()
+    post_message.assert_not_awaited()
 
 
 async def test_post_note_unknown_thread_is_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    client, recorder, _ = _wire_agent_door(monkeypatch, thread=None, last_thread=123)
+    # A resolved thread that post_message rejects (not a member / missing) → 404 surfaces.
+    client, post_message, _ = _wire_agent_door(
+        monkeypatch, post_error=NotFoundError("Unknown thread"), last_thread=123
+    )
     r = client.post("/notes", json={"text": "into the void"}, headers=_HEADERS)
 
     assert r.status_code == 404
-    recorder.add_message.assert_not_awaited()
+    post_message.assert_awaited_once()

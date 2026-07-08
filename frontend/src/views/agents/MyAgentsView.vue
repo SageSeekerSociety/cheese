@@ -54,6 +54,15 @@
               <v-btn
                 size="small"
                 variant="text"
+                icon="mdi-backup-restore"
+                :loading="recreating === a.user_id"
+                :disabled="!isAgentOnline(a)"
+                title="重启并恢复会话（复用原用户与对话历史）"
+                @click="recreateAgentRow(a)"
+              />
+              <v-btn
+                size="small"
+                variant="text"
                 color="error"
                 icon="mdi-delete-outline"
                 :loading="busyAgent === a.sid"
@@ -140,6 +149,27 @@
             label="昵称（可选）"
             variant="outlined"
             density="comfortable"
+          />
+          <v-select
+            v-model="createForm.copy_from"
+            :items="copyFromOptions"
+            item-title="title"
+            item-value="value"
+            label="复制自"
+            variant="outlined"
+            density="comfortable"
+            hint="选一个已有 agent 会把它的 Claude 会话复制到目标机并从中恢复；源 agent 所在机器需在线"
+            persistent-hint
+          />
+          <!-- 仅在选了「复制自」时显示：目标机上的工作目录，不填则沿用源 agent 的目录。 -->
+          <v-text-field
+            v-if="createForm.copy_from"
+            v-model="createForm.target_cwd"
+            label="目标工作目录（可选）"
+            variant="outlined"
+            density="comfortable"
+            hint="目标机上的工作目录；不填则沿用源 agent 的目录。目录不存在会自动创建。"
+            persistent-hint
           />
         </v-card-text>
         <v-card-actions>
@@ -291,6 +321,7 @@ const loading = ref(false)
 const error = ref('')
 const busyAgent = ref<string | null>(null)
 const busyDevice = ref<string | null>(null)
+const recreating = ref<number | null>(null)
 
 // 跨设备扁平化所有 agent，并记住其所在设备（用于展示设备名 / 在线态）。
 interface AgentRow extends Member {
@@ -348,12 +379,33 @@ onMounted(load)
 // —— 创建 agent ——
 const showCreate = ref(false)
 const creating = ref(false)
-const createForm = ref<{ device_id: string | null; nickname: string }>({ device_id: null, nickname: '' })
+const createForm = ref<{
+  device_id: string | null
+  nickname: string
+  copy_from: number | null
+  target_cwd: string
+}>({
+  device_id: null,
+  nickname: '',
+  copy_from: null,
+  target_cwd: '',
+})
+
+// 「复制自」下拉：从零开始 + 每个已有 agent（复制其 Claude 会话）。
+const copyFromOptions = computed(() => [
+  { title: '从零开始', value: null as number | null },
+  ...allAgents.value.map((a) => ({
+    title: `${a.nickname || `agent#${a.user_id}`}${a._deviceOnline ? '' : '（离线）'}`,
+    value: a.user_id as number | null,
+  })),
+])
 
 function openCreate(): void {
   createForm.value = {
     device_id: onlineDeviceOptions.value[0]?.value ?? null,
     nickname: '',
+    copy_from: null,
+    target_cwd: '',
   }
   showCreate.value = true
 }
@@ -365,8 +417,14 @@ async function submitCreate(): Promise<void> {
     await AgentsApi.createAgent({
       device_id: createForm.value.device_id,
       nickname: createForm.value.nickname || undefined,
+      copy_from_agent_user_id: createForm.value.copy_from ?? undefined,
+      // 仅在「复制自」时透传目标目录；不填则由后端沿用源 agent 的 cwd。
+      target_cwd:
+        createForm.value.copy_from && createForm.value.target_cwd.trim()
+          ? createForm.value.target_cwd.trim()
+          : undefined,
     })
-    toast.success('已创建 agent')
+    toast.success(createForm.value.copy_from ? '已复制并创建 agent' : '已创建 agent')
     showCreate.value = false
     await load()
   } catch (e) {
@@ -391,6 +449,25 @@ async function removeAgent(a: AgentRow): Promise<void> {
     toast.error(e instanceof Error ? e.message : '删除失败')
   } finally {
     busyAgent.value = null
+  }
+}
+
+// —— 重启并恢复会话（复用原用户 + 原 Claude session）——
+async function recreateAgentRow(a: AgentRow): Promise<void> {
+  if (!isAgentOnline(a)) return
+  if (!window.confirm(`将结束「${a.nickname || `agent#${a.user_id}`}」当前的现场，并用同一个 Claude 会话重启它。继续？`))
+    return
+  recreating.value = a.user_id
+  try {
+    // 现场仍存活 → force；resume=true 沿用原会话继续对话。
+    await AgentsApi.recreateAgent(a.user_id, { resume: true, force: true })
+    toast.success('已重启并恢复会话')
+    await load()
+    setTimeout(load, 3000)
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : '重启失败')
+  } finally {
+    recreating.value = null
   }
 }
 

@@ -25,10 +25,15 @@ class RenameThreadBody(BaseModel):
 class PostMessageBody(BaseModel):
     text: str
     mention_user_ids: list[int] | None = None
+    reply_to_id: int | None = None
 
 
 class MarkReadBody(BaseModel):
     last_read_id: int
+
+
+class ForwardMessageBody(BaseModel):
+    targetThreadId: int  # wire contract is camelCase
 
 
 class AddMemberBody(BaseModel):
@@ -87,7 +92,7 @@ def build_thread_router(thread_service: ThreadService) -> APIRouter:
         tid: int, body: PostMessageBody, user_id: int = Depends(get_current_user_id)
     ) -> dict[str, object]:
         return await thread_service.post_message(
-            user_id, tid, body.text, body.mention_user_ids
+            user_id, tid, body.text, body.mention_user_ids, body.reply_to_id
         )
 
     @router.post("/threads/{tid}/read")
@@ -95,6 +100,43 @@ def build_thread_router(thread_service: ThreadService) -> APIRouter:
         tid: int, body: MarkReadBody, user_id: int = Depends(get_current_user_id)
     ) -> dict[str, object]:
         return await thread_service.mark_read(user_id, tid, body.last_read_id)
+
+    # -- message actions (删除 / 置顶 / 转发) ------------------------------
+
+    @router.delete("/threads/{tid}/messages/{block_id}")
+    async def delete_message(
+        tid: int, block_id: int, user_id: int = Depends(get_current_user_id)
+    ) -> dict[str, object]:
+        return await thread_service.delete_message(user_id, tid, block_id)
+
+    @router.post("/threads/{tid}/messages/{block_id}/pin")
+    async def pin_message(
+        tid: int, block_id: int, user_id: int = Depends(get_current_user_id)
+    ) -> dict[str, object]:
+        return await thread_service.pin_message(user_id, tid, block_id)
+
+    @router.delete("/threads/{tid}/messages/{block_id}/pin")
+    async def unpin_message(
+        tid: int, block_id: int, user_id: int = Depends(get_current_user_id)
+    ) -> dict[str, object]:
+        return await thread_service.unpin_message(user_id, tid, block_id)
+
+    @router.get("/threads/{tid}/pins")
+    async def list_pins(
+        tid: int, user_id: int = Depends(get_current_user_id)
+    ) -> dict[str, object]:
+        return await thread_service.list_pins(user_id, tid)
+
+    @router.post("/threads/{tid}/messages/{block_id}/forward")
+    async def forward_message(
+        tid: int,
+        block_id: int,
+        body: ForwardMessageBody,
+        user_id: int = Depends(get_current_user_id),
+    ) -> dict[str, object]:
+        return await thread_service.forward_message(
+            user_id, tid, block_id, body.targetThreadId
+        )
 
     # -- members -----------------------------------------------------------
 

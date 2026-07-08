@@ -15,7 +15,7 @@ target thread (either the explicit ``thread_id`` or the agent's most-recently-@'
 thread — the cheeselet's ``say`` prompt carries a ``[thread:<id>]`` marker).
 """
 
-from fastapi import FastAPI, Header
+from fastapi import APIRouter, FastAPI, Header
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -26,12 +26,10 @@ from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
     BaseError,
-    NotFoundError,
     base_error_handler,
 )
-from app.domain.block.repositories import BlockRepository
 from app.domain.device.service import DeviceService
-from app.domain.thread.repositories import ThreadRepository
+from app.domain.thread.services import ThreadService
 
 
 class NoteBody(BaseModel):
@@ -43,13 +41,20 @@ class FinishTriageBody(BaseModel):
     thread_id: int | None = None
 
 
-def build_agent_api(
+def build_agent_tool_router(
     session_factory: async_sessionmaker[AsyncSession],
     agent_service: AgentService,
     hub: DeviceHub,
     device_service: DeviceService,
-    public_base: str | None = None,
-) -> FastAPI:
+    thread_service: "ThreadService",
+) -> APIRouter:
+    """The agent tool-door routes as a plain router, so they can be *both* mounted as
+    the standalone sub-app (``build_agent_api``, the legacy ``CHEESE_API=/agent-api``
+    surface) and included in the main app's OpenAPI (so a screen pointed at the site
+    root sees ``post-note`` alongside the full API). The routes self-authenticate from
+    the device+screen headers — they never depend on the human JWT dependency."""
+    router = APIRouter(tags=["agent-tool"])
+
     async def _agent_user(authorization: str | None, screen_token: str | None) -> int:
         """The calling agent's user id, from the device token (bearer) + screen token
         (X-Cheese-Screen). Must come from inside a live screen — a bare device call is
@@ -65,23 +70,7 @@ def build_agent_api(
             raise AuthenticationRequiredError("this call must come from inside an agent screen")
         return attribution.actor_user_id
 
-    # `cheese api` (restish) resolves request URLs against the spec's server URL, not
-    # against CHEESE_API. A mounted sub-app otherwise advertises a host-absolute
-    # `/agent-api`, which drops the edge's `/api` prefix (agents then POST to
-    # <origin>/agent-api/notes → 404). So advertise the full external base
-    # (CHEESE_API, e.g. <origin>/api/agent-api) as the server URL.
-    servers = [{"url": public_base}] if public_base else None
-    # root_path_in_servers=False stops the mount's `/agent-api` from being injected as
-    # the first server (which restish would use, dropping the `/api` edge prefix).
-    api = FastAPI(
-        title="cheese agent API",
-        version="1.0.0",
-        servers=servers,
-        root_path_in_servers=False,
-    )
-    api.add_exception_handler(BaseError, base_error_handler)  # type: ignore[arg-type]
-
-    @api.post("/notes", operation_id="post-note", summary="Post a message into a thread.")
+    @router.post("/notes", operation_id="post-note", summary="Post a message into a thread.")
     async def post_note(
         body: NoteBody,
         authorization: str | None = Header(default=None),
@@ -91,22 +80,22 @@ def build_agent_api(
         thread_id = body.thread_id or agent_service.last_thread_for_agent(user_id)
         if thread_id is None:
             raise BadRequestError("no target thread; specify thread_id")
-        async with session_factory() as session:
-            thread = await ThreadRepository(session).get(thread_id)
-            if thread is None:
-                raise NotFoundError("Unknown thread")
-            block = await BlockRepository(session).add_message(
-                thread_id=thread_id,
-                project_id=thread.project_id,
-                author_id=user_id,
-                text=body.text,
-            )
-            await ThreadRepository(session).touch(thread_id)
-            block_id = block.id
-            await session.commit()
-        return {"ok": True, "id": block_id, "thread_id": thread_id}
+        # Unified path: post-note is a thin alias over the SAME service the human
+        # `POST /threads/{tid}/messages` uses — so an agent's message runs the identical
+        # @-mention scan + attention/triage forwarding. (The old direct block-write here
+        # skipped forwarding entirely, so @-mentions from an agent never woke anyone.)
+        result = await thread_service.post_message(
+            actor_id=user_id, thread_id=thread_id, text=body.text
+        )
+        message = result.get("message", {})
+        return {
+            "ok": True,
+            "id": message.get("id") if isinstance(message, dict) else None,
+            "thread_id": thread_id,
+            "forwarded_to_agents": result.get("forwarded_to_agents", 0),
+        }
 
-    @api.post(
+    @router.post(
         "/finish-triage",
         operation_id="finish-triage",
         summary="Release the group's message lock so other agents get the message.",
@@ -123,7 +112,7 @@ def build_agent_api(
         released = await agent_service.finish_triage(thread_id)
         return {"ok": True, "thread_id": thread_id, "released": released}
 
-    @api.get("/whoami", operation_id="whoami", summary="Report who you are and where.")
+    @router.get("/whoami", operation_id="whoami", summary="Report who you are and where.")
     async def whoami(
         authorization: str | None = Header(default=None),
         x_cheese_screen: str | None = Header(default=None, alias="X-Cheese-Screen"),
@@ -136,4 +125,39 @@ def build_agent_api(
             "screen": screen.sid if screen else None,
         }
 
+    return router
+
+
+def build_agent_api(
+    session_factory: async_sessionmaker[AsyncSession],
+    agent_service: AgentService,
+    hub: DeviceHub,
+    device_service: DeviceService,
+    public_base: str | None = None,
+) -> FastAPI:
+    """The standalone tool-door sub-app (legacy ``CHEESE_API=<origin>/api/agent-api``
+    surface). Kept so already-running screens keep their exact endpoint. New screens
+    point ``CHEESE_API`` at the site root and reach the same routes via the main app's
+    OpenAPI (see ``build_agent_tool_router`` included in ``main.py``)."""
+    # `cheese api` (restish) resolves request URLs against the spec's server URL, not
+    # against CHEESE_API. A mounted sub-app otherwise advertises a host-absolute
+    # `/agent-api`, which drops the edge's `/api` prefix. So advertise the full external
+    # base (CHEESE_API, e.g. <origin>/api/agent-api) as the server URL.
+    servers = [{"url": public_base}] if public_base else None
+    api = FastAPI(
+        title="cheese agent API",
+        version="1.0.0",
+        servers=servers,
+        root_path_in_servers=False,
+    )
+    api.add_exception_handler(BaseError, base_error_handler)  # type: ignore[arg-type]
+    api.include_router(
+        build_agent_tool_router(
+            session_factory,
+            agent_service,
+            hub,
+            device_service,
+            ThreadService(session_factory, hub, agent_service),
+        )
+    )
     return api

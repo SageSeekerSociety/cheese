@@ -41,6 +41,36 @@ export namespace ProjectsApi {
       params,
     })
 
+  // 知是 2.0：当前用户的项目（含无小队的个人项目）。这是「我的项目」的唯一真源。
+  export const listMine = () =>
+    NewApiInstance.request<{ projects: Project[]; total: number }>({
+      url: '/projects/mine',
+      method: 'GET',
+    })
+
+  // 知是 2.0：创建个人项目（无需小队）。返回同 detail 的 project 模型。
+  export const createMine = (data: { name: string; description?: string }) =>
+    NewApiInstance.request<{ project: Project }>({
+      url: '/projects/mine',
+      method: 'POST',
+      data,
+    })
+
+  // 知是 2.0：重命名 / 改简介（PATCH）。项目 OWNER/leader 才有权限。
+  export const renameProject = (projectId: number, data: { name: string; description?: string }) =>
+    NewApiInstance.request<{ project: Project }>({
+      url: `/projects/${projectId}`,
+      method: 'PATCH',
+      data,
+    })
+
+  // 知是 2.0：删除项目（软删除，DELETE）。项目 OWNER/leader 才有权限。
+  export const deleteProject = (projectId: number) =>
+    NewApiInstance.request({
+      url: `/projects/${projectId}`,
+      method: 'DELETE',
+    })
+
   export const detail = (projectId: number) =>
     NewApiInstance.request<{ project: Project }>({
       url: `/projects/${projectId}`,

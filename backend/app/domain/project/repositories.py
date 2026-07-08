@@ -17,10 +17,10 @@ class ProjectRepository:
         name: str,
         description: str,
         color_code: str,
-        team_id: int,
+        team_id: int | None,
         leader_id: int,
-        start_date: datetime,
-        end_date: datetime,
+        start_date: datetime | None,
+        end_date: datetime | None,
         content: str | None = None,
         parent_id: int | None = None,
         external_task_id: int | None = None,
@@ -132,6 +132,18 @@ class ProjectMembershipRepository:
         self._session.add(membership)
         await self._session.flush()
         return membership
+
+    async def list_project_ids_for_user(self, user_id: int) -> list[int]:
+        stmt = (
+            select(ProjectMembership.project_id)
+            .where(
+                ProjectMembership.user_id == user_id,
+                ProjectMembership.deleted_at.is_(None),
+            )
+            .order_by(ProjectMembership.project_id.desc())
+        )
+        result = await self._session.execute(stmt)
+        return [row[0] for row in result.all()]
 
     async def get_relation(self, project_id: int, user_id: int) -> ProjectMembership | None:
         stmt: Select[tuple[ProjectMembership]] = select(ProjectMembership).where(

@@ -50,6 +50,17 @@ if TYPE_CHECKING:
 # agent (the safe default: only wake it when someone @'s it).
 _ATTENTION_MODES = ("ALL", "INTERVAL", "MENTION")
 
+# Quoted-preview excerpt length. Pure truncation of the referenced block's raw text —
+# never NL/semantic parsing (万物皆块: the preview is structural, not interpreted).
+_QUOTE_EXCERPT_LEN = 140
+
+
+def _quote_excerpt(text: str) -> str:
+    text = text.strip()
+    if len(text) > _QUOTE_EXCERPT_LEN:
+        return text[:_QUOTE_EXCERPT_LEN] + "…"
+    return text
+
 
 def parse_attention_policy(raw: str | None) -> tuple[str, int | None]:
     """Decode a stored override into ``(mode, interval_minutes)``. Unknown / null →
@@ -159,14 +170,43 @@ class ThreadService:
     ) -> dict[str, object]:
         author = (await build_member_dicts(session, self._hub, [block.author_id]))[0]
         author.pop("role", None)
-        return {
+        deleted = block.deleted_at is not None
+        result: dict[str, object] = {
             "id": block.id,
             "thread_id": block.thread_id,
             "author_id": block.author_id,
             "author": author,
-            "text": block.content,
+            # A deleted message is a tombstone: it still appears in listings so clients
+            # update in place, but its content is blanked (and it drops its quoted preview).
+            "text": "" if deleted else block.content,
             "ts": block.created_at.isoformat(),
             "reply_to_id": block.reply_to_id,
+            "deleted": deleted,
+            "pinned": block.pinned_at is not None,
+        }
+        if not deleted and block.reply_to_id is not None:
+            result["quoted"] = await self._quoted_preview(
+                session, block.thread_id, block.reply_to_id
+            )
+        return result
+
+    async def _quoted_preview(
+        self, session: AsyncSession, thread_id: int | None, reply_to_id: int
+    ) -> dict[str, object]:
+        """Small structural preview of the block a message replies to: author + a
+        truncated excerpt, or ``deleted`` when it is missing / in another thread."""
+        ref = (
+            await BlockRepository(session).get_message_in_thread(thread_id, reply_to_id)
+            if thread_id is not None
+            else None
+        )
+        if ref is None:
+            return {"id": reply_to_id, "author_id": None, "excerpt": None, "deleted": True}
+        return {
+            "id": ref.id,
+            "author_id": ref.author_id,
+            "excerpt": _quote_excerpt(ref.content),
+            "deleted": False,
         }
 
     # -- threads -----------------------------------------------------------
@@ -232,6 +272,7 @@ class ThreadService:
         thread_id: int,
         text: str,
         mention_user_ids: list[int] | None = None,
+        reply_to_id: int | None = None,
     ) -> dict[str, object]:
         # Deferred import avoids a module-load cycle (orchestrator ⇄ thread service).
         from app.agent.orchestrator import ThreadAgentPolicy
@@ -243,6 +284,7 @@ class ThreadService:
                 project_id=thread.project_id,
                 author_id=actor_id,
                 text=text,
+                reply_to_id=reply_to_id,
             )
             await ThreadRepository(session).touch(thread_id)
 
@@ -266,7 +308,10 @@ class ThreadService:
 
             policies: list[ThreadAgentPolicy] = []
             for r in rows:
-                if r.user_id in agents:
+                # Never forward a message back to its own author — otherwise an agent that
+                # posts (via post-note, which now runs this same pipeline) gets woken by its
+                # own message, which at "立即" attention is an infinite self-notification loop.
+                if r.user_id in agents and r.user_id != actor_id:
                     mode, interval = parse_attention_policy(r.attention_policy_override)
                     policies.append(
                         ThreadAgentPolicy(
@@ -308,6 +353,87 @@ class ThreadService:
             )
             await session.commit()
         return {"ok": True, "last_read_block_id": watermark or 0}
+
+    # -- message actions (飞书式: 删除 / 置顶 / 转发) ------------------------
+
+    async def _require_message(
+        self, session: AsyncSession, thread_id: int, block_id: int
+    ) -> Block:
+        block = await BlockRepository(session).get_message_in_thread(thread_id, block_id)
+        if block is None:
+            raise NotFoundError("Unknown message")
+        return block
+
+    async def delete_message(
+        self, actor_id: int, thread_id: int, block_id: int
+    ) -> dict[str, object]:
+        """删除 (soft delete): tombstone a message. Allowed if the actor is the author,
+        or a thread ADMIN/OWNER. The row is kept so replies/quotes degrade gracefully."""
+        async with self._sf() as session:
+            await self._require_member(session, thread_id, actor_id)
+            block = await self._require_message(session, thread_id, block_id)
+            if block.author_id != actor_id:
+                role = await ThreadMembershipRepository(session).role_of(thread_id, actor_id)
+                if role is None or role < ThreadMemberRole.ADMIN:
+                    raise ForbiddenError("only the author or a thread admin may delete a message")
+            await BlockRepository(session).set_deleted(block, deleted=True)
+            message = await self._message_json(session, block)
+            await session.commit()
+        return {"message": message}
+
+    async def pin_message(
+        self, actor_id: int, thread_id: int, block_id: int
+    ) -> dict[str, object]:
+        """置顶: pin a message. Any member may pin."""
+        async with self._sf() as session:
+            await self._require_member(session, thread_id, actor_id)
+            block = await self._require_message(session, thread_id, block_id)
+            await BlockRepository(session).set_pinned(block, pinned=True)
+            message = await self._message_json(session, block)
+            await session.commit()
+        return {"message": message}
+
+    async def unpin_message(
+        self, actor_id: int, thread_id: int, block_id: int
+    ) -> dict[str, object]:
+        """取消置顶: unpin a message. Any member may unpin."""
+        async with self._sf() as session:
+            await self._require_member(session, thread_id, actor_id)
+            block = await self._require_message(session, thread_id, block_id)
+            await BlockRepository(session).set_pinned(block, pinned=False)
+            message = await self._message_json(session, block)
+            await session.commit()
+        return {"message": message}
+
+    async def list_pins(self, actor_id: int, thread_id: int) -> dict[str, object]:
+        """List a thread's pinned messages, most-recently-pinned first. Member-only."""
+        async with self._sf() as session:
+            await self._require_member(session, thread_id, actor_id)
+            blocks = await BlockRepository(session).list_pinned(thread_id)
+            return {"messages": [await self._message_json(session, b) for b in blocks]}
+
+    async def forward_message(
+        self, actor_id: int, from_thread_id: int, block_id: int, to_thread_id: int
+    ) -> dict[str, object]:
+        """转发: copy a message into another thread. The actor must be a member of BOTH
+        threads. A new message authored by the actor is created in the target thread,
+        copying the source text, with provenance recorded in ``refs``."""
+        async with self._sf() as session:
+            await self._require_member(session, from_thread_id, actor_id)
+            target = await self._require_member(session, to_thread_id, actor_id)
+            source = await self._require_message(session, from_thread_id, block_id)
+            ref = f"forwarded_from:{from_thread_id}:{block_id}"
+            block = await BlockRepository(session).add_message(
+                thread_id=to_thread_id,
+                project_id=target.project_id,
+                author_id=actor_id,
+                text=source.content,
+                refs=[ref],
+            )
+            await ThreadRepository(session).touch(to_thread_id)
+            message = await self._message_json(session, block)
+            await session.commit()
+        return {"message": message}
 
     # -- members -----------------------------------------------------------
 
