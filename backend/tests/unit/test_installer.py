@@ -52,37 +52,43 @@ def test_install_script_base_follows_the_forwarded_origin(client: TestClient) ->
     assert "testserver" not in body
 
 
-def test_cli_base_default_empty_leaves_derivation_unchanged(client: TestClient) -> None:
-    # With no override configured (the default), __CLI_BASE__ is baked empty, so install.sh
-    # falls back to deriving the base from CONNECTOR_BASE — byte-for-byte the old behaviour.
+def test_ws_base_default_empty_leaves_derivation_unchanged(client: TestClient) -> None:
+    # With no override configured (the default), __WS_BASE__ is baked empty, so ws_origin
+    # is empty, ws stays empty, and the cli derives its control channel from "base" itself
+    # — byte-for-byte the old behaviour. "base" (login/API) is always the install origin.
     body = client.get("/connector/install.sh").text
-    assert "__CLI_BASE__" not in body
-    assert 'base="${CHEESE_CLI_BASE:-}"' in body
-    assert 'base="${CONNECTOR_BASE%/connector}"' in body  # the fallback derivation is intact
+    assert "__WS_BASE__" not in body
+    assert 'ws_origin="${CHEESE_WS_BASE:-}"' in body
+    assert 'base="${CONNECTOR_BASE%/connector}"' in body  # the login/API base is intact
 
 
-def test_cli_base_override_applies_only_to_matching_origin(
+def test_ws_base_override_applies_only_to_matching_origin(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
         settings,
-        "connector_base_overrides",
+        "connector_ws_overrides",
         {"https://cheese.ruc.edu.cn/": "https://119pve.ghg.org.cn/api"},
     )
-    # A matching install origin remaps the cli's runtime (WS control-channel) base, while the
-    # binary-download CONNECTOR_BASE stays on the install origin (valid cert, HTTP works).
+    # A matching install origin remaps only the cli's WS control channel; "base" (login,
+    # API, binary downloads) stays on the install origin — where OAuth callbacks,
+    # WebAuthn RP ID and CORS are all pinned — so the human approve page keeps working.
+    # The override is a plain http(s) origin; the script derives the actual ws(s)://…/agent
+    # dial URL from it, the same way the cli itself would from "base".
     body = client.get(
         "/connector/install.sh",
         headers={"X-Forwarded-Host": "cheese.ruc.edu.cn", "X-Forwarded-Proto": "https"},
     ).text
-    assert 'base="${CHEESE_CLI_BASE:-https://119pve.ghg.org.cn/api}"' in body
+    assert 'ws_origin="${CHEESE_WS_BASE:-https://119pve.ghg.org.cn/api}"' in body
+    assert 'ws="${ws%/}/agent"' in body
+    assert 'base="${CONNECTOR_BASE%/connector}"' in body
     assert 'CONNECTOR_BASE="${CHEESE_CONNECTOR_BASE:-https://cheese.ruc.edu.cn/api/connector}"' in body
     # A non-matching origin gets no override — derivation unchanged.
     other = client.get(
         "/connector/install.sh",
         headers={"X-Forwarded-Host": "other.example.com", "X-Forwarded-Proto": "https"},
     ).text
-    assert 'base="${CHEESE_CLI_BASE:-}"' in other
+    assert 'ws_origin="${CHEESE_WS_BASE:-}"' in other
 
 
 def test_artifact_rejects_unknown_target(client: TestClient) -> None:
@@ -128,4 +134,4 @@ def test_served_script_matches_the_repo_file(client: TestClient) -> None:
     with open(repo_script) as f:
         script = f.read()
     assert "__CONNECTOR_BASE__" in script
-    assert "__CLI_BASE__" in script
+    assert "__WS_BASE__" in script

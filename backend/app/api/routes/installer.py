@@ -53,15 +53,18 @@ def _connector_base(request: Request) -> str:
     return public_origin(request) + "/api/connector"
 
 
-def _cli_base_override(request: Request) -> str:
-    """A configured override for the cli's *runtime* base (its WebSocket control-channel
-    endpoint), keyed by the public origin the installer was fetched from. Empty (the
-    default, and whenever nothing matches) → install.sh derives the base itself, exactly
-    as before. Set via ``CONNECTOR_BASE_OVERRIDES`` when the friendly origin sits behind
-    an edge that strips the WebSocket Upgrade: users still install from that origin (the
-    binary download keeps using it), while the cli connects to the mapped WS-capable
-    endpoint. Behaviour is unchanged unless an override is both configured and matches."""
-    overrides = settings.connector_base_overrides
+def _ws_base_override(request: Request) -> str:
+    """A configured override for just the cli's WebSocket control-channel endpoint
+    (the ``ws`` field in ``config.json``; see ``config.ControlURL``), keyed by the
+    public origin the installer was fetched from. Empty (the default, and whenever
+    nothing matches) → the cli derives its control channel from ``base`` itself,
+    exactly as before. Set via ``CONNECTOR_WS_OVERRIDES`` when the friendly origin sits
+    behind an edge that strips the WebSocket Upgrade: users still install from — and log
+    in / approve devices on — that origin (login, OAuth callbacks and WebAuthn are all
+    pinned to it), while only the persistent control channel connects via the mapped
+    WS-capable endpoint. Behaviour is unchanged unless an override is both configured
+    and matches."""
+    overrides = settings.connector_ws_overrides
     if not overrides:
         return ""
     return overrides.get(public_origin(request).rstrip("/") + "/", "")
@@ -77,7 +80,7 @@ async def _serve_install_sh(request: Request) -> Response:
     async with aiofiles.open(_INSTALL_SH) as f:
         script = await f.read()
     script = script.replace("__CONNECTOR_BASE__", _connector_base(request))
-    script = script.replace("__CLI_BASE__", _cli_base_override(request))
+    script = script.replace("__WS_BASE__", _ws_base_override(request))
     # text/x-shellscript so `curl … | sh` and a browser both do the sane thing.
     return PlainTextResponse(script, media_type="text/x-shellscript")
 

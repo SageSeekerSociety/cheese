@@ -108,32 +108,63 @@ else
 fi
 
 # --- 3. remember the server --------------------------------------------------
-# The cli base is normally the connector base minus its trailing /connector segment.
-# A deployment whose edge strips the WebSocket Upgrade can bake __CLI_BASE__ (via the
-# backend's CONNECTOR_BASE_OVERRIDES) to point the cli's control channel at a WS-capable
-# endpoint; empty (the default) keeps the derived base, unchanged. The binary downloads
-# above always use CONNECTOR_BASE (the install origin), so they are unaffected here.
-# CHEESE_CLI_BASE overrides both, for manual use.
-base="${CHEESE_CLI_BASE:-__CLI_BASE__}"
-[ -n "$base" ] || base="${CONNECTOR_BASE%/connector}"
+# Two separate endpoints, matching the two things this machine does:
+#   - "base" — login (device flow) and the request/response API. Always the
+#     friendly install origin (never overridden): OAuth callbacks, WebAuthn RP ID
+#     and CORS are all pinned to that origin, so the human-facing approve page
+#     (<base>/connect?code=…) only works when opened there.
+#   - "ws"   — the persistent control channel `cheese run` dials out on: an
+#     already-complete ws(s)://…/agent URL (config.Config's WS field is dialed
+#     verbatim, unlike "base" which the cli itself turns into a control URL by
+#     swapping the scheme and appending /agent). Empty (the default) leaves that
+#     derivation to the cli, from "base". A deployment whose edge strips the
+#     WebSocket Upgrade header can bake __WS_BASE__ (via the backend's
+#     CONNECTOR_WS_OVERRIDES, a plain http(s) origin — no scheme swap or /agent
+#     needed there) to point just this channel at a WS-capable endpoint instead,
+#     leaving login/API/binary-downloads untouched; this script does the same
+#     http(s)->ws(s) + /agent derivation the cli would have done, so the override
+#     only ever needs to name an origin.
+# CHEESE_WS_BASE overrides it manually (also a plain origin).
+base="${CONNECTOR_BASE%/connector}"
+ws_origin="${CHEESE_WS_BASE:-__WS_BASE__}"
+ws=""
+if [ -n "$ws_origin" ]; then
+  case "$ws_origin" in
+    https://*) ws="wss://${ws_origin#https://}" ;;
+    http://*)  ws="ws://${ws_origin#http://}" ;;
+    *)         ws="$ws_origin" ;;  # already ws(s):// (or unrecognized) — use as-is
+  esac
+  ws="${ws%/}/agent"
+fi
 mkdir -p "$CFG_DIR"
 if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
-  python3 - "$CFG" "$base" <<'PY'
+  python3 - "$CFG" "$base" "$ws" <<'PY'
 import json, sys
-path, base = sys.argv[1], sys.argv[2]
+path, base, ws = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
     cfg = json.load(open(path))
 except Exception:
     cfg = {}
 cfg["base"] = base
+if ws:
+    cfg["ws"] = ws
+else:
+    cfg.pop("ws", None)
 json.dump(cfg, open(path, "w"), indent=2)
 PY
 else
-  printf '{\n  "base": "%s"\n}\n' "$base" > "$CFG"
+  if [ -n "$ws" ]; then
+    printf '{\n  "base": "%s",\n  "ws": "%s"\n}\n' "$base" "$ws" > "$CFG"
+  else
+    printf '{\n  "base": "%s"\n}\n' "$base" > "$CFG"
+  fi
   chmod 600 "$CFG"
 fi
 step "Server"
 ok "$base"
+if [ -n "$ws" ]; then
+  ok "control channel: $ws"
+fi
 
 # When installed via sudo, hand the config dir back to the user the service will run as.
 if [ "$(id -u)" = 0 ] && [ "$owner" != "root" ]; then
