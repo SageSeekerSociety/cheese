@@ -151,26 +151,77 @@
             density="comfortable"
           />
           <v-select
-            v-model="createForm.copy_from"
-            :items="copyFromOptions"
+            v-model="createForm.mode"
+            :items="createModeOptions"
             item-title="title"
             item-value="value"
-            label="复制自"
+            label="创建方式"
             variant="outlined"
             density="comfortable"
-            hint="选一个已有 agent 会把它的 Claude 会话复制到目标机并从中恢复；源 agent 所在机器需在线"
-            persistent-hint
           />
-          <!-- 仅在选了「复制自」时显示：目标机上的工作目录，不填则沿用源 agent 的目录。 -->
-          <v-text-field
-            v-if="createForm.copy_from"
-            v-model="createForm.target_cwd"
-            label="目标工作目录（可选）"
-            variant="outlined"
-            density="comfortable"
-            hint="目标机上的工作目录；不填则沿用源 agent 的目录。目录不存在会自动创建。"
-            persistent-hint
-          />
+
+          <!-- 「复制自」：把某个已有 agent 的 Claude 会话复制到目标机并从中恢复。 -->
+          <template v-if="createForm.mode === 'copy'">
+            <v-select
+              v-model="createForm.copy_from"
+              :items="copyFromOptions"
+              item-title="title"
+              item-value="value"
+              label="源 agent"
+              variant="outlined"
+              density="comfortable"
+              hint="它的 Claude 会话会被复制到目标机并从中恢复；源 agent 所在机器需在线"
+              persistent-hint
+            />
+            <v-text-field
+              v-model="createForm.target_cwd"
+              label="目标工作目录（可选）"
+              variant="outlined"
+              density="comfortable"
+              hint="目标机上的工作目录；不填则沿用源 agent 的目录。目录不存在会自动创建。"
+              persistent-hint
+            />
+          </template>
+
+          <!-- 「接入已有会话」：resume 目标设备上已经存在的一个 Claude 会话（例如你自己在
+               那台机器上手动跑过 claude），而不是新建或复制一份。 -->
+          <template v-else-if="createForm.mode === 'attach'">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-4 text-body-2">
+              前提：该会话是在<strong>上面选中的这台设备</strong>上，用 <code>claude</code> 跑出来的——
+              cheese 目前只能接管自己知道的机器，接管不了机器上随便一个终端。
+            </v-alert>
+            <div class="tut-step">
+              <div class="tut-step__num">1</div>
+              <div class="tut-step__content">
+                <div class="tut-step__title">在目标设备上，进入该会话对应的项目目录，执行：</div>
+                <div class="tut-code">
+                  <code>{{ attachLookupCmd }}</code>
+                  <v-btn icon="mdi-content-copy" size="x-small" variant="text" @click="copy(attachLookupCmd)" />
+                </div>
+                <div class="text-body-2 text-medium-emphasis mt-2">
+                  输出就是这个目录里最近一次会话的 session id；把这个目录的<strong>绝对路径</strong>和这个 id
+                  分别填到下面两个框里。
+                </div>
+              </div>
+            </div>
+            <v-text-field
+              v-model="createForm.attach_session_id"
+              label="Claude session id"
+              variant="outlined"
+              density="comfortable"
+              class="mt-2"
+              placeholder="例如 38747be3-845e-44ea-8b87-732509654485"
+            />
+            <v-text-field
+              v-model="createForm.attach_cwd"
+              label="工作目录（绝对路径）"
+              variant="outlined"
+              density="comfortable"
+              placeholder="例如 /home/nictheboy/repo/SageSeekerSociety"
+              hint="必须和上面命令执行时的目录一致，否则 Claude 找不到这个会话的记录"
+              persistent-hint
+            />
+          </template>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -179,7 +230,7 @@
             color="primary"
             variant="flat"
             :loading="creating"
-            :disabled="!createForm.device_id"
+            :disabled="!canSubmitCreate"
             @click="submitCreate"
           >
             创建
@@ -379,52 +430,90 @@ onMounted(load)
 // —— 创建 agent ——
 const showCreate = ref(false)
 const creating = ref(false)
+type CreateMode = 'fresh' | 'copy' | 'attach'
 const createForm = ref<{
   device_id: string | null
   nickname: string
+  mode: CreateMode
   copy_from: number | null
   target_cwd: string
+  attach_session_id: string
+  attach_cwd: string
 }>({
   device_id: null,
   nickname: '',
+  mode: 'fresh',
   copy_from: null,
   target_cwd: '',
+  attach_session_id: '',
+  attach_cwd: '',
 })
 
-// 「复制自」下拉：从零开始 + 每个已有 agent（复制其 Claude 会话）。
-const copyFromOptions = computed(() => [
-  { title: '从零开始', value: null as number | null },
-  ...allAgents.value.map((a) => ({
+const createModeOptions: { title: string; value: CreateMode }[] = [
+  { title: '从零开始', value: 'fresh' },
+  { title: '复制已有 agent 的会话', value: 'copy' },
+  { title: '接入设备上已有的 Claude 会话', value: 'attach' },
+]
+
+// 「复制自」下拉：每个已有 agent（复制其 Claude 会话）。
+const copyFromOptions = computed(() =>
+  allAgents.value.map((a) => ({
     title: `${a.nickname || `agent#${a.user_id}`}${a._deviceOnline ? '' : '（离线）'}`,
     value: a.user_id as number | null,
   })),
-])
+)
+
+// 「接入已有会话」教程里的查找命令：cd 到会话对应的项目目录后执行，取该目录最近一次
+// 会话的 session id（Claude 按 cwd 的 slug 存 transcript，文件名去掉 .jsonl 就是 id）。
+const attachLookupCmd =
+  'slug=$(pwd | sed \'s/\\//-/g\'); ls -t ~/.claude/projects/"$slug"/*.jsonl 2>/dev/null | head -1 | xargs -n1 basename | sed \'s/\\.jsonl$//\''
+
+const canSubmitCreate = computed(() => {
+  if (!createForm.value.device_id) return false
+  if (createForm.value.mode === 'copy') return createForm.value.copy_from != null
+  if (createForm.value.mode === 'attach') {
+    return !!createForm.value.attach_session_id.trim() && !!createForm.value.attach_cwd.trim()
+  }
+  return true
+})
 
 function openCreate(): void {
   createForm.value = {
     device_id: onlineDeviceOptions.value[0]?.value ?? null,
     nickname: '',
+    mode: 'fresh',
     copy_from: null,
     target_cwd: '',
+    attach_session_id: '',
+    attach_cwd: '',
   }
   showCreate.value = true
 }
 
 async function submitCreate(): Promise<void> {
-  if (!createForm.value.device_id) return
+  if (!createForm.value.device_id || !canSubmitCreate.value) return
   creating.value = true
   try {
     await AgentsApi.createAgent({
       device_id: createForm.value.device_id,
       nickname: createForm.value.nickname || undefined,
-      copy_from_agent_user_id: createForm.value.copy_from ?? undefined,
+      copy_from_agent_user_id: createForm.value.mode === 'copy' ? createForm.value.copy_from ?? undefined : undefined,
       // 仅在「复制自」时透传目标目录；不填则由后端沿用源 agent 的 cwd。
       target_cwd:
-        createForm.value.copy_from && createForm.value.target_cwd.trim()
+        createForm.value.mode === 'copy' && createForm.value.target_cwd.trim()
           ? createForm.value.target_cwd.trim()
           : undefined,
+      attach_session_id:
+        createForm.value.mode === 'attach' ? createForm.value.attach_session_id.trim() : undefined,
+      attach_cwd: createForm.value.mode === 'attach' ? createForm.value.attach_cwd.trim() : undefined,
     })
-    toast.success(createForm.value.copy_from ? '已复制并创建 agent' : '已创建 agent')
+    toast.success(
+      createForm.value.mode === 'copy'
+        ? '已复制并创建 agent'
+        : createForm.value.mode === 'attach'
+          ? '已接入该会话'
+          : '已创建 agent',
+    )
     showCreate.value = false
     await load()
   } catch (e) {

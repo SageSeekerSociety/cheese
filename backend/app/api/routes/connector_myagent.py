@@ -17,7 +17,7 @@ from app.agent.identity import agent_owner, build_member_dicts
 from app.agent.models import AgentScreenRow
 from app.agent.orchestrator import AgentService
 from app.common.auth import get_current_user_id
-from app.core.errors import ForbiddenError, NotFoundError, PreconditionFailedError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError, PreconditionFailedError
 from app.domain.device.service import DeviceService
 from app.domain.user.repositories import UserProfileRepository
 
@@ -32,6 +32,12 @@ class CreateAgentBody(BaseModel):
     # 「复制自」时可选的目标工作目录：不填则沿用源 agent 的 cwd。目录在目标机上不存在时
     # 后端会 `mkdir -p` 建出来，不会阻断创建。
     target_cwd: str | None = None
+    # 「接入已有会话」: resume an existing Claude Code session that's already on disk
+    # on device_id (e.g. the user ran `claude` there themselves) instead of starting
+    # fresh or copying. Both fields are required together; mutually exclusive with
+    # copy_from_agent_user_id.
+    attach_session_id: str | None = None
+    attach_cwd: str | None = None
 
 
 class UpdateAgentBody(BaseModel):
@@ -149,6 +155,16 @@ def build_myagent_router(
                 project_id=project_id,
                 nickname=body.nickname,
                 target_cwd=body.target_cwd,
+            )
+        elif body.attach_session_id is not None:
+            if not body.attach_cwd:
+                raise BadRequestError("attach_cwd is required when attaching an existing session")
+            opened = await agent_service.attach_agent(
+                device_id=body.device_id,
+                project_id=project_id,
+                nickname=body.nickname,
+                session_id=body.attach_session_id,
+                cwd=body.attach_cwd,
             )
         else:
             opened = await agent_service.open_agent(

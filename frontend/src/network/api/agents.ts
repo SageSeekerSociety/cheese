@@ -49,6 +49,10 @@ export const createAgent = (body: {
   copy_from_agent_user_id?: number
   // 「复制自」时可选的目标工作目录：不填则沿用源 agent 的 cwd。
   target_cwd?: string
+  // 「接入已有会话」：resume 设备上已经存在的一个 Claude 会话，而不是新建或复制。
+  // 两个字段必须同时提供；与 copy_from_agent_user_id 互斥。
+  attach_session_id?: string
+  attach_cwd?: string
 }) =>
   request<{ agent: Member }>('/connector/my/agents', {
     method: 'POST',

@@ -347,6 +347,54 @@ class AgentService:
             agent_user_id=agent_user_id, agent_username=username, agent_secret=secret, sid=screen.sid
         )
 
+    async def attach_agent(
+        self,
+        *,
+        device_id: str,
+        project_id: int | None = None,
+        nickname: str | None = None,
+        session_id: str,
+        cwd: str,
+    ) -> OpenedAgent:
+        """Create an agent whose Claude conversation is an EXISTING session already on
+        disk on ``device_id`` — e.g. the user ran ``claude`` there themselves before
+        cheese knew about it — instead of minting a fresh one. Just ``claude --resume
+        <session_id>`` from ``cwd``; unlike ``clone_agent`` there is nothing to copy, the
+        transcript already lives where it's being resumed.
+
+        Guards against attaching a session id some other live screen already has open
+        (two ``claude --resume`` processes racing the same transcript file)."""
+        if not self._hub.is_online(device_id):
+            raise PreconditionFailedError("device is not connected")
+        if project_id is not None and not await self._device_service.serves_project(
+            device_id, project_id
+        ):
+            raise PreconditionFailedError("device is not assigned to this project")
+
+        async with self._sf() as db_session:
+            existing = (
+                await db_session.execute(
+                    select(AgentScreenRow).where(AgentScreenRow.claude_session_id == session_id)
+                )
+            ).scalars().all()
+        if any(self._hub.screen(row.sid) is not None for row in existing):
+            raise ConflictError("this Claude session is already attached to a live agent")
+
+        agent_user_id, username, secret = await self._create_agent_user(
+            nickname=nickname, project_id=project_id
+        )
+        screen = await self._open_screen_for_user(
+            device_id=device_id,
+            agent_user_id=agent_user_id,
+            project_id=project_id,
+            session_id=session_id,
+            cwd=cwd,
+            resume=True,
+        )
+        return OpenedAgent(
+            agent_user_id=agent_user_id, agent_username=username, agent_secret=secret, sid=screen.sid
+        )
+
     async def recreate_agent(
         self,
         *,
@@ -901,9 +949,14 @@ class AgentService:
                 # message to re-adopt its surviving tmux session — even though the
                 # server-side hub state persisted across the client's reconnect. It is
                 # idempotent: a same-process reconnect treats it as a driver hot-reload.
+                command = (
+                    self._claude_command(session_id=row.claude_session_id, cwd=row.cwd, resume=True)
+                    if row.claude_session_id
+                    else self._command  # legacy row with no recorded session — best effort
+                )
                 try:
                     await self._hub.readopt_screen(
-                        device_id, row.sid, self._command, source, env=env or None
+                        device_id, row.sid, command, source, env=env or None
                     )
                 except Exception:
                     logging.getLogger(__name__).warning(
