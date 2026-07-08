@@ -246,7 +246,15 @@ class NotificationEventHandler:
             return
         for handler in self._channel_handlers:
             try:
-                await handler.send_batch(deliveries)
+                # A savepoint, not just a try/except: a DB-writing handler (in-app) can
+                # fail mid-flush (e.g. a non-ASCII payload against a non-UTF8 database),
+                # which leaves the whole shared session's transaction aborted in Postgres
+                # even though the Python exception is caught here — silently breaking the
+                # caller's own later commit (e.g. thread/application creation). The
+                # savepoint scopes that failure to just this handler's writes, so it rolls
+                # back on its own and the caller's transaction stays usable.
+                async with self._session.begin_nested():
+                    await handler.send_batch(deliveries)
             except Exception:  # pragma: no cover - defensive guardrail
                 logger.exception("Notification handler %s failed", handler.name)
 
