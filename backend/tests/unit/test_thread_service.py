@@ -53,6 +53,8 @@ class _Store:
     blocks: list[SimpleNamespace] = field(default_factory=list)
     # user_id -> owner_user_id. A user_id present here is treated as an agent.
     agents: dict[int, int | None] = field(default_factory=dict)
+    # user_id -> set of project ids they're a member of (for the agent-consent bypass).
+    project_memberships: dict[int, set[int]] = field(default_factory=dict)
     _thread_seq: int = 100
     _member_seq: int = 1000
     _app_seq: int = 5000
@@ -285,6 +287,14 @@ class _FakeAppRepo:
         return app
 
 
+class _FakeProjectMembershipRepo:
+    def __init__(self, store: _Store) -> None:
+        self._s = store
+
+    async def list_project_ids_for_user(self, user_id: int) -> list[int]:
+        return sorted(self._s.project_memberships.get(user_id, set()))
+
+
 class _FakeBlockRepo:
     def __init__(self, store: _Store) -> None:
         self._s = store
@@ -417,6 +427,9 @@ def ctx() -> Iterator[_Ctx]:
             patch(f"{mod}.ThreadApplicationRepository", lambda _s: _FakeAppRepo(store))
         )
         es.enter_context(patch(f"{mod}.BlockRepository", lambda _s: _FakeBlockRepo(store)))
+        es.enter_context(
+            patch(f"{mod}.ProjectMembershipRepository", lambda _s: _FakeProjectMembershipRepo(store))
+        )
         es.enter_context(patch(f"{mod}.resolve_agent_identities", _resolve))
         es.enter_context(patch(f"{mod}.agent_owner", _owner))
         es.enter_context(patch(f"{mod}.build_member_dicts", _members))
@@ -622,6 +635,35 @@ class TestAddMemberAgentConsent:
         # no application, no consent notification
         assert ctx.store.applications == []
         ctx.publish.assert_not_awaited()
+
+    async def test_inviter_shares_a_project_with_agent_auto_adds(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.OWNER)
+        # user 9 is an agent owned by someone else (77), but both the agent and the
+        # inviter (5) are members of project 508 — everyone in a project stands as
+        # that project's resources' owner, so no approval is needed either.
+        ctx.store.agents[9] = 77
+        ctx.store.project_memberships[9] = {508}
+        ctx.store.project_memberships[5] = {508, 42}
+
+        result = await ctx.svc.add_member(actor_id=5, thread_id=1, user_id=9)
+
+        assert result["added"] is True
+        assert any(m.user_id == 9 and m.deleted_at is None for m in ctx.store.memberships)
+        assert ctx.store.applications == []
+        ctx.publish.assert_not_awaited()
+
+    async def test_inviter_in_different_project_still_needs_consent(self, ctx: _Ctx) -> None:
+        ctx.store.add_thread(1)
+        ctx.store.add_membership(1, 5, ThreadMemberRole.OWNER)
+        ctx.store.agents[9] = 77
+        ctx.store.project_memberships[9] = {508}
+        ctx.store.project_memberships[5] = {42}  # no overlap with the agent's projects
+
+        result = await ctx.svc.add_member(actor_id=5, thread_id=1, user_id=9)
+
+        assert result["pending"] is True
+        assert not any(m.user_id == 9 for m in ctx.store.memberships)
 
 
 # ---------------------------------------------------------------------------

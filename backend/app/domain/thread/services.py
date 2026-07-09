@@ -26,6 +26,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.device.models import DeviceRow
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import publish_notification_event
+from app.domain.project.repositories import ProjectMembershipRepository
 from app.domain.thread.models import (
     ApplicationStatus,
     ApplicationType,
@@ -227,7 +228,11 @@ class ThreadService:
                 if uid == actor_id:
                     continue
                 if uid in agents:
-                    await self._invite_agent(session, thread, uid, actor_id, ThreadMemberRole.MEMBER)
+                    owner = await agent_owner(session, uid)
+                    if await self._agent_needs_owner_approval(session, actor_id, uid, owner):
+                        await self._invite_agent(session, thread, uid, actor_id, ThreadMemberRole.MEMBER)
+                    else:
+                        await memberships.add(thread.id, uid, ThreadMemberRole.MEMBER)
                 else:
                     await memberships.add(thread.id, uid, ThreadMemberRole.MEMBER)
             result = await self._thread_json(session, thread)
@@ -465,9 +470,10 @@ class ThreadService:
             agents = await resolve_agent_identities(session, self._hub, [user_id])
             if user_id in agents:
                 # Adding an agent needs its owner's consent — EXCEPT when the inviter is
-                # that owner (no point asking yourself); then add it directly.
+                # that owner, or shares a project with the agent (see
+                # _agent_needs_owner_approval); then add it directly.
                 owner = await agent_owner(session, user_id)
-                if owner != actor_id:
+                if await self._agent_needs_owner_approval(session, actor_id, user_id, owner):
                     app = await self._invite_agent(session, thread, user_id, actor_id, target_role)
                     result: dict[str, object] = {"pending": True, "application_id": app.id}
                     await session.commit()
@@ -484,6 +490,23 @@ class ThreadService:
             session, self._hub, [user_id], roles={user_id: int(role)}
         )
         return members[0]
+
+    async def _agent_needs_owner_approval(
+        self, session: AsyncSession, actor_id: int, agent_user_id: int, owner: int | None
+    ) -> bool:
+        """Whether pulling ``agent_user_id`` into a thread needs its owner's consent.
+        No point asking when the inviter IS the owner. Also skipped when the inviter
+        shares a project with the agent: everyone in a project has, by design, the
+        same standing as an owner over that project's resources (including its
+        agents), so a fellow project member inviting the agent needs no approval
+        either — treat them as if they were its owner for this purpose."""
+        if owner == actor_id:
+            return False
+        agent_projects = set(await ProjectMembershipRepository(session).list_project_ids_for_user(agent_user_id))
+        if not agent_projects:
+            return True
+        actor_projects = set(await ProjectMembershipRepository(session).list_project_ids_for_user(actor_id))
+        return agent_projects.isdisjoint(actor_projects)
 
     async def _invite_agent(
         self,
