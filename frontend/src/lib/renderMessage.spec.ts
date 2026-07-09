@@ -5,7 +5,13 @@ import { describe, expect, it } from 'vitest'
 import { renderMarkdown, renderPlain } from './renderMessage'
 
 const MAPS = {
-  mentionNames: { andyl: 'Andy Liu', 'zhang-heng': '张衡' },
+  // `all`/`here` are the reserved 群播 tokens seeded by ChatPanel.
+  mentionNames: {
+    andyl: 'Andy Liu',
+    'zhang-heng': '张衡',
+    all: '所有人',
+    here: '在线成员',
+  },
   topicTitles: { 'abc12345-0000-0000-0000-000000000000': '搭建推荐算法原型' },
 }
 
@@ -30,6 +36,19 @@ describe('renderMarkdown (芝士 replies)', () => {
     const html = renderMarkdown('<@ghost> 看下', MAPS)
     expect(html).toContain('data-handle="ghost"')
     expect(html).toContain('@ghost')
+  })
+
+  it('renders the 群播 <@all> token as a friendly chip (fusion-design §3)', () => {
+    const html = renderMarkdown('<@all> 大家看一下', MAPS)
+    expect(html).toContain('class="mention"')
+    expect(html).toContain('data-handle="all"')
+    expect(html).toContain('@所有人')
+  })
+
+  it('renders <@here> as the 在线成员 chip', () => {
+    const html = renderMarkdown('<@here> 在的看下', MAPS)
+    expect(html).toContain('data-handle="here"')
+    expect(html).toContain('@在线成员')
   })
 
   it('keeps single newlines as line breaks (chat, not strict markdown)', () => {

@@ -30,6 +30,7 @@ import {
   getGitLog,
   getPreview,
   getProjectUsage,
+  getTerminal,
   getTopicUsage,
   getTranscript,
   listFiles,
@@ -476,6 +477,10 @@ const commentsFolded = ref(false)
 
 // 现场: read-only transcript timeline.
 const transcript = ref<Block[]>([])
+// 现场实时终端: when the tmux backend has this topic's container up, the 现场
+// drawer embeds the real read-only terminal (ttyd) instead of the rebuilt
+// worklog. `terminalUrl` is the backend proxy the iframe loads.
+const terminalUrl = ref<string | null>(null)
 // Live-turn elapsed seconds (ticks while `working`).
 const nowTick = ref(Date.now())
 let tickTimer: ReturnType<typeof setInterval> | null = null
@@ -637,7 +642,18 @@ async function loadTool(key: string) {
   toolError.value = null
   try {
     if (key === 'site') {
-      transcript.value = (await getTranscript(tid)).data
+      // Prefer the real terminal (tmux backend); fall back to the worklog
+      // timeline. The terminal probe must never break 现场 — on any error it
+      // just stays null and the worklog view renders.
+      const [tx, term] = await Promise.all([
+        getTranscript(tid),
+        getTerminal(tid).catch(() => null),
+      ])
+      if (props.topic?.id !== tid) return
+      transcript.value = tx.data
+      // `url` is already a root-relative path ("/api/topics/…/terminal/live/")
+      // — the iframe loads it through the same dev/proxy that fronts /api.
+      terminalUrl.value = term?.available && term.url ? term.url : null
     } else if (key === 'git') {
       // A fresh repo with no commits makes git log fail (422); tolerate it so
       // the diff still renders instead of the whole drawer showing an error.
@@ -1691,6 +1707,8 @@ watch(
     // Close the drawer on topic switch so it doesn't carry over.
     openTool.value = null
     drawerOpen.value = false
+    // Drop the previous topic's terminal so it can't flash in the new 现场.
+    terminalUrl.value = null
   },
   { immediate: true },
 )
@@ -2087,6 +2105,25 @@ onBeforeUnmount(() => {
           >
             {{ toolError }}
           </v-alert>
+
+          <!-- 现场: real terminal (tmux backend) OR read-only transcript timeline -->
+          <template v-else-if="openTool === 'site' && terminalUrl">
+            <!-- 实时终端(只读): the topic container's ttyd pane, proxied by the
+                 backend. iframe is the simplest embed — ttyd ships its own
+                 xterm.js frontend, and same-origin (via the /api proxy) means no
+                 CSP/cross-origin friction. Read-only mirror (ttyd -R). -->
+            <div class="term-wrap">
+              <div class="term-bar text-caption px-3 py-1">
+                <span class="term-bar__dot">●</span>
+                实时终端（只读）
+              </div>
+              <iframe
+                class="term-frame"
+                :src="terminalUrl"
+                title="实时终端（只读）"
+              />
+            </div>
+          </template>
 
           <!-- 现场: read-only transcript timeline (芝士 messages + 🔧 events) -->
           <template v-else-if="openTool === 'site'">
@@ -2917,6 +2954,29 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
+}
+/* 实时终端(只读): the embedded ttyd pane fills the 现场 drawer height. */
+.term-wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted, rgba(0, 0, 0, 0.6));
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+}
+.term-bar__dot {
+  color: #3fb950;
+  font-size: 10px;
+}
+.term-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  border: none;
+  background: #000;
 }
 .preview-wrap {
   height: 100%;

@@ -29,6 +29,11 @@ class ValidationError(AppError):
     message = "Validation failed"
 
 
+class ForbiddenError(AppError):
+    code = 403
+    message = "Forbidden"
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:

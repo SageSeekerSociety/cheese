@@ -26,6 +26,33 @@ def test_pane_ready_detects_prompt_box():
     assert pane_ready("Welcome to Claude Code\nloading...\n") is False
 
 
+class _FakeRun:
+    def __init__(self, returncode: int, stdout: str) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""
+
+
+def test_ttyd_endpoint_parses_docker_port(monkeypatch):
+    monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
+    monkeypatch.setattr(
+        tp.subprocess, "run", lambda *a, **k: _FakeRun(0, "127.0.0.1:55011\n")
+    )
+    assert tp.ttyd_endpoint(uuid.uuid4()) == "127.0.0.1:55011"
+
+
+def test_ttyd_endpoint_none_when_container_down(monkeypatch):
+    monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
+    # docker port on a missing/unpublished container → non-zero rc, empty stdout.
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **k: _FakeRun(1, ""))
+    assert tp.ttyd_endpoint(uuid.uuid4()) is None
+
+
+def test_ttyd_endpoint_none_without_docker(monkeypatch):
+    monkeypatch.setattr(tp.ws, "sandbox_available", lambda: False)
+    assert tp.ttyd_endpoint(uuid.uuid4()) is None
+
+
 @pytest.fixture
 def _stub_env(monkeypatch, tmp_path):
     """Fake docker + workspace so the provider needs no real container."""

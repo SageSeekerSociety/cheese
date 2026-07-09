@@ -114,6 +114,10 @@ watch(
   (m) => {
     for (const k of Object.keys(mentionNames)) delete mentionNames[k]
     for (const row of m) mentionNames[row.user_handle] = row.name || row.user_handle
+    // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
+    // not the raw literal — they are reserved handles, not roster members.
+    mentionNames.all = '所有人'
+    mentionNames.here = '在线成员'
   },
   { immediate: true, deep: true },
 )

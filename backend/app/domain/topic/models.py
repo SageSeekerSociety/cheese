@@ -32,6 +32,18 @@ class TopicKind(enum.StrEnum):
     subtopic = "subtopic"  # 三级+, 芝士分身工作处
 
 
+class TopicRole(enum.StrEnum):
+    """A member's role in a topic's roster (话题成员名册, fusion-design §3).
+
+    Distinct from ProjectRole (lead/member/mentor): a topic is a group room and
+    its membership governs who can manage the roster and who @all/@here reaches.
+    """
+
+    owner = "owner"  # 话题创建者, 不可被移除到只剩空 owner
+    admin = "admin"
+    member = "member"
+
+
 class Topic(UuidPk, Timestamps, Base):
     __tablename__ = "topics"
 
@@ -101,3 +113,27 @@ class TopicReadState(UuidPk, Timestamps, Base):
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TopicMembership(UuidPk, Timestamps, Base):
+    """A member of a topic's group room (话题成员名册, fusion-design §3).
+
+    The roster is the foundation of "话题 = 群聊": who is in the room, their
+    role, and — via @all/@here — who a broadcast reaches. 芝士 is a member too,
+    identified by the handle `cheese` (P1 turns agents into real user rows;
+    here they are still string handles, deliberately no user FK).
+    """
+
+    __tablename__ = "topic_memberships"
+    __table_args__ = (
+        UniqueConstraint("topic_id", "member_handle", name="uq_topic_member"),
+    )
+
+    topic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+    )
+    member_handle: Mapped[str] = mapped_column(String(64), index=True)
+    role: Mapped[TopicRole] = mapped_column(
+        Enum(TopicRole, native_enum=False, length=16),
+        default=TopicRole.member,
+    )

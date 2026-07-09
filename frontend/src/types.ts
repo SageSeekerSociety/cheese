@@ -169,6 +169,19 @@ export interface ProjectMemberRow {
   [key: string]: unknown
 }
 
+// 话题成员名册 (fusion-design §3): a topic's group-room roster. Roles are
+// owner/admin/member (distinct from ProjectMemberRow's lead/member/mentor);
+// `agent` marks 芝士 (the AI member) so the UI can badge it.
+export interface TopicMemberRow {
+  id: string
+  topic_id: string
+  member_handle: string
+  role: 'owner' | 'admin' | 'member'
+  name?: string
+  agent?: boolean
+  created_at: string
+}
+
 // GET /api/projects/{id}/overview
 export interface ProjectOverview {
   project_id: string

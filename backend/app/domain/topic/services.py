@@ -21,6 +21,7 @@ from app.domain.notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.services import TopicMemberService
 
 CHEESE_AUTHOR = "cheese"
 # Titles are AI-generated (the agent names a topic via `cheese title`), never
@@ -82,6 +83,7 @@ class TopicService:
         self._repo = TopicRepository(session)
         self._projects = ProjectRepository(session)
         self._blocks = BlockRepository(session)
+        self._members = TopicMemberService(session)
 
     async def create(
         self,
@@ -104,13 +106,17 @@ class TopicService:
             if parent is None:
                 raise NotFoundError("Parent topic not found")
             kind = _child_kind(parent)
-        return await self._repo.add(
+        topic = await self._repo.add(
             project_id=project_id,
             title=title,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
         )
+        # 群聊房间的地基 (fusion-design §3): seed the roster — creator = owner,
+        # 芝士 joins as a member.
+        await self._members.seed(topic.id, owner_handle=created_by)
+        return topic
 
     async def get_or_create_private(
         self, *, project_id: uuid.UUID, user_handle: str
@@ -263,6 +269,7 @@ class TopicService:
             created_by=created_by,
             upgraded_from_block_id=block.id,
         )
+        await self._members.seed(new_topic.id, owner_handle=created_by)
         await self._blocks.set_upgraded_to_topic(block, new_topic.id)
         # Parent doc snapshot only from a real topic — never copy a private
         # chat's doc into a public topic.
@@ -323,6 +330,7 @@ class TopicService:
             kind=_child_kind(parent),
             created_by=created_by,
         )
+        await self._members.seed(new_topic.id, owner_handle=created_by)
         parent_doc = await self._blocks.doc_root(parent.id)
         await self._seed_brief_doc(
             new_topic,

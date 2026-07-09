@@ -31,6 +31,7 @@ import type {
   SpaceDashboard,
   TaskApplication,
   Topic,
+  TopicMemberRow,
   UpstreamInfo,
   UpstreamSyncResult,
   UsageStats,
@@ -561,6 +562,19 @@ export function getTranscript(topicId: string): Promise<ListPayload<Block>> {
   )
 }
 
+// 现场实时终端 (施工现场): whether this topic has an embeddable read-only
+// terminal (only under the tmux agent backend, container up) and its iframe URL.
+export interface TerminalInfo {
+  available: boolean
+  backend: string
+  url?: string
+}
+export function getTerminal(topicId: string): Promise<TerminalInfo> {
+  return request<TerminalInfo>(
+    `/topics/${encodeURIComponent(topicId)}/terminal`,
+  )
+}
+
 // Git: commit log + working-tree diff for the project repo.
 export function getGitLog(projectId: string): Promise<ListPayload<GitCommit>> {
   return request<ListPayload<GitCommit>>(
@@ -727,6 +741,56 @@ export function listProjectMembers(
 ): Promise<ListPayload<ProjectMemberRow>> {
   return request<ListPayload<ProjectMemberRow>>(
     `/projects/${encodeURIComponent(projectId)}/members`,
+  )
+}
+
+// ---- 话题成员名册 (群聊房间的地基, fusion-design §3) --------------------------
+// Roster of a topic's group room. `actor` is the acting user's handle — no auth
+// layer yet (agent-as-user is P1), so the backend authorizes mutations against
+// the actor's topic role (owner/admin may manage the roster).
+
+export function listTopicMembers(
+  topicId: string,
+): Promise<ListPayload<TopicMemberRow>> {
+  return request<ListPayload<TopicMemberRow>>(
+    `/topics/${encodeURIComponent(topicId)}/members`,
+  )
+}
+
+export function addTopicMember(
+  topicId: string,
+  handle: string,
+  role: string,
+  actor: string,
+): Promise<TopicMemberRow> {
+  return request<TopicMemberRow>(
+    `/topics/${encodeURIComponent(topicId)}/members`,
+    { method: 'POST', body: JSON.stringify({ handle, role, actor }) },
+  )
+}
+
+export function updateTopicMemberRole(
+  topicId: string,
+  handle: string,
+  role: string,
+  actor: string,
+): Promise<TopicMemberRow> {
+  return request<TopicMemberRow>(
+    `/topics/${encodeURIComponent(topicId)}/members/${encodeURIComponent(handle)}`,
+    { method: 'PUT', body: JSON.stringify({ role, actor }) },
+  )
+}
+
+export function removeTopicMember(
+  topicId: string,
+  handle: string,
+  actor: string,
+): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/topics/${encodeURIComponent(topicId)}/members/${encodeURIComponent(
+      handle,
+    )}?actor=${encodeURIComponent(actor)}`,
+    { method: 'DELETE' },
   )
 }
 

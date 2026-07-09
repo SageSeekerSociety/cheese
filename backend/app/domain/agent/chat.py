@@ -46,6 +46,7 @@ from app.domain.notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.usage.credits import tokens_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
@@ -337,6 +338,14 @@ def _build_system_prompt(
 # renders as a chip showing the member's name. A literal "@name" is just text.
 _MENTION_RE = re.compile(r"<@([\w-]+)>")
 
+# 群播 tokens (fusion-design §3): `<@all>` / `<@here>` are FIXED-LITERAL
+# structured tokens (not natural-language semantics — rule 4), reserved handles
+# the composer emits and the platform expands to the topic's roster. @all = the
+# whole room; @here = active members (no presence yet, so = all — see below).
+MENTION_ALL = "all"
+MENTION_HERE = "here"
+_SPECIAL_MENTIONS = frozenset({MENTION_ALL, MENTION_HERE})
+
 
 _TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
 
@@ -397,7 +406,9 @@ def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[st
         return resolved, unresolved
     handles = {m["handle"] for m in roster}
     for h in dict.fromkeys(_MENTION_RE.findall(text)):
-        (resolved if h in handles else unresolved).append(h)
+        # @all/@here are reserved broadcast tokens — always "resolved" (expanded
+        # to the roster by _notify_mentions), never flagged as a bad handle.
+        (resolved if h in _SPECIAL_MENTIONS or h in handles else unresolved).append(h)
     return resolved, unresolved
 
 
@@ -827,10 +838,24 @@ class ChatService:
         self, session, topic, author: str, text: str, roster: list[dict]
     ) -> tuple[list[str], list[str]]:
         """@<name> in a message → a strong notification to each matched teammate
-        (spec §7: @人 = strong). Returns (resolved_handles, unresolved_names) so the
-        caller can set refs and flag the wrong ones."""
+        (spec §7: @人 = strong). `<@all>`/`<@here>` expand to the topic's roster
+        (群播, fusion-design §3). Returns (resolved_handles, unresolved_names) so
+        the caller can set refs and flag the wrong ones."""
         resolved, unresolved = _resolve_mentions(text, roster)
-        targets = [h for h in resolved if h not in (author, CHEESE_AUTHOR)]
+        concrete = [h for h in resolved if h not in _SPECIAL_MENTIONS]
+        if any(h in _SPECIAL_MENTIONS for h in resolved):
+            # Expand @all/@here to the topic's members. @here should be the
+            # ACTIVE members, but there's no presence signal yet, so it equals
+            # @all for now (TODO: intersect with presence once it lands).
+            members = await TopicMembershipRepository(session).list_for_topic(
+                topic.id
+            )
+            concrete += [m.member_handle for m in members]
+        targets = [
+            h
+            for h in dict.fromkeys(concrete)
+            if h not in (author, CHEESE_AUTHOR)
+        ]
         if targets:
             notifs = NotificationService(session)
             preview = markdown_preview(text, 200)

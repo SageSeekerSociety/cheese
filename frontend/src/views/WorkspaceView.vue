@@ -17,6 +17,7 @@ import ChatPanel from '../components/ChatPanel.vue'
 import DocPanel from '../components/DocPanel.vue'
 import ProjectDocsView from './ProjectDocsView.vue'
 import TopicSidebar from '../components/TopicSidebar.vue'
+import TopicMembers from '../components/TopicMembers.vue'
 import {
   acceptCard,
   addComment,
@@ -276,18 +277,44 @@ const mentionQuery = computed(() => {
 })
 interface MentionItem {
   label: string
-  kind: 'member' | 'topic'
-  // Secondary line: @handle for people, status for topics.
+  kind: 'member' | 'topic' | 'broadcast'
+  // Text written after the "@" when picked (a handle/token/name). Defaults to
+  // `label` for members/topics; broadcast items insert the fixed token (all/here).
+  insert: string
+  // Secondary line: @handle for people, status for topics, hint for broadcast.
   sub: string
   agent: boolean
 }
+// 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
+// at the top of the menu. expandMentions turns them into <@all>/<@here>.
+const BROADCAST_ITEMS: MentionItem[] = [
+  {
+    label: '所有人',
+    kind: 'broadcast',
+    insert: 'all',
+    sub: '@all · 通知话题全体成员',
+    agent: false,
+  },
+  {
+    label: '在线成员',
+    kind: 'broadcast',
+    insert: 'here',
+    sub: '@here · 通知在线成员',
+    agent: false,
+  },
+]
 const mentionMatches = computed<MentionItem[]>(() => {
   const q = mentionQuery.value
   if (q === null) return []
-  const items: MentionItem[] = [
+  const ql = q.toLowerCase()
+  const broadcast = BROADCAST_ITEMS.filter(
+    (b) => b.insert.startsWith(ql) || b.label.includes(q),
+  )
+  const rest: MentionItem[] = [
     ...projectMembers.value.map((m) => ({
       label: m.name || m.user_handle,
       kind: 'member' as const,
+      insert: m.name || m.user_handle,
       sub: `@${m.user_handle}`,
       agent: m.user_handle === 'cheese',
     })),
@@ -296,17 +323,15 @@ const mentionMatches = computed<MentionItem[]>(() => {
       .map((t) => ({
         label: t.title,
         kind: 'topic' as const,
+        insert: t.title,
         sub: t.status === 'archived' ? '已归档' : '进行中',
         agent: false,
       })),
-  ]
-  const ql = q.toLowerCase()
-  return items
-    .filter((i) => i.label.toLowerCase().includes(ql))
-    .slice(0, 6)
+  ].filter((i) => i.label.toLowerCase().includes(ql))
+  return [...broadcast, ...rest].slice(0, 7)
 })
-function pickMention(label: string) {
-  draft.value = draft.value.replace(/@([^\s@]*)$/, `@${label} `)
+function pickMention(item: MentionItem) {
+  draft.value = draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
 }
 
 // IME (输入法) guard. Chrome marks the commit-Enter keydown with
@@ -352,7 +377,7 @@ function onComposerKey(e: KeyboardEvent) {
   // While the @-menu is open, Enter picks the first match instead of sending
   // (@-mentions don't apply to doc comments, so comment mode skips this).
   if (!commentIntent.value && mentionMatches.value.length) {
-    pickMention(mentionMatches.value[0].label)
+    pickMention(mentionMatches.value[0])
     return
   }
   void sendDraft()
@@ -738,6 +763,10 @@ function handleMentionClick(handle: string) {
 // patterns first so substrings don't mis-match — same encoding 芝士 uses.
 function expandMentions(text: string): string {
   const subs: { pat: string; token: string }[] = [
+    // 群播 tokens (fusion-design §3): @all/@here → the reserved broadcast tokens
+    // the backend expands to the whole roster.
+    { pat: '@all', token: '<@all>' },
+    { pat: '@here', token: '<@here>' },
     // Both spellings a human naturally types: @名字 and @handle (e.g. a handle
     // pasted from someone else's message).
     ...projectMembers.value.flatMap((m) => [
@@ -971,6 +1000,18 @@ onUnmounted(() => {
       class="workspace d-flex flex-column flex-grow-1"
       style="min-width: 0"
     >
+      <!-- 群聊感 (fusion-design §3): the topic's member roster + count sit in a
+           thin header above the panes. Not on the root topic (项目本体). -->
+      <div
+        v-if="selectedTopic && selectedTopic.kind !== 'root'"
+        class="topic-members-bar"
+      >
+        <TopicMembers
+          :topic-id="selectedTopic.id"
+          :project-members="projectMembers"
+          :me="AUTHOR"
+        />
+      </div>
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0">
         <ChatPanel
           ref="chatRef"
@@ -1330,13 +1371,19 @@ onUnmounted(() => {
           <div v-if="mentionMatches.length && !commentIntent" class="mention-menu">
             <button
               v-for="(mm, i) in mentionMatches"
-              :key="mm.kind + mm.label"
+              :key="mm.kind + mm.insert"
               type="button"
               class="mention-menu-item"
-              @click="pickMention(mm.label)"
+              @click="pickMention(mm)"
             >
               <span
-                v-if="mm.kind === 'member'"
+                v-if="mm.kind === 'broadcast'"
+                class="mention-avatar mention-avatar--broadcast"
+              >
+                <v-icon size="13">mdi-bullhorn-outline</v-icon>
+              </span>
+              <span
+                v-else-if="mm.kind === 'member'"
                 class="mention-avatar"
                 :class="{ 'mention-avatar--agent': mm.agent }"
               >{{ mm.label.slice(0, 1).toUpperCase() }}</span>
@@ -1610,6 +1657,9 @@ onUnmounted(() => {
 .mention-avatar--agent {
   background: var(--accent, #f57f17);
 }
+.mention-avatar--broadcast {
+  background: var(--ink, #33373d);
+}
 .mention-avatar--topic {
   background: var(--fill, #f0f1f3);
   color: var(--muted, #6b6b6b);
@@ -1637,6 +1687,17 @@ onUnmounted(() => {
 .composer-input :deep(textarea) {
   font-size: 14px;
   line-height: 1.5;
+}
+
+/* 群聊感 (fusion-design §3): thin roster bar above the panes. */
+.topic-members-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line-2, #eee);
+  background: var(--surface, #fff);
+  flex: 0 0 auto;
 }
 
 /* Secondary button: 1px border, neutral text, surface bg. */
