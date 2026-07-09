@@ -308,6 +308,16 @@ class ComputePool:
         provider = TmuxHooksProvider(image=image, turn_timeout_s=turn_timeout_s)
         return cls([provider], provider.name)
 
+    @classmethod
+    def device(cls, *, turn_timeout_s: float) -> "ComputePool":
+        """Self-hosted / BYO backend (AGENT_BACKEND=device, P3): runs the turn on a
+        user's own enrolled machine via the frozen link.Msg channel, streaming events
+        from Claude Code hooks — same contract, execution relocated to the device."""
+        from app.domain.agent.device_provider import DeviceProvider
+
+        provider = DeviceProvider(turn_timeout_s=turn_timeout_s)
+        return cls([provider], provider.name)
+
     def select(self, *, env_spec: dict | None = None) -> ComputeProvider:
         """Pick a provider for this turn. Single-provider today → the default
         (always available); caps/quota/queue routing arrives with more providers
@@ -325,6 +335,9 @@ def build_compute_pool(agent: AgentService) -> ComputePool:
             image=settings.tmux_sandbox_image,
             turn_timeout_s=settings.agent_turn_timeout_s,
         )
+    if settings.agent_backend == "device":
+        # Self-hosted / BYO compute (P3): relocate the turn to a user's own machine.
+        return ComputePool.device(turn_timeout_s=settings.device_turn_timeout_s)
     if settings.compute_provider == "remote":
         return ComputePool.remote(
             cheesed_url=settings.cheesed_url, cheese_api=settings.cheesed_cheese_api

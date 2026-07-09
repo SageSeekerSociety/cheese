@@ -39,6 +39,18 @@ class IdentityService:
             )
         return user
 
+    async def create_device_agent(self, *, name: str) -> User:
+        """Mint a fresh agent-user for a self-hosted device (P3): a real ``User`` row
+        with a unique handle and a ``device`` agent-binding. A screen on the device
+        acts as this user, so it is authorized exactly like a human (fusion-design §2).
+        Not idempotent — each approved device gets its own agent identity."""
+        import uuid as _uuid
+
+        handle = f"agent-{_uuid.uuid4().hex[:10]}"
+        user = await self._users.add(User(handle=handle, name=name))
+        await self._bindings.add(user_id=user.id, kind=AgentBindingKind.device)
+        return user
+
     async def is_agent(self, handle: str) -> bool:
         """True iff the handle names a user carrying an agent-binding."""
         user = await self._users.get_by_handle(handle)

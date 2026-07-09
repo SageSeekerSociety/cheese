@@ -32,6 +32,10 @@ from app.main import app
 # exclusive data-dir lock (owned by the dev server when it's running), and
 # tests must not depend on — or corrupt — the live memory store.
 settings.memory_backend = "db"
+# Tests exercise the real authz enforcement regardless of the dev .env (which
+# ships it OFF for the conservative dogfood rollout). Same leak class as the
+# memory backend above: the .env value must not decide test behavior.
+settings.authz_enforce_topic_access = True
 
 
 def wait_turns_idle() -> None:

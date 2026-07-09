@@ -68,9 +68,23 @@ class Settings(BaseSettings):
     #          events come back via Claude Code HTTP hooks (POST /sandbox/hooks).
     # Defaults to "sdk" so a broken tmux path never affects existing turns.
     agent_backend: str = "sdk"
+    # "device" → DeviceProvider: the turn runs on a user's own enrolled machine
+    #          (self-hosted / BYO compute, P3). An interactive `claude` lives in a
+    #          screen the platform opens over the frozen link.Msg control channel;
+    #          structured events come back via Claude Code hooks (same as tmux).
     # Image the tmux backend uses (base image + tmux + ttyd + pre-accepted
     # first-launch gates). Independent of sandbox_image (the SDK path's image).
     tmux_sandbox_image: str = "cheesex-agent-tmux:latest"
+
+    # --- Self-hosted / BYO device compute (P3, fusion-design §5) ---
+    # Public base URL a device reaches the backend at (NO /api suffix): the enrolled
+    # machine's `cheese-hook` POSTs Claude Code hooks to
+    # `{connector_public_base}/connector/hooks/{key}`, and the device-flow approval
+    # link is built from it. For a NAT'd device this must be publicly reachable
+    # (outbound-only for the link WS; the hook POST is a normal outbound request).
+    connector_public_base: str = "http://localhost:8099"
+    # Per-turn wall-clock ceiling for a device turn (mirrors agent_turn_timeout_s).
+    device_turn_timeout_s: float = 900.0
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # When on, the interactive turn runs `claude` INSIDE a per-topic Docker
