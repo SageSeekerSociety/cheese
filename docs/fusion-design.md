@@ -111,6 +111,22 @@ block_ref）、改文档=下指令、人验收才算数——同源 spec。
 - **P3**：self-hosted 设备流 + 瘦客户机（战略大件，单独立项）。
 - **P4**：clone agent（transcript-fork）。
 
+## 8.5 仓库收敛（接入主 repo cheese-backend-py）
+
+现状：主 repo `cheese-backend-py` 上有队友的 `design/cheese-agent-layer`（含 cli + 设备流 +
+connector 服务器，self-hosted 服务器端已建完）。我们的 `cheesex` 是独立 dogfood 仓（产品面更全）。
+**目标：我们的工作往主 repo 收敛，不再长期两仓并行。**
+
+关键判断（实证：他们 cli `go build` 零改动即成、服务器端点仅 `/auth/device/{start,poll}` +
+`/agent` WS + `/openapi.json`，后者 FastAPI 已免费提供）：
+- **self-hosted 不在 cheesex 重造**——直接复用主 repo 已有的 cli + 设备流 + connector 骨架；
+- 我们的贡献 = 把他们的**读屏 cheeselet 换成我们的 hooks 感知** + 带入我们的产品面
+  （前端 / 记忆真集成 / 闸门 / 算力 / 群聊）；
+- cli 唯一必改：与我们沙箱内 `cheese`（平台动作 CLI）**重名冲突**须理顺（改一方名）。
+
+收敛是多阶段工程 + 需与队友协调，不是一次性 merge。建议先出一份"收敛计划"单独文档，
+明确哪些模块以谁为准、迁移顺序、命名理顺。
+
 ## 9. 与队友对齐
 
 这份文档也是和 `design/cheese-agent-layer` 作者对齐"融合而非替代"的靶子。核心信息：
