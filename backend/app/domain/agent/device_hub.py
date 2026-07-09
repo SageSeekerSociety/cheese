@@ -73,6 +73,10 @@ class HubDevice:
     device_id: str
     transport: DeviceTransport | None = None
     proto: int | None = None
+    # Last time the device sent any frame (hello/heartbeat/…). A liveness signal for
+    # ops/UX: `is_online` already tracks the socket; this dates the last contact so a
+    # future reaper can distinguish a wedged-but-connected device from a healthy one.
+    last_seen: float = 0.0
     screens: dict[str, HubScreen] = field(default_factory=dict)
     exec_seq: int = 0
     call_seq: int = 0
@@ -174,6 +178,51 @@ class DeviceHub:
                 env=env,
             )
         )
+        return screen
+
+    def adopt_screen(
+        self,
+        device_id: str,
+        sid: str,
+        *,
+        token: str,
+        agent_user_id: uuid.UUID,
+        agent_handle: str,
+        command: list[str] | None = None,
+        project_id: uuid.UUID | None = None,
+        topic_id: uuid.UUID | None = None,
+        hook_key: str = "",
+    ) -> HubScreen:
+        """Re-register a screen the *device* is still running after the server lost its
+        in-memory state (a restart). The frozen cli auto-reconnects its control channel
+        and re-announces the screens it kept alive; adopting rebinds the sid + its
+        screen token to the agent identity so viewers/attribution work again without
+        restarting the screen. Idempotent per (device, sid).
+
+        NOTE (P3 Phase B, item 5 skeleton): the caller that reconstructs the identity
+        from the DB (agent_user_id/handle/project/topic per persisted screen row) and
+        replays the device's re-announce into this is not yet wired — see
+        ``connector.agent_socket``'s inbound loop. The mechanism is here and tested;
+        the persistence + replay is the remaining TODO.
+        """
+        device = self._device(device_id)
+        existing = device.screens.get(sid)
+        if existing is not None:
+            return existing
+        screen = HubScreen(
+            sid=sid,
+            device_id=device_id,
+            command=command or [],
+            token=token,
+            agent_user_id=agent_user_id,
+            agent_handle=agent_handle,
+            project_id=project_id,
+            topic_id=topic_id,
+            hook_key=hook_key,
+        )
+        device.screens[sid] = screen
+        self._screens[sid] = screen
+        self._by_screen_token[token] = screen
         return screen
 
     async def close_screen(self, device_id: str, sid: str) -> bool:
@@ -312,6 +361,8 @@ class DeviceHub:
     async def on_device_message(self, device_id: str, m: dict[str, Any]) -> None:
         """Dispatch one inbound ``link.Msg`` from the device."""
         device = self._device(device_id)
+        # Any inbound frame is a liveness signal (heartbeats included) — monotonic.
+        device.last_seen = asyncio.get_event_loop().time()
         msg = device_link.LinkMsg.parse(m)
         screen = device.screens.get(msg.sid)
 

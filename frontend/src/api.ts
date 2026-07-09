@@ -78,6 +78,89 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return envelope.data
 }
 
+// The connector lives at the origin root (`/connector/*`), not under `/api`, and its
+// responses are plain JSON (no ApiEnvelope). This mirrors `request` but skips the
+// `/api` prefix + envelope unwrap. Still sends the Bearer token for owner-gated routes.
+async function connectorRequest<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  const res = await fetch(`/connector${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
+  })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const body = await res.json()
+      message = body?.message || body?.detail || message
+    } catch {
+      // non-JSON error body — keep the status message
+    }
+    throw new Error(message)
+  }
+  return (await res.json()) as T
+}
+
+// Approve a pending device flow (the `/connect` page): binds the machine to the
+// logged-in human as owner, mints its agent, optionally assigns it to a project.
+export function connectDevice(
+  deviceCode: string,
+  projectId?: string,
+): Promise<import('./types').DeviceApproval> {
+  return connectorRequest<import('./types').DeviceApproval>('/connect', {
+    method: 'POST',
+    body: JSON.stringify({
+      device_code: deviceCode,
+      project_id: projectId ?? null,
+    }),
+  })
+}
+
+// 「我的设备」: the machines the signed-in human enrolled, with liveness + agents.
+export function listMyDevices(): Promise<{
+  devices: import('./types').MyDevice[]
+}> {
+  return connectorRequest<{ devices: import('./types').MyDevice[] }>(
+    '/my/devices',
+  )
+}
+
+export function renameMyDevice(
+  deviceId: string,
+  name: string,
+): Promise<import('./types').MyDevice> {
+  return connectorRequest<import('./types').MyDevice>(
+    `/my/devices/${encodeURIComponent(deviceId)}`,
+    { method: 'PATCH', body: JSON.stringify({ name }) },
+  )
+}
+
+export function unbindMyDevice(
+  deviceId: string,
+): Promise<{ deleted: boolean; device_id: string }> {
+  return connectorRequest<{ deleted: boolean; device_id: string }>(
+    `/my/devices/${encodeURIComponent(deviceId)}`,
+    { method: 'DELETE' },
+  )
+}
+
+// Absolute WS URL for a device screen's 现场 (read-only terminal). The session token
+// rides as ?token= (browsers can't set an Authorization header on a WebSocket); the
+// backend authorizes the viewer against the screen's project/topic membership.
+export function screenWsUrl(sid: string): string {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const token = authToken()
+  const q = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `${proto}://${window.location.host}/connector/session/${encodeURIComponent(
+    sid,
+  )}/screen${q}`
+}
+
 export function listProjects(): Promise<ListPayload<Project>> {
   return request<ListPayload<Project>>('/projects')
 }

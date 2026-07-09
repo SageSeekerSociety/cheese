@@ -10,10 +10,15 @@ import SpaceBoardView from './views/SpaceBoardView.vue'
 import MemberView from './views/MemberView.vue'
 import ProjectSettingsView from './views/ProjectSettingsView.vue'
 import MarketView from './views/MarketView.vue'
+import ConnectView from './views/ConnectView.vue'
+import MyDevicesView from './views/MyDevicesView.vue'
 
 const routes: RouteRecordRaw[] = [
   // 工作台: sidebar + chat + doc. The optional :projectId pre-selects a project.
   { path: '/', name: 'workspace', component: WorkspaceView },
+  // 设备连接器 (P3): the device-flow approval page + the owner's device manager.
+  { path: '/connect', name: 'connect', component: ConnectView },
+  { path: '/my/devices', name: 'my-devices', component: MyDevicesView },
   {
     path: '/project/:projectId',
     name: 'workspace-project',

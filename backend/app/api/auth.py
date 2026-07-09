@@ -19,6 +19,8 @@ from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sandbox_auth import verify_scoped_token
 from app.core.tokens import verify_session_token
+from app.domain.agent.device_attribution import resolve_screen_actor
+from app.domain.agent.device_hub import device_hub
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.services import CHEESE_HANDLE, IdentityService
@@ -58,10 +60,21 @@ class ActorResolver:
     """Per-request resolver. Reads the human bearer token + agent scoped token,
     then resolves/authorizes against the DB."""
 
-    def __init__(self, *, session: AsyncSession, bearer: str | None, cheese_token: str):
+    def __init__(
+        self,
+        *,
+        session: AsyncSession,
+        bearer: str | None,
+        cheese_token: str,
+        screen_token: str = "",
+    ):
         self._session = session
         self._bearer = bearer
         self._cheese_token = cheese_token
+        # A ``cheese`` call made from inside a self-hosted device screen carries that
+        # screen's token (``X-Cheese-Screen``). It makes the call act as the screen's
+        # agent-user (device agent-as-user, P3), not the platform 芝士 — see resolve().
+        self._screen_token = screen_token
         self._identity = IdentityService(session)
 
     async def resolve(
@@ -101,6 +114,20 @@ class ActorResolver:
             actor = Actor(
                 handle="anonymous", user_id=None, is_agent=False, via="handle"
             )
+        # Device-screen attribution (P3): a cheese call from inside an enrolled device's
+        # screen carries that screen's token. It is a per-screen capability that proves
+        # the call runs as that screen's agent — so it acts as the device agent-user
+        # (agent-as-user), overriding the generic cheese identity. The write-surface
+        # gate (cheese_token_gate) is unaffected; this only decides *who* the actor is.
+        if self._screen_token:
+            screen = resolve_screen_actor(device_hub, self._screen_token)
+            if screen is not None:
+                return Actor(
+                    handle=screen.agent_handle,
+                    user_id=screen.agent_user_id,
+                    is_agent=True,
+                    via="cheese",
+                )
         if actor.via == "handle" and actor.handle != "anonymous":
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
@@ -155,6 +182,7 @@ def get_actor_resolver(
         session=db,
         bearer=_bearer(request.headers.get("authorization")),
         cheese_token=request.headers.get("x-cheese-token") or "",
+        screen_token=request.headers.get("x-cheese-screen") or "",
     )
 
 

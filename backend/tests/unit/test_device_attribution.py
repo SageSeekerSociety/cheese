@@ -3,7 +3,10 @@
 import uuid
 from datetime import UTC, datetime
 
-from app.domain.agent.device_attribution import resolve_device_actor
+from app.domain.agent.device_attribution import (
+    resolve_device_actor,
+    resolve_screen_actor,
+)
 from app.domain.agent.device_hub import DeviceHub, HubScreen
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.repository import Device
@@ -98,3 +101,28 @@ async def test_unknown_device_token_returns_none():
         service, hub, device_token="bogus", owner_handle_of=_owner_handle
     )
     assert attr is None
+
+
+def test_resolve_screen_actor_by_token_alone():
+    # The cheese-API resolver's fast path: a screen token identifies the screen (and
+    # thus the agent to act as) without a device token.
+    hub = DeviceHub()
+    agent = uuid.uuid4()
+    screen = HubScreen(
+        sid="s1",
+        device_id="d1",
+        command=[],
+        token="screen-tok",
+        agent_user_id=agent,
+        agent_handle="agent-x",
+        project_id=uuid.uuid4(),
+    )
+    hub._by_screen_token[screen.token] = screen
+    resolved = resolve_screen_actor(hub, "screen-tok")
+    assert resolved is screen and resolved.agent_user_id == agent
+
+
+def test_resolve_screen_actor_unknown_or_empty_is_none():
+    hub = DeviceHub()
+    assert resolve_screen_actor(hub, "") is None
+    assert resolve_screen_actor(hub, "nope") is None

@@ -580,6 +580,12 @@ provide('activityBump', activityBump)
           <v-list-item disabled>
             <v-list-item-title class="t-meta">@{{ me.handle }}</v-list-item-title>
           </v-list-item>
+          <v-list-item
+            prepend-icon="mdi-laptop"
+            :to="{ name: 'my-devices' }"
+          >
+            <v-list-item-title>我的设备</v-list-item-title>
+          </v-list-item>
           <v-list-item prepend-icon="mdi-logout" @click="doSignOut">
             <v-list-item-title>退出登录</v-list-item-title>
           </v-list-item>

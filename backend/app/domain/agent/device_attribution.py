@@ -78,3 +78,22 @@ async def resolve_device_actor(
         device_id=device.device_id,
         screen=None,
     )
+
+
+def resolve_screen_actor(hub: DeviceHub, screen_token: str) -> HubScreen | None:
+    """Resolve a *screen-scoped* call to the screen it came from, by its token alone.
+
+    A screen token is an unguessable per-screen secret minted server-side and injected
+    into the screen process (``CHEESE_SCREEN`` → ``X-Cheese-Screen`` header). Possession
+    proves the call originates inside that screen, so it authorizes acting as the
+    screen's ``agent_user_id`` (handle ``agent_handle``) in its ``project_id`` — 一个
+    agent 是一个屏幕. Returns ``None`` for an unknown token (the caller ignores it and
+    falls back to the request's other credentials).
+
+    This is the token-only fast path used by the shared cheese-API actor resolver; the
+    device-token-anchored ``resolve_device_actor`` above is the fuller path (owner
+    attribution + cross-device safety) used when a bare device token is also present.
+    """
+    if not screen_token:
+        return None
+    return hub.screen_by_token(screen_token)

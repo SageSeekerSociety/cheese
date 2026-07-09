@@ -140,3 +140,40 @@ async def test_screens_in_project_only_counts_online():
     assert hub.screens_in_project(project) == [screen]
     await hub.detach_device("dev1", t)
     assert hub.screens_in_project(project) == []
+
+
+async def test_adopt_screen_reregisters_running_screen_after_restart():
+    # After a server restart the device (frozen cli) re-announces the screens it kept
+    # alive; adopting rebinds sid + screen token to the agent identity so viewers and
+    # attribution work again without restarting the screen.
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    agent = uuid.uuid4()
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    screen = hub.adopt_screen(
+        "dev1",
+        "s-kept",
+        token="kept-tok",
+        agent_user_id=agent,
+        agent_handle="agent-x",
+        project_id=project,
+        topic_id=topic,
+    )
+    # Discoverable by sid and by its token (attribution) again.
+    assert hub.screen("s-kept") is screen
+    assert hub.screen_by_token("kept-tok") is screen
+    assert screen.agent_user_id == agent and screen.topic_id == topic
+    # Idempotent: adopting the same sid returns the already-registered screen.
+    again = hub.adopt_screen(
+        "dev1", "s-kept", token="other", agent_user_id=uuid.uuid4(), agent_handle="y"
+    )
+    assert again is screen
+
+
+async def test_inbound_frame_updates_last_seen():
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message("dev1", {"t": "heartbeat"})
+    assert hub._device("dev1").last_seen > 0

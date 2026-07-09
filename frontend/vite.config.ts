@@ -19,6 +19,13 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // The self-hosted device connector lives at the origin root (`/connector/*`,
+      // incl. the 现场 viewer WS `/connector/session/{sid}/screen`), not under /api.
+      '/connector': {
+        target: process.env.BACKEND_URL ?? 'http://localhost:8099',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
 })

@@ -136,6 +136,16 @@ class DeviceService:
         await self._require_owned(device_id, actor_user_id)
         await self._repo.delete_device(device_id)
 
+    async def rename_owned(
+        self, device_id: str, name: str, *, actor_user_id: uuid.UUID
+    ) -> Device:
+        """Rename a device the caller owns. The name is a human label only (never a
+        semantic/authorization key), so a plain non-empty check is all that's needed."""
+        device = await self._require_owned(device_id, actor_user_id)
+        device.name = self._require_name(name)
+        await self._repo.save_device(device)
+        return device
+
     # -- device ↔ project assignment (the owner manages) -------------------
 
     async def assign_to_project(

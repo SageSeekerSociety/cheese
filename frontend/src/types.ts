@@ -552,3 +552,33 @@ export interface UpstreamSyncResult {
   commits?: number
   reason?: string
 }
+
+// ---- self-hosted 设备连接器 (P3 Phase B) ----
+
+// One agent (a screen) currently running on an enrolled device — a live 现场 the
+// browser can watch read-only via `screenWsUrl(sid)`.
+export interface DeviceScreen {
+  sid: string
+  agent_handle: string
+  agent_user_id: string
+  project_id: string | null
+  topic_id: string | null
+}
+
+// A machine the signed-in human enrolled + the agent identity minted for it.
+export interface MyDevice {
+  device_id: string
+  name: string
+  online: boolean
+  agent_handle: string | null
+  project_ids: string[]
+  screens: DeviceScreen[]
+}
+
+// The result of approving a pending device flow (binds owner + mints its agent).
+export interface DeviceApproval {
+  device_id: string
+  device_name: string
+  agent_handle: string
+  project_id: string | null
+}
