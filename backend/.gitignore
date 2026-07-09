@@ -21,3 +21,7 @@ __pycache__/
 
 # OpenViking embedded memory store (local data + generated ov.conf with keys)
 .viking/
+
+# self-hosted connector binaries (built artifacts, not source; see
+# scripts/build-connector.sh). The cli source lives in the main repo.
+connector-dist/
