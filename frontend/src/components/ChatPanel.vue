@@ -893,7 +893,7 @@ onBeforeUnmount(() => {
             >
               <button
                 type="button"
-                class="im-act"
+                class="im-act rx-toggle"
                 :class="{ 'im-act--on': reactionPickerFor === m.id }"
                 title="加表情"
                 @click="
