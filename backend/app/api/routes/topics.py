@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_turn_runner
 from app.api.response import ok, page
 from app.core.db import get_db
@@ -128,6 +129,7 @@ async def add_comment(
     topic_id: uuid.UUID,
     body: dict,
     db: DbSession,
+    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
 ) -> dict:
@@ -150,7 +152,15 @@ async def add_comment(
     quote = (body.get("quote") or "").strip() or None
     if quote and len(quote) > 500:
         quote = quote[:500]
-    author = body.get("author") or "anonymous"
+    actor = await resolver.resolve(
+        fallback_handle=body.get("author"),
+        topic_id=topic_id,
+        project_id=topic.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    author = actor.handle
     comment = await repo.add(
         project_id=topic.project_id,
         topic_id=topic_id,
@@ -190,9 +200,23 @@ async def get_topic_doc(topic_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.put("/{topic_id}/doc")
-async def edit_topic_doc(topic_id: uuid.UUID, body: DocEditIn, db: DbSession) -> dict:
+async def edit_topic_doc(
+    topic_id: uuid.UUID,
+    body: DocEditIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """改文档即指令 (eval B2): edit the living doc; emits a conversation event."""
     topic = await TopicService(db).get_or_404(topic_id)
+    # actor 在信任边界注入: prefer the verified token, fall back to body.author.
+    actor = await resolver.resolve(
+        fallback_handle=body.author,
+        topic_id=topic_id,
+        project_id=topic.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     # Same backstop as chat replies: friendly "@名字 / @话题名" → structured
     # token, so refs in the doc render as clickable chips (docs used to skip
     # this and stayed plain text).
@@ -200,7 +224,7 @@ async def edit_topic_doc(topic_id: uuid.UUID, body: DocEditIn, db: DbSession) ->
         db, topic.project_id, body.content, exclude_topic_id=topic_id
     )
     doc = await TopicService(db).edit_doc(
-        topic_id=topic_id, content=content, author=body.author
+        topic_id=topic_id, content=content, author=actor.handle
     )
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
 
@@ -239,20 +263,29 @@ async def answer_options(
     block_id: uuid.UUID,
     body: dict,
     db: DbSession,
+    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
 ) -> dict:
     """One-click answer to an option question: validates the choice against the
     ask block's own options, records it on the block (meta.answered), and posts
     the choice as the answerer's message with summon — 芝士 continues."""
-    author = (body.get("author") or "").strip()
     option = (body.get("option") or "").strip()
-    if not author or not option:
-        raise ValidationError("author 和 option 都要有")
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
     if blk is None:
         raise NotFoundError("问题不存在")
+    actor = await resolver.resolve(
+        fallback_handle=body.get("author"),
+        topic_id=blk.topic_id,
+        project_id=blk.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=blk.project_id, topic_id=blk.topic_id
+    )
+    author = actor.handle
+    if author == "anonymous" or not option:
+        raise ValidationError("author 和 option 都要有")
     meta = dict(blk.meta or {})
     options = meta.get("options") or []
     if option not in options:

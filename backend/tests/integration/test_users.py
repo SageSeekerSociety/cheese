@@ -60,9 +60,11 @@ def test_list_users_newest_first(client):
     r = client.get("/api/users")
     body = r.json()
     assert body["code"] == 200
-    assert body["data"]["total"] == 2
-    handles = [u["handle"] for u in body["data"]["data"]]
+    # 芝士 is a real, pre-seeded agent-user (P1 agent-as-user), so it's the oldest
+    # row — ignore it when asserting the two humans' newest-first order.
+    handles = [u["handle"] for u in body["data"]["data"] if u["handle"] != "cheese"]
     assert handles == ["user-2", "user-1"]
+    assert body["data"]["total"] == 3  # user-2 + user-1 + cheese
 
 
 def test_update_profile(client):
@@ -96,7 +98,8 @@ def test_login_creates_then_signs_in(client):
     r = client.post("/api/users/login", json={"handle": "andyl", "name": "Other"})
     assert r.status_code == 200
     assert r.json()["data"]["name"] == "Andy"
-    assert client.get("/api/users").json()["data"]["total"] == 1
+    # 1 human (andyl) + the pre-seeded 芝士 agent-user (P1 agent-as-user).
+    assert client.get("/api/users").json()["data"]["total"] == 2
     # Name omitted → handle doubles as the display name.
     r = client.post("/api/users/login", json={"handle": "bob"})
     assert r.json()["data"]["name"] == "bob"

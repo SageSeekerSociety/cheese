@@ -48,6 +48,21 @@ async def lifespan(_: FastAPI):
     from app.api.deps import get_chat_service, get_turn_runner
     from app.domain.scheduler.service import SchedulerRunner, SchedulerService
 
+    # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
+    # its platform agent-binding. Idempotent — the migration seeds it too; this is
+    # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
+    try:
+        from app.core.db import async_session_factory
+        from app.domain.identity.services import IdentityService
+
+        async with async_session_factory() as session:
+            await IdentityService(session).ensure_agent_user()
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — a missing table (pre-migration) must not crash boot
+        get_logger("cheesex.runtime").warning(
+            "agent-user seed skipped", reason=str(exc)[:120]
+        )
+
     try:
         n = await get_turn_runner().resume_orphans(get_chat_service())
         if n:

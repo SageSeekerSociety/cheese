@@ -535,6 +535,11 @@ export interface Me {
   id: string
   handle: string
   name: string
+  // P1 真鉴权: signed session token minted at login. Sent as
+  // `Authorization: Bearer` on every request (and as ?token= on the chat WS) so
+  // the backend resolves the actor from a verified token, not a forgeable body
+  // field. Optional so an older stored identity (pre-token) still type-checks.
+  token?: string
 }
 
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)

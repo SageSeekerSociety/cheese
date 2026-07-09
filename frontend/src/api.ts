@@ -41,10 +41,32 @@ import type {
 
 export const BASE = '/api'
 
+// P1 真鉴权: read the signed session token straight from storage (avoids an
+// import cycle with me.ts). Sent as `Authorization: Bearer` so the backend
+// resolves the actor from a verified token instead of a forgeable body field.
+// Empty when signed out or for an older pre-token cached identity.
+export function authToken(): string {
+  try {
+    const raw = localStorage.getItem('cheesex.me')
+    return raw ? (JSON.parse(raw)?.token ?? '') : ''
+  } catch {
+    return ''
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const token = authToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
   })
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} for ${path}`)
@@ -442,7 +464,7 @@ export async function uploadAttachment(
   form.append('file', file)
   const res = await fetch(
     `${BASE}/topics/${encodeURIComponent(topicId)}/attachments`,
-    { method: 'POST', body: form },
+    { method: 'POST', body: form, headers: authHeaders() },
   )
   const envelope = (await res.json().catch(() => null)) as
     | ApiEnvelope<ChatAttachment>
@@ -920,7 +942,12 @@ export function getContributions(projectId: string): Promise<Contributions> {
 // current page protocol (ws/wss) so it works behind the dev proxy and in prod.
 export function chatWsUrl(topicId: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  // Browsers can't set an Authorization header on a WebSocket, so the session
+  // token rides as ?token= (the backend pins authorship from it, ignoring any
+  // per-message `author` the client sends).
+  const token = authToken()
+  const q = token ? `?token=${encodeURIComponent(token)}` : ''
   return `${proto}://${window.location.host}/api/topics/${encodeURIComponent(
     topicId,
-  )}/chat`
+  )}/chat${q}`
 }

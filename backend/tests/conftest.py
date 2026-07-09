@@ -104,6 +104,19 @@ def client(stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
 
     asyncio.run(_create_schema())
 
+    # agent-as-user baseline (P1): 芝士 is a real user with a platform agent-
+    # binding — seeded by the migration in prod, seeded here for the sqlite DB so
+    # the derived is-agent flag matches. StaticPool shares the one connection, so
+    # this own-loop write is visible to the TestClient loop (like the schema).
+    async def _seed_agent_user() -> None:
+        from app.domain.identity.services import IdentityService
+
+        async with test_factory() as session:
+            await IdentityService(session).ensure_agent_user()
+            await session.commit()
+
+    asyncio.run(_seed_agent_user())
+
     async def override_get_db():
         async with test_factory() as session:
             try:

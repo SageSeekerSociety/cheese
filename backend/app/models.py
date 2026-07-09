@@ -7,6 +7,7 @@ metadata. Keep this list complete when adding a new model.
 
 from app.domain.block import models as block  # noqa: F401
 from app.domain.expert_role import models as expert_role  # noqa: F401
+from app.domain.identity import models as identity  # noqa: F401
 from app.domain.memory import models as memory  # noqa: F401
 from app.domain.milestone import models as milestone  # noqa: F401
 from app.domain.notification import models as notification  # noqa: F401

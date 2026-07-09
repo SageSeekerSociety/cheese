@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.core.tokens import mint_session_token
 from app.domain.user.schemas import UserCreate, UserLogin, UserOut, UserUpdate
 from app.domain.user.services import UserService
 
@@ -23,10 +24,14 @@ async def create_user(body: UserCreate, db: DbSession) -> dict:
 
 @router.post("/login")
 async def login(body: UserLogin, db: DbSession) -> dict:
-    """极简登录 (Phase 0): get-or-create by handle, no password. The frontend
-    keeps the returned identity locally and sends it as the author of actions."""
+    """极简登录 (Phase 0 UX kept): get-or-create by handle, no password. P1 adds a
+    signed session **token** to the response — the frontend stores it and sends it
+    as ``Authorization: Bearer`` so the actor is resolved from a verified token,
+    not a body field. The handle is still returned for the compat fallback."""
     user = await UserService(db).login(handle=body.handle, name=body.name)
-    return ok(UserOut.model_validate(user).model_dump(mode="json"))
+    payload = UserOut.model_validate(user).model_dump(mode="json")
+    payload["token"] = mint_session_token(handle=user.handle, user_id=user.id)
+    return ok(payload)
 
 
 @router.get("")

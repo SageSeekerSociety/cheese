@@ -161,6 +161,21 @@ class Settings(BaseSettings):
         "soul",
     ]
 
+    # --- Human auth (P1 agent-as-user / 真鉴权) ---
+    # Signing secret for human session tokens (JWT HS256). Empty → derived from
+    # sandbox_token when set, else a per-process random secret (fine for a single
+    # worker; pin it for multi-worker / stable-across-restart deployments so a
+    # redeploy doesn't invalidate every logged-in session).
+    auth_token_secret: str = ""
+    # Session token lifetime. Login is passwordless (handle IS the identity), so
+    # this only bounds how long a minted token stays valid before re-login.
+    auth_token_ttl_s: int = 7 * 24 * 3600
+    # Enforce topic access for TOKEN-authenticated actors (成员/角色/项目 checks).
+    # The Phase-0 handle fallback stays permissive regardless, so existing
+    # (no-token) callers are unaffected. Ops kill-switch: set false to disable the
+    # membership check entirely if a token rollout surfaces an unexpected block.
+    authz_enforce_topic_access: bool = True
+
     # --- App ---
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 

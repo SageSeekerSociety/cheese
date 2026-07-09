@@ -35,3 +35,9 @@ export function signOut(): void {
 export function myHandle(): string {
   return me.value?.handle ?? ''
 }
+
+// The signed session token (P1 真鉴权). api.ts attaches it as a Bearer header;
+// empty when signed out or when an older (pre-token) identity is cached.
+export function authToken(): string {
+  return me.value?.token ?? ''
+}

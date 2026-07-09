@@ -29,6 +29,11 @@ class ValidationError(AppError):
     message = "Validation failed"
 
 
+class UnauthorizedError(AppError):
+    code = 401
+    message = "Unauthorized"
+
+
 class ForbiddenError(AppError):
     code = 403
     message = "Forbidden"
