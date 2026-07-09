@@ -402,6 +402,51 @@ async def split_topic(
     return ok(out)
 
 
+@router.post("/{topic_id}/clone-from")
+async def clone_topic_from(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Clone (transcript-fork) another topic's Claude conversation onto THIS
+    topic (fusion-design §6 clone — 「复制自」/并行探索, not 分身).
+
+    Auth: the actor must have access to BOTH the target (where the copy lands)
+    and the SOURCE (whose conversation is being read out). A token alone is
+    necessary-not-sufficient — access is checked per actor on each topic (§4).
+    Only meaningful on backends with real session files (tmux/device); the sdk
+    backend returns a clear 422 (degrade to a fresh 子话题)."""
+    source_raw = (body.get("source_topic_id") or "").strip()
+    if not source_raw:
+        raise ValidationError("source_topic_id 必填")
+    try:
+        source_id = uuid.UUID(source_raw)
+    except ValueError as exc:
+        raise ValidationError("source_topic_id 不是合法的话题 id") from exc
+    service = TopicService(db)
+    target = await service.get_or_404(topic_id)
+    source = await service.get_or_404(source_id)
+    actor = await resolver.resolve(
+        fallback_handle=body.get("by"),
+        topic_id=topic_id,
+        project_id=target.project_id,
+    )
+    # Must be allowed on BOTH ends: reading the source's session is as sensitive
+    # as writing into the target.
+    await resolver.authorize_topic(
+        actor, project_id=target.project_id, topic_id=topic_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=source.project_id, topic_id=source_id
+    )
+    topic = await service.clone_from(
+        target_topic_id=topic_id, source_topic_id=source_id
+    )
+    await db.commit()
+    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
 @router.post("/{topic_id}/return-conclusion")
 async def return_conclusion(
     topic_id: uuid.UUID,

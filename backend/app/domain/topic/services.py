@@ -11,8 +11,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.text import markdown_preview
+from app.domain.agent import clone
 from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -22,6 +24,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.workspace import service as ws
 
 CHEESE_AUTHOR = "cheese"
 # Titles are AI-generated (the agent names a topic via `cheese title`), never
@@ -343,6 +346,47 @@ class TopicService:
             ),
         )
         return new_topic
+
+    async def clone_from(
+        self, *, target_topic_id: uuid.UUID, source_topic_id: uuid.UUID
+    ) -> Topic:
+        """Deep-copy the source topic's Claude conversation onto the target topic
+        (transcript-fork, fusion-design §6 clone — distinct from 分身/split).
+
+        分身 (split_to_subtopic) starts a FRESH session with a task brief; clone
+        instead forks the source's full conversation state so the target resumes
+        exactly where the source is. Only the interactive backends (tmux/device)
+        keep a real Claude session file on disk; the sdk backend has none, so
+        clone is unsupported there (start a fresh 子话题 instead — a graceful
+        degrade, not a silent no-op)."""
+        if settings.agent_backend not in ("tmux", "device"):
+            raise ValidationError(
+                "当前后端没有独立会话文件，无法克隆会话；请改用「拆子话题」新起会话"
+            )
+        target = await self.get_or_404(target_topic_id)
+        source = await self.get_or_404(source_topic_id)
+        if source.id == target.id:
+            raise ValidationError("不能把话题克隆到它自己")
+        if source.project_id != target.project_id:
+            # Session dirs + the /work slug are keyed per project; a cross-project
+            # clone would point the transcript at a different repo. Keep in-project.
+            raise ValidationError("只能在同一项目内克隆会话")
+        source_sid = source.session_id
+        if not source_sid:
+            raise ValidationError("源话题还没跑过（没有可克隆的会话）")
+        new_sid = clone.mint_session_id()
+        try:
+            clone.clone_transcript_files(
+                source_session_dir=ws.session_dir(source.project_id, source.id),
+                source_session_id=source_sid,
+                target_session_dir=ws.session_dir(target.project_id, target.id),
+                new_session_id=new_sid,
+            )
+        except FileNotFoundError as exc:
+            raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc
+        # Point the target at the forked session so its next turn --resume's it.
+        await self._repo.set_session_id(target, new_sid)
+        return target
 
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
         await self.get_or_404(topic_id)

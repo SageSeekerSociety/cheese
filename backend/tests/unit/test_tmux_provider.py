@@ -26,6 +26,19 @@ def test_pane_ready_detects_prompt_box():
     assert pane_ready("Welcome to Claude Code\nloading...\n") is False
 
 
+def test_resume_ready_only_when_transcript_present(tmp_path):
+    from app.domain.agent import clone
+
+    sid = "cloned-session-id"
+    # No transcript yet → do NOT resume (ordinary fresh topic stays fresh).
+    assert tp._resume_ready(str(tmp_path), sid) is False
+    # Write the forked transcript where the mount would hold it → resume.
+    f = clone.transcript_file(tmp_path, sid)
+    f.parent.mkdir(parents=True)
+    f.write_text("{}", encoding="utf-8")
+    assert tp._resume_ready(str(tmp_path), sid) is True
+
+
 class _FakeRun:
     def __init__(self, returncode: int, stdout: str) -> None:
         self.returncode = returncode
@@ -51,6 +64,41 @@ def test_ttyd_endpoint_none_when_container_down(monkeypatch):
 def test_ttyd_endpoint_none_without_docker(monkeypatch):
     monkeypatch.setattr(tp.ws, "sandbox_available", lambda: False)
     assert tp.ttyd_endpoint(uuid.uuid4()) is None
+
+
+@pytest.mark.anyio
+async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
+    from app.domain.agent import clone
+
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_docker(*args: str, stdin=None):
+        calls.append(args)
+        if "has-session" in args:
+            return 1, "", ""  # no live session → create one
+        return 0, "", ""
+
+    monkeypatch.setattr(tp, "_docker", fake_docker)
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    sid = "cloned-sid"
+
+    # No transcript → fresh session (no --resume).
+    await provider._ensure_session(
+        "box", None, resume_session_id=sid, session_dir=str(tmp_path)
+    )
+    new_session = next(c for c in calls if "new-session" in c)
+    assert "--resume" not in " ".join(new_session)
+
+    # Write the cloned transcript → next session creation resumes it.
+    f = clone.transcript_file(tmp_path, sid)
+    f.parent.mkdir(parents=True)
+    f.write_text("{}", encoding="utf-8")
+    calls.clear()
+    await provider._ensure_session(
+        "box", None, resume_session_id=sid, session_dir=str(tmp_path)
+    )
+    new_session = next(c for c in calls if "new-session" in c)
+    assert f"--resume {sid}" in " ".join(new_session)
 
 
 @pytest.fixture

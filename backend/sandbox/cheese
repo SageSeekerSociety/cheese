@@ -74,6 +74,62 @@ def _need(name: str, value: str) -> str:
     return value
 
 
+def _api_root() -> str:
+    """The app root (where /openapi.json lives), i.e. CHEESE_API without the
+    trailing /api mount prefix."""
+    return API[: -len("/api")] if API.endswith("/api") else API
+
+
+def _raw_request(method: str, path: str, data: str | None) -> None:
+    """Raw API escape hatch (fusion-design §5.2): hit our backend directly with
+    the container's existing auth (CHEESE_TOKEN), printing the response body
+    verbatim. NOT a no-auth backdoor — it still carries the token, and the
+    backend still authorizes the actor per call; it is just the low-ceremony
+    channel for the 20% of cases the curated commands don't cover. Prefer the
+    curated `cheese <verb>` commands (title/doc/ask/remember/...) — see SKILL.md."""
+    if not path.startswith("/"):
+        path = "/" + path
+    body = data.encode() if data else None
+    req = urllib.request.Request(f"{API}{path}", data=body, method=method.upper())
+    req.add_header("Content-Type", "application/json")
+    if TOKEN:
+        req.add_header("X-Cheese-Token", TOKEN)
+    if TURN:
+        req.add_header("X-Cheese-Turn", TURN)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            print(r.read().decode(errors="replace"))
+    except urllib.error.HTTPError as e:
+        # Surface the backend's error body (auth failures, validation, etc.)
+        # verbatim so the caller sees exactly why — then exit non-zero.
+        print(e.read().decode(errors="replace"))
+        sys.exit(1)
+    except Exception as e:  # noqa: BLE001
+        print(f"[cheese] api {method} {path} 出错: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _print_api_index() -> None:
+    """List available operations from our FastAPI /openapi.json (like Restish,
+    but built from OUR live spec). Lets `cheese api` self-describe what raw calls
+    are possible without hardcoding anything."""
+    url = f"{_api_root()}/openapi.json"
+    try:
+        with urllib.request.urlopen(url, timeout=20) as r:
+            spec = json.load(r)
+    except Exception as e:  # noqa: BLE001
+        print(f"[cheese] 拉取 openapi 失败: {e}", file=sys.stderr)
+        sys.exit(1)
+    print("可用的原始 API 操作（优先用 curated 命令，这些是兜底逃生口）：")
+    for path in sorted(spec.get("paths", {})):
+        methods = spec["paths"][path]
+        for method in sorted(methods):
+            if method.lower() in ("get", "post", "put", "delete", "patch"):
+                print(f"  {method.upper():6} {path}")
+    print("\n用法: cheese api <METHOD> <path> [--data '<json>']")
+    print("例:   cheese api GET /topics/$CHEESE_TOPIC/blocks")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="cheese", description="芝士 平台 CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -138,6 +194,14 @@ def main() -> None:
     part.add_argument("path", help="工作区相对路径,如 report.html")
     part.add_argument("--as", dest="as_", default="html", choices=["html", "svg"],
                       help="渲染类型(默认 html)")
+
+    papi = sub.add_parser(
+        "api",
+        help="原始 API 逃生口(兜底,不推荐):直接打后端,带容器已有鉴权。无参=列可用操作",
+    )
+    papi.add_argument("method", nargs="?", help="HTTP 方法,如 GET/POST/PUT/DELETE")
+    papi.add_argument("path", nargs="?", help="API 路径,如 /topics/<id>/blocks")
+    papi.add_argument("--data", "-d", default=None, help="请求体(JSON 字符串)")
 
     a = p.parse_args()
 
@@ -249,6 +313,21 @@ def main() -> None:
             rel = a.path
         _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": a.as_})
         print(f"已把 {rel} 设为当前预览（{a.as_}）。")
+    elif a.cmd == "api":
+        if not a.method:
+            _print_api_index()
+            return
+        if not a.path:
+            print("[cheese] api 需要一个路径,如 cheese api GET /topics/<id>/blocks",
+                  file=sys.stderr)
+            sys.exit(2)
+        if a.data is not None:
+            try:
+                json.loads(a.data)  # fail fast on malformed JSON
+            except ValueError as e:
+                print(f"[cheese] --data 不是合法 JSON: {e}", file=sys.stderr)
+                sys.exit(2)
+        _raw_request(a.method, a.path, a.data)
 
 
 if __name__ == "__main__":

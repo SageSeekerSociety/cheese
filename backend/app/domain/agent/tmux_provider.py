@@ -29,6 +29,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import clone
 from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
 from app.domain.agent.service import AgentEvent, AgentResult
 from app.domain.workspace import service as ws
@@ -47,6 +48,14 @@ _READY_POLL_S = 0.4
 
 # The `cheese` CLI lives next to the shim; mounted read-only like the SDK path.
 _CHEESE_CLI = Path(settings.sandbox_shim).resolve().parent / "cheese"
+
+
+def _resume_ready(session_dir: str, resume_session_id: str) -> bool:
+    """True when a resumable transcript for ``resume_session_id`` is present in
+    this topic's ~/.claude mount (i.e. a cloned/forked conversation was written
+    there). Pure so it can be unit-tested without a container. Guards the
+    `--resume` path so an ordinary fresh topic (no transcript) never resumes."""
+    return clone.transcript_file(Path(session_dir), resume_session_id).is_file()
 
 
 def pane_ready(capture: str) -> bool:
@@ -204,12 +213,31 @@ class TmuxHooksProvider:
         if rc != 0:
             raise RuntimeError(f"tmux container create failed: {err.strip()}")
 
-    async def _ensure_session(self, name: str, model: str | None) -> None:
-        """Ensure the interactive `claude` tmux session exists (lazy, reused)."""
+    async def _ensure_session(
+        self,
+        name: str,
+        model: str | None,
+        *,
+        resume_session_id: str | None = None,
+        session_dir: str | None = None,
+    ) -> None:
+        """Ensure the interactive `claude` tmux session exists (lazy, reused).
+
+        Normally the tmux session IS the continuity, so this starts a FRESH
+        `claude`. The ONE exception (enabling clone, fusion-design §6): when a
+        resumable session id is given AND its transcript is actually present in
+        this topic's ~/.claude mount, start `claude --resume <id>` so a cloned
+        (transcript-fork) conversation is picked up on the target topic's first
+        turn. The transcript-existence guard keeps every normal path unchanged —
+        a fresh topic has no transcript, so it never accidentally resumes."""
         rc, _, _ = await _docker("exec", name, "tmux", "has-session", "-t", _SESSION)
         if rc == 0:
             return
         claude_cmd = "claude --dangerously-skip-permissions"
+        if resume_session_id and session_dir and _resume_ready(
+            session_dir, resume_session_id
+        ):
+            claude_cmd += f" --resume {resume_session_id}"
         if model:
             claude_cmd += f" --model {model}"
         rc, _, err = await _docker(
@@ -342,7 +370,12 @@ class TmuxHooksProvider:
                 # Seed hooks + skip-disclaimer settings before the session starts
                 # (only read at session creation), then bring the session up.
                 self._write_session_settings(session_dir)
-                await self._ensure_session(name, model)
+                await self._ensure_session(
+                    name,
+                    model,
+                    resume_session_id=resume_session_id,
+                    session_dir=session_dir,
+                )
                 if not await self._wait_ready(name):
                     yield AgentResult(
                         text="tmux 会话未就绪（未等到输入框），已放弃本轮",
