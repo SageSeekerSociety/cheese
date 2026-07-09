@@ -37,12 +37,21 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post("")
-async def create_topic(body: TopicCreate, db: DbSession) -> dict:
+async def create_topic(
+    body: TopicCreate, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    # The creator becomes the topic's roster owner (fusion-design §3). Resolve
+    # them at the trust boundary (P1): the token's actor wins over any body
+    # value, so the roster owner is who's really logged in — and body.created_by
+    # stays a Phase-0 fallback for token-less callers.
+    actor = await resolver.resolve(
+        fallback_handle=body.created_by, project_id=body.project_id
+    )
     topic = await TopicService(db).create(
         project_id=body.project_id,
         title=body.title,
         parent_id=body.parent_id,
-        created_by=body.created_by,
+        created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
