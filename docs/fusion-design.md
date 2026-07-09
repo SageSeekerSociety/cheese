@@ -89,6 +89,20 @@
 - **P3 定位**：到 self-hosted 阶段，他们的 `cli/` 是**最该整体拿来的骨架**（尤其拨出连接 +
   frozen 协议），把其中的读屏 cheeselet 换成我们的 hooks 感知即可。
 
+## 5.2 cheese CLI 设计（用我们的代码，curated + raw 逃生口）
+
+不整体照搬他们 OpenAPI 全生成的 `cheese api`。学 Notion 的分层，**在我们代码上**建：
+- **顶级 curated 工具**（推荐路径，80%）：`cheese write` / `cheese ask` / `cheese title` /
+  `cheese doc` 等明确指令——语义清晰、有校验、是芝士该用的一等接口（我们现有 cheese CLI 就是
+  这个形态，保留扩展）。
+- **raw API 逃生口**（20%，不推荐但可用）：`cheese api <op>`（可从我们 FastAPI 的
+  `/openapi.json` 生成，同他们思路）**甚至直接 `curl` 打我们的 API**——相当于放行原始 API 调用，
+  给需要时兜底。
+- 纪律不变（规则4 + §4 权限）：无论走 curated 还是 raw，都在信任边界注入 actor、按真实权限授权；
+  raw 逃生口不绕过鉴权。
+- **必须用我们的代码实现**（不 wholesale 引入他们的 Go 客户端做平台动作层）；他们 cli 的价值在
+  §5.1 的 self-hosted 连接器骨架，与这里的平台动作 CLI 是两回事（重名须理顺）。
+
 ## 6. 分身 / clone（纠正：另起会话是对的）
 
 - **分身 = 标准 subagent（fresh 会话 + 任务简报）**，不 fork。依据：spec §8.4 分身专注、
