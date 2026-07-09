@@ -162,3 +162,15 @@ class SqlDeviceRepository:
     async def is_assigned(self, device_id: str, project_id: int) -> bool:
         async with self._sf() as session:
             return await _assigned(session, device_id, project_id)
+
+    async def list_devices_by_project(self, project_id: int) -> list[Device]:
+        async with self._sf() as session:
+            rows = (
+                await session.execute(
+                    select(DeviceRow)
+                    .join(DeviceProjectRow, DeviceProjectRow.device_id == DeviceRow.device_id)
+                    .where(DeviceProjectRow.project_id == project_id)
+                    .order_by(DeviceRow.created_at)
+                )
+            ).scalars()
+            return [d for d in (_to_device(r) for r in rows) if d is not None]

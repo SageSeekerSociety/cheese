@@ -64,6 +64,7 @@
           </v-btn>
           <v-spacer />
           <v-btn icon="mdi-account-group-outline" size="small" variant="text" title="项目成员" @click="membersOpen = true" />
+          <v-btn icon="mdi-laptop" size="small" variant="text" title="项目设备" @click="devicesOpen = true" />
           <v-btn icon="mdi-plus" size="small" variant="text" title="新建根文档" @click="createDoc(null)" />
         </div>
         <div class="pv-tree__scroll">
@@ -124,6 +125,9 @@
 
     <!-- 项目成员管理侧栏（含项目 agent 的创建/停止） -->
     <ProjectMembersPanel v-model:open="membersOpen" :project-id="projectId" />
+
+    <!-- 项目设备管理侧栏（绑定/解绑设备） -->
+    <ProjectDevicesPanel v-model:open="devicesOpen" :project-id="projectId" />
 
     <!-- 创建项目对话框 -->
     <v-dialog v-model="createProjectOpen" width="460">
@@ -283,6 +287,7 @@ import {
 } from '@/network/api/documents'
 import { ProjectsApi } from '@/network/api/projects'
 import DocumentTreeNode from '@/views/workspace/components/DocumentTreeNode.vue'
+import ProjectDevicesPanel from '@/views/workspace/components/ProjectDevicesPanel.vue'
 import ProjectMembersPanel from '@/views/workspace/components/ProjectMembersPanel.vue'
 
 const route = useRoute()
@@ -307,6 +312,8 @@ const currentProjectName = ref('')
 
 // 项目成员管理侧栏开关。
 const membersOpen = ref(false)
+// 项目设备管理侧栏开关。
+const devicesOpen = ref(false)
 
 // 「我的项目」唯一真源：GET /projects/mine（含无小队的个人项目）。
 const loadProjects = async () => {

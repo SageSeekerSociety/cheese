@@ -55,6 +55,7 @@ class DeviceRepository(Protocol):
     async def unassign_project(self, device_id: str, project_id: int) -> None: ...
     async def list_project_ids(self, device_id: str) -> list[int]: ...
     async def is_assigned(self, device_id: str, project_id: int) -> bool: ...
+    async def list_devices_by_project(self, project_id: int) -> list[Device]: ...
 
 
 class InMemoryDeviceRepository:
@@ -103,3 +104,7 @@ class InMemoryDeviceRepository:
 
     async def is_assigned(self, device_id: str, project_id: int) -> bool:
         return project_id in self._assignments.get(device_id, set())
+
+    async def list_devices_by_project(self, project_id: int) -> list[Device]:
+        device_ids = [d for d, projects in self._assignments.items() if project_id in projects]
+        return [self._devices[d] for d in device_ids if d in self._devices]

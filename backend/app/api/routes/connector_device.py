@@ -190,7 +190,13 @@ class RecreateInProjectBody(BaseModel):
     cwd: str | None = None
 
 
-def build_agent_list_router(agent_service: AgentService, is_member: MembershipChecker) -> APIRouter:
+def build_agent_list_router(
+    agent_service: AgentService,
+    is_member: MembershipChecker,
+    device_service: DeviceService | None = None,
+    hub: DeviceHub | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> APIRouter:
     """List a project's live agents (for the workspace to show avatars + open 现场).
     Project members only."""
     router = APIRouter(prefix="/connector/projects", tags=["connector"])
@@ -202,6 +208,34 @@ def build_agent_list_router(agent_service: AgentService, is_member: MembershipCh
         if not await is_member(project_id, user_id):
             raise ForbiddenError("must be a member of the project to list its agents")
         return {"agents": agent_service.list_agents_in_project(project_id)}
+
+    if device_service is not None and hub is not None and session_factory is not None:
+
+        @router.get("/{project_id}/devices")
+        async def list_project_devices(
+            project_id: int, user_id: int = Depends(get_current_user_id)
+        ) -> dict[str, object]:
+            """Devices assigned to this project — for the workspace's device panel.
+            Project members only; the device's own owner_user_id is included so the
+            UI can tell who may rename/unassign it (only its owner)."""
+            if not await is_member(project_id, user_id):
+                raise ForbiddenError("must be a member of the project to list its devices")
+            devices = await device_service.list_devices_for_project(project_id)
+            out: list[dict[str, object]] = []
+            for device in devices:
+                agent_ids = agent_service.agent_user_ids_on_device(device.device_id)
+                async with session_factory() as session:
+                    agents = await build_member_dicts(session, hub, agent_ids)
+                out.append(
+                    {
+                        "device_id": device.device_id,
+                        "name": device.name,
+                        "owner_user_id": device.owner_user_id,
+                        "online": hub.is_online(device.device_id),
+                        "agents": agents,
+                    }
+                )
+            return {"devices": out}
 
     @router.post("/{project_id}/agents")
     async def open_agent_in_project(

@@ -161,7 +161,7 @@ def build_connector_routers() -> list[APIRouter]:
         build_device_admin_router(_device_service, _is_member),
         build_device_update_router(_device_service, _hub, _is_member),
         build_agent_open_router(_agent_service, _is_member, _can_operate_agent),
-        build_agent_list_router(_agent_service, _is_member),
+        build_agent_list_router(_agent_service, _is_member, _device_service, _hub, AsyncSessionLocal),
         build_project_members_router(_hub, AsyncSessionLocal, _is_member),
         build_document_connector_router(AsyncSessionLocal),
         build_thread_router(_thread_service),

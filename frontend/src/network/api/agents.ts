@@ -26,6 +26,11 @@ export interface Device {
   agents: Member[]
 }
 
+/** 项目设备列表里的一项：多带一个 owner_user_id，用于判断当前用户是否可改名/取消绑定。 */
+export interface ProjectDevice extends Device {
+  owner_user_id: number
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   // Shared connector transport: refreshes an expired access token on 401 and retries,
   // so 我的 Agent keeps working on a long-open tab (see ./connectorFetch).
@@ -98,5 +103,24 @@ export const renameDevice = (deviceId: string, name: string) =>
 /** 删除设备。 */
 export const deleteDevice = (deviceId: string) =>
   request<{ deleted: boolean }>(`/connector/my/devices/${deviceId}`, {
+    method: 'DELETE',
+  })
+
+// -- 项目 ↔ 设备（项目工作区的设备面板） ---------------------------------
+
+/** 已绑定到该项目的设备（项目成员可见）。 */
+export const listProjectDevices = (projectId: number) =>
+  request<{ devices: ProjectDevice[] }>(`/connector/projects/${projectId}/devices`)
+
+/** 把（我拥有的）某设备绑定到该项目；需要我既是设备所有者又是项目成员。 */
+export const assignDeviceToProject = (deviceId: string, projectId: number) =>
+  request<{ ok: boolean }>(`/connector/devices/${deviceId}/projects`, {
+    method: 'POST',
+    body: JSON.stringify({ project_id: projectId }),
+  })
+
+/** 从该项目解绑某设备；仅设备所有者可操作。 */
+export const unassignDeviceFromProject = (deviceId: string, projectId: number) =>
+  request<{ ok: boolean }>(`/connector/devices/${deviceId}/projects/${projectId}`, {
     method: 'DELETE',
   })

@@ -184,6 +184,10 @@ class DeviceService:
         running an agent (screen) there."""
         return await self._repo.is_assigned(device_id, project_id)
 
+    async def list_devices_for_project(self, project_id: int) -> list[Device]:
+        """Devices assigned to the project — any of them may run an agent there."""
+        return await self._repo.list_devices_by_project(project_id)
+
     async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)
         if device is None:
