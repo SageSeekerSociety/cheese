@@ -299,6 +299,15 @@ class ComputePool:
         provider = RemoteCheesedProvider(cheesed_url=cheesed_url, cheese_api=cheese_api)
         return cls([provider], provider.name)
 
+    @classmethod
+    def tmux(cls, *, image: str, turn_timeout_s: float) -> "ComputePool":
+        """Interactive/tmux backend (AGENT_BACKEND=tmux): drives `claude` in a
+        tmux session and streams events from Claude Code HTTP hooks."""
+        from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+        provider = TmuxHooksProvider(image=image, turn_timeout_s=turn_timeout_s)
+        return cls([provider], provider.name)
+
     def select(self, *, env_spec: dict | None = None) -> ComputeProvider:
         """Pick a provider for this turn. Single-provider today → the default
         (always available); caps/quota/queue routing arrives with more providers
@@ -309,6 +318,13 @@ class ComputePool:
 def build_compute_pool(agent: AgentService) -> ComputePool:
     """Build the ComputePool from settings (design v3): local Docker by default,
     or a remote cheesed node when compute_provider='remote'."""
+    if settings.agent_backend == "tmux":
+        # Interactive tmux + HTTP hooks path — replaces the SDK stream-json path
+        # (LocalDockerProvider) while keeping the same run_turn/checkpoint contract.
+        return ComputePool.tmux(
+            image=settings.tmux_sandbox_image,
+            turn_timeout_s=settings.agent_turn_timeout_s,
+        )
     if settings.compute_provider == "remote":
         return ComputePool.remote(
             cheesed_url=settings.cheesed_url, cheese_api=settings.cheesed_cheese_api

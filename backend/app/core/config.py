@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     # releases the lock and tears down the in-container claude process.
     agent_turn_timeout_s: float = 900.0
 
+    # Agent compute backend (design: two execution paths behind ComputeProvider):
+    # "sdk"  → the default LocalDockerProvider: runs the Claude Agent SDK
+    #          (stream-json over the cli_path shim) in a per-topic container.
+    # "tmux" → TmuxHooksProvider: an interactive `claude` lives in a tmux session
+    #          inside the container and is driven by tmux send-keys; structured
+    #          events come back via Claude Code HTTP hooks (POST /sandbox/hooks).
+    # Defaults to "sdk" so a broken tmux path never affects existing turns.
+    agent_backend: str = "sdk"
+    # Image the tmux backend uses (base image + tmux + ttyd + pre-accepted
+    # first-launch gates). Independent of sandbox_image (the SDK path's image).
+    tmux_sandbox_image: str = "cheesex-agent-tmux:latest"
+
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # When on, the interactive turn runs `claude` INSIDE a per-topic Docker
     # container (native Bash/Read/Write jailed there) via the cli_path shim, and
