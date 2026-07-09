@@ -33,7 +33,12 @@ from app.agent.clone import clone_session
 from app.agent.hub import DeviceHub, HubScreen
 from app.agent.identity import build_member_dicts
 from app.agent.models import AgentScreenRow
-from app.core.errors import ConflictError, NotFoundError, PreconditionFailedError
+from app.core.errors import (
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    PreconditionFailedError,
+)
 from app.domain.device.service import DeviceService
 from app.domain.project.models import ProjectMemberRole
 from app.domain.project.repositories import ProjectMembershipRepository
@@ -541,15 +546,49 @@ class AgentService:
             await session.commit()
 
     async def open_agent_in_project(
-        self, *, project_id: int, nickname: str | None = None
+        self,
+        *,
+        project_id: int,
+        nickname: str | None = None,
+        copy_from_agent_user_id: int | None = None,
+        target_cwd: str | None = None,
+        attach_session_id: str | None = None,
+        attach_cwd: str | None = None,
     ) -> OpenedAgent:
         """Open an agent in a project, auto-picking an online device assigned to it —
-        so the website need not choose a device. Errors if none is available."""
+        so the website (or a fellow project agent) need not choose a device. Errors if
+        none is available.
+
+        Same 「模板」 options project agents' owners get via ``/connector/my/agents``:
+        ``copy_from_agent_user_id`` forks an existing agent's Claude conversation onto
+        the new one (the source must be a member of this same project — checked by the
+        caller), and ``attach_session_id``/``attach_cwd`` resumes a Claude session that
+        already exists on disk instead of minting a fresh one. At most one of the two
+        may be set; neither set falls back to a plain fresh ``open_agent``."""
         for device_id in self._hub.online_device_ids():
-            if await self._device_service.serves_project(device_id, project_id):
-                return await self.open_agent(
-                    device_id=device_id, project_id=project_id, nickname=nickname
+            if not await self._device_service.serves_project(device_id, project_id):
+                continue
+            if copy_from_agent_user_id is not None:
+                return await self.clone_agent(
+                    source_agent_user_id=copy_from_agent_user_id,
+                    target_device_id=device_id,
+                    project_id=project_id,
+                    nickname=nickname,
+                    target_cwd=target_cwd,
                 )
+            if attach_session_id is not None:
+                if not attach_cwd:
+                    raise BadRequestError("attach_cwd is required when attaching an existing session")
+                return await self.attach_agent(
+                    device_id=device_id,
+                    project_id=project_id,
+                    nickname=nickname,
+                    session_id=attach_session_id,
+                    cwd=attach_cwd,
+                )
+            return await self.open_agent(
+                device_id=device_id, project_id=project_id, nickname=nickname
+            )
         raise PreconditionFailedError("no online device is assigned to this project")
 
     async def forward_chat_to_agents(self, *, project_id: int, text: str, speaker: str) -> int:

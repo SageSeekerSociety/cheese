@@ -182,6 +182,14 @@ def build_device_update_router(
 
 class OpenProjectAgentBody(BaseModel):
     nickname: str | None = None
+    # 「复制自」: fork an existing agent's Claude conversation onto the new one. The
+    # source must be a member of this same project (checked below) — a project agent
+    # gets the same template options its human owner has via /connector/my/agents.
+    copy_from_agent_user_id: int | None = None
+    target_cwd: str | None = None
+    # 「接入已有会话」: resume a Claude session already on disk instead of a fresh one.
+    attach_session_id: str | None = None
+    attach_cwd: str | None = None
 
 
 class RecreateInProjectBody(BaseModel):
@@ -243,8 +251,20 @@ def build_agent_list_router(
     ) -> dict[str, object]:
         if not await is_member(project_id, user_id):
             raise ForbiddenError("must be a member of the project to run an agent in it")
+        if body.copy_from_agent_user_id is not None and session_factory is not None:
+            async with session_factory() as session:
+                relation = await ProjectMembershipRepository(session).get_relation(
+                    project_id, body.copy_from_agent_user_id
+                )
+            if relation is None:
+                raise ForbiddenError("template agent must be a member of this project")
         opened = await agent_service.open_agent_in_project(
-            project_id=project_id, nickname=body.nickname
+            project_id=project_id,
+            nickname=body.nickname,
+            copy_from_agent_user_id=body.copy_from_agent_user_id,
+            target_cwd=body.target_cwd,
+            attach_session_id=body.attach_session_id,
+            attach_cwd=body.attach_cwd,
         )
         return {
             "agent_user_id": opened.agent_user_id,
