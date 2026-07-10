@@ -195,7 +195,16 @@ cheesex 全层从 handle 迁到 user_id。分支重置回 I3 绿 checkpoint（29
   - 38/38 路由 import、43 routers。**原版知是产品(空间/小队/任务)现在带真实数据 + 真鉴权,
     活在合并代码库里,与我们的 agent/topic 层并存。后端合流实质完成。**
 
-### ⏭ A5 前端(唯一剩余;是"接线"不是"从零建")
+### ✅ A5 前端接线完成 —— 原版 空间/小队 在我们的壳里带真数据显示(`f982793`)
+合并前端(我们的 shell,主仓前端超集,vue-tsc 0 错)已接到原版产品:
+- `api.ts` 加产品客户端(`loginProduct` + `listProductSpaces/Teams`,打根产品 API、带真
+  accessToken);`ProductView.vue` 渲染 空间/小队;路由 `/product`,rail 加入口;vite 代理
+  `/users //spaces //teams //tasks` 到合并后端。
+- **端到端实证(截图 `tmp_review/fusion_product.png`)**:以 alice 登录,**我们的壳里显示原版
+  知是的 空间(人工智能实践空间/软件工程训练营/数学建模工作坊)和 小队(数据分析兴趣组/全栈
+  开发小队/深度学习研究组),真实 seed 数据。原版产品 + 我们的 topic/agent 世界,同一合并 app。**
+
+### ⏭（历史)A5 前端(接线,已完成 ↑)
 **重要发现:cheesex 前端本就是主仓前端的超集**(cheesex fork 了 cheese-backend-py 前端)——
 合并前端里**已经有**真登录(`services/account.ts` + `network/` 的 Bearer 拦截器/refreshToken)
 和产品视图(`views/spaces/`、`views/tasks/`、`views/teams/`、`SpacesView.vue`)。我们的 shell
