@@ -160,9 +160,20 @@ cheesex 全层从 handle 迁到 user_id。分支重置回 I3 绿 checkpoint（29
   - **srp_rs（Rust SRP 扩展）maturin build 通** → 真登录路由 import 绿。
   - **合并树现在完整承载原版知是产品全域(空间/任务/小队/问答/资料/群组/知识/passkey/
     oauth…)+ 我们的 agent/topic/chat/hooks 层,同一身份(主仓 User)一起 import。**
-- ⏭ 运行时"可见/可用"剩余:**A2** `*_handle→user_id` 列迁移、**A3** 鉴权运行时(agent-as-user
-  建主仓 User 行 + 真登录端到端)、**A6** 单 alembic 链 + 存量数据迁移、**A5** 前端真登录 +
-  产品视图挂进 rail。import 通是最难的结构性台阶,已 durable;剩下是让它带数据真跑起来。
+- ✅ **合并 app BOOTS & 带数据跑起来了**(`73f1695`,隔离库 fusion_test 实证):
+  - 统一 Base/metadata(`app.core.db.Base` 复用主仓 `db.base_class.Base` → 一套 metadata,
+    跨域 FK 解析);A2 首刀(cheesex identity/device 的 user 引用列 uuid→int、FK users→user);
+  - 跑通 alembic 链 → 启动 uvicorn → **`/health` 200、`/api/projects`(我们的路由) 200**。
+  - **发现真 A6 关口**:主仓产品与 cheesex **各带一套 alembic initial-schema**,`upgrade head`
+    只跑了 cheesex 链 → DB 有 cheesex 表(users/topics/agent_bindings)但没主仓产品表
+    (team/space/user)→ 产品路由 `/teams` 500。
+- ⏭ 让**产品路由带数据可见**的剩余:
+  - **A6 合并两条 alembic 历史**成一条线性链(cheesex 链 rebase 到主仓 initial 之上),
+    upgrade 后 DB 同时有产品表 + cheesex 表;
+  - **A2 收尾**(models 已指向主仓 user;补迁移让 agent_bindings/device FK 与之一致)+ agent-seed 对齐;
+  - **A3** 真登录端到端、**A5** 前端换真登录 + 空间/任务/小队视图挂 rail。
+  - **里程碑级事实:合并树已能启动、带数据响应我们的路由——从"import 通"到"boots-with-data"
+    这一步已 durable。** 剩下是 alembic 双历史合并 + 产品表落地。
 
 ## 分期
 - P-merge-1：桶 A + 桶 B + 桶 D 的机械/采纳部分解完，树成形（可 import）。✅
