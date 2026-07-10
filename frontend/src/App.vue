@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { renderMarkdown as renderMarkdownWith } from './lib/renderMessage'
 import { NOTIF_KIND, label } from './labels'
 import {
+  createProject,
   getNotificationUnreadCount,
   getNotifications,
   ingestActivity,
@@ -16,6 +17,7 @@ import {
 } from './api'
 import type { Me, Notification, Project } from './types'
 import CheeseAvatar from './components/CheeseAvatar.vue'
+import ProjectRail from './components/ProjectRail.vue'
 import { me, signIn, signOut } from './me'
 
 // 极简登录 (Phase 0): the main UI only mounts when signed in, so every
@@ -101,6 +103,28 @@ function onPickProject(id: string | null) {
   // Stay on the same kind of page (工作台 vs 总览) when switching projects.
   const name = route.name === 'overview' ? 'overview' : 'workspace-project'
   router.push({ name, params: { projectId: id } })
+}
+
+// 新建项目 (from the project rail's +). The signed-in user owns what they
+// create (same rule as WorkspaceView.handleCreateProject).
+const createDialog = ref(false)
+const createName = ref('')
+const createBusy = ref(false)
+async function doCreateProject() {
+  const name = createName.value.trim()
+  if (!name || createBusy.value) return
+  createBusy.value = true
+  try {
+    const project = await createProject(name, me.value?.handle)
+    projects.value.push(project)
+    createDialog.value = false
+    createName.value = ''
+    router.push({ name: 'workspace-project', params: { projectId: project.id } })
+  } catch {
+    // Non-fatal: keep the dialog open so the name isn't lost.
+  } finally {
+    createBusy.value = false
+  }
 }
 
 // Which top-level nav tab is active.
@@ -368,23 +392,7 @@ provide('activityBump', activityBump)
 
       <v-spacer />
 
-      <!-- Project picker — only where there's no rail (workspace switches the
-           project from the rail's 本体 header instead). -->
-      <v-select
-        v-if="activeTab !== 'workspace'"
-        :model-value="currentProjectId"
-        :items="projects"
-        item-title="name"
-        item-value="id"
-        placeholder="选择项目…"
-        density="compact"
-        variant="outlined"
-        hide-details
-        prepend-inner-icon="mdi-folder-outline"
-        class="project-picker me-3"
-        style="max-width: 220px"
-        @update:model-value="onPickProject"
-      />
+      <!-- 项目切换在最左侧 project rail（Discord 式，每项目一图标）；这里不再放下拉。 -->
 
       <!-- 项目设置 (资源池): a gear, not a primary tab — it's project config. -->
       <v-btn
@@ -592,6 +600,60 @@ provide('activityBump', activityBump)
         </v-list>
       </v-menu>
     </v-app-bar>
+
+    <!-- Project rail (Discord/Slack 式): 最左一条，一项目一图标，全局项目切换。 -->
+    <v-navigation-drawer
+      v-if="me"
+      permanent
+      :width="64"
+      class="rail-drawer"
+    >
+      <ProjectRail
+        :projects="projects"
+        :current-project-id="currentProjectId"
+        @pick="onPickProject"
+        @home="goWorkspace"
+        @create="createDialog = true"
+      >
+        <template #home-icon>
+          <CheeseAvatar :size="30" />
+        </template>
+      </ProjectRail>
+    </v-navigation-drawer>
+
+    <!-- 新建项目 (from the rail's +) -->
+    <v-dialog v-model="createDialog" max-width="420">
+      <v-card rounded="lg">
+        <v-card-title class="d-flex align-center ga-2 t-title pt-4">
+          <v-icon size="19" class="c-muted">mdi-plus</v-icon>
+          新建项目
+        </v-card-title>
+        <v-card-text>
+          <v-text-field
+            v-model="createName"
+            variant="outlined"
+            density="compact"
+            placeholder="项目名称"
+            hide-details
+            autofocus
+            @keydown.enter="doCreateProject"
+          />
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="createDialog = false">取消</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="createBusy"
+            :disabled="!createName.trim()"
+            @click="doCreateProject"
+          >
+            创建
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- 记一笔 / 导入 (E1/E3): 芝士 digests raw input into an [活动] topic. -->
     <v-dialog v-model="noteDialog" max-width="560">
@@ -874,7 +936,8 @@ provide('activityBump', activityBump)
 :deep(.v-main) {
   min-height: 0;
 }
-.project-picker :deep(.v-field) {
-  font-size: 0.85rem;
+/* Project rail drawer: the component paints its own surface + hairline. */
+.rail-drawer :deep(.v-navigation-drawer__content) {
+  overflow: hidden;
 }
 </style>

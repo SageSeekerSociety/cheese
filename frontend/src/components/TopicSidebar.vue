@@ -54,8 +54,6 @@ function startResize(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
-const newProjectName = ref('')
-
 // Project switcher dropdown. Only the caret opens it (the #activator); clicking
 // the bar opens 本体. Width is captured from the 本体 box so they line up.
 const bentaiMain = ref<HTMLElement | null>(null)
@@ -63,13 +61,6 @@ const switcherOpen = ref(false)
 const switcherWidth = ref(248)
 function captureSwitcherWidth() {
   if (bentaiMain.value) switcherWidth.value = bentaiMain.value.offsetWidth
-}
-
-function submitProject() {
-  const name = newProjectName.value.trim()
-  if (!name) return
-  emit('create-project', name)
-  newProjectName.value = ''
 }
 
 // New topic: don't ask the human for a title — create an untitled one and open
@@ -509,21 +500,8 @@ const onMemory = computed(() => props.activeDocs === 'memory')
         </template>
       </div>
 
-      <v-divider />
-
-      <!-- New project footer -->
-      <div class="pa-3">
-        <v-text-field
-          v-model="newProjectName"
-          placeholder="新建项目…"
-          density="compact"
-          variant="outlined"
-          hide-details
-          append-inner-icon="mdi-plus"
-          @click:append-inner="submitProject"
-          @keydown.enter="submitProject"
-        />
-      </div>
+      <!-- 新建项目 moved to the project rail's + (App.vue) — one affordance,
+           Discord-style. The create-project emit stays for API compatibility. -->
     </div>
   </v-navigation-drawer>
 </template>
