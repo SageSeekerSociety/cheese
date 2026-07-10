@@ -32,10 +32,19 @@ routes（`users.py` `spaces.py` `tasks.py`）+ `domain/team`（主仓独有，cl
   （主仓 JWT=HS256 `sub=user_id`；我们原来是 handle）。→ 见「集成任务 I1」。
 
 ### 桶 C — 真语义调和（两边各建了一份，需设计决策）
-- **`domain/project`**：我们的 Project = git repo = 根话题（agent 世界）；主仓的
-  project = 产品实体。**决策(待定/建议)**：保留我们的 Project 语义为主（agent 层核心），
-  但让它可**隶属于**主仓的 space/task（一个产品 task 可落成一个我们的 project/topic 树）。
-  这是 fusion §4「Space/Task/Project 解耦」的落点。→ 需 andyl 拍板或我出文档版。
+- **`domain/project` → 合并(非替换)。andyl 2026-07-11 拍板方向**：schema 实测证明两者是
+  同一现实对象的两面——主仓 `project`(int PK, `team_id`/`leader_id`/`external_task_id`/
+  `github_repo`/起止日期)= 小队的作品项目(绑小队/组长/题目/GitHub,有真实数据);我们
+  `projects`(uuid, `root_topic_id`/`ai_mode`/`expert_role`)= agent 工作区(git 仓=根话题)。
+  **决策：一个 Project = 主仓产品实体(保关系链)+ 我们的 agent 字段嫁上去**。于是"一个小队
+  的项目"本身就是一个可跑芝士的 agent 工作区。体验是我们的(话题=群聊),底层保留他们的
+  team/task/github 绑定。这是 fusion §4「Space/Task/Project 解耦」的字面落地。**不整个换掉**
+  ——否则丢掉产品关系链 + 真实数据,与"采纳原版空间/任务"矛盾。
+  - 落地：以主仓 `project` 表为基,增列 `root_topic_id`/`ai_mode`/`expert_role`/`summary`;
+    id 策略(int vs uuid)在 I2 迁移合流里定(倾向保主仓 int PK + 我们表用 FK 挂上去)。
+- **元思(`/assistant`)→ 退场(替换)。andyl 拍板**：元思是 agent 层**之前**的老助手;lg 自己
+  代码已在内测态隐藏它(「内测态元思已不再需要」)。我们的**芝士**(话题=群聊 + hooks)是替代。
+  合并时不带入 `/assistant` 入口,导航位让给芝士/话题。
 - **`domain/notification`**：两边都建了通知。**决策**：主仓的通知系统更全（渠道/savepoint），
   采纳主仓版；我们话题内的 @提及/回流通知改为**产生主仓通知**（薄适配）。
 
