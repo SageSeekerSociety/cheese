@@ -88,8 +88,32 @@ agent-user seed + 主仓的 auth/oauth）、`backend/app/core/config.py`（setti
   → 空间/任务/小队 API 在合并树里可用；随后 **I1 身份统一**（agent-as-user 挂主仓真实
   SRP/JWT User）、**I2 迁移合流**、桶 C project 合并、I4 前端数据层。
 
+## I3 执行结果（2026-07-11，已提交 `origin/fusion/merge-cheesex`）
+- ✅ errors 超集（采纳主仓 BaseError 为规范 + 保留我们的 AppError/handler 双注册）；
+- ✅ 依赖并集（+aiofiles +redis）；
+- **产品路由 23 → 29 通 / 9 挂**。
+
+## 诚实的结构性结论（决定剩余全部工作量）
+剩余 9 条全是主仓产品路由（answers/comments/discussions/groups/knowledge/questions/
+recruitment/teams/avatars），它们挂在**同一个根因**：两套代码各有一份完整
+`user`/`notification`/`space`/`task` 域，且**互不兼容**——
+- 主仓：`user` int PK + SRP/JWT，`notification.NotificationType` 枚举、`UserProfileRepository`…
+- 我们：`user` handle 制、我们的 notification/space/task。
+
+同路径只能留一份。逐个 shim 符号 = 两套 User 模型并存的 Frankenstein，能 import 但语义崩，
+比诚实更糟。**真正的完成 = 身份模型统一（I1）**，这是贯穿整个 agent/topic/chat/authz 层的
+重构（每个 service、每个 FK、每条测试从 handle 迁到 user_id），是这次合并**真正的 80%**。
+
+### I1 方向决策（andyl「接入原来的登录系统」已隐含）
+**采纳主仓身份为规范**：主仓真实 User（int PK）+ SRP/JWT 登录为准；我们的 agent-as-user
+（P1 的 agent_bindings）挂到主仓 user 表；handle 降级为展示名/别名。前端登录门换成主仓
+`/users/auth/*` 真登录。→ 这样"接入原版登录 + 原版空间/任务可见"才真正成立。
+- 代价：我们 topic/block/agent/membership 所有 `*_handle` 列迁成 `user_id` FK（I2 迁移）。
+- 这是多阶段重构，按域推进：user→notification→space/task→project(桶C 合并)→前端数据层。
+
 ## 分期
 - P-merge-1：桶 A + 桶 B + 桶 D 的机械/采纳部分解完，树成形（可 import）。✅
+- I3：errors/config/deps 超集 → 29/38 路由通。✅
 - P-merge-2：I1 身份统一（最关键，碰真鉴权，谨慎）。
 - P-merge-3：I2 迁移合流 + I3 配置 + I4 前端数据层。
 - P-merge-4：桶 C 语义调和（project/notification）+ I5 cherry。
