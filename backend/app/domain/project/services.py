@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.project.models import AiMode, Project, ProjectTaskLink
 from app.domain.project.repositories import ProjectRepository
-from app.domain.task.repositories import TaskRepository, TaskTemplateRepository
+from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.repositories import ComputeGrantRepository

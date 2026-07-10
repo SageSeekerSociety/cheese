@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.space.models import SpaceKind
+from app.domain.cx_space.models import SpaceKind
 
 
 class SpaceCreate(BaseModel):

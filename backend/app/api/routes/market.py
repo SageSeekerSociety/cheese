@@ -19,14 +19,14 @@ from app.core.db import get_db
 from app.domain.agent.market import ai_listings, compute_listings
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import TurnRunner
-from app.domain.task.models import TaskApplication
-from app.domain.task.schemas import (
+from app.domain.cx_task.models import TaskApplication
+from app.domain.cx_task.schemas import (
     ApplicationCreate,
     ApplicationDecide,
     MarketTaskOut,
     TaskApplicationOut,
 )
-from app.domain.task.services import TaskApplicationService, TaskTemplateService
+from app.domain.cx_task.services import TaskApplicationService, TaskTemplateService
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 

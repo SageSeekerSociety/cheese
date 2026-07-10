@@ -20,8 +20,8 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
-from app.domain.space.repositories import SpaceRepository
-from app.domain.task.repositories import TaskRepository, TaskTemplateRepository
+from app.domain.cx_space.repositories import SpaceRepository
+from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.repositories import TopicRepository
 

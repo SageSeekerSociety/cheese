@@ -16,7 +16,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
-from app.domain.task.repositories import TaskRepository, TaskTemplateRepository
+from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 

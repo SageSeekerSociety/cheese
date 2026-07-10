@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     storage_type: str = "local"
     storage_local_path: str = "./uploads"
     storage_local_url: str = "/uploads"
+    # main's auth (real SRP/JWT login — A3): the merged app uses this as the
+    # canonical identity. jwt_secret signs/verifies the product's access tokens.
+    jwt_secret: str = "dev-secret"
+    access_token_expires_seconds: int = 15 * 60
+    refresh_token_expires_seconds: int = 60 * 60 * 24 * 30
 
     # --- Agent (Claude Agent SDK) ---
     # The SDK talks to the model via the `claude` CLI. We route to a provider
