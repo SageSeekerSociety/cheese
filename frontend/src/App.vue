@@ -131,16 +131,8 @@ async function doCreateProject() {
   }
 }
 
-// Which top-level nav tab is active.
-const activeTab = computed<string>(() => {
-  if (route.name === 'overview') return 'overview'
-  if (route.name === 'calendar') return 'calendar'
-  if (route.name === 'project-settings') return 'settings'
-  if (route.name === 'market') return 'market'
-  if (route.name === 'spaces' || route.name === 'space-board') return 'spaces'
-  return 'workspace'
-})
-
+// 界面级合入 IA: 顶栏无导航。rail = 项目切换 + 组织面（机构看板/市场）；
+// 项目级页面（总览/日历/设置）住话题栏的项目头下（TopicSidebar）。
 function goWorkspace() {
   if (currentProjectId.value) {
     router.push({
@@ -151,30 +143,13 @@ function goWorkspace() {
     router.push({ name: 'workspace' })
   }
 }
-function goOverview() {
-  if (currentProjectId.value) {
-    router.push({ name: 'overview', params: { projectId: currentProjectId.value } })
-  }
-}
-function goSpaces() {
-  router.push({ name: 'spaces' })
-}
-function goCalendar() {
-  if (currentProjectId.value) {
-    router.push({ name: 'calendar', params: { projectId: currentProjectId.value } })
-  }
-}
-function goSettings() {
-  if (currentProjectId.value) {
-    router.push({
-      name: 'project-settings',
-      params: { projectId: currentProjectId.value },
-    })
-  }
-}
-function goMarket() {
-  router.push({ name: 'market' })
-}
+
+// rail 底部组织面图标的 active 态（高亮当前所在的组织级页面）。
+const orgSurface = computed<string | null>(() => {
+  if (route.name === 'market') return 'market'
+  if (route.name === 'spaces' || route.name === 'space-board') return 'spaces'
+  return null
+})
 
 // ---- 通知中心 (G2/G3): app-bar bell + menu ----
 const notifMenu = ref(false)
@@ -367,50 +342,9 @@ provide('activityBump', activityBump)
         <span class="brand-tag d-none d-sm-inline">CheeseX</span>
       </div>
 
-      <!-- Nav tabs: active = --ink + 2px amber underline; inactive = --muted -->
-      <v-tabs
-        :model-value="activeTab"
-        color="primary"
-        density="compact"
-        class="ms-5 nav-tabs"
-        slider-color="primary"
-      >
-        <v-tab value="workspace" @click="goWorkspace">工作台</v-tab>
-        <v-tab
-          value="overview"
-          :disabled="!currentProjectId"
-          @click="goOverview"
-        >
-          项目总览
-        </v-tab>
-        <v-tab
-          value="calendar"
-          :disabled="!currentProjectId"
-          @click="goCalendar"
-        >
-          日历
-        </v-tab>
-        <v-tab value="spaces" @click="goSpaces">机构看板</v-tab>
-        <v-tab value="market" @click="goMarket">市场</v-tab>
-      </v-tabs>
-
+      <!-- 导航不在顶栏（界面级合入）：项目切换/组织面在最左 rail，项目级页面
+           （总览/日历/设置）在话题栏的项目头下。顶栏只留品牌 + 全局动作。 -->
       <v-spacer />
-
-      <!-- 项目切换在最左侧 project rail（Discord 式，每项目一图标）；这里不再放下拉。 -->
-
-      <!-- 项目设置 (资源池): a gear, not a primary tab — it's project config. -->
-      <v-btn
-        icon
-        variant="text"
-        size="small"
-        class="me-1"
-        :disabled="!currentProjectId"
-        :color="activeTab === 'settings' ? 'primary' : undefined"
-        title="项目设置（资源池）"
-        @click="goSettings"
-      >
-        <v-icon>mdi-cog-outline</v-icon>
-      </v-btn>
 
       <!-- 记一笔 / 导入 (E1/E3) -->
       <v-btn
@@ -617,9 +551,11 @@ provide('activityBump', activityBump)
       <ProjectRail
         :projects="projects"
         :current-project-id="currentProjectId"
+        :org-surface="orgSurface"
         @pick="onPickProject"
         @home="goWorkspace"
         @create="createDialog = true"
+        @org="(s) => router.push({ name: s })"
       >
         <template #home-icon>
           <CheeseAvatar :size="30" />

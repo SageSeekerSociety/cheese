@@ -13,12 +13,16 @@ import type { Project } from '../types'
 const props = defineProps<{
   projects: Project[]
   currentProjectId: string | null
+  // Which org-level surface is active ('spaces' | 'market' | null) — the rail
+  // bottom cluster highlights it.
+  orgSurface?: string | null
 }>()
 
 const emit = defineEmits<{
   (e: 'pick', id: string): void
   (e: 'home'): void
   (e: 'create'): void
+  (e: 'org', surface: 'spaces' | 'market'): void
 }>()
 
 // One glyph per project: the first *grapheme* of the name, so an emoji-leading
@@ -83,6 +87,35 @@ const items = computed(() =>
         </template>
       </v-tooltip>
     </div>
+
+    <!-- 组织面（项目之上的一层）: 机构看板 / 市场 — Discord 的 explore 位。 -->
+    <div class="rail-divider" />
+    <v-tooltip location="right" text="机构看板">
+      <template #activator="{ props: tip }">
+        <button
+          class="rail-item rail-org"
+          :class="{ active: orgSurface === 'spaces' }"
+          v-bind="tip"
+          @click="emit('org', 'spaces')"
+        >
+          <span class="rail-pill" aria-hidden="true" />
+          <v-icon size="18">mdi-domain</v-icon>
+        </button>
+      </template>
+    </v-tooltip>
+    <v-tooltip location="right" text="市场">
+      <template #activator="{ props: tip }">
+        <button
+          class="rail-item rail-org"
+          :class="{ active: orgSurface === 'market' }"
+          v-bind="tip"
+          @click="emit('org', 'market')"
+        >
+          <span class="rail-pill" aria-hidden="true" />
+          <v-icon size="18">mdi-storefront-outline</v-icon>
+        </button>
+      </template>
+    </v-tooltip>
 
     <v-tooltip location="right" text="新建项目">
       <template #activator="{ props: tip }">
@@ -210,5 +243,20 @@ const items = computed(() =>
   color: var(--accent-ink);
   background: var(--accent-wash);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* 组织面图标: quieter than project squircles (icon on transparent). */
+.rail-org {
+  background: transparent;
+  color: var(--muted);
+}
+.rail-org:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+.rail-org.active {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  box-shadow: none;
 }
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { relTime } from '../lib/relTime'
 import type { Project, Topic } from '../types'
 import CheeseAvatar from './CheeseAvatar.vue'
@@ -52,6 +53,18 @@ function startResize(e: MouseEvent) {
   window.addEventListener('mouseup', stop)
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
+}
+
+// 项目级页面（总览/日历/设置）住在项目头下（界面级合入 IA：不在顶栏）。
+const router = useRouter()
+const projectPages = [
+  { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
+  { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
+  { key: 'project-settings', label: '设置', icon: 'mdi-cog-outline' },
+] as const
+function openProjectPage(name: string) {
+  if (!props.selectedProjectId) return
+  router.push({ name, params: { projectId: props.selectedProjectId } })
 }
 
 // Project switcher dropdown. Only the caret opens it (the #activator); clicking
@@ -257,6 +270,20 @@ const onMemory = computed(() => props.activeDocs === 'memory')
             </button>
           </div>
         </v-menu>
+      </div>
+
+      <!-- 项目级页面（总览/日历/设置）: Slack 式置顶行，属项目上下文而非顶栏。 -->
+      <div v-if="selectedProjectId" class="proj-pages">
+        <button
+          v-for="p in projectPages"
+          :key="p.key"
+          type="button"
+          class="proj-pages__item"
+          @click="openProjectPage(p.key)"
+        >
+          <v-icon size="15">{{ p.icon }}</v-icon>
+          <span>{{ p.label }}</span>
+        </button>
       </div>
 
       <v-divider />
@@ -548,6 +575,30 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   align-items: center;
   gap: 2px;
   padding: 6px 6px 6px 10px;
+}
+
+/* 项目级页面行 (总览/日历/设置) — quiet, Slack-pinned-row feel. */
+.proj-pages {
+  display: flex;
+  gap: 4px;
+  padding: 0 10px 8px;
+}
+.proj-pages__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.proj-pages__item:hover {
+  background: var(--fill-2);
+  color: var(--ink);
 }
 .bentai-bar__main {
   flex: 1;
