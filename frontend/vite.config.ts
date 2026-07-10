@@ -26,6 +26,15 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // Fusion merge (A5): the original product API lives at the ROOT, not under
+      // /api. Proxy those paths to the merged backend so the shell's ProductView
+      // can hit real /users/auth/login + /spaces + /teams.
+      ...Object.fromEntries(
+        ['/users', '/spaces', '/teams', '/tasks', '/questions'].map((p) => [
+          p,
+          { target: process.env.BACKEND_URL ?? 'http://localhost:8099', changeOrigin: true },
+        ]),
+      ),
     },
   },
 })

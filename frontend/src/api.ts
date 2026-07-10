@@ -59,6 +59,65 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+// ---- Fusion merge (A5): the original 知是 product API lives at the ROOT
+// (no /api prefix) and is authed by the real access token (account.ts, stored
+// under 'accessToken'). These helpers let our shell log in with a real account
+// and read the product surfaces (spaces/tasks/teams). ----
+export function productToken(): string {
+  return localStorage.getItem('accessToken') ?? ''
+}
+
+async function productRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = productToken()
+  const res = await fetch(path, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
+  })
+  const envelope = (await res.json()) as { code: number; message: string; data: T }
+  if (envelope.code !== 200 && envelope.code !== 201) {
+    throw new Error(envelope.message || `product API error ${envelope.code}`)
+  }
+  return envelope.data
+}
+
+export interface ProductSpace {
+  id: number
+  name: string
+  intro?: string
+  description?: string
+  avatar?: string
+}
+
+export interface ProductTeam {
+  id: number
+  name: string
+  intro?: string
+}
+
+/** Real login against the product auth (username/password). Returns the token +
+ * user; the caller stores it via account.ts so product calls are authed. */
+export function loginProduct(
+  username: string,
+  password: string,
+): Promise<{ accessToken: string; user: { id: number; username: string; nickname?: string } }> {
+  return productRequest('/users/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export function listProductSpaces(): Promise<{ spaces: ProductSpace[] }> {
+  return productRequest('/spaces?pageStart=0&pageSize=50')
+}
+
+export function listProductTeams(): Promise<{ teams: ProductTeam[] }> {
+  return productRequest('/teams?pageStart=0&pageSize=50')
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,

@@ -3,6 +3,7 @@ import type { RouteRecordRaw } from 'vue-router'
 
 import { expOnly } from './exp'
 import WorkspaceView from './views/WorkspaceView.vue'
+import ProductView from './views/ProductView.vue'
 import OverviewView from './views/OverviewView.vue'
 import CalendarView from './views/CalendarView.vue'
 import ProjectDocsView from './views/ProjectDocsView.vue'
@@ -84,6 +85,7 @@ const routes: RouteRecordRaw[] = [
   },
   // 市场 (design v3): browse the AI + compute resource-pool catalog.
   { path: '/market', name: 'market', component: MarketView },
+  { path: '/product', name: 'product', component: ProductView },
   // 机构看板 (eval F3): a spaces picker + per-space board.
   { path: '/spaces', name: 'spaces', component: SpacesView },
   {

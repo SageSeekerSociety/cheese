@@ -22,7 +22,7 @@ const emit = defineEmits<{
   (e: 'pick', id: string): void
   (e: 'home'): void
   (e: 'create'): void
-  (e: 'org', surface: 'spaces' | 'market'): void
+  (e: 'org', surface: 'spaces' | 'market' | 'product'): void
 }>()
 
 // One glyph per project: the first *grapheme* of the name, so an emoji-leading
@@ -113,6 +113,14 @@ const items = computed(() =>
         >
           <span class="rail-pill" aria-hidden="true" />
           <v-icon size="18">mdi-storefront-outline</v-icon>
+        </button>
+      </template>
+    </v-tooltip>
+
+    <v-tooltip location="right" text="原版知是（空间/小队）">
+      <template #activator="{ props: tip }">
+        <button class="rail-item rail-org" v-bind="tip" @click="emit('org', 'product')">
+          <v-icon size="18">mdi-school-outline</v-icon>
         </button>
       </template>
     </v-tooltip>
