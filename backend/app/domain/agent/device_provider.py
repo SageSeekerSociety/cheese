@@ -152,6 +152,17 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
     # --- turn --------------------------------------------------------------
 
+    async def _precheck(self, project_id: uuid.UUID) -> tuple[str, uuid.UUID, str]:
+        """Resolve an online bound device + its agent identity BEFORE the base
+        claims the topic's hook queue (pre-refactor ordering, review finding).
+        The resolved tuple is handed back to ``_ensure_ready`` via ``precheck``."""
+        resolved = await self._resolve_device_agent(project_id)
+        if resolved is None:
+            raise ScreenSetupError(
+                "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
+            )
+        return resolved
+
     async def _ensure_ready(
         self,
         *,
@@ -164,16 +175,13 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         owner: str | None,
         turn_id: uuid.UUID | None,
         resume_session_id: str | None,
+        precheck: object,
     ) -> HubScreen:
-        """Resolve an online bound device + its agent identity, then reuse/open the
-        topic's screen running `claude` with our hooks; return the screen (ctx).
-        Raises ScreenSetupError when no device is online or the screen fails."""
-        resolved = await self._resolve_device_agent(project_id)
-        if resolved is None:
-            raise ScreenSetupError(
-                "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
-            )
-        device_id, agent_user_id, agent_handle = resolved
+        """Reuse/open the topic's screen running `claude` with our hooks on the
+        device resolved by ``_precheck``; return the screen (ctx). Raises
+        ScreenSetupError when the screen fails."""
+        assert isinstance(precheck, tuple)  # from our _precheck
+        device_id, agent_user_id, agent_handle = precheck
         try:
             return await self._ensure_screen(
                 device_id=device_id,

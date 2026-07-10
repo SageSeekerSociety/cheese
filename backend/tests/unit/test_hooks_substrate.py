@@ -7,9 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
+    HooksTurnProvider,
+    ScreenSetupError,
     hooks_settings,
     run_hooks_turn,
 )
@@ -93,3 +96,38 @@ async def test_run_hooks_turn_times_out_with_message_on_silence():
     assert isinstance(events[0], AgentResult)
     assert events[0].is_error is True
     assert events[0].text == "轮次超时"
+
+
+async def test_failed_precheck_never_touches_the_router():
+    """A turn that can't run at all (no Docker / no online device) must yield a
+    clean error WITHOUT claiming the topic's queue — otherwise it would evict a
+    live turn's queue (review finding; matches pre-refactor ordering)."""
+    import uuid as _uuid
+
+    class _NoRun(HooksTurnProvider[str]):
+        name = "no-run"
+
+        async def _precheck(self, project_id):
+            raise ScreenSetupError("挡在门外")
+
+    router = HookRouter()
+    topic_id = _uuid.uuid4()
+    live_queue = router.register(str(topic_id))  # a "running turn" holds the slot
+
+    provider = _NoRun(router=router, turn_timeout_s=1)
+    events = [
+        e
+        async for e in provider.run_turn(
+            project_id=_uuid.uuid4(),
+            topic_id=topic_id,
+            prompt="x",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+    assert len(events) == 1
+    assert isinstance(events[0], AgentResult) and events[0].is_error
+    assert events[0].text == "挡在门外"
+    # The live turn's queue is untouched: pushes still reach it.
+    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is True
+    assert live_queue.qsize() == 1

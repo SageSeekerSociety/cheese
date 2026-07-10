@@ -171,7 +171,7 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
 **进度**：
 - ✅ **增量 1（完成、行为不变）**：抽出共享底座 `agent/hooks_substrate.py`—— turn drain 循环
   `run_hooks_turn`、`hooks_settings()`、`cheese-hook` forwarder、session token TTL。
-- ✅ **增量 2（完成、行为不变、478 测试绿）**：把两个 provider 的**整段 turn 流程**收敛进基类
+- ✅ **增量 2（完成、行为不变、479 测试绿）**：把两个 provider 的**整段 turn 流程**收敛进基类
   `HooksTurnProvider[ScreenT]`（模板方法）——check topic → mint token → register 队列 →
   `_ensure_ready` + `_send_prompt`（子类 transport）→ drain → unregister，**一套流程**。
   `TmuxHooksProvider`（本地 docker/tmux，`ScreenT=str`）与 `DeviceProvider`（远程 link.Msg，
@@ -185,6 +185,16 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
 **为什么用模板方法基类而非 `HooksScreenProvider(hub)` 组合**：组合要重写两个 provider 的构造 +
 测试的 monkeypatch 点；模板方法零改测试、行为可逐一比对，对执行核心更稳。二者架构等价（策略 vs
 模板），选了低风险的那个。
+
+- ✅ **三方并行 review + 修复（收官）**：安全/正确性/行为保持三个独立 reviewer 过了整个 diff。
+  结论：无安全回归、无新 bug；行为保持发现 2 个窄差异，已修——(a) tmux `_wait_ready`/
+  `_send_prompt` 的 docker-exec OS 级失败原会以裸异常逃出 generator，现包进 `ScreenSetupError`
+  （旧行为=干净错误结果）；(b) 新增 `_precheck` seam：早失败（无 Docker / 无在线设备）在
+  mint token + 占用 hook 队列**之前**发生（恢复重构前顺序，杜绝"跑不了的 turn 驱逐活 turn 队列/
+  扩大陈旧 hook 窗口"），device 的设备解析也在此完成并传递给 `_ensure_ready`（不解析两次）。
+  +1 单测锁定"precheck 失败绝不碰 router"。review 另记 3 个**重构前就存在**的原有隐患
+  （tmux 送 prompt 不查 rc→静默挂到超时；setup 失败被当 transient 重试 3 次；`images` 参数
+  两个 hooks 后端都静默忽略）——非回归，留待后续。
 
 **为什么不做"平台容器经 connector dial-out 自动入册 / 拆 tmux provider"（原设想的更激进一步）**：
 那会把 Go connector 常驻 + 设备入册塞进我们**自己**的容器,给本地路径**增加**复杂度——与"复杂性

@@ -67,6 +67,8 @@ def hooks_settings() -> dict:
 # backend with the screen's token. Exit 0 + empty stdout = "no decision" → the
 # tool proceeds. The device backend writes this via its launcher; the local
 # (tmux) image bakes the same script (kept identical so sensing can't drift).
+# NOTE: the device launcher embeds this in a <<'SH' heredoc — never add a line
+# consisting of just `SH` here or the heredoc would silently truncate.
 CHEESE_HOOK_SCRIPT = """#!/bin/sh
 [ -n "$CHEESE_HOOK_URL" ] || exit 0
 curl -s -m 10 -X POST \\
@@ -131,11 +133,12 @@ class HooksTurnProvider[ScreenT]:
     until Stop, and always release the queue.
 
     A subclass ("本地/远程只差 transport/入册") implements only the transport seam:
-    ``_ensure_ready`` (→ a screen ctx of type ``ScreenT``) and ``_send_prompt``,
-    plus the class-level ``name`` / ``_needs_topic_message`` / ``_timeout_message``.
-    ``_ensure_ready`` / ``_send_prompt`` raise ``ScreenSetupError`` to surface a
-    clean error result. This is the strategy behind ``TmuxHooksProvider`` (local
-    docker/tmux) and ``DeviceProvider`` (remote link.Msg)."""
+    ``_precheck`` (cheap fail-fast BEFORE the queue is claimed), ``_ensure_ready``
+    (→ a screen ctx of type ``ScreenT``) and ``_send_prompt``, plus the class-level
+    ``name`` / ``_needs_topic_message`` / ``_timeout_message``. All three raise
+    ``ScreenSetupError`` to surface a clean error result. This is the strategy
+    behind ``TmuxHooksProvider`` (local docker/tmux) and ``DeviceProvider``
+    (remote link.Msg)."""
 
     name: str = "hooks"
     _needs_topic_message = "本轮需要话题上下文"
@@ -150,6 +153,15 @@ class HooksTurnProvider[ScreenT]:
     def available(self) -> bool:
         return True
 
+    async def _precheck(self, project_id: uuid.UUID) -> object:
+        """Cheap fail-fast checks that run BEFORE the token is minted and the hook
+        queue is claimed (preserves the pre-refactor ordering: a turn that can't
+        run at all never touches the router — review finding). Raise
+        ``ScreenSetupError`` to end the turn with a clean error result. The return
+        value is handed to ``_ensure_ready`` as ``precheck`` so a subclass doesn't
+        resolve twice (e.g. the device backend resolves its device here)."""
+        return None
+
     async def _ensure_ready(
         self,
         *,
@@ -162,6 +174,7 @@ class HooksTurnProvider[ScreenT]:
         owner: str | None,
         turn_id: uuid.UUID | None,
         resume_session_id: str | None,
+        precheck: object,
     ) -> ScreenT:
         """Bring the topic's screen to a prompt-ready state; raise
         ``ScreenSetupError`` if it can't be. Transport-specific (subclass)."""
@@ -200,6 +213,17 @@ class HooksTurnProvider[ScreenT]:
             )
             return
 
+        # Fail-fast BEFORE claiming the topic's queue (no Docker / no online
+        # device): a turn that can't run must never evict a live queue or widen
+        # the stale-hook window (review finding — matches pre-refactor ordering).
+        try:
+            precheck = await self._precheck(project_id)
+        except ScreenSetupError as exc:
+            yield AgentResult(
+                text=str(exc), session_id=resume_session_id, is_error=True
+            )
+            return
+
         topic_key = str(topic_id)
         token = mint_scoped_token(
             project_id=str(project_id),
@@ -221,6 +245,7 @@ class HooksTurnProvider[ScreenT]:
                     owner=owner,
                     turn_id=turn_id,
                     resume_session_id=resume_session_id,
+                    precheck=precheck,
                 )
                 await self._send_prompt(screen, prompt)
             except ScreenSetupError as exc:

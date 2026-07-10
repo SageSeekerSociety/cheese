@@ -242,12 +242,19 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
 
     async def _send_prompt(self, name: str, prompt: str) -> None:
         """Inject the prompt as one atomic paste, then a SEPARATE Enter (spike:
-        bracketed paste + independent Enter, so the prompt isn't split)."""
-        await _docker(
-            "exec", "-i", name, "tmux", "load-buffer", "-", stdin=prompt.encode()
-        )
-        await _docker("exec", name, "tmux", "paste-buffer", "-t", _SESSION, "-d", "-p")
-        await _docker("exec", name, "tmux", "send-keys", "-t", _SESSION, "Enter")
+        bracketed paste + independent Enter, so the prompt isn't split). Wrapped
+        so a docker-exec OS failure surfaces as a clean error result (review
+        finding — the old code had the send inside the same setup wrap)."""
+        try:
+            await _docker(
+                "exec", "-i", name, "tmux", "load-buffer", "-", stdin=prompt.encode()
+            )
+            await _docker(
+                "exec", name, "tmux", "paste-buffer", "-t", _SESSION, "-d", "-p"
+            )
+            await _docker("exec", name, "tmux", "send-keys", "-t", _SESSION, "Enter")
+        except Exception as exc:  # noqa: BLE001 — a failed send ends the turn
+            raise ScreenSetupError(f"tmux 后端启动失败：{exc}") from exc
 
     # --- turn --------------------------------------------------------------
 
@@ -291,6 +298,13 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             merged["CHEESE_TURN"] = str(turn_id)
         return merged
 
+    async def _precheck(self, project_id: uuid.UUID) -> object:
+        """Fail fast when Docker is absent — BEFORE the base claims the topic's
+        hook queue (pre-refactor ordering, review finding)."""
+        if not self.available():
+            raise ScreenSetupError(self._needs_topic_message)
+        return None
+
     async def _ensure_ready(
         self,
         *,
@@ -303,27 +317,26 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         owner: str | None,
         turn_id: uuid.UUID | None,
         resume_session_id: str | None,
+        precheck: object,
     ) -> str:
         """Bring up (or reuse) the topic's tmux `claude` and wait for the `❯`
         input box; return the container name (the screen ctx). Raises
-        ScreenSetupError on no-Docker / setup failure / not-ready."""
-        if not self.available():
-            raise ScreenSetupError(self._needs_topic_message)
+        ScreenSetupError on setup failure / not-ready."""
         # session_dir() seeds the cheese skill + returns the ~/.claude mount path.
-        session_dir = str(ws.session_dir(project_id, topic_id))
-        worktree = str(ws.topic_worktree(project_id, topic_id))
-        session_env = self._session_env(
-            project_id=project_id,
-            topic_id=topic_id,
-            session_dir=session_dir,
-            worktree=worktree,
-            token=token,
-            env=env,
-            memory_scope=memory_scope,
-            owner=owner,
-            turn_id=turn_id,
-        )
         try:
+            session_dir = str(ws.session_dir(project_id, topic_id))
+            worktree = str(ws.topic_worktree(project_id, topic_id))
+            session_env = self._session_env(
+                project_id=project_id,
+                topic_id=topic_id,
+                session_dir=session_dir,
+                worktree=worktree,
+                token=token,
+                env=env,
+                memory_scope=memory_scope,
+                owner=owner,
+                turn_id=turn_id,
+            )
             name = await self._ensure_container(topic_id, session_env)
             # Seed hooks + skip-disclaimer settings before the session starts
             # (only read at session creation), then bring the session up.
@@ -334,9 +347,13 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
                 resume_session_id=resume_session_id,
                 session_dir=session_dir,
             )
+            # _wait_ready inside the wrap too: its docker exec can itself fail
+            # (docker binary vanishing mid-turn) — that must surface as a clean
+            # error result, not a raw exception (review finding).
+            ready = await self._wait_ready(name)
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             raise ScreenSetupError(f"tmux 后端启动失败：{exc}") from exc
-        if not await self._wait_ready(name):
+        if not ready:
             raise ScreenSetupError("tmux 会话未就绪（未等到输入框），已放弃本轮")
         return name
 
