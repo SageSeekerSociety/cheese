@@ -175,6 +175,20 @@ cheesex 全层从 handle 迁到 user_id。分支重置回 I3 绿 checkpoint（29
   - **里程碑级事实:合并树已能启动、带数据响应我们的路由——从"import 通"到"boots-with-data"
     这一步已 durable。** 剩下是 alembic 双历史合并 + 产品表落地。
 
+### ✅ A6 完成 + 原版产品带数据可见(`464b7a9`)
+- **两条 alembic 历史合并成一条**:把主仓产品迁移(base a95752502bb0)拷进 cheesex 的
+  `alembic/versions`,`alembic merge heads` 把两个 base 连成一个 head,`upgrade head` 一次
+  建齐**两套 schema**:产品表(space/task/**team**/user)+ cheesex 表(topics/blocks/
+  agent_bindings/projects)同库共存。
+- **合并 app 启动 + 原版产品带真实数据响应**:`/teams` → **200 + 真实小队数据**
+  (`{id:3,name:"数据分析兴趣组"}`,seed_demo_data 灌的),`/api/projects`(我们的) → 200,
+  `/health` → 200。**原版知是的小队,现在活在合并代码库里、带数据点得开。**
+- 撤回过早的 A2 FK 改动(cheesex 模型对齐 cheesex 迁移;users→user 真数据合并留作后续)。
+- ⏭ 还差:`/spaces` `/tasks` 等产品路由 **de-collision**(merge 时取了 cheesex 的路由文件盖过
+  主仓产品路由;需按已验证的 cluster 套路采纳 space/task 域、cheesex 的挪 cx_),然后 A3 真登录 /
+  A5 前端把空间/任务/小队挂进 rail。**teams 已证明整条链路(域+迁移+数据+路由)打通,space/task
+  照抄即可。**
+
 ## 分期
 - P-merge-1：桶 A + 桶 B + 桶 D 的机械/采纳部分解完，树成形（可 import）。✅
 - I3：errors/config/deps 超集 → 29/38 路由通。✅
