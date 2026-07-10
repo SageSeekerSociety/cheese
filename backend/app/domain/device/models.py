@@ -10,7 +10,7 @@ never sees them.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Integer, DateTime, ForeignKey, String, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -27,12 +27,12 @@ class DeviceRow(Base):
     token: Mapped[str] = mapped_column(
         String(128), nullable=False, unique=True, index=True
     )
-    owner_user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     # The agent-user minted for this device: the identity a screen on it acts as.
-    agent_user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    agent_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
