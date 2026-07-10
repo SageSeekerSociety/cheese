@@ -18,6 +18,7 @@ import {
 import type { Me, Notification, Project } from './types'
 import CheeseAvatar from './components/CheeseAvatar.vue'
 import ProjectRail from './components/ProjectRail.vue'
+import { useExperimental } from './exp'
 import { me, signIn, signOut } from './me'
 
 // 极简登录 (Phase 0): the main UI only mounts when signed in, so every
@@ -67,6 +68,9 @@ function renderMarkdown(text: string): string {
 
 const route = useRoute()
 const router = useRouter()
+
+// 功能旗: 内测态 (?exp=true, sticky — see exp.ts) gates 内测 surfaces.
+const experimental = useExperimental()
 
 const projects = ref<Project[]>([])
 
@@ -588,7 +592,9 @@ provide('activityBump', activityBump)
           <v-list-item disabled>
             <v-list-item-title class="t-meta">@{{ me.handle }}</v-list-item-title>
           </v-list-item>
+          <!-- 内测面 (功能旗 ?exp=true): self-hosted 设备管理 -->
           <v-list-item
+            v-if="experimental"
             prepend-icon="mdi-laptop"
             :to="{ name: 'my-devices' }"
           >

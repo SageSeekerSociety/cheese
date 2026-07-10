@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 
+import { expOnly } from './exp'
 import WorkspaceView from './views/WorkspaceView.vue'
 import OverviewView from './views/OverviewView.vue'
 import CalendarView from './views/CalendarView.vue'
@@ -17,8 +18,16 @@ const routes: RouteRecordRaw[] = [
   // 工作台: sidebar + chat + doc. The optional :projectId pre-selects a project.
   { path: '/', name: 'workspace', component: WorkspaceView },
   // 设备连接器 (P3): the device-flow approval page + the owner's device manager.
+  // /connect stays open — it's the FUNCTIONAL enrollment approval page the
+  // cheesehost CLI sends users to; gating it would break device login.
   { path: '/connect', name: 'connect', component: ConnectView },
-  { path: '/my/devices', name: 'my-devices', component: MyDevicesView },
+  // 设备管理是内测面 (功能旗): reachable only in 内测态 (?exp=true).
+  {
+    path: '/my/devices',
+    name: 'my-devices',
+    component: MyDevicesView,
+    beforeEnter: expOnly,
+  },
   {
     path: '/project/:projectId',
     name: 'workspace-project',
