@@ -169,15 +169,28 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
 后端）＋ 现场 screen relay 随之统一。客户端 frozen、hook 逻辑随服务端更新而**不重装**。
 
 **进度**：
-- ✅ **增量 1（已完成、行为不变、477 测试绿）**：抽出共享底座 `agent/hooks_substrate.py`——
-  turn drain 循环 `run_hooks_turn`、`hooks_settings()`、`cheese-hook` forwarder、session token
-  TTL。tmux（本地）与 device（远程）两个 provider 现都委托它，**只剩 transport 特有的
-  ensure-screen + send-prompt 各自实现**（本地 docker/tmux vs 远程 link.Msg）——即"一套底座、
-  只差 transport/入册"。+5 单测锁定。
-- ⏭ **增量 2（下一步）**：引入 `ScreenHub` seam（`LocalDockerHub` / `DeviceHub` 两个 adapter），
-  把两个 provider 类收敛成单一 `HooksScreenProvider(hub)`；平台容器经 connector 底座自动入册；
-  跑通验证后拆掉 tmux provider + 镜像内烤入的 `cheese-hook`（改由共享 `CHEESE_HOOK_SCRIPT`
-  在构建期生成，杜绝漂移）。
+- ✅ **增量 1（完成、行为不变）**：抽出共享底座 `agent/hooks_substrate.py`—— turn drain 循环
+  `run_hooks_turn`、`hooks_settings()`、`cheese-hook` forwarder、session token TTL。
+- ✅ **增量 2（完成、行为不变、478 测试绿）**：把两个 provider 的**整段 turn 流程**收敛进基类
+  `HooksTurnProvider[ScreenT]`（模板方法）——check topic → mint token → register 队列 →
+  `_ensure_ready` + `_send_prompt`（子类 transport）→ drain → unregister，**一套流程**。
+  `TmuxHooksProvider`（本地 docker/tmux，`ScreenT=str`）与 `DeviceProvider`（远程 link.Msg，
+  `ScreenT=HubScreen`）只实现 `_ensure_ready`/`_send_prompt` 两个 transport 钩子 +
+  `name`/超时文案。`ScreenSetupError` 是 setup 失败→错误结果的**唯一**出口。
+- ✅ **单一来源 forwarder**：`cheese-hook` 由 `scripts/gen-sandbox-assets.py` 从
+  `CHEESE_HOOK_SCRIPT` 生成为 `sandbox/cheese-hook`，tmux 镜像 `COPY` 它（不再 inline printf）；
+  `test_hooks_substrate.py` 断言二者一致 → **漂移即测试失败**。device launcher 运行时写的是同一
+  常量。烤入镜像与远程运行时两条路的 forwarder 由此**同源**。
+
+**为什么用模板方法基类而非 `HooksScreenProvider(hub)` 组合**：组合要重写两个 provider 的构造 +
+测试的 monkeypatch 点；模板方法零改测试、行为可逐一比对，对执行核心更稳。二者架构等价（策略 vs
+模板），选了低风险的那个。
+
+**为什么不做"平台容器经 connector dial-out 自动入册 / 拆 tmux provider"（原设想的更激进一步）**：
+那会把 Go connector 常驻 + 设备入册塞进我们**自己**的容器,给本地路径**增加**复杂度——与"复杂性
+太高"的初衷相反。本地(docker/tmux)与远程(link.Msg)的 transport 差异是**不可约的**(怎么够到一台
+本地容器 vs 一台 NAT 后的远程机器本就不同)。正解是**一套流程 + 两个瘦 transport 子类**,而非强行
+让本地也走拨出。故 tmux 不"拆",它就是本地 transport 子类;dial-out 是远程 transport 的事。
 
 ## 8.5 仓库收敛（接入主 repo cheese-backend-py）
 

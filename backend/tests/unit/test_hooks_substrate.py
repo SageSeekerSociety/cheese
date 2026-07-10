@@ -3,6 +3,7 @@ both the local (tmux) and remote (device) backends run — settings wiring, the
 cheese-hook forwarder, and the drain loop. Tested without Docker or a device."""
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -20,7 +21,8 @@ pytestmark = pytest.mark.anyio
 def test_hooks_settings_wire_every_perception_hook_to_the_forwarder():
     s = hooks_settings()
     assert s["skipDangerousModePermissionPrompt"] is True
-    for event in ("SessionStart", "PreToolUse", "PostToolUse", "MessageDisplay", "Stop"):
+    names = ("SessionStart", "PreToolUse", "PostToolUse", "MessageDisplay", "Stop")
+    for event in names:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
 
@@ -36,6 +38,15 @@ def test_session_token_ttl_is_session_length():
     assert SESSION_TOKEN_TTL_S == 30 * 24 * 3600
 
 
+def test_baked_forwarder_matches_the_single_source():
+    """The tmux image COPYs backend/sandbox/cheese-hook; it MUST equal the
+    substrate constant (the device launcher writes the same string at runtime).
+    Regenerate with `scripts/gen-sandbox-assets.py` — this guards against drift."""
+    baked = Path(__file__).resolve().parents[2] / "sandbox" / "cheese-hook"
+    assert baked.is_file(), "run scripts/gen-sandbox-assets.py to emit it"
+    assert baked.read_text(encoding="utf-8") == CHEESE_HOOK_SCRIPT
+
+
 async def _drain(queue, **kw):
     events = []
     async for e in run_hooks_turn(
@@ -49,12 +60,20 @@ async def test_run_hooks_turn_streams_in_order_and_ends_on_stop():
     queue: asyncio.Queue[dict] = asyncio.Queue()
     queue.put_nowait({"hook_event_name": "SessionStart", "session_id": "s1"})
     queue.put_nowait(
-        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"cmd": "ls"}}
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"cmd": "ls"},
+        }
     )
     queue.put_nowait({"hook_event_name": "PostToolUse"})  # → None, skipped
     queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "hi"})
     queue.put_nowait(
-        {"hook_event_name": "Stop", "last_assistant_message": "done", "session_id": "s1"}
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "done",
+            "session_id": "s1",
+        }
     )
     events = await _drain(queue, turn_timeout_s=5, timeout_message="timeout")
     # PostToolUse produced no event; the rest stream in order, Stop ends it.

@@ -21,9 +21,11 @@ All pure / transport-free, so it is unit-testable without Docker or a device.
 """
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 
-from app.domain.agent.hook_events import translate_hook
+from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
 from app.domain.agent.service import AgentEvent, AgentResult
 
 # The interactive session's hook token outlives a single turn (the screen / tmux
@@ -111,3 +113,127 @@ async def run_hooks_turn(
         yield event
         if isinstance(event, AgentResult):
             return  # Stop hook → turn done
+
+
+class ScreenSetupError(Exception):
+    """A backend couldn't bring the screen to a prompt-ready state (no Docker /
+    no online device / not ready in time). Its message becomes the turn's error
+    result — the ONE place setup failures turn into an ``AgentResult``."""
+
+
+class HooksTurnProvider[ScreenT]:
+    """Base for the hooks-driven backends (fusion-design §8.6, increment 2).
+
+    Owns the transport-INDEPENDENT turn — ONE flow for local and remote so they
+    can't drift: check the topic, mint the session-scoped token, register the
+    topic's hook queue BEFORE any prompt (so no hook is missed), bring up a screen
+    + inject the prompt (subclass transport), then drain hooks → ``AgentEvent``
+    until Stop, and always release the queue.
+
+    A subclass ("本地/远程只差 transport/入册") implements only the transport seam:
+    ``_ensure_ready`` (→ a screen ctx of type ``ScreenT``) and ``_send_prompt``,
+    plus the class-level ``name`` / ``_needs_topic_message`` / ``_timeout_message``.
+    ``_ensure_ready`` / ``_send_prompt`` raise ``ScreenSetupError`` to surface a
+    clean error result. This is the strategy behind ``TmuxHooksProvider`` (local
+    docker/tmux) and ``DeviceProvider`` (remote link.Msg)."""
+
+    name: str = "hooks"
+    _needs_topic_message = "本轮需要话题上下文"
+    _timeout_message = "轮次超时"
+
+    def __init__(
+        self, *, router: HookRouter | None = None, turn_timeout_s: float = 900.0
+    ) -> None:
+        self._router = router or hook_router
+        self._turn_timeout_s = turn_timeout_s
+
+    def available(self) -> bool:
+        return True
+
+    async def _ensure_ready(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        token: str,
+        model: str | None,
+        env: dict[str, str] | None,
+        memory_scope: str | None,
+        owner: str | None,
+        turn_id: uuid.UUID | None,
+        resume_session_id: str | None,
+    ) -> ScreenT:
+        """Bring the topic's screen to a prompt-ready state; raise
+        ``ScreenSetupError`` if it can't be. Transport-specific (subclass)."""
+        raise NotImplementedError
+
+    async def _send_prompt(self, screen: ScreenT, prompt: str) -> None:
+        """Deliver the turn's prompt to the ready screen. Transport-specific."""
+        raise NotImplementedError
+
+    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        """Snapshot the turn's edits into version history. Default no-op (the
+        device owns its own tree); the local backend overrides to git-snapshot."""
+        return
+
+    async def run_turn(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID | None,
+        prompt: str,
+        system_prompt: str,
+        resume_session_id: str | None,
+        model: str | None = None,
+        env: dict[str, str] | None = None,
+        memory_scope: str | None = None,
+        owner: str | None = None,
+        turn_id: uuid.UUID | None = None,
+        sandbox_image: str | None = None,
+        images: list[dict] | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        if topic_id is None:
+            yield AgentResult(
+                text=self._needs_topic_message,
+                session_id=resume_session_id,
+                is_error=True,
+            )
+            return
+
+        topic_key = str(topic_id)
+        token = mint_scoped_token(
+            project_id=str(project_id),
+            topic_id=topic_key,
+            ttl_s=SESSION_TOKEN_TTL_S,
+        )
+        # Register the queue BEFORE bringing up the screen / sending the prompt so
+        # no hook is missed.
+        queue = self._router.register(topic_key)
+        try:
+            try:
+                screen = await self._ensure_ready(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    token=token,
+                    model=model,
+                    env=env,
+                    memory_scope=memory_scope,
+                    owner=owner,
+                    turn_id=turn_id,
+                    resume_session_id=resume_session_id,
+                )
+                await self._send_prompt(screen, prompt)
+            except ScreenSetupError as exc:
+                yield AgentResult(
+                    text=str(exc), session_id=resume_session_id, is_error=True
+                )
+                return
+            async for event in run_hooks_turn(
+                queue=queue,
+                turn_timeout_s=self._turn_timeout_s,
+                resume_session_id=resume_session_id,
+                timeout_message=self._timeout_message,
+            ):
+                yield event
+        finally:
+            self._router.unregister(topic_key, queue)
