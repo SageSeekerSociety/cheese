@@ -154,8 +154,15 @@ cheesex 全层从 handle 迁到 user_id。分支重置回 I3 绿 checkpoint（29
   `get_by_username`(username 就是 handle)。跨域耦合(user 统计→task/team/knowledge 模型)用
   **call-time 惰性 import** 拆开,让 user 域独立可 import。cheesex identity(agent-as-user)/
   topic/dashboard 解析全部回绿,净 +3 routers。**采纳+compat+惰性 shim 是可复制的域采纳套路。**
-- ⏭ 下一步:notification/task/space/project 域同法采纳(注意 notification 要真收敛枚举、
-  task/space 挂产品实体),srp_rs（Rust ext）build 通真登录路由(A3),`*_handle→user_id`(A2)。
+- ✅ **A(import-complete)—— 38/38 路由全通,41 routers**(`45c3d3d`→`58f8d8f`):
+  - notification 域采纳(cheesex→cx_notification 过渡,A4 再收敛枚举);
+  - config 超集(storage_*/avatar);deps 并集(bcrypt/webauthn);
+  - **srp_rs（Rust SRP 扩展）maturin build 通** → 真登录路由 import 绿。
+  - **合并树现在完整承载原版知是产品全域(空间/任务/小队/问答/资料/群组/知识/passkey/
+    oauth…)+ 我们的 agent/topic/chat/hooks 层,同一身份(主仓 User)一起 import。**
+- ⏭ 运行时"可见/可用"剩余:**A2** `*_handle→user_id` 列迁移、**A3** 鉴权运行时(agent-as-user
+  建主仓 User 行 + 真登录端到端)、**A6** 单 alembic 链 + 存量数据迁移、**A5** 前端真登录 +
+  产品视图挂进 rail。import 通是最难的结构性台阶,已 durable;剩下是让它带数据真跑起来。
 
 ## 分期
 - P-merge-1：桶 A + 桶 B + 桶 D 的机械/采纳部分解完，树成形（可 import）。✅
