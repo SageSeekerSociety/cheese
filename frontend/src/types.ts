@@ -582,3 +582,7 @@ export interface DeviceApproval {
   agent_handle: string
   project_id: string | null
 }
+
+// Fusion merge (C): main's product views import knowledge types from @/types,
+// which resolves to this file (shadowing main's src/types/ dir). Re-export them.
+export * from './types/knowledges'
