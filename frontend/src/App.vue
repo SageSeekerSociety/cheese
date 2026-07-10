@@ -38,7 +38,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+
+import { listProjects } from '@/api'
+import type { Project } from '@/types'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 
@@ -75,15 +78,23 @@ const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar
 })
 
-const navItems: NavGenericItem[] = [
-  {
-    key: 'Home',
-    type: 'item',
-    title: '首页',
-    to: '/',
-    icon: 'cheese',
-    visibleOnMobile: false,
-  },
+// Fusion merge (C): the LeftAppRail carries the product surfaces (首页/空间/小队)
+// PLUS our projects — each project is a rail icon (Discord-style, replacing the
+// old 元思 assistant). Clicking a project opens OUR full workspace (topics/群聊/
+// doc/agent) for it. Projects come from our backend (/api/projects).
+const cxProjects = ref<Project[]>([])
+
+async function loadCxProjects() {
+  try {
+    cxProjects.value = (await listProjects()).data
+  } catch {
+    cxProjects.value = []
+  }
+}
+onMounted(loadCxProjects)
+
+const navItems = computed<NavGenericItem[]>(() => [
+  { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese', visibleOnMobile: false },
   {
     key: 'Spaces',
     type: 'item',
@@ -102,14 +113,18 @@ const navItems: NavGenericItem[] = [
     visibleOnMobile: true,
     visibleOnPC: false,
   },
-  {
-    key: 'Assistant',
-    type: 'item',
-    title: '元思',
-    to: '/assistant',
-    icon: 'mdi-assistant',
-  },
-]
+  ...(cxProjects.value.length
+    ? [{ key: 'cx-divider', type: 'divider' as const }]
+    : []),
+  // Each project → our workspace (topics/群聊/doc/agent).
+  ...cxProjects.value.map((p) => ({
+    key: `cx-${p.id}`,
+    type: 'item' as const,
+    title: p.name,
+    to: `/cxproject/${p.id}`,
+    icon: 'mdi-hexagon-multiple-outline',
+  })),
+])
 </script>
 
 <style lang="scss" scoped>

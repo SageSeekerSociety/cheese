@@ -56,6 +56,10 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    proxy: {
+      '/api': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+    },
   },
   build: {
     minify: 'terser',

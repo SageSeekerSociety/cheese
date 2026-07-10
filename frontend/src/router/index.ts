@@ -23,6 +23,13 @@ const routes: RouteRecordRaw[] = [
   SpacesRoutes,
   TeamsRoutes,
   {
+    name: 'CheesexProject',
+    path: '/cxproject/:projectId',
+    component: () => import('@/views/WorkspaceView.vue'),
+    props: true,
+    meta: { title: '项目工作台', isFullPage: true },
+  },
+  {
     name: 'Search',
     path: '/search',
     component: () => import('@/views/searches/Index.vue'),
