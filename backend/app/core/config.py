@@ -204,7 +204,7 @@ class Settings(BaseSettings):
     authz_enforce_topic_access: bool = True
 
     # --- App ---
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5200", "http://localhost:5200"]
 
 
 @lru_cache
