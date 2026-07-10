@@ -130,6 +130,33 @@ recruitment/teams/avatars），它们挂在**同一个根因**：两套代码各
 
 **建议**:先 B(快速让"原版空间/任务可见 + 我们的东西都在"成立、可 demo)→ 再按域走 A 收敛。
 
+## andyl 定案：走 A（全统一），多日无妨（2026-07-11）
+放弃 B 的 cx_* 共存，直接做端态正解：**主仓真实 User（int PK, SRP/JWT）= 唯一身份**，
+cheesex 全层从 handle 迁到 user_id。分支重置回 I3 绿 checkpoint（29/38），从此按 A 推进。
+
+### A 执行分期（每阶段绿了才提交，可跨会话续）
+- **A1 身份地基**：采纳主仓 user 域为规范；删 cheesex user 域；建 handle→User 兼容 seam
+  （主仓 `user.username` ≈ 我们的 handle）。cheesex 对 UserService/UserCreate 等的引用回接到
+  主仓 API 或 compat。产出：`app.domain.user` = 主仓版，cheesex 代码能 import。
+- **A2 列迁移**：cheesex 各模型 `*_handle`/`owner_handle`/`author`/`target_handle` →
+  `user_id` FK 指主仓 user 表。schema + 代码 + resolve。
+- **A3 鉴权统一**：cheesex `resolve_actor` 用主仓 JWT（`sub=user_id`）；前端登录门换主仓
+  `/users/auth/*`；agent-as-user 用主仓 user 行 + 我们的 agent_bindings。
+- **A4 域收敛**：notification（并 kind 枚举:主仓 TEAM_* + 我们 decision/heartbeat/accept，
+  单表 user_id 收件人）、space/task（挂主仓产品实体）、project（桶C：主仓实体 + 我们 agent 列）。
+- **A5 前端**：真登录 + 原版空间/任务/小队视图挂进我们的 rail 组织面。
+- **A6 迁移合流**：单 alembic 链（主仓表 + 我们的表 user_id 化）+ 存量数据迁移。
+- 全绿（ruff/pyright/pytest/vue-tsc）+ 38/38 路由 → PR 进 main。
+
+### A 进度（`origin/fusion/merge-cheesex`）
+- ✅ **A1 身份地基(user 域)—— 31→34 routers**：主仓 User(int PK, username)为规范身份;
+  compat seam 证明可行——cheesex 按 handle 找人 → `UserRepository.get_by_handle` 别名到主仓
+  `get_by_username`(username 就是 handle)。跨域耦合(user 统计→task/team/knowledge 模型)用
+  **call-time 惰性 import** 拆开,让 user 域独立可 import。cheesex identity(agent-as-user)/
+  topic/dashboard 解析全部回绿,净 +3 routers。**采纳+compat+惰性 shim 是可复制的域采纳套路。**
+- ⏭ 下一步:notification/task/space/project 域同法采纳(注意 notification 要真收敛枚举、
+  task/space 挂产品实体),srp_rs（Rust ext）build 通真登录路由(A3),`*_handle→user_id`(A2)。
+
 ## 分期
 - P-merge-1：桶 A + 桶 B + 桶 D 的机械/采纳部分解完，树成形（可 import）。✅
 - I3：errors/config/deps 超集 → 29/38 路由通。✅
