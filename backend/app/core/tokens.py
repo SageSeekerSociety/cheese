@@ -1,0 +1,79 @@
+"""Human session tokens (P1 真人类鉴权, fusion-design §2/§4).
+
+Login stays passwordless — the handle IS the identity (Phase 0 UX) — but a
+successful login now also mints a signed **session token**. Every subsequent
+request carries it as ``Authorization: Bearer <token>`` (or, for WebSockets that
+cannot set headers, as a ``?token=`` query param), and the actor is resolved
+from the *verified* token instead of a body field the caller could forge.
+
+The token is a stock JWT (HS256) so claims (``exp``/``iat``/``type``) come for
+free and it interoperates with the reference design's ``type == "access"``
+convention. This is the human counterpart to the agent's HMAC scoped token in
+``app.core.sandbox_auth`` — a valid token is **necessary, not sufficient**:
+every write is still authorized against the actor's real membership/role
+(``app.domain.authz``).
+"""
+
+import secrets
+import uuid
+from typing import TypedDict
+
+import jwt
+
+from app.core.config import settings
+
+# A stable secret survives restarts (sessions stay valid across a redeploy) when
+# pinned via env; otherwise reuse the sandbox signing secret, else a per-process
+# random one. Resolved once at import — mirrors sandbox_auth.SANDBOX_TOKEN.
+_SECRET: str = (
+    settings.auth_token_secret or settings.sandbox_token or secrets.token_hex(24)
+)
+_ALG = "HS256"
+_TYPE = "access"
+
+
+class TokenClaims(TypedDict):
+    """The subset of JWT claims we rely on. ``sub`` is the handle (authorship is
+    still keyed by handle in P1 — no user_id data migration), ``uid`` is the
+    user row's UUID as a string so callers can resolve the User without a lookup."""
+
+    sub: str
+    uid: str | None
+    type: str
+
+
+def mint_session_token(
+    *, handle: str, user_id: uuid.UUID | None, ttl_s: int | None = None
+) -> str:
+    """Sign a session token for a logged-in human. ``ttl_s`` overrides the
+    configured lifetime (used only by tests exercising expiry)."""
+    import time
+
+    now = int(time.time())
+    payload = {
+        "sub": handle,
+        "uid": str(user_id) if user_id is not None else None,
+        "type": _TYPE,
+        "iat": now,
+        "exp": now + (ttl_s if ttl_s is not None else settings.auth_token_ttl_s),
+    }
+    return jwt.encode(payload, _SECRET, algorithm=_ALG)
+
+
+def verify_session_token(token: str) -> TokenClaims | None:
+    """Decode + verify a session token. Returns its claims, or ``None`` for any
+    invalid/expired/wrong-type token — the caller turns that into 401 or a
+    handle-fallback, never a trusted actor."""
+    if not token:
+        return None
+    try:
+        decoded = jwt.decode(token, _SECRET, algorithms=[_ALG])
+    except jwt.PyJWTError:
+        return None
+    if decoded.get("type") != _TYPE or not decoded.get("sub"):
+        return None
+    return TokenClaims(
+        sub=str(decoded["sub"]),
+        uid=(str(decoded["uid"]) if decoded.get("uid") else None),
+        type=_TYPE,
+    )

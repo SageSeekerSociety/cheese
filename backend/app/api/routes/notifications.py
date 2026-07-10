@@ -1,320 +1,125 @@
-import base64
-import json
-from datetime import UTC, datetime
+"""Notification routes — spec §8.5/8.6, evals G2/G3.
+
+Spans two resource prefixes (per-project collection + per-notification actions),
+so this router uses an empty prefix and spells out each path.
+"""
+
+import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, status
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.checker import require_auth_user
-from app.auth.core import AuthUserInfo
-from app.core.config import settings
-from app.core.errors import BadRequestError, NotFoundError
-from app.db.session import get_db
-from app.domain.notification.entity_resolvers import (
-    ProjectEntityResolver,
-    TeamEntityResolver,
-    UserEntityResolver,
+from app.api.response import ok, page
+from app.core.db import get_db
+from app.domain.notification.schemas import (
+    FeedbackIn,
+    NotificationCreate,
+    NotificationOut,
+    ResolveIn,
 )
-from app.domain.notification.models import Notification, NotificationType
-from app.domain.notification.repositories import NotificationRepository
-from app.domain.notification.services import NotificationQueryService
-from app.domain.project.repositories import ProjectRepository
-from app.domain.project.services import ProjectService
-from app.domain.team.repositories import TeamRepository
-from app.domain.team.services import TeamService
-from app.domain.user.repositories import UserProfileRepository
-from app.domain.user.services import UserService
+from app.domain.notification.services import NotificationService
 
-# ── Request Models ────────────────────────────────────────────────────────────
+router = APIRouter(prefix="", tags=["notifications"])
+
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-class NotificationUpdateItem(BaseModel):
-    id: int
-    read: bool
+def _dump(notification) -> dict:
+    return NotificationOut.model_validate(notification).model_dump(mode="json")
 
 
-class BulkUpdateNotificationsRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    updates: list[NotificationUpdateItem] = []
-
-
-class SetCollectiveNotificationStatusRequest(BaseModel):
-    read: bool
-
-
-class UpdateNotificationStatusRequest(BaseModel):
-    read: bool
-
-
-router = APIRouter(prefix="/notifications", tags=["Notifications"])
-
-
-async def get_notification_service(
-    db=Depends(get_db),
-) -> NotificationQueryService:
-    repo = NotificationRepository(session=db)
-    # Register entity resolvers (team, user, project)
-    team_repo = TeamRepository(session=db)
-    team_service = TeamService(team_repo)
-    team_resolver = TeamEntityResolver(
-        team_service=team_service, avatar_base_url=settings.avatar_base_url
-    )
-
-    user_profile_repo = UserProfileRepository(session=db)
-    user_service = UserService(user_profile_repo)
-    user_resolver = UserEntityResolver(
-        user_service=user_service, avatar_base_url=settings.avatar_base_url
-    )
-
-    project_repo = ProjectRepository(session=db)
-    project_service = ProjectService(project_repo)
-    project_resolver = ProjectEntityResolver(project_service=project_service)
-
-    resolvers = [team_resolver, user_resolver, project_resolver]
-
-    return NotificationQueryService(repo, resolvers=resolvers)
-
-
-def _notification_to_api_model(notification: Notification) -> dict:
-    created_at_ms: int | None = (
-        int(notification.created_at.timestamp() * 1000)
-        if getattr(notification, "created_at", None) is not None
-        else None
-    )
-    return {
-        "id": notification.id,
-        "type": notification.type.value
-        if isinstance(notification.type, NotificationType)
-        else str(notification.type),
-        "read": notification.read,
-        "createdAt": created_at_ms or 0,
-        # TODO: entities/contextMetadata to be populated when metadata resolution is ported
-        "entities": None,
-        "contextMetadata": {},
-    }
-
-
-class BulkUpdateNotificationItem(dict):
-    id: int
-    read: bool
-
-
-@router.get("/unread-count", summary="Get Unread Notification Count")
-async def get_unread_notifications_count(
-    service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
+@router.post("/api/projects/{project_id}/notifications")
+async def create_notification(
+    project_id: uuid.UUID, body: NotificationCreate, db: DbSession
 ) -> dict:
-    count = await service.get_unread_notification_count_for_current_user(user_id=auth_user.user_id)
-    return {"code": 200, "message": "Success", "data": {"count": count}}
-
-
-@router.get(
-    "/{notificationId}",
-    summary="Get notification by id for current user",
-)
-async def get_notification_by_id(
-    notification_id: Annotated[int, Path(ge=1, alias="notificationId")],
-    service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-) -> dict:
-    notification = await service.get_notification_by_id_for_current_user(
-        user_id=auth_user.user_id, notification_id=notification_id
+    notification = await NotificationService(db).create(
+        project_id=project_id,
+        level=body.level,
+        kind=body.kind,
+        title=body.title,
+        body=body.body,
+        target_handle=body.target_handle,
+        topic_id=body.topic_id,
+        payload=body.payload,
     )
-    if notification is None:
-        raise NotFoundError(
-            "Resource notification not found", data={"type": "notification", "id": notification_id}
-        )
-
-    dto = await service.build_notification_dto(notification)
-
-    return {
-        "code": 200,
-        "message": "Success",
-        "data": {"notification": dto.__dict__},
-    }
+    return ok(_dump(notification))
 
 
-@router.get(
-    "",
-    summary="List notifications for current user",
-)
+@router.get("/api/projects/{project_id}/notifications")
 async def list_notifications(
-    page_start: str | None = Query(default=None, alias="pageStart"),
-    page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
-    type_: NotificationType | None = Query(default=None, alias="type"),
-    read: bool | None = Query(default=None),
-    service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
+    project_id: uuid.UUID,
+    db: DbSession,
+    target_handle: str | None = None,
+    unread_only: bool = False,
 ) -> dict:
-    # Decode cursor (pageStart) into created_at/id pair, if present.
-    cursor_created_at: datetime | None = None
-    cursor_id: int | None = None
-    if page_start:
-        try:
-            raw = base64.urlsafe_b64decode(page_start.encode("utf-8")).decode("utf-8")
-            data = json.loads(raw)
-            ts = data.get("createdAt")
-            cid = data.get("id")
-            if isinstance(ts, (int, float)) and isinstance(cid, int):
-                cursor_created_at = datetime.fromtimestamp(ts / 1000.0, tz=UTC)
-                cursor_id = cid
-        except Exception:
-            cursor_created_at = None
-            cursor_id = None
-
-    notifications = await service.get_notifications_for_current_user(
-        user_id=auth_user.user_id,
-        limit=page_size + 1,
-        cursor_created_at=cursor_created_at,
-        cursor_id=cursor_id,
-        type_=type_,
-        read=read,
+    items, total = await NotificationService(db).list_for_project(
+        project_id, target_handle=target_handle, unread_only=unread_only
     )
-
-    has_more = len(notifications) > page_size
-    notifications = notifications[:page_size]
-
-    # Build DTOs with resolved entities and convert to plain dicts
-    items = [(await service.build_notification_dto(n)).__dict__ for n in notifications]
-
-    total = await service.count_notifications_for_current_user(
-        user_id=auth_user.user_id,
-        type_=type_,
-        read=read,
-    )
-
-    returned = len(items)
-
-    # Encode next cursor using last item's createdAt/id.
-    next_start: str | None = None
-    if has_more:
-        last = notifications[-1]
-        last_created_ms = int(last.created_at.timestamp() * 1000)
-        cursor_payload = {"createdAt": last_created_ms, "id": last.id}
-        encoded = base64.urlsafe_b64encode(json.dumps(cursor_payload).encode("utf-8")).decode(
-            "utf-8"
-        )
-        next_start = encoded
-
-    return {
-        "code": 200,
-        "message": "Success",
-        "data": {
-            "notifications": items,
-            "page": {
-                # EncodedCursorPage 兼容结构，pageStart/nextStart 使用简单的 Base64 JSON 游标。
-                "pageStart": page_start or "",
-                "pageSize": returned,
-                "hasMore": has_more,
-                "nextStart": next_start,
-                "total": total,
-            },
-        },
-    }
+    return ok(page([_dump(n) for n in items], total))
 
 
-@router.patch(
-    "",
-    summary="Bulk Update Notification Status",
-)
-async def bulk_update_notifications(
-    payload: BulkUpdateNotificationsRequest,
-    service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
+@router.get("/api/projects/{project_id}/inbox")
+async def project_inbox(
+    project_id: uuid.UUID,
+    db: DbSession,
+    target_handle: str | None = None,
 ) -> dict:
-    """Bulk update notification read status for current user.
-
-    Request shape is aligned with NT-API.yml: {updates: [{id, read}, ...]}.
-    """
-    updates: list[tuple[int, bool]] = [(item.id, item.read) for item in payload.updates]
-
-    updated_ids = await service.bulk_set_read_status(
-        user_id=auth_user.user_id,
-        updates=updates,
+    items, total = await NotificationService(db).inbox(
+        project_id, target_handle=target_handle
     )
+    return ok(page([_dump(n) for n in items], total))
 
-    return {"code": 200, "message": "Success", "data": {"updatedIds": updated_ids}}
 
-
-@router.put(
-    "/status",
-    summary="Set Collective Notification Status",
-)
-async def set_collective_notification_status(
-    payload: SetCollectiveNotificationStatusRequest,
-    service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
+@router.get("/api/projects/{project_id}/notifications/unread-count")
+async def notifications_unread_count(
+    project_id: uuid.UUID,
+    db: DbSession,
+    target_handle: str | None = None,
 ) -> dict:
-    """Set collective read status for all notifications.
-
-    Currently only supports setting read=true, consistent with Kotlin implementation.
-    """
-    if payload.read is not True:
-        raise BadRequestError(
-            "This operation only supports marking all notifications as read (read must be true)."
-        )
-
-    count = await service.mark_all_as_read_for_current_user(user_id=auth_user.user_id)
-
-    return {"code": 200, "message": "Success", "data": {"count": count}}
+    """Badge count for the bell: unread, non-silent, visible to this user.
+    Server-side so the client never has to fetch the full list just to count."""
+    count = await NotificationService(db).unread_count(
+        project_id, target_handle=target_handle
+    )
+    return ok({"unread": count})
 
 
-@router.patch(
-    "/{notificationId}",
-    summary="Update Notification Status",
-)
-async def update_notification_status(
-    notification_id: Annotated[int, Path(ge=1, alias="notificationId")],
-    payload: UpdateNotificationStatusRequest,
-    service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
+@router.post("/api/projects/{project_id}/notifications/read-all")
+async def mark_all_notifications_read(
+    project_id: uuid.UUID,
+    db: DbSession,
+    target_handle: str | None = None,
 ) -> dict:
-    # Update then refetch for DTO
-    affected = await service.set_read_status(
-        user_id=auth_user.user_id,
-        notification_id=notification_id,
-        desired_read_status=payload.read,
+    """全部标记已读 (Feishu-style)."""
+    marked = await NotificationService(db).mark_all_read(
+        project_id, target_handle=target_handle
     )
-    if affected == 0:
-        raise NotFoundError(
-            "Resource notification not found", data={"type": "notification", "id": notification_id}
-        )
+    return ok({"marked": marked})
 
-    notification = await service.get_notification_by_id_for_current_user(
-        user_id=auth_user.user_id,
-        notification_id=notification_id,
+
+@router.post("/api/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: uuid.UUID, db: DbSession) -> dict:
+    notification = await NotificationService(db).mark_read(notification_id)
+    return ok(_dump(notification))
+
+
+@router.post("/api/notifications/{notification_id}/feedback")
+async def set_notification_feedback(
+    notification_id: uuid.UUID, body: FeedbackIn, db: DbSession
+) -> dict:
+    notification = await NotificationService(db).set_feedback(
+        notification_id, body.feedback
     )
-    if notification is None:
-        raise NotFoundError(
-            "Resource notification not found", data={"type": "notification", "id": notification_id}
-        )
-
-    dto = await service.build_notification_dto(notification)
-
-    return {
-        "code": 200,
-        "message": "Success",
-        "data": {"notification": dto.__dict__},
-    }
+    return ok(_dump(notification))
 
 
-@router.delete(
-    "/{notificationId}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a Notification",
-)
-async def delete_notification(
-    notification_id: Annotated[int, Path(ge=1, alias="notificationId")],
-    service: NotificationQueryService = Depends(get_notification_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-) -> None:
-    deleted = await service.delete_notification_for_current_user(
-        user_id=auth_user.user_id,
-        notification_id=notification_id,
+@router.post("/api/notifications/{notification_id}/resolve")
+async def resolve_notification(
+    notification_id: uuid.UUID, body: ResolveIn, db: DbSession
+) -> dict:
+    """拍板 a decision request (spec G2)."""
+    notification = await NotificationService(db).resolve(
+        notification_id, chosen=body.chosen, decided_by=body.decided_by
     )
-    if not deleted:
-        raise NotFoundError(
-            "Resource notification not found", data={"type": "notification", "id": notification_id}
-        )
+    return ok(_dump(notification))

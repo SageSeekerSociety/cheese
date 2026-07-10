@@ -1,86 +1,71 @@
-from datetime import UTC, datetime
-from enum import Enum
+"""Notification model — spec §8.5, §8.6.
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Index, Sequence, String
-from sqlalchemy.dialects.postgresql import JSONB
+Notifications are the real-time surface of "what changed" / "what needs you".
+Ground truth stays in docs; a notification points at it. Graded by how much it
+interrupts (spec §3, §8.6):
+  silent → 默默记下来, 不打扰
+  light  → 对话里轻提一句, 带可操作按钮
+  strong → 强提醒, @ 具体的人
+
+Two typical kinds (spec §8.5): change_alert (干完活后的变更提醒) and
+decision_request (需要人拍板, 带选项).
+"""
+
+import enum
+import uuid
+from datetime import datetime
+
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base_class import Base
-
-notification_seq = Sequence("notification_seq")
-
-
-class NotificationType(str, Enum):
-    # Align enum values with DB CHECK constraint and OpenAPI NotificationType
-    MENTION = "MENTION"
-    REPLY = "REPLY"
-    REACTION = "REACTION"
-    PROJECT_INVITE = "PROJECT_INVITE"
-    DEADLINE_REMIND = "DEADLINE_REMIND"
-
-    TEAM_JOIN_REQUEST = "TEAM_JOIN_REQUEST"
-    TEAM_INVITATION = "TEAM_INVITATION"
-    TEAM_REQUEST_APPROVED = "TEAM_REQUEST_APPROVED"
-    TEAM_REQUEST_REJECTED = "TEAM_REQUEST_REJECTED"
-    TEAM_INVITATION_ACCEPTED = "TEAM_INVITATION_ACCEPTED"
-    TEAM_INVITATION_DECLINED = "TEAM_INVITATION_DECLINED"
-    TEAM_INVITATION_CANCELED = "TEAM_INVITATION_CANCELED"
-    TEAM_REQUEST_CANCELED = "TEAM_REQUEST_CANCELED"
+from app.core.db import Base
+from app.domain.common import Timestamps, UuidPk
 
 
-class Notification(Base):
-    __tablename__ = "notification"
-    __table_args__ = (
-        Index(
-            "idx_notification_receiver_read_created",
-            "receiver_id",
-            "read",
-            "created_at",
-            postgresql_using="btree",
-        ),
-        Index(
-            "idx_notification_aggregation",
-            "receiver_id",
-            "aggregation_key",
-            "aggregate_until",
-            postgresql_using="btree",
-        ),
+class NotifLevel(enum.StrEnum):
+    silent = "silent"
+    light = "light"
+    strong = "strong"
+
+
+class NotifKind(enum.StrEnum):
+    change_alert = "change_alert"  # 变更提醒
+    decision_request = "decision_request"  # 决策请求 (带选项)
+    accept_request = "accept_request"  # 验收卡 (点名)
+    heartbeat = "heartbeat"  # 巡检催办
+    mention = "mention"  # @点名 (强提醒)
+
+
+class Notification(UuidPk, Timestamps, Base):
+    __tablename__ = "notifications"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-
-    id: Mapped[int] = mapped_column(BigInteger, notification_seq, primary_key=True)
-    receiver_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-
-    type: Mapped[NotificationType] = mapped_column("type", String(length=255), nullable=False)
-
-    metadata_payload: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
-    content: Mapped[dict | None] = mapped_column("content", JSONB, nullable=True)
-
-    read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-
-    is_aggregatable: Mapped[bool] = mapped_column(
-        "is_aggregatable", Boolean, nullable=False, default=False
+    topic_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    aggregation_key: Mapped[str | None] = mapped_column(
-        "aggregation_key", String(length=255), nullable=True
+    level: Mapped[NotifLevel] = mapped_column(
+        Enum(NotifLevel, native_enum=False, length=16)
     )
-    aggregate_until: Mapped[datetime | None] = mapped_column(
-        "aggregate_until", DateTime(timezone=True), nullable=True
+    kind: Mapped[NotifKind] = mapped_column(
+        Enum(NotifKind, native_enum=False, length=16)
     )
-    finalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-
-    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    def is_aggregation_active(self, now: datetime | None = None) -> bool:
-        from datetime import datetime as _dt
-
-        current = now or _dt.now(tz=UTC)
-        return (
-            self.is_aggregatable
-            and not self.finalized
-            and self.aggregate_until is not None
-            and self.aggregate_until > current
-        )
+    # Who it's addressed to (a user handle); NULL = broadcast/board only.
+    target_handle: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text, default="")
+    # Extra structured payload: decision options, diffstat, accept card id, etc.
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # A decision request stays in the inbox until it's resolved (拍板), not just
+    # read. The chosen option is stored in payload["resolved_choice"].
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # 👍/👎 feedback on proactive messages (spec G3): null / "up" / "down".
+    feedback: Mapped[str | None] = mapped_column(String(8), nullable=True)

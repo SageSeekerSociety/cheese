@@ -1,0 +1,265 @@
+/* ===========================================================================
+   CheeseX 知是 — design language foundation.
+
+   THE ONE PRINCIPLE: ~95% of every screen is NEUTRAL. Amber (#F57F17) is a rare
+   accent — primary action button, active nav indicator, brand mark. Nothing
+   else. Restraint = professional (Linear / Notion grade).
+
+   Tokens below are the single source of truth for the neutral ramp + accent +
+   status. Vuetify theme colors (plugins/vuetify.ts) mirror these so component
+   styling and hand-rolled CSS agree. Reference these vars; never hardcode hex.
+   =========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* ---- Neutral ramp (warm-cool gray) ---- */
+  --ink: #191a1c; /* titles */
+  --text: #36383c; /* body */
+  --muted: #6a6e76; /* secondary */
+  --faint: #9aa0a8; /* meta */
+
+  --line: #ecedef; /* hairlines */
+  --line-2: #e2e3e6;
+  --fill: #f4f5f7; /* hover / inset */
+  --fill-2: #eeeff1;
+
+  --canvas: #f7f8fa; /* app bg */
+  --surface: #ffffff; /* cards / panels */
+
+  /* ---- Accent (amber, sparingly) ---- */
+  --accent: #f57f17;
+  --accent-press: #d96e0a;
+  --accent-ink: #9a5413; /* amber text on light */
+  --accent-wash: #fdf1e2; /* rare tint */
+
+  /* ---- Status (ONLY for real status; dot + neutral text) ---- */
+  --ok: #1f9d55;
+  --warn: #e8901c;
+  --danger: #dc2626;
+
+  /* ---- Type ---- */
+  --font-sans:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-display: 'Bricolage Grotesque', var(--font-sans);
+  --font-mono:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#app {
+  height: 100vh;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 430;
+  line-height: 1.62;
+  color: var(--text);
+  background: var(--canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Let Vuetify inherit our sans stack rather than its default Roboto. */
+.v-application {
+  font-family: var(--font-sans) !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Type hierarchy — utility classes referenced across views. Enforces the spec:
+   tight headings in --ink, lighter body in --text, metadata always --faint mono.
+   --------------------------------------------------------------------------- */
+
+/* Page title: 23 / 650 / -0.02em / --ink */
+.t-page-title {
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  color: var(--ink);
+}
+
+/* Section / card title: 15 / 600 / --ink */
+.t-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+/* Eyebrow label: 12 / 600 / --faint / .04em (not all-caps for Chinese) */
+.t-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+}
+
+/* Body: 14 / 430 / 1.62 / --text */
+.t-body {
+  font-size: 14px;
+  font-weight: 430;
+  line-height: 1.62;
+  color: var(--text);
+}
+
+/* Meta (timestamps, #ids, counts, branch): 12.5 / mono / --faint / tnum */
+.t-meta {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Generic helpers for color application without inventing per-component CSS. */
+.c-ink {
+  color: var(--ink);
+}
+.c-text {
+  color: var(--text);
+}
+.c-muted {
+  color: var(--muted);
+}
+.c-faint {
+  color: var(--faint);
+}
+.c-ok {
+  color: var(--ok);
+}
+.c-warn {
+  color: var(--warn);
+}
+.c-danger {
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------------------
+   Status dot — small 6px circle + neutral text label (NOT a colored chip).
+   --------------------------------------------------------------------------- */
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--faint);
+}
+.status-dot--ok {
+  background: var(--ok);
+}
+.status-dot--warn {
+  background: var(--warn);
+}
+.status-dot--danger {
+  background: var(--danger);
+}
+.status-dot--muted {
+  background: var(--faint);
+}
+
+/* ---------------------------------------------------------------------------
+   Neutral chip / label — --fill bg, --muted text, no border, 6px radius, 12px.
+   --------------------------------------------------------------------------- */
+.chip-neutral {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+  background: var(--fill);
+  padding: 1px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+/* Plain kind text (本体 / 话题 / 分身) — quiet, no chrome. */
+.kind-text {
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Markdown / Tiptap surfaces are not Vuetify components — keep accent links and
+   list markers neutral-ink, not amber (amber stays an accent, not body text).
+   Component-level :deep styling lives in the SFCs.
+   --------------------------------------------------------------------------- */
+
+/* Thin, unobtrusive scrollbars — far more polished than default chunky ones. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(25, 26, 28, 0.16) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(25, 26, 28, 0.14);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(25, 26, 28, 0.28);
+  background-clip: content-box;
+}
+
+/* Calm micro-interactions on interactive Vuetify surfaces. */
+.v-btn,
+.v-chip,
+.v-list-item,
+.v-card {
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.18s ease,
+    border-color 0.15s ease,
+    transform 0.06s ease;
+}
+.v-btn:active {
+  transform: translateY(0.5px);
+}
+
+/* Raw <button> reset: every hand-rolled button styles itself; without this the
+   UA's default border/background leaks in (the mystery dark boxes around 本体
+   bar / 已归档 / project switcher rows). Vuetify's v-btn is unaffected, and
+   buttons that declare their own border (e.g. .pool-row) override this. */
+button:not(.v-btn) {
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+
+/* Crisp keyboard focus (a11y floor) — soft amber ring. */
+:focus-visible {
+  outline: 2px solid rgba(245, 127, 23, 0.55);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(245, 127, 23, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -1,135 +1,48 @@
 [project]
-name = "cheese-backend-py"
+name = "cheesex-backend"
 version = "0.1.0"
-description = "Cheese backend rewrite in Python (FastAPI + SQLAlchemy)."
-readme = "README.md"
-requires-python = ">=3.11"
-authors = [{ name = "Cheese Team" }]
-
+requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.115.0,<1.0.0",
-    "uvicorn[standard]>=0.30.0,<1.0.0",
-    "sqlalchemy>=2.0.0,<3.0.0",
-    "pydantic>=2.7.0,<3.0.0",
-    "pydantic-settings>=2.2.0,<3.0.0",
-    "httpx>=0.27.0,<1.0.0",
-    "taskiq[redis,fastapi]>=0.11.0,<1.0.0",
-    "redis>=5.0.0,<6.0.0",
-    "cryptography>=43.0.0,<44.0.0",
-    "pyyaml>=6.0.0,<7.0.0",
-    "asyncpg>=0.29.0,<1.0.0",
-    "bcrypt>=4.0.0,<5.0.0",
-    "python-multipart>=0.0.7,<1.0.0",
-    "alembic>=1.17.2",
-    "openai>=1.50.0,<2.0.0",
-    "pymupdf4llm>=0.4.0",
-    "tiktoken>=0.7.0,<1.0.0",
-    "structlog>=24.0.0,<25.0.0",
-    "pyotp>=2.9.0,<3.0.0",
-    "webauthn>=2.0.0,<3.0.0",
-    "psycopg2-binary>=2.9.0,<3.0.0",
-    "srp_rs",
-    "greenlet>=3.2.4",
-    "pyjwt>=2.10.1",
-    "pytest-xdist>=3.8.0",
-    "aiosmtplib>=5.1.0",
-    "aiofiles>=25.1.0",
-    "aioboto3>=15.5.0",
-    "meilisearch-python-sdk>=7.1.4",
+    "alembic>=1.18.4",
+    "asyncpg>=0.31.0",
+    "claude-agent-sdk>=0.2.101",
+    "fastapi>=0.137.0",
+    "httpx>=0.28.1",
+    "openviking>=0.4.7",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.1",
+    "pyjwt>=2.13.0",
+    "python-dotenv>=1.2.2",
+    "sqlalchemy[asyncio]>=2.0",
+    "structlog>=26.1.0",
+    "uvicorn[standard]>=0.49.0",
+    "websockets>=16.0",
 ]
-
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.uv]
-index-url = "https://pypi.org/simple"
-
-[tool.uv.sources]
-srp_rs = { path = "srp_rs", editable = true }
-
-[tool.hatch.build.targets.wheel]
-packages = ["app"]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "app",
-    "scripts",
-    "tests",
-    "pyproject.toml",
-    "README.md",
-]
-
-[tool.pyright]
-pythonVersion = "3.11"
-typeCheckingMode = "standard"
-exclude = ["tests", ".venv", "__pycache__", "node_modules", ".*"]
-reportMissingImports = "warning"
-reportOptionalMemberAccess = "error"
-reportOptionalSubscript = "error"
-reportCallIssue = "error"
-# Downgraded: too many false positives from Redis/SQLAlchemy/OpenAI typing
-reportArgumentType = "warning"
-reportReturnType = "warning"
-reportAttributeAccessIssue = "warning"  # SQLAlchemy ORM dynamic attrs
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "I",    # isort
-    "UP",   # pyupgrade
-    "B",    # flake8-bugbear (catches common bugs)
-    "SIM",  # flake8-simplify
-    "RUF",  # ruff-specific rules
-    "ASYNC",# flake8-async (async pitfalls)
-    "S",    # flake8-bandit (security)
-    "T20",  # flake8-print (no print statements)
-    "DTZ",  # flake8-datetimez (prevent naive datetimes — root cause of tz bugs)
-]
-ignore = [
-    "S101",   # allow assert in tests
-    "S104",   # allow binding to 0.0.0.0
-    "S105",   # false positives on password variable names
-    "S106",   # false positives on password argument names
-    "B008",   # allow Depends() in function defaults (FastAPI pattern)
-    "RUF001", # ambiguous unicode — Chinese text
-    "RUF002", # ambiguous unicode — Chinese text
-    "RUF003", # ambiguous unicode — Chinese text
-    "RUF012", # mutable class variable annotations (SQLAlchemy models)
-    "RUF059", # false positives on _ = auth_user pattern
-    "SIM108", # ternary operator — style preference
-    "SIM102", # collapsible if — style preference
-    "SIM105", # contextlib.suppress — style preference
-    "SIM115", # open context manager — style preference
-    "E501",   # line too long — ruff format handles this
-    "UP042",  # unnecessary __future__ annotations
-    "ASYNC109",# false positive on timeout parameter names
-    "ASYNC230",# blocking open() — needs aiofiles dep, defer
-    "ASYNC240",# blocking os.path — needs anyio dep, defer
-    "S108",   # hardcoded /tmp — acceptable for local file ops
-    "S324",   # md5 for checksums, not security
-]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "T20", "DTZ"]
-"scripts/**" = ["T20"]
 
 [dependency-groups]
 dev = [
-    "ruff>=0.15.0,<0.16.0",
-    "pyright>=1.1.0,<2.0.0",
-    "pytest>=8.0.0,<9.0.0",
-    "pytest-asyncio>=0.23.0,<1.0.0",
-    "pytest-rerunfailures>=14.0,<15.0",
-    "anyio>=4.0.0,<5.0.0",
-    "pytest-cov>=7.0.0",
-    "pytest-testmon>=2.2.0",
-    "playwright>=1.58.0",
+    "aiosqlite>=0.22.1",
+    "anyio>=4.13.0",
+    "httpx>=0.28.1",
+    "pyright>=1.1.410",
+    "pytest>=9.1.0",
+    "pytest-anyio>=0.0.0",
+    "ruff>=0.15.17",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.13"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+anyio_mode = "auto"
+testpaths = ["tests"]

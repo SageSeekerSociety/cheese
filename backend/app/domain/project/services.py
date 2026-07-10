@@ -1,157 +1,103 @@
-from collections.abc import Sequence
-from datetime import UTC
+"""Project business logic."""
 
-from app.core.errors import BadRequestError, NotFoundError
-from app.domain.project.models import Project, ProjectMemberRole, ProjectMembership
-from app.domain.project.repositories import ProjectMembershipRepository, ProjectRepository
+import uuid
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import NotFoundError, ValidationError
+from app.domain.project.models import AiMode, Project, ProjectTaskLink
+from app.domain.project.repositories import ProjectRepository
+from app.domain.task.repositories import TaskRepository, TaskTemplateRepository
+from app.domain.topic.models import TopicKind
+from app.domain.topic.repositories import TopicRepository
+from app.domain.usage.repositories import ComputeGrantRepository
 
 
 class ProjectService:
-    def __init__(
-        self,
-        repo: ProjectRepository,
-        membership_repo: ProjectMembershipRepository | None = None,
-    ) -> None:
-        self._repo = repo
-        self._membership_repo = membership_repo
+    def __init__(self, session: AsyncSession):
+        self._repo = ProjectRepository(session)
+        self._topics = TopicRepository(session)
+        self._tasks = TaskRepository(session)
+        self._templates = TaskTemplateRepository(session)
+        self._grants = ComputeGrantRepository(session)
 
-    async def create_project(
+    async def create(
         self,
         *,
         name: str,
-        description: str,
-        color_code: str,
-        team_id: int,
-        leader_id: int,
-        start_date: int,
-        end_date: int,
-        content: str | None = None,
-        parent_id: int | None = None,
-        external_task_id: int | None = None,
-        github_repo: str | None = None,
+        owner_handle: str | None = None,
+        ai_mode: AiMode = AiMode.collaborative,
+        expert_role: str | None = None,
     ) -> Project:
-        from datetime import datetime
-
-        start_dt = datetime.fromtimestamp(start_date / 1000, tz=UTC)
-        end_dt = datetime.fromtimestamp(end_date / 1000, tz=UTC)
-        return await self._repo.create_project(
+        """Create a project and its root topic (= 项目本身, spec §6)."""
+        project = await self._repo.add(
             name=name,
-            description=description,
-            color_code=color_code,
-            team_id=team_id,
-            leader_id=leader_id,
-            start_date=start_dt,
-            end_date=end_dt,
-            content=content,
-            parent_id=parent_id,
-            external_task_id=external_task_id,
-            github_repo=github_repo,
+            owner_handle=owner_handle,
+            ai_mode=ai_mode,
+            expert_role=expert_role,
         )
-
-    async def get_projects_by_ids(self, ids: Sequence[int]) -> dict[int, Project]:
-        return await self._repo.get_by_ids(ids)
-
-    async def get_project(self, project_id: int) -> Project | None:
-        return await self._repo.get_by_id(project_id)
-
-    async def update_project(
-        self,
-        project: Project,
-        *,
-        name: str | None = None,
-        description: str | None = None,
-        color_code: str | None = None,
-        archived: bool | None = None,
-    ) -> Project:
-        if name is not None:
-            project.name = name
-        if description is not None:
-            project.description = description
-        if color_code is not None:
-            project.color_code = color_code
-        if archived is not None:
-            project.archived = archived
-        return await self._repo.save(project)
-
-    async def soft_delete_project(self, project: Project) -> None:
-        await self._repo.soft_delete(project)
-
-    async def list_projects(
-        self,
-        *,
-        team_id: int,
-        parent_id: int | None = None,
-        leader_id: int | None = None,
-        member_id: int | None = None,
-        archived: bool | None = None,
-    ) -> Sequence[Project]:
-        return await self._repo.list_projects(
-            team_id=team_id,
-            parent_id=parent_id,
-            leader_id=leader_id,
-            member_id=member_id,
-            archived=archived,
+        root = await self._topics.add(
+            project_id=project.id,
+            title=f"{name} · 项目总览",
+            kind=TopicKind.root,
+            created_by=owner_handle,
         )
+        await self._repo.set_root_topic(project, root.id)
+        return project
 
-    # ------------------------------------------------------------------
-    # Project membership
-    # ------------------------------------------------------------------
+    async def get_or_404(self, project_id: uuid.UUID) -> Project:
+        project = await self._repo.get(project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        return project
 
-    def _require_membership_repo(self) -> ProjectMembershipRepository:
-        if self._membership_repo is None:
-            raise BadRequestError("Project membership repository unavailable")
-        return self._membership_repo
+    async def list_all(self) -> tuple[list[Project], int]:
+        return await self._repo.list_all(), await self._repo.count()
 
-    async def list_members(
-        self,
-        project_id: int,
-        *,
-        limit: int = 20,
-        offset: int = 0,
-    ) -> tuple[list[ProjectMembership], int]:
-        repo = self._require_membership_repo()
-        return await repo.list_members(project_id, limit=limit, offset=offset)
+    async def link_task(
+        self, *, project_id: uuid.UUID, task_id: uuid.UUID
+    ) -> ProjectTaskLink:
+        """Link a project to a task = accept the Template's protocol (§4.2)."""
+        project = await self.get_or_404(project_id)
+        task = await self._tasks.get(task_id)
+        if task is None:
+            raise NotFoundError("Task not found")
+        if await self._repo.get_link(project_id=project_id, task_id=task_id):
+            raise ValidationError("Project already linked to this task")
+        tmpl = await self._templates.get(task.template_id)
+        if tmpl is not None:
+            # Inherit the Template's default expert role if the project has none
+            # yet (§4.2: accepting the protocol也继承默认配置).
+            if not project.expert_role and tmpl.default_role:
+                project.expert_role = tmpl.default_role
+            # 资源包 made real (spec §9.1 机构提供算力): a compute_credits entry
+            # in the template's resource_pack issues a ComputeGrant. From the
+            # first grant on, the project is metered; unlinked projects stay
+            # unlimited (spec §4 自治).
+            credits = (tmpl.resource_pack or {}).get("compute_credits")
+            if (
+                isinstance(credits, int | float)
+                and not isinstance(credits, bool)
+                and credits > 0
+            ):
+                await self._grants.grant(
+                    project_id=project_id,
+                    source_task_id=task_id,
+                    credits_total=float(credits),
+                )
+        return await self._repo.link_task(project_id=project_id, task_id=task_id)
 
-    async def add_member(
-        self,
-        *,
-        project_id: int,
-        user_id: int,
-        role: str,
-        notes: str = "",
-    ) -> ProjectMembership:
-        repo = self._require_membership_repo()
-        existing = await repo.get_relation(project_id, user_id)
-        if existing is not None:
-            raise BadRequestError("User is already a member of this project")
-        role_enum = self._parse_role(role)
-        return await repo.add_member(
-            project_id=project_id,
-            user_id=user_id,
-            role=role_enum,
-            notes=notes,
-        )
-
-    async def remove_member(
-        self,
-        *,
-        project_id: int,
-        user_id: int,
+    async def unlink_task(
+        self, *, project_id: uuid.UUID, task_id: uuid.UUID
     ) -> None:
-        repo = self._require_membership_repo()
-        existing = await repo.get_relation(project_id, user_id)
-        if existing is None:
-            raise NotFoundError("Project membership not found")
-        await repo.remove_member(existing)
+        """退出/断开 Task 协议 (§4): remove the project↔task link."""
+        await self.get_or_404(project_id)
+        if not await self._repo.unlink_task(project_id=project_id, task_id=task_id):
+            raise NotFoundError("Project is not linked to this task")
 
-    @staticmethod
-    def _parse_role(role: str) -> ProjectMemberRole:
-        mapping = {
-            "MEMBER": ProjectMemberRole.MEMBER,
-            "ADMIN": ProjectMemberRole.ADMIN,
-            "OWNER": ProjectMemberRole.OWNER,
-        }
-        result = mapping.get(role.upper())
-        if result is None:
-            raise BadRequestError(f"Invalid role: {role}. Must be MEMBER, ADMIN, or OWNER")
-        return result
+    async def list_links(
+        self, project_id: uuid.UUID
+    ) -> tuple[list[ProjectTaskLink], int]:
+        await self.get_or_404(project_id)
+        links = await self._repo.list_links(project_id)
+        return links, len(links)

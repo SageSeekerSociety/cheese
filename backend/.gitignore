@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+
+# Environment / secrets
+.env
+
+# Agent workspaces (git-backed project repos)
+.workspaces/
+
+# Test / tool caches
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.cheesed-workspaces/
+
+# OpenViking embedded memory store (local data + generated ov.conf with keys)
+.viking/
+
+# self-hosted connector binaries (built artifacts, not source; see
+# scripts/build-connector.sh). The cli source lives in the main repo.
+connector-dist/

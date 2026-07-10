@@ -1,192 +1,169 @@
-from collections.abc import Sequence
-from datetime import UTC, datetime
+"""Notification data access."""
 
-from sqlalchemy import Select, and_, func, select, update
+import uuid
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.notification.models import Notification, NotificationType
+from app.domain.notification.models import Notification, NotifKind, NotifLevel
+
+# 分级限流 (spec §8.5): per topic, at most 2 light/day and 1 strong/week.
+_QUOTA = {
+    NotifLevel.light: (timedelta(days=1), 2),
+    NotifLevel.strong: (timedelta(days=7), 1),
+}
 
 
 class NotificationRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def get_by_id_for_user(self, user_id: int, notification_id: int) -> Notification | None:
-        stmt: Select[tuple[Notification]] = select(Notification).where(
-            and_(
-                Notification.id == notification_id,
-                Notification.receiver_id == user_id,
-                Notification.deleted_at.is_(None),
-            )
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def list_for_user(
-        self,
-        user_id: int,
-        *,
-        limit: int,
-        cursor_created_at: datetime | None = None,
-        cursor_id: int | None = None,
-        type_: NotificationType | None = None,
-        read: bool | None = None,
-    ) -> Sequence[Notification]:
-        stmt: Select[tuple[Notification]] = select(Notification).where(
-            Notification.receiver_id == user_id,
-            Notification.deleted_at.is_(None),
-            Notification.finalized.is_(True),
-        )
-
-        if type_ is not None:
-            stmt = stmt.where(Notification.type == type_)
-        if read is not None:
-            stmt = stmt.where(Notification.read == read)
-
-        # Cursor-based pagination: order by created_at DESC, id DESC.
-        if cursor_created_at is not None and cursor_id is not None:
-            stmt = stmt.where(
-                (Notification.created_at < cursor_created_at)
-                | ((Notification.created_at == cursor_created_at) & (Notification.id < cursor_id))
-            )
-
-        stmt = stmt.order_by(
-            Notification.created_at.desc(),
-            Notification.id.desc(),
-        ).limit(limit)
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def mark_all_as_read_for_user(self, user_id: int) -> int:
-        stmt = (
-            update(Notification)
-            .where(
-                and_(
-                    Notification.receiver_id == user_id,
-                    Notification.read.is_(False),
-                    Notification.deleted_at.is_(None),
-                )
-            )
-            .values(read=True)
-        )
-        result = await self._session.execute(stmt)
-        return int(result.rowcount or 0)
-
-    async def count_unread_for_user(self, user_id: int) -> int:
-        """Count unread notifications for a given user."""
-        stmt = select(func.count(Notification.id)).where(
-            Notification.receiver_id == user_id,
-            Notification.read.is_(False),
-            Notification.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return int(result.scalar_one() or 0)
-
-    async def set_read_status_for_user(self, user_id: int, notification_id: int, read: bool) -> int:
-        stmt = (
-            update(Notification)
-            .where(
-                and_(
-                    Notification.receiver_id == user_id,
-                    Notification.id == notification_id,
-                    Notification.deleted_at.is_(None),
-                )
-            )
-            .values(read=read)
-        )
-        result = await self._session.execute(stmt)
-        return int(result.rowcount or 0)
-
-    async def find_all_by_ids_for_user(
-        self, user_id: int, ids: Sequence[int]
-    ) -> list[Notification]:
-        if not ids:
-            return []
-        stmt: Select[tuple[Notification]] = select(Notification).where(
-            Notification.receiver_id == user_id,
-            Notification.id.in_(list(ids)),
-            Notification.deleted_at.is_(None),
-        )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def count_for_user(
-        self,
-        user_id: int,
-        *,
-        type_: NotificationType | None = None,
-        read: bool | None = None,
-    ) -> int:
-        """Count notifications for a given user with optional filters.
-
-        Mirrors the filters used in ``list_for_user`` so that pagination
-        metadata (total/hasMore/nextStart) can be computed consistently.
-        """
-        stmt = select(func.count(Notification.id)).where(
-            Notification.receiver_id == user_id,
-            Notification.deleted_at.is_(None),
-            Notification.finalized.is_(True),
-        )
-
-        if type_ is not None:
-            stmt = stmt.where(Notification.type == type_)
-        if read is not None:
-            stmt = stmt.where(Notification.read == read)
-
-        result = await self._session.execute(stmt)
-        # ``scalar_one`` is safe here because COUNT always returns a row.
-        return int(result.scalar_one() or 0)
-
-    async def save_all(self, notifications: Sequence[Notification]) -> None:
-        for n in notifications:
-            self._session.add(n)
-        await self._session.flush()
-
-    async def soft_delete_for_user(self, user_id: int, notification_id: int) -> bool:
-        notification = await self.get_by_id_for_user(
-            user_id=user_id, notification_id=notification_id
-        )
-        if notification is None:
+    async def over_quota(
+        self, topic_id: uuid.UUID | None, level: NotifLevel
+    ) -> bool:
+        """True when this topic already hit its quota for this level in the
+        window (silent is never throttled; non-topic notifications either)."""
+        if topic_id is None or level not in _QUOTA:
             return False
-        notification.deleted_at = datetime.now(UTC)
-        await self._session.flush()
-        return True
+        window, cap = _QUOTA[level]
+        count = await self._session.scalar(
+            select(func.count())
+            .select_from(Notification)
+            .where(
+                Notification.topic_id == topic_id,
+                Notification.level == level,
+                Notification.created_at >= datetime.now(UTC) - window,
+            )
+        )
+        return (count or 0) >= cap
 
-    async def find_active_aggregation(
+    async def add(
         self,
         *,
-        recipient_id: int,
-        aggregation_key: str,
-        now: datetime,
-    ) -> Notification | None:
-        stmt: Select[tuple[Notification]] = (
-            select(Notification)
-            .where(
-                Notification.receiver_id == recipient_id,
-                Notification.aggregation_key == aggregation_key,
-                Notification.is_aggregatable.is_(True),
-                Notification.finalized.is_(False),
-                Notification.aggregate_until.is_not(None),
-                Notification.aggregate_until > now,
-                Notification.deleted_at.is_(None),
-            )
-            .order_by(Notification.id.desc())
-            .limit(1)
+        project_id: uuid.UUID,
+        level: NotifLevel,
+        kind: NotifKind,
+        title: str,
+        body: str = "",
+        target_handle: str | None = None,
+        topic_id: uuid.UUID | None = None,
+        payload: dict | None = None,
+    ) -> Notification:
+        notification = Notification(
+            project_id=project_id,
+            level=level,
+            kind=kind,
+            title=title,
+            body=body,
+            target_handle=target_handle,
+            topic_id=topic_id,
+            payload=payload if payload is not None else {},
         )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        self._session.add(notification)
+        await self._session.flush()
+        await self._session.refresh(notification)
+        return notification
 
-    async def find_expired_aggregations(self, now: datetime) -> list[Notification]:
-        stmt: Select[tuple[Notification]] = (
-            select(Notification)
-            .where(
-                Notification.is_aggregatable.is_(True),
-                Notification.finalized.is_(False),
-                Notification.aggregate_until.is_not(None),
-                Notification.aggregate_until <= now,
-                Notification.deleted_at.is_(None),
+    async def get(self, notification_id: uuid.UUID) -> Notification | None:
+        return await self._session.get(Notification, notification_id)
+
+    async def list_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        target_handle: str | None = None,
+        unread_only: bool = False,
+    ) -> list[Notification]:
+        stmt = select(Notification).where(Notification.project_id == project_id)
+        if target_handle is not None:
+            # A user sees notifications addressed to them AND broadcasts
+            # (target_handle IS NULL), which are meant for everyone.
+            stmt = stmt.where(
+                (Notification.target_handle == target_handle)
+                | (Notification.target_handle.is_(None))
             )
-            .order_by(Notification.aggregate_until.asc())
+        if unread_only:
+            stmt = stmt.where(Notification.read_at.is_(None))
+        stmt = stmt.order_by(Notification.created_at.desc())
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_inbox(
+        self,
+        project_id: uuid.UUID,
+        *,
+        target_handle: str | None = None,
+    ) -> list[Notification]:
+        """等你处理的事 (spec G2): decision requests until 拍板 (resolved), and
+        accept requests until read, newest-first."""
+        stmt = (
+            select(Notification)
+            .where(Notification.project_id == project_id)
+            .where(
+                or_(
+                    and_(
+                        Notification.kind == NotifKind.decision_request,
+                        Notification.resolved_at.is_(None),
+                    ),
+                    and_(
+                        Notification.kind == NotifKind.accept_request,
+                        Notification.read_at.is_(None),
+                    ),
+                )
+            )
         )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
+        if target_handle is not None:
+            stmt = stmt.where(
+                (Notification.target_handle == target_handle)
+                | (Notification.target_handle.is_(None))
+            )
+        stmt = stmt.order_by(Notification.created_at.desc())
+        return list((await self._session.scalars(stmt)).all())
+
+    async def save(self, notification: Notification) -> Notification:
+        await self._session.flush()
+        await self._session.refresh(notification)
+        return notification
+
+    def _visible_to(self, stmt, target_handle: str | None):
+        if target_handle is not None:
+            stmt = stmt.where(
+                (Notification.target_handle == target_handle)
+                | (Notification.target_handle.is_(None))
+            )
+        return stmt
+
+    async def unread_count(
+        self, project_id: uuid.UUID, *, target_handle: str | None = None
+    ) -> int:
+        """Badge count: unread, non-silent notifications visible to this user.
+        Silent ones are 默默记下来 (spec §8.6) — they never light the badge."""
+        stmt = (
+            select(func.count())
+            .select_from(Notification)
+            .where(
+                Notification.project_id == project_id,
+                Notification.read_at.is_(None),
+                Notification.level != NotifLevel.silent,
+            )
+        )
+        stmt = self._visible_to(stmt, target_handle)
+        return int((await self._session.scalar(stmt)) or 0)
+
+    async def mark_all_read(
+        self, project_id: uuid.UUID, *, target_handle: str | None = None
+    ) -> int:
+        """全部标记已读 — returns how many were marked. Unresolved decision
+        requests stay in the inbox (resolution ≠ read), but their badge count
+        clears like Feishu."""
+        stmt = select(Notification).where(
+            Notification.project_id == project_id,
+            Notification.read_at.is_(None),
+        )
+        stmt = self._visible_to(stmt, target_handle)
+        items = list((await self._session.scalars(stmt)).all())
+        now = datetime.now(UTC)
+        for n in items:
+            n.read_at = now
+        await self._session.flush()
+        return len(items)
