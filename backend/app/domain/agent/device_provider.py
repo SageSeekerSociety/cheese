@@ -19,18 +19,16 @@ Per turn (``run_turn``):
 extension can ``exec`` a git snapshot on the device over the link).
 """
 
-import asyncio
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import build_screen_launch
-from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
-from app.domain.agent.service import AgentEvent, AgentResult
+from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.user.models import User
@@ -38,17 +36,17 @@ from app.domain.user.models import User
 # Resolve an online device serving a project → (device_id, agent_user_id, agent_handle).
 DeviceResolver = Callable[[uuid.UUID], Awaitable["tuple[str, uuid.UUID, str] | None"]]
 
-# The device session's hook token outlives one turn (the screen is reused), so it is
-# scoped to the topic with a session-length TTL — a stale one still can't reach another
-# topic. Mirrors TmuxHooksProvider._SESSION_TOKEN_TTL_S.
-_SESSION_TOKEN_TTL_S = 30 * 24 * 3600
 
-
-class DeviceProvider:
-    """ComputeProvider that runs a turn on an enrolled device's screen and streams
-    AgentEvents from Claude Code hooks."""
+class DeviceProvider(HooksTurnProvider[HubScreen]):
+    """The REMOTE hooks backend: runs interactive `claude` on a user's enrolled
+    machine over the frozen link.Msg channel (DeviceHub), streaming AgentEvents
+    from Claude Code hooks. Transport = link.Msg + a device screen; the shared
+    turn flow lives in the base (HooksTurnProvider) — this class implements only
+    the transport seam. The screen ctx is a HubScreen."""
 
     name = "device"
+    _needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
+    _timeout_message = "device 轮次超时"
 
     def __init__(
         self,
@@ -60,14 +58,13 @@ class DeviceProvider:
         public_base: str | None = None,
         turn_timeout_s: float = 900.0,
     ) -> None:
+        super().__init__(router=router, turn_timeout_s=turn_timeout_s)
         self._hub = hub or device_hub
         self._session_factory = session_factory
         # A resolver may be injected (tests / future routing); otherwise the DB-backed
         # resolver is used lazily (keeps this module importable without a DB).
         self._device_resolver = device_resolver
-        self._router = router or hook_router
         self._public_base = (public_base or settings.connector_public_base).rstrip("/")
-        self._turn_timeout_s = turn_timeout_s
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
@@ -155,103 +152,60 @@ class DeviceProvider:
 
     # --- turn --------------------------------------------------------------
 
-    async def run_turn(
+    async def _precheck(self, project_id: uuid.UUID) -> tuple[str, uuid.UUID, str]:
+        """Resolve an online bound device + its agent identity BEFORE the base
+        claims the topic's hook queue (pre-refactor ordering, review finding).
+        The resolved tuple is handed back to ``_ensure_ready`` via ``precheck``."""
+        resolved = await self._resolve_device_agent(project_id)
+        if resolved is None:
+            raise ScreenSetupError(
+                "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
+            )
+        return resolved
+
+    async def _ensure_ready(
         self,
         *,
         project_id: uuid.UUID,
-        topic_id: uuid.UUID | None,
-        prompt: str,
-        system_prompt: str,
+        topic_id: uuid.UUID,
+        token: str,
+        model: str | None,
+        env: dict[str, str] | None,
+        memory_scope: str | None,
+        owner: str | None,
+        turn_id: uuid.UUID | None,
         resume_session_id: str | None,
-        model: str | None = None,
-        env: dict[str, str] | None = None,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-        turn_id: uuid.UUID | None = None,
-        sandbox_image: str | None = None,
-        images: list[dict] | None = None,
-    ) -> AsyncIterator[AgentEvent]:
-        if topic_id is None:
-            yield AgentResult(
-                text="device 后端需要话题上下文（每个屏幕绑定一个话题）",
-                session_id=resume_session_id,
-                is_error=True,
-            )
-            return
-
-        resolved = await self._resolve_device_agent(project_id)
-        if resolved is None:
-            yield AgentResult(
-                text="没有在线的绑定设备可运行本轮（self-hosted 设备未连接）",
-                session_id=resume_session_id,
-                is_error=True,
-            )
-            return
-        device_id, agent_user_id, agent_handle = resolved
-
-        topic_key = str(topic_id)
-        token = mint_scoped_token(
-            project_id=str(project_id), topic_id=topic_key, ttl_s=_SESSION_TOKEN_TTL_S
-        )
-
-        # Register the queue BEFORE the prompt so no hook is missed (same discipline
-        # as the tmux backend).
-        queue = self._router.register(topic_key)
+        precheck: object,
+    ) -> HubScreen:
+        """Reuse/open the topic's screen running `claude` with our hooks on the
+        device resolved by ``_precheck``; return the screen (ctx). Raises
+        ScreenSetupError when the screen fails."""
+        assert isinstance(precheck, tuple)  # from our _precheck
+        device_id, agent_user_id, agent_handle = precheck
         try:
-            try:
-                screen = await self._ensure_screen(
-                    device_id=device_id,
-                    agent_user_id=agent_user_id,
-                    agent_handle=agent_handle,
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    token=token,
-                    model=model,
-                    env=env,
-                )
-                # The cheeselet gates on the `❯` input box before typing, so a fresh
-                # screen's first prompt is not dropped. Await its ack (or error).
-                call_id = await self._hub.call_screen(
-                    device_id, screen.sid, "prompt", [prompt]
-                )
-                await self._hub.await_call(device_id, call_id, timeout=60)
-            except Exception as exc:  # noqa: BLE001 — any setup/prompt failure ends the turn
-                yield AgentResult(
-                    text=f"device 后端启动失败：{exc}",
-                    session_id=resume_session_id,
-                    is_error=True,
-                )
-                return
+            return await self._ensure_screen(
+                device_id=device_id,
+                agent_user_id=agent_user_id,
+                agent_handle=agent_handle,
+                project_id=project_id,
+                topic_id=topic_id,
+                token=token,
+                model=model,
+                env=env,
+            )
+        except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
+            raise ScreenSetupError(f"device 后端启动失败：{exc}") from exc
 
-            deadline = asyncio.get_event_loop().time() + self._turn_timeout_s
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    yield AgentResult(
-                        text="device 轮次超时",
-                        session_id=resume_session_id,
-                        is_error=True,
-                    )
-                    return
-                try:
-                    hook = await asyncio.wait_for(queue.get(), timeout=remaining)
-                except TimeoutError:
-                    yield AgentResult(
-                        text="device 轮次超时",
-                        session_id=resume_session_id,
-                        is_error=True,
-                    )
-                    return
-                event = translate_hook(hook)
-                if event is None:
-                    continue
-                yield event
-                if isinstance(event, AgentResult):
-                    return  # Stop hook → turn done
-        finally:
-            self._router.unregister(topic_key, queue)
+    async def _send_prompt(self, screen: HubScreen, prompt: str) -> None:
+        """Deliver the prompt via the minimal cheeselet's `prompt` (it gates on the
+        `❯` input box first, so a fresh screen's first prompt is not dropped)."""
+        try:
+            call_id = await self._hub.call_screen(
+                screen.device_id, screen.sid, "prompt", [prompt]
+            )
+            await self._hub.await_call(screen.device_id, call_id, timeout=60)
+        except Exception as exc:  # noqa: BLE001 — a failed prompt ends the turn
+            raise ScreenSetupError(f"device 后端启动失败：{exc}") from exc
 
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        """No-op: the device owns its working tree. A future extension can exec a git
-        snapshot on the device over the link (best-effort, never fail a turn)."""
-        return
+    # checkpoint: inherited no-op — the device owns its working tree. A future
+    # extension can exec a git snapshot on the device over the link.

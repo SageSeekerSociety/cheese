@@ -7,14 +7,26 @@
 >
 > **执行模式**：一阶段一阶段自主推进（P0→P4→收敛），不问、不等协调——我们有全部权限。
 > 每阶段用 subagent 并行攻坚 + 联检 + 提交。所有实现**用我们的代码**。
+>
+> **修订 2026-07-10（andyl，与 lg 对齐后）**：撤销原「平台容器 / 用户设备 二选一并存」的
+> 两路框架。本地容器与远程用户机器**只走一套 cc-脚本-服务端底座**（复用他们 frozen 的 cli +
+> 线协议）——唯一真实差别是**入册**（本地我们自动注入凭证；远程走设备流）与**网络拓扑**
+> （远程穿 NAT，本地 dial-out 退化为 localhost no-op），都是薄差异，不值得两套机制。hooks
+> 不再烤进镜像做独立第二路，而是作为「报状态」通道，由**服务端下发的 cheeselet** 统一接线
+> （改 cli 的 js 暴露面——**瘦客户机是宪法**：cli/线协议 frozen、业务逻辑在后端、客户端永不因
+> 业务改动重装。**这块我们自己做，不外包。**）唯一真正正交的轴**不是**「本地 vs 远程」，而是「**SDK 原生流 vs
+> 驱动真 cc TUI**」——两种「怎么跟 cc 说话」的产品形态，与容器在哪无关。§0/§5 已按此重写，
+> 实现层收敛见 §8.6。
 
-## 0. 一句话公式
+## 0. 一句话公式（2026-07-10 修订：统一底座）
 
-> 我们的主干（前端 + 产品后端 + **tmux/hooks 感知**）
-> ＋ 嫁接他们的 [agent-as-user 身份] ＋ [权限纪律] ＋ [self-hosted 设备流骨架 cli]
+> 一套 cc-脚本-服务端底座（复用他们 frozen 的 cli + 线协议）
+> ＋ 服务端下发的 cheeselet 驱动真 cc，hooks 作「报状态」通道换掉读屏
+> ＋ 本地容器与用户设备走**同一底座**，只差入册（本地自动 / 远程设备流）
+> ＋ 我们的产品面（前端 + 群聊 + agent-as-user + 权限 + 记忆 + 闸门）
 > ＋ 话题=群聊（我们的选择，非他们的 thread/workitem 拆分）
 > ＋ merge 进主 repo（我们代码为准）
-> ＝ 用 hooks 换掉他们的读屏，取其骨架去其脆弱点。
+> ＝ 一套底座、到处一致；取他们骨架、去其读屏脆弱点。
 
 ## 1. 感知层：hooks，不是读屏（决定性，保留我们的）
 
@@ -71,9 +83,11 @@
 - frozen `cli/` Go 瘦客户机 + `link.Msg` 线协议：`curl … | sh` 装、device-flow 登录、
   常驻连接器；所有逻辑在后端，客户端永不因业务改动重装；
 - 一个 agent = 一个屏幕（screen），screen token 归属调用。
-- **我们的做法**：借鉴设备流/连接器把 agent 落到用户机器，但**感知走我们的 hooks**（不是他们
-  的读屏 cheeselet）。算力模型二选一并存：平台容器（现状，`AGENT_BACKEND` 已支持切换）＋
-  用户设备（新增 self-hosted provider）。
+- **我们的做法（统一底座）**：本地容器与用户设备**同走一套 cc-脚本-服务端底座**（他们的 cli +
+  线协议），感知走 hooks（服务端下发的 cheeselet 接线，非读屏）。本地=我们自动入册、NAT 是
+  no-op；远程=设备流。**不是「平台容器 vs 用户设备」两套 provider，是同一底座上的入册差异。**
+- 正交的一轴（非本地/远程）：**SDK 原生流** vs **驱动真 cc TUI**——干净结构化 vs 真终端可围观
+  （现场镜像 + hooks）。这是「怎么跟 cc 说话」的产品形态选择，与容器在哪无关。
 - 这是大件，单独分阶段，不是抄一段代码。
 
 ### 5.1 他们的 `cli/` 瘦客户机（读过代码，确实好——self-hosted 的现成骨架）
@@ -91,8 +105,10 @@
    直接借鉴。**
 3. **frozen 瘦客户机 + `link.Msg` 版本化协议**：单一 JSON union 承载会话/变量/RPC/屏幕/exec，
    握手协商版本，客户端纯传输、永不因业务改动重装。
-- **P3 定位**：到 self-hosted 阶段，他们的 `cli/` 是**最该整体拿来的骨架**（尤其拨出连接 +
-  frozen 协议），把其中的读屏 cheeselet 换成我们的 hooks 感知即可。
+- **定位（统一底座，2026-07-10 修订）**：他们的 `cli/` 不只是「self-hosted 的骨架」，而是
+  **本地/远程通用的执行底座**——本地容器也跑在同一 cc-脚本-服务端模型上（dial-out 退化为
+  localhost no-op）。把读屏 cheeselet 换成**服务端下发的 hooks-cheeselet** 即可；cli/线协议
+  frozen，改 js 暴露面（我们自己做）。
 
 ## 5.2 cheese CLI 设计（用我们的代码，curated + raw 逃生口）
 
@@ -130,6 +146,62 @@ block_ref）、改文档=下指令、人验收才算数——同源 spec。
 - **P3**：self-hosted 设备流 + 瘦客户机（战略大件，单独立项）。
 - **P4**：clone agent（transcript-fork）。
 
+> 修订 2026-07-10：P0–P4 记录保留（均已建/已上线）。方向修正见顶部修订块与 §0/§5——
+> 收敛终态是**统一底座**（本地/远程一套 cc-脚本-服务端）；原实现里烤进镜像的独立 hook 路
+> 作为迁移项收敛进统一底座，见 §8.6。
+
+## 8.6 实现层收敛（统一底座迁移，2026-07-10）
+
+原实现有两条并行感知/执行路（平台=SDK/烤入镜像的 `cheese-hook`；自托管=cli+我们写的
+`claude_min.js`）。现按顺序收敛成**一套**，纪律是「**先让统一底座跑通、验证后再拆旧路**」——
+**全部我们做（含 cli 侧改动，不外包）**：
+
+1. **底座统一**：cli/线协议保持 frozen 语义（不改线协议），改 driver 的 **js 暴露面**，让服务端
+   下发的 cheeselet 订阅 hooks 事件流（替代读屏）。本地容器与用户设备共用这一底座。
+2. **入册统一**：平台容器经同一 connector 底座**自动入册**（注入凭证、免交互设备流），用户设备
+   走设备流；本地/远程只差入册，不两套 provider。
+3. **拆旧路**：统一底座（1+2）跑通并验证后，拆掉烤入镜像的 `cheese-hook` 第二路 + 冗余 provider，
+   一次切换。
+4. **SDK 后端**：作为正交产品形态保留（见 §5，「怎么跟 cc 说话」的另一选项），不在本次收敛范围。
+
+**触及面（我们自己改）**：`claude_min.js`（最小 driver：启动 cc + 过 `❯` ready-gate）→ 改造成
+cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToolUse/Stop → 结构化事件 →
+后端）＋ 现场 screen relay 随之统一。客户端 frozen、hook 逻辑随服务端更新而**不重装**。
+
+**进度**：
+- ✅ **增量 1（完成、行为不变）**：抽出共享底座 `agent/hooks_substrate.py`—— turn drain 循环
+  `run_hooks_turn`、`hooks_settings()`、`cheese-hook` forwarder、session token TTL。
+- ✅ **增量 2（完成、行为不变、479 测试绿）**：把两个 provider 的**整段 turn 流程**收敛进基类
+  `HooksTurnProvider[ScreenT]`（模板方法）——check topic → mint token → register 队列 →
+  `_ensure_ready` + `_send_prompt`（子类 transport）→ drain → unregister，**一套流程**。
+  `TmuxHooksProvider`（本地 docker/tmux，`ScreenT=str`）与 `DeviceProvider`（远程 link.Msg，
+  `ScreenT=HubScreen`）只实现 `_ensure_ready`/`_send_prompt` 两个 transport 钩子 +
+  `name`/超时文案。`ScreenSetupError` 是 setup 失败→错误结果的**唯一**出口。
+- ✅ **单一来源 forwarder**：`cheese-hook` 由 `scripts/gen-sandbox-assets.py` 从
+  `CHEESE_HOOK_SCRIPT` 生成为 `sandbox/cheese-hook`，tmux 镜像 `COPY` 它（不再 inline printf）；
+  `test_hooks_substrate.py` 断言二者一致 → **漂移即测试失败**。device launcher 运行时写的是同一
+  常量。烤入镜像与远程运行时两条路的 forwarder 由此**同源**。
+
+**为什么用模板方法基类而非 `HooksScreenProvider(hub)` 组合**：组合要重写两个 provider 的构造 +
+测试的 monkeypatch 点；模板方法零改测试、行为可逐一比对，对执行核心更稳。二者架构等价（策略 vs
+模板），选了低风险的那个。
+
+- ✅ **三方并行 review + 修复（收官）**：安全/正确性/行为保持三个独立 reviewer 过了整个 diff。
+  结论：无安全回归、无新 bug；行为保持发现 2 个窄差异，已修——(a) tmux `_wait_ready`/
+  `_send_prompt` 的 docker-exec OS 级失败原会以裸异常逃出 generator，现包进 `ScreenSetupError`
+  （旧行为=干净错误结果）；(b) 新增 `_precheck` seam：早失败（无 Docker / 无在线设备）在
+  mint token + 占用 hook 队列**之前**发生（恢复重构前顺序，杜绝"跑不了的 turn 驱逐活 turn 队列/
+  扩大陈旧 hook 窗口"），device 的设备解析也在此完成并传递给 `_ensure_ready`（不解析两次）。
+  +1 单测锁定"precheck 失败绝不碰 router"。review 另记 3 个**重构前就存在**的原有隐患
+  （tmux 送 prompt 不查 rc→静默挂到超时；setup 失败被当 transient 重试 3 次；`images` 参数
+  两个 hooks 后端都静默忽略）——非回归，留待后续。
+
+**为什么不做"平台容器经 connector dial-out 自动入册 / 拆 tmux provider"（原设想的更激进一步）**：
+那会把 Go connector 常驻 + 设备入册塞进我们**自己**的容器,给本地路径**增加**复杂度——与"复杂性
+太高"的初衷相反。本地(docker/tmux)与远程(link.Msg)的 transport 差异是**不可约的**(怎么够到一台
+本地容器 vs 一台 NAT 后的远程机器本就不同)。正解是**一套流程 + 两个瘦 transport 子类**,而非强行
+让本地也走拨出。故 tmux 不"拆",它就是本地 transport 子类;dial-out 是远程 transport 的事。
+
 ## 8.5 仓库收敛（接入主 repo cheese-backend-py）
 
 现状：主 repo `cheese-backend-py` 上有队友的 `design/cheese-agent-layer`（含 cli + 设备流 +
@@ -150,6 +222,13 @@ connector 服务器，self-hosted 服务器端已建完）。我们的 `cheesex`
 
 ## 9. 与队友对齐
 
-这份文档也是和 `design/cheese-agent-layer` 作者对齐"融合而非替代"的靶子。核心信息：
-我们保留他们的骨架（agent-as-user / 权限 / 设备流 / 多 agent 编排），但**感知层用我们的
-hooks 替换读屏**——那是他们代码里最脆弱、补丁最多的一块，换掉是净收益。
+这份文档也是和 `design/cheese-agent-layer` 作者（lg）对齐"融合而非替代"的靶子。
+核心信息（2026-07-10 对齐后）：
+- **底座一套**：cc-脚本-服务端 + frozen cli/线协议语义不变；本地/远程只差入册，不两套。
+  **我们直接实现（含 cli 侧），不分包。**
+- **读屏去掉、双方已一致**；hooks 作「报状态」通道，走**服务端下发的 cheeselet**（改 cli 的 js
+  暴露面，我们做），不烤进镜像。
+- **我们守产品面**：前端 / 群聊（话题=群聊，非 thread/workitem）/ agent-as-user / 权限 / 记忆 / 闸门。
+- 那三条 coordinator 标的「分歧」：#1 感知其实无冲突（都去读屏，只谈投递方式，已定服务端下发）；
+  #2 话题=群聊 是我们已定的产品决策，保留；#3 cli 定位——按统一底座，cli 确实是本地/远程通用
+  地基（比"三个前门之一"更接近 lg 原意），已在 §5 修正。

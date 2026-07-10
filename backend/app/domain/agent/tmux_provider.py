@@ -24,24 +24,22 @@ import asyncio
 import json
 import subprocess
 import uuid
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import clone
-from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
-from app.domain.agent.service import AgentEvent, AgentResult
+from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.hooks_substrate import (
+    HooksTurnProvider,
+    ScreenSetupError,
+    hooks_settings,
+)
 from app.domain.workspace import service as ws
 
 _CHEESE_AUTHOR = "cheese"
 _SESSION = "cheese"  # tmux session name inside the container
 _TTYD_PORT = 7681  # in-container ttyd port (published for 施工现场; not wired yet)
 _APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
-# The interactive session's hook token outlives a single turn (the tmux session
-# is reused across turns), so it needs a lifetime measured in the session's life,
-# not a turn's. Topic-scoped, so a stale one still can't reach another topic.
-_SESSION_TOKEN_TTL_S = 30 * 24 * 3600
 # Wait this long for the pane to reach the `❯` input box after (re)starting.
 _READY_TIMEOUT_S = 45.0
 _READY_POLL_S = 0.4
@@ -100,33 +98,6 @@ def _hook_base() -> str:
     return base
 
 
-def _hooks_settings() -> dict:
-    """~/.claude/settings.json for the interactive session: pre-accept the bypass
-    disclaimer AND forward every structured event to our hook endpoint.
-
-    We use COMMAND hooks (not the built-in `"type":"http"` type): Claude Code
-    2.1.x BLOCKS HTTP hooks whose host resolves to a non-loopback / private IP
-    ("HTTP hook blocked: host.docker.internal resolves to 192.168.x.x …"), and
-    only 127.0.0.1/::1 are allowed — which the container can't use to reach the
-    host. The baked `cheese-hook` script reads the hook JSON on stdin and POSTs
-    it to CHEESE_HOOK_URL with the CHEESE_TOKEN header (both from container env),
-    sidestepping that restriction."""
-    cmd = {"type": "command", "command": "cheese-hook"}
-    tool_matched = [{"matcher": "*", "hooks": [cmd]}]
-    plain = [{"hooks": [cmd]}]
-    return {
-        # Gate 2 pre-accept (modern key; see docs/tmux-backend-spike.md research).
-        "skipDangerousModePermissionPrompt": True,
-        "hooks": {
-            "SessionStart": plain,
-            "PreToolUse": tool_matched,
-            "PostToolUse": tool_matched,
-            "MessageDisplay": plain,
-            "Stop": plain,
-        },
-    }
-
-
 async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str]:
     """Run a docker command off the event loop. Returns (rc, stdout, stderr)."""
     proc = await asyncio.create_subprocess_exec(
@@ -144,11 +115,16 @@ async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str
     )
 
 
-class TmuxHooksProvider:
-    """ComputeProvider that runs interactive `claude` in a per-topic tmux session
-    and streams AgentEvents from Claude Code HTTP hooks."""
+class TmuxHooksProvider(HooksTurnProvider[str]):
+    """The LOCAL hooks backend: runs interactive `claude` in a per-topic tmux
+    session inside a platform container, streaming AgentEvents from Claude Code
+    hooks. Transport = docker/tmux; the shared turn flow lives in the base
+    (HooksTurnProvider) — this class implements only the transport seam. The
+    screen ctx is the container name (str)."""
 
     name = "tmux-hooks"
+    _needs_topic_message = "tmux 后端需要 Docker 和话题上下文（缺一不可）"
+    _timeout_message = "tmux 轮次超时"
 
     def __init__(
         self,
@@ -157,9 +133,8 @@ class TmuxHooksProvider:
         router: HookRouter | None = None,
         turn_timeout_s: float = 900.0,
     ) -> None:
+        super().__init__(router=router, turn_timeout_s=turn_timeout_s)
         self._image = image
-        self._router = router or hook_router
-        self._turn_timeout_s = turn_timeout_s
 
     def available(self) -> bool:
         return ws.sandbox_available()
@@ -267,12 +242,19 @@ class TmuxHooksProvider:
 
     async def _send_prompt(self, name: str, prompt: str) -> None:
         """Inject the prompt as one atomic paste, then a SEPARATE Enter (spike:
-        bracketed paste + independent Enter, so the prompt isn't split)."""
-        await _docker(
-            "exec", "-i", name, "tmux", "load-buffer", "-", stdin=prompt.encode()
-        )
-        await _docker("exec", name, "tmux", "paste-buffer", "-t", _SESSION, "-d", "-p")
-        await _docker("exec", name, "tmux", "send-keys", "-t", _SESSION, "Enter")
+        bracketed paste + independent Enter, so the prompt isn't split). Wrapped
+        so a docker-exec OS failure surfaces as a clean error result (review
+        finding — the old code had the send inside the same setup wrap)."""
+        try:
+            await _docker(
+                "exec", "-i", name, "tmux", "load-buffer", "-", stdin=prompt.encode()
+            )
+            await _docker(
+                "exec", name, "tmux", "paste-buffer", "-t", _SESSION, "-d", "-p"
+            )
+            await _docker("exec", name, "tmux", "send-keys", "-t", _SESSION, "Enter")
+        except Exception as exc:  # noqa: BLE001 — a failed send ends the turn
+            raise ScreenSetupError(f"tmux 后端启动失败：{exc}") from exc
 
     # --- turn --------------------------------------------------------------
 
@@ -316,109 +298,64 @@ class TmuxHooksProvider:
             merged["CHEESE_TURN"] = str(turn_id)
         return merged
 
-    async def run_turn(
+    async def _precheck(self, project_id: uuid.UUID) -> object:
+        """Fail fast when Docker is absent — BEFORE the base claims the topic's
+        hook queue (pre-refactor ordering, review finding)."""
+        if not self.available():
+            raise ScreenSetupError(self._needs_topic_message)
+        return None
+
+    async def _ensure_ready(
         self,
         *,
         project_id: uuid.UUID,
-        topic_id: uuid.UUID | None,
-        prompt: str,
-        system_prompt: str,
+        topic_id: uuid.UUID,
+        token: str,
+        model: str | None,
+        env: dict[str, str] | None,
+        memory_scope: str | None,
+        owner: str | None,
+        turn_id: uuid.UUID | None,
         resume_session_id: str | None,
-        model: str | None = None,
-        env: dict[str, str] | None = None,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-        turn_id: uuid.UUID | None = None,
-        sandbox_image: str | None = None,
-        images: list[dict] | None = None,
-    ) -> AsyncIterator[AgentEvent]:
-        # No container without Docker / a topic → surface a clean error result.
-        if topic_id is None or not self.available():
-            yield AgentResult(
-                text="tmux 后端需要 Docker 和话题上下文（缺一不可）",
-                session_id=resume_session_id,
-                is_error=True,
-            )
-            return
-
-        topic_key = str(topic_id)
-        token = mint_scoped_token(
-            project_id=str(project_id),
-            topic_id=topic_key,
-            ttl_s=_SESSION_TOKEN_TTL_S,
-        )
+        precheck: object,
+    ) -> str:
+        """Bring up (or reuse) the topic's tmux `claude` and wait for the `❯`
+        input box; return the container name (the screen ctx). Raises
+        ScreenSetupError on setup failure / not-ready."""
         # session_dir() seeds the cheese skill + returns the ~/.claude mount path.
-        session_dir = str(ws.session_dir(project_id, topic_id))
-        worktree = str(ws.topic_worktree(project_id, topic_id))
-        session_env = self._session_env(
-            project_id=project_id,
-            topic_id=topic_id,
-            session_dir=session_dir,
-            worktree=worktree,
-            token=token,
-            env=env,
-            memory_scope=memory_scope,
-            owner=owner,
-            turn_id=turn_id,
-        )
-
-        # Register the queue BEFORE the prompt so no hook is missed.
-        queue = self._router.register(topic_key)
         try:
-            try:
-                name = await self._ensure_container(topic_id, session_env)
-                # Seed hooks + skip-disclaimer settings before the session starts
-                # (only read at session creation), then bring the session up.
-                self._write_session_settings(session_dir)
-                await self._ensure_session(
-                    name,
-                    model,
-                    resume_session_id=resume_session_id,
-                    session_dir=session_dir,
-                )
-                if not await self._wait_ready(name):
-                    yield AgentResult(
-                        text="tmux 会话未就绪（未等到输入框），已放弃本轮",
-                        session_id=resume_session_id,
-                        is_error=True,
-                    )
-                    return
-                await self._send_prompt(name, prompt)
-            except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
-                yield AgentResult(
-                    text=f"tmux 后端启动失败：{exc}",
-                    session_id=resume_session_id,
-                    is_error=True,
-                )
-                return
-
-            deadline = asyncio.get_event_loop().time() + self._turn_timeout_s
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    yield AgentResult(
-                        text="tmux 轮次超时",
-                        session_id=resume_session_id,
-                        is_error=True,
-                    )
-                    return
-                try:
-                    hook = await asyncio.wait_for(queue.get(), timeout=remaining)
-                except TimeoutError:
-                    yield AgentResult(
-                        text="tmux 轮次超时",
-                        session_id=resume_session_id,
-                        is_error=True,
-                    )
-                    return
-                event = translate_hook(hook)
-                if event is None:
-                    continue
-                yield event
-                if isinstance(event, AgentResult):
-                    return  # Stop hook → turn done
-        finally:
-            self._router.unregister(topic_key, queue)
+            session_dir = str(ws.session_dir(project_id, topic_id))
+            worktree = str(ws.topic_worktree(project_id, topic_id))
+            session_env = self._session_env(
+                project_id=project_id,
+                topic_id=topic_id,
+                session_dir=session_dir,
+                worktree=worktree,
+                token=token,
+                env=env,
+                memory_scope=memory_scope,
+                owner=owner,
+                turn_id=turn_id,
+            )
+            name = await self._ensure_container(topic_id, session_env)
+            # Seed hooks + skip-disclaimer settings before the session starts
+            # (only read at session creation), then bring the session up.
+            self._write_session_settings(session_dir)
+            await self._ensure_session(
+                name,
+                model,
+                resume_session_id=resume_session_id,
+                session_dir=session_dir,
+            )
+            # _wait_ready inside the wrap too: its docker exec can itself fail
+            # (docker binary vanishing mid-turn) — that must surface as a clean
+            # error result, not a raw exception (review finding).
+            ready = await self._wait_ready(name)
+        except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
+            raise ScreenSetupError(f"tmux 后端启动失败：{exc}") from exc
+        if not ready:
+            raise ScreenSetupError("tmux 会话未就绪（未等到输入框），已放弃本轮")
+        return name
 
     def _write_session_settings(self, session_dir: str) -> None:
         """Write ~/.claude/settings.json (hooks + skip-disclaimer) into the
@@ -427,7 +364,7 @@ class TmuxHooksProvider:
         target = Path(session_dir) / "settings.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
-            json.dumps(_hooks_settings(), ensure_ascii=False),
+            json.dumps(hooks_settings(), ensure_ascii=False),
             encoding="utf-8",
         )
         target.chmod(0o666)
