@@ -21,6 +21,12 @@ import shlex
 from importlib import resources
 from pathlib import Path
 
+# Perception wiring (settings.json + the cheese-hook forwarder) is the SHARED
+# substrate — identical for the local (tmux) and remote (device) backends so it
+# can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
+# this module's launcher and its callers build on it.
+from app.domain.agent.hooks_substrate import CHEESE_HOOK_SCRIPT, hooks_settings
+
 # Top-level first-launch gates (Claude Code 2.1.x) for $HOME/.claude.json. The
 # PER-PROJECT trust gate (projects[workdir].hasTrustDialogAccepted) is added by the
 # launcher for the resolved work dir — without it a "do you trust this folder?" dialog
@@ -31,26 +37,9 @@ _CLAUDE_JSON_GATES = {
     "bypassPermissionsModeAccepted": True,
 }
 
-
-def hooks_settings() -> dict:
-    """``~/.claude/settings.json`` for the device session: pre-accept the bypass
-    disclaimer AND forward every structured event to our hook endpoint via a COMMAND
-    hook (``cheese-hook``). Command (not HTTP) hooks: Claude Code blocks HTTP hooks to
-    non-loopback targets — the forwarder script sidesteps that, exactly like the tmux
-    backend."""
-    cmd = {"type": "command", "command": "cheese-hook"}
-    tool_matched = [{"matcher": "*", "hooks": [cmd]}]
-    plain = [{"hooks": [cmd]}]
-    return {
-        "skipDangerousModePermissionPrompt": True,
-        "hooks": {
-            "SessionStart": plain,
-            "PreToolUse": tool_matched,
-            "PostToolUse": tool_matched,
-            "MessageDisplay": plain,
-            "Stop": plain,
-        },
-    }
+# Kept as a module-level alias so existing callers/tests referencing this name
+# keep working; the source of truth is hooks_substrate.CHEESE_HOOK_SCRIPT.
+_CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 
 
 def cheeselet_source() -> str:
@@ -60,18 +49,6 @@ def cheeselet_source() -> str:
         .joinpath("claude_min.js")
         .read_text(encoding="utf-8")
     )
-
-
-# The forwarder: reads a Claude Code hook's JSON on stdin and POSTs it to the backend
-# with the screen's token. Exit 0 + empty stdout = "no decision" → the tool proceeds.
-_CHEESE_HOOK_SCRIPT = """#!/bin/sh
-[ -n "$CHEESE_HOOK_URL" ] || exit 0
-curl -s -m 10 -X POST \\
-  -H 'Content-Type: application/json' \\
-  -H "X-Cheese-Token: $CHEESE_TOKEN" \\
-  --data-binary @- "$CHEESE_HOOK_URL" >/dev/null 2>&1 || true
-exit 0
-"""
 
 
 def build_launch_script() -> str:

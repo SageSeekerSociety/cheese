@@ -7,14 +7,26 @@
 >
 > **执行模式**：一阶段一阶段自主推进（P0→P4→收敛），不问、不等协调——我们有全部权限。
 > 每阶段用 subagent 并行攻坚 + 联检 + 提交。所有实现**用我们的代码**。
+>
+> **修订 2026-07-10（andyl，与 lg 对齐后）**：撤销原「平台容器 / 用户设备 二选一并存」的
+> 两路框架。本地容器与远程用户机器**只走一套 cc-脚本-服务端底座**（复用他们 frozen 的 cli +
+> 线协议）——唯一真实差别是**入册**（本地我们自动注入凭证；远程走设备流）与**网络拓扑**
+> （远程穿 NAT，本地 dial-out 退化为 localhost no-op），都是薄差异，不值得两套机制。hooks
+> 不再烤进镜像做独立第二路，而是作为「报状态」通道，由**服务端下发的 cheeselet** 统一接线
+> （改 cli 的 js 暴露面——**瘦客户机是宪法**：cli/线协议 frozen、业务逻辑在后端、客户端永不因
+> 业务改动重装。**这块我们自己做，不外包。**）唯一真正正交的轴**不是**「本地 vs 远程」，而是「**SDK 原生流 vs
+> 驱动真 cc TUI**」——两种「怎么跟 cc 说话」的产品形态，与容器在哪无关。§0/§5 已按此重写，
+> 实现层收敛见 §8.6。
 
-## 0. 一句话公式
+## 0. 一句话公式（2026-07-10 修订：统一底座）
 
-> 我们的主干（前端 + 产品后端 + **tmux/hooks 感知**）
-> ＋ 嫁接他们的 [agent-as-user 身份] ＋ [权限纪律] ＋ [self-hosted 设备流骨架 cli]
+> 一套 cc-脚本-服务端底座（复用他们 frozen 的 cli + 线协议）
+> ＋ 服务端下发的 cheeselet 驱动真 cc，hooks 作「报状态」通道换掉读屏
+> ＋ 本地容器与用户设备走**同一底座**，只差入册（本地自动 / 远程设备流）
+> ＋ 我们的产品面（前端 + 群聊 + agent-as-user + 权限 + 记忆 + 闸门）
 > ＋ 话题=群聊（我们的选择，非他们的 thread/workitem 拆分）
 > ＋ merge 进主 repo（我们代码为准）
-> ＝ 用 hooks 换掉他们的读屏，取其骨架去其脆弱点。
+> ＝ 一套底座、到处一致；取他们骨架、去其读屏脆弱点。
 
 ## 1. 感知层：hooks，不是读屏（决定性，保留我们的）
 
@@ -71,9 +83,11 @@
 - frozen `cli/` Go 瘦客户机 + `link.Msg` 线协议：`curl … | sh` 装、device-flow 登录、
   常驻连接器；所有逻辑在后端，客户端永不因业务改动重装；
 - 一个 agent = 一个屏幕（screen），screen token 归属调用。
-- **我们的做法**：借鉴设备流/连接器把 agent 落到用户机器，但**感知走我们的 hooks**（不是他们
-  的读屏 cheeselet）。算力模型二选一并存：平台容器（现状，`AGENT_BACKEND` 已支持切换）＋
-  用户设备（新增 self-hosted provider）。
+- **我们的做法（统一底座）**：本地容器与用户设备**同走一套 cc-脚本-服务端底座**（他们的 cli +
+  线协议），感知走 hooks（服务端下发的 cheeselet 接线，非读屏）。本地=我们自动入册、NAT 是
+  no-op；远程=设备流。**不是「平台容器 vs 用户设备」两套 provider，是同一底座上的入册差异。**
+- 正交的一轴（非本地/远程）：**SDK 原生流** vs **驱动真 cc TUI**——干净结构化 vs 真终端可围观
+  （现场镜像 + hooks）。这是「怎么跟 cc 说话」的产品形态选择，与容器在哪无关。
 - 这是大件，单独分阶段，不是抄一段代码。
 
 ### 5.1 他们的 `cli/` 瘦客户机（读过代码，确实好——self-hosted 的现成骨架）
@@ -91,8 +105,10 @@
    直接借鉴。**
 3. **frozen 瘦客户机 + `link.Msg` 版本化协议**：单一 JSON union 承载会话/变量/RPC/屏幕/exec，
    握手协商版本，客户端纯传输、永不因业务改动重装。
-- **P3 定位**：到 self-hosted 阶段，他们的 `cli/` 是**最该整体拿来的骨架**（尤其拨出连接 +
-  frozen 协议），把其中的读屏 cheeselet 换成我们的 hooks 感知即可。
+- **定位（统一底座，2026-07-10 修订）**：他们的 `cli/` 不只是「self-hosted 的骨架」，而是
+  **本地/远程通用的执行底座**——本地容器也跑在同一 cc-脚本-服务端模型上（dial-out 退化为
+  localhost no-op）。把读屏 cheeselet 换成**服务端下发的 hooks-cheeselet** 即可；cli/线协议
+  frozen，改 js 暴露面（我们自己做）。
 
 ## 5.2 cheese CLI 设计（用我们的代码，curated + raw 逃生口）
 
@@ -130,6 +146,39 @@ block_ref）、改文档=下指令、人验收才算数——同源 spec。
 - **P3**：self-hosted 设备流 + 瘦客户机（战略大件，单独立项）。
 - **P4**：clone agent（transcript-fork）。
 
+> 修订 2026-07-10：P0–P4 记录保留（均已建/已上线）。方向修正见顶部修订块与 §0/§5——
+> 收敛终态是**统一底座**（本地/远程一套 cc-脚本-服务端）；原实现里烤进镜像的独立 hook 路
+> 作为迁移项收敛进统一底座，见 §8.6。
+
+## 8.6 实现层收敛（统一底座迁移，2026-07-10）
+
+原实现有两条并行感知/执行路（平台=SDK/烤入镜像的 `cheese-hook`；自托管=cli+我们写的
+`claude_min.js`）。现按顺序收敛成**一套**，纪律是「**先让统一底座跑通、验证后再拆旧路**」——
+**全部我们做（含 cli 侧改动，不外包）**：
+
+1. **底座统一**：cli/线协议保持 frozen 语义（不改线协议），改 driver 的 **js 暴露面**，让服务端
+   下发的 cheeselet 订阅 hooks 事件流（替代读屏）。本地容器与用户设备共用这一底座。
+2. **入册统一**：平台容器经同一 connector 底座**自动入册**（注入凭证、免交互设备流），用户设备
+   走设备流；本地/远程只差入册，不两套 provider。
+3. **拆旧路**：统一底座（1+2）跑通并验证后，拆掉烤入镜像的 `cheese-hook` 第二路 + 冗余 provider，
+   一次切换。
+4. **SDK 后端**：作为正交产品形态保留（见 §5，「怎么跟 cc 说话」的另一选项），不在本次收敛范围。
+
+**触及面（我们自己改）**：`claude_min.js`（最小 driver：启动 cc + 过 `❯` ready-gate）→ 改造成
+cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToolUse/Stop → 结构化事件 →
+后端）＋ 现场 screen relay 随之统一。客户端 frozen、hook 逻辑随服务端更新而**不重装**。
+
+**进度**：
+- ✅ **增量 1（已完成、行为不变、477 测试绿）**：抽出共享底座 `agent/hooks_substrate.py`——
+  turn drain 循环 `run_hooks_turn`、`hooks_settings()`、`cheese-hook` forwarder、session token
+  TTL。tmux（本地）与 device（远程）两个 provider 现都委托它，**只剩 transport 特有的
+  ensure-screen + send-prompt 各自实现**（本地 docker/tmux vs 远程 link.Msg）——即"一套底座、
+  只差 transport/入册"。+5 单测锁定。
+- ⏭ **增量 2（下一步）**：引入 `ScreenHub` seam（`LocalDockerHub` / `DeviceHub` 两个 adapter），
+  把两个 provider 类收敛成单一 `HooksScreenProvider(hub)`；平台容器经 connector 底座自动入册；
+  跑通验证后拆掉 tmux provider + 镜像内烤入的 `cheese-hook`（改由共享 `CHEESE_HOOK_SCRIPT`
+  在构建期生成，杜绝漂移）。
+
 ## 8.5 仓库收敛（接入主 repo cheese-backend-py）
 
 现状：主 repo `cheese-backend-py` 上有队友的 `design/cheese-agent-layer`（含 cli + 设备流 +
@@ -150,6 +199,13 @@ connector 服务器，self-hosted 服务器端已建完）。我们的 `cheesex`
 
 ## 9. 与队友对齐
 
-这份文档也是和 `design/cheese-agent-layer` 作者对齐"融合而非替代"的靶子。核心信息：
-我们保留他们的骨架（agent-as-user / 权限 / 设备流 / 多 agent 编排），但**感知层用我们的
-hooks 替换读屏**——那是他们代码里最脆弱、补丁最多的一块，换掉是净收益。
+这份文档也是和 `design/cheese-agent-layer` 作者（lg）对齐"融合而非替代"的靶子。
+核心信息（2026-07-10 对齐后）：
+- **底座一套**：cc-脚本-服务端 + frozen cli/线协议语义不变；本地/远程只差入册，不两套。
+  **我们直接实现（含 cli 侧），不分包。**
+- **读屏去掉、双方已一致**；hooks 作「报状态」通道，走**服务端下发的 cheeselet**（改 cli 的 js
+  暴露面，我们做），不烤进镜像。
+- **我们守产品面**：前端 / 群聊（话题=群聊，非 thread/workitem）/ agent-as-user / 权限 / 记忆 / 闸门。
+- 那三条 coordinator 标的「分歧」：#1 感知其实无冲突（都去读屏，只谈投递方式，已定服务端下发）；
+  #2 话题=群聊 是我们已定的产品决策，保留；#3 cli 定位——按统一底座，cli 确实是本地/远程通用
+  地基（比"三个前门之一"更接近 lg 原意），已在 §5 修正。

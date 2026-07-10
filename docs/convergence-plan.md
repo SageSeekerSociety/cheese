@@ -21,8 +21,13 @@
   - **hooks 感知**替换他们的读屏 cheeselet（他们最脆弱、补丁最多的一块）——净收益；
   - 完整**产品面**：前端（群聊化 UI/现场/记忆页/市场…）、OpenViking 真集成、质量闸门、算力配额、角色、eval 框架；
   - 话题=群聊模型（我们的选择，非他们的 thread/workitem 拆分）。
+> **2026-07-10 修订（统一底座）**：撤销"平台容器 / 用户设备两路"。本地/远程只走**一套
+> cc-脚本-服务端底座**（他们 frozen cli + 线协议），只差入册（本地自动 / 远程设备流）。hooks
+> 走**服务端下发的 cheeselet**（改 cli js 暴露面，我们自己做），不烤进镜像做第二路。cli 因此是
+> 本地/远程通用地基，而非"三个前门之一"。实现层迁移排序见 fusion-design.md §8.6。
+
 - **我们从主 repo 采纳/对齐**（他们已建完、更完整）：
-  - 连接器 Phase B 的完整度（viewer WS/adopt/resize/heartbeat/审批页）——我们 P3 是"证明 hooks 路径成立"的骨架，收敛时可用他们更完整的连接器骨架 + 我们的 hooks-cheeselet；
+  - 连接器 Phase B 的完整度（viewer WS/adopt/resize/heartbeat/审批页）——我们 P3 是"证明 hooks 路径成立"的骨架，收敛时用他们更完整的连接器骨架 + 我们的 hooks-cheeselet（走服务端下发，非烤入）；
   - agent-as-user 我们已用**务实版**（handle 仍是 authorship 键，未做 handle→user_id 大迁移）——若主 repo 走 user_id，收敛时对齐该数据模型（大迁移单独立项）。
 
 ## 3. 命名冲突决议（merge 阻塞项，定死）

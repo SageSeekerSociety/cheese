@@ -19,7 +19,6 @@ Per turn (``run_turn``):
 extension can ``exec`` a git snapshot on the device over the link).
 """
 
-import asyncio
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 
@@ -29,7 +28,8 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import build_screen_launch
-from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
+from app.domain.agent.hook_events import HookRouter, hook_router
+from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S, run_hooks_turn
 from app.domain.agent.service import AgentEvent, AgentResult
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
@@ -40,8 +40,8 @@ DeviceResolver = Callable[[uuid.UUID], Awaitable["tuple[str, uuid.UUID, str] | N
 
 # The device session's hook token outlives one turn (the screen is reused), so it is
 # scoped to the topic with a session-length TTL — a stale one still can't reach another
-# topic. Mirrors TmuxHooksProvider._SESSION_TOKEN_TTL_S.
-_SESSION_TOKEN_TTL_S = 30 * 24 * 3600
+# topic. Shared with the tmux backend (hooks_substrate.SESSION_TOKEN_TTL_S).
+_SESSION_TOKEN_TTL_S = SESSION_TOKEN_TTL_S
 
 
 class DeviceProvider:
@@ -223,31 +223,16 @@ class DeviceProvider:
                 )
                 return
 
-            deadline = asyncio.get_event_loop().time() + self._turn_timeout_s
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    yield AgentResult(
-                        text="device 轮次超时",
-                        session_id=resume_session_id,
-                        is_error=True,
-                    )
-                    return
-                try:
-                    hook = await asyncio.wait_for(queue.get(), timeout=remaining)
-                except TimeoutError:
-                    yield AgentResult(
-                        text="device 轮次超时",
-                        session_id=resume_session_id,
-                        is_error=True,
-                    )
-                    return
-                event = translate_hook(hook)
-                if event is None:
-                    continue
+            # Shared drain loop (hooks_substrate): transport-specific work above
+            # (open a device screen + prompt over link.Msg) is done; sensing is
+            # identical to the tmux backend from here.
+            async for event in run_hooks_turn(
+                queue=queue,
+                turn_timeout_s=self._turn_timeout_s,
+                resume_session_id=resume_session_id,
+                timeout_message="device 轮次超时",
+            ):
                 yield event
-                if isinstance(event, AgentResult):
-                    return  # Stop hook → turn done
         finally:
             self._router.unregister(topic_key, queue)
 

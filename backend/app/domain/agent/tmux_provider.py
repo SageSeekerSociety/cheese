@@ -30,7 +30,12 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import clone
-from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
+from app.domain.agent.hook_events import HookRouter, hook_router
+from app.domain.agent.hooks_substrate import (
+    SESSION_TOKEN_TTL_S,
+    hooks_settings,
+    run_hooks_turn,
+)
 from app.domain.agent.service import AgentEvent, AgentResult
 from app.domain.workspace import service as ws
 
@@ -40,8 +45,8 @@ _TTYD_PORT = 7681  # in-container ttyd port (published for 施工现场; not wir
 _APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
 # The interactive session's hook token outlives a single turn (the tmux session
 # is reused across turns), so it needs a lifetime measured in the session's life,
-# not a turn's. Topic-scoped, so a stale one still can't reach another topic.
-_SESSION_TOKEN_TTL_S = 30 * 24 * 3600
+# not a turn's. Shared with the device backend (hooks_substrate.SESSION_TOKEN_TTL_S).
+_SESSION_TOKEN_TTL_S = SESSION_TOKEN_TTL_S
 # Wait this long for the pane to reach the `❯` input box after (re)starting.
 _READY_TIMEOUT_S = 45.0
 _READY_POLL_S = 0.4
@@ -98,33 +103,6 @@ def _hook_base() -> str:
     if base.endswith("/api"):
         base = base[: -len("/api")]
     return base
-
-
-def _hooks_settings() -> dict:
-    """~/.claude/settings.json for the interactive session: pre-accept the bypass
-    disclaimer AND forward every structured event to our hook endpoint.
-
-    We use COMMAND hooks (not the built-in `"type":"http"` type): Claude Code
-    2.1.x BLOCKS HTTP hooks whose host resolves to a non-loopback / private IP
-    ("HTTP hook blocked: host.docker.internal resolves to 192.168.x.x …"), and
-    only 127.0.0.1/::1 are allowed — which the container can't use to reach the
-    host. The baked `cheese-hook` script reads the hook JSON on stdin and POSTs
-    it to CHEESE_HOOK_URL with the CHEESE_TOKEN header (both from container env),
-    sidestepping that restriction."""
-    cmd = {"type": "command", "command": "cheese-hook"}
-    tool_matched = [{"matcher": "*", "hooks": [cmd]}]
-    plain = [{"hooks": [cmd]}]
-    return {
-        # Gate 2 pre-accept (modern key; see docs/tmux-backend-spike.md research).
-        "skipDangerousModePermissionPrompt": True,
-        "hooks": {
-            "SessionStart": plain,
-            "PreToolUse": tool_matched,
-            "PostToolUse": tool_matched,
-            "MessageDisplay": plain,
-            "Stop": plain,
-        },
-    }
 
 
 async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str]:
@@ -392,31 +370,16 @@ class TmuxHooksProvider:
                 )
                 return
 
-            deadline = asyncio.get_event_loop().time() + self._turn_timeout_s
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    yield AgentResult(
-                        text="tmux 轮次超时",
-                        session_id=resume_session_id,
-                        is_error=True,
-                    )
-                    return
-                try:
-                    hook = await asyncio.wait_for(queue.get(), timeout=remaining)
-                except TimeoutError:
-                    yield AgentResult(
-                        text="tmux 轮次超时",
-                        session_id=resume_session_id,
-                        is_error=True,
-                    )
-                    return
-                event = translate_hook(hook)
-                if event is None:
-                    continue
+            # Shared drain loop (hooks_substrate): transport-specific work above
+            # (start the local tmux `claude` + inject the prompt) is done; sensing
+            # is identical to the device backend from here.
+            async for event in run_hooks_turn(
+                queue=queue,
+                turn_timeout_s=self._turn_timeout_s,
+                resume_session_id=resume_session_id,
+                timeout_message="tmux 轮次超时",
+            ):
                 yield event
-                if isinstance(event, AgentResult):
-                    return  # Stop hook → turn done
         finally:
             self._router.unregister(topic_key, queue)
 
@@ -427,7 +390,7 @@ class TmuxHooksProvider:
         target = Path(session_dir) / "settings.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
-            json.dumps(_hooks_settings(), ensure_ascii=False),
+            json.dumps(hooks_settings(), ensure_ascii=False),
             encoding="utf-8",
         )
         target.chmod(0o666)
