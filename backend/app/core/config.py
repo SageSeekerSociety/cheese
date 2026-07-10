@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://cheesex:cheesex@localhost:5433/cheesex"
     db_echo: bool = False
 
+    # --- 主仓产品配置并入 (fusion merge I3-config): fields main's product
+    # domains (avatars/materials/storage/auth) read from settings. Superset so
+    # the adopted product routes boot. Defaults mirror deploy/.env.prod.example.
+    avatar_base_url: str = "http://localhost:8081"
+    storage_type: str = "local"
+    storage_local_path: str = "./uploads"
+    storage_local_url: str = "/uploads"
+
     # --- Agent (Claude Agent SDK) ---
     # The SDK talks to the model via the `claude` CLI. We route to a provider
     # through the Anthropic-compatible gateway (spec §9: 不绑定模型). For Zhipu

@@ -1,130 +1,186 @@
-"""Notification business logic."""
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
-import uuid
-from datetime import UTC, datetime
-
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.notification.models import Notification, NotifKind, NotifLevel
+from app.domain.notification.dto import NotificationDTO, ResolvedEntityInfoDTO
+from app.domain.notification.entity_resolvers import EntityInfoResolver
+from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.repositories import NotificationRepository
-from app.domain.project.repositories import ProjectRepository
-
-_VALID_FEEDBACK = {"up", "down"}
 
 
-class NotificationService:
-    def __init__(self, session: AsyncSession):
-        self._session = session
-        self._repo = NotificationRepository(session)
-        self._projects = ProjectRepository(session)
+@dataclass(slots=True)
+class _EntityPointer:
+    path: str
+    type: str
+    id: str
 
-    async def create(
+
+class NotificationQueryService:
+    """Python port of notification query operations.
+
+    NOTE: Initial version may not fully cover Kotlin behavior; will be aligned
+    incrementally using contract tests.
+    """
+
+    def __init__(
         self,
+        repo: NotificationRepository,
+        resolvers: Sequence[EntityInfoResolver] | None = None,
+    ) -> None:
+        self._repo = repo
+        self._resolver_map: dict[str, EntityInfoResolver] = {
+            r.supported_entity_type(): r for r in (resolvers or [])
+        }
+
+    async def get_notification_by_id_for_current_user(
+        self, user_id: int, notification_id: int
+    ) -> Notification | None:
+        return await self._repo.get_by_id_for_user(user_id=user_id, notification_id=notification_id)
+
+    async def get_notifications_for_current_user(
+        self,
+        user_id: int,
         *,
-        project_id: uuid.UUID,
-        level: NotifLevel,
-        kind: NotifKind,
-        title: str,
-        body: str = "",
-        target_handle: str | None = None,
-        topic_id: uuid.UUID | None = None,
-        payload: dict | None = None,
-    ) -> Notification:
-        if await self._projects.get(project_id) is None:
-            raise NotFoundError("Project not found")
-        return await self._repo.add(
-            project_id=project_id,
-            level=level,
-            kind=kind,
-            title=title,
-            body=body,
-            target_handle=target_handle,
-            topic_id=topic_id,
-            payload=payload,
+        limit: int,
+        cursor_created_at: datetime | None = None,
+        cursor_id: int | None = None,
+        type_: NotificationType | None = None,
+        read: bool | None = None,
+    ) -> Sequence[Notification]:
+        return await self._repo.list_for_user(
+            user_id=user_id,
+            limit=limit,
+            cursor_created_at=cursor_created_at,
+            cursor_id=cursor_id,
+            type_=type_,
+            read=read,
         )
 
-    async def list_for_project(
-        self,
-        project_id: uuid.UUID,
-        *,
-        target_handle: str | None = None,
-        unread_only: bool = False,
-    ) -> tuple[list[Notification], int]:
-        items = await self._repo.list_for_project(
-            project_id, target_handle=target_handle, unread_only=unread_only
+    async def mark_all_as_read_for_current_user(self, user_id: int) -> int:
+        return await self._repo.mark_all_as_read_for_user(user_id=user_id)
+
+    async def set_read_status(
+        self, user_id: int, notification_id: int, desired_read_status: bool
+    ) -> int:
+        return await self._repo.set_read_status_for_user(
+            user_id=user_id, notification_id=notification_id, read=desired_read_status
         )
-        return items, len(items)
 
-    async def inbox(
+    async def get_unread_notification_count_for_current_user(self, user_id: int) -> int:
+        return await self._repo.count_unread_for_user(user_id=user_id)
+
+    async def count_notifications_for_current_user(
         self,
-        project_id: uuid.UUID,
+        user_id: int,
         *,
-        target_handle: str | None = None,
-    ) -> tuple[list[Notification], int]:
-        items = await self._repo.list_inbox(project_id, target_handle=target_handle)
-        return items, len(items)
-
-    async def unread_count(
-        self, project_id: uuid.UUID, *, target_handle: str | None = None
+        type_: NotificationType | None = None,
+        read: bool | None = None,
     ) -> int:
-        return await self._repo.unread_count(project_id, target_handle=target_handle)
+        """Return total count of notifications for pagination metadata."""
+        return await self._repo.count_for_user(user_id=user_id, type_=type_, read=read)
 
-    async def mark_all_read(
-        self, project_id: uuid.UUID, *, target_handle: str | None = None
-    ) -> int:
-        return await self._repo.mark_all_read(project_id, target_handle=target_handle)
+    async def bulk_set_read_status(
+        self, user_id: int, updates: Sequence[tuple[int, bool]]
+    ) -> list[int]:
+        """Bulk update read status for notifications owned by the user."""
+        if not updates:
+            return []
 
-    async def get_or_404(self, notification_id: uuid.UUID) -> Notification:
-        notification = await self._repo.get(notification_id)
-        if notification is None:
-            raise NotFoundError("Notification not found")
-        return notification
+        ids = [id_ for id_, _ in updates]
+        desired_map = dict(updates)
 
-    async def mark_read(self, notification_id: uuid.UUID) -> Notification:
-        notification = await self.get_or_404(notification_id)
-        notification.read_at = datetime.now(UTC)
-        return await self._repo.save(notification)
+        notifications = await self._repo.find_all_by_ids_for_user(user_id=user_id, ids=ids)
+        updated_ids: list[int] = []
 
-    async def resolve(
-        self, notification_id: uuid.UUID, *, chosen: str, decided_by: str = "user-1"
-    ) -> Notification:
-        """拍板 (spec G2): record the chosen option on a decision request and drop
-        the decision into the topic so 芝士 picks it up on its next turn."""
-        n = await self.get_or_404(notification_id)
-        if n.kind != NotifKind.decision_request:
-            raise ValidationError("只有决策请求可以拍板")
-        # Idempotent: a decision is resolved once. Re-resolving must not post a
-        # second 【决策】block into the topic.
-        if n.resolved_at is not None:
-            return n
-        payload = dict(n.payload or {})
-        options = payload.get("options") or []
-        if options and chosen not in options:
-            raise ValidationError("所选项不在候选项中")
-        now = datetime.now(UTC)
-        n.resolved_at = now
-        n.read_at = n.read_at or now
-        payload["resolved_choice"] = chosen
-        n.payload = payload
-        if n.topic_id is not None:
-            await BlockRepository(self._session).add(
-                project_id=n.project_id,
-                topic_id=n.topic_id,
-                author=decided_by,
-                author_type=AuthorType.human,
-                content=f"【决策】关于「{n.title}」：选择「{chosen}」。",
-                kind=BlockKind.message,
-            )
-        return await self._repo.save(n)
+        for notification in notifications:
+            if notification.id is None:
+                continue
+            desired = desired_map.get(notification.id)
+            if desired is not None and notification.read != desired:
+                notification.read = desired
+                updated_ids.append(notification.id)
 
-    async def set_feedback(
-        self, notification_id: uuid.UUID, feedback: str
-    ) -> Notification:
-        if feedback not in _VALID_FEEDBACK:
-            raise ValidationError("feedback must be 'up' or 'down'")
-        notification = await self.get_or_404(notification_id)
-        notification.feedback = feedback
-        return await self._repo.save(notification)
+        if updated_ids:
+            await self._repo.save_all(notifications)
+
+        return updated_ids
+
+    async def delete_notification_for_current_user(
+        self, user_id: int, notification_id: int
+    ) -> bool:
+        return await self._repo.soft_delete_for_user(
+            user_id=user_id, notification_id=notification_id
+        )
+
+    # --- Metadata / entity resolution ---
+
+    async def resolve_entities_from_metadata(
+        self, metadata_maps: Sequence[Mapping[str, Any]]
+    ) -> dict[str, ResolvedEntityInfoDTO | None]:
+        """Resolve nested entity references within metadata payloads."""
+
+        pointers: list[_EntityPointer] = []
+        for metadata in metadata_maps:
+            for key, value in metadata.items():
+                self._collect_entity_pointers(value, path=str(key), output=pointers)
+
+        if not pointers:
+            return {}
+
+        ids_by_type: dict[str, set[str]] = {}
+        for pointer in pointers:
+            ids_by_type.setdefault(pointer.type, set()).add(pointer.id)
+
+        resolved_by_type: dict[str, dict[str, ResolvedEntityInfoDTO | None]] = {}
+        for entity_type, ids in ids_by_type.items():
+            resolver = self._resolver_map.get(entity_type)
+            if resolver is None:
+                continue
+            resolved_by_type[entity_type] = await resolver.resolve(sorted(ids))
+
+        flattened: dict[str, ResolvedEntityInfoDTO | None] = {}
+        for pointer in pointers:
+            entity_map = resolved_by_type.get(pointer.type) or {}
+            flattened[pointer.path] = entity_map.get(pointer.id)
+        return flattened
+
+    def _collect_entity_pointers(
+        self,
+        value: Any,
+        *,
+        path: str,
+        output: list[_EntityPointer],
+    ) -> None:
+        if isinstance(value, Mapping):
+            entity_type = value.get("type")
+            entity_id = value.get("id")
+            if isinstance(entity_type, str) and isinstance(entity_id, str):
+                output.append(_EntityPointer(path=path, type=entity_type, id=entity_id))
+
+            for key, nested in value.items():
+                nested_path = f"{path}.{key}" if path else str(key)
+                self._collect_entity_pointers(nested, path=nested_path, output=output)
+
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            for idx, nested in enumerate(value):
+                nested_path = f"{path}[{idx}]" if path else f"[{idx}]"
+                self._collect_entity_pointers(nested, path=nested_path, output=output)
+
+    async def build_notification_dto(self, notification: Notification) -> NotificationDTO:
+        """Build NotificationDTO from Notification entity and its metadata."""
+        metadata_raw = getattr(notification, "metadata_payload", None)
+
+        metadata_map: dict[str, Any]
+        if isinstance(metadata_raw, dict):
+            metadata_map = metadata_raw
+        else:
+            metadata_map = {}
+
+        entities = await self.resolve_entities_from_metadata([metadata_map]) if metadata_map else {}
+
+        return NotificationDTO.from_notification(
+            notification=notification,
+            metadata_map=metadata_map,
+            resolved_entities=entities,
+        )

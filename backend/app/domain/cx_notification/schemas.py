@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.notification.models import NotifKind, NotifLevel
+from app.domain.cx_notification.models import NotifKind, NotifLevel
 
 
 class NotificationCreate(BaseModel):

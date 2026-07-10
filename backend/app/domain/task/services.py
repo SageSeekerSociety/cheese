@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.notification.models import NotifKind, NotifLevel
-from app.domain.notification.services import NotificationService
+from app.domain.cx_notification.models import NotifKind, NotifLevel
+from app.domain.cx_notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import SpaceRepository

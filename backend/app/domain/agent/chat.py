@@ -41,8 +41,8 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import memory_store
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
-from app.domain.notification.models import NotifKind, NotifLevel
-from app.domain.notification.services import NotificationService
+from app.domain.cx_notification.models import NotifKind, NotifLevel
+from app.domain.cx_notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository

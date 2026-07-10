@@ -12,13 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.domain.notification.schemas import (
+from app.domain.cx_notification.schemas import (
     FeedbackIn,
     NotificationCreate,
     NotificationOut,
     ResolveIn,
 )
-from app.domain.notification.services import NotificationService
+from app.domain.cx_notification.services import NotificationService
 
 router = APIRouter(prefix="", tags=["notifications"])
 

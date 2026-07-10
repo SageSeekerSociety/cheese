@@ -18,8 +18,8 @@ from app.domain.agent import clone
 from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.notification.models import NotifKind, NotifLevel
-from app.domain.notification.services import NotificationService
+from app.domain.cx_notification.models import NotifKind, NotifLevel
+from app.domain.cx_notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicRepository
