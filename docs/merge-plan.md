@@ -184,10 +184,27 @@ cheesex 全层从 handle 迁到 user_id。分支重置回 I3 绿 checkpoint（29
   (`{id:3,name:"数据分析兴趣组"}`,seed_demo_data 灌的),`/api/projects`(我们的) → 200,
   `/health` → 200。**原版知是的小队,现在活在合并代码库里、带数据点得开。**
 - 撤回过早的 A2 FK 改动(cheesex 模型对齐 cheesex 迁移;users→user 真数据合并留作后续)。
-- ⏭ 还差:`/spaces` `/tasks` 等产品路由 **de-collision**(merge 时取了 cheesex 的路由文件盖过
-  主仓产品路由;需按已验证的 cluster 套路采纳 space/task 域、cheesex 的挪 cx_),然后 A3 真登录 /
-  A5 前端把空间/任务/小队挂进 rail。**teams 已证明整条链路(域+迁移+数据+路由)打通,space/task
-  照抄即可。**
+### ✅ 后端合流完成 —— 空间/小队/任务 带真实数据 + 真 JWT 在合并 app 里可访问(`f452fff`)
+- **space/task 域 de-collision 完成**(cluster 套路):主仓 space/task 域 + 产品路由(`/spaces`
+  `/tasks`)为规范,cheesex 的挪 cx_space/cx_task/cx_spaces/cx_tasks,~16 处 cheesex import 回接。
+- **A3-config**:补 `jwt_secret`/token 过期;deps 补 pymupdf4llm。
+- **实证(fusion_test + 真发 JWT for user alice)**:
+  - `/spaces` → **200 真数据** `{id:1,name:"人工智能实践空间"...}`
+  - `/teams`  → **200 真数据** `{id:3,name:"数据分析兴趣组"...}`
+  - `/tasks`  → 路由通(400=查询参数校验);`/api/projects`(我们的) → 200
+  - 38/38 路由 import、43 routers。**原版知是产品(空间/小队/任务)现在带真实数据 + 真鉴权,
+    活在合并代码库里,与我们的 agent/topic 层并存。后端合流实质完成。**
+
+### ⏭ A5 前端(唯一剩余;是"接线"不是"从零建")
+**重要发现:cheesex 前端本就是主仓前端的超集**(cheesex fork 了 cheese-backend-py 前端)——
+合并前端里**已经有**真登录(`services/account.ts` + `network/` 的 Bearer 拦截器/refreshToken)
+和产品视图(`views/spaces/`、`views/tasks/`、`views/teams/`、`SpacesView.vue`)。我们的 shell
+(App.vue)现在只是用了我们自己的 handle 登录(`./me`)、router 只路由我们的视图。
+A5 = **把 shell 接到已存在的这些件上**:
+1. shell 登录门接 `account.ts` 真登录(username/password → accessToken),handle 降级;
+2. router 加产品视图路由(spaces/tasks/teams 已存在),挂进 rail 组织面;
+3. 指向合并后端跑通、截图。
+- 附:`users→user` 真数据统合(A2 后续)、`/tasks` 查询参数——细节项。
 
 ## 分期
 - P-merge-1：桶 A + 桶 B + 桶 D 的机械/采纳部分解完，树成形（可 import）。✅
