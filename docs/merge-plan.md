@@ -66,8 +66,30 @@ agent-user seed + 主仓的 auth/oauth）、`backend/app/core/config.py`（setti
   空间/任务/小队视图（主仓）挂进我们的 rail 组织面。
 - **I5 采纳 lg**：fork/attach agent、WS-edge override（从 cheese-agent-layer cherry）。
 
+## 进度（2026-07-11 执行中）
+
+- ✅ **P-merge-1 完成、已提交、已推 `origin/fusion/merge-cheesex`**：两棵树并成一棵
+  （base=main + graft=cheesex，45 冲突全解，ours-primary）。合并树 domain 层是**并集**：
+  我们的（agent/topic/block/hooks/authz/membership/memory/…）+ 主仓全部产品域
+  （space/task/team/questions/answers/comments/discussion/groups/materials/knowledge/
+  passkey/oauth/…）。**backend `import app.main` 通过、跑 25 个 router**（我们的 main.py
+  resilient loader 自动跳过还没接通的主仓路由，所以我们半边直接活）。
+- 📏 **采纳积压实测**：38 个 route 模块里 **23 通 / 15 挂**。挂的是主仓产品路由
+  （teams/groups/questions/answers/comments/discussions/materials/knowledge/recruitment/
+  ai/attachments/avatars/topics_legacy/health/materialbundles）。两类 gap：
+  1. **错误框架冲突（主要 blocker）**：主仓代码 `from app.core.errors import
+     AuthenticationRequiredError`——主仓是 `BaseError` 体系（16 个类 + `format_error_response`），
+     我们是 `AppError` 体系（5 类 + `register_exception_handlers`），且 `NotFoundError`/
+     `ForbiddenError` **同名不同基**。→ **决策(I3-errors)**：采纳主仓 `BaseError` 为规范
+     （产品代码依赖它抛错），把我们的少量 handler 移植过去、注册主仓的 `format_error_response`；
+     我们代码的 raise remap 到 BaseError 家族。
+  2. **缺依赖**：主仓用 `redis` 等（我们用 valkey/别的）。→ **I3-deps**：pyproject 依赖并集。
+- ⏭ **下一 tranche = I3**（errors 超集 + config 超集 + deps 并集）→ 点亮 15 条产品路由
+  → 空间/任务/小队 API 在合并树里可用；随后 **I1 身份统一**（agent-as-user 挂主仓真实
+  SRP/JWT User）、**I2 迁移合流**、桶 C project 合并、I4 前端数据层。
+
 ## 分期
-- P-merge-1：桶 A + 桶 B + 桶 D 的机械/采纳部分解完，树成形（可 import）。
+- P-merge-1：桶 A + 桶 B + 桶 D 的机械/采纳部分解完，树成形（可 import）。✅
 - P-merge-2：I1 身份统一（最关键，碰真鉴权，谨慎）。
 - P-merge-3：I2 迁移合流 + I3 配置 + I4 前端数据层。
 - P-merge-4：桶 C 语义调和（project/notification）+ I5 cherry。
