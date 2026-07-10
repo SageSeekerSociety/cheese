@@ -1,7 +1,21 @@
 # CheeseX 生产运维手册 (etrip)
 
 服务器: 阿里云香港 `ssh etrip` (root)，公网 IP 8.217.1.152。
-入口: **http://8.217.1.152:8080**（80/443 被 Cheese 1.0 老栈 `cheese_prod_*` 占用，绝对不动）。
+
+入口（2026-07-10 实测更正）:
+- **公网（团队用这个）: https://etrip.tailf7bcbf.ts.net/** — Tailscale Funnel 发布
+  （`tailscale funnel --bg 8080`，真 TLS，任何人可访问，不占服务器端口）。
+  重启后若失效: `ssh etrip 'tailscale funnel --bg 8080'`。
+- ~~http://8.217.1.152:8080~~ **公网不通**: 阿里云安全组从未放行 8080（本手册旧版
+  声称的这个入口只在 tailnet/服务器本机可用；真外网视角实测 502/超时）。要启用须在
+  VSTECS 控制台 (ecs4service.console.aliyun.com) 安全组放行 8080 入方向——届时
+  该入口可作为 Funnel 的备份。
+- tailnet 内: http://100.110.174.48:8080 （挂 Tailscale 的设备直连）。
+- 80/443 被 Cheese 1.0 老栈 `cheese_prod_*` 占用，绝对不动；Caddyfile 全局
+  `auto_https disable_redirects` 防止 Caddy 抢绑 80（教训: 2026-07-10 一次 :443
+  探针块让 Caddy 连带绑 80 → 整个服务挂了几分钟）。
+- 功能旗: 入口后拼 `?exp=true` 进入内测态（应用内导航保持粘性），内测面（我的设备等）
+  只在内测态可见。
 
 部署形态:
 

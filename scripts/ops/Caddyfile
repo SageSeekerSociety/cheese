@@ -1,3 +1,8 @@
+{
+	# 80 belongs to the legacy 1.0 stack — never auto-bind it for redirects
+	auto_https disable_redirects
+}
+
 # CheeseX production Caddyfile (deployed at /etc/caddy/Caddyfile on etrip)
 #
 # NOTE (port): port 80/443 on this server are occupied by the legacy Cheese 1.0
@@ -26,3 +31,4 @@
 		file_server
 	}
 }
+
