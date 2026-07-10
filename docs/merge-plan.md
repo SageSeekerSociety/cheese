@@ -111,6 +111,25 @@ recruitment/teams/avatars），它们挂在**同一个根因**：两套代码各
 - 代价：我们 topic/block/agent/membership 所有 `*_handle` 列迁成 `user_id` FK（I2 迁移）。
 - 这是多阶段重构，按域推进：user→notification→space/task→project(桶C 合并)→前端数据层。
 
+## I1 实证（2026-07-11，试了 notification 域）
+- 采纳主仓 notification 域后,cheesex 3 处创建通知的点(agent/chat、topic/services、
+  routes/notifications)立刻断——它们用我们的 `NotifKind`(decision_request/heartbeat/
+  accept_request 等 agent 专属种类)+ `target_handle`;主仓是 `NotificationType` +
+  `recipient user_id`。回接 = 改我们 agent 的通知创建行为(决策卡/巡检/验收卡)+ 前端读法。
+  → 已还原到绿 checkpoint(不留半改坏树)。**结论:每个域的采纳都是一次 handle→user_id +
+  行为回接,不是机械 resolve。**
+
+## 战略岔口（决定剩余工作量级，需 andyl 定）
+两条都真、都不小：
+- **A. 全统一(正解端态)**:采纳主仓 5 个域 + 把我们 agent/topic/authz 全层从 handle 迁到
+  user_id。产出=单一身份、单一登录、产品与 agent 同源。代价=多日重构(逐域 + 迁移 + 前端)。
+- **B. 命名空间共存(先都可见,后收敛)**:把我们冲突的域重命名(notification→topic_notif 等)
+  + 改我们自己的 import 路径(机械 sed,不改逻辑);主仓产品域保持规范、零回接(它是 base)。
+  产出=两套产品在同一代码库都能跑、都可见(空间/任务/小队 + 我们的话题/agent),**两套身份
+  暂时并存**,单一身份留作后续收敛。代价=一次机械重命名,比 A 快得多,但不是终态。
+
+**建议**:先 B(快速让"原版空间/任务可见 + 我们的东西都在"成立、可 demo)→ 再按域走 A 收敛。
+
 ## 分期
 - P-merge-1：桶 A + 桶 B + 桶 D 的机械/采纳部分解完，树成形（可 import）。✅
 - I3：errors/config/deps 超集 → 29/38 路由通。✅
