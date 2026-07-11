@@ -39,8 +39,10 @@ from app.domain.common import Timestamps, UuidPk
 class TaskTemplate(UuidPk, Timestamps, Base):
     __tablename__ = "task_templates"
 
-    space_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("spaces.id", ondelete="CASCADE"), index=True
+    # fusion unify P1c: a TaskTemplate belongs to a real 知是 Space (main's int
+    # `space` table), not the retired cheesex `spaces` uuid stub.
+    space_id: Mapped[int] = mapped_column(
+        ForeignKey("space.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str] = mapped_column(Text, default="")

@@ -33,14 +33,14 @@ class TaskTemplateService:
     async def create(
         self,
         *,
-        space_id: uuid.UUID,
+        space_id: int,
         name: str,
         description: str,
         resource_pack: dict,
         conditions: list[dict],
         default_role: str | None,
     ) -> TaskTemplate:
-        if await self._spaces.get(space_id) is None:
+        if await self._spaces.get_by_id(space_id) is None:
             raise NotFoundError("Space not found")
         return await self._repo.add(
             space_id=space_id,
@@ -58,9 +58,9 @@ class TaskTemplateService:
         return template
 
     async def list_for_space(
-        self, space_id: uuid.UUID
+        self, space_id: int
     ) -> tuple[list[TaskTemplate], int]:
-        if await self._spaces.get(space_id) is None:
+        if await self._spaces.get_by_id(space_id) is None:
             raise NotFoundError("Space not found")
         return (
             await self._repo.list_for_space(space_id),
@@ -68,7 +68,7 @@ class TaskTemplateService:
         )
 
     async def set_published(
-        self, *, space_id: uuid.UUID, template_id: uuid.UUID, published: bool
+        self, *, space_id: int, template_id: uuid.UUID, published: bool
     ) -> TaskTemplate:
         """(Un)list a template on the 匹配市场. Scoped to its owning Space."""
         template = await self.get_or_404(template_id)

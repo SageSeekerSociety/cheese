@@ -1,6 +1,5 @@
 """Request/response schemas for the roles API (spec §8.2)."""
 
-import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,7 +12,7 @@ class RoleCreate(BaseModel):
     # The persona system prompt (= the markdown body of a role file).
     body: str = Field(min_length=1)
     # NULL space_id = a personal role; set = owned by that institution.
-    space_id: uuid.UUID | None = None
+    space_id: int | None = None
     created_by: str = Field(default="", max_length=128)
 
 
@@ -33,6 +32,6 @@ class RoleOut(BaseModel):
     description: str
     body: str
     builtin: bool
-    space_id: uuid.UUID | None = None
+    space_id: int | None = None
     created_by: str | None = None
     created_at: datetime | None = None

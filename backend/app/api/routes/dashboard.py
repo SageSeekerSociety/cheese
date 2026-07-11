@@ -22,7 +22,7 @@ async def project_overview(project_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.get("/spaces/{space_id}/dashboard")
-async def space_dashboard(space_id: uuid.UUID, db: DbSession) -> dict:
+async def space_dashboard(space_id: int, db: DbSession) -> dict:
     return ok(await DashboardService(db).space_board(space_id))
 
 

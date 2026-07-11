@@ -41,8 +41,10 @@ class CustomRole(UuidPk, Timestamps, Base):
 
     __tablename__ = "custom_roles"
 
-    space_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("spaces.id", ondelete="SET NULL"), nullable=True, index=True
+    # fusion unify P1c: owned by a real 知是 Space (main's int `space`), not the
+    # retired cheesex `spaces` uuid stub. NULL = a personal role.
+    space_id: Mapped[int | None] = mapped_column(
+        ForeignKey("space.id", ondelete="SET NULL"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(64), unique=True)
     title: Mapped[str] = mapped_column(String(128), default="")

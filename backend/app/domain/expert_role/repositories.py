@@ -1,6 +1,5 @@
 """Custom role data access."""
 
-import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +18,7 @@ class CustomRoleRepository:
         title: str,
         description: str,
         body: str,
-        space_id: uuid.UUID | None,
+        space_id: int | None,
         created_by: str,
     ) -> CustomRole:
         role = CustomRole(

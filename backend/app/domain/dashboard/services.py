@@ -20,7 +20,7 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
-from app.domain.cx_space.repositories import SpaceRepository
+from app.domain.space.repositories import SpaceRepository
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.repositories import TopicRepository
@@ -265,9 +265,9 @@ class DashboardService:
                 by_author[author] = by_author.get(author, 0) + count
         return {"by_author_type": by_type, "by_author": by_author}
 
-    async def space_board(self, space_id: uuid.UUID) -> dict:
+    async def space_board(self, space_id: int) -> dict:
         """机构看板 (eval F3): every team that linked a Task under this Space."""
-        space = await self._spaces.get(space_id)
+        space = await self._spaces.get_by_id(space_id)
         if space is None:
             raise NotFoundError("Space not found")
         # Space → templates → tasks → linked projects (deduped).

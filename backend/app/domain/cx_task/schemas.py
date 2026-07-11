@@ -18,7 +18,7 @@ class TaskTemplateOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    space_id: uuid.UUID
+    space_id: int
     name: str
     description: str
     resource_pack: dict
@@ -37,7 +37,7 @@ class MarketTaskOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    space_id: uuid.UUID
+    space_id: int
     space_name: str
     name: str
     description: str

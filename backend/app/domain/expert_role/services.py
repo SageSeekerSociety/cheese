@@ -7,7 +7,6 @@ edited or deleted through the API.
 """
 
 import re
-import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,7 +50,7 @@ class CustomRoleService:
         title: str,
         description: str,
         body: str,
-        space_id: uuid.UUID | None,
+        space_id: int | None,
         created_by: str,
     ) -> CustomRole:
         if not _NAME_RE.match(name):

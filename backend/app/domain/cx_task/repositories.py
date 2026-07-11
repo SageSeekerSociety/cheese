@@ -22,7 +22,7 @@ class TaskTemplateRepository:
     async def add(
         self,
         *,
-        space_id: uuid.UUID,
+        space_id: int,
         name: str,
         description: str,
         resource_pack: dict,
@@ -45,7 +45,7 @@ class TaskTemplateRepository:
     async def get(self, template_id: uuid.UUID) -> TaskTemplate | None:
         return await self._session.get(TaskTemplate, template_id)
 
-    async def list_for_space(self, space_id: uuid.UUID) -> list[TaskTemplate]:
+    async def list_for_space(self, space_id: int) -> list[TaskTemplate]:
         stmt = (
             select(TaskTemplate)
             .where(TaskTemplate.space_id == space_id)
@@ -53,7 +53,7 @@ class TaskTemplateRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def count_for_space(self, space_id: uuid.UUID) -> int:
+    async def count_for_space(self, space_id: int) -> int:
         stmt = (
             select(func.count())
             .select_from(TaskTemplate)
