@@ -135,8 +135,8 @@ function projectAvatar(name: string): string {
   const esc = ch.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">` +
-    `<rect width="48" height="48" rx="14" fill="${c}"/>` +
-    `<text x="24" y="24" font-size="22" fill="#ffffff" text-anchor="middle" ` +
+    `<rect width="48" height="48" rx="11" fill="${c}"/>` +
+    `<text x="24" y="24" font-size="24" fill="#ffffff" text-anchor="middle" ` +
     `dominant-baseline="central" font-family="sans-serif" font-weight="700">${esc}</text></svg>`
   // Unicode-safe base64 (the initial may be CJK) — more robust in v-img than a
   // percent-encoded data URI.

@@ -57,6 +57,10 @@ function startResize(e: MouseEvent) {
 
 // 项目级页面（总览/日历/设置）住在项目头下（界面级合入 IA：不在顶栏）。
 const router = useRouter()
+// Below this drawer width the 总览/日历/设置 labels are dropped — just the icons,
+// so the row never wraps into an awkward two-line cramp on a narrow rail.
+const narrowPages = computed(() => (props.width ?? 280) < 216)
+
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
@@ -239,16 +243,17 @@ const onMemory = computed(() => props.activeDocs === 'memory')
       </div>
 
       <!-- 项目级页面（总览/日历/设置）: Slack 式置顶行，属项目上下文而非顶栏。 -->
-      <div v-if="selectedProjectId" class="proj-pages">
+      <div v-if="selectedProjectId" class="proj-pages" :class="{ 'proj-pages--compact': narrowPages }">
         <button
           v-for="p in projectPages"
           :key="p.key"
           type="button"
           class="proj-pages__item"
+          :title="p.label"
           @click="openProjectPage(p.key)"
         >
           <v-icon size="15">{{ p.icon }}</v-icon>
-          <span>{{ p.label }}</span>
+          <span v-if="!narrowPages">{{ p.label }}</span>
         </button>
       </div>
 
@@ -565,6 +570,12 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 .proj-pages__item:hover {
   background: var(--fill-2);
   color: var(--ink);
+}
+/* narrow rail: icon-only, evenly spread, no label wrap */
+.proj-pages--compact .proj-pages__item {
+  flex: 1;
+  justify-content: center;
+  padding: 6px 0;
 }
 .bentai-bar__main {
   flex: 1;

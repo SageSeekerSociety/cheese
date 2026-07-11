@@ -18,7 +18,7 @@ from app.core.errors import NotFoundError
 from app.domain.block.models import AuthorType, Block
 from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
-from app.domain.notification.repositories import NotificationRepository
+from app.domain.cx_notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository

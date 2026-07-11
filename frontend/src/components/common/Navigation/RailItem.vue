@@ -8,7 +8,7 @@
     <template v-if="item.img">
       <!-- match the original 元思 tile: a colored rounded-square chip + the
            project name as a caption below it (fusion merge: project avatars) -->
-      <v-img :src="item.img" width="30" height="30" class="rounded-lg" cover />
+      <v-img :src="item.img" width="34" height="34" class="rounded-lg" cover />
       <div class="text-caption app-rail-item-text app-rail-item-label">
         {{ item.title }}
       </div>
