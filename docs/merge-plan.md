@@ -204,6 +204,19 @@ cheesex 全层从 handle 迁到 user_id。分支重置回 I3 绿 checkpoint（29
   知是的 空间(人工智能实践空间/软件工程训练营/数学建模工作坊)和 小队(数据分析兴趣组/全栈
   开发小队/深度学习研究组),真实 seed 数据。原版产品 + 我们的 topic/agent 世界,同一合并 app。**
 
+### ✅ A5 打磨 + A2 收官(四项全落地)
+- **① 空间卡头像兜底**：seed 是 108B 假图 → 无效头像回退到首字色块(人/软/数),和 rail 一致。
+- **② vue-tsc 类型 428→15**：根因是 cheesex 的 `types.ts` 遮蔽主仓 `types/` 目录 → 改名
+  `cx_types.ts` + 我们 ~21 文件改导入 → `@/types` 还给主仓;残留 15 全是主仓自身既有欠债 + 测试。
+  **我们的代码 0 类型错。**
+- **③ A2 身份统一(最后结构件)**:agent-as-user 从 cheesex `users`(uuid)迁到主仓 `user`(int)
+  ——`ensure_agent_user` 用 `create_user`,`agent_bindings`/`device` FK uuid→int、users→user,
+  两条迁移加 `depends_on` 保证跨链顺序,去掉迁移里的旧 seed(boot seed 进 user)。**实测新库:
+  upgrade 干净、boot 无 seed-skipped、芝士 = user id=9 username=cheese + platform binding。
+  人和 agent 同在一张 `user` 表——真·单一身份。**
+- **④ DocPanel 拖拽把手**:tiptap v3 drag-handle 的 peer 链(collaboration→y-tiptap→
+  y-protocols+yjs)按正确版本装齐(y-tiptap 走它自己的 3.0.x 线),去桩、恢复真把手。
+
 ### ⏭（历史)A5 前端(接线,已完成 ↑)
 **重要发现:cheesex 前端本就是主仓前端的超集**(cheesex fork 了 cheese-backend-py 前端)——
 合并前端里**已经有**真登录(`services/account.ts` + `network/` 的 Bearer 拦截器/refreshToken)
