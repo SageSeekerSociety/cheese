@@ -16,8 +16,13 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def create_access_token(user_id: int) -> str:
-    """Create a short-lived access token for the given user."""
+def create_access_token(user_id: int, handle: str | None = None) -> str:
+    """Create a short-lived access token for the given user.
+
+    ``handle`` (= the user's username) is embedded as an extra claim so the ONE
+    token also satisfies the cheesex auth layer, which keys on handle (fusion
+    unify P3: one token for both API layers). Main auth reads ``sub`` (int id);
+    cheesex reads ``handle`` (falling back to ``sub``)."""
     now = _utcnow()
     payload = {
         "sub": str(user_id),
@@ -25,6 +30,8 @@ def create_access_token(user_id: int) -> str:
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=settings.access_token_expires_seconds)).timestamp()),
     }
+    if handle:
+        payload["handle"] = handle
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 

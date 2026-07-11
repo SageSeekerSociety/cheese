@@ -33,11 +33,13 @@ _TYPE = "access"
 
 
 class TokenClaims(TypedDict):
-    """The subset of JWT claims we rely on. ``sub`` is the handle (authorship is
-    still keyed by handle in P1 — no user_id data migration), ``uid`` is the
-    user row's UUID as a string so callers can resolve the User without a lookup."""
+    """The subset of JWT claims we rely on. ``sub`` is either the handle
+    (cheesex-minted tokens) or the int user id as a string (main-minted tokens);
+    ``handle`` is the explicit username claim main embeds for the fusion one-token
+    story (falls back to sub). ``uid`` is a legacy uuid string if present."""
 
     sub: str
+    handle: str | None
     uid: str | None
     type: str
 
@@ -52,6 +54,7 @@ def mint_session_token(
     now = int(time.time())
     payload = {
         "sub": handle,
+        "handle": handle,  # explicit handle claim (fusion unify P3, one-token story)
         "uid": str(user_id) if user_id is not None else None,
         "type": _TYPE,
         "iat": now,
@@ -74,6 +77,7 @@ def verify_session_token(token: str) -> TokenClaims | None:
         return None
     return TokenClaims(
         sub=str(decoded["sub"]),
+        handle=(str(decoded["handle"]) if decoded.get("handle") else None),
         uid=(str(decoded["uid"]) if decoded.get("uid") else None),
         type=_TYPE,
     )

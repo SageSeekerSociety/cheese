@@ -53,7 +53,10 @@ def _token_verifier(token: str) -> TokenIdentity | None:
             uid = uuid.UUID(claims["uid"])
         except ValueError:
             uid = None
-    return TokenIdentity(handle=claims["sub"], user_id=uid)
+    # fusion unify P3: main-minted tokens carry the username in ``handle`` and an
+    # int id in ``sub``; cheesex-minted ones put the handle in ``sub``. Prefer the
+    # explicit handle claim so ONE token authenticates both API layers.
+    return TokenIdentity(handle=claims["handle"] or claims["sub"], user_id=uid)
 
 
 class ActorResolver:

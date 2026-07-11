@@ -1067,7 +1067,7 @@ async def register_user(
         invite_service = InviteCodeService(session)
         await invite_service.consume_code(invite_code)
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(user.id, handle=user.username)
     refresh_token = create_refresh_token(user.id)
 
     response.set_cookie(
@@ -1327,7 +1327,7 @@ async def user_login(
             user_agent=user_agent,
         )
 
-        access_token = create_access_token(user.id)
+        access_token = create_access_token(user.id, handle=user.username)
         refresh_token = create_refresh_token(user.id)
 
         response.set_cookie(
@@ -1498,7 +1498,7 @@ async def srp_login_verify(
             if not is_valid_totp:
                 raise AuthenticationRequiredError("Invalid 2FA code")
 
-        access_token = create_access_token(user.id)
+        access_token = create_access_token(user.id, handle=user.username)
         refresh_token = create_refresh_token(user.id)
         session_mgr = SessionManager(
             AsyncRedis.from_url(settings.redis_url, decode_responses=False)
