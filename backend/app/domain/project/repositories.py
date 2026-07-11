@@ -11,7 +11,7 @@ from app.domain.project.models import (
     ProjectMember,
     ProjectTaskLink,
 )
-from app.domain.user.models import User
+from app.domain.user.models import User, UserProfile
 
 
 class ProjectRepository:
@@ -102,9 +102,12 @@ class ProjectRepository:
     async def list_members(self, project_id: uuid.UUID) -> list[dict]:
         """Project roster: each member's handle, display name, and role — used to
         inject 芝士's teammate context and to resolve @mentions to a handle."""
+        # Display name lives on UserProfile.nickname (main's User has only
+        # username); join both, keyed by handle == username (fusion identity).
         stmt = (
-            select(ProjectMember.user_handle, ProjectMember.role, User.nickname)
+            select(ProjectMember.user_handle, ProjectMember.role, UserProfile.nickname)
             .join(User, User.username == ProjectMember.user_handle, isouter=True)
+            .join(UserProfile, UserProfile.user_id == User.id, isouter=True)
             .where(ProjectMember.project_id == project_id)
         )
         rows = (await self._session.execute(stmt)).all()

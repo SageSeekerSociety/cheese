@@ -31,25 +31,29 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 @router.get("/{topic_id}/members")
 async def list_topic_members(topic_id: uuid.UUID, db: DbSession) -> dict:
     from app.domain.identity.repositories import AgentBindingRepository
-    from app.domain.user.repositories import UserRepository
+    from app.domain.user.repositories import UserProfileRepository, UserRepository
 
     members, total = await TopicMemberService(db).list_for_topic(topic_id)
     # Attach display names so the UI can label 头像 without a second round-trip.
     users = UserRepository(db)
+    profiles = UserProfileRepository(db)
     bindings = AgentBindingRepository(db)
     # Resolve handles → users once, then derive is-agent from the binding (never
     # a hard-coded handle check): a member is an agent iff it carries a binding.
     rows = {
         m.member_handle: await users.get_by_handle(m.member_handle) for m in members
     }
-    agent_ids = await bindings.agent_user_ids(
-        [u.id for u in rows.values() if u is not None]
-    )
+    user_ids = [u.id for u in rows.values() if u is not None]
+    agent_ids = await bindings.agent_user_ids(user_ids)
+    # The human-readable display name lives on the profile (nickname); the core
+    # User row only carries the handle (username). Fall back to the handle.
+    profile_by_uid = await profiles.get_profiles_by_user_ids(user_ids)
     items = []
     for m in members:
         d = TopicMemberOut.model_validate(m).model_dump(mode="json")
         user = rows.get(m.member_handle)
-        d["name"] = user.name if user and user.name else m.member_handle
+        profile = profile_by_uid.get(user.id) if user is not None else None
+        d["name"] = profile.nickname if profile and profile.nickname else m.member_handle
         # Agent members wear an Agent badge — derived from the execution binding.
         d["agent"] = user is not None and user.id in agent_ids
         items.append(d)
