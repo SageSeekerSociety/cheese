@@ -104,7 +104,7 @@ function inferKind(t: Topic): string {
 }
 
 const KIND_BADGE: Record<string, string> = {
-  root: '本体',
+  root: '全局',
   topic: '话题',
   subtopic: '分身',
 }
@@ -233,7 +233,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
         >
           <v-icon size="18" class="bentai-bar__icon">mdi-hexagon-outline</v-icon>
           <span class="bentai-bar__name">{{ currentProjectName }}</span>
-          <span class="chip-neutral">本体</span>
+          <span class="chip-neutral">全局</span>
           <span
             v-if="rootTopic && unreadOf(rootTopic.id) > 0"
             class="unread-badge"

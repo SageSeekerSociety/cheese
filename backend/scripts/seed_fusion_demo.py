@@ -24,68 +24,92 @@ from app.domain.project.models import (
 from app.domain.team.models import Team  # noqa: F401 — register `team` for Project.team_id FK
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 
-PROJECT_NAME = "知是 2.0 融合演示"
 OWNER = "alice"  # username == handle (fusion A2)
-TEAM_ID = 1      # 知是 Team 「深度学习研究组」 (P4 native link)
 CHEESE = "cheese"
+
+# A few demo projects so the rail shows multiple Discord-style tiles (⌘2/⌘3/…),
+# each linked to a real 知是 Team (P4). (name, team_id, summary, first_topic)
+DEMO_PROJECTS = [
+    (
+        "知是 2.0 融合演示",
+        1,  # 深度学习研究组
+        "演示：把原版知是（空间/小队/任务）与芝士的话题/群聊/文档合到一处。",
+        "搭建第一个原型",
+    ),
+    (
+        "AI 系统实验室",
+        2,  # 全栈开发小队
+        "AI 系统方向的课题工作台：推理服务、评测、Agent 编排。",
+        "设计推理服务架构",
+    ),
+    (
+        "数据分析平台",
+        3,  # 数据分析兴趣组
+        "数据分析课题：数据管线、可视化看板、指标体系。",
+        "梳理数据管线",
+    ),
+]
 
 
 async def seed() -> None:
     async with async_session_factory() as s:
-        # Idempotent: drop any prior instance (cascades to topics/members).
-        existing = (
-            await s.execute(select(Project).where(Project.name == PROJECT_NAME))
-        ).scalars().all()
-        for p in existing:
-            await s.execute(delete(Topic).where(Topic.project_id == p.id))
-            await s.execute(
-                delete(ProjectMember).where(ProjectMember.project_id == p.id)
+        for name, team_id, summary, first_topic in DEMO_PROJECTS:
+            # Idempotent: drop any prior instance (cascades to topics/members).
+            existing = (
+                await s.execute(select(Project).where(Project.name == name))
+            ).scalars().all()
+            for p in existing:
+                await s.execute(delete(Topic).where(Topic.project_id == p.id))
+                await s.execute(
+                    delete(ProjectMember).where(ProjectMember.project_id == p.id)
+                )
+                await s.delete(p)
+            await s.flush()
+
+            project = Project(
+                name=name,
+                owner_handle=OWNER,
+                team_id=team_id,
+                ai_mode=AiMode.collaborative,
+                summary=summary,
             )
-            await s.delete(p)
-        await s.flush()
+            s.add(project)
+            await s.flush()
 
-        project = Project(
-            name=PROJECT_NAME,
-            owner_handle=OWNER,
-            team_id=TEAM_ID,
-            ai_mode=AiMode.collaborative,
-            summary="演示：把原版知是（空间/小队/任务）与芝士的话题/群聊/文档合到一处。",
-        )
-        s.add(project)
-        await s.flush()
-
-        root = Topic(
-            project_id=project.id,
-            title="项目总览 · 芝士本体",
-            kind=TopicKind.root,
-            status=TopicStatus.active,
-            created_by=OWNER,
-        )
-        s.add(root)
-        await s.flush()
-        project.root_topic_id = root.id
-
-        s.add(
-            Topic(
+            root = Topic(
                 project_id=project.id,
-                title="搭建第一个原型",
-                kind=TopicKind.topic,
+                title="项目总览 · 芝士本体",
+                kind=TopicKind.root,
                 status=TopicStatus.active,
                 created_by=OWNER,
             )
-        )
-        s.add_all(
-            [
-                ProjectMember(
-                    project_id=project.id, user_handle=OWNER, role=ProjectRole.lead
-                ),
-                ProjectMember(
-                    project_id=project.id, user_handle=CHEESE, role=ProjectRole.member
-                ),
-            ]
-        )
+            s.add(root)
+            await s.flush()
+            project.root_topic_id = root.id
+
+            s.add(
+                Topic(
+                    project_id=project.id,
+                    title=first_topic,
+                    kind=TopicKind.topic,
+                    status=TopicStatus.active,
+                    created_by=OWNER,
+                )
+            )
+            s.add_all(
+                [
+                    ProjectMember(
+                        project_id=project.id, user_handle=OWNER, role=ProjectRole.lead
+                    ),
+                    ProjectMember(
+                        project_id=project.id,
+                        user_handle=CHEESE,
+                        role=ProjectRole.member,
+                    ),
+                ]
+            )
+            print(f"seeded project '{name}' (team {team_id})")
         await s.commit()
-        print(f"seeded project {project.id} '{PROJECT_NAME}' owner={OWNER}")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ export const TOPIC_STATUS: Record<string, string> = {
 }
 
 export const TOPIC_KIND: Record<string, string> = {
-  root: '本体',
+  root: '全局',
   topic: '话题',
   subtopic: '分身',
 }
