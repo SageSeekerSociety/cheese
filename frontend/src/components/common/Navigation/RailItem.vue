@@ -7,12 +7,16 @@
     :class="{ 'app-rail-item-cheese': item.icon === 'cheese', 'app-rail-item--tile': item.img }"
   >
     <template v-if="item.img">
-      <!-- match the original 元思 tile: a prominent colored rounded-square app
-           icon + the project name as a caption below it (fusion: project tiles) -->
-      <v-img :src="item.img" width="40" height="40" class="rounded-lg" cover />
-      <div class="text-caption app-rail-item-text app-rail-item-label">
-        {{ item.title }}
-      </div>
+      <!-- project tile: just the colored rounded-square app icon, no caption
+           (name shows on hover tooltip) — Discord-style rail -->
+      <v-img
+        v-tooltip="item.title"
+        :src="item.img"
+        width="40"
+        height="40"
+        class="rounded-lg"
+        cover
+      />
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="26" height="26" class="cheese-icon" />
