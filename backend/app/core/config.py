@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     storage_local_url: str = "/uploads"
     # main's auth (real SRP/JWT login — A3): the merged app uses this as the
     # canonical identity. jwt_secret signs/verifies the product's access tokens.
+    redis_url: str = "redis://localhost:6379/0"
+    environment: str = "development"
+    frontend_url: str = "http://localhost:5200"
+    frontend_oauth_success_path: str = "/"
+    frontend_oauth_error_path: str = "/login"
+    require_invite_code: bool = False
     jwt_secret: str = "dev-secret"
     access_token_expires_seconds: int = 15 * 60
     refresh_token_expires_seconds: int = 60 * 60 * 24 * 30
