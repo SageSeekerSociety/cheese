@@ -93,8 +93,8 @@ class ProjectRepository:
         """Project roster: each member's handle, display name, and role — used to
         inject 芝士's teammate context and to resolve @mentions to a handle."""
         stmt = (
-            select(ProjectMember.user_handle, ProjectMember.role, User.name)
-            .join(User, User.handle == ProjectMember.user_handle, isouter=True)
+            select(ProjectMember.user_handle, ProjectMember.role, User.nickname)
+            .join(User, User.username == ProjectMember.user_handle, isouter=True)
             .where(ProjectMember.project_id == project_id)
         )
         rows = (await self._session.execute(stmt)).all()
