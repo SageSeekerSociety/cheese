@@ -21,6 +21,7 @@ class ProjectOut(BaseModel):
     id: uuid.UUID
     name: str
     owner_handle: str | None
+    team_id: int | None = None
     ai_mode: AiMode
     expert_role: str | None
     summary: str

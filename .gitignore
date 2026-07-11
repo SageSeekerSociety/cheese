@@ -41,3 +41,6 @@ scripts/ops/etrip-proxy.yaml
 # playwright run artifacts
 e2e/test-results/
 e2e/node_modules/
+
+tmp/
+e2e/tmp/

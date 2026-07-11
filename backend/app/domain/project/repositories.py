@@ -40,6 +40,16 @@ class ProjectRepository:
     async def get(self, project_id: uuid.UUID) -> Project | None:
         return await self._session.get(Project, project_id)
 
+    async def get_by_team(self, team_id: int) -> Project | None:
+        """The AI-workspace project for a 知是 Team (P4 native link), newest first."""
+        stmt = (
+            select(Project)
+            .where(Project.team_id == team_id)
+            .order_by(Project.created_at.desc())
+            .limit(1)
+        )
+        return (await self._session.scalars(stmt)).first()
+
     async def list_all(self) -> list[Project]:
         stmt = select(Project).order_by(Project.created_at.desc())
         return list((await self._session.scalars(stmt)).all())

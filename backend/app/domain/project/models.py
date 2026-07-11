@@ -37,6 +37,11 @@ class Project(UuidPk, Timestamps, Base):
 
     name: Mapped[str] = mapped_column(String(200))
     owner_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # fusion P4: the 知是 Team this project is the AI workspace for (nullable — a
+    # personal project has none). Lets a team page open its Project natively.
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("team.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     ai_mode: Mapped[AiMode] = mapped_column(
         Enum(AiMode, native_enum=False, length=16),
         default=AiMode.collaborative,

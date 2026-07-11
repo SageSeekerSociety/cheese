@@ -21,10 +21,12 @@ from app.domain.project.models import (
     ProjectMember,
     ProjectRole,
 )
+from app.domain.team.models import Team  # noqa: F401 — register `team` for Project.team_id FK
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 
 PROJECT_NAME = "知是 2.0 融合演示"
 OWNER = "alice"  # username == handle (fusion A2)
+TEAM_ID = 1      # 知是 Team 「深度学习研究组」 (P4 native link)
 CHEESE = "cheese"
 
 
@@ -45,6 +47,7 @@ async def seed() -> None:
         project = Project(
             name=PROJECT_NAME,
             owner_handle=OWNER,
+            team_id=TEAM_ID,
             ai_mode=AiMode.collaborative,
             summary="演示：把原版知是（空间/小队/任务）与芝士的话题/群聊/文档合到一处。",
         )

@@ -55,6 +55,20 @@ async def list_projects(db: DbSession) -> dict:
     return ok(page(items, total))
 
 
+@router.get("/by-team/{team_id}")
+async def project_for_team(team_id: int, db: DbSession) -> dict:
+    """The AI-workspace project for a 知是 Team (P4). ``data`` is null when the
+    team has no project yet — the team page uses this to show/hide its 「AI 工作台」
+    entry."""
+    project = await ProjectRepository(db).get_by_team(team_id)
+    data = (
+        ProjectOut.model_validate(project).model_dump(mode="json")
+        if project is not None
+        else None
+    )
+    return ok(data)
+
+
 @router.get("/{project_id}")
 async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
     project = await ProjectService(db).get_or_404(project_id)

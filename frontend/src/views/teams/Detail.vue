@@ -41,6 +41,19 @@
 
               <v-spacer></v-spacer>
 
+              <!-- fusion P4: this team's cheesex AI workspace, opened natively -->
+              <v-btn
+                v-if="teamProject"
+                variant="tonal"
+                color="primary"
+                size="small"
+                prepend-icon="mdi-robot-happy-outline"
+                class="mr-2"
+                @click="openAiWorkspace"
+              >
+                AI 工作台
+              </v-btn>
+
               <!-- 频道相关操作按钮 -->
               <div
                 v-if="activeTab === 'TeamsDetailChannels' && currentChannel && isTeamAdmin"
@@ -119,6 +132,8 @@ import DetailSidebar from './DetailSidebar.vue'
 import ProjectFormDialog from '@/components/projects/forms/ProjectFormDialog.vue'
 import { teamDataInjectionKey } from '@/keys'
 import { ProjectsApi } from '@/network/api/projects'
+import { getProjectForTeam } from '@/api'
+import type { Project as CxProject } from '@/cx_types'
 import { TeamsApi } from '@/network/api/teams'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
@@ -132,6 +147,20 @@ const teamData = ref<Team>()
 provide(teamDataInjectionKey, teamData)
 
 const teamId = computed(() => Number(route.params.teamId))
+
+// fusion P4: this team's cheesex AI-workspace project (null → no 「AI 工作台」 entry).
+const teamProject = ref<CxProject | null>(null)
+async function loadTeamProject() {
+  try {
+    teamProject.value = await getProjectForTeam(teamId.value)
+  } catch {
+    teamProject.value = null
+  }
+}
+function openAiWorkspace() {
+  if (teamProject.value) router.push(`/project/${teamProject.value.id}`)
+}
+
 const activeTab = ref<string | null>(null)
 const teamMembers = ref<User[]>([])
 const teamMembersCount = ref(0)
@@ -439,7 +468,12 @@ const getDialogSubtitle = () => {
 
 onMounted(async () => {
   const teamId = Number(route.params.teamId)
-  await Promise.all([fetchTeamData(teamId), fetchProjects(), fetchTeamMembers()])
+  await Promise.all([
+    fetchTeamData(teamId),
+    fetchProjects(),
+    fetchTeamMembers(),
+    loadTeamProject(),
+  ])
 })
 </script>
 

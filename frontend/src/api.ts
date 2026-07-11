@@ -541,6 +541,12 @@ export function getOverview(projectId: string): Promise<ProjectOverview> {
   )
 }
 
+// The AI-workspace project for a 知是 Team (fusion P4). Null when the team has no
+// project yet — the team page uses this to show/hide its 「AI 工作台」 entry.
+export function getProjectForTeam(teamId: number): Promise<Project | null> {
+  return request<Project | null>(`/projects/by-team/${teamId}`)
+}
+
 export function getInbox(
   projectId: string,
   targetHandle: string,
