@@ -122,7 +122,7 @@ const navItems = computed<NavGenericItem[]>(() => [
     key: `cx-${p.id}`,
     type: 'item' as const,
     title: p.name,
-    to: `/cxproject/${p.id}`,
+    to: `/project/${p.id}`,
     img: projectAvatar(p.name),
   })),
 ])
