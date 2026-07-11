@@ -132,12 +132,20 @@ function projectAvatar(name: string): string {
   const ch = trimmed ? [...trimmed][0] : '·'
   const colors = ['#F57F17', '#1f9d55', '#2563eb', '#7c3aed', '#dc2626', '#0891b2']
   const c = colors[trimmed.length % colors.length]
+  const esc = ch.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">` +
     `<rect width="48" height="48" rx="14" fill="${c}"/>` +
-    `<text x="24" y="32" font-size="24" fill="#fff" text-anchor="middle" ` +
-    `font-family="-apple-system,sans-serif" font-weight="600">${ch}</text></svg>`
-  return 'data:image/svg+xml,' + encodeURIComponent(svg)
+    `<text x="24" y="24" font-size="22" fill="#ffffff" text-anchor="middle" ` +
+    `dominant-baseline="central" font-family="sans-serif" font-weight="700">${esc}</text></svg>`
+  // Unicode-safe base64 (the initial may be CJK) — more robust in v-img than a
+  // percent-encoded data URI.
+  const b64 = btoa(
+    encodeURIComponent(svg).replace(/%([0-9A-F]{2})/g, (_, h) =>
+      String.fromCharCode(parseInt(h, 16)),
+    ),
+  )
+  return `data:image/svg+xml;base64,${b64}`
 }
 </script>
 

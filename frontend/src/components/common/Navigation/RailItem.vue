@@ -6,7 +6,9 @@
     :class="{ 'app-rail-item-cheese': item.icon === 'cheese' }"
   >
     <template v-if="item.img">
-      <v-img :src="item.img" :aspect-ratio="1"></v-img>
+      <!-- explicit size: an aspect-ratio-only v-img collapses to 0 width in the
+           rail (fusion merge: project avatars) -->
+      <v-img :src="item.img" width="40" height="40" class="rounded-lg" cover />
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="36" height="36" class="cheese-icon" />
