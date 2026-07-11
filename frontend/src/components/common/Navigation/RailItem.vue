@@ -14,7 +14,7 @@
       </div>
     </template>
     <template v-else-if="item.icon === 'cheese'">
-      <CheeseLogo width="36" height="36" class="cheese-icon" />
+      <CheeseLogo width="30" height="30" class="cheese-icon" />
     </template>
     <template v-else>
       <v-icon size="small">{{ item.icon }}</v-icon>
@@ -127,11 +127,16 @@ const { item } = toRefs(navBarProps)
   gap: 3px;
   background-color: transparent;
 
-  &:hover {
-    background-color: rgba(var(--v-theme-surface-light), 0.5);
-  }
+  // the colored avatar IS the tile — never draw a card box behind it (that made
+  // a messy second square around the icon). Active state = the label turns the
+  // brand colour instead.
+  &:hover,
   &[aria-current] {
-    background-color: rgba(var(--v-theme-primary), 0.1);
+    background-color: transparent;
+  }
+  &[aria-current] .app-rail-item-label {
+    color: rgb(var(--v-theme-primary));
+    font-weight: 600;
   }
 }
 
