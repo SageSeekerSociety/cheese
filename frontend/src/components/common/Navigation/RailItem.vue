@@ -2,7 +2,8 @@
   <v-card
     v-if="item.type === 'item'"
     :to="item.to"
-    class="app-rail-item rounded-lg"
+    rounded="lg"
+    class="app-rail-item"
     :class="{ 'app-rail-item-cheese': item.icon === 'cheese', 'app-rail-item--tile': item.img }"
   >
     <template v-if="item.img">
@@ -14,7 +15,7 @@
       </div>
     </template>
     <template v-else-if="item.icon === 'cheese'">
-      <CheeseLogo width="30" height="30" class="cheese-icon" />
+      <CheeseLogo width="26" height="26" class="cheese-icon" />
     </template>
     <template v-else>
       <v-icon size="small">{{ item.icon }}</v-icon>
@@ -74,11 +75,17 @@ const { item } = toRefs(navBarProps)
   }
 
   &.app-rail-item-cheese {
-    // a clearly visible light-grey rounded-square tile so 知是's home icon reads
-    // as a 方框 (like the original), not just the round logo floating on white
-    background-color: #eceef2;
+    // a clearly visible light-grey rounded-square tile (iOS-app-icon style, per
+    // Image #63) so 知是's home icon reads as a 方块 — the 4 corners must show grey
+    // around the round logo, not let the logo fill the slot into a circle.
+    background-color: #e2e4ea;
 
     .cheese-icon {
+      // force the logo small so grey shows on ALL sides (the width/height props
+      // on the ?component SVG don't reliably shrink it) → the tile reads as a
+      // clear rounded 方块 with the round logo inside, per Image #63
+      width: 24px !important;
+      height: 24px !important;
       fill: rgb(var(--v-theme-on-surface));
       opacity: var(--v-medium-high-opacity);
       transition: all 0.2s ease;
