@@ -6,17 +6,20 @@
     class="app-rail-item"
     :class="{ 'app-rail-item-cheese': item.icon === 'cheese', 'app-rail-item--tile': item.img }"
   >
+    <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
+    <v-tooltip activator="parent" location="end" content-class="rail-flyout">
+      <div class="rail-flyout__inner">
+        <span class="rail-flyout__name">{{ item.title }}</span>
+        <template v-if="item.shortcut">
+          <kbd class="rail-flyout__kbd">⌘</kbd>
+          <kbd class="rail-flyout__kbd">{{ item.shortcut }}</kbd>
+        </template>
+      </div>
+    </v-tooltip>
+
     <template v-if="item.img">
-      <!-- project tile: just the colored rounded-square app icon, no caption
-           (name shows on hover tooltip) — Discord-style rail -->
-      <v-img
-        v-tooltip="item.title"
-        :src="item.img"
-        width="40"
-        height="40"
-        class="rounded-lg"
-        cover
-      />
+      <!-- project tile: just the colored rounded-square app icon (Discord-style) -->
+      <v-img :src="item.img" width="40" height="40" class="rounded-lg" cover />
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="26" height="26" class="cheese-icon" />
@@ -53,6 +56,7 @@ const { item } = toRefs(navBarProps)
 }
 
 .app-rail-item {
+  position: relative;
   width: 48px;
   height: 48px;
   display: flex;
@@ -159,5 +163,54 @@ const { item } = toRefs(navBarProps)
   margin: 6px auto;
   opacity: 0.6;
   border-radius: 2px;
+}
+
+/* active indicator — a soft amber pill on the left edge, in our brand accent
+   (not Discord's white), so the selected rail tile reads at a glance */
+.app-rail-item[aria-current]::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 22px;
+  border-radius: 0 3px 3px 0;
+  background: #f57f17;
+}
+
+/* Discord-style hover flyout, tuned to our light/amber aesthetic. Rendered at the
+   <body>, so this is global (the style block is unscoped). */
+.rail-flyout.rail-flyout {
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  opacity: 1;
+}
+.rail-flyout .rail-flyout__inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #23242a;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+}
+.rail-flyout .rail-flyout__kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
 }
 </style>

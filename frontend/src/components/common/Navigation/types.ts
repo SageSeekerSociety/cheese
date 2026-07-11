@@ -8,6 +8,8 @@ export type NavItem = {
   permanent?: boolean
   visibleOnMobile?: boolean
   visibleOnPC?: boolean
+  // Discord-style ⌘N quick-switch number shown in the hover tooltip.
+  shortcut?: number
 }
 
 export type NavDivider = {

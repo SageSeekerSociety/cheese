@@ -94,7 +94,7 @@ async function loadCxProjects() {
 onMounted(loadCxProjects)
 
 const navItems = computed<NavGenericItem[]>(() => [
-  { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese', visibleOnMobile: false },
+  { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese', visibleOnMobile: false, shortcut: 1 },
   {
     key: 'Spaces',
     type: 'item',
@@ -118,14 +118,28 @@ const navItems = computed<NavGenericItem[]>(() => [
     : []),
   // Each project → our workspace (topics/群聊/doc/agent). Discord-style: a
   // squircle avatar (initial + color), not a cut-off title.
-  ...cxProjects.value.map((p) => ({
+  ...cxProjects.value.map((p, i) => ({
     key: `cx-${p.id}`,
     type: 'item' as const,
     title: p.name,
     to: `/project/${p.id}`,
     img: projectAvatar(p.name),
+    shortcut: i + 2, // ⌘1 = 首页, then projects
   })),
 ])
+
+// Discord-style ⌘N quick-switch: ⌘1 首页, ⌘2.. projects.
+function onRailShortcut(e: KeyboardEvent) {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+  const n = Number(e.key)
+  if (!n) return
+  const item = navItems.value.find((it) => it.type === 'item' && it.shortcut === n)
+  if (item && item.type === 'item') {
+    e.preventDefault()
+    router.push(item.to)
+  }
+}
+onMounted(() => window.addEventListener('keydown', onRailShortcut))
 
 function projectAvatar(name: string): string {
   const trimmed = (name || '').trim()
