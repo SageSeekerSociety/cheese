@@ -81,11 +81,12 @@ const { item } = toRefs(navBarProps)
     background-color: #e2e4ea;
 
     .cheese-icon {
-      // force the logo small so grey shows on ALL sides (the width/height props
-      // on the ?component SVG don't reliably shrink it) → the tile reads as a
-      // clear rounded 方块 with the round logo inside, per Image #63
-      width: 24px !important;
-      height: 24px !important;
+      // logo size set via CSS (the width/height props on the ?component SVG don't
+      // reliably apply). ~32px in the 48px square ≈ the proportion in Image #63 —
+      // the tile is a clear 方块 thanks to the rounded='lg' prop, not by shrinking
+      // the logo, so it can sit comfortably large.
+      width: 32px !important;
+      height: 32px !important;
       fill: rgb(var(--v-theme-on-surface));
       opacity: var(--v-medium-high-opacity);
       transition: all 0.2s ease;
