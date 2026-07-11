@@ -6,9 +6,9 @@
     :class="{ 'app-rail-item-cheese': item.icon === 'cheese' }"
   >
     <template v-if="item.img">
-      <!-- explicit size: an aspect-ratio-only v-img collapses to 0 width in the
-           rail (fusion merge: project avatars) -->
-      <v-img :src="item.img" width="40" height="40" class="rounded-lg" cover />
+      <!-- fill the whole 48px card so a generated single-char squircle covers
+           the frame edge-to-edge (fusion merge: project avatars) -->
+      <v-img :src="item.img" width="48" height="48" class="rounded-lg" cover />
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="36" height="36" class="cheese-icon" />
@@ -19,7 +19,8 @@
     </template>
   </v-card>
   <template v-else>
-    <v-divider></v-divider>
+    <!-- separates 本体(首页) from the project list — a short, visible rule -->
+    <v-divider class="app-rail-divider" thickness="2"></v-divider>
   </template>
 </template>
 
@@ -98,5 +99,14 @@ const { item } = toRefs(navBarProps)
   .app-rail-item-text {
     line-height: 1;
   }
+}
+
+.app-rail-divider.app-rail-divider {
+  // clear gap above/below + a solid enough rule that the boundary between
+  // 本体(首页) and the project list reads at a glance
+  width: 24px;
+  margin: 6px auto;
+  opacity: 0.6;
+  border-radius: 2px;
 }
 </style>

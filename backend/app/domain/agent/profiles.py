@@ -197,8 +197,15 @@ def build_registry(settings) -> ProfileRegistry:  # type: ignore[no-untyped-def]
         opus_model=settings.fable_model,
         oauth_token=settings.claude_oauth_token,
     )
+    # The platform default is normally the pool ("default"); an operator can point
+    # it at a subscription profile via settings.agent_default_profile (e.g. a demo
+    # where the GLM pool is dry). Guard: fall back to "default" if the configured
+    # profile is unknown or has no credentials, so boot never picks a dead pool.
+    by_name = {p.name: p for p in (default, claude, fable)}
+    wanted = by_name.get(settings.agent_default_profile)
+    default_name = wanted.name if wanted and wanted.available else "default"
     return ProfileRegistry(
         [default, claude, fable],
-        default_name="default",
+        default_name=default_name,
         dogfood_owners=frozenset(settings.dogfood_owner_handles),
     )

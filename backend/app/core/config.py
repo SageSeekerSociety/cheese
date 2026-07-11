@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
+    # Which registered profile is the platform default ("our AI pool"). Normally
+    # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
+    # whole platform on the subscription seat — e.g. a demo where the GLM pool is
+    # out of balance. The chosen profile must have credentials or boot fails fast.
+    agent_default_profile: str = "default"
     agent_system_prompt: str = (
         "你是「芝士」，知是平台里的 AI 队友。你贯穿一个项目的全过程，"
         "了解项目的话题、决策和进展。回答要说人话，让零基础的同学也能看懂，"
@@ -210,7 +215,12 @@ class Settings(BaseSettings):
     authz_enforce_topic_access: bool = True
 
     # --- App ---
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5200", "http://localhost:5200"]
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5200",
+        "http://localhost:5200",
+    ]
 
 
 @lru_cache

@@ -153,6 +153,8 @@ function projectAvatar(name: string): string {
 .app-content {
   min-height: 0;
   overflow: auto;
-  overscroll-behavior: contain;
+  /* contain only the vertical axis: `contain` on both axes also swallows the
+     browser's horizontal swipe-to-go-back gesture (fusion: 左划返回失效). */
+  overscroll-behavior-y: contain;
 }
 </style>
