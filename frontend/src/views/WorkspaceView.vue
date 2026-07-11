@@ -826,7 +826,14 @@ async function handleCreateTopic(title: string) {
 // ＋ 子话题 on a topic row: split off a sub-topic, refresh the tree, select it.
 async function handleSplitTopic(payload: { topicId: string; title: string }) {
   try {
-    const sub = await splitTopic(payload.topicId, payload.title, AUTHOR)
+    // Untitled by default — mirrors handleCreateTopic. The backend requires a
+    // non-empty title, so fall back to a neutral placeholder; the real title is
+    // derived from the first message (芝士 can refine it via a tool).
+    const sub = await splitTopic(
+      payload.topicId,
+      payload.title.trim() || '新话题',
+      AUTHOR,
+    )
     await refreshTopics()
     selectTopic(sub.id)
   } catch (e) {

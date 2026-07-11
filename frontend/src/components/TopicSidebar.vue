@@ -200,9 +200,10 @@ const currentProjectName = computed<string>(
 )
 
 function onSplit(t: Topic) {
-  const title = window.prompt(`在「${t.title}」下新建子话题，标题：`)
-  if (!title || !title.trim()) return
-  emit('split-topic', { topicId: t.id, title: title.trim() })
+  // Never ask the human for a title (spec §rule 4, mirrors newTopic()). The
+  // sub-topic is born untitled and opened; its title is derived from the first
+  // message (芝士 can refine it via a tool).
+  emit('split-topic', { topicId: t.id, title: '' })
 }
 
 // 项目文档 (spec §7.1): 章程 / 决策记录 / 周报集 open INSIDE the 工作台 (keeping
@@ -298,8 +299,8 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                 'is-sub': row.depth > 0,
               }"
               :style="{
-                paddingInlineStart: 14 + row.depth * 20 + 'px',
-                '--guide-x': 22 + (row.depth - 1) * 20 + 'px',
+                paddingInlineStart: 8 + row.depth * 20 + 'px',
+                '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
               }"
               @click="emit('select-topic', row.topic.id)"
             >
@@ -347,7 +348,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                 <div class="row-actions" @click.stop>
                   <v-btn
                     icon="mdi-archive-arrow-down-outline"
-                    size="x-small"
+                    size="small"
                     variant="text"
                     density="comfortable"
                     title="归档话题"
@@ -355,7 +356,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                   />
                   <v-btn
                     icon="mdi-source-branch-plus"
-                    size="x-small"
+                    size="small"
                     variant="text"
                     density="comfortable"
                     title="拆出子话题"
@@ -776,23 +777,29 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   transform: translateY(-50%);
   display: flex;
   align-items: center;
-  gap: 0;
-  padding: 0 2px;
+  gap: 2px;
+  padding: 2px 3px;
   opacity: 0;
   pointer-events: none;
   /* 有意为之的浮动工具条（Linear 手法）：白底+细边+微影，
      在任何行底色上都成立——不再试图和行底色融为一体。 */
   background: var(--surface, #fff);
   border: 1px solid var(--line-2, #e3e3e3);
-  border-radius: 7px;
+  border-radius: 10px;
   box-shadow: 0 1px 4px rgba(20, 22, 26, 0.07);
   transition: opacity 0.1s ease;
   color: var(--muted);
 }
-/* 工具条里的每颗按钮要有自己的悬停反馈——否则不像能按的东西。 */
+/* 工具条里的每颗按钮要有自己的悬停反馈——否则不像能按的东西。
+   舒适可点，但必须小于行高（~36px）：25px 按钮 + 16px 图标，稳稳落在行内。 */
 .row-actions :deep(.v-btn) {
-  border-radius: 5px;
+  width: 25px;
+  height: 25px;
+  border-radius: 7px;
   cursor: pointer;
+}
+.row-actions :deep(.v-btn .v-icon) {
+  font-size: 16px;
 }
 .row-actions :deep(.v-btn:hover) {
   background: var(--fill, #ececec);
