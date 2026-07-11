@@ -74,6 +74,10 @@ const { item } = toRefs(navBarProps)
   }
 
   &.app-rail-item-cheese {
+    // a clearly visible light-grey rounded-square tile so 知是's home icon reads
+    // as a 方框 (like the original), not just the round logo floating on white
+    background-color: #eceef2;
+
     .cheese-icon {
       fill: rgb(var(--v-theme-on-surface));
       opacity: var(--v-medium-high-opacity);
