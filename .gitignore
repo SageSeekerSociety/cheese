@@ -37,3 +37,7 @@ dist-ssr/
 # Server-only proxy config — contains the personal airport subscription URL
 # (a secret). Lives at etrip:/etc/mihomo/config.yaml (root 600), never in git.
 scripts/ops/etrip-proxy.yaml
+
+# playwright run artifacts
+e2e/test-results/
+e2e/node_modules/

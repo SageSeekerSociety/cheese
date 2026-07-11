@@ -3,12 +3,12 @@
     v-if="item.type === 'item'"
     :to="item.to"
     class="app-rail-item rounded-lg"
-    :class="{ 'app-rail-item-cheese': item.icon === 'cheese' }"
+    :class="{ 'app-rail-item-cheese': item.icon === 'cheese', 'app-rail-item--tile': item.img }"
   >
     <template v-if="item.img">
-      <!-- match the original 元思 tile: a colored rounded-square chip + the
-           project name as a caption below it (fusion merge: project avatars) -->
-      <v-img :src="item.img" width="34" height="34" class="rounded-lg" cover />
+      <!-- match the original 元思 tile: a prominent colored rounded-square app
+           icon + the project name as a caption below it (fusion: project tiles) -->
+      <v-img :src="item.img" width="40" height="40" class="rounded-lg" cover />
       <div class="text-caption app-rail-item-text app-rail-item-label">
         {{ item.title }}
       </div>
@@ -111,6 +111,23 @@ const { item } = toRefs(navBarProps)
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 10px;
+  }
+}
+
+// project tiles: the colored rounded-square IS the visual (like the 元思 app
+// icon), floating on the rail with its name below — no grey box around it.
+.app-rail-item.app-rail-item--tile {
+  height: auto;
+  min-height: 48px;
+  padding: 3px 0 4px;
+  gap: 3px;
+  background-color: transparent;
+
+  &:hover {
+    background-color: rgba(var(--v-theme-surface-light), 0.5);
+  }
+  &[aria-current] {
+    background-color: rgba(var(--v-theme-primary), 0.1);
   }
 }
 
