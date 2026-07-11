@@ -34,14 +34,47 @@
         </div>
       </div>
     </v-main>
+
+    <!-- 新建项目 dialog (opened by the rail's "+" affordance) -->
+    <v-dialog v-model="newProjectDialog" max-width="420" persistent>
+      <v-card rounded="lg" class="pa-2">
+        <v-card-title class="text-h6 font-weight-bold pb-1">新建项目</v-card-title>
+        <v-card-text class="pb-2">
+          <v-text-field
+            v-model="newProjectName"
+            label="项目名称"
+            variant="outlined"
+            color="primary"
+            autofocus
+            hide-details
+            :disabled="creatingProject"
+            @keyup.enter="confirmNewProject"
+          />
+        </v-card-text>
+        <v-card-actions class="px-4 pb-3">
+          <v-spacer />
+          <v-btn variant="text" :disabled="creatingProject" @click="newProjectDialog = false">取消</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="creatingProject"
+            :disabled="!newProjectName.trim()"
+            @click="confirmNewProject"
+          >
+            创建
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </my-app>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
-import { listProjects } from '@/api'
+import { createProject, listProjects } from '@/api'
 import type { Project } from '@/cx_types'
+import { myHandle } from '@/me'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 
@@ -126,7 +159,45 @@ const navItems = computed<NavGenericItem[]>(() => [
     img: projectAvatar(p.name),
     shortcut: i + 2, // ⌘1 = 首页, then projects
   })),
+  // Discord-style "+" at the bottom of the project list: create a new project.
+  {
+    key: 'cx-add',
+    type: 'item' as const,
+    title: '新建项目',
+    icon: 'mdi-plus',
+    add: true,
+    action: createNewProject,
+    visibleOnMobile: false,
+  },
 ])
+
+// The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
+// we create the project owned by the current user, refresh the rail so the new
+// tile appears, then open its workspace.
+const newProjectDialog = ref(false)
+const newProjectName = ref('')
+const creatingProject = ref(false)
+
+function createNewProject() {
+  newProjectName.value = ''
+  newProjectDialog.value = true
+}
+
+async function confirmNewProject() {
+  const name = newProjectName.value.trim()
+  if (!name || creatingProject.value) return
+  creatingProject.value = true
+  try {
+    const project = await createProject(name, myHandle())
+    await loadCxProjects()
+    newProjectDialog.value = false
+    router.push(`/project/${project.id}`)
+  } catch {
+    window.alert('创建项目失败')
+  } finally {
+    creatingProject.value = false
+  }
+}
 
 // Discord-style ⌘N quick-switch: ⌘1 首页, ⌘2.. projects.
 function onRailShortcut(e: KeyboardEvent) {
@@ -134,7 +205,7 @@ function onRailShortcut(e: KeyboardEvent) {
   const n = Number(e.key)
   if (!n) return
   const item = navItems.value.find((it) => it.type === 'item' && it.shortcut === n)
-  if (item && item.type === 'item') {
+  if (item && item.type === 'item' && item.to) {
     e.preventDefault()
     router.push(item.to)
   }

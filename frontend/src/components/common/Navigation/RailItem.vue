@@ -4,7 +4,12 @@
     :to="item.to"
     rounded="lg"
     class="app-rail-item"
-    :class="{ 'app-rail-item-cheese': item.icon === 'cheese', 'app-rail-item--tile': item.img }"
+    :class="{
+      'app-rail-item-cheese': item.icon === 'cheese',
+      'app-rail-item--tile': item.img,
+      'app-rail-item--add': item.add,
+    }"
+    @click="!item.to && item.action ? item.action() : undefined"
   >
     <!-- Discord-style hover flyout: name + ⌘N quick-switch key -->
     <v-tooltip activator="parent" location="end" content-class="rail-flyout">
@@ -23,6 +28,11 @@
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="26" height="26" class="cheese-icon" />
+    </template>
+    <template v-else-if="item.add">
+      <!-- subtle "add" affordance: a plus glyph, no label/color, so it reads as
+           a button rather than a project tile -->
+      <v-icon size="22" class="app-rail-add-icon">{{ item.icon }}</v-icon>
     </template>
     <template v-else>
       <v-icon size="small">{{ item.icon }}</v-icon>
@@ -142,6 +152,10 @@ const { item } = toRefs(navBarProps)
   padding: 3px 0 4px;
   gap: 3px;
   background-color: transparent;
+  // the amber ring is a box-shadow on the inner 40px avatar; a v-card clips its
+  // content (overflow:hidden) so the ring only showed at the corners. Let it
+  // render fully so the frame is a clean, symmetric square on all 4 sides.
+  overflow: visible;
 
   // the colored avatar IS the tile — never draw a card box behind it (that made
   // a messy second square around the icon). Active state = the label turns the
@@ -153,6 +167,34 @@ const { item } = toRefs(navBarProps)
   &[aria-current] .app-rail-item-label {
     color: rgb(var(--v-theme-primary));
     font-weight: 600;
+  }
+
+  // Selected project reads as selected via an amber ring FRAMING the square —
+  // the 40px avatar keeps a small gap to the ring (box-shadow: 0 spread = the
+  // avatar edge, then a transparent gap, then the 2px amber ring).
+  .v-img {
+    transition: box-shadow 0.2s ease;
+  }
+  &[aria-current] .v-img {
+    box-shadow: 0 0 0 3px rgb(var(--v-theme-surface)), 0 0 0 5px #f57f17;
+  }
+}
+
+// "add project" affordance: a dashed rounded square with a muted plus, distinct
+// from a project tile (no colored avatar). Greens up on hover to invite the click.
+.app-rail-item.app-rail-item--add {
+  background-color: transparent;
+  border: 1.5px dashed rgba(var(--v-theme-on-surface), 0.28);
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+
+  .app-rail-add-icon {
+    transition: all 0.2s ease;
+  }
+
+  &:hover {
+    background-color: rgba(var(--v-theme-primary), 0.08);
+    border-color: rgba(var(--v-theme-primary), 0.6);
+    color: rgba(var(--v-theme-primary), var(--v-high-emphasis-opacity));
   }
 }
 
@@ -177,6 +219,12 @@ const { item } = toRefs(navBarProps)
   height: 22px;
   border-radius: 0 3px 3px 0;
   background: #f57f17;
+}
+
+/* project tiles use the amber RING (above) as their active indicator, so drop
+   the left edge pill for them — the frame around the square carries selection */
+.app-rail-item.app-rail-item--tile[aria-current]::before {
+  content: none;
 }
 
 /* Discord-style hover flyout, tuned to our light/amber aesthetic. Rendered at the
