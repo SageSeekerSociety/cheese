@@ -6,9 +6,12 @@
     :class="{ 'app-rail-item-cheese': item.icon === 'cheese' }"
   >
     <template v-if="item.img">
-      <!-- fill the whole 48px card so a generated single-char squircle covers
-           the frame edge-to-edge (fusion merge: project avatars) -->
-      <v-img :src="item.img" width="48" height="48" class="rounded-lg" cover />
+      <!-- match the original 元思 tile: a colored rounded-square chip + the
+           project name as a caption below it (fusion merge: project avatars) -->
+      <v-img :src="item.img" width="30" height="30" class="rounded-lg" cover />
+      <div class="text-caption app-rail-item-text app-rail-item-label">
+        {{ item.title }}
+      </div>
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="36" height="36" class="cheese-icon" />
@@ -98,6 +101,16 @@ const { item } = toRefs(navBarProps)
 
   .app-rail-item-text {
     line-height: 1;
+  }
+
+  // project tiles: keep the name to a single, truncated line so a long title
+  // ("知是 2.0 融合演示") never breaks the tile grid
+  .app-rail-item-label {
+    max-width: 44px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
   }
 }
 

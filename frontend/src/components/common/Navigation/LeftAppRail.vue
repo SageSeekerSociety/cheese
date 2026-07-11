@@ -13,7 +13,13 @@
     >
       <template #activator="{ props }">
         <v-avatar v-tooltip="userMenu.nickname.value" class="cursor-pointer elevation-1 mb-4" size="32" v-bind="props">
-          <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value" />
+          <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+            <!-- avatar service (localhost:8081) may be down in the merged demo:
+                 fall back to the account icon instead of a broken white tile -->
+            <template #error>
+              <v-icon icon="mdi-account" />
+            </template>
+          </v-img>
           <v-icon v-else icon="mdi-account" />
         </v-avatar>
       </template>
@@ -21,7 +27,11 @@
       <v-card class="user-menu-card rounded-lg elevation-1 border pa-0" min-width="300">
         <v-card-item class="user-header pa-4 pb-3">
           <v-avatar size="56" class="mb-2" elevation="1">
-            <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value" />
+            <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+              <template #error>
+                <v-icon icon="mdi-account" size="large" />
+              </template>
+            </v-img>
             <v-icon v-else icon="mdi-account" size="large" />
           </v-avatar>
           <div class="mt-2">
