@@ -6,7 +6,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { connectDevice, listProjects } from '../api'
-import type { DeviceApproval, Project } from '../types'
+import type { DeviceApproval, Project } from '../cx_types'
 
 const route = useRoute()
 const code = computed(() => String(route.query.code ?? ''))

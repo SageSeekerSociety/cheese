@@ -48,7 +48,7 @@ import type {
   Project,
   ProjectMemberRow,
   Topic,
-} from '../types'
+} from '../cx_types'
 
 // projectId comes from the route (/project/:projectId). When absent we fall
 // back to the first project so 工作台 is never empty.
@@ -207,7 +207,7 @@ function pickAttFiles() {
 }
 function onAttFilePicked(e: Event) {
   const input = e.target as HTMLInputElement
-  if (input.files?.length) void addAttFiles(input.files)
+  if (input.files?.length) void addAttFiles(Array.from(input.files))
   input.value = ''
 }
 

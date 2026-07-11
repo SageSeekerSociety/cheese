@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { getCalendar, getProject, listMilestones } from '../api'
-import type { MilestoneFull } from '../types'
+import type { MilestoneFull } from '../cx_types'
 
 // 时间维度 (spec §7.2): a clean deadline list with countdowns, plus the done
 // milestones shown faded.

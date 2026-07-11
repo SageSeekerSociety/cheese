@@ -8,7 +8,7 @@ import {
   listTaskApplications,
 } from '../api'
 import { myHandle } from '../me'
-import type { MarketTask, Project, TaskApplication } from '../types'
+import type { MarketTask, Project, TaskApplication } from '../cx_types'
 
 // 题目匹配 (spec §13 阶段 6): Spaces publish 题目 (Task Templates) here; a team
 // applies with one of its projects (应征); the Space accepts → the project is

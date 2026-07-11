@@ -365,7 +365,7 @@ const sendMessage = async () => {
 const replyToMessage = (message: any) => {
   replyingToMessage.value = message
   replyingToReply.value = null
-  newMessage.value = null
+  newMessage.value = undefined
 
   // 聚焦到主输入框
   focusMainInput()

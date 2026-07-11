@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { getMarketNodes } from '../api'
-import type { MarketNodes } from '../types'
+import type { MarketNodes } from '../cx_types'
 
 // 节点状态 (spec §9.1): the physical side of the compute pools — every
 // configured node (local docker + cheesed remote), its liveness, and how many

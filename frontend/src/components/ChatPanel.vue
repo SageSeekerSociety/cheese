@@ -37,7 +37,7 @@ import type {
   Topic,
   WsClientMessage,
   WsServerFrame,
-} from '../types'
+} from '../cx_types'
 import CheeseAvatar from './CheeseAvatar.vue'
 
 // Message rendering (markdown / plain / reference chips) lives in
@@ -639,7 +639,7 @@ function pickFiles() {
 }
 function onFilePicked(e: Event) {
   const input = e.target as HTMLInputElement
-  if (input.files?.length) void addFiles(input.files)
+  if (input.files?.length) void addFiles(Array.from(input.files))
   input.value = '' // allow re-picking the same file
 }
 

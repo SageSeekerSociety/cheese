@@ -23,7 +23,7 @@ import type {
   ExpertRole,
   SandboxImageInfo,
   UpstreamSyncResult,
-} from '../types'
+} from '../cx_types'
 
 // 项目设置 (design v3): a project picks which resource pools it runs on — an AI
 // pool (model/provider) and a compute pool (which machine runs the sandbox).

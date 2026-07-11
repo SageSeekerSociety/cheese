@@ -3,7 +3,7 @@
 // the topic's worktree immediately → the send only references {path, mime}.
 import { ref } from 'vue'
 import { uploadAttachment } from '../api'
-import type { ChatAttachment } from '../types'
+import type { ChatAttachment } from '../cx_types'
 
 const IMAGE_MIME = new Set([
   'image/png',
@@ -44,7 +44,7 @@ export function usePendingAttachments(
     const items = e.clipboardData?.items
     if (!items) return
     const files: File[] = []
-    for (const item of items) {
+    for (const item of Array.from(items)) {
       if (item.kind === 'file') {
         const f = item.getAsFile()
         if (f && IMAGE_MIME.has(f.type)) files.push(f)

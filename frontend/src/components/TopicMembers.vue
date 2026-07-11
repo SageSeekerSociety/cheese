@@ -11,7 +11,7 @@ import {
   removeTopicMember,
   updateTopicMemberRole,
 } from '../api'
-import type { ProjectMemberRow, TopicMemberRow } from '../types'
+import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
 
 const props = defineProps<{
   topicId: string

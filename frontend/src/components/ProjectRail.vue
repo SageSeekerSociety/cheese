@@ -8,7 +8,7 @@
 // squircles on --fill; the ONE amber is the active project (wash bg + accent
 // ring + left pill). Tooltip carries the full name.
 import { computed } from 'vue'
-import type { Project } from '../types'
+import type { Project } from '../cx_types'
 
 const props = defineProps<{
   projects: Project[]

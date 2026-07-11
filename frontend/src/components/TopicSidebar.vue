@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { relTime } from '../lib/relTime'
-import type { Project, Topic } from '../types'
+import type { Project, Topic } from '../cx_types'
 import CheeseAvatar from './CheeseAvatar.vue'
 
 const props = defineProps<{

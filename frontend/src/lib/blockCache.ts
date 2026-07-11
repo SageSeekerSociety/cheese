@@ -3,7 +3,7 @@
 // reply that landed while you were in ANOTHER topic is already in the cache
 // when you come back: the last message is there on the very first frame).
 import { listBlocks } from '../api'
-import type { Block } from '../types'
+import type { Block } from '../cx_types'
 
 export const blockCache = new Map<string, Block[]>()
 

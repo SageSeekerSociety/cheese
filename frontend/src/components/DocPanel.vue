@@ -55,7 +55,7 @@ import type {
   Topic,
   UsageStats,
   WorkspaceFile,
-} from '../types'
+} from '../cx_types'
 
 // The living doc is the core interface (spec §2.2): an AI-maintained markdown
 // document the user can also edit ("改文档即指令"). Stored as markdown, so the

@@ -15,7 +15,7 @@ import {
 } from '../api'
 import type { MemoryEntryOut } from '../api'
 import { relTime } from '../lib/relTime'
-import type { Block, Topic } from '../types'
+import type { Block, Topic } from '../cx_types'
 
 // 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集. Shown either as a standalone
 // route or embedded inside the 工作台 (keeping the left rail) — `kind`/`embedded`

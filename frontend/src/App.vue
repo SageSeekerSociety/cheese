@@ -41,7 +41,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 import { listProjects } from '@/api'
-import type { Project } from '@/types'
+import type { Project } from '@/cx_types'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 

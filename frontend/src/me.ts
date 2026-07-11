@@ -3,7 +3,7 @@
 // main content on `me`, so components can read myHandle() once at setup.
 import { ref } from 'vue'
 import { login as apiLogin } from './api'
-import type { Me } from './types'
+import type { Me } from './cx_types'
 
 const KEY = 'cheesex.me'
 

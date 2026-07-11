@@ -37,7 +37,7 @@ import type {
   UsageStats,
   UserProfile,
   WorkspaceFile,
-} from './types'
+} from './cx_types'
 
 export const BASE = '/api'
 
@@ -170,8 +170,8 @@ async function connectorRequest<T>(
 export function connectDevice(
   deviceCode: string,
   projectId?: string,
-): Promise<import('./types').DeviceApproval> {
-  return connectorRequest<import('./types').DeviceApproval>('/connect', {
+): Promise<import('./cx_types').DeviceApproval> {
+  return connectorRequest<import('./cx_types').DeviceApproval>('/connect', {
     method: 'POST',
     body: JSON.stringify({
       device_code: deviceCode,
@@ -182,9 +182,9 @@ export function connectDevice(
 
 // 「我的设备」: the machines the signed-in human enrolled, with liveness + agents.
 export function listMyDevices(): Promise<{
-  devices: import('./types').MyDevice[]
+  devices: import('./cx_types').MyDevice[]
 }> {
-  return connectorRequest<{ devices: import('./types').MyDevice[] }>(
+  return connectorRequest<{ devices: import('./cx_types').MyDevice[] }>(
     '/my/devices',
   )
 }
@@ -192,8 +192,8 @@ export function listMyDevices(): Promise<{
 export function renameMyDevice(
   deviceId: string,
   name: string,
-): Promise<import('./types').MyDevice> {
-  return connectorRequest<import('./types').MyDevice>(
+): Promise<import('./cx_types').MyDevice> {
+  return connectorRequest<import('./cx_types').MyDevice>(
     `/my/devices/${encodeURIComponent(deviceId)}`,
     { method: 'PATCH', body: JSON.stringify({ name }) },
   )

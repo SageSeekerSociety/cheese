@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { getSpaceDashboard } from '../api'
 import { AI_MODE, label } from '../labels'
-import type { SpaceDashboard, SpaceTeam } from '../types'
+import type { SpaceDashboard, SpaceTeam } from '../cx_types'
 
 const props = defineProps<{ spaceId: string }>()
 

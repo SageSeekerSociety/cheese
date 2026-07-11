@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getMemberSummary, getUserProfile } from '../api'
 import { NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS, label } from '../labels'
-import type { MemberSummary, ProfileProject, UserProfile } from '../types'
+import type { MemberSummary, ProfileProject, UserProfile } from '../cx_types'
 
 // 个人主页 = LinkedIn / GitHub profile (spec §1). "项目过程即简历": the page is
 // primarily the cross-project profile; the per-project member summary (TA 发起的

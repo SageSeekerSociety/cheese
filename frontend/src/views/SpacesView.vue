@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { listSpaces } from '../api'
-import type { Space } from '../types'
+import type { Space } from '../cx_types'
 
 const spaces = ref<Space[]>([])
 const loading = ref(false)

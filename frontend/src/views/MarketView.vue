@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { getMarketPools } from '../api'
-import type { MarketPools, PoolListing } from '../types'
+import type { MarketPools, PoolListing } from '../cx_types'
 import NodeBoard from '../components/NodeBoard.vue'
 import TaskMarket from '../components/TaskMarket.vue'
 

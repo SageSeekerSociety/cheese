@@ -20,7 +20,7 @@ import type {
   ProjectCredits,
   ProjectOverview,
   TopicRef,
-} from '../types'
+} from '../cx_types'
 
 const props = defineProps<{ projectId: string }>()
 

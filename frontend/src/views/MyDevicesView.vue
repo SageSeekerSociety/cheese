@@ -8,7 +8,7 @@ import {
   renameMyDevice,
   unbindMyDevice,
 } from '../api'
-import type { DeviceScreen, MyDevice } from '../types'
+import type { DeviceScreen, MyDevice } from '../cx_types'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
 
 const devices = ref<MyDevice[]>([])
