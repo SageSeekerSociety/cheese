@@ -19,7 +19,7 @@ from alembic import op
 revision: str = "d3b8f1a20c11"
 down_revision: Union[str, Sequence[str], None] = "c5f1a9d24e07"
 branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = "a95752502bb0"  # fusion A2: needs main user table
 
 
 def upgrade() -> None:
@@ -28,11 +28,11 @@ def upgrade() -> None:
         sa.Column("device_id", sa.String(length=64), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("token", sa.String(length=128), nullable=False),
-        sa.Column("owner_user_id", sa.Uuid(), nullable=False),
-        sa.Column("agent_user_id", sa.Uuid(), nullable=False),
+        sa.Column("owner_user_id", sa.Integer(), nullable=False),
+        sa.Column("agent_user_id", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["agent_user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["owner_user_id"], ["user.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["agent_user_id"], ["user.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("device_id"),
     )
     op.create_index(op.f("ix_device_token"), "device", ["token"], unique=True)

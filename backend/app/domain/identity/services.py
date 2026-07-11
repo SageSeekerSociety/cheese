@@ -25,6 +25,16 @@ class IdentityService:
         self._users = UserRepository(session)
         self._bindings = AgentBindingRepository(session)
 
+    async def _create_agent_user(self, *, handle: str) -> User:
+        """Create an agent as a real (main-repo) User row: username == handle,
+        a placeholder agent email, no password (agents don't log in). Fusion A2:
+        the merged app has ONE identity table (``user``) — agents live there too."""
+        return await self._users.create_user(
+            username=handle,
+            email=f"{handle}@agent.cheese.local",
+            hashed_password=None,
+        )
+
     async def ensure_agent_user(
         self, *, handle: str = CHEESE_HANDLE, name: str = CHEESE_NAME
     ) -> User:
@@ -32,7 +42,7 @@ class IdentityService:
         Safe to call at every startup and from the migration — never duplicates."""
         user = await self._users.get_by_handle(handle)
         if user is None:
-            user = await self._users.add(User(handle=handle, name=name))
+            user = await self._create_agent_user(handle=handle)
         if await self._bindings.get_for_user(user.id) is None:
             await self._bindings.add(
                 user_id=user.id, kind=AgentBindingKind.platform
@@ -47,7 +57,7 @@ class IdentityService:
         import uuid as _uuid
 
         handle = f"agent-{_uuid.uuid4().hex[:10]}"
-        user = await self._users.add(User(handle=handle, name=name))
+        user = await self._create_agent_user(handle=handle)
         await self._bindings.add(user_id=user.id, kind=AgentBindingKind.device)
         return user
 

@@ -19,58 +19,28 @@ from alembic import op
 revision: str = "c5f1a9d24e07"
 down_revision: Union[str, Sequence[str], None] = "a1c9f3e70b21"
 branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = "a95752502bb0"  # fusion A2: needs main user table
 
 
 def upgrade() -> None:
+    # Fusion A2: agent_bindings.user_id references the merged canonical identity
+    # (main's ``user`` table, int PK) — agents are real users there. 芝士 itself is
+    # seeded at boot by IdentityService.ensure_agent_user (into ``user``), so this
+    # migration only creates the binding table (no cross-table seed needed).
     op.create_table(
         "agent_bindings",
         sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("user_id", sa.Uuid(), nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("kind", sa.String(length=32), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["user.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("user_id", name="uq_agent_binding_user"),
     )
     op.create_index(
         op.f("ix_agent_bindings_user_id"), "agent_bindings", ["user_id"], unique=True
     )
-
-    # --- Seed 芝士 as a real agent-user (idempotent) ---
-    conn = op.get_bind()
-    row = conn.execute(
-        sa.text("SELECT id FROM users WHERE handle = :h"), {"h": "cheese"}
-    ).first()
-    if row is None:
-        user_id = uuid.uuid4()
-        # JSON columns written as SQL literals to avoid driver-specific codecs.
-        conn.execute(
-            sa.text(
-                "INSERT INTO users "
-                "(id, handle, name, email, bio, interests, skills, "
-                " created_at, updated_at) "
-                "VALUES (:id, :handle, :name, NULL, '', "
-                " '[]'::json, '[]'::json, now(), now())"
-            ),
-            {"id": user_id, "handle": "cheese", "name": "芝士"},
-        )
-    else:
-        user_id = row[0]
-
-    has_binding = conn.execute(
-        sa.text("SELECT 1 FROM agent_bindings WHERE user_id = :u"), {"u": user_id}
-    ).first()
-    if has_binding is None:
-        conn.execute(
-            sa.text(
-                "INSERT INTO agent_bindings "
-                "(id, user_id, kind, created_at, updated_at) "
-                "VALUES (:id, :u, 'platform', now(), now())"
-            ),
-            {"id": uuid.uuid4(), "u": user_id},
-        )
 
 
 def downgrade() -> None:

@@ -12,7 +12,7 @@ that binding, not a magic string, is what makes it an agent.
 
 import uuid
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import Integer, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -30,7 +30,7 @@ class AgentBinding(UuidPk, Timestamps, Base):
     __tablename__ = "agent_bindings"
 
     # One binding per agent user (a user is an agent iff a row exists here).
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), unique=True, index=True
     )
     kind: Mapped[str] = mapped_column(String(32), default=AgentBindingKind.platform)
