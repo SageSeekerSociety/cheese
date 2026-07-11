@@ -47,9 +47,18 @@
                 <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4">
                   <v-card flat rounded="lg" class="space-card elevation-0 border" :to="`/spaces/${space.id}`">
                     <v-card-item>
-                      <v-avatar size="60" class="mt-2 mb-4">
-                        <v-img v-if="space.avatarId" :src="getAvatarUrl(space.avatarId)"></v-img>
-                        <v-icon v-else icon="mdi-google-maps" size="large" color="primary"></v-icon>
+                      <v-avatar size="60" color="primary" class="mt-2 mb-4">
+                        <v-img v-if="space.avatarId" :src="getAvatarUrl(space.avatarId)">
+                          <!-- seed avatars may be invalid; fall back to the initial -->
+                          <template #error>
+                            <span class="text-h5 text-white font-weight-medium">{{
+                              (space.name || '·').trim().charAt(0)
+                            }}</span>
+                          </template>
+                        </v-img>
+                        <span v-else class="text-h5 text-white font-weight-medium">{{
+                          (space.name || '·').trim().charAt(0)
+                        }}</span>
                       </v-avatar>
                       <v-card-title class="text-h6 mb-2">{{ space.name }}</v-card-title>
                       <v-card-subtitle class="text-body-2 text-medium-emphasis">{{ space.intro }}</v-card-subtitle>
