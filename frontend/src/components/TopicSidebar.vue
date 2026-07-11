@@ -235,41 +235,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
             class="unread-badge"
           >{{ unreadLabel(rootTopic.id) }}</span>
         </button>
-        <!-- ONLY the caret opens the switcher (clicking the bar opens 本体). -->
-        <v-menu v-model="switcherOpen" location="bottom end" :offset="6">
-          <template #activator="{ props: mp }">
-            <v-btn
-              v-bind="mp"
-              icon="mdi-unfold-more-horizontal"
-              size="x-small"
-              variant="text"
-              title="切换项目"
-              @click.stop="captureSwitcherWidth"
-            />
-          </template>
-          <div class="proj-switcher" :style="{ width: switcherWidth + 'px' }">
-            <div class="proj-switcher__head">切换项目</div>
-            <button
-              v-for="p in projects"
-              :key="p.id"
-              type="button"
-              class="proj-switcher__row"
-              :class="{ 'is-active': p.id === selectedProjectId }"
-              @click="emit('select-project', p.id)"
-            >
-              <v-icon size="17" class="proj-switcher__icon"
-                >mdi-hexagon-outline</v-icon
-              >
-              <span class="proj-switcher__name">{{ p.name }}</span>
-              <v-icon
-                v-if="p.id === selectedProjectId"
-                size="15"
-                class="proj-switcher__check"
-                >mdi-check</v-icon
-              >
-            </button>
-          </div>
-        </v-menu>
+        <!-- 切换项目已回归左侧 rail（每个项目一个图标）——此处不再放切换器。 -->
       </div>
 
       <!-- 项目级页面（总览/日历/设置）: Slack 式置顶行，属项目上下文而非顶栏。 -->

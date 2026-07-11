@@ -116,15 +116,29 @@ const navItems = computed<NavGenericItem[]>(() => [
   ...(cxProjects.value.length
     ? [{ key: 'cx-divider', type: 'divider' as const }]
     : []),
-  // Each project → our workspace (topics/群聊/doc/agent).
+  // Each project → our workspace (topics/群聊/doc/agent). Discord-style: a
+  // squircle avatar (initial + color), not a cut-off title.
   ...cxProjects.value.map((p) => ({
     key: `cx-${p.id}`,
     type: 'item' as const,
     title: p.name,
     to: `/cxproject/${p.id}`,
-    icon: 'mdi-hexagon-multiple-outline',
+    img: projectAvatar(p.name),
   })),
 ])
+
+function projectAvatar(name: string): string {
+  const trimmed = (name || '').trim()
+  const ch = trimmed ? [...trimmed][0] : '·'
+  const colors = ['#F57F17', '#1f9d55', '#2563eb', '#7c3aed', '#dc2626', '#0891b2']
+  const c = colors[trimmed.length % colors.length]
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">` +
+    `<rect width="48" height="48" rx="14" fill="${c}"/>` +
+    `<text x="24" y="32" font-size="24" fill="#fff" text-anchor="middle" ` +
+    `font-family="-apple-system,sans-serif" font-weight="600">${ch}</text></svg>`
+  return 'data:image/svg+xml,' + encodeURIComponent(svg)
+}
 </script>
 
 <style lang="scss" scoped>

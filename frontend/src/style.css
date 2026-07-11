@@ -47,34 +47,11 @@
     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-}
-
-#app {
-  height: 100vh;
-  overflow: hidden;
-}
-
-body {
-  font-family: var(--font-sans);
-  font-size: 14px;
-  font-weight: 430;
-  line-height: 1.62;
-  color: var(--text);
-  background: var(--canvas);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-
-/* Let Vuetify inherit our sans stack rather than its default Roboto. */
-.v-application {
-  font-family: var(--font-sans) !important;
-}
+/* Fusion merge: these global element overrides (html/body/#app/.v-application)
+   are DISABLED here — in the merged app the original cheese shell owns the
+   document-level styling; our tokens (:root) + utility classes (.t-*, .chip-*)
+   below still apply to our grafted views without fighting main's layout.
+   (The standalone cheesex app keeps these via its own style.css.) */
 
 /* ---------------------------------------------------------------------------
    Type hierarchy — utility classes referenced across views. Enforces the spec:
