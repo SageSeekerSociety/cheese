@@ -11,8 +11,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)/backend"
 cd "$ROOT"
-lsof -ti:8799 | xargs kill 2>/dev/null || true
-sleep 1
+pkill -9 -f "uvicorn app.main" 2>/dev/null || true
+lsof -ti:8799 | xargs kill -9 2>/dev/null || true
+sleep 2
 env -u ANTHROPIC_API_KEY -u ANTHROPIC_MODEL -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
     -u ANTHROPIC_VERTEX_PROJECT_ID -u AI_AGENT -u ANTHROPIC_AUTH_TOKEN \
     -u ANTHROPIC_BASE_URL -u OPENAI_API_KEY \
