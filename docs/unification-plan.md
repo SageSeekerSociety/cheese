@@ -38,24 +38,39 @@ story; one frontend token/API; no fallbacks.
 
 ## Phases (each: edit → verify import + fresh-DB upgrade + serve → commit)
 
-- [ ] **P1 backend de-dup**
-  - [ ] P1a cx_notification: fix broken event-pipeline imports (or delete if dead).
-  - [ ] P1b route collisions: remove cx_spaces stub CRUD (`/api/spaces`, `/{id}`)
-        + cx_tasks `GET /api/tasks/{id}`; keep template/market endpoints on
-        non-colliding paths. main space/task own `/api/spaces` `/api/tasks`.
-  - [ ] P1c cx_space → main space: repoint `TaskTemplate.space_id` uuid→int
-        (→`space.id`), rewire cx_space importers (dashboard, cx_spaces, cx_task)
-        to main space, delete `app/domain/cx_space/`, migration.
-  - [ ] P1d cx_task: drop duplicate `Task` stub (uuid), keep TaskTemplate +
-        TaskApplication; rewire ProjectTaskLink if needed; migration.
-- [ ] **P2 retire dead int project**: drop `project` + `project_membership`
-      tables + orphan `/projects` frontend + `knowledge.project_id`.
-- [ ] **P3 frontend unify**: one auth token; fold `/cxproject` workspace into the
-      知是 shell as a native surface; drop the `/cx` prefix seam.
-- [ ] **P4 native integration**: a 知是 Task/Team → "AI 工作台" opens its cheesex
-      Project natively.
-- [ ] **P5 kill fallbacks**: run the avatar service (real avatars); AI pool is one
-      configured native pool (no fallback chain).
+- [x] **P1 backend de-dup**
+  - [x] P1a cx_notification: deleted the dead broken event pipeline (6 files).
+  - [x] P1b: removed the duplicate cheesex Space CRUD stub (no real collision —
+        main space is `/spaces`, cheesex stub was `/api/spaces`; stub was dead).
+  - [x] P1c cx_space → main space: repointed `TaskTemplate.space_id` +
+        `custom_roles.space_id` uuid→int (→`space.id`), rewired dashboard, deleted
+        `app/domain/cx_space/`, migration b8e1c0a5f7d2. Finished a half-done merge
+        (market was silently broken). Verified: 3 real spaces.
+  - [x] P1d cx_task: deleted 3 dead broken stub files (deadline_scheduler,
+        task_ai_advice_service, visibility_service) + orphans; kept the market
+        (TaskTemplate/Application/Task — net-new, NOT a duplicate of main task).
+- [x] **P2 retire dead int project**: dropped `project` + `project_membership`
+      (migration c9f2a3b40e15). cheesex uuid `projects` is the only project.
+- [x] **P3 unify** (mostly): one auth token (main JWT carries a `handle` claim;
+      cheesex reads it — verified one token authenticates both `/spaces` and
+      `/api/projects`); one backend (frontend `.env.local` → :8799, avatars load,
+      no fallback); dropped the `/cx` URL prefix (`/project/:id`). The workspace
+      is reachable natively from the shell via the rail project tiles.
+- [ ] **P4 native Task/Team → Project** (needs a product decision — see below).
+- [x] **P5 kill fallbacks**: avatars load from the backend `/avatars` (fixed the
+      dead `:7777` base URL, not a fallback); AI pool is the Claude subscription
+      profile via `AGENT_DEFAULT_PROFILE` (GLM pool is out of balance).
+
+## P4 open decision
+
+"A 知是 Task/Team page opens its cheesex Project natively" needs an association
+that doesn't exist yet: a cheesex Project (uuid, owner_handle + member handles)
+has no link to a 知是 Team/Task (int). Options: (a) the rail already gives native
+per-user project access (matches the original "each project = a rail icon"
+vision) — treat P4 as satisfied; (b) add a nullable `project.team_id` (→ 知是
+team) + a "AI 工作台" button on the team page; (c) link via the existing
+TaskTemplate/Application market (space publishes template → team applies with a
+project). Needs the user to pick the relationship model.
 
 ## Verification harness
 
