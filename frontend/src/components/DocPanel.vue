@@ -4,16 +4,7 @@ import { isPlatformEvent, summarizeActions, toolLabel } from '../lib/toolLabels'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { relTime } from '../lib/relTime'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
-// Fusion merge: the tiptap v3 drag-handle-vue-3 pulls an unresolvable peer chain
-// (@tiptap/y-tiptap has no matching version in the merged frontend). Stub it as a
-// passthrough so the doc editor builds & works — only the hover drag-handle
-// affordance is absent (TODO: reconcile tiptap deps for the full editor).
-const DragHandle = {
-  name: 'DragHandle',
-  render(this: { $slots: { default?: () => unknown } }) {
-    return this.$slots.default ? this.$slots.default() : null
-  },
-}
+import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { Extension } from '@tiptap/core'
 import type { ChainedCommands, Editor as CoreEditor } from '@tiptap/core'
 import { Suggestion } from '@tiptap/suggestion'
