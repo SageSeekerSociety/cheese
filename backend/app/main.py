@@ -111,6 +111,13 @@ app.add_middleware(
 
 register_exception_handlers(app)
 
+# Wire the domain permission configs + role providers into the shared checker.
+# Without this every require_permission()-gated endpoint 403s (the providers
+# would otherwise be empty). Idempotent-enough for a single process start.
+from app.auth.domains import register_all_permissions  # noqa: E402
+
+register_all_permissions()
+
 
 # The `cheese` CLI (running inside the sandbox container) reaches the backend
 # over the network, so its write-surface must not be open like the browser API.
