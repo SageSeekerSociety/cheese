@@ -84,9 +84,7 @@ def clone_transcript_files(
     src = transcript_file(source_session_dir, source_session_id, cwd=cwd)
     data = src.read_bytes() if src.is_file() else b""
     if not data:
-        raise FileNotFoundError(
-            f"source transcript missing or empty: {src}"
-        )
+        raise FileNotFoundError(f"source transcript missing or empty: {src}")
     forked = fork_transcript(data, source_session_id, new_session_id)
     dst = transcript_file(target_session_dir, new_session_id, cwd=cwd)
     dst.parent.mkdir(parents=True, exist_ok=True)

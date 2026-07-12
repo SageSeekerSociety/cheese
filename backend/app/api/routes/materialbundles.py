@@ -6,7 +6,10 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
 from app.db.session import get_db
-from app.domain.materials.repositories import MaterialBundleRepository, MaterialRepository
+from app.domain.materials.repositories import (
+    MaterialBundleRepository,
+    MaterialRepository,
+)
 from app.domain.materials.services import MaterialBundleService
 
 router = APIRouter(prefix="/material-bundles", tags=["MaterialBundles"])

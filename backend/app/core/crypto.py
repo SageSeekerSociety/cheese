@@ -17,7 +17,9 @@ def _derive_key() -> bytes:
             base64.urlsafe_b64decode(settings.realname_encryption_key)
             return settings.realname_encryption_key.encode("utf-8")
         except Exception as exc:  # pragma: no cover - invalid config
-            raise InternalServerError("Invalid REALNAME_ENCRYPTION_KEY configured") from exc
+            raise InternalServerError(
+                "Invalid REALNAME_ENCRYPTION_KEY configured"
+            ) from exc
 
     digest = hashlib.sha256(settings.jwt_secret.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)

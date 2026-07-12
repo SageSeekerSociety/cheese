@@ -79,11 +79,17 @@ class SpaceAnalyticsService:
         )
 
         memberships = await self._membership_repo.list_memberships_for_space(space_id)
-        participant_counter = Counter(self._participant_label(m.approved) for m in memberships)
+        participant_counter = Counter(
+            self._participant_label(m.approved) for m in memberships
+        )
 
         return {
-            "taskCategoryDistribution": self._build_distribution("taskCategory", category_counter),
-            "taskStatusDistribution": self._build_distribution("taskStatus", status_counter),
+            "taskCategoryDistribution": self._build_distribution(
+                "taskCategory", category_counter
+            ),
+            "taskStatusDistribution": self._build_distribution(
+                "taskStatus", status_counter
+            ),
             "participantStatusDistribution": self._build_distribution(
                 "participantStatus", participant_counter
             ),
@@ -99,16 +105,22 @@ class SpaceAnalyticsService:
         participants_by_task: dict[int, list[int]] = {}
         completed_users: dict[int, int] = {}
         for membership in memberships:
-            participants_by_task.setdefault(membership.task_id, []).append(membership.member_id)
+            participants_by_task.setdefault(membership.task_id, []).append(
+                membership.member_id
+            )
             if getattr(membership, "completion_status", "NOT_SUBMITTED") == "COMPLETED":
-                completed_users[membership.task_id] = completed_users.get(membership.task_id, 0) + 1
+                completed_users[membership.task_id] = (
+                    completed_users.get(membership.task_id, 0) + 1
+                )
 
         # Resolve publisher names from profiles (nickname) with fallback to username
         all_publisher_ids = list(publisher_counter.keys())
         profiles: dict = {}
         users: dict = {}
         if self._profile_repo and all_publisher_ids:
-            profiles = await self._profile_repo.get_profiles_by_user_ids(all_publisher_ids)
+            profiles = await self._profile_repo.get_profiles_by_user_ids(
+                all_publisher_ids
+            )
         if self._user_repo and all_publisher_ids:
             users = await self._user_repo.get_by_ids(all_publisher_ids)
 
@@ -116,9 +128,13 @@ class SpaceAnalyticsService:
         for publisher_id, count in publisher_counter.items():
             task_ids = [task.id for task in tasks if task.creator_id == publisher_id]
             participant_ids = {
-                member for task_id in task_ids for member in participants_by_task.get(task_id, [])
+                member
+                for task_id in task_ids
+                for member in participants_by_task.get(task_id, [])
             }
-            completed_total = sum(completed_users.get(task_id, 0) for task_id in task_ids)
+            completed_total = sum(
+                completed_users.get(task_id, 0) for task_id in task_ids
+            )
 
             profile = profiles.get(publisher_id)
             user = users.get(publisher_id)

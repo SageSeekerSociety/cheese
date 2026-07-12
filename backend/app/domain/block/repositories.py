@@ -138,9 +138,7 @@ class BlockRepository:
         reply_to."""
         stmt = (
             select(Block)
-            .where(
-                Block.topic_id == topic_id, Block.kind == BlockKind.comment
-            )
+            .where(Block.topic_id == topic_id, Block.kind == BlockKind.comment)
             .order_by(Block.created_at)
         )
         return list((await self._session.scalars(stmt)).all())
@@ -150,9 +148,7 @@ class BlockRepository:
         芝士 pointed at. Newest wins — re-running `cheese artifact` repoints it."""
         stmt = (
             select(Block)
-            .where(
-                Block.topic_id == topic_id, Block.kind == BlockKind.artifact
-            )
+            .where(Block.topic_id == topic_id, Block.kind == BlockKind.artifact)
             .order_by(Block.created_at.desc())
         )
         return (await self._session.scalars(stmt)).first()

@@ -50,9 +50,13 @@ class Notification(Base):
     id: Mapped[int] = mapped_column(BigInteger, notification_seq, primary_key=True)
     receiver_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
-    type: Mapped[NotificationType] = mapped_column("type", String(length=255), nullable=False)
+    type: Mapped[NotificationType] = mapped_column(
+        "type", String(length=255), nullable=False
+    )
 
-    metadata_payload: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    metadata_payload: Mapped[dict | None] = mapped_column(
+        "metadata", JSONB, nullable=True
+    )
     content: Mapped[dict | None] = mapped_column("content", JSONB, nullable=True)
 
     read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -70,9 +74,15 @@ class Notification(Base):
 
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     def is_aggregation_active(self, now: datetime | None = None) -> bool:
         from datetime import datetime as _dt

@@ -177,9 +177,7 @@ async def _pump(browser: WebSocket, upstream: "websockets.ClientConnection") -> 
 
     t_up = asyncio.create_task(browser_to_upstream())
     t_down = asyncio.create_task(upstream_to_browser())
-    _, pending = await asyncio.wait(
-        {t_up, t_down}, return_when=asyncio.FIRST_COMPLETED
-    )
+    _, pending = await asyncio.wait({t_up, t_down}, return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
     await upstream.close()

@@ -31,7 +31,9 @@ def _git(cwd: Path, *args: str) -> str:
     try:
         return subprocess.run(
             ["git", "-C", str(cwd), *args],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
         return ""
@@ -47,6 +49,7 @@ def _ensure_repo(worktree: Path) -> None:
     _git(worktree, "config", "user.name", "芝士")
     _git(worktree, "commit", "-q", "--allow-empty", "-m", "baseline")
 
+
 _IMAGE = os.environ.get("CHEESED_IMAGE", "cheesex-agent-sandbox:latest")
 _SHIM = str(Path(os.environ.get("CHEESED_SHIM", "./sandbox/claude-sbx")).resolve())
 # Absolute: SBX_WORKTREE is a docker bind-mount source — a relative path makes
@@ -56,8 +59,16 @@ _WORKSPACE = str(
 )
 
 _SANDBOX_TOOLS = [
-    "Bash", "Read", "Write", "Edit", "Grep", "Glob",
-    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
+    "Grep",
+    "Glob",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 app = FastAPI(title="cheesed", version="0.1.0")
@@ -192,9 +203,7 @@ async def git_log(project_id: str, topic_id: str, limit: int = 50) -> dict:
         for line in out.splitlines():
             parts = line.split("\t", 2)
             if len(parts) == 3:
-                rows.append(
-                    {"hash": parts[0], "author": parts[1], "message": parts[2]}
-                )
+                rows.append({"hash": parts[0], "author": parts[1], "message": parts[2]})
     return {"data": rows}
 
 

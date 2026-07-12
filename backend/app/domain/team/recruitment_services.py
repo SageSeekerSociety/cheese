@@ -31,7 +31,9 @@ class RecruitmentService:
         if team is None:
             raise NotFoundError("Team not found", data={"type": "team", "id": team_id})
         if not await self._team_repo.is_team_at_least_admin(team_id, actor_user_id):
-            raise ForbiddenError("Only team admins or owner can create recruitment posts")
+            raise ForbiddenError(
+                "Only team admins or owner can create recruitment posts"
+            )
         return await self._repo.create(
             team_id=team_id,
             title=title,
@@ -77,7 +79,8 @@ class RecruitmentService:
         post = await self._repo.get_by_id(post_id)
         if post is None:
             raise NotFoundError(
-                "Recruitment post not found", data={"type": "recruitment_post", "id": post_id}
+                "Recruitment post not found",
+                data={"type": "recruitment_post", "id": post_id},
             )
         if post.created_by != actor_user_id:
             raise ForbiddenError("Only the post creator can edit this recruitment post")
@@ -101,8 +104,13 @@ class RecruitmentService:
         post = await self._repo.get_by_id(post_id)
         if post is None:
             raise NotFoundError(
-                "Recruitment post not found", data={"type": "recruitment_post", "id": post_id}
+                "Recruitment post not found",
+                data={"type": "recruitment_post", "id": post_id},
             )
-        if not await self._team_repo.is_team_at_least_admin(post.team_id, actor_user_id):
-            raise ForbiddenError("Only team admins or owner can delete recruitment posts")
+        if not await self._team_repo.is_team_at_least_admin(
+            post.team_id, actor_user_id
+        ):
+            raise ForbiddenError(
+                "Only team admins or owner can delete recruitment posts"
+            )
         await self._repo.soft_delete(post)

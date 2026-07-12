@@ -133,9 +133,7 @@ async def reassign_card(
 @router.post("/accept-cards/{card_id}/reject")
 async def reject_card(card_id: uuid.UUID, body: RejectDecision, db: DbSession) -> dict:
     svc = AcceptService(db)
-    card = await svc.reject(
-        card_id=card_id, decided_by=body.decided_by, note=body.note
-    )
+    card = await svc.reject(card_id=card_id, decided_by=body.decided_by, note=body.note)
     return ok(await svc.describe(card))
 
 

@@ -37,8 +37,16 @@ _CHEESE_AUTHOR = "cheese"
 
 # Native tools 芝士 may use inside the sandbox + the Task tools (live todo).
 _SANDBOX_TOOLS = [
-    "Bash", "Read", "Write", "Edit", "Grep", "Glob",
-    "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
+    "Grep",
+    "Glob",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
 ]
 
 
@@ -261,9 +269,7 @@ class RemoteCheesedProvider:
         # Commit the turn's edits ON THE NODE so /git/log + /git/diff have history.
         # Best-effort; never fail the turn (runs after streaming, not in the path).
         try:
-            httpx.post(
-                f"{self._url}/checkpoint/{project_id}/{topic_id}", timeout=15
-            )
+            httpx.post(f"{self._url}/checkpoint/{project_id}/{topic_id}", timeout=15)
         except httpx.HTTPError:
             pass
 

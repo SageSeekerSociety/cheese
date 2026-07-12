@@ -4,7 +4,9 @@ from app.domain.avatars.repositories import AvatarRepository
 
 
 def _avatar_to_dto(avatar: Avatar) -> dict:
-    created_at_ms = int(avatar.created_at.timestamp() * 1000) if avatar.created_at else 0
+    created_at_ms = (
+        int(avatar.created_at.timestamp() * 1000) if avatar.created_at else 0
+    )
     return {
         "id": avatar.id,
         "url": avatar.url,
@@ -47,6 +49,8 @@ class AvatarService:
             raise NotFoundError("No default avatar found")
         return avatar.id
 
-    async def create_avatar(self, *, url: str, name: str, avatar_type: str = "UPLOADED") -> dict:
+    async def create_avatar(
+        self, *, url: str, name: str, avatar_type: str = "UPLOADED"
+    ) -> dict:
         avatar = await self._repo.create(url=url, name=name, avatar_type=avatar_type)
         return {"avatarId": avatar.id}

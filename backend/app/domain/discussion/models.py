@@ -26,7 +26,10 @@ class Discussion(Base):
     __tablename__ = "discussion"
 
     id: Mapped[int] = mapped_column(
-        Integer, discussion_seq, primary_key=True, server_default=discussion_seq.next_value()
+        Integer,
+        discussion_seq,
+        primary_key=True,
+        server_default=discussion_seq.next_value(),
     )
     model_type: Mapped[str] = mapped_column(String(length=255), nullable=False)
     model_id: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -34,9 +37,15 @@ class Discussion(Base):
     sender_id: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class DiscussionMentionedUser(Base):
@@ -50,7 +59,10 @@ class ReactionType(Base):
     __tablename__ = "reaction_type"
 
     id: Mapped[int] = mapped_column(
-        Integer, reaction_type_seq, primary_key=True, server_default=reaction_type_seq.next_value()
+        Integer,
+        reaction_type_seq,
+        primary_key=True,
+        server_default=reaction_type_seq.next_value(),
     )
     code: Mapped[str] = mapped_column(String(length=32), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(length=64), nullable=False)
@@ -58,9 +70,15 @@ class ReactionType(Base):
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class DiscussionReaction(Base):
@@ -76,6 +94,12 @@ class DiscussionReaction(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     reaction_type_id: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

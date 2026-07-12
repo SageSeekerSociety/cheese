@@ -110,7 +110,9 @@ class RoleHierarchy:
 ROLE_HIERARCHY = RoleHierarchy()
 
 
-PermissionCondition = Callable[[AuthUserInfo, Action, Resource, int | None, dict[str, Any]], bool]
+PermissionCondition = Callable[
+    [AuthUserInfo, Action, Resource, int | None, dict[str, Any]], bool
+]
 
 
 @dataclass
@@ -130,7 +132,9 @@ class PermissionRule:
             if not cond(user, action, resource, resource_id, context):
                 return False
         for or_group in self.or_conditions:
-            if not any(cond(user, action, resource, resource_id, context) for cond in or_group):
+            if not any(
+                cond(user, action, resource, resource_id, context) for cond in or_group
+            ):
                 return False
         return True
 

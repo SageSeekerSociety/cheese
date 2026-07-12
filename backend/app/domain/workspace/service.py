@@ -170,14 +170,20 @@ def _safe_path(repo: Path, rel: str) -> Path:
 # Never listed (nor descended into): VCS internals + dependency/cache dirs a
 # turn may create in the worktree (npm ci → 13k node_modules entries).
 _SKIP_DIRS = {
-    ".git", ".jj", "node_modules", ".venv", "__pycache__",
-    ".pytest_cache", ".ruff_cache", ".cache", "dist", ".next",
+    ".git",
+    ".jj",
+    "node_modules",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".cache",
+    "dist",
+    ".next",
 }
 
 
-def list_files(
-    project_id: uuid.UUID, topic_id: uuid.UUID | None = None
-) -> list[dict]:
+def list_files(project_id: uuid.UUID, topic_id: uuid.UUID | None = None) -> list[dict]:
     tree = _tree(project_id, topic_id)
     files: list[dict] = []
     for root, dirnames, filenames in os.walk(tree):
@@ -307,18 +313,18 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         )
     except ValidationError as exc:
         try:
-            conflicts = _git(
-                repo, "diff", "--name-only", "--diff-filter=U"
-            ).strip().splitlines()
+            conflicts = (
+                _git(repo, "diff", "--name-only", "--diff-filter=U")
+                .strip()
+                .splitlines()
+            )
         except ValidationError:
             conflicts = []
         try:
             _git(repo, "merge", "--abort")
         except ValidationError:
             pass
-        reason = (
-            "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
-        )
+        reason = "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
         return {"merged": False, "reason": reason, "conflicts": conflicts}
     return {"merged": True, "branch": branch, "into": base}
 
@@ -421,18 +427,18 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
         # Name the conflicted files before aborting — "同步失败" without saying
         # where is undebuggable for the user.
         try:
-            conflicts = _git(
-                repo, "diff", "--name-only", "--diff-filter=U"
-            ).strip().splitlines()
+            conflicts = (
+                _git(repo, "diff", "--name-only", "--diff-filter=U")
+                .strip()
+                .splitlines()
+            )
         except ValidationError:
             conflicts = []
         try:
             _git(repo, "merge", "--abort")
         except ValidationError:
             pass
-        reason = (
-            "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
-        )
+        reason = "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
         return {"synced": False, "reason": reason, "conflicts": conflicts}
     return {"synced": True, "commits": behind}
 
@@ -571,13 +577,25 @@ def exec_in_sandbox(
     try:
         result = subprocess.run(
             [
-                "docker", "run", "--rm",
-                "--network", "none",
-                "--memory", "512m", "--cpus", "1",
-                "--pids-limit", "256",
-                "-v", f"{tree}:/work", "-w", "/work",
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--memory",
+                "512m",
+                "--cpus",
+                "1",
+                "--pids-limit",
+                "256",
+                "-v",
+                f"{tree}:/work",
+                "-w",
+                "/work",
                 SANDBOX_IMAGE,
-                "sh", "-lc", command,
+                "sh",
+                "-lc",
+                command,
             ],
             capture_output=True,
             text=True,

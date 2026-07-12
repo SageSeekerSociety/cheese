@@ -10,8 +10,12 @@ if TYPE_CHECKING:
 
 
 def _comment_to_dto(comment: Comment) -> dict:
-    created_at_ms = int(comment.created_at.timestamp() * 1000) if comment.created_at else 0
-    updated_at_ms = int(comment.updated_at.timestamp() * 1000) if comment.updated_at else 0
+    created_at_ms = (
+        int(comment.created_at.timestamp() * 1000) if comment.created_at else 0
+    )
+    updated_at_ms = (
+        int(comment.updated_at.timestamp() * 1000) if comment.updated_at else 0
+    )
     return {
         "id": comment.id,
         "commentable_type": comment.commentable_type,
@@ -59,7 +63,9 @@ class CommentService:
             offset=offset,
         )
         items = [_comment_to_dto(c) for c in comments]
-        items = await self._enrich_comment_dtos(items, viewer_id=viewer_id, with_sub_comments=True)
+        items = await self._enrich_comment_dtos(
+            items, viewer_id=viewer_id, with_sub_comments=True
+        )
         returned = len(items)
         has_more = offset + returned < total
         next_start = offset + returned if has_more and returned > 0 else None
@@ -131,13 +137,17 @@ class CommentService:
             raise NotFoundError("Comment not found", data={"id": comment_id})
         return comment
 
-    async def vote_comment(self, *, comment_id: int, user_id: int, vote_type: str) -> dict:
+    async def vote_comment(
+        self, *, comment_id: int, user_id: int, vote_type: str
+    ) -> dict:
         from app.core.errors import BadRequestError
 
         await self._ensure_comment_exists(comment_id)
         if vote_type not in ("POSITIVE", "NEGATIVE"):
             raise BadRequestError("Invalid vote type", data={"vote_type": vote_type})
-        await self._repo.vote(comment_id=comment_id, user_id=user_id, vote_type=vote_type)
+        await self._repo.vote(
+            comment_id=comment_id, user_id=user_id, vote_type=vote_type
+        )
         counts = await self._repo.count_votes(comment_id)
         return {
             "upvotes": counts.get("POSITIVE", 0),
@@ -188,7 +198,9 @@ class CommentService:
         votes_map = await self._repo.bulk_count_votes(comment_ids)
         user_votes_map: dict[int, str] = {}
         if viewer_id is not None and viewer_id > 0:
-            user_votes_map = await self._repo.bulk_get_user_votes(comment_ids, viewer_id)
+            user_votes_map = await self._repo.bulk_get_user_votes(
+                comment_ids, viewer_id
+            )
 
         # 2. user (author) profiles.
         from app.domain.user.models import User, UserProfile

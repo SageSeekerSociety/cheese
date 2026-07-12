@@ -53,7 +53,9 @@ async def list_topic_members(topic_id: uuid.UUID, db: DbSession) -> dict:
         d = TopicMemberOut.model_validate(m).model_dump(mode="json")
         user = rows.get(m.member_handle)
         profile = profile_by_uid.get(user.id) if user is not None else None
-        d["name"] = profile.nickname if profile and profile.nickname else m.member_handle
+        d["name"] = (
+            profile.nickname if profile and profile.nickname else m.member_handle
+        )
         # Agent members wear an Agent badge — derived from the execution binding.
         d["agent"] = user is not None and user.id in agent_ids
         items.append(d)

@@ -73,7 +73,9 @@ async def create_knowledge(
     project_id = payload.get("projectId")
     discussion_id = payload.get("discussionId")
     labels_raw = payload.get("labels") or []
-    labels: list[str] = [str(item) for item in labels_raw if isinstance(item, str) and item.strip()]
+    labels: list[str] = [
+        str(item) for item in labels_raw if isinstance(item, str) and item.strip()
+    ]
 
     knowledge = await service.create(
         name=name,
@@ -219,7 +221,9 @@ async def upvote_knowledge(
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     try:
-        knowledge = await service.upvote(knowledge_id=knowledge_id, user_id=auth_user.user_id)
+        knowledge = await service.upvote(
+            knowledge_id=knowledge_id, user_id=auth_user.user_id
+        )
     except ValueError as exc:
         raise BadRequestError(str(exc)) from exc
     return {
@@ -238,7 +242,9 @@ async def remove_upvote_knowledge(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
-    knowledge = await service.remove_upvote(knowledge_id=knowledge_id, user_id=auth_user.user_id)
+    knowledge = await service.remove_upvote(
+        knowledge_id=knowledge_id, user_id=auth_user.user_id
+    )
     return {
         "code": 200,
         "message": "success",

@@ -474,9 +474,7 @@ async def return_conclusion(
     conclusion = await canonicalize_refs(
         db, topic.project_id, body.conclusion, exclude_topic_id=topic_id
     )
-    block = await service.return_conclusion(
-        subtopic_id=topic_id, conclusion=conclusion
-    )
+    block = await service.return_conclusion(subtopic_id=topic_id, conclusion=conclusion)
     parent = await service.get_or_404(block.topic_id)
     out = BlockOut.model_validate(block).model_dump(mode="json")
     wake = parent.status != TopicStatus.archived

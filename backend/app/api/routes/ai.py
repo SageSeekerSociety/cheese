@@ -73,7 +73,11 @@ async def list_conversations(
         page_start=pageStart,
         page_size=pageSize,
     )
-    return {"code": 200, "message": "OK", "data": {"conversations": convs, "page": page}}
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"conversations": convs, "page": page},
+    }
 
 
 @router.post("/conversations", summary="Create AI Conversation", status_code=201)
@@ -105,7 +109,9 @@ async def get_conversation(
     return {"code": 200, "message": "OK", "data": {"conversation": conv}}
 
 
-@router.delete("/conversations/{conversationId}", summary="Delete AI Conversation", status_code=204)
+@router.delete(
+    "/conversations/{conversationId}", summary="Delete AI Conversation", status_code=204
+)
 async def delete_conversation(
     conversation_id: Annotated[int, Path(ge=1, alias="conversationId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),

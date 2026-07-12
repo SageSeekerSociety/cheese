@@ -88,7 +88,8 @@ class KnowledgeService:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
             raise NotFoundError(
-                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+                "Resource knowledge not found",
+                data={"type": "knowledge", "id": knowledge_id},
             )
         await self._ensure_team_member(entity.team_id, user_id)
         return await self._build_dto(entity, current_user_id=user_id)
@@ -97,13 +98,15 @@ class KnowledgeService:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
             raise NotFoundError(
-                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+                "Resource knowledge not found",
+                data={"type": "knowledge", "id": knowledge_id},
             )
         await self._ensure_team_member(entity.team_id, user_id)
         deleted = await self._repo.soft_delete(knowledge_id)
         if not deleted:
             raise NotFoundError(
-                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+                "Resource knowledge not found",
+                data={"type": "knowledge", "id": knowledge_id},
             )
 
     async def update(
@@ -119,7 +122,8 @@ class KnowledgeService:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
             raise NotFoundError(
-                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+                "Resource knowledge not found",
+                data={"type": "knowledge", "id": knowledge_id},
             )
         await self._ensure_team_member(entity.team_id, user_id)
         updated = await self._repo.update_entity(
@@ -136,7 +140,8 @@ class KnowledgeService:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
             raise NotFoundError(
-                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+                "Resource knowledge not found",
+                data={"type": "knowledge", "id": knowledge_id},
             )
         await self._ensure_team_member(entity.team_id, user_id)
         await self._repo.add_upvote(knowledge_id, user_id)
@@ -146,13 +151,16 @@ class KnowledgeService:
         entity = await self._repo.get_by_id(knowledge_id)
         if entity is None:
             raise NotFoundError(
-                "Resource knowledge not found", data={"type": "knowledge", "id": knowledge_id}
+                "Resource knowledge not found",
+                data={"type": "knowledge", "id": knowledge_id},
             )
         await self._ensure_team_member(entity.team_id, user_id)
         await self._repo.remove_upvote(knowledge_id, user_id)
         return await self._build_dto(entity, current_user_id=user_id)
 
-    async def _build_dto(self, entity: Knowledge, *, current_user_id: int | None) -> dict:
+    async def _build_dto(
+        self, entity: Knowledge, *, current_user_id: int | None
+    ) -> dict:
         label_map = await self._repo.get_labels_map([entity.id])
         count = await self._repo.get_upvote_count(entity.id)
         is_upvoted = False
@@ -184,7 +192,9 @@ class KnowledgeService:
         result: list[dict] = []
         for entity in entities:
             count = count_map.get(entity.id, 0)
-            is_upvoted = entity.id in user_upvotes if current_user_id is not None else False
+            is_upvoted = (
+                entity.id in user_upvotes if current_user_id is not None else False
+            )
             result.append(
                 self._to_dto(
                     entity,
@@ -237,8 +247,12 @@ class KnowledgeService:
         is_upvoted: bool,
         creator: dict | None = None,
     ) -> dict:
-        created_at = int(entity.created_at.timestamp() * 1000) if entity.created_at else 0
-        updated_at = int(entity.updated_at.timestamp() * 1000) if entity.updated_at else 0
+        created_at = (
+            int(entity.created_at.timestamp() * 1000) if entity.created_at else 0
+        )
+        updated_at = (
+            int(entity.updated_at.timestamp() * 1000) if entity.updated_at else 0
+        )
         return {
             "id": entity.id,
             "name": entity.name,

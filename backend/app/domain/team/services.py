@@ -1,7 +1,12 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from app.core.errors import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
 from app.domain.team.repositories import TeamRepository
 
@@ -181,7 +186,8 @@ class TeamService:
         relation = await self._repo.get_member_relation(team_id, target_user_id)
         if relation is None:
             raise NotFoundError(
-                "Resource team member not found", data={"teamId": team_id, "userId": target_user_id}
+                "Resource team member not found",
+                data={"teamId": team_id, "userId": target_user_id},
             )
 
         if relation.role == TeamMemberRole.OWNER:
@@ -190,7 +196,9 @@ class TeamService:
             )
 
         if target_user_id != actor_user_id:
-            actor_relation = await self._repo.get_member_relation(team_id, actor_user_id)
+            actor_relation = await self._repo.get_member_relation(
+                team_id, actor_user_id
+            )
             if actor_relation is None or actor_relation.role == TeamMemberRole.MEMBER:
                 raise ForbiddenError("Only admins or owner can remove other members")
             if (
@@ -237,14 +245,22 @@ class TeamService:
         new_owner_user_id: int,
         actor_user_id: int,
     ) -> None:
-        current_owner_relation = await self._repo.get_member_relation(team_id, actor_user_id)
-        if current_owner_relation is None or current_owner_relation.role != TeamMemberRole.OWNER:
+        current_owner_relation = await self._repo.get_member_relation(
+            team_id, actor_user_id
+        )
+        if (
+            current_owner_relation is None
+            or current_owner_relation.role != TeamMemberRole.OWNER
+        ):
             raise ForbiddenError("Only current owner can transfer ownership")
 
-        target_relation = await self._repo.get_member_relation(team_id, new_owner_user_id)
+        target_relation = await self._repo.get_member_relation(
+            team_id, new_owner_user_id
+        )
         if target_relation is None:
             raise NotFoundError(
-                "New owner must be an existing team member", data={"userId": new_owner_user_id}
+                "New owner must be an existing team member",
+                data={"userId": new_owner_user_id},
             )
 
         current_owner_relation.role = TeamMemberRole.ADMIN
@@ -257,5 +273,7 @@ class TeamService:
     async def _get_team_or_error(self, team_id: int) -> Team:
         team = await self._repo.get_by_id(team_id)
         if team is None:
-            raise NotFoundError("Resource team not found", data={"type": "team", "id": team_id})
+            raise NotFoundError(
+                "Resource team not found", data={"type": "team", "id": team_id}
+            )
         return team

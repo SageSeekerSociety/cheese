@@ -141,9 +141,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
 
     # --- container / session lifecycle -------------------------------------
 
-    async def _ensure_container(
-        self, topic_id: uuid.UUID, env: dict[str, str]
-    ) -> str:
+    async def _ensure_container(self, topic_id: uuid.UUID, env: dict[str, str]) -> str:
         """Create (or reuse) the topic's tmux container and return its name. Env
         is fixed at creation and reused across turns (the container is long-lived
         per topic — same trade-off as the SDK shim)."""
@@ -165,19 +163,40 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         # SBX_WORKTREE / SBX_SESSION are mount sources, not container env vars.
         mounts = {"SBX_WORKTREE", "SBX_SESSION"}
         args = [
-            "run", "-d", "--name", name, "--user", "node",
-            "-p", f"127.0.0.1:0:{_APP_PORT}",
-            "-p", f"127.0.0.1:0:{_TTYD_PORT}",
-            "--add-host", "host.docker.internal:host-gateway",
-            "-v", f"{env['SBX_SESSION']}:/home/node/.claude",
-            "-v", f"{env['SBX_WORKTREE']}:/work", "-w", "/work",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--user",
+            "node",
+            "-p",
+            f"127.0.0.1:0:{_APP_PORT}",
+            "-p",
+            f"127.0.0.1:0:{_TTYD_PORT}",
+            "--add-host",
+            "host.docker.internal:host-gateway",
+            "-v",
+            f"{env['SBX_SESSION']}:/home/node/.claude",
+            "-v",
+            f"{env['SBX_WORKTREE']}:/work",
+            "-w",
+            "/work",
         ]
         if _CHEESE_CLI.is_file():
             args += ["-v", f"{_CHEESE_CLI}:/usr/local/bin/cheese:ro"]
         args += [
-            "--network", "bridge",
-            "--memory", "2g", "--cpus", "2", "--pids-limit", "512",
-            "--label", "cheesex-sandbox=1", "--label", "cheesex-tmux=1",
+            "--network",
+            "bridge",
+            "--memory",
+            "2g",
+            "--cpus",
+            "2",
+            "--pids-limit",
+            "512",
+            "--label",
+            "cheesex-sandbox=1",
+            "--label",
+            "cheesex-tmux=1",
         ]
         for key, value in env.items():
             if key in mounts:
@@ -209,8 +228,10 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         if rc == 0:
             return
         claude_cmd = "claude --dangerously-skip-permissions"
-        if resume_session_id and session_dir and _resume_ready(
-            session_dir, resume_session_id
+        if (
+            resume_session_id
+            and session_dir
+            and _resume_ready(session_dir, resume_session_id)
         ):
             claude_cmd += f" --resume {resume_session_id}"
         if model:
@@ -223,7 +244,11 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         # ttyd (施工现场; not wired to the frontend yet): a read-only terminal
         # mirror. Best-effort — the turn does not depend on it.
         await _docker(
-            "exec", "-d", name, "sh", "-lc",
+            "exec",
+            "-d",
+            name,
+            "sh",
+            "-lc",
             f"pgrep -x ttyd >/dev/null 2>&1 || "
             f"ttyd -R -p {_TTYD_PORT} tmux attach -t {_SESSION}",
         )

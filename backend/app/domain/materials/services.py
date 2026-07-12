@@ -9,7 +9,9 @@ from app.domain.materials.repositories import (
 
 
 def _material_to_dto(material: Material) -> dict:
-    created_at_ms = int(material.created_at.timestamp() * 1000) if material.created_at else 0
+    created_at_ms = (
+        int(material.created_at.timestamp() * 1000) if material.created_at else 0
+    )
     return {
         "id": material.id,
         "type": material.type,
@@ -24,8 +26,12 @@ def _material_to_dto(material: Material) -> dict:
 
 
 def _bundle_to_dto(bundle: MaterialBundle) -> dict:
-    created_at_ms = int(bundle.created_at.timestamp() * 1000) if bundle.created_at else 0
-    updated_at_ms = int(bundle.updated_at.timestamp() * 1000) if bundle.updated_at else 0
+    created_at_ms = (
+        int(bundle.created_at.timestamp() * 1000) if bundle.created_at else 0
+    )
+    updated_at_ms = (
+        int(bundle.updated_at.timestamp() * 1000) if bundle.updated_at else 0
+    )
     return {
         "id": bundle.id,
         "title": bundle.title,
@@ -190,7 +196,12 @@ class MaterialBundleService:
         return dto
 
     async def create_bundle(
-        self, *, title: str, content: str, creator_id: int, material_ids: list[int] | None = None
+        self,
+        *,
+        title: str,
+        content: str,
+        creator_id: int,
+        material_ids: list[int] | None = None,
     ) -> dict:
         if material_ids:
             for mid in material_ids:
@@ -205,7 +216,9 @@ class MaterialBundleService:
         )
         if material_ids:
             for mid in material_ids:
-                await self._repo.add_material_to_bundle(bundle_id=bundle.id, material_id=mid)
+                await self._repo.add_material_to_bundle(
+                    bundle_id=bundle.id, material_id=mid
+                )
         return {"id": bundle.id}
 
     async def update_bundle(
@@ -233,7 +246,9 @@ class MaterialBundleService:
                     )
             for mid in material_ids:
                 if mid not in current_mids:
-                    await self._repo.add_material_to_bundle(bundle_id=bundle_id, material_id=mid)
+                    await self._repo.add_material_to_bundle(
+                        bundle_id=bundle_id, material_id=mid
+                    )
 
         final_material_ids = await self._repo.get_materials_for_bundle(bundle_id)
         dto = _bundle_to_dto(bundle)

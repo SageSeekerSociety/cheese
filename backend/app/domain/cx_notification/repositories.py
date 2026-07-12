@@ -19,9 +19,7 @@ class NotificationRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def over_quota(
-        self, topic_id: uuid.UUID | None, level: NotifLevel
-    ) -> bool:
+    async def over_quota(self, topic_id: uuid.UUID | None, level: NotifLevel) -> bool:
         """True when this topic already hit its quota for this level in the
         window (silent is never throttled; non-topic notifications either)."""
         if topic_id is None or level not in _QUOTA:

@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.space.repositories import SpaceCategoryRepository, SpaceRepository
-from app.domain.task.models import Task, TaskMembership, TaskSubmission, TaskSubmissionReview
+from app.domain.task.models import (
+    Task,
+    TaskMembership,
+    TaskSubmission,
+    TaskSubmissionReview,
+)
 
 APPROVED_MAP = {
     "APPROVED": 0,
@@ -65,7 +70,9 @@ class SpaceMemberPublishingService:
             "submittedParticipantCount": sum(
                 item["submittedParticipantCount"] for item in task_items
             ),
-            "pendingReviewCount": sum(item["pendingReviewCount"] for item in task_items),
+            "pendingReviewCount": sum(
+                item["pendingReviewCount"] for item in task_items
+            ),
             "successfulParticipantCount": sum(
                 item["successfulParticipantCount"] for item in task_items
             ),
@@ -109,11 +116,14 @@ class SpaceMemberPublishingService:
             items = [
                 item
                 for item in items
-                if (item["pendingParticipantApprovalCount"] > 0) == has_pending_participant_approval
+                if (item["pendingParticipantApprovalCount"] > 0)
+                == has_pending_participant_approval
             ]
         if has_pending_review is not None:
             items = [
-                item for item in items if (item["pendingReviewCount"] > 0) == has_pending_review
+                item
+                for item in items
+                if (item["pendingReviewCount"] > 0) == has_pending_review
             ]
 
         reverse = normalized_sort_order == "desc"
@@ -129,7 +139,9 @@ class SpaceMemberPublishingService:
     async def _ensure_space_exists(self, space_id: int) -> Space:
         space = await self._space_repo.get_by_id(space_id)
         if space is None:
-            raise NotFoundError("Resource space not found", data={"type": "space", "id": space_id})
+            raise NotFoundError(
+                "Resource space not found", data={"type": "space", "id": space_id}
+            )
         return space
 
     async def _list_my_publishing_tasks(
@@ -175,18 +187,23 @@ class SpaceMemberPublishingService:
 
         task_ids = [int(task.id) for task in tasks]
         categories_by_id = await self._load_categories_by_id(space_id=space_id)
-        memberships_by_task_id = await self._load_memberships_by_task_id(task_ids=task_ids)
+        memberships_by_task_id = await self._load_memberships_by_task_id(
+            task_ids=task_ids
+        )
         membership_ids = [
             int(membership.id)
             for memberships in memberships_by_task_id.values()
             for membership in memberships
         ]
-        latest_submissions_by_membership_id = await self._load_latest_submissions_by_membership_id(
-            membership_ids=membership_ids
+        latest_submissions_by_membership_id = (
+            await self._load_latest_submissions_by_membership_id(
+                membership_ids=membership_ids
+            )
         )
         reviews_by_submission_id = await self._load_reviews_by_submission_id(
             submission_ids=[
-                int(submission.id) for submission in latest_submissions_by_membership_id.values()
+                int(submission.id)
+                for submission in latest_submissions_by_membership_id.values()
             ]
         )
         visible_task_ids = self._compute_visible_approved_task_ids(
@@ -202,13 +219,16 @@ class SpaceMemberPublishingService:
                 latest_submissions_by_membership_id=latest_submissions_by_membership_id,
                 reviews_by_submission_id=reviews_by_submission_id,
                 is_visible=(
-                    int(task.id) in visible_task_ids or getattr(task, "ended_at", None) is not None
+                    int(task.id) in visible_task_ids
+                    or getattr(task, "ended_at", None) is not None
                 ),
             )
             for task in tasks
         ]
 
-    async def _load_categories_by_id(self, *, space_id: int) -> dict[int, SpaceCategory]:
+    async def _load_categories_by_id(
+        self, *, space_id: int
+    ) -> dict[int, SpaceCategory]:
         categories = await self._category_repo.list_categories_for_space(
             space_id, include_archived=True
         )
@@ -258,14 +278,18 @@ class SpaceMemberPublishingService:
             .join(
                 latest_version_subquery,
                 and_(
-                    TaskSubmission.membership_id == latest_version_subquery.c.membership_id,
+                    TaskSubmission.membership_id
+                    == latest_version_subquery.c.membership_id,
                     TaskSubmission.version == latest_version_subquery.c.max_version,
                 ),
             )
             .where(TaskSubmission.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
-        return {int(submission.membership_id): submission for submission in result.scalars().all()}
+        return {
+            int(submission.membership_id): submission
+            for submission in result.scalars().all()
+        }
 
     async def _load_reviews_by_submission_id(
         self,
@@ -307,7 +331,9 @@ class SpaceMemberPublishingService:
             elif membership.approved == APPROVED_MAP["NONE"]:
                 pending_participant_approval_count += 1
 
-            latest_submission = latest_submissions_by_membership_id.get(int(membership.id))
+            latest_submission = latest_submissions_by_membership_id.get(
+                int(membership.id)
+            )
             review = (
                 reviews_by_submission_id.get(int(latest_submission.id))
                 if latest_submission is not None
@@ -359,7 +385,9 @@ class SpaceMemberPublishingService:
                 "name": category.name if category is not None else "",
             },
             "approved": APPROVED_REVERSE_MAP.get(task.approved, "NONE"),
-            "visibilityStatus": self._derive_visibility_status(task=task, is_visible=is_visible),
+            "visibilityStatus": self._derive_visibility_status(
+                task=task, is_visible=is_visible
+            ),
             "isVisible": is_visible,
             "createdAt": self._to_timestamp_ms(task.created_at) or 0,
             "publishedAt": self._to_timestamp_ms(getattr(task, "published_at", None)),
@@ -393,7 +421,8 @@ class SpaceMemberPublishingService:
         approved_not_ended = [
             task
             for task in tasks
-            if task.approved == APPROVED_MAP["APPROVED"] and getattr(task, "ended_at", None) is None
+            if task.approved == APPROVED_MAP["APPROVED"]
+            and getattr(task, "ended_at", None) is None
         ]
         if visible_task_limit is None:
             return {int(task.id) for task in approved_not_ended}
@@ -412,7 +441,9 @@ class SpaceMemberPublishingService:
                     int(task.id),
                 ),
             )
-            visible_ids.update(int(task.id) for task in creator_tasks[:visible_task_limit])
+            visible_ids.update(
+                int(task.id) for task in creator_tasks[:visible_task_limit]
+            )
         return visible_ids
 
     @staticmethod
@@ -439,13 +470,17 @@ class SpaceMemberPublishingService:
             raise BadRequestError(f"{field_name} is not a valid timestamp") from exc
 
     @staticmethod
-    def _parse_approved_filter(value: str | None, field_name: str = "approved") -> int | None:
+    def _parse_approved_filter(
+        value: str | None, field_name: str = "approved"
+    ) -> int | None:
         if value is None:
             return None
         normalized = value.strip().upper()
         mapped = APPROVED_MAP.get(normalized)
         if mapped is None:
-            raise BadRequestError(f"{field_name} must be APPROVED, DISAPPROVED, or NONE")
+            raise BadRequestError(
+                f"{field_name} must be APPROVED, DISAPPROVED, or NONE"
+            )
         return mapped
 
     @staticmethod

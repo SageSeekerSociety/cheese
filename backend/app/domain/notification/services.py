@@ -36,7 +36,9 @@ class NotificationQueryService:
     async def get_notification_by_id_for_current_user(
         self, user_id: int, notification_id: int
     ) -> Notification | None:
-        return await self._repo.get_by_id_for_user(user_id=user_id, notification_id=notification_id)
+        return await self._repo.get_by_id_for_user(
+            user_id=user_id, notification_id=notification_id
+        )
 
     async def get_notifications_for_current_user(
         self,
@@ -90,7 +92,9 @@ class NotificationQueryService:
         ids = [id_ for id_, _ in updates]
         desired_map = dict(updates)
 
-        notifications = await self._repo.find_all_by_ids_for_user(user_id=user_id, ids=ids)
+        notifications = await self._repo.find_all_by_ids_for_user(
+            user_id=user_id, ids=ids
+        )
         updated_ids: list[int] = []
 
         for notification in notifications:
@@ -162,12 +166,16 @@ class NotificationQueryService:
                 nested_path = f"{path}.{key}" if path else str(key)
                 self._collect_entity_pointers(nested, path=nested_path, output=output)
 
-        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        elif isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
             for idx, nested in enumerate(value):
                 nested_path = f"{path}[{idx}]" if path else f"[{idx}]"
                 self._collect_entity_pointers(nested, path=nested_path, output=output)
 
-    async def build_notification_dto(self, notification: Notification) -> NotificationDTO:
+    async def build_notification_dto(
+        self, notification: Notification
+    ) -> NotificationDTO:
         """Build NotificationDTO from Notification entity and its metadata."""
         metadata_raw = getattr(notification, "metadata_payload", None)
 
@@ -177,7 +185,11 @@ class NotificationQueryService:
         else:
             metadata_map = {}
 
-        entities = await self.resolve_entities_from_metadata([metadata_map]) if metadata_map else {}
+        entities = (
+            await self.resolve_entities_from_metadata([metadata_map])
+            if metadata_map
+            else {}
+        )
 
         return NotificationDTO.from_notification(
             notification=notification,

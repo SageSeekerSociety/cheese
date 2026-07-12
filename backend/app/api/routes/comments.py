@@ -57,7 +57,9 @@ async def update_attitude_to_comment(
     attitude_type = payload.get("attitude_type", "UNDEFINED")
     vote_type = attitude_type if attitude_type in ("POSITIVE", "NEGATIVE") else None
     if vote_type is None:
-        result = await service.remove_comment_vote(comment_id=commentId, user_id=auth_user.user_id)
+        result = await service.remove_comment_vote(
+            comment_id=commentId, user_id=auth_user.user_id
+        )
     else:
         result = await service.vote_comment(
             comment_id=commentId, user_id=auth_user.user_id, vote_type=vote_type

@@ -54,6 +54,7 @@ def _save_inflight(reg: dict) -> None:
     except Exception:  # noqa: BLE001 — registry is best-effort
         logger.exception("failed to persist in-flight turn registry")
 
+
 # Channel = the topic id (str). Frames are the same dicts converse yields.
 Frame = dict
 
@@ -172,10 +173,17 @@ class TurnRunner:
         turn_id = uuid.uuid4()
         task = asyncio.create_task(
             self._run(
-                chat_service, topic_id, turn_id,
-                author=author, content=content, summon=summon, reply_to=reply_to,
-                attachments=attachments, is_resume=is_resume,
-                resume_reason=resume_reason, nudge_event=nudge_event,
+                chat_service,
+                topic_id,
+                turn_id,
+                author=author,
+                content=content,
+                summon=summon,
+                reply_to=reply_to,
+                attachments=attachments,
+                is_resume=is_resume,
+                resume_reason=resume_reason,
+                nudge_event=nudge_event,
             )
         )
         self._tasks.add(task)
@@ -191,13 +199,15 @@ class TurnRunner:
         pre-built kickoff frame stream rides the same _run pipeline (telemetry,
         timeout, failure events) via the `frames` override."""
         turn_id = uuid.uuid4()
-        frames = chat_service.kickoff(
-            topic_id=topic_id, turn_id=turn_id, prompt=prompt
-        )
+        frames = chat_service.kickoff(topic_id=topic_id, turn_id=turn_id, prompt=prompt)
         task = asyncio.create_task(
             self._run(
-                chat_service, topic_id, turn_id,
-                author="system", content=prompt or "", summon=True,
+                chat_service,
+                topic_id,
+                turn_id,
+                author="system",
+                content=prompt or "",
+                summon=True,
                 frames=frames,
             )
         )
@@ -440,11 +450,18 @@ class TurnRunner:
             return
         try:
             await self._execute(
-                chat_service, topic_id, turn_id,
-                author=author, content=content, summon=summon,
-                reply_to=reply_to, attachments=attachments,
-                is_resume=is_resume, resume_reason=resume_reason,
-                nudge_event=nudge_event, frames=frames,
+                chat_service,
+                topic_id,
+                turn_id,
+                author=author,
+                content=content,
+                summon=summon,
+                reply_to=reply_to,
+                attachments=attachments,
+                is_resume=is_resume,
+                resume_reason=resume_reason,
+                nudge_event=nudge_event,
+                frames=frames,
             )
         finally:
             if gate is not None:
@@ -547,14 +564,19 @@ class TurnRunner:
             rec["duration_s"] = round(time.monotonic() - t0, 1)
             logger.info(
                 "turn done: status=%s tools=%s first_output=%ss duration=%ss",
-                rec["status"], rec["tools"], rec["first_output_s"], rec["duration_s"],
+                rec["status"],
+                rec["tools"],
+                rec["first_output_s"],
+                rec["duration_s"],
             )
         except TimeoutError:
             rec["status"] = "timeout"
             rec["duration_s"] = round(time.monotonic() - t0, 1)
             logger.warning(
                 "turn %s timed out (>%ss) for topic %s; interrupted",
-                turn_id, self._timeout, topic_id,
+                turn_id,
+                self._timeout,
+                topic_id,
             )
             text = (
                 "⚠️ 芝士这轮超时被中断了（可能卡在某步）。已完成的改动都在；"

@@ -65,7 +65,9 @@ class PermissionChecker:
             return True
 
         if resource_id is not None and domain:
-            domain_roles = await self.get_domain_roles(db, user.user_id, domain, resource_id)
+            domain_roles = await self.get_domain_roles(
+                db, user.user_id, domain, resource_id
+            )
             for role in domain_roles:
                 user.add_domain_role(domain, resource_id, role)
 
@@ -145,7 +147,9 @@ def require_permission(
     action: Action,
     resource: Resource,
     resource_id_param: str | None = None,
-    context_builder: Callable[[Request, AsyncSession, int | None], Awaitable[dict[str, Any]]]
+    context_builder: Callable[
+        [Request, AsyncSession, int | None], Awaitable[dict[str, Any]]
+    ]
     | None = None,
 ):
     async def dependency(

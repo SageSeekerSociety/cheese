@@ -74,7 +74,9 @@ class TopicRepository:
         prev_id = None
         if page_start is not None and rows:
             prev_stmt = (
-                select(Topic.id).where(Topic.deleted_at.is_(None)).where(Topic.id < page_start)
+                select(Topic.id)
+                .where(Topic.deleted_at.is_(None))
+                .where(Topic.id < page_start)
             )
             if keyword:
                 tokens = keyword.strip().split()

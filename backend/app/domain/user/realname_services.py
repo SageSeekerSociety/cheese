@@ -29,7 +29,9 @@ class UserRealNameService:
     async def _ensure_user_exists(self, user_id: int) -> User:
         user = await self._user_repo.get_by_id(user_id)
         if user is None:
-            raise NotFoundError("Resource user not found", data={"type": "user", "id": user_id})
+            raise NotFoundError(
+                "Resource user not found", data={"type": "user", "id": user_id}
+            )
         return user
 
     def _identity_dict(self, identity: UserRealNameIdentity, *, decrypt: bool) -> dict:

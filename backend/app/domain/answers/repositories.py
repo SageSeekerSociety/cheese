@@ -134,7 +134,9 @@ class AnswerRepository:
             counts[attitude] = count
         return counts
 
-    async def update_answer(self, answer: Answer, *, content: str | None = None) -> Answer:
+    async def update_answer(
+        self, answer: Answer, *, content: str | None = None
+    ) -> Answer:
         if content is not None:
             answer.content = content
         answer.updated_at = datetime.now(UTC)
@@ -165,7 +167,9 @@ class AnswerRepository:
         await self._session.flush()
         return True
 
-    async def _get_favorite(self, answer_id: int, user_id: int) -> AnswerFavorite | None:
+    async def _get_favorite(
+        self, answer_id: int, user_id: int
+    ) -> AnswerFavorite | None:
         stmt: Select[tuple[AnswerFavorite]] = select(AnswerFavorite).where(
             AnswerFavorite.answer_id == answer_id,
             AnswerFavorite.user_id == user_id,
@@ -258,7 +262,9 @@ class AnswerRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0) > 0
 
-    async def get_answerer_user_ids(self, question_id: int, user_ids: set[int]) -> set[int]:
+    async def get_answerer_user_ids(
+        self, question_id: int, user_ids: set[int]
+    ) -> set[int]:
         if not user_ids:
             return set()
         stmt = (

@@ -44,9 +44,7 @@ class IdentityService:
         if user is None:
             user = await self._create_agent_user(handle=handle)
         if await self._bindings.get_for_user(user.id) is None:
-            await self._bindings.add(
-                user_id=user.id, kind=AgentBindingKind.platform
-            )
+            await self._bindings.add(user_id=user.id, kind=AgentBindingKind.platform)
         return user
 
     async def create_device_agent(self, *, name: str) -> User:

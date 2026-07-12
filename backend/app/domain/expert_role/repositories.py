@@ -1,6 +1,5 @@
 """Custom role data access."""
 
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

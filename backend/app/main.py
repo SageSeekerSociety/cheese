@@ -157,8 +157,12 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     # WS upgrades and health probes are logged by their own layers; skip noise.
     if request.url.path != "/health":
         _http_log.info(
-            "req", method=request.method, path=request.url.path,
-            status=response.status_code, ms=ms, req=rid,
+            "req",
+            method=request.method,
+            path=request.url.path,
+            status=response.status_code,
+            ms=ms,
+            req=rid,
         )
     response.headers["X-Request-ID"] = rid
     return response
