@@ -71,30 +71,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # ElasticSearch (if needed for search features)
-  elasticsearch:
-    image: elasticsearch:8.18.1
-    container_name: cheese_py_elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ELASTIC_USERNAME=elastic
-      - ELASTIC_PASSWORD=elastic
-    deploy:
-      resources:
-        limits:
-          memory: 2g
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-    ports:
-      - "127.0.0.1:9200:9200"
-    networks:
-      - cheese_py_network
-
 networks:
   cheese_py_network:
     name: cheese_py_network
