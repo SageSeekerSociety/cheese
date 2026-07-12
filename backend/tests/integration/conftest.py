@@ -179,17 +179,8 @@ class UserCreator:
 
 @pytest.fixture(scope="session")
 def app() -> "FastAPI":
-    """Import the FastAPI app, with the notification background scheduler
-    patched out so it cannot escape the test transaction or leak across tests.
-    """
-    from app.domain.notification import scheduler as _sched
-
-    async def _noop(self) -> None:
-        return None
-
-    _sched.NotificationAggregationFinalizer.start = _noop  # type: ignore[method-assign]
-    _sched.NotificationAggregationFinalizer.stop = _noop  # type: ignore[method-assign]
-
+    """Import the FastAPI app. (Notification aggregation is finalized by the
+    taskiq cron, not an in-process scheduler — nothing to patch out here.)"""
     from app.main import app as fastapi_app
 
     return fastapi_app

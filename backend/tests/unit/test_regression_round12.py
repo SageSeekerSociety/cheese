@@ -1,8 +1,9 @@
 """Tests for Round 12 bug fixes.
 
-Covers: notification scheduler, deadline scheduler, AIConversation creation,
-route ordering, material upload, migration chain, groups search count,
-datetime timezone, identity patch, and histogram defaults.
+Covers: deadline scheduler, AIConversation creation, route ordering, material
+upload, migration chain, groups search count, datetime timezone, identity
+patch, and histogram defaults. (The in-process notification finalizer this
+file once covered was superseded by the taskiq cron and removed.)
 """
 
 from datetime import UTC, datetime
@@ -10,38 +11,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Notification scheduler: _tick must commit after finalize
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_notification_finalizer_tick_commits_session():
-    from app.domain.notification.scheduler import NotificationAggregationFinalizer
-
-    mock_session = AsyncMock()
-    mock_handler = AsyncMock()
-    mock_handler.finalize_expired.return_value = []
-
-    mock_factory = MagicMock()
-    mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
-
-    finalizer = NotificationAggregationFinalizer(
-        session_factory=mock_factory,
-        interval_seconds=60,
-    )
-
-    with patch(
-        "app.domain.notification.scheduler.build_notification_event_handler",
-        return_value=mock_handler,
-    ):
-        await finalizer._tick()
-
-    mock_handler.finalize_expired.assert_awaited_once()
-    mock_session.commit.assert_awaited_once()
-
 
 # ---------------------------------------------------------------------------
 # Deadline scheduler: must process all batches without skipping
