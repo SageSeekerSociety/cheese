@@ -3,7 +3,6 @@ import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 
 import AccountRoutes from './account'
-import AssistantRoutes from './assistant'
 import HomeRoutes from './home'
 import ProjectsRoutes from './projects'
 import QuestionRoutes from './question'
@@ -15,7 +14,6 @@ import { usePageTitleStore } from '@/stores/title'
 
 const routes: RouteRecordRaw[] = [
   AccountRoutes,
-  AssistantRoutes,
   HomeRoutes,
   UserRoutes,
   ProjectsRoutes,

@@ -4,8 +4,6 @@ import type { App } from 'vue'
 
 import { debounce } from 'lodash-es'
 
-import { CiteComponent } from './citeComponent'
-
 export function registerDirectives(app: App) {
   app.directive('observe-height', {
     beforeMount(el, binding) {
@@ -25,5 +23,4 @@ export function registerDirectives(app: App) {
       observer.observe(el)
     },
   })
-  app.directive('cite-markers', CiteComponent)
 }

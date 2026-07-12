@@ -1,7 +1,7 @@
 import type { AxiosError } from 'axios'
 import type { ResponseDataType } from '../../types'
 
-import ApiInstance, { NewApiInstance } from '../../api'
+import ApiInstance from '../../api'
 import { UserApi } from '../../api/users'
 import { messageFailed } from '../../utils/showMessage'
 import { Local } from '../../utils/storage'
@@ -56,10 +56,8 @@ export default async function refreshToken(error: AxiosError<ResponseDataType>) 
       eventSourceQueue.forEach((cb) => cb(accessToken))
       eventSourceQueue.splice(0)
       console.log('re-request', config)
-      // 根据原始请求的baseURL判断使用哪个API实例
-      const baseURL = config.baseURL || ''
-      const apiInstance = baseURL.includes('8080') ? NewApiInstance : ApiInstance
-      return apiInstance.request<any>(config)
+      // config 自带 baseURL（axios 以它覆盖实例默认值），任一实例重发都等价。
+      return ApiInstance.request<any>(config)
     } catch {
       messageFailed('请重新登录')
       Local.clear()
@@ -74,10 +72,8 @@ export default async function refreshToken(error: AxiosError<ResponseDataType>) 
       queue.push((newToken: string) => {
         Reflect.set(config.headers!, 'Authorization', `Bearer ${newToken}`)
         console.log('queue', config)
-        // 根据原始请求的baseURL判断使用哪个API实例
-        const baseURL = config.baseURL || ''
-        const apiInstance = baseURL.includes('8080') ? NewApiInstance : ApiInstance
-        resolve(apiInstance.request<any>(config))
+        // config 自带 baseURL（axios 以它覆盖实例默认值），任一实例重发都等价。
+        resolve(ApiInstance.request<any>(config))
       })
     })
   }
