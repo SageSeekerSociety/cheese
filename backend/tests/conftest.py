@@ -42,7 +42,12 @@ _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (ser
 _DB_SUFFIX = f"_{_XDIST_WORKER}" if _XDIST_WORKER else ""
 _INTG_DB_NAME = f"cheesex_test{_DB_SUFFIX}"
 _CLIENT_DB_NAME = f"cheesex_test{_DB_SUFFIX}_c"
-_PG_BASE = "postgresql+asyncpg://cheesex:cheesex@localhost:5433"
+# Postgres server root (no database). Defaults to the local docker-compose test
+# PG; CI (and any other host) overrides it via TEST_PG_BASE so the per-worker
+# databases are provisioned over the network instead of `docker exec`.
+_PG_BASE = os.environ.get(
+    "TEST_PG_BASE", "postgresql+asyncpg://cheesex:cheesex@localhost:5433"
+)
 settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
 
@@ -197,37 +202,36 @@ async def _truncate_all(engine) -> None:
         await conn.exec_driver_sql(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
 
 
+async def _admin_recreate_db(db_name: str) -> None:
+    """Drop + recreate a database over the network (no `docker exec`), from the
+    maintenance `postgres` DB (can't drop a DB you're connected to). FORCE closes
+    any stale connection. asyncpg runs each statement in autocommit, which
+    DROP/CREATE DATABASE require (they can't run inside a transaction)."""
+    import asyncpg
+
+    # asyncpg wants a plain libpq DSN, not the SQLAlchemy "+asyncpg" dialect URL.
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)')
+        await conn.execute(f'CREATE DATABASE "{db_name}"')
+    finally:
+        await conn.close()
+
+
 def _create_and_migrate(db_name: str, db_url: str) -> None:
     """Drop + recreate a database and migrate it to head (alembic)."""
     import subprocess
+    import sys
     from pathlib import Path
 
     backend_dir = Path(__file__).resolve().parent.parent
-    # Drop + recreate from the maintenance `postgres` DB (can't drop a DB you're
-    # connected to); FORCE closes any stale connection. Separate -c flags because
-    # DROP/CREATE DATABASE can't run inside a transaction and psql wraps multiple
-    # statements in one -c into a single transaction.
-    subprocess.run(
-        [
-            "docker",
-            "exec",
-            "cheesex-pg",
-            "psql",
-            "-U",
-            "cheesex",
-            "-d",
-            "postgres",
-            "-c",
-            f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)',
-            "-c",
-            f'CREATE DATABASE "{db_name}"',
-        ],
-        check=True,
-        capture_output=True,
-    )
+    asyncio.run(_admin_recreate_db(db_name))
     # DATABASE_URL maps to settings.database_url, which alembic/env.py reads.
+    # `python -m alembic` works from any host (local venv or CI) without assuming
+    # a `.venv/bin/alembic` path.
     subprocess.run(
-        [str(backend_dir / ".venv/bin/alembic"), "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=backend_dir,
         env={**os.environ, "DATABASE_URL": db_url},
         check=True,
@@ -241,7 +245,8 @@ def _pg_schema():
     the integration DB (settings.database_url, bound by the app engines) and the
     client/python_client DB (TEST_DATABASE_URL). autouse so the integration harness
     — which binds to settings.database_url — always finds a ready schema too. Both
-    are per-worker, so nothing races across xdist workers. Requires Docker pg :5433.
+    are per-worker, so nothing races across xdist workers. Talks to the Postgres
+    server at TEST_PG_BASE (local docker pg :5433 by default; CI overrides it).
     """
     _create_and_migrate(_INTG_DB_NAME, settings.database_url)
     _create_and_migrate(_CLIENT_DB_NAME, TEST_DATABASE_URL)

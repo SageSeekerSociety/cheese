@@ -72,10 +72,13 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
+          # Per-worker test DBs are provisioned over the network from this server
+          # root (the conftest no longer shells out to `docker exec`).
+          TEST_PG_BASE: postgresql+asyncpg://postgres:postgres@localhost:5432
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: test-secret
           ENVIRONMENT: test
-        run: uv run pytest tests/ -n auto --tb=short --ignore=tests/contract -k "not kotlin"
+        run: uv run pytest tests/ -n auto --tb=short -k "not kotlin"
 
   lint:
     runs-on: ubuntu-latest
