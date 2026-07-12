@@ -139,9 +139,14 @@ async def add_question(
 ) -> dict:
     title = payload.get("title") or ""
     content = payload.get("content") or ""
-    type_ = int(payload.get("type", 0))
+    # `type`/`bounty` must be numeric — a non-numeric value is a client error (400),
+    # not an unhandled 500 from a bare int().
+    try:
+        type_ = int(payload.get("type", 0))
+        bounty = int(payload.get("bounty", 0))
+    except (TypeError, ValueError):
+        raise BadRequestError("type and bounty must be integers") from None
     group_id = payload.get("groupId")
-    bounty = int(payload.get("bounty", 0))
     topic_ids = payload.get("topics") or payload.get("topicIds") or []
     if not isinstance(topic_ids, list):
         raise BadRequestError("topics must be an array")
