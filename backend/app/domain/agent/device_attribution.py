@@ -20,7 +20,7 @@ from app.domain.agent.device_hub import DeviceHub, HubScreen
 from app.domain.device.service import DeviceService
 
 # handle-resolver adapter injected at the trust boundary (user_id → handle).
-OwnerHandleResolver = Callable[[uuid.UUID], Awaitable[str]]
+OwnerHandleResolver = Callable[[int], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -28,9 +28,9 @@ class DeviceAttribution:
     """Who a connector call acts as. ``actor_handle`` is the authorship key handed to
     the domain services (the screen's agent when inside one, else the device owner)."""
 
-    actor_user_id: uuid.UUID
+    actor_user_id: int
     actor_handle: str
-    owner_user_id: uuid.UUID
+    owner_user_id: int
     project_id: uuid.UUID | None  # set only when the call came from inside a screen
     device_id: str
     screen: HubScreen | None

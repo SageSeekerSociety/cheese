@@ -102,7 +102,7 @@ class SqlDeviceRepository:
         )
         await self._session.flush()
 
-    async def list_devices_by_owner(self, owner_user_id: uuid.UUID) -> list[Device]:
+    async def list_devices_by_owner(self, owner_user_id: int) -> list[Device]:
         rows = (
             await self._session.scalars(
                 select(DeviceRow).where(DeviceRow.owner_user_id == owner_user_id)
@@ -130,9 +130,7 @@ class SqlDeviceRepository:
     async def assign_project(self, device_id: str, project_id: uuid.UUID) -> None:
         if await self.is_assigned(device_id, project_id):
             return
-        self._session.add(
-            DeviceProjectRow(device_id=device_id, project_id=project_id)
-        )
+        self._session.add(DeviceProjectRow(device_id=device_id, project_id=project_id))
         await self._session.flush()
 
     async def unassign_project(self, device_id: str, project_id: uuid.UUID) -> None:

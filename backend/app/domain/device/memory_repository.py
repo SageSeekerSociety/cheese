@@ -35,7 +35,7 @@ class InMemoryDeviceRepository:
     async def delete_device(self, device_id: str) -> None:
         self._devices.pop(device_id, None)
 
-    async def list_devices_by_owner(self, owner_user_id: uuid.UUID) -> list[Device]:
+    async def list_devices_by_owner(self, owner_user_id: int) -> list[Device]:
         return [d for d in self._devices.values() if d.owner_user_id == owner_user_id]
 
     async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:

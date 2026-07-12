@@ -122,13 +122,21 @@ class TopicService:
         return topic
 
     async def get_or_create_private(
-        self, *, project_id: uuid.UUID, user_handle: str
+        self,
+        *,
+        project_id: uuid.UUID,
+        user_handle: str,
+        peer_handle: str | None = None,
     ) -> Topic:
-        """The member's 1:1 private chat with 芝士 (spec §1)."""
+        """A 1:1 private chat (spec §1).
+
+        No ``peer_handle`` → the member's 1:1 with 芝士. With ``peer_handle`` →
+        a person-to-person DM between the two humans (shared by both).
+        """
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         return await self._repo.get_or_create_private(
-            project_id=project_id, user_handle=user_handle
+            project_id=project_id, user_handle=user_handle, peer_handle=peer_handle
         )
 
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
@@ -192,7 +200,7 @@ class TopicService:
         note = (
             f"📦 随父话题「{cascaded_from}」一同归档"
             if cascaded_from
-            else f"📦 {by} 归档了话题"
+            else f"📦 <@{by}> 归档了话题"
         )
         await self._blocks.add(
             project_id=topic.project_id,
@@ -218,7 +226,7 @@ class TopicService:
             topic_id=topic.id,
             author=by,
             author_type=AuthorType.system,
-            content=f"📂 {by} 取消归档，话题恢复活跃",
+            content=f"📂 <@{by}> 取消归档，话题恢复活跃",
             kind=BlockKind.event,
             meta={"platform": True},
         )
@@ -418,20 +426,17 @@ class TopicService:
         # doc's blocks get stable ids for cross-view highlight / comments later.
         await self._sync_doc_nodes(doc, content)
         # Append-only conversation event (spec H1): the doc edit is visible.
-        # Display name, not raw handle — system lines read as product copy.
-        display = "芝士" if author == "cheese" else author
-        if author != "cheese":
-            from app.domain.user.repositories import UserRepository
-
-            user = await UserRepository(self._session).get_by_handle(author)
-            if user is not None and user.name:
-                display = user.name
+        # A human actor is emitted as the structured <@handle> token so the
+        # client renders it as a clickable mention chip (resolving handle→name
+        # via the roster) — NOT prose we later pattern-match. 芝士 isn't a roster
+        # member, so it stays as plain product copy.
+        actor = "芝士" if author == "cheese" else f"<@{author}>"
         await self._blocks.add(
             project_id=topic.project_id,
             topic_id=topic_id,
             author=author,
             author_type=AuthorType.system,
-            content=f"{display} 编辑了文档",
+            content=f"{actor} 编辑了文档",
             kind=BlockKind.event,
             refs=[str(doc.id)],
             # action:"doc" → the client renders the 看文档 link on this SAME

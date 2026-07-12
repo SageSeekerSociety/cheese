@@ -40,7 +40,9 @@ class SpaceRepository:
         return int(result.scalar_one() or 0)
 
     async def exists_by_name(self, name: str) -> bool:
-        stmt = select(Space.id).where(and_(Space.name == name, Space.deleted_at.is_(None)))
+        stmt = select(Space.id).where(
+            and_(Space.name == name, Space.deleted_at.is_(None))
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
@@ -89,7 +91,7 @@ class SpaceCategoryRepository:
         category_id: int,
         space_id: int,
     ) -> SpaceCategory | None:
-        """Return category by id and space id (including archived ones, excluding deleted)."""
+        """Return category by id and space id (including archived ones, excluding deleted)."""  # noqa: E501
         stmt: Select[tuple[SpaceCategory]] = select(SpaceCategory).where(
             SpaceCategory.id == category_id,
             SpaceCategory.space_id == space_id,
@@ -107,7 +109,9 @@ class SpaceCategoryRepository:
         )
         if not include_archived:
             stmt = stmt.where(SpaceCategory.archived_at.is_(None))
-        stmt = stmt.order_by(SpaceCategory.display_order.asc(), SpaceCategory.name.asc())
+        stmt = stmt.order_by(
+            SpaceCategory.display_order.asc(), SpaceCategory.name.asc()
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
@@ -245,7 +249,9 @@ class SpaceAdminRelationRepository:
         await self._session.flush()
         return relation
 
-    async def get_relation(self, space_id: int, user_id: int) -> SpaceAdminRelation | None:
+    async def get_relation(
+        self, space_id: int, user_id: int
+    ) -> SpaceAdminRelation | None:
         stmt: Select[tuple[SpaceAdminRelation]] = select(SpaceAdminRelation).where(
             SpaceAdminRelation.space_id == space_id,
             SpaceAdminRelation.user_id == user_id,
@@ -308,7 +314,9 @@ class SpaceClassificationTopicsRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_topics_for_spaces(self, space_ids: Sequence[int]) -> dict[int, list[Topic]]:
+    async def list_topics_for_spaces(
+        self, space_ids: Sequence[int]
+    ) -> dict[int, list[Topic]]:
         """Bulk variant. Returns {space_id: [Topic, ...]}."""
         if not space_ids:
             return {}
@@ -328,7 +336,9 @@ class SpaceClassificationTopicsRepository:
             mapping.setdefault(sid, []).append(topic)
         return mapping
 
-    async def replace_topics_for_space(self, *, space_id: int, topic_ids: Sequence[int]) -> None:
+    async def replace_topics_for_space(
+        self, *, space_id: int, topic_ids: Sequence[int]
+    ) -> None:
         """Soft-delete existing links then insert the given ones in order."""
         now = datetime.now(UTC)
         existing_stmt: Select[tuple[SpaceClassificationTopicsRelation]] = select(
@@ -370,7 +380,9 @@ class SpaceDomainGroupRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_by_id(self, *, space_id: int, group_id: int) -> SpaceDomainGroup | None:
+    async def get_by_id(
+        self, *, space_id: int, group_id: int
+    ) -> SpaceDomainGroup | None:
         stmt: Select[tuple[SpaceDomainGroup]] = select(SpaceDomainGroup).where(
             SpaceDomainGroup.id == group_id,
             SpaceDomainGroup.space_id == space_id,
@@ -426,7 +438,9 @@ class SpaceDomainGroupDomainRepository:
         result = await self._session.execute(stmt)
         return [row[0] for row in result.all()]
 
-    async def list_domains_for_groups(self, group_ids: Sequence[int]) -> dict[int, list[str]]:
+    async def list_domains_for_groups(
+        self, group_ids: Sequence[int]
+    ) -> dict[int, list[str]]:
         if not group_ids:
             return {}
         stmt = (
@@ -445,7 +459,9 @@ class SpaceDomainGroupDomainRepository:
 
     async def replace_domains(self, *, group_id: int, domains: Sequence[str]) -> None:
         now = datetime.now(UTC)
-        stmt: Select[tuple[SpaceDomainGroupDomain]] = select(SpaceDomainGroupDomain).where(
+        stmt: Select[tuple[SpaceDomainGroupDomain]] = select(
+            SpaceDomainGroupDomain
+        ).where(
             SpaceDomainGroupDomain.group_id == group_id,
             SpaceDomainGroupDomain.deleted_at.is_(None),
         )
@@ -467,7 +483,9 @@ class SpaceDomainGroupDomainRepository:
 
     async def soft_delete_by_group(self, *, group_id: int) -> None:
         now = datetime.now(UTC)
-        stmt: Select[tuple[SpaceDomainGroupDomain]] = select(SpaceDomainGroupDomain).where(
+        stmt: Select[tuple[SpaceDomainGroupDomain]] = select(
+            SpaceDomainGroupDomain
+        ).where(
             SpaceDomainGroupDomain.group_id == group_id,
             SpaceDomainGroupDomain.deleted_at.is_(None),
         )
@@ -477,13 +495,17 @@ class SpaceDomainGroupDomainRepository:
             item.updated_at = now
         await self._session.flush()
 
-    async def list_group_ids_by_domains(self, *, space_id: int, domains: Sequence[str]) -> set[int]:
+    async def list_group_ids_by_domains(
+        self, *, space_id: int, domains: Sequence[str]
+    ) -> set[int]:
         """Return domain-group IDs whose stored domains intersect the given set."""
         if not domains:
             return set()
         stmt = (
             select(SpaceDomainGroupDomain.group_id)
-            .join(SpaceDomainGroup, SpaceDomainGroupDomain.group_id == SpaceDomainGroup.id)
+            .join(
+                SpaceDomainGroup, SpaceDomainGroupDomain.group_id == SpaceDomainGroup.id
+            )
             .where(
                 SpaceDomainGroup.space_id == space_id,
                 SpaceDomainGroupDomain.domain.in_(list(domains)),

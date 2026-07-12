@@ -1,6 +1,8 @@
+import uuid
 from collections.abc import Sequence
 from typing import Protocol
 
+from app.core.errors import NotFoundError
 from app.domain.notification.dto import ResolvedEntityInfoDTO
 from app.domain.project.services import ProjectService
 from app.domain.team.services import TeamService
@@ -14,7 +16,9 @@ class EntityInfoResolver(Protocol):
         """Return the entity type key (e.g. 'team', 'user')."""
         raise NotImplementedError
 
-    async def resolve(self, entity_ids: Sequence[str]) -> dict[str, ResolvedEntityInfoDTO | None]:
+    async def resolve(
+        self, entity_ids: Sequence[str]
+    ) -> dict[str, ResolvedEntityInfoDTO | None]:
         """Resolve a batch of entity IDs into displayable info."""
         raise NotImplementedError
 
@@ -29,7 +33,9 @@ class TeamEntityResolver:
     def supported_entity_type(self) -> str:
         return "team"
 
-    async def resolve(self, entity_ids: Sequence[str]) -> dict[str, ResolvedEntityInfoDTO | None]:
+    async def resolve(
+        self, entity_ids: Sequence[str]
+    ) -> dict[str, ResolvedEntityInfoDTO | None]:
         numeric_ids: list[int] = []
         id_strs: list[str] = []
         for raw_id in entity_ids:
@@ -78,7 +84,9 @@ class UserEntityResolver:
     def supported_entity_type(self) -> str:
         return "user"
 
-    async def resolve(self, entity_ids: Sequence[str]) -> dict[str, ResolvedEntityInfoDTO | None]:
+    async def resolve(
+        self, entity_ids: Sequence[str]
+    ) -> dict[str, ResolvedEntityInfoDTO | None]:
         numeric_ids: list[int] = []
         id_strs: list[str] = []
         for raw_id in entity_ids:
@@ -124,26 +132,20 @@ class ProjectEntityResolver:
     def supported_entity_type(self) -> str:
         return "project"
 
-    async def resolve(self, entity_ids: Sequence[str]) -> dict[str, ResolvedEntityInfoDTO | None]:
-        numeric_ids: list[int] = []
-        id_strs: list[str] = []
+    async def resolve(
+        self, entity_ids: Sequence[str]
+    ) -> dict[str, ResolvedEntityInfoDTO | None]:
+        # cheesex projects are UUID-keyed (spec: Project = git repo, uuid PK).
+        result: dict[str, ResolvedEntityInfoDTO | None] = {}
         for raw_id in entity_ids:
             try:
-                numeric_ids.append(int(raw_id))
-                id_strs.append(str(int(raw_id)))
+                project_uuid = uuid.UUID(raw_id)
             except (TypeError, ValueError):
                 continue
 
-        if not numeric_ids:
-            return {}
-
-        projects_by_id = await self._project_service.get_projects_by_ids(numeric_ids)
-
-        result: dict[str, ResolvedEntityInfoDTO | None] = {}
-        for raw_id in id_strs:
-            pid = int(raw_id)
-            project = projects_by_id.get(pid)
-            if project is None:
+            try:
+                project = await self._project_service.get_or_404(project_uuid)
+            except NotFoundError:
                 result[raw_id] = None
                 continue
 

@@ -5,9 +5,9 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.cx_task.models import Task, TaskApplication, TaskTemplate
 from app.domain.project.models import Project
 from app.domain.space.models import Space
-from app.domain.cx_task.models import Task, TaskApplication, TaskTemplate
 
 
 def _escape_like(term: str) -> str:

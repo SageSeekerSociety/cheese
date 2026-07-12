@@ -47,16 +47,14 @@ def _token_verifier(token: str) -> TokenIdentity | None:
     claims = verify_session_token(token)
     if claims is None:
         return None
-    uid: uuid.UUID | None = None
-    if claims["uid"]:
-        try:
-            uid = uuid.UUID(claims["uid"])
-        except ValueError:
-            uid = None
-    # fusion unify P3: main-minted tokens carry the username in ``handle`` and an
-    # int id in ``sub``; cheesex-minted ones put the handle in ``sub``. Prefer the
-    # explicit handle claim so ONE token authenticates both API layers.
-    return TokenIdentity(handle=claims["handle"] or claims["sub"], user_id=uid)
+    # fusion unify P3: main-minted tokens carry the username in ``handle`` and the
+    # int User PK in ``sub``; legacy cheesex-minted ones put the handle in ``sub``
+    # (non-numeric) and have no int id. Resolve user_id from ``sub`` when it's the
+    # int id — device binding (device.owner_user_id, an int column) needs it.
+    sub = claims["sub"]
+    user_id: int | None = int(sub) if sub and sub.isdigit() else None
+    # Prefer the explicit handle claim so ONE token authenticates both API layers.
+    return TokenIdentity(handle=claims["handle"] or sub, user_id=user_id)
 
 
 class ActorResolver:
@@ -168,9 +166,7 @@ class ActorResolver:
             is_project_member=is_project_member,
         )
         if not allowed:
-            _log.info(
-                "topic_access_denied", handle=actor.handle, topic=str(topic_id)
-            )
+            _log.info("topic_access_denied", handle=actor.handle, topic=str(topic_id))
             raise ForbiddenError("你不是这个话题的成员，无权在此操作")
 
     async def project_of_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:

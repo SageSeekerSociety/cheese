@@ -2,9 +2,17 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    RateLimitError,
+)
+from openai.types.chat import ChatCompletionMessageParam
+from openai.types.shared_params import ResponseFormatJSONObject, ResponseFormatText
 
 from app.core.config import settings
 from app.domain.task.models import Task
@@ -97,12 +105,14 @@ class LLMClient:
         max_tokens = settings.openai_max_tokens
         effective_timeout = timeout or settings.openai_timeout_seconds
 
-        messages = []
+        messages: list[ChatCompletionMessageParam] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response_format = {"type": "json_object"} if json_response else {"type": "text"}
+        response_format: ResponseFormatJSONObject | ResponseFormatText = (
+            {"type": "json_object"} if json_response else {"type": "text"}
+        )
 
         try:
             response = await asyncio.wait_for(
@@ -116,7 +126,9 @@ class LLMClient:
                 timeout=effective_timeout,
             )
         except TimeoutError as exc:
-            raise LLMTimeoutError(f"LLM request timed out after {effective_timeout}s") from exc
+            raise LLMTimeoutError(
+                f"LLM request timed out after {effective_timeout}s"
+            ) from exc
         except APITimeoutError as exc:
             raise LLMTimeoutError(f"OpenAI API timeout: {exc}") from exc
         except APIConnectionError as exc:
@@ -124,7 +136,9 @@ class LLMClient:
         except RateLimitError as exc:
             raise LLMRateLimitError(f"OpenAI rate limit exceeded: {exc}") from exc
         except APIStatusError as exc:
-            raise LLMAPIError(f"OpenAI API error: {exc}", status_code=exc.status_code) from exc
+            raise LLMAPIError(
+                f"OpenAI API error: {exc}", status_code=exc.status_code
+            ) from exc
 
         content = response.choices[0].message.content or ""
         usage = response.usage
@@ -152,13 +166,18 @@ class LLMClient:
         temperature = settings.openai_temperature
         max_tokens = settings.openai_max_tokens
         effective_timeout = timeout or settings.openai_timeout_seconds
-        response_format = {"type": "json_object"} if json_response else {"type": "text"}
+        response_format: ResponseFormatJSONObject | ResponseFormatText = (
+            {"type": "json_object"} if json_response else {"type": "text"}
+        )
+        # OpenAI's messages param is a TypedDict union; the merged code passes plain
+        # list[dict[str, str]], runtime-valid but not narrowable to that union.
+        typed_messages = cast("list[ChatCompletionMessageParam]", messages)
 
         try:
             response = await asyncio.wait_for(
                 self._client.chat.completions.create(
                     model=model,
-                    messages=messages,
+                    messages=typed_messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     response_format=response_format,
@@ -166,7 +185,9 @@ class LLMClient:
                 timeout=effective_timeout,
             )
         except TimeoutError as exc:
-            raise LLMTimeoutError(f"LLM request timed out after {effective_timeout}s") from exc
+            raise LLMTimeoutError(
+                f"LLM request timed out after {effective_timeout}s"
+            ) from exc
         except APITimeoutError as exc:
             raise LLMTimeoutError(f"OpenAI API timeout: {exc}") from exc
         except APIConnectionError as exc:
@@ -174,7 +195,9 @@ class LLMClient:
         except RateLimitError as exc:
             raise LLMRateLimitError(f"OpenAI rate limit exceeded: {exc}") from exc
         except APIStatusError as exc:
-            raise LLMAPIError(f"OpenAI API error: {exc}", status_code=exc.status_code) from exc
+            raise LLMAPIError(
+                f"OpenAI API error: {exc}", status_code=exc.status_code
+            ) from exc
 
         content = response.choices[0].message.content or ""
         usage = response.usage
@@ -194,7 +217,9 @@ class LLMClient:
         model_type: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         if not self.is_configured:
-            yield StreamChunk(content=self._placeholder_response(prompt).content, is_final=True)
+            yield StreamChunk(
+                content=self._placeholder_response(prompt).content, is_final=True
+            )
             return
         assert self._client is not None
 
@@ -202,7 +227,7 @@ class LLMClient:
         temperature = settings.openai_temperature
         max_tokens = settings.openai_max_tokens
 
-        messages = []
+        messages: list[ChatCompletionMessageParam] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
@@ -219,7 +244,9 @@ class LLMClient:
 
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
-                    yield StreamChunk(content=chunk.choices[0].delta.content, is_final=False)
+                    yield StreamChunk(
+                        content=chunk.choices[0].delta.content, is_final=False
+                    )
                 if chunk.usage:
                     yield StreamChunk(
                         content="",
@@ -233,7 +260,9 @@ class LLMClient:
         except RateLimitError as exc:
             raise LLMRateLimitError(f"OpenAI rate limit exceeded: {exc}") from exc
         except APIStatusError as exc:
-            raise LLMAPIError(f"OpenAI API error: {exc}", status_code=exc.status_code) from exc
+            raise LLMAPIError(
+                f"OpenAI API error: {exc}", status_code=exc.status_code
+            ) from exc
 
     async def stream_completion_with_history(
         self,
@@ -242,18 +271,22 @@ class LLMClient:
         model_type: str | None = None,
     ) -> AsyncIterator[StreamChunk]:
         if not self.is_configured:
-            yield StreamChunk(content=self._placeholder_response("").content, is_final=True)
+            yield StreamChunk(
+                content=self._placeholder_response("").content, is_final=True
+            )
             return
         assert self._client is not None
 
         model = self._get_model(model_type)
         temperature = settings.openai_temperature
         max_tokens = settings.openai_max_tokens
+        # Plain list[dict[str, str]] contract; runtime-valid for the OpenAI SDK.
+        typed_messages = cast("list[ChatCompletionMessageParam]", messages)
 
         try:
             stream = await self._client.chat.completions.create(  # type: ignore[call-overload]
                 model=model,
-                messages=messages,
+                messages=typed_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True,
@@ -262,7 +295,9 @@ class LLMClient:
 
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
-                    yield StreamChunk(content=chunk.choices[0].delta.content, is_final=False)
+                    yield StreamChunk(
+                        content=chunk.choices[0].delta.content, is_final=False
+                    )
                 if chunk.usage:
                     yield StreamChunk(
                         content="",
@@ -276,7 +311,9 @@ class LLMClient:
         except RateLimitError as exc:
             raise LLMRateLimitError(f"OpenAI rate limit exceeded: {exc}") from exc
         except APIStatusError as exc:
-            raise LLMAPIError(f"OpenAI API error: {exc}", status_code=exc.status_code) from exc
+            raise LLMAPIError(
+                f"OpenAI API error: {exc}", status_code=exc.status_code
+            ) from exc
 
     def _get_model(self, model_type: str | None) -> str:
         if model_type == "reasoning":
@@ -302,7 +339,7 @@ class LLMClient:
 - knowledge_fields: [{name: string, description: string}] 需要掌握的知识领域
 - learning_paths: [{stage: string, description: string, resources?: [{name, type, url?}]}] 学习路径
 - methodology: [{step: string, description: string}] 方法论建议
-- team_tips: [{role: string, description: string}] 团队协作建议"""
+- team_tips: [{role: string, description: string}] 团队协作建议"""  # noqa: E501  # AI-facing prompt content, must stay verbatim
 
         user_prompt = f"""任务名称：{task.name}
 任务简介：{task.intro or ""}

@@ -12,8 +12,12 @@ from app.domain.user.repositories import UserProfileRepository
 
 
 def _question_to_dto(question: Question, *, include_content: bool = True) -> dict:
-    created_at_ms = int(question.created_at.timestamp() * 1000) if question.created_at else 0
-    updated_at_ms = int(question.updated_at.timestamp() * 1000) if question.updated_at else 0
+    created_at_ms = (
+        int(question.created_at.timestamp() * 1000) if question.created_at else 0
+    )
+    updated_at_ms = (
+        int(question.updated_at.timestamp() * 1000) if question.updated_at else 0
+    )
     return {
         "id": question.id,
         "title": question.title,
@@ -56,7 +60,11 @@ class QuestionsService:
         offset = max(0, page_start) if page_start is not None else 0
 
         # Meilisearch-first: if configured, use it for relevance-ranked CJK search.
-        ms_sort = [f"{sort_by}:{sort_order}"] if sort_by in {"createdAt", "updatedAt"} else None
+        ms_sort = (
+            [f"{sort_by}:{sort_order}"]
+            if sort_by in {"createdAt", "updatedAt"}
+            else None
+        )
         ms_result = await meilisearch_search_ids(
             INDEX_QUESTIONS,
             keyword or "",
@@ -193,7 +201,9 @@ class QuestionsService:
             if self._profile_repo
             else None
         )
-        dto["author"] = _profile_to_user(author_profile) or {"id": question.created_by_id}
+        dto["author"] = _profile_to_user(author_profile) or {
+            "id": question.created_by_id
+        }
 
         follow_count = await self._repo.count_followers(question_id)
         dto["follow_count"] = follow_count
@@ -219,7 +229,9 @@ class QuestionsService:
 
         answer_count = 0
         if self._answer_repo:
-            answer_count = await self._answer_repo.count_answers_for_question(question_id)
+            answer_count = await self._answer_repo.count_answers_for_question(
+                question_id
+            )
         dto["answer_count"] = answer_count
 
         comment_count = await self._repo.count_comments(question_id)
@@ -238,7 +250,9 @@ class QuestionsService:
             accepted = await self._answer_repo.get_by_id(question.accepted_answer_id)
             if accepted:
                 accepted_author = (
-                    await self._profile_repo.get_profile_by_user_id(accepted.created_by_id)
+                    await self._profile_repo.get_profile_by_user_id(
+                        accepted.created_by_id
+                    )
                     if self._profile_repo
                     else None
                 )
@@ -246,7 +260,8 @@ class QuestionsService:
                     "id": accepted.id,
                     "question_id": accepted.question_id,
                     "content": accepted.content,
-                    "author": _profile_to_user(accepted_author) or {"id": accepted.created_by_id},
+                    "author": _profile_to_user(accepted_author)
+                    or {"id": accepted.created_by_id},
                     "created_at": int(accepted.created_at.timestamp() * 1000)
                     if accepted.created_at
                     else 0,
@@ -262,11 +277,15 @@ class QuestionsService:
 
     async def follow_question(self, *, question_id: int, user_id: int) -> bool:
         await self._ensure_question_exists(question_id)
-        return await self._repo.follow_question(question_id=question_id, user_id=user_id)
+        return await self._repo.follow_question(
+            question_id=question_id, user_id=user_id
+        )
 
     async def unfollow_question(self, *, question_id: int, user_id: int) -> bool:
         await self._ensure_question_exists(question_id)
-        return await self._repo.unfollow_question(question_id=question_id, user_id=user_id)
+        return await self._repo.unfollow_question(
+            question_id=question_id, user_id=user_id
+        )
 
     async def list_followed(
         self, *, user_id: int, page_size: int, page_start: int | None
@@ -293,7 +312,9 @@ class QuestionsService:
         if exists is None:
             raise NotFoundError("Question not found", data={"id": question_id})
 
-    async def accept_answer(self, *, question_id: int, answer_id: int, user_id: int) -> dict:
+    async def accept_answer(
+        self, *, question_id: int, answer_id: int, user_id: int
+    ) -> dict:
         question = await self._repo.get_by_id(question_id)
         if question is None:
             raise NotFoundError("Question not found", data={"id": question_id})
@@ -306,7 +327,9 @@ class QuestionsService:
             raise NotFoundError("Answer not found", data={"id": answer_id})
         if answer.question_id != question_id:
             raise BadRequestError("Answer does not belong to this question")
-        updated = await self._repo.accept_answer(question_id=question_id, answer_id=answer_id)
+        updated = await self._repo.accept_answer(
+            question_id=question_id, answer_id=answer_id
+        )
         if updated is None:
             raise NotFoundError("Question not found", data={"id": question_id})
         dto = _question_to_dto(updated)
@@ -328,11 +351,15 @@ class QuestionsService:
         dto["topicIds"] = topics.get(question_id, [])
         return dto
 
-    async def vote_question(self, *, question_id: int, user_id: int, vote_type: str) -> dict:
+    async def vote_question(
+        self, *, question_id: int, user_id: int, vote_type: str
+    ) -> dict:
         await self._ensure_question_exists(question_id)
         if vote_type not in (VoteType.POSITIVE.value, VoteType.NEGATIVE.value):
             raise BadRequestError("Invalid vote type", data={"vote_type": vote_type})
-        await self._repo.vote(question_id=question_id, user_id=user_id, vote_type=vote_type)
+        await self._repo.vote(
+            question_id=question_id, user_id=user_id, vote_type=vote_type
+        )
         counts = await self._repo.count_votes(question_id)
         return {
             "upvotes": counts.get(VoteType.POSITIVE.value, 0),
@@ -350,7 +377,9 @@ class QuestionsService:
             "userVote": None,
         }
 
-    async def get_question_votes(self, *, question_id: int, user_id: int | None) -> dict:
+    async def get_question_votes(
+        self, *, question_id: int, user_id: int | None
+    ) -> dict:
         await self._ensure_question_exists(question_id)
         counts = await self._repo.count_votes(question_id)
         user_vote = None
@@ -362,14 +391,18 @@ class QuestionsService:
             "userVote": user_vote,
         }
 
-    async def get_trending_questions(self, *, limit: int = 10, days: int = 7) -> list[dict]:
+    async def get_trending_questions(
+        self, *, limit: int = 10, days: int = 7
+    ) -> list[dict]:
         questions = await self._repo.get_trending_questions(limit=limit, days=days)
         return await self._enrich_question_list(questions)
 
     async def get_stats(self) -> dict:
         return await self._repo.get_stats()
 
-    async def get_popular_search_terms(self, *, limit: int = 10, days: int = 7) -> list[dict]:
+    async def get_popular_search_terms(
+        self, *, limit: int = 10, days: int = 7
+    ) -> list[dict]:
         return await self._repo.get_popular_search_terms(limit=limit, days=days)
 
     async def update_question(
@@ -450,9 +483,15 @@ class QuestionsService:
         return follower_ids, page
 
 
-def _invitation_to_dto(invitation: QuestionInvitation, user: dict | None = None) -> dict:
-    created_at_ms = int(invitation.created_at.timestamp() * 1000) if invitation.created_at else 0
-    updated_at_ms = int(invitation.updated_at.timestamp() * 1000) if invitation.updated_at else 0
+def _invitation_to_dto(
+    invitation: QuestionInvitation, user: dict | None = None
+) -> dict:
+    created_at_ms = (
+        int(invitation.created_at.timestamp() * 1000) if invitation.created_at else 0
+    )
+    updated_at_ms = (
+        int(invitation.updated_at.timestamp() * 1000) if invitation.updated_at else 0
+    )
     return {
         "id": invitation.id,
         "question_id": invitation.question_id,
@@ -486,7 +525,7 @@ class QuestionInvitationService:
             question_id=question_id, limit=page_size, offset=offset
         )
         user_ids = {row.user_id for row in rows}
-        profiles = await self._profile_repo.get_profiles_by_user_ids(user_ids)
+        profiles = await self._profile_repo.get_profiles_by_user_ids(list(user_ids))
         answered_map = await self._get_answered_map(question_id, user_ids)
         items = []
         for row in rows:
@@ -566,7 +605,9 @@ class QuestionInvitationService:
         if question is None:
             raise NotFoundError("Question not found", data={"id": question_id})
 
-    async def _get_answered_map(self, question_id: int, user_ids: set[int]) -> dict[int, bool]:
+    async def _get_answered_map(
+        self, question_id: int, user_ids: set[int]
+    ) -> dict[int, bool]:
         if not self._answer_repo or not user_ids:
             return {}
         answered = await self._answer_repo.get_answerer_user_ids(question_id, user_ids)

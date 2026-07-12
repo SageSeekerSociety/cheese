@@ -59,7 +59,7 @@ class HubScreen:
     # A screen *is* an agent (一个 agent 是一个屏幕): it acts as one agent-user in its
     # project/topic. Attribution of the screen's cheese-api calls keys on
     # agent_user_id; hooks route by hook_key (see DeviceProvider).
-    agent_user_id: uuid.UUID
+    agent_user_id: int
     agent_handle: str
     project_id: uuid.UUID | None = None
     topic_id: uuid.UUID | None = None
@@ -138,7 +138,7 @@ class DeviceHub:
         command: list[str],
         cheeselet_source: str,
         *,
-        agent_user_id: uuid.UUID,
+        agent_user_id: int,
         agent_handle: str,
         project_id: uuid.UUID | None = None,
         topic_id: uuid.UUID | None = None,
@@ -186,7 +186,7 @@ class DeviceHub:
         sid: str,
         *,
         token: str,
-        agent_user_id: uuid.UUID,
+        agent_user_id: int,
         agent_handle: str,
         command: list[str] | None = None,
         project_id: uuid.UUID | None = None,

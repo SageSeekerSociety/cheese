@@ -34,7 +34,7 @@
             </v-img>
             <v-icon v-else icon="mdi-account" size="large" />
           </v-avatar>
-          <div class="mt-2">
+          <div>
             <v-card-title class="px-0 py-0 text-h6 font-weight-bold">{{ userMenu.nickname.value }}</v-card-title>
             <v-card-subtitle class="px-0 pt-1 pb-0 text-body-2 text-medium-emphasis text-truncate" max-width="220">
               {{ userMenu.intro.value || '还没有个人简介' }}
@@ -94,6 +94,12 @@
                 <v-icon icon="mdi-account" class="me-2"></v-icon>
               </template>
               <v-list-item-title>个人中心</v-list-item-title>
+            </v-list-item>
+            <v-list-item :to="{ name: 'my-devices' }" rounded="lg" class="mb-1" color="primary">
+              <template #prepend>
+                <v-icon icon="mdi-server-network" class="me-2"></v-icon>
+              </template>
+              <v-list-item-title>我的设备</v-list-item-title>
             </v-list-item>
             <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
               <template #prepend>

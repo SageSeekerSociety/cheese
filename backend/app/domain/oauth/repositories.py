@@ -71,7 +71,8 @@ class OAuthConnectionRepository:
         )
         result = await self._session.execute(stmt)
         await self._session.flush()
-        return result.rowcount > 0
+        # rowcount exists on CursorResult returned by execute() for DML at runtime
+        return result.rowcount > 0  # type: ignore[attr-defined]
 
     async def update_tokens(
         self,
@@ -79,7 +80,9 @@ class OAuthConnectionRepository:
         refresh_token: str | None,
         token_expires: datetime | None,
     ) -> None:
-        stmt = select(UserOAuthConnection).where(UserOAuthConnection.id == connection_id)
+        stmt = select(UserOAuthConnection).where(
+            UserOAuthConnection.id == connection_id
+        )
         result = await self._session.execute(stmt)
         entity = result.scalar_one_or_none()
         if entity:

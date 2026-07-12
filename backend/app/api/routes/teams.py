@@ -8,8 +8,16 @@ from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
 from app.domain.team.membership_services import TeamMembershipService
-from app.domain.team.models import ApplicationStatus, Team, TeamMemberRole, TeamUserRelation
-from app.domain.team.repositories import TeamMembershipApplicationRepository, TeamRepository
+from app.domain.team.models import (
+    ApplicationStatus,
+    Team,
+    TeamMemberRole,
+    TeamUserRelation,
+)
+from app.domain.team.repositories import (
+    TeamMembershipApplicationRepository,
+    TeamRepository,
+)
 from app.domain.team.services import TeamService
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -78,7 +86,9 @@ async def get_team_membership_service(
 ) -> TeamMembershipService:
     team_repo = TeamRepository(session=db)
     app_repo = TeamMembershipApplicationRepository(session=db)
-    return TeamMembershipService(session=db, team_repo=team_repo, application_repo=app_repo)
+    return TeamMembershipService(
+        session=db, team_repo=team_repo, application_repo=app_repo
+    )
 
 
 def _user_payload(user, profile, *, fallback_id: int) -> dict:
@@ -95,7 +105,11 @@ def _user_payload(user, profile, *, fallback_id: int) -> dict:
             "question_count": 0,
             "answer_count": 0,
         }
-    nickname = profile.nickname if profile and getattr(profile, "nickname", None) else user.username
+    nickname = (
+        profile.nickname
+        if profile and getattr(profile, "nickname", None)
+        else user.username
+    )
     return {
         "id": user.id,
         "username": user.username,
@@ -117,8 +131,12 @@ def _team_to_api_model(
     users_map: dict | None = None,
     profiles_map: dict | None = None,
 ) -> dict:
-    created_at_ms = int(team.created_at.timestamp() * 1000) if team.created_at is not None else 0
-    updated_at_ms = int(team.updated_at.timestamp() * 1000) if team.updated_at is not None else 0
+    created_at_ms = (
+        int(team.created_at.timestamp() * 1000) if team.created_at is not None else 0
+    )
+    updated_at_ms = (
+        int(team.updated_at.timestamp() * 1000) if team.updated_at is not None else 0
+    )
 
     owner_info = None
     admin_relations: list[TeamUserRelation] = []
@@ -199,8 +217,12 @@ def _member_to_api_model(
     profiles_map: dict | None = None,
 ) -> dict:
     """TeamMember representation with the full User shape the frontend expects."""
-    created_at_ms = int(rel.created_at.timestamp() * 1000) if rel.created_at is not None else 0
-    updated_at_ms = int(rel.updated_at.timestamp() * 1000) if rel.updated_at is not None else 0
+    created_at_ms = (
+        int(rel.created_at.timestamp() * 1000) if rel.created_at is not None else 0
+    )
+    updated_at_ms = (
+        int(rel.updated_at.timestamp() * 1000) if rel.updated_at is not None else 0
+    )
     # Map numeric role to string name (OWNER / ADMIN / MEMBER)
     role_map = {
         0: "OWNER",
@@ -224,7 +246,9 @@ def _member_to_api_model(
     }
 
 
-async def _load_team_user_maps(db, members: list[TeamUserRelation]) -> tuple[dict, dict]:
+async def _load_team_user_maps(
+    db, members: list[TeamUserRelation]
+) -> tuple[dict, dict]:
     """Bulk-load User + UserProfile records for all member relations."""
     user_ids = list({rel.user_id for rel in members})
     if not user_ids:
@@ -276,7 +300,9 @@ def _application_to_api_model(
             profiles_map.get(app.user_id),
             fallback_id=app.user_id,
         ),
-        "team": _team_summary_payload(teams_map.get(app.team_id), fallback_id=app.team_id),
+        "team": _team_summary_payload(
+            teams_map.get(app.team_id), fallback_id=app.team_id
+        ),
         "initiator": _user_payload(
             users_map.get(app.initiator_id),
             profiles_map.get(app.initiator_id),
@@ -286,7 +312,9 @@ def _application_to_api_model(
         "status": app.status,
         "role": app.role,
         "message": app.message,
-        "processedAt": int(app.processed_at.timestamp() * 1000) if app.processed_at else None,
+        "processedAt": int(app.processed_at.timestamp() * 1000)
+        if app.processed_at
+        else None,
         "createdAt": int(app.created_at.timestamp() * 1000) if app.created_at else None,
         "updatedAt": int(app.updated_at.timestamp() * 1000) if app.updated_at else None,
     }
@@ -353,7 +381,9 @@ async def get_teams(
     db=Depends(get_db),
 ) -> dict:
     offset = int(page_start) if page_start and page_start.isdigit() else 0
-    teams = await service.enumerate_teams(query=query or None, limit=page_size + 1, offset=offset)
+    teams = await service.enumerate_teams(
+        query=query or None, limit=page_size + 1, offset=offset
+    )
     has_more = len(teams) > page_size
     teams_to_emit = teams[:page_size]
     items: list[dict] = []
@@ -426,7 +456,9 @@ async def get_team(
 ) -> dict:
     team = await service.get_team(team_id=team_id)
     if team is None:
-        raise NotFoundError("Resource team not found", data={"type": "team", "id": team_id})
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "id": team_id}
+        )
 
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map = await _load_team_user_maps(db, members)
@@ -456,7 +488,9 @@ async def get_team_members(
     # NT @Auth("team:view:membership") requires MEMBER role or higher; this
     # route used to have no auth at all, so anyone — even anonymous — could
     # enumerate any team's roster.
-    auth_user: AuthUserInfo = require_permission(Action.READ, Resource.TEAM_MEMBERSHIP, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.READ, Resource.TEAM_MEMBERSHIP, "teamId"
+    ),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
@@ -532,7 +566,9 @@ async def create_team(
 async def patch_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     payload: PatchTeamRequest,
-    auth_user: AuthUserInfo = require_permission(Action.UPDATE, Resource.TEAM, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.UPDATE, Resource.TEAM, "teamId"
+    ),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
@@ -568,7 +604,9 @@ async def patch_team(
 )
 async def delete_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    auth_user: AuthUserInfo = require_permission(Action.DELETE, Resource.TEAM, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.DELETE, Resource.TEAM, "teamId"
+    ),
     service: TeamService = Depends(get_team_service),
 ) -> Response:
     await service.delete_team(team_id=team_id, actor_user_id=auth_user.user_id)
@@ -602,7 +640,9 @@ async def patch_team_member_role(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     user_id: Annotated[int, Path(ge=1, alias="userId")],
     payload: PatchTeamMemberRoleRequest,
-    auth_user: AuthUserInfo = require_permission(Action.UPDATE, Resource.TEAM_MEMBERSHIP, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.UPDATE, Resource.TEAM_MEMBERSHIP, "teamId"
+    ),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
@@ -612,11 +652,15 @@ async def patch_team_member_role(
         team_id=team_id,
         target_user_id=user_id,
         actor_user_id=auth_user.user_id,
-        new_role=mapped_role,
+        # TeamMemberRole is a namespace of int constants, not an enum; mapped_role is
+        # the int value the service/DB expect (see other call sites typed as int).
+        new_role=mapped_role,  # type: ignore[arg-type]
     )
     team = await service.get_team(team_id)
     if team is None:
-        raise NotFoundError("Resource team not found", data={"type": "team", "id": team_id})
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "id": team_id}
+        )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map = await _load_team_user_maps(db, members)
     return {
@@ -642,7 +686,9 @@ async def patch_team_member_role(
 async def add_team_member_entry(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     payload: AddTeamMemberRequest,
-    auth_user: AuthUserInfo = require_permission(Action.CREATE, Resource.TEAM_MEMBERSHIP, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.CREATE, Resource.TEAM_MEMBERSHIP, "teamId"
+    ),
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
@@ -687,14 +733,23 @@ async def list_team_join_requests(
     status: str | None = Query(default=None),
     pageStart: int | None = Query(default=None),
     pageSize: int | None = Query(default=None),
-    auth_user: AuthUserInfo = require_permission(Action.READ, Resource.TEAM_REQUEST, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.READ, Resource.TEAM_REQUEST, "teamId"
+    ),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
 ) -> dict:
     status_enum: ApplicationStatus | None = None
     if status is not None:
         upper = status.upper()
-        if upper in {"PENDING", "APPROVED", "REJECTED", "ACCEPTED", "DECLINED", "CANCELED"}:
+        if upper in {
+            "PENDING",
+            "APPROVED",
+            "REJECTED",
+            "ACCEPTED",
+            "DECLINED",
+            "CANCELED",
+        }:
             status_enum = ApplicationStatus[upper]
         else:
             raise BadRequestError(f"Invalid status: {status}")
@@ -731,7 +786,9 @@ async def list_team_requests_alias(
     status: str | None = Query(default=None),
     pageStart: int | None = Query(default=None),
     pageSize: int | None = Query(default=None),
-    auth_user: AuthUserInfo = require_permission(Action.READ, Resource.TEAM_REQUEST, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.READ, Resource.TEAM_REQUEST, "teamId"
+    ),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
 ) -> dict:
@@ -755,14 +812,23 @@ async def list_team_invitations(
     status: str | None = Query(default=None),
     pageStart: int | None = Query(default=None),
     pageSize: int | None = Query(default=None),
-    auth_user: AuthUserInfo = require_permission(Action.READ, Resource.TEAM_INVITATION, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.READ, Resource.TEAM_INVITATION, "teamId"
+    ),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
 ) -> dict:
     status_enum: ApplicationStatus | None = None
     if status is not None:
         upper = status.upper()
-        if upper in {"PENDING", "APPROVED", "REJECTED", "ACCEPTED", "DECLINED", "CANCELED"}:
+        if upper in {
+            "PENDING",
+            "APPROVED",
+            "REJECTED",
+            "ACCEPTED",
+            "DECLINED",
+            "CANCELED",
+        }:
             status_enum = ApplicationStatus[upper]
         else:
             raise BadRequestError(f"Invalid status: {status}")
@@ -798,7 +864,9 @@ async def list_team_invitations(
 async def create_team_invitation(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     payload: CreateTeamInvitationRequest,
-    auth_user: AuthUserInfo = require_permission(Action.CREATE, Resource.TEAM_INVITATION, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.CREATE, Resource.TEAM_INVITATION, "teamId"
+    ),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
     db=Depends(get_db),
 ) -> dict:
@@ -830,7 +898,9 @@ async def create_team_invitation(
 async def cancel_team_invitation(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     invitation_id: Annotated[int, Path(ge=1, alias="invitationId")],
-    auth_user: AuthUserInfo = require_permission(Action.DELETE, Resource.TEAM_INVITATION, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.DELETE, Resource.TEAM_INVITATION, "teamId"
+    ),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
     await membership_service.cancel_team_invitation(
@@ -899,7 +969,9 @@ async def create_team_request_alias(
 async def approve_team_join_request(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     request_id: Annotated[int, Path(ge=1, alias="requestId")],
-    auth_user: AuthUserInfo = require_permission(Action.UPDATE, Resource.TEAM_REQUEST, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.UPDATE, Resource.TEAM_REQUEST, "teamId"
+    ),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
     await membership_service.approve_team_join_request(
@@ -918,7 +990,9 @@ async def approve_team_join_request(
 async def approve_team_request_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     request_id: Annotated[int, Path(ge=1, alias="requestId")],
-    auth_user: AuthUserInfo = require_permission(Action.UPDATE, Resource.TEAM_REQUEST, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.UPDATE, Resource.TEAM_REQUEST, "teamId"
+    ),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
     await membership_service.approve_team_join_request(
@@ -937,7 +1011,9 @@ async def approve_team_request_alias(
 async def reject_team_join_request(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     request_id: Annotated[int, Path(ge=1, alias="requestId")],
-    auth_user: AuthUserInfo = require_permission(Action.UPDATE, Resource.TEAM_REQUEST, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.UPDATE, Resource.TEAM_REQUEST, "teamId"
+    ),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
     await membership_service.reject_team_join_request(
@@ -956,7 +1032,9 @@ async def reject_team_join_request(
 async def reject_team_request_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     request_id: Annotated[int, Path(ge=1, alias="requestId")],
-    auth_user: AuthUserInfo = require_permission(Action.UPDATE, Resource.TEAM_REQUEST, "teamId"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.UPDATE, Resource.TEAM_REQUEST, "teamId"
+    ),
     membership_service: TeamMembershipService = Depends(get_team_membership_service),
 ) -> Response:
     await membership_service.reject_team_join_request(

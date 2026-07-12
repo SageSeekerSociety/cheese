@@ -91,6 +91,16 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '我的设备', isFullPage: true },
   },
   {
+    // Device-flow approval landing page: `cheesehost auth login` prints a
+    // `<frontend>/connect?code=…` link; the signed-in human lands here to bind
+    // the machine to a project and mint its agent (fusion-design §5). Registered
+    // here because the merged app uses main's router.
+    name: 'connect',
+    path: '/connect',
+    component: () => import('@/views/ConnectView.vue'),
+    meta: { title: '连接设备', isFullPage: true },
+  },
+  {
     name: 'market',
     path: '/market',
     component: () => import('@/views/MarketView.vue'),

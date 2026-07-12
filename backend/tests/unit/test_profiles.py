@@ -100,6 +100,7 @@ def test_build_registry_has_fable_channel():
         claude_oauth_token="oauth-tok",
         fable_model="claude-fable-5",
         dogfood_owner_handles=["andyl"],
+        agent_default_profile="default",
     )
     reg = build_registry(settings)
     fable = reg.get("claude-fable")

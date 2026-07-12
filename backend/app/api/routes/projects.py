@@ -106,9 +106,7 @@ async def list_linked_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.delete("/{project_id}/tasks/{task_id}")
-async def unlink_task(
-    project_id: uuid.UUID, task_id: uuid.UUID, db: DbSession
-) -> dict:
+async def unlink_task(project_id: uuid.UUID, task_id: uuid.UUID, db: DbSession) -> dict:
     """退出 Task 协议 (§4): break the project↔task link."""
     await ProjectService(db).unlink_task(project_id=project_id, task_id=task_id)
     return ok({"unlinked": True})
@@ -174,11 +172,19 @@ async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dic
 
 @router.get("/{project_id}/private-chat")
 async def get_private_chat(
-    project_id: uuid.UUID, user_handle: str, db: DbSession
+    project_id: uuid.UUID,
+    user_handle: str,
+    db: DbSession,
+    peer_handle: str | None = None,
 ) -> dict:
-    """Get-or-create the member's 1:1 private chat with 芝士 (spec §1)."""
+    """Get-or-create a 1:1 private chat (spec §1).
+
+    Without ``peer_handle`` this is the member's 1:1 with 芝士. With
+    ``peer_handle`` it is a person-to-person DM between the two humans, shared
+    by both regardless of who opens it first.
+    """
     topic = await TopicService(db).get_or_create_private(
-        project_id=project_id, user_handle=user_handle
+        project_id=project_id, user_handle=user_handle, peer_handle=peer_handle
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 

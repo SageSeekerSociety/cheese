@@ -52,7 +52,9 @@ class LoginRateLimiter:
         if attempts >= MAX_LOGIN_ATTEMPTS:
             lockout_key = f"{LOGIN_LOCKOUT_PREFIX}{username}"
             await self._redis.setex(lockout_key, LOCKOUT_DURATION_SECONDS, "1")
-            logger.warning("User %s locked out after %d failed attempts", username, attempts)
+            logger.warning(
+                "User %s locked out after %d failed attempts", username, attempts
+            )
 
         return attempts
 
@@ -170,7 +172,9 @@ class SessionManager:
         if not data:
             return None
 
-        return {k.decode(): v.decode() for k, v in data.items()}
+        # redis client is decode_responses=False → values are bytes at runtime,
+        # but the redis-py stubs don't model that and type them as str.
+        return {k.decode(): v.decode() for k, v in data.items()}  # type: ignore[attr-defined]
 
     async def update_last_active(self, session_id: str) -> None:
         key = f"{SESSION_PREFIX}{session_id}"
@@ -211,7 +215,9 @@ class SessionManager:
         logger.info("Revoked session %s for user %d", session_id, user_id)
         return True
 
-    async def revoke_all_sessions(self, user_id: int, except_session_id: str | None = None) -> int:
+    async def revoke_all_sessions(
+        self, user_id: int, except_session_id: str | None = None
+    ) -> int:
         user_sessions_key = f"{USER_SESSIONS_PREFIX}{user_id}"
         session_ids = await self._redis.smembers(user_sessions_key)  # type: ignore[misc]
 
@@ -270,7 +276,9 @@ class PasswordResetService:
         if not data:
             return None
 
-        return {k.decode(): v.decode() for k, v in data.items()}
+        # redis client is decode_responses=False → values are bytes at runtime,
+        # but the redis-py stubs don't model that and type them as str.
+        return {k.decode(): v.decode() for k, v in data.items()}  # type: ignore[attr-defined]
 
     async def consume_reset_token(self, token: str) -> dict | None:
         data = await self.validate_reset_token(token)

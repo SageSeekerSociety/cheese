@@ -10,9 +10,7 @@ what drives the agent: ``platform`` = our in-process agent runtime (今)， ``de
 that binding, not a magic string, is what makes it an agent.
 """
 
-import uuid
-
-from sqlalchemy import Integer, ForeignKey, String
+from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base

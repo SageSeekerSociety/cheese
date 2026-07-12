@@ -34,7 +34,7 @@ from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.user.models import User
 
 # Resolve an online device serving a project → (device_id, agent_user_id, agent_handle).
-DeviceResolver = Callable[[uuid.UUID], Awaitable["tuple[str, uuid.UUID, str] | None"]]
+DeviceResolver = Callable[[uuid.UUID], Awaitable["tuple[str, int, str] | None"]]
 
 
 class DeviceProvider(HooksTurnProvider[HubScreen]):
@@ -75,7 +75,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
     async def _resolve_device_agent(
         self, project_id: uuid.UUID
-    ) -> tuple[str, uuid.UUID, str] | None:
+    ) -> tuple[str, int, str] | None:
         """An online device serving ``project_id`` → ``(device_id, agent_user_id,
         agent_handle)``, or ``None`` when no bound device is online."""
         if self._device_resolver is not None:
@@ -90,13 +90,11 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             for device in await service.list_devices_for_project(project_id):
                 if self._hub.is_online(device.device_id):
                     agent = await session.get(User, device.agent_user_id)
-                    handle = agent.handle if agent is not None else "agent"
+                    handle = agent.username if agent is not None else "agent"
                     return device.device_id, device.agent_user_id, handle
         return None
 
-    def _existing_screen(
-        self, device_id: str, topic_id: uuid.UUID
-    ) -> HubScreen | None:
+    def _existing_screen(self, device_id: str, topic_id: uuid.UUID) -> HubScreen | None:
         for screen in self._hub.all_online_screens():
             if screen.device_id == device_id and screen.topic_id == topic_id:
                 return screen
@@ -111,7 +109,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         self,
         *,
         device_id: str,
-        agent_user_id: uuid.UUID,
+        agent_user_id: int,
         agent_handle: str,
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
@@ -152,7 +150,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
     # --- turn --------------------------------------------------------------
 
-    async def _precheck(self, project_id: uuid.UUID) -> tuple[str, uuid.UUID, str]:
+    async def _precheck(self, project_id: uuid.UUID) -> tuple[str, int, str]:
         """Resolve an online bound device + its agent identity BEFORE the base
         claims the topic's hook queue (pre-refactor ordering, review finding).
         The resolved tuple is handed back to ``_ensure_ready`` via ``precheck``."""

@@ -3,8 +3,8 @@
 import asyncio
 import uuid
 
-from app.domain.notification.models import NotifKind, NotifLevel
-from app.domain.notification.repositories import NotificationRepository
+from app.domain.cx_notification.models import NotifKind, NotifLevel
+from app.domain.cx_notification.repositories import NotificationRepository
 
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 

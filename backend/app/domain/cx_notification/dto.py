@@ -2,7 +2,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from app.domain.cx_notification.models import Notification
+from app.domain.notification.models import Notification
 
 
 @dataclass
@@ -75,7 +75,9 @@ class NotificationDTO:
                     cleaned[key] = stripped
             return cleaned
 
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
             cleaned_list = []
             for nested in value:
                 stripped = NotificationDTO._strip_entity_nodes(nested)

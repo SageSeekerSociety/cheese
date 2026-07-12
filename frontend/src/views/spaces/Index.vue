@@ -49,14 +49,16 @@
                     <v-card-item>
                       <v-avatar size="60" color="primary" class="mt-2 mb-4">
                         <v-img v-if="space.avatarId" :src="getAvatarUrl(space.avatarId)">
-                          <!-- seed avatars may be invalid; fall back to the initial -->
+                          <!-- seed avatars may be invalid; fall back to the initial.
+                               The #error slot fills the v-img, so the char must be a
+                               flex-centered fill or it sits top-left, not centered. -->
                           <template #error>
-                            <span class="text-h5 text-white font-weight-medium">{{
+                            <span class="space-avatar-char text-h5 text-white font-weight-medium">{{
                               (space.name || '·').trim().charAt(0)
                             }}</span>
                           </template>
                         </v-img>
-                        <span v-else class="text-h5 text-white font-weight-medium">{{
+                        <span v-else class="space-avatar-char text-h5 text-white font-weight-medium">{{
                           (space.name || '·').trim().charAt(0)
                         }}</span>
                       </v-avatar>
@@ -156,6 +158,15 @@ onMounted(async () => {
   transition: all 0.2s ease;
   height: 100%;
   border: 1px solid transparent;
+}
+
+.space-avatar-char {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  line-height: 1;
 }
 
 .space-card:hover {

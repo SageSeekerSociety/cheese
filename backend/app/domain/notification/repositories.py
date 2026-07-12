@@ -11,7 +11,9 @@ class NotificationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get_by_id_for_user(self, user_id: int, notification_id: int) -> Notification | None:
+    async def get_by_id_for_user(
+        self, user_id: int, notification_id: int
+    ) -> Notification | None:
         stmt: Select[tuple[Notification]] = select(Notification).where(
             and_(
                 Notification.id == notification_id,
@@ -47,7 +49,10 @@ class NotificationRepository:
         if cursor_created_at is not None and cursor_id is not None:
             stmt = stmt.where(
                 (Notification.created_at < cursor_created_at)
-                | ((Notification.created_at == cursor_created_at) & (Notification.id < cursor_id))
+                | (
+                    (Notification.created_at == cursor_created_at)
+                    & (Notification.id < cursor_id)
+                )
             )
 
         stmt = stmt.order_by(
@@ -70,7 +75,8 @@ class NotificationRepository:
             .values(read=True)
         )
         result = await self._session.execute(stmt)
-        return int(result.rowcount or 0)
+        # UPDATE returns a CursorResult which has rowcount at runtime.
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def count_unread_for_user(self, user_id: int) -> int:
         """Count unread notifications for a given user."""
@@ -82,7 +88,9 @@ class NotificationRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
-    async def set_read_status_for_user(self, user_id: int, notification_id: int, read: bool) -> int:
+    async def set_read_status_for_user(
+        self, user_id: int, notification_id: int, read: bool
+    ) -> int:
         stmt = (
             update(Notification)
             .where(
@@ -95,7 +103,8 @@ class NotificationRepository:
             .values(read=read)
         )
         result = await self._session.execute(stmt)
-        return int(result.rowcount or 0)
+        # UPDATE returns a CursorResult which has rowcount at runtime.
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def find_all_by_ids_for_user(
         self, user_id: int, ids: Sequence[int]

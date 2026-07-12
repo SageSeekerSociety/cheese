@@ -23,6 +23,7 @@ from app.domain.project.models import (
 )
 from app.domain.team.models import Team  # noqa: F401 — register `team` for Project.team_id FK
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic_membership.services import TopicMemberService
 
 OWNER = "alice"  # username == handle (fusion A2)
 CHEESE = "cheese"
@@ -87,15 +88,14 @@ async def seed() -> None:
             await s.flush()
             project.root_topic_id = root.id
 
-            s.add(
-                Topic(
-                    project_id=project.id,
-                    title=first_topic,
-                    kind=TopicKind.topic,
-                    status=TopicStatus.active,
-                    created_by=OWNER,
-                )
+            work = Topic(
+                project_id=project.id,
+                title=first_topic,
+                kind=TopicKind.topic,
+                status=TopicStatus.active,
+                created_by=OWNER,
             )
+            s.add(work)
             s.add_all(
                 [
                     ProjectMember(
@@ -108,6 +108,16 @@ async def seed() -> None:
                     ),
                 ]
             )
+            await s.flush()
+
+            # Seed topic rosters (这些 Topic 是直接建的，绕过了 TopicService，
+            # 所以名册要在这里补种). 总览 = 项目本体 → 全体项目成员 + 芝士；
+            # 工作话题 → 创建者(owner) + 芝士. Idempotent via _ensure_member.
+            members = TopicMemberService(s)
+            await members.seed_root(
+                root.id, owner_handle=OWNER, member_handles=[OWNER, CHEESE]
+            )
+            await members.seed(work.id, owner_handle=OWNER)
             print(f"seeded project '{name}' (team {team_id})")
         await s.commit()
 

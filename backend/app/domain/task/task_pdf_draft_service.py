@@ -6,14 +6,19 @@ import pathlib
 import re
 import shutil
 import tempfile
-from typing import Any
+from typing import Any, cast
 
 import pymupdf4llm
 
 from app.core.config import settings
 from app.core.errors import BadRequestError
 from app.core.storage import generate_storage_key, get_storage_backend
-from app.domain.llm.llm_client import LLMAPIError, LLMClient, LLMConnectionError, LLMTimeoutError
+from app.domain.llm.llm_client import (
+    LLMAPIError,
+    LLMClient,
+    LLMConnectionError,
+    LLMTimeoutError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +36,9 @@ class TaskPdfDraftService:
         self._timeout_seconds = timeout_seconds or settings.openai_pdf_timeout_seconds
 
     @staticmethod
-    def pick_template(task_templates: list[Any], template_index: int = 0) -> dict[str, Any]:
+    def pick_template(
+        task_templates: list[Any], template_index: int = 0
+    ) -> dict[str, Any]:
         if not task_templates:
             return {}
         if template_index < 0 or template_index >= len(task_templates):
@@ -66,7 +73,9 @@ class TaskPdfDraftService:
             raise BadRequestError("No task payload extracted from PDF")
         return payloads[0], token_used
 
-    def _split_pdf_to_pages(self, pdf_bytes: bytes) -> tuple[list[tuple[str, dict[str, str]]], str]:
+    def _split_pdf_to_pages(
+        self, pdf_bytes: bytes
+    ) -> tuple[list[tuple[str, dict[str, str]]], str]:
         import fitz
 
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -87,13 +96,19 @@ class TaskPdfDraftService:
                 page_images_dir = pathlib.Path(temp_dir) / f"images_p{page_num}"
                 page_images_dir.mkdir(exist_ok=True)
 
-                markdown_text = pymupdf4llm.to_markdown(
-                    tmp_path,
-                    pages=[page_num],
-                    use_ocr=False,
-                    write_images=True,
-                    image_path=str(page_images_dir),
-                    image_format="png",
+                # pymupdf4llm.to_markdown is an untyped wrapper whose inferred
+                # return is str | list[dict] (the list only in page_chunks mode).
+                # With page_chunks unset (default False) it always returns str.
+                markdown_text = cast(
+                    str,
+                    pymupdf4llm.to_markdown(
+                        tmp_path,
+                        pages=[page_num],
+                        use_ocr=False,
+                        write_images=True,
+                        image_path=str(page_images_dir),
+                        image_format="png",
+                    ),
                 )
 
                 if not markdown_text or not markdown_text.strip():
@@ -129,7 +144,9 @@ class TaskPdfDraftService:
         if not pdf_bytes:
             raise BadRequestError("Uploaded PDF is empty")
 
-        page_data, temp_dir = await asyncio.to_thread(self._split_pdf_to_pages, pdf_bytes)
+        page_data, temp_dir = await asyncio.to_thread(
+            self._split_pdf_to_pages, pdf_bytes
+        )
         try:
 
             async def process_page(
@@ -165,7 +182,9 @@ class TaskPdfDraftService:
             for i, result in enumerate(results):
                 if isinstance(result, BaseException):
                     failed_pages.append(i + 1)
-                    logger.warning("PDF page %d LLM processing failed: %s", i + 1, result)
+                    logger.warning(
+                        "PDF page %d LLM processing failed: %s", i + 1, result
+                    )
                 else:
                     payloads, tokens = result
                     all_payloads.extend(payloads)
@@ -288,7 +307,9 @@ class TaskPdfDraftService:
 
             import io as _io
 
-            storage_url = await storage.upload(_io.BytesIO(content), storage_key, "image/png")
+            storage_url = await storage.upload(
+                _io.BytesIO(content), storage_key, "image/png"
+            )
 
             # Convert relative storage URL to absolute URL pointing to the backend
             # storage_url is like "/uploads/task-images/2026/05/01/abc.png"
@@ -316,10 +337,10 @@ class TaskPdfDraftService:
             "3. 可以将图片中提取的文本（picture text部分）删除；\n"
             "4. 将修正后的 Markdown 放入 JSON 的 `description` 字段；\n"
             "5. 从内容中提炼出合适的 `name`（赛题名称）和 `intro`（简短介绍）。\n\n"
-            "**输出格式要求**：直接输出一个 JSON 对象，包含 name、intro、description 三个字段。"
+            "**输出格式要求**：直接输出一个 JSON 对象，包含 name、intro、description 三个字段。"  # noqa: E501
             "形如 "
             '{"name": "...", "intro": "...", "description": "..."}。\n\n'
-            "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"
+            "**重要：只输出纯 JSON，不要用 ```json 代码块包裹，不要加任何前缀或后缀说明。**"  # noqa: E501
         )
 
     def _build_user_prompt(self, *, text: str, template: dict[str, Any]) -> str:
@@ -344,7 +365,9 @@ class TaskPdfDraftService:
                 f"LLM response is not valid JSON. Content preview: {preview}..."
             ) from exc
         if not isinstance(obj, dict):
-            raise BadRequestError(f"LLM response JSON must be an object, got {type(obj).__name__}.")
+            raise BadRequestError(
+                f"LLM response JSON must be an object, got {type(obj).__name__}."
+            )
         return obj
 
     @staticmethod
@@ -400,8 +423,12 @@ class TaskPdfDraftService:
         """
         # --- Core fields: AI output, with template as fallback ---
         template_defaults = self._extract_template_defaults(template)
-        name = str(llm_result.get("name") or template_defaults.get("name") or "").strip()
-        intro = str(llm_result.get("intro") or template_defaults.get("intro") or "").strip()
+        name = str(
+            llm_result.get("name") or template_defaults.get("name") or ""
+        ).strip()
+        intro = str(
+            llm_result.get("intro") or template_defaults.get("intro") or ""
+        ).strip()
         description = str(
             llm_result.get("description") or template_defaults.get("description") or ""
         ).strip()

@@ -80,7 +80,7 @@ async def chat(
                         conn_actor, project_id=project_id, topic_id=topic_id
                     )
                 except ForbiddenError as exc:
-                    denied_message = exc.message
+                    denied_message = exc.args[0]
                     denied = True
     if denied:
         await send({"type": "error", "message": denied_message})

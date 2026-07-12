@@ -8,9 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
-from app.domain.project.repositories import ProjectRepository
-from app.domain.project.services import ProjectService
-from app.domain.space.repositories import SpaceRepository
 from app.domain.cx_task.models import (
     ApplicationStatus,
     Task,
@@ -22,6 +19,9 @@ from app.domain.cx_task.repositories import (
     TaskRepository,
     TaskTemplateRepository,
 )
+from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import ProjectService
+from app.domain.space.repositories import SpaceRepository
 
 
 class TaskTemplateService:
@@ -57,9 +57,7 @@ class TaskTemplateService:
             raise NotFoundError("Task template not found")
         return template
 
-    async def list_for_space(
-        self, space_id: int
-    ) -> tuple[list[TaskTemplate], int]:
+    async def list_for_space(self, space_id: int) -> tuple[list[TaskTemplate], int]:
         if await self._spaces.get_by_id(space_id) is None:
             raise NotFoundError("Space not found")
         return (
@@ -188,9 +186,7 @@ class TaskApplicationService:
             title=project.name,
             description=application.pitch,
         )
-        await self._project_service.link_task(
-            project_id=project.id, task_id=task.id
-        )
+        await self._project_service.link_task(project_id=project.id, task_id=task.id)
         application.status = ApplicationStatus.accepted
         application.decided_by = decided_by
         application.decided_at = datetime.now(UTC)

@@ -68,10 +68,14 @@ class Topic(UuidPk, Timestamps, Base):
     branch_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # 私聊 (spec §1): a member's 1:1 with 芝士. Not shown in the topic tree;
-    # uses the owner's cross-project personal memory (spec §8.4).
+    # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
+    # participants' cross-project personal memory (spec §8.4).
+    #  - 芝士 DM:  private_peer is NULL, private_owner = the member's handle.
+    #  - peer DM: two humans; the unordered handle pair is canonicalized so
+    #    private_owner = min(a, b), private_peer = max(a, b) — one row, both see it.
     is_private: Mapped[bool] = mapped_column(default=False, server_default="false")
     private_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    private_peer: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # If this topic was upgraded from a block (讨论升级 / 拆解), link it back.
     # use_alter: topics↔blocks is a circular FK; add this one via ALTER.
     upgraded_from_block_id: Mapped[uuid.UUID | None] = mapped_column(

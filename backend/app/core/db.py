@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+
 from app.core.config import settings
 
 # Fusion merge (A6): ONE declarative Base / metadata across the whole app so

@@ -141,19 +141,27 @@ function selectDocs(kind: 'charter' | 'decisions' | 'weeklies' | 'memory') {
 const privateTopic = ref<Topic | null>(null)
 const privateLoading = ref(false)
 const privateError = ref<string | null>(null)
+// Which peer's DM is open (null = the 芝士 DM), so the sidebar can highlight it.
+const privatePeer = ref<string | null>(null)
 
-async function selectPrivate() {
+// Open a 1:1 private chat: 芝士 when `peer` is undefined, else a person DM.
+async function openPrivate(peer?: string) {
   const pid = selectedProjectId.value
   if (!pid) return
   mode.value = 'private'
+  privatePeer.value = peer ?? null
   worklog.value = []
   // Re-fetch so we always have the right project's private topic.
   privateLoading.value = true
   privateError.value = null
   privateTopic.value = null
   try {
-    const topic = await getPrivateChat(pid, AUTHOR)
-    if (selectedProjectId.value === pid && mode.value === 'private') {
+    const topic = await getPrivateChat(pid, AUTHOR, peer)
+    if (
+      selectedProjectId.value === pid &&
+      mode.value === 'private' &&
+      privatePeer.value === (peer ?? null)
+    ) {
       privateTopic.value = topic
     }
   } catch (e) {
@@ -164,6 +172,23 @@ async function selectPrivate() {
     if (selectedProjectId.value === pid) privateLoading.value = false
   }
 }
+
+function selectPrivate() {
+  return openPrivate()
+}
+
+function selectPeerDm(handle: string) {
+  return openPrivate(handle)
+}
+
+// Header label for the open 私聊: the peer's name for a person DM, else 芝士.
+const privateTitle = computed<string | null>(() => {
+  if (privatePeer.value === null) return '芝士'
+  const m = projectMembers.value.find(
+    (x) => x.user_handle === privatePeer.value,
+  )
+  return m?.name || privatePeer.value
+})
 
 // Snackbar v-model bridge: visible while there's an error; writing false clears.
 const hasError = computed<boolean>({
@@ -404,6 +429,7 @@ async function loadTopicsFor(id: string) {
   // stale private topic so 私聊 re-fetches for the new project on next open.
   mode.value = 'topic'
   privateTopic.value = null
+  privatePeer.value = null
   loadingTopics.value = true
   loadProjectMembers()
   try {
@@ -933,14 +959,18 @@ onUnmounted(() => {
       :selected-project-id="selectedProjectId"
       @update:width="onRailWidth"
       :topics="topics"
-      :selected-topic-id="selectedTopicId"
+      :selected-topic-id="mode === 'topic' ? selectedTopicId : null"
       :loading-topics="loadingTopics"
-      :private-active="mode === 'private'"
+      :private-active="mode === 'private' && privatePeer === null"
+      :members="projectMembers"
+      :me-handle="AUTHOR"
+      :active-peer="mode === 'private' ? privatePeer : null"
       :active-docs="mode === 'docs' ? docKind : null"
       :unread-map="unreadMap"
       @select-project="selectProject"
       @select-topic="selectTopic"
       @select-private="selectPrivate"
+      @select-peer-dm="selectPeerDm"
       @select-docs="selectDocs"
       @archive-topic="handleArchiveTopic"
       @unarchive-topic="handleUnarchiveTopic"
@@ -976,7 +1006,8 @@ onUnmounted(() => {
         style="min-height: 0"
         :topic="privateTopic"
         :pr-header="false"
-        :default-summon="true"
+        :default-summon="privatePeer === null"
+        :title-override="privateTitle"
         :members="projectMembers"
         :topic-list="topics"
         :show-composer="true"
@@ -1007,19 +1038,25 @@ onUnmounted(() => {
       class="workspace d-flex flex-column flex-grow-1"
       style="min-width: 0"
     >
-      <!-- 群聊感 (fusion-design §3): the topic's member roster + count sit in a
-           thin header above the panes. Not on the root topic (项目本体). -->
       <div
-        v-if="selectedTopic && selectedTopic.kind !== 'root'"
-        class="topic-members-bar"
+        class="panes d-flex flex-grow-1"
+        style="min-width: 0; min-height: 0; position: relative"
       >
-        <TopicMembers
-          :topic-id="selectedTopic.id"
-          :project-members="projectMembers"
-          :me="AUTHOR"
-        />
-      </div>
-      <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0">
+        <!-- 群聊感 (fusion-design §3): the topic's member roster as a COMPACT
+             avatar-stack, overlaid at the top-right of the chat column's header
+             row (not a full-width bar) so the chat header lines up with the doc
+             header. Not on the root topic (项目本体). -->
+        <div
+          v-if="selectedTopic && selectedTopic.kind !== 'root' && !focusMode"
+          class="topic-members-slot"
+          :style="{ right: `calc(${100 - chatPct}% + 92px)` }"
+        >
+          <TopicMembers
+            :topic-id="selectedTopic.id"
+            :project-members="projectMembers"
+            :me="AUTHOR"
+          />
+        </div>
         <ChatPanel
           ref="chatRef"
           v-show="!focusMode"
@@ -1696,15 +1733,15 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
-/* 群聊感 (fusion-design §3): thin roster bar above the panes. */
-.topic-members-bar {
+/* 群聊感 (fusion-design §3): compact roster indicator overlaid at the top-right
+   of the chat column's header row (pr-header), so the chat header and the doc
+   header line up. Vertically centered on the ~45px pr-header row. */
+.topic-members-slot {
+  position: absolute;
+  top: 9px;
+  z-index: 3;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--line-2, #eee);
-  background: var(--surface, #fff);
-  flex: 0 0 auto;
 }
 
 /* Secondary button: 1px border, neutral text, surface bg. */

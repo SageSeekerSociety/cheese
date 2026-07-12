@@ -39,16 +39,18 @@ class EmailVerificationService:
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #333;">Email Verification</h2>
             <p>Your verification code is:</p>
-            <div style="background-color: #f5f5f5; padding: 20px; text-align: center; margin: 20px 0;">
-                <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #007bff;">{code}</span>
+            <div style="background-color: #f5f5f5; padding: 20px;
+                        text-align: center; margin: 20px 0;">
+                <span style="font-size: 32px; font-weight: bold;
+                             letter-spacing: 5px; color: #007bff;">{code}</span>
             </div>
             <p>This code will expire in 10 minutes.</p>
-            <p style="color: #666; font-size: 12px;">If you didn't request this code, please ignore this email.</p>
+            <p style="color: #666; font-size: 12px;">
+              If you didn't request this code, please ignore this email.
+            </p>
         </div>
         """
-        body_text = (
-            f"Your Cheese verification code is: {code}\nThis code will expire in 10 minutes."
-        )
+        body_text = f"Your Cheese verification code is: {code}\nThis code will expire in 10 minutes."  # noqa: E501
 
         success = await self._sender.send(
             to=email,
@@ -60,7 +62,9 @@ class EmailVerificationService:
         if success:
             logger.info("Verification code sent to %s", email)
         else:
-            logger.warning("Failed to send verification code to %s (email not configured)", email)
+            logger.warning(
+                "Failed to send verification code to %s (email not configured)", email
+            )
 
         return True
 
@@ -71,7 +75,9 @@ class EmailVerificationService:
         if stored_code is None:
             return False
 
-        if stored_code.decode() != code:
+        # redis client is decode_responses=False → get() returns bytes at runtime,
+        # but the redis-py stubs don't model that and type it as str.
+        if stored_code.decode() != code:  # type: ignore[attr-defined]
             return False
 
         await self._redis.delete(key)

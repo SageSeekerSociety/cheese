@@ -90,9 +90,12 @@ async def device_start(
     """Begin a device flow. The ``approve_url`` is built from the public base so a
     human can open it and approve this machine (fusion-design §5 device flow)."""
     code = await service.start(body.device_name)
-    base = settings.connector_public_base.rstrip("/")
     # The approve link points a human at the frontend ``/connect`` approval page: there,
     # behind login, they bind this machine to a project and mint its agent (item 3).
+    # It MUST be the frontend origin (the SPA serves ``/connect``), not
+    # ``connector_public_base`` — that's the backend/webhook base (default
+    # localhost:8099, the dead pre-merge cheesex port) and would 404 in a browser.
+    base = settings.frontend_url.rstrip("/")
     approve_url = f"{base}/connect?code={code}"
     return {"device_code": code, "approve_url": approve_url, "interval": 2}
 
@@ -137,7 +140,7 @@ async def device_connect(
     return {
         "device_id": device.device_id,
         "device_name": device.name,
-        "agent_handle": agent_user.handle,
+        "agent_handle": agent_user.username,
         "project_id": str(body.project_id) if body.project_id else None,
     }
 
@@ -296,7 +299,7 @@ class RenameDeviceRequest(BaseModel):
     name: str
 
 
-async def _require_user(resolver: ActorResolverDep) -> uuid.UUID:
+async def _require_user(resolver: ActorResolverDep) -> int:
     actor = await resolver.resolve(fallback_handle=None)
     if not actor.authenticated or actor.user_id is None:
         raise UnauthorizedError("Managing devices requires a logged-in user")
@@ -327,7 +330,7 @@ async def _device_view(db: AsyncSession, device: Device) -> dict[str, Any]:
         "device_id": device.device_id,
         "name": device.name,
         "online": device_hub.is_online(device.device_id),
-        "agent_handle": agent.handle if agent is not None else None,
+        "agent_handle": agent.username if agent is not None else None,
         "project_ids": [str(p) for p in device.project_ids],
         "screens": _device_screens(device.device_id),
     }

@@ -102,7 +102,9 @@ class SpaceService:
             include_archived=include_archived,
         )
 
-    async def get_category_detail(self, *, space_id: int, category_id: int) -> SpaceCategory:
+    async def get_category_detail(
+        self, *, space_id: int, category_id: int
+    ) -> SpaceCategory:
         return await self._get_category(space_id, category_id)
 
     async def get_user_rank(self, space_id: int, user_id: int | None) -> int | None:
@@ -239,7 +241,9 @@ class SpaceService:
         return await self._category_repo.create_category(
             space_id=space_id,
             name=name.strip(),
-            description=description.strip() if isinstance(description, str) else description,
+            description=description.strip()
+            if isinstance(description, str)
+            else description,
             display_order=display_order,
         )
 
@@ -260,8 +264,11 @@ class SpaceService:
         if name is not None:
             if not name.strip():
                 raise BadRequestError("Category name cannot be empty")
-            if name.strip() != category.name and await self._category_repo.exists_unarchived_name(
-                space_id, name.strip()
+            if (
+                name.strip() != category.name
+                and await self._category_repo.exists_unarchived_name(
+                    space_id, name.strip()
+                )
             ):
                 raise BadRequestError("Category name already exists")
             category.name = name.strip()
@@ -340,7 +347,10 @@ class SpaceService:
             raise BadRequestError("Space admin repository unavailable")
         existing = await self._admin_repo.get_relation(space_id, target_user_id)
         if existing and existing.deleted_at is None:
-            if role is SpaceAdminRole.OWNER and existing.role != SpaceAdminRole.OWNER.value:
+            if (
+                role is SpaceAdminRole.OWNER
+                and existing.role != SpaceAdminRole.OWNER.value
+            ):
                 await self._promote_admin_to_owner(space_id, existing)
                 return
             raise BadRequestError("User already has a space role")
@@ -370,7 +380,9 @@ class SpaceService:
         if relation is None:
             raise NotFoundError("Space admin relation not found")
         if relation.role == SpaceAdminRole.OWNER.value:
-            raise BadRequestError("Cannot remove space owner. Transfer ownership instead.")
+            raise BadRequestError(
+                "Cannot remove space owner. Transfer ownership instead."
+            )
         await self._admin_repo.remove_admin(relation)
 
     async def update_admin_role(
@@ -395,7 +407,7 @@ class SpaceService:
         else:
             if relation.role == SpaceAdminRole.OWNER.value:
                 raise BadRequestError(
-                    "Cannot demote owner directly. Transfer ownership to another admin first."
+                    "Cannot demote owner directly. Transfer ownership to another admin first."  # noqa: E501
                 )
             relation.role = new_role.value
             relation.updated_at = datetime.now(UTC)
@@ -448,7 +460,9 @@ class SpaceService:
         group = await group_repo.create_group(
             space_id=space_id,
             name=name.strip(),
-            description=description.strip() if isinstance(description, str) else description,
+            description=description.strip()
+            if isinstance(description, str)
+            else description,
         )
         await domain_repo.replace_domains(group_id=group.id, domains=normalized_domains)
         return group, normalized_domains
@@ -485,7 +499,9 @@ class SpaceService:
             normalized_domains = self._normalize_domains(domains)
             if not normalized_domains:
                 raise BadRequestError("Domain list cannot be empty")
-            await domain_repo.replace_domains(group_id=group.id, domains=normalized_domains)
+            await domain_repo.replace_domains(
+                group_id=group.id, domains=normalized_domains
+            )
         else:
             normalized_domains = await domain_repo.list_domains_for_group(group.id)
 
@@ -534,7 +550,9 @@ class SpaceService:
     async def _get_space_or_error(self, space_id: int) -> Space:
         space = await self._repo.get_by_id(space_id)
         if space is None:
-            raise NotFoundError("Resource space not found", data={"type": "space", "id": space_id})
+            raise NotFoundError(
+                "Resource space not found", data={"type": "space", "id": space_id}
+            )
         return space
 
     async def _promote_admin_to_owner(
@@ -562,7 +580,9 @@ class SpaceService:
             )
         return category
 
-    async def _get_domain_group(self, *, space_id: int, group_id: int) -> SpaceDomainGroup:
+    async def _get_domain_group(
+        self, *, space_id: int, group_id: int
+    ) -> SpaceDomainGroup:
         group_repo = self._require_domain_group_repo()
         group = await group_repo.get_by_id(space_id=space_id, group_id=group_id)
         if group is None:
@@ -591,7 +611,9 @@ class SpaceService:
         if value is None:
             return
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise BadRequestError("visibleTaskLimit must be null or a non-negative integer")
+            raise BadRequestError(
+                "visibleTaskLimit must be null or a non-negative integer"
+            )
 
     def _require_domain_group_repo(self) -> SpaceDomainGroupRepository:
         if self._domain_group_repo is None:

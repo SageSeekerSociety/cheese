@@ -9,6 +9,7 @@ from webauthn import (
 from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
+    AuthenticatorTransport,
     PublicKeyCredentialDescriptor,
     ResidentKeyRequirement,
     UserVerificationRequirement,
@@ -78,7 +79,7 @@ class PasskeyService:
                 "residentKey": options.authenticator_selection.resident_key.value  # type: ignore[union-attr]
                 if options.authenticator_selection
                 else None,
-                "userVerification": options.authenticator_selection.user_verification.value  # type: ignore[union-attr]
+                "userVerification": options.authenticator_selection.user_verification.value  # type: ignore[union-attr]  # noqa: E501
                 if options.authenticator_selection
                 else None,
             },
@@ -133,7 +134,11 @@ class PasskeyService:
             allow_credentials = [
                 PublicKeyCredentialDescriptor(
                     id=base64url_to_bytes(cred.credential_id),
-                    transports=cred.transports.split(",") if cred.transports else None,
+                    transports=(
+                        [AuthenticatorTransport(t) for t in cred.transports.split(",")]
+                        if cred.transports
+                        else None
+                    ),
                 )
                 for cred in creds
             ]

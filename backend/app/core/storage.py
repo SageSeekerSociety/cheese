@@ -10,6 +10,7 @@ from typing import BinaryIO
 
 import aiofiles
 import aiofiles.os
+import aiofiles.ospath
 
 from app.core.config import settings
 

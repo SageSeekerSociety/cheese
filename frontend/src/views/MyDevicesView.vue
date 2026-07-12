@@ -2,14 +2,28 @@
 // 「我的设备 / Agent」(P3 Phase B item 4): the machines the signed-in human enrolled
 // via the device flow. List them with liveness, rename/unbind, and open the 现场 of any
 // agent (screen) currently running on them — a read-only real terminal in the browser.
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   listMyDevices,
   renameMyDevice,
   unbindMyDevice,
 } from '../api'
+import accountService from '@/services/account'
 import type { DeviceScreen, MyDevice } from '../cx_types'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
+
+// The real logged-in session, resolved the same way the rest of the app resolves
+// it: AccountService.loggedIn (set from localStorage `accessToken` + `user` at
+// boot). We also accept the raw localStorage credential as a fallback so the gate
+// is correct even before AccountService.init() has finished its async warm-up.
+const isLoggedIn = computed(() => {
+  if (accountService.loggedIn) return true
+  try {
+    return !!localStorage.getItem('accessToken')
+  } catch {
+    return false
+  }
+})
 
 const devices = ref<MyDevice[]>([])
 const loading = ref(false)
@@ -22,13 +36,47 @@ const liveScreen = ref<DeviceScreen | null>(null)
 const renaming = ref<string | null>(null)
 const draftName = ref('')
 
+// 「添加设备」flow. The install one-liner the user runs on the *target* machine.
+// The origin is derived from where the app is actually served (window.location):
+// dev proxies /connector → :8799, prod serves it same-origin, so this is always
+// the reachable backend from the user's browser — never hardcoded to a dead port.
+const addDeviceOpen = ref(false)
+const copied = ref(false)
+const installCommand = computed(
+  () => `curl -fsSL ${window.location.origin}/connector/install.sh | sh`,
+)
+
+async function copyInstall() {
+  try {
+    await navigator.clipboard.writeText(installCommand.value)
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1600)
+  } catch {
+    // Clipboard blocked (insecure context / permissions) — leave the command
+    // visible so the user can still select and copy it by hand.
+  }
+}
+
 async function load() {
+  // Client-side gate: the device UI is only meaningful for a signed-in human. When
+  // signed out we show the gate banner instead of firing an inevitably-401 request.
+  if (!isLoggedIn.value) return
   loading.value = true
   error.value = null
   try {
     devices.value = (await listMyDevices()).devices
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载设备失败'
+    const msg = e instanceof Error ? e.message : '加载设备失败'
+    // We are (client-side) authoritatively signed in, so the connector's
+    // "requires a logged-in user" gate is not the truth about the session — it
+    // means the connector has no owner record for us yet (no device enrolled).
+    // Never surface that as the "please log in" banner; fall through to the
+    // empty-state, which correctly invites the user to run `cheese link`.
+    if (msg.includes('requires a logged-in user')) {
+      devices.value = []
+    } else {
+      error.value = msg
+    }
   } finally {
     loading.value = false
   }
@@ -77,9 +125,28 @@ onMounted(load)
           <h1 class="t-page-title">我的设备</h1>
         </div>
         <v-spacer />
-        <v-btn variant="text" icon="mdi-refresh" @click="load" />
+        <v-btn variant="text" icon="mdi-refresh" class="mr-1" @click="load" />
+        <v-btn
+          v-if="isLoggedIn"
+          color="primary"
+          variant="flat"
+          prepend-icon="mdi-plus"
+          @click="addDeviceOpen = true"
+        >
+          添加设备
+        </v-btn>
       </div>
 
+      <v-alert
+        v-if="!isLoggedIn"
+        type="info"
+        density="comfortable"
+        class="mb-4"
+      >
+        登录后即可管理接入的客户机 / Agent。
+      </v-alert>
+
+      <template v-else>
       <v-alert
         v-if="error"
         type="error"
@@ -96,10 +163,35 @@ onMounted(load)
       </div>
 
       <div v-else-if="devices.length === 0" class="empty-state text-center py-10">
-        <v-icon size="34" class="mb-2 c-muted">mdi-laptop</v-icon>
-        <div class="t-body c-muted">
-          还没有连接的设备。在你的机器上运行 <code>cheese link</code> 并批准即可接入。
+        <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
+        <div class="t-body c-muted mb-1">还没有连接的设备。</div>
+        <div class="t-caption c-muted mb-5">
+          在你的机器上运行下面这条命令，按提示批准，设备就会出现在这里。
         </div>
+
+        <!-- Copyable install one-liner, right in the empty-state so the user can
+             act without hunting for a dialog. -->
+        <div class="install-cmd mx-auto mb-4">
+          <code class="install-cmd__code">{{ installCommand }}</code>
+          <v-btn
+            :color="copied ? 'success' : 'primary'"
+            variant="text"
+            size="small"
+            :prepend-icon="copied ? 'mdi-check' : 'mdi-content-copy'"
+            @click="copyInstall"
+          >
+            {{ copied ? '已复制' : '复制' }}
+          </v-btn>
+        </div>
+
+        <v-btn
+          color="primary"
+          variant="flat"
+          prepend-icon="mdi-plus"
+          @click="addDeviceOpen = true"
+        >
+          添加设备
+        </v-btn>
       </div>
 
       <v-card
@@ -177,7 +269,55 @@ onMounted(load)
           </div>
         </div>
       </v-card>
+      </template>
     </v-container>
+
+    <!-- 添加设备: how to enroll this-or-another machine via the device flow. -->
+    <v-dialog v-model="addDeviceOpen" max-width="560">
+      <v-card class="pa-5">
+        <div class="d-flex align-center mb-1">
+          <v-icon color="primary" class="mr-2">mdi-laptop-account</v-icon>
+          <span class="t-title">添加设备</span>
+          <v-spacer />
+          <v-btn variant="text" icon="mdi-close" size="small" @click="addDeviceOpen = false" />
+        </div>
+        <div class="t-caption c-muted mb-4">
+          在你想接入的机器上运行下面这条命令，即可把它连接到 CheeseX。
+        </div>
+
+        <div class="install-cmd mb-5">
+          <code class="install-cmd__code">{{ installCommand }}</code>
+          <v-btn
+            :color="copied ? 'success' : 'primary'"
+            variant="text"
+            size="small"
+            :prepend-icon="copied ? 'mdi-check' : 'mdi-content-copy'"
+            @click="copyInstall"
+          >
+            {{ copied ? '已复制' : '复制' }}
+          </v-btn>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <span class="steps__n">1</span>
+            <span>在你的机器上运行这条命令。</span>
+          </li>
+          <li>
+            <span class="steps__n">2</span>
+            <span>按提示批准接入（<code>cheesehost auth login</code>）。</span>
+          </li>
+          <li>
+            <span class="steps__n">3</span>
+            <span>设备出现在这个页面，可看现场、重命名或解绑。</span>
+          </li>
+        </ol>
+
+        <div class="d-flex justify-end mt-4">
+          <v-btn variant="flat" color="primary" @click="addDeviceOpen = false">知道了</v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
 
     <v-dialog
       :model-value="liveScreen !== null"
@@ -197,3 +337,69 @@ onMounted(load)
     </v-dialog>
   </div>
 </template>
+
+<style scoped>
+/* Copyable install one-liner: a monospace command in a soft amber-washed pill
+   with the copy button riding alongside. Scrolls horizontally on narrow widths
+   rather than wrapping the command. */
+.install-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 480px;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--accent-wash, #fdf1e2);
+  background: var(--accent-wash, #fdf1e2);
+  border-radius: 10px;
+}
+.install-cmd__code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--accent-ink, #9a5413);
+  background: transparent;
+  text-align: left;
+}
+
+/* 1-2-3 steps: numbered amber discs with left-aligned copy. */
+.steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--ink, #191a1c);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.steps__n {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent, #f57f17);
+}
+.steps code {
+  font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  background: var(--accent-wash, #fdf1e2);
+  color: var(--accent-ink, #9a5413);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+</style>

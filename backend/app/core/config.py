@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -213,6 +214,58 @@ class Settings(BaseSettings):
     # (no-token) callers are unaffected. Ops kill-switch: set false to disable the
     # membership check entirely if a token rollout surfaces an unexpected block.
     authz_enforce_topic_access: bool = True
+
+    # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
+    # (task AI advice, rank checks, email/notifications, meilisearch, real-name
+    # encryption) read these off settings. The merge dropped them, so those code
+    # paths hit AttributeError at runtime; restored verbatim from origin/main
+    # (aliases kept where the env var name differs from the field name). ---
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    openai_base_url: str = Field(
+        default="https://api.openai.com/v1", alias="OPENAI_BASE_URL"
+    )
+    openai_default_model: str = Field(
+        default="gpt-4o-mini", alias="OPENAI_DEFAULT_MODEL"
+    )
+    openai_reasoning_model: str = Field(
+        default="o1-mini", alias="OPENAI_REASONING_MODEL"
+    )
+    openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
+    openai_max_tokens: int = Field(default=4096, alias="OPENAI_MAX_TOKENS")
+    openai_timeout_seconds: float = Field(default=180.0, alias="OPENAI_TIMEOUT_SECONDS")
+    openai_pdf_timeout_seconds: float = Field(
+        default=300.0, alias="OPENAI_PDF_TIMEOUT_SECONDS"
+    )
+    ai_daily_quota: float = Field(default=10.0, alias="AI_DAILY_QUOTA")
+
+    email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
+    email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")
+    email_smtp_port: int = Field(default=587, alias="EMAIL_SMTP_PORT")
+    email_smtp_username: str = Field(default="", alias="EMAIL_SMTP_USERNAME")
+    email_smtp_password: str = Field(default="", alias="EMAIL_SMTP_PASSWORD")
+    email_smtp_ssl: bool = Field(default=False, alias="EMAIL_SMTP_SSL_ENABLE")
+
+    notification_dedup_ttl_seconds: int = Field(
+        default=10 * 60, alias="NOTIFICATION_DEDUP_TTL_SECONDS"
+    )
+    notification_email_batch_size: int = Field(
+        default=100, alias="NOTIFICATION_EMAIL_BATCH_SIZE"
+    )
+    notification_email_queue_key: str = Field(
+        default="cheese:notifications:email", alias="NOTIFICATION_EMAIL_QUEUE_KEY"
+    )
+
+    meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")
+    meilisearch_api_key: str = Field(default="", alias="MEILISEARCH_API_KEY")
+
+    enforce_task_participant_limit_check: bool = Field(
+        default=False, alias="APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK"
+    )
+    rank_check_enforced: bool = Field(
+        default=False, alias="APPLICATION_RANK_CHECK_ENFORCED"
+    )
+    rank_jump: int = Field(default=1, alias="APPLICATION_RANK_JUMP")
+    realname_encryption_key: str = Field(default="", alias="REALNAME_ENCRYPTION_KEY")
 
     # --- App ---
     cors_origins: list[str] = [

@@ -1,6 +1,7 @@
 """Team Recruitment routes.
 
-Team-scoped endpoints live on the teams router (POST/GET under /teams/{teamId}/recruitment).
+Team-scoped endpoints live on the teams router
+(POST/GET under /teams/{teamId}/recruitment).
 This module provides the global recruitment plaza endpoints:
   GET  /recruitment         — browse all OPEN posts
   PATCH  /recruitment/{postId} — edit a post (creator only)
@@ -71,7 +72,11 @@ def _team_summary(team: Team | None, *, fallback_id: int) -> dict:
 def _creator_summary(user, profile, *, fallback_id: int) -> dict:
     if user is None:
         return {"id": fallback_id, "nickname": "", "avatarId": None, "intro": ""}
-    nickname = profile.nickname if profile and getattr(profile, "nickname", None) else user.username
+    nickname = (
+        profile.nickname
+        if profile and getattr(profile, "nickname", None)
+        else user.username
+    )
     return {
         "id": user.id,
         "nickname": nickname,
@@ -112,7 +117,9 @@ def _post_to_api(
     }
 
 
-async def _load_maps_for_posts(db, posts: list[TeamRecruitmentPost]) -> tuple[dict, dict, dict]:
+async def _load_maps_for_posts(
+    db, posts: list[TeamRecruitmentPost]
+) -> tuple[dict, dict, dict]:
     if not posts:
         return {}, {}, {}
     team_ids = list({p.team_id for p in posts})
@@ -144,7 +151,9 @@ async def list_recruitment_posts(
     )
     teams_map, users_map, profiles_map = await _load_maps_for_posts(db, posts)
     items = [
-        _post_to_api(p, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map)
+        _post_to_api(
+            p, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map
+        )
         for p in posts
     ]
     return {
@@ -186,8 +195,12 @@ async def edit_recruitment_post(
             expires_at = datetime.fromtimestamp(payload.expires_at / 1000, tz=UTC)
 
     # Use ... sentinel for fields not included in request
-    contact = payload.contact if "contact" in payload.model_fields_set else ...
-    max_members = payload.max_members if "max_members" in payload.model_fields_set else ...
+    contact: str | None = ...  # type: ignore[assignment]
+    if "contact" in payload.model_fields_set:
+        contact = payload.contact
+    max_members: int | None = ...  # type: ignore[assignment]
+    if "max_members" in payload.model_fields_set:
+        max_members = payload.max_members
 
     post = await service.update_post(
         post_id=post_id,
@@ -205,7 +218,10 @@ async def edit_recruitment_post(
         "message": "OK",
         "data": {
             "post": _post_to_api(
-                post, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map
+                post,
+                teams_map=teams_map,
+                users_map=users_map,
+                profiles_map=profiles_map,
             )
         },
     }
@@ -263,7 +279,10 @@ async def create_recruitment_post(
         "message": "Created",
         "data": {
             "post": _post_to_api(
-                post, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map
+                post,
+                teams_map=teams_map,
+                users_map=users_map,
+                profiles_map=profiles_map,
             )
         },
     }
@@ -281,7 +300,9 @@ async def list_team_recruitment_posts(
     posts = await service.list_by_team(team_id)
     teams_map, users_map, profiles_map = await _load_maps_for_posts(db, posts)
     items = [
-        _post_to_api(p, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map)
+        _post_to_api(
+            p, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map
+        )
         for p in posts
     ]
     return {

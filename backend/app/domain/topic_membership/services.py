@@ -41,26 +41,37 @@ class TopicMemberService:
         if member is None or member.role not in _MANAGER_ROLES:
             raise ForbiddenError("只有话题的 owner / admin 能管理成员")
 
-    async def seed(
-        self, topic_id: uuid.UUID, *, owner_handle: str | None
-    ) -> None:
+    async def seed(self, topic_id: uuid.UUID, *, owner_handle: str | None) -> None:
         """Seed a newborn topic's roster: the creator becomes owner and 芝士
         joins as a member (fusion-design §3). Idempotent — re-seeding never
         duplicates a row. Called at topic-create time, outside the actor check
         (the platform, not a user, seeds)."""
         if owner_handle and owner_handle != CHEESE_HANDLE:
-            await self._ensure_member(
-                topic_id, owner_handle, role=TopicRole.owner
-            )
+            await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
         await self._ensure_member(topic_id, CHEESE_HANDLE, role=TopicRole.member)
+
+    async def seed_root(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        owner_handle: str | None,
+        member_handles: list[str],
+    ) -> None:
+        """Seed a project's ROOT topic (总览/项目本体) roster: EVERY project
+        member joins the room, so 总览 mirrors the whole project (fusion-design
+        §3). The project owner is the topic owner; other members join as members;
+        芝士 joins as a member. Idempotent — re-seeding never duplicates a row."""
+        await self.seed(topic_id, owner_handle=owner_handle)
+        for handle in member_handles:
+            if not handle or handle == CHEESE_HANDLE or handle == owner_handle:
+                continue
+            await self._ensure_member(topic_id, handle, role=TopicRole.member)
 
     async def _ensure_member(
         self, topic_id: uuid.UUID, handle: str, *, role: TopicRole
     ) -> None:
         if await self._repo.get(topic_id=topic_id, member_handle=handle) is None:
-            await self._repo.add(
-                topic_id=topic_id, member_handle=handle, role=role
-            )
+            await self._repo.add(topic_id=topic_id, member_handle=handle, role=role)
 
     async def list_for_topic(
         self, topic_id: uuid.UUID
@@ -79,9 +90,7 @@ class TopicMemberService:
         existing = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if existing is not None:
             raise ValidationError("该成员已在话题里")
-        return await self._repo.add(
-            topic_id=topic_id, member_handle=handle, role=role
-        )
+        return await self._repo.add(topic_id=topic_id, member_handle=handle, role=role)
 
     async def update_role(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
@@ -100,9 +109,7 @@ class TopicMemberService:
             raise ValidationError("不能把最后一个 owner 降级")
         return await self._repo.update_role(member, role=role)
 
-    async def remove(
-        self, *, topic_id: uuid.UUID, handle: str, actor: str
-    ) -> None:
+    async def remove(self, *, topic_id: uuid.UUID, handle: str, actor: str) -> None:
         await self._ensure_topic(topic_id)
         await self._require_manager(topic_id, actor)
         member = await self._repo.get(topic_id=topic_id, member_handle=handle)

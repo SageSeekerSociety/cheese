@@ -253,15 +253,21 @@ export function generateSummary(projectId: string): Promise<{ summary: string }>
   )
 }
 
-// The member's 1:1 private chat with 芝士 (a normal Topic; open chat WS on its id).
+// A 1:1 private chat as a normal Topic (open the chat WS on its id). Without
+// `peerHandle` it's the member's 1:1 with 芝士; with `peerHandle` it's a
+// person-to-person DM between the two humans (shared by both).
 export function getPrivateChat(
   projectId: string,
   userHandle: string,
+  peerHandle?: string,
 ): Promise<Topic> {
+  const peer = peerHandle
+    ? `&peer_handle=${encodeURIComponent(peerHandle)}`
+    : ''
   return request<Topic>(
     `/projects/${encodeURIComponent(projectId)}/private-chat?user_handle=${encodeURIComponent(
       userHandle,
-    )}`,
+    )}${peer}`,
   )
 }
 

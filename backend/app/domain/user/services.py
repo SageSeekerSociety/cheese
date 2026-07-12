@@ -80,7 +80,9 @@ class UserAuthService:
             return None
 
         if not await asyncio.to_thread(
-            bcrypt.checkpw, password.encode("utf-8"), user.hashed_password.encode("utf-8")
+            bcrypt.checkpw,
+            password.encode("utf-8"),
+            user.hashed_password.encode("utf-8"),
         ):
             return None
 
@@ -106,7 +108,9 @@ class UserAuthService:
 
     async def update_password(self, user_id: int, new_password: str) -> None:
         hashed = (
-            await asyncio.to_thread(bcrypt.hashpw, new_password.encode("utf-8"), bcrypt.gensalt())
+            await asyncio.to_thread(
+                bcrypt.hashpw, new_password.encode("utf-8"), bcrypt.gensalt()
+            )
         ).decode("utf-8")
         await self._user_repo.update_password(user_id, hashed)
 
@@ -137,7 +141,9 @@ class UserAuthService:
             raise ValueError("EMAIL_TAKEN")
 
         hashed = (
-            await asyncio.to_thread(bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt())
+            await asyncio.to_thread(
+                bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt()
+            )
         ).decode("utf-8")
         user = await self._user_repo.create_user(
             username=username,
@@ -201,7 +207,9 @@ class UserAuthService:
         username is derived from the provider identity and de-duplicated.
         """
         base = "".join(
-            ch for ch in (preferred_username or email.split("@", 1)[0]) if ch.isalnum() or ch in "_-"
+            ch
+            for ch in (preferred_username or email.split("@", 1)[0])
+            if ch.isalnum() or ch in "_-"
         )
         base = base or "ruc_user"
         username = base
@@ -237,7 +245,7 @@ class UserAuthService:
         profile: UserProfile,
         viewer_id: int | None = None,
     ) -> dict:
-        """Map User + UserProfile into a UserDto-compatible dict with counts & follow flag."""
+        """Map User + UserProfile into a UserDto-compatible dict with counts & follow flag."""  # noqa: E501
         base = self._base_user_dto(user, profile)
         followers = await self._follow_repo.count_followers(user.id)
         following = await self._follow_repo.count_following(user.id)

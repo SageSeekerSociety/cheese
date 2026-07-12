@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { relTime } from '../lib/relTime'
-import type { Project, Topic } from '../cx_types'
+import type { Project, ProjectMemberRow, Topic } from '../cx_types'
 import CheeseAvatar from './CheeseAvatar.vue'
 
 const props = defineProps<{
@@ -13,6 +13,12 @@ const props = defineProps<{
   loadingTopics: boolean
   // True when the 私聊 (1:1 with 芝士) entry is the active main view.
   privateActive: boolean
+  // Project roster for the 私聊 DM list (each OTHER member = a person to DM).
+  members?: ProjectMemberRow[]
+  // The signed-in user's handle — excluded from the member DM list (no self-DM).
+  meHandle?: string
+  // The peer handle whose DM is currently open (for active highlighting), or null.
+  activePeer?: string | null
   // Which 项目文档 is open in the main area ('charter'|'decisions'|'weeklies'),
   // or null when none — so the rail can show it active.
   activeDocs?: string | null
@@ -33,6 +39,8 @@ const emit = defineEmits<{
   (e: 'unarchive-topic', id: string): void
   // Open the 1:1 private chat with 芝士 in the main area (飞书私聊 conversation).
   (e: 'select-private'): void
+  // Open a person-to-person DM with the given member handle (飞书私聊 conversation).
+  (e: 'select-peer-dm', handle: string): void
   // Open a 项目文档 (章程/决策记录/周报集) in the main area, keeping the rail.
   (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
   // Live drawer width while dragging the right edge.
@@ -60,6 +68,20 @@ const router = useRouter()
 // Below this drawer width the 总览/日历/设置 labels are dropped — just the icons,
 // so the row never wraps into an awkward two-line cramp on a narrow rail.
 const narrowPages = computed(() => (props.width ?? 280) < 216)
+
+// 私聊 DM list: the OTHER project members (each a person you can 1:1 DM). 芝士
+// gets its own dedicated row above, and you don't DM yourself.
+const peerDms = computed(() =>
+  (props.members ?? [])
+    .filter(
+      (m) =>
+        m.user_handle !== props.meHandle && m.user_handle !== 'cheese',
+    )
+    .map((m) => ({
+      handle: m.user_handle,
+      name: m.name || m.user_handle,
+    })),
+)
 
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
@@ -414,7 +436,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                   </span>
                   <v-btn
                     icon="mdi-archive-arrow-up-outline"
-                    size="x-small"
+                    size="small"
                     variant="text"
                     density="comfortable"
                     title="取消归档"
@@ -475,7 +497,8 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 
           <v-divider class="mx-3 my-1" />
 
-          <!-- 私聊 (飞书私聊): a 1:1 conversation with 芝士, opens in main area -->
+          <!-- 私聊 (飞书私聊): 1:1 conversations — 芝士 plus each other project
+               member — each opens as a normal chat in the main area. -->
           <div class="t-eyebrow side-subhead">私聊</div>
           <v-list density="compact" nav class="py-0">
             <v-list-item
@@ -486,14 +509,36 @@ const onMemory = computed(() => props.activeDocs === 'memory')
               @click="emit('select-private')"
             >
               <template #prepend>
-                <CheeseAvatar :size="24" class="me-2" />
+                <!-- 芝士头像放进与图标同宽 (16px) 的定宽槽并居中：头像 18px，
+                     视觉上与话题/项目文档那一列的 ~16px 图标同大，icon-left 与
+                     text-left 都能和那一列对齐。 -->
+                <span class="private-avatar-slot">
+                  <CheeseAvatar :size="18" />
+                </span>
               </template>
               <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)">
-                与芝士私聊
+                芝士
               </v-list-item-title>
-              <v-list-item-subtitle class="t-meta">
-                只有你能看到
-              </v-list-item-subtitle>
+            </v-list-item>
+
+            <!-- Person-to-person DMs: one row per OTHER project member. -->
+            <v-list-item
+              v-for="dm in peerDms"
+              :key="dm.handle"
+              :active="activePeer === dm.handle"
+              rounded="lg"
+              class="nav-row private-row"
+              :class="{ 'is-active': activePeer === dm.handle }"
+              @click="emit('select-peer-dm', dm.handle)"
+            >
+              <template #prepend>
+                <span class="private-avatar-slot">
+                  <span class="dm-avatar">{{ dm.name.slice(0, 1).toUpperCase() }}</span>
+                </span>
+              </template>
+              <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)">
+                {{ dm.name }}
+              </v-list-item-title>
             </v-list-item>
           </v-list>
         </template>
@@ -734,9 +779,52 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   padding-block: 0;
 }
 /* 核心修正：Vuetify 的 prepend spacer 默认 ~32px，把图标和标题隔出一条鸿沟，
-   稀释了一切缩进关系。压到 8px，缩进的台阶才立得起来。 */
-.topic-row :deep(.v-list-item__spacer) {
+   稀释了一切缩进关系。压到 8px，缩进的台阶才立得起来。
+   nav-row (项目文档/私聊) 必须共用同一套：否则图标虽同列，文字却各自缩进
+   （话题 24px、项目文档 56px、私聊 32px），三列文字对不齐。 */
+.topic-row :deep(.v-list-item__spacer),
+.nav-row :deep(.v-list-item__spacer) {
   width: 8px !important;
+}
+/* 图标槽统一成 16px 定宽方块：话题用 size=16 的 v-icon，项目文档用
+   prepend-icon（默认 24），私聊用 24px 头像。锁死 prepend 里图标的字号与
+   槽宽，icon-left 与 text-left 才能双双成列。 */
+.topic-row :deep(.v-list-item__prepend),
+.nav-row :deep(.v-list-item__prepend) {
+  align-items: center;
+}
+.nav-row :deep(.v-list-item__prepend > .v-icon) {
+  font-size: 16px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+/* 私聊行的头像槽：定宽 16px、与图标同列；18px 头像在其中居中、略微溢出，
+   视觉大小与话题/项目文档那一列的图标持平，头像左缘落在同一图标列、
+   文字左缘落在同一文字列。 */
+.private-avatar-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  overflow: visible;
+}
+/* Human DM avatar: an initial in a muted circle, sized to match 芝士's 18px
+   avatar so both DM columns share the same icon/text lead. */
+.dm-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--fill, #e8e8ec);
+  color: var(--muted, #6b6b76);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
 }
 /* Item 感（混合版）：前置图标做行的身份锚，未读转琥珀。 */
 .row-glyph {
@@ -804,6 +892,22 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 .row-actions :deep(.v-btn:hover) {
   background: var(--fill, #ececec);
   color: var(--text, #2b2b2b);
+}
+/* 取消归档按钮与归档/拆分同属一个按钮家族：同样的 25px 方盒、7px 圆角、
+   16px 图标、琥珀强调 + hover 反馈，避免归档区里出现一颗尺寸/配色不一致的按钮。 */
+.split-btn {
+  width: 25px;
+  height: 25px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--accent, #f57f17);
+}
+.split-btn :deep(.v-icon) {
+  font-size: 16px;
+}
+.split-btn:hover {
+  background: var(--fill, #ececec);
+  color: var(--accent, #f57f17);
 }
 .topic-row:hover .row-actions,
 .topic-row:focus-within .row-actions {

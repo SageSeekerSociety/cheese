@@ -16,12 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.domain.block.models import AuthorType, Block
+from app.domain.cx_notification.repositories import NotificationRepository
+from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
-from app.domain.cx_notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
-from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.repositories import TopicRepository
 
@@ -70,9 +70,7 @@ class DashboardService:
             "summary": project.summary,
             "topic_count": len(topics),
             "topics_by_status": by_status,
-            "last_activity_at": (
-                last_activity.isoformat() if last_activity else None
-            ),
+            "last_activity_at": (last_activity.isoformat() if last_activity else None),
             "contributions": mix,
             "upcoming_milestones": [
                 {
@@ -184,9 +182,14 @@ class DashboardService:
         from app.domain.memory.store import memory_store
         from app.domain.project.models import Project, ProjectMember
         from app.domain.topic.models import Topic
-        from app.domain.user.repositories import UserRepository
+        from app.domain.user.repositories import UserProfileRepository, UserRepository
 
         user = await UserRepository(self._s).get_by_handle(handle)
+        profile = (
+            await UserProfileRepository(self._s).get_profile_by_user_id(user.id)
+            if user
+            else None
+        )
 
         # Cross-project memberships + role + how much they started/contributed.
         rows = (
@@ -236,10 +239,12 @@ class DashboardService:
         understanding = await memory_store(self._s).recall(MemoryScope.user, handle)
         return {
             "handle": handle,
-            "name": user.name if user else handle,
-            "bio": user.bio if user else "",
-            "interests": user.interests if user else [],
-            "skills": user.skills if user else [],
+            # Merged schema: display name is UserProfile.nickname, bio is
+            # UserProfile.intro. There are no interests/skills columns.
+            "name": profile.nickname if profile else handle,
+            "bio": profile.intro if profile else "",
+            "interests": [],
+            "skills": [],
             "projects": projects,
             "understanding": understanding,  # 芝士 对 TA 的理解 (§8.4)
         }

@@ -43,7 +43,10 @@ class MeilisearchClient:
         if searchable_attributes:
             await index.update_searchable_attributes(searchable_attributes)
         if filterable_attributes:
-            await index.update_filterable_attributes(filterable_attributes)
+            # meilisearch types this as invariant list[str | FilterableAttributes]
+            await index.update_filterable_attributes(
+                filterable_attributes  # type: ignore[arg-type]
+            )
         if sortable_attributes:
             await index.update_sortable_attributes(sortable_attributes)
 
@@ -56,7 +59,12 @@ class MeilisearchClient:
         try:
             await self._client.index(uid).delete_document(str(doc_id))
         except Exception:
-            _logger.debug("Failed to delete document %s from index %s", doc_id, uid, exc_info=True)
+            _logger.debug(
+                "Failed to delete document %s from index %s",
+                doc_id,
+                uid,
+                exc_info=True,
+            )
 
     async def search(
         self,
@@ -91,9 +99,13 @@ def get_search_client() -> MeilisearchClient | None:
         _logger.info("MEILISEARCH_URL not set — using PG FTS only")
         return None
     try:
-        _client = MeilisearchClient(settings.meilisearch_url, settings.meilisearch_api_key)
+        _client = MeilisearchClient(
+            settings.meilisearch_url, settings.meilisearch_api_key
+        )
     except Exception:
-        _logger.warning("Failed to connect to Meilisearch — falling back to PG FTS", exc_info=True)
+        _logger.warning(
+            "Failed to connect to Meilisearch — falling back to PG FTS", exc_info=True
+        )
         _client = None
     return _client
 

@@ -10,7 +10,7 @@ never sees them.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Integer, DateTime, ForeignKey, String, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base

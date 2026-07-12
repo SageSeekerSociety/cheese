@@ -81,7 +81,9 @@ class QuestionRepository:
             return or_(Question.title.ilike(like), Question.content.ilike(like))
         tsvector = func.to_tsvector(
             text("'simple'"),
-            func.coalesce(Question.title, "") + " " + func.coalesce(Question.content, ""),
+            func.coalesce(Question.title, "")
+            + " "
+            + func.coalesce(Question.content, ""),
         )
         tsquery = func.plainto_tsquery(text("'simple'"), stripped)
         return tsvector.op("@@")(tsquery)
@@ -95,16 +97,24 @@ class QuestionRepository:
         sort_by: str,
         sort_order: str,
     ) -> tuple[list[Question], int]:
-        stmt: Select[tuple[Question]] = select(Question).where(Question.deleted_at.is_(None))
+        stmt: Select[tuple[Question]] = select(Question).where(
+            Question.deleted_at.is_(None)
+        )
         if keyword:
             stmt = stmt.where(self._keyword_filter(keyword))
-        order_col = Question.created_at if sort_by == "createdAt" else Question.updated_at
-        stmt = stmt.order_by(order_col.desc() if sort_order == "desc" else order_col.asc())
+        order_col = (
+            Question.created_at if sort_by == "createdAt" else Question.updated_at
+        )
+        stmt = stmt.order_by(
+            order_col.desc() if sort_order == "desc" else order_col.asc()
+        )
         stmt = stmt.limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
 
-        count_stmt = select(func.count(Question.id)).where(Question.deleted_at.is_(None))
+        count_stmt = select(func.count(Question.id)).where(
+            Question.deleted_at.is_(None)
+        )
         if keyword:
             count_stmt = count_stmt.where(self._keyword_filter(keyword))
         count_result = await self._session.execute(count_stmt)
@@ -141,7 +151,9 @@ class QuestionRepository:
     async def _get_follow_relation(
         self, question_id: int, user_id: int
     ) -> QuestionFollowerRelation | None:
-        stmt: Select[tuple[QuestionFollowerRelation]] = select(QuestionFollowerRelation).where(
+        stmt: Select[tuple[QuestionFollowerRelation]] = select(
+            QuestionFollowerRelation
+        ).where(
             QuestionFollowerRelation.question_id == question_id,
             QuestionFollowerRelation.follower_id == user_id,
         )
@@ -153,7 +165,10 @@ class QuestionRepository:
     ) -> tuple[list[Question], int]:
         stmt = (
             select(Question)
-            .join(QuestionFollowerRelation, QuestionFollowerRelation.question_id == Question.id)
+            .join(
+                QuestionFollowerRelation,
+                QuestionFollowerRelation.question_id == Question.id,
+            )
             .where(
                 QuestionFollowerRelation.follower_id == user_id,
                 QuestionFollowerRelation.deleted_at.is_(None),
@@ -202,7 +217,9 @@ class QuestionRepository:
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
-    async def accept_answer(self, *, question_id: int, answer_id: int) -> Question | None:
+    async def accept_answer(
+        self, *, question_id: int, answer_id: int
+    ) -> Question | None:
         """Set accepted_answer_id for a question."""
         question = await self.get_by_id(question_id)
         if question is None:
@@ -329,14 +346,17 @@ class QuestionRepository:
         self._session.add(log)
         await self._session.flush()
 
-    async def get_trending_questions(self, *, limit: int = 10, days: int = 7) -> list[Question]:
+    async def get_trending_questions(
+        self, *, limit: int = 10, days: int = 7
+    ) -> list[Question]:
         cutoff = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         from datetime import timedelta
 
         cutoff = cutoff - timedelta(days=days)
         subq = (
             select(
-                QuestionQueryLog.question_id, func.count(QuestionQueryLog.id).label("view_count")
+                QuestionQueryLog.question_id,
+                func.count(QuestionQueryLog.id).label("view_count"),
             )
             .where(QuestionQueryLog.created_at >= cutoff)
             .group_by(QuestionQueryLog.question_id)
@@ -353,7 +373,9 @@ class QuestionRepository:
         return list(result.scalars().all())
 
     async def get_stats(self) -> dict:
-        total_questions_stmt = select(func.count(Question.id)).where(Question.deleted_at.is_(None))
+        total_questions_stmt = select(func.count(Question.id)).where(
+            Question.deleted_at.is_(None)
+        )
         total_result = await self._session.execute(total_questions_stmt)
         total_questions = int(total_result.scalar_one() or 0)
 
@@ -375,12 +397,17 @@ class QuestionRepository:
             "totalViews": total_views,
         }
 
-    async def get_popular_search_terms(self, *, limit: int = 10, days: int = 7) -> list[dict]:
+    async def get_popular_search_terms(
+        self, *, limit: int = 10, days: int = 7
+    ) -> list[dict]:
         from datetime import timedelta
 
         cutoff = datetime.now(UTC) - timedelta(days=days)
         stmt = (
-            select(QuestionSearchLog.keywords, func.count(QuestionSearchLog.id).label("count"))
+            select(
+                QuestionSearchLog.keywords,
+                func.count(QuestionSearchLog.id).label("count"),
+            )
             .where(QuestionSearchLog.created_at >= cutoff)
             .group_by(QuestionSearchLog.keywords)
             .order_by(func.count(QuestionSearchLog.id).desc())
@@ -503,7 +530,9 @@ class QuestionTopicRepository:
                 QuestionTopicRelation.question_id.in_(list(question_ids)),
                 QuestionTopicRelation.deleted_at.is_(None),
             )
-            .order_by(QuestionTopicRelation.question_id.asc(), QuestionTopicRelation.id.asc())
+            .order_by(
+                QuestionTopicRelation.question_id.asc(), QuestionTopicRelation.id.asc()
+            )
         )
         result = await self._session.execute(stmt)
         mapping: dict[int, list[int]] = {}
@@ -539,8 +568,10 @@ class QuestionTopicRepository:
         topics = result.scalars().all()
         return [{"id": t.id, "name": t.name} for t in topics]
 
-    async def get_topics_for_questions(self, question_ids: Sequence[int]) -> dict[int, list[dict]]:
-        """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""
+    async def get_topics_for_questions(
+        self, question_ids: Sequence[int]
+    ) -> dict[int, list[dict]]:
+        """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""  # noqa: E501
         from app.domain.topics.models import Topic
 
         if not question_ids:
@@ -561,7 +592,9 @@ class QuestionTopicRepository:
         result = await self._session.execute(stmt)
         mapping: dict[int, list[dict]] = {}
         for question_id, topic_id, topic_name in result.all():
-            mapping.setdefault(question_id, []).append({"id": topic_id, "name": topic_name})
+            mapping.setdefault(question_id, []).append(
+                {"id": topic_id, "name": topic_name}
+            )
         return mapping
 
 
@@ -569,7 +602,9 @@ class QuestionInvitationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create_invitation(self, *, question_id: int, user_id: int) -> QuestionInvitation:
+    async def create_invitation(
+        self, *, question_id: int, user_id: int
+    ) -> QuestionInvitation:
         existing = await self._get_invitation(question_id, user_id)
         now = datetime.now(UTC)
         if existing is not None:
@@ -619,7 +654,9 @@ class QuestionInvitationRepository:
         await self._session.delete(invitation)
         await self._session.flush()
 
-    async def _get_invitation(self, question_id: int, user_id: int) -> QuestionInvitation | None:
+    async def _get_invitation(
+        self, question_id: int, user_id: int
+    ) -> QuestionInvitation | None:
         stmt: Select[tuple[QuestionInvitation]] = select(QuestionInvitation).where(
             QuestionInvitation.question_id == question_id,
             QuestionInvitation.user_id == user_id,

@@ -28,7 +28,9 @@ class NotificationDeduplicator:
         self._namespace = namespace
 
     def _payload_fingerprint(self, event: NotificationTriggerEvent) -> str:
-        canon = json.dumps(event.payload, sort_keys=True, separators=(",", ":"), default=str)
+        canon = json.dumps(
+            event.payload, sort_keys=True, separators=(",", ":"), default=str
+        )
         return hashlib.sha1(canon.encode("utf-8"), usedforsecurity=False).hexdigest()
 
     def _build_cache_key(self, event: NotificationTriggerEvent) -> str:
@@ -36,7 +38,9 @@ class NotificationDeduplicator:
         fingerprint = self._payload_fingerprint(event)
         return f"{self._namespace}:{event.type.value}:{recipients}:{fingerprint}"
 
-    async def should_process(self, event: NotificationTriggerEvent) -> NotificationDedupResult:
+    async def should_process(
+        self, event: NotificationTriggerEvent
+    ) -> NotificationDedupResult:
         """Return False when the event has already been processed recently."""
 
         if self._redis is None:
@@ -45,10 +49,14 @@ class NotificationDeduplicator:
         cache_key = self._build_cache_key(event)
 
         try:
-            was_set = await self._redis.set(cache_key, b"1", ex=self._ttl_seconds, nx=True)
+            was_set = await self._redis.set(
+                cache_key, b"1", ex=self._ttl_seconds, nx=True
+            )
         except Exception:
-            # Redis outages must not block notification delivery; fall back to allowing event.
+            # Redis outages must not block notification delivery; fall back to allowing event.  # noqa: E501
             return NotificationDedupResult(should_process=True, cache_key=cache_key)
 
         should_process = bool(was_set)
-        return NotificationDedupResult(should_process=should_process, cache_key=cache_key)
+        return NotificationDedupResult(
+            should_process=should_process, cache_key=cache_key
+        )

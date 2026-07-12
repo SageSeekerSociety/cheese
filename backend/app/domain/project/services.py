@@ -5,11 +5,12 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.project.models import AiMode, Project, ProjectTaskLink
 from app.domain.project.repositories import ProjectRepository
-from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository
 
 
@@ -20,6 +21,7 @@ class ProjectService:
         self._tasks = TaskRepository(session)
         self._templates = TaskTemplateRepository(session)
         self._grants = ComputeGrantRepository(session)
+        self._members = TopicMemberService(session)
 
     async def create(
         self,
@@ -43,6 +45,17 @@ class ProjectService:
             created_by=owner_handle,
         )
         await self._repo.set_root_topic(project, root.id)
+        # 总览 = 项目本体: its roster mirrors the whole project (fusion-design §3).
+        # Seed it with every current project member + 芝士. At create-time the
+        # ProjectMember rows may not exist yet (added separately); seed_root is
+        # idempotent, so the owner + 芝士 are seeded now and any members already
+        # present are folded in.
+        member_handles = [
+            m["handle"] for m in await self._repo.list_members(project.id)
+        ]
+        await self._members.seed_root(
+            root.id, owner_handle=owner_handle, member_handles=member_handles
+        )
         return project
 
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
@@ -87,9 +100,7 @@ class ProjectService:
                 )
         return await self._repo.link_task(project_id=project_id, task_id=task_id)
 
-    async def unlink_task(
-        self, *, project_id: uuid.UUID, task_id: uuid.UUID
-    ) -> None:
+    async def unlink_task(self, *, project_id: uuid.UUID, task_id: uuid.UUID) -> None:
         """退出/断开 Task 协议 (§4): remove the project↔task link."""
         await self.get_or_404(project_id)
         if not await self._repo.unlink_task(project_id=project_id, task_id=task_id):

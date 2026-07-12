@@ -17,7 +17,6 @@ resolution rule is unit-tested without a request, DB or WebSocket. The concrete
 wiring lives in ``app.api.auth``.
 """
 
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -32,16 +31,20 @@ class TokenIdentity:
     """What a verified human token asserts."""
 
     handle: str
-    user_id: uuid.UUID | None
+    # fusion unify P3: main's User PK is an int (table ``user``). A verified
+    # main-minted token carries it in the ``sub`` claim; legacy cheesex tokens
+    # (handle in ``sub``) have no int id → None.
+    user_id: int | None
 
 
 @dataclass(frozen=True)
 class Actor:
     """Who is acting, resolved at the trust boundary. ``handle`` stays the
-    authorship key (no user_id data migration in P1); ``is_agent`` is derived."""
+    authorship key; ``user_id`` is main's int User PK when a real token carries
+    it (needed to bind int-keyed rows like ``device.owner_user_id``)."""
 
     handle: str
-    user_id: uuid.UUID | None
+    user_id: int | None
     is_agent: bool
     via: str  # "token" | "cheese" | "handle"
 

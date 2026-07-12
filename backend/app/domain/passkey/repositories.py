@@ -37,8 +37,12 @@ class PasskeyRepository:
         await self._session.flush()
         return entity
 
-    async def get_by_credential_id(self, credential_id: str) -> PasskeyCredential | None:
-        stmt = select(PasskeyCredential).where(PasskeyCredential.credential_id == credential_id)
+    async def get_by_credential_id(
+        self, credential_id: str
+    ) -> PasskeyCredential | None:
+        stmt = select(PasskeyCredential).where(
+            PasskeyCredential.credential_id == credential_id
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -52,7 +56,9 @@ class PasskeyRepository:
         return list(result.scalars().all())
 
     async def get_all_credential_ids_for_user(self, user_id: int) -> list[str]:
-        stmt = select(PasskeyCredential.credential_id).where(PasskeyCredential.user_id == user_id)
+        stmt = select(PasskeyCredential.credential_id).where(
+            PasskeyCredential.user_id == user_id
+        )
         result = await self._session.execute(stmt)
         return [row[0] for row in result.all()]
 
@@ -74,7 +80,9 @@ class PasskeyRepository:
         )
         result = await self._session.execute(stmt)
         await self._session.flush()
-        return result.rowcount > 0
+        # execute() of a DELETE returns a CursorResult, which exposes rowcount at
+        # runtime; the SQLAlchemy stubs only surface the base Result[Any] type.
+        return result.rowcount > 0  # type: ignore[attr-defined]
 
     async def delete_by_credential_id(self, credential_id: str, user_id: int) -> bool:
         stmt = delete(PasskeyCredential).where(
@@ -83,4 +91,6 @@ class PasskeyRepository:
         )
         result = await self._session.execute(stmt)
         await self._session.flush()
-        return result.rowcount > 0
+        # execute() of a DELETE returns a CursorResult, which exposes rowcount at
+        # runtime; the SQLAlchemy stubs only surface the base Result[Any] type.
+        return result.rowcount > 0  # type: ignore[attr-defined]

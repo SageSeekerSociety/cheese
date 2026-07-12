@@ -71,8 +71,8 @@ class DeviceService:
         self,
         code_value: str,
         *,
-        owner_user_id: uuid.UUID,
-        agent_user_id: uuid.UUID,
+        owner_user_id: int,
+        agent_user_id: int,
     ) -> Device:
         """Approve a pending flow on behalf of the logged-in ``owner_user_id``,
         binding the device to that human as its owner and to ``agent_user_id`` as the
@@ -129,15 +129,15 @@ class DeviceService:
         entry = await self._repo.get_code(code_value)
         return entry.device_name if entry is not None else None
 
-    async def list_owned(self, owner_user_id: uuid.UUID) -> list[Device]:
+    async def list_owned(self, owner_user_id: int) -> list[Device]:
         return await self._repo.list_devices_by_owner(owner_user_id)
 
-    async def delete_owned(self, device_id: str, *, actor_user_id: uuid.UUID) -> None:
+    async def delete_owned(self, device_id: str, *, actor_user_id: int) -> None:
         await self._require_owned(device_id, actor_user_id)
         await self._repo.delete_device(device_id)
 
     async def rename_owned(
-        self, device_id: str, name: str, *, actor_user_id: uuid.UUID
+        self, device_id: str, name: str, *, actor_user_id: int
     ) -> Device:
         """Rename a device the caller owns. The name is a human label only (never a
         semantic/authorization key), so a plain non-empty check is all that's needed."""
@@ -149,7 +149,7 @@ class DeviceService:
     # -- device ↔ project assignment (the owner manages) -------------------
 
     async def assign_to_project(
-        self, device_id: str, project_id: uuid.UUID, *, actor_user_id: uuid.UUID
+        self, device_id: str, project_id: uuid.UUID, *, actor_user_id: int
     ) -> None:
         """Assign the device to a project. Only the device's owner may do this; the
         caller separately checks the owner is a member of that project."""
@@ -157,7 +157,7 @@ class DeviceService:
         await self._repo.assign_project(device_id, project_id)
 
     async def unassign_from_project(
-        self, device_id: str, project_id: uuid.UUID, *, actor_user_id: uuid.UUID
+        self, device_id: str, project_id: uuid.UUID, *, actor_user_id: int
     ) -> None:
         await self._require_owned(device_id, actor_user_id)
         await self._repo.unassign_project(device_id, project_id)
@@ -173,9 +173,7 @@ class DeviceService:
     async def list_devices_for_project(self, project_id: uuid.UUID) -> list[Device]:
         return await self._repo.list_devices_by_project(project_id)
 
-    async def _require_owned(
-        self, device_id: str, actor_user_id: uuid.UUID
-    ) -> Device:
+    async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)
         if device is None:
             raise NotFoundError("Unknown device")

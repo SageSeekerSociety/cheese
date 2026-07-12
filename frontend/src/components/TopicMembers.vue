@@ -53,6 +53,12 @@ const countLabel = computed(() => {
   return hasAgent.value ? `${n} 人 + 芝士` : `${n} 人`
 })
 
+// Compact indicator: the first few human faces as a stack, capped so the
+// stack never grows unbounded — extra people fold into a "+N" tile.
+const MAX_FACES = 3
+const stackFaces = computed(() => humans.value.slice(0, MAX_FACES))
+const overflow = computed(() => Math.max(0, humans.value.length - MAX_FACES))
+
 // My role in THIS topic decides whether the management controls show at all.
 const myRole = computed(
   () => members.value.find((m) => m.member_handle === props.me)?.role ?? null,
@@ -124,12 +130,30 @@ async function onSetRole(handle: string, role: string) {
       <button
         v-bind="act"
         type="button"
-        class="members-pill"
-        :class="{ 'members-pill--open': open }"
-        title="话题成员"
+        class="members-mini"
+        :class="{ 'members-mini--open': open }"
+        :title="`话题成员 · ${countLabel}`"
       >
-        <v-icon size="15" class="members-pill__icon">mdi-account-group</v-icon>
-        <span>{{ countLabel }}</span>
+        <span class="members-mini__stack">
+          <span
+            v-for="(m, i) in stackFaces"
+            :key="m.id"
+            class="members-mini__face"
+            :style="{ zIndex: MAX_FACES - i }"
+          >{{ initial(m.name || m.member_handle) }}</span>
+          <span
+            v-if="overflow"
+            class="members-mini__face members-mini__face--more"
+            :style="{ zIndex: 0 }"
+          >+{{ overflow }}</span>
+          <span
+            v-if="hasAgent"
+            class="members-mini__face members-mini__face--agent"
+            :style="{ zIndex: MAX_FACES + 1 }"
+            title="芝士在这个话题里"
+          >芝</span>
+        </span>
+        <span class="members-mini__count">{{ humans.length }}</span>
       </button>
     </template>
 
@@ -230,27 +254,67 @@ async function onSetRole(handle: string, role: string) {
 </template>
 
 <style scoped>
-.members-pill {
+/* Compact roster indicator: an avatar stack + count, no full-width bar.
+   Sits at the top-right of the topic/chat header row (fusion-design §3). */
+.members-mini {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--line-2, #e0e0e0);
-  border-radius: 13px;
-  background: var(--surface, #fff);
-  color: var(--muted, #6b6b6b);
-  font-size: 0.78rem;
-  font-weight: 500;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
   cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
-.members-pill:hover,
-.members-pill--open {
-  border-color: var(--line, #ccc);
+.members-mini:hover,
+.members-mini--open {
+  background: var(--fill, #f4f5f7);
+  border-color: var(--line-2, #e2e3e6);
+}
+.members-mini__stack {
+  display: inline-flex;
+  align-items: center;
+}
+.members-mini__face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  margin-left: -7px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #fff;
+  background: #8a94a3;
+  border: 1.5px solid var(--surface, #fff);
+  box-sizing: border-box;
+}
+.members-mini__face:first-child {
+  margin-left: 0;
+}
+.members-mini__face--more {
+  background: var(--fill-2, #eeeff1);
+  color: var(--muted, #6a6e76);
+  font-size: 0.6rem;
+}
+.members-mini__face--agent {
+  background: var(--accent, #f57f17);
+  font-size: 0.6rem;
+}
+.members-mini__count {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted, #6a6e76);
+  line-height: 1;
+}
+.members-mini:hover .members-mini__count,
+.members-mini--open .members-mini__count {
   color: var(--ink, #222);
-}
-.members-pill__icon {
-  color: var(--muted, #8a94a3);
 }
 
 .roster {

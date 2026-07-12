@@ -25,3 +25,7 @@ __pycache__/
 # self-hosted connector binaries (built artifacts, not source; see
 # scripts/build-connector.sh). The cli source lives in the main repo.
 connector-dist/
+
+# connector build cache (frozen cli/ extracted from git — see scripts/build-connector.sh)
+backend/.cli-src/
+.cli-src/

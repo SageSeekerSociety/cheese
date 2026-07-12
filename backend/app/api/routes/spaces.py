@@ -11,7 +11,9 @@ from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.db.session import get_db
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
-from app.domain.space.member_participating_service import SpaceMemberParticipatingService
+from app.domain.space.member_participating_service import (
+    SpaceMemberParticipatingService,
+)
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
 from app.domain.space.models import (
     Space,
@@ -55,7 +57,9 @@ class CreateSpaceRequest(BaseModel):
     enable_rank: bool = Field(default=False, alias="enableRank")
     announcements: list | str | None = None
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
-    classification_topics: list[int] | None = Field(default=None, alias="classificationTopics")
+    classification_topics: list[int] | None = Field(
+        default=None, alias="classificationTopics"
+    )
     visible_task_limit: int | None = Field(default=None, alias="visibleTaskLimit")
 
     @field_validator("visible_task_limit", mode="before")
@@ -78,7 +82,9 @@ class PatchSpaceRequest(BaseModel):
     enable_rank: bool | None = Field(default=None, alias="enableRank")
     announcements: list | str | None = None
     task_templates: list | str | None = Field(default=None, alias="taskTemplates")
-    classification_topics: list[int] | None = Field(default=None, alias="classificationTopics")
+    classification_topics: list[int] | None = Field(
+        default=None, alias="classificationTopics"
+    )
     default_category_id: int | None = Field(default=None, alias="defaultCategoryId")
     visible_task_limit: int | None = Field(default=None, alias="visibleTaskLimit")
 
@@ -253,7 +259,9 @@ def _category_to_api_model(cat: SpaceCategory) -> dict:
     created_at_ms = int(cat.created_at.timestamp() * 1000) if cat.created_at else 0
     updated_at_ms = int(cat.updated_at.timestamp() * 1000) if cat.updated_at else 0
     raw_archived_at = getattr(cat, "archived_at", None)
-    archived_at_ms = int(raw_archived_at.timestamp() * 1000) if raw_archived_at else None
+    archived_at_ms = (
+        int(raw_archived_at.timestamp() * 1000) if raw_archived_at else None
+    )
     return {
         "id": cat.id,
         "spaceId": cat.space_id,
@@ -285,7 +293,10 @@ def _admin_to_api_model(
     user_info: dict | None = None,
 ) -> dict:
     created_at_ms = int(rel.created_at.timestamp() * 1000) if rel.created_at else 0
-    role_name_map = {SpaceAdminRole.OWNER.value: "OWNER", SpaceAdminRole.ADMIN.value: "ADMIN"}
+    role_name_map = {
+        SpaceAdminRole.OWNER.value: "OWNER",
+        SpaceAdminRole.ADMIN.value: "ADMIN",
+    }
     result: dict = {
         "userId": rel.user_id,
         "role": role_name_map.get(rel.role, "ADMIN"),
@@ -314,7 +325,9 @@ async def _build_admins_payload(
     admins_list: list[dict] = []
     for rel in admin_relations:
         user = await user_repo.get_by_id(rel.user_id)
-        profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+        profile = (
+            await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+        )
         user_info = (
             {
                 "id": user.id,
@@ -368,7 +381,9 @@ async def get_space(
 ) -> dict:
     space = await service.get_space(space_id=space_id)
     if space is None:
-        raise NotFoundError("Resource space not found", data={"type": "space", "id": space_id})
+        raise NotFoundError(
+            "Resource space not found", data={"type": "space", "id": space_id}
+        )
 
     categories = None
     if queryCategories:
@@ -387,7 +402,9 @@ async def get_space(
     admins_list = []
     for rel in admin_relations:
         user = await user_repo.get_by_id(rel.user_id)
-        profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+        profile = (
+            await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+        )
         user_info = (
             {
                 "id": user.id,
@@ -408,7 +425,7 @@ async def get_space(
     # so callers that forget the flag still get a sensible value.
     topics = await service.list_classification_topics(space_id)
     space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
-    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.
+    _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.  # noqa: E501
 
     data: dict = {
         "space": space_data,
@@ -452,7 +469,9 @@ async def get_spaces(
         admins_list = []
         for rel in admin_relations:
             user = await user_repo.get_by_id(rel.user_id)
-            profile = await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+            profile = (
+                await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
+            )
             user_info = (
                 {
                     "id": user.id,
@@ -598,7 +617,9 @@ async def list_space_categories(
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     _ = auth_user
-    cats = await service.list_categories(space_id=space_id, include_archived=includeArchived)
+    cats = await service.list_categories(
+        space_id=space_id, include_archived=includeArchived
+    )
     items = [_category_to_api_model(c) for c in cats]
     return {"code": 200, "message": "OK", "data": {"categories": items}}
 
@@ -658,7 +679,7 @@ async def get_publishers_participation(
     "/{spaceId}/participants/export",
     summary="Export Space Participants",
     deprecated=True,
-    description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",
+    description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",  # noqa: E501
 )
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -673,7 +694,9 @@ async def export_space_participants(
     return Response(
         content=csv_payload,
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"},
+        headers={
+            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"  # noqa: E501
+        },
     )
 
 
@@ -863,7 +886,9 @@ async def export_space_analytics_participants(
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"},
+        headers={
+            "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"  # noqa: E501
+        },
     )
 
 
@@ -898,7 +923,9 @@ async def export_space_analytics_tasks(
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="space-{space_id}-tasks.csv"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="space-{space_id}-tasks.csv"'
+        },
     )
 
 
@@ -927,7 +954,9 @@ async def export_space_analytics_publishers(
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="space-{space_id}-publishers.csv"'  # noqa: E501
+        },
     )
 
 
@@ -943,7 +972,9 @@ async def export_space_analytics_publishers(
 async def get_space_me_publishing(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberPublishingService = Depends(get_space_member_publishing_service),
+    service: SpaceMemberPublishingService = Depends(
+        get_space_member_publishing_service
+    ),
 ) -> dict:
     """Return the authenticated user's publishing summary in this space."""
     data = await service.get_my_publishing_overview(
@@ -968,7 +999,9 @@ async def get_space_me_published_tasks(
     sortBy: str = Query(default="createdAt"),
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberPublishingService = Depends(get_space_member_publishing_service),
+    service: SpaceMemberPublishingService = Depends(
+        get_space_member_publishing_service
+    ),
 ) -> dict:
     """Return the authenticated user's published tasks in this space."""
     items = await service.get_my_published_tasks(
@@ -993,7 +1026,9 @@ async def get_space_me_published_tasks(
 async def get_space_me_participating(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(get_space_member_participating_service),
+    service: SpaceMemberParticipatingService = Depends(
+        get_space_member_participating_service
+    ),
 ) -> dict:
     """Return the authenticated user's participation summary in this space."""
     data = await service.get_overview(
@@ -1015,7 +1050,9 @@ async def get_space_me_participations(
     sortBy: str = Query(default="joinedAt"),
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceMemberParticipatingService = Depends(get_space_member_participating_service),
+    service: SpaceMemberParticipatingService = Depends(
+        get_space_member_participating_service
+    ),
 ) -> dict:
     """Return the authenticated user's participation list in this space."""
     participations = await service.get_participations(
@@ -1136,7 +1173,9 @@ async def get_space_category(
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
     _ = auth_user
-    category = await service.get_category_detail(space_id=space_id, category_id=category_id)
+    category = await service.get_category_detail(
+        space_id=space_id, category_id=category_id
+    )
     return {
         "code": 200,
         "message": "OK",
@@ -1216,7 +1255,9 @@ async def list_space_domain_groups(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> dict:
-    groups = await service.list_domain_groups(space_id=space_id, actor_user_id=auth_user.user_id)
+    groups = await service.list_domain_groups(
+        space_id=space_id, actor_user_id=auth_user.user_id
+    )
     items = [_domain_group_to_api_model(group, domains) for group, domains in groups]
     return {
         "code": 200,

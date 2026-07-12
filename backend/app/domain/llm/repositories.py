@@ -47,14 +47,17 @@ class AIUserQuotaRepository:
         remaining = entity.remaining_seu or 0.0
         if remaining < amount:
             raise ValueError("AI quota exhausted")
-        entity.remaining_seu = remaining - amount
+        new_remaining = remaining - amount
+        entity.remaining_seu = new_remaining
         entity.total_seu_consumed = (entity.total_seu_consumed or 0.0) + amount
         entity.updated_at = datetime.now(UTC)
         await self._session.flush()
         reset_at = entity.last_reset_time or datetime.now(UTC)
-        return entity.remaining_seu, reset_at
+        return new_remaining, reset_at
 
-    async def get_quota(self, user_id: int, daily_total: float) -> tuple[float, datetime]:
+    async def get_quota(
+        self, user_id: int, daily_total: float
+    ) -> tuple[float, datetime]:
         entity = await self.get_or_create(user_id, daily_total)
         remaining = max(0.0, entity.remaining_seu or 0.0)
         reset_at = entity.last_reset_time or datetime.now(UTC)
@@ -139,7 +142,9 @@ class AIConversationRepository:
         await self._session.flush()
         return True
 
-    async def update_title(self, conversation_id: int, title: str) -> AIConversation | None:
+    async def update_title(
+        self, conversation_id: int, title: str
+    ) -> AIConversation | None:
         entity = await self.get_by_id(conversation_id)
         if entity is None:
             return None

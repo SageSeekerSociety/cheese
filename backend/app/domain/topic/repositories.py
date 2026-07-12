@@ -50,24 +50,49 @@ class TopicRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def get_or_create_private(
-        self, *, project_id: uuid.UUID, user_handle: str
+        self,
+        *,
+        project_id: uuid.UUID,
+        user_handle: str,
+        peer_handle: str | None = None,
     ) -> Topic:
-        """The member's 1:1 private chat with 芝士 in this project."""
-        stmt = select(Topic).where(
-            Topic.project_id == project_id,
-            Topic.is_private.is_(True),
-            Topic.private_owner == user_handle,
-        )
+        """A 1:1 private conversation in this project.
+
+        Without ``peer_handle`` this is the member's 1:1 with 芝士 (private_peer
+        NULL). With ``peer_handle`` it is a person-to-person DM between the two
+        humans; the unordered pair is canonicalized (owner = min, peer = max) so
+        both participants get and share the same row regardless of who opens it.
+        """
+        if peer_handle is not None:
+            owner, peer = sorted((user_handle, peer_handle))
+            stmt = select(Topic).where(
+                Topic.project_id == project_id,
+                Topic.is_private.is_(True),
+                Topic.private_owner == owner,
+                Topic.private_peer == peer,
+            )
+        else:
+            owner, peer = user_handle, None
+            stmt = select(Topic).where(
+                Topic.project_id == project_id,
+                Topic.is_private.is_(True),
+                Topic.private_owner == user_handle,
+                Topic.private_peer.is_(None),
+            )
         existing = (await self._session.scalars(stmt)).first()
         if existing is not None:
             return existing
+        # Title is a rendering hint only; the sidebar/ChatPanel show the peer's
+        # own name from the roster. Deterministic, no NL parsing (CLAUDE.md §4).
+        title = f"私聊 · {owner} · {peer}" if peer else f"与芝士私聊 · {owner}"
         topic = Topic(
             project_id=project_id,
-            title=f"与芝士私聊 · {user_handle}",
+            title=title,
             kind=TopicKind.topic,
             created_by=user_handle,
             is_private=True,
-            private_owner=user_handle,
+            private_owner=owner,
+            private_peer=peer,
         )
         self._session.add(topic)
         await self._session.flush()
@@ -119,6 +144,7 @@ class TopicRepository:
                 or_(
                     Topic.is_private.is_(False),
                     Topic.private_owner == user_handle,
+                    Topic.private_peer == user_handle,
                 ),
                 Block.kind == BlockKind.message,
                 Block.author != user_handle,

@@ -73,6 +73,9 @@ const props = withDefaults(
     members?: ProjectMemberRow[]
     // Project topics (id→title) so <#topicId> reference tokens render as chips.
     topicList?: Topic[]
+    // Header label override for a 私聊 whose stored title is a bookkeeping key
+    // (e.g. a person DM's canonical "私聊 · a · b"): show the peer's name instead.
+    titleOverride?: string | null
   }>(),
   {
     defaultSummon: false,
@@ -80,6 +83,7 @@ const props = withDefaults(
     prHeader: false,
     members: () => [],
     topicList: () => [],
+    titleOverride: null,
   },
 )
 
@@ -618,6 +622,81 @@ const prState = computed(() => {
 const draft = ref('')
 const summon = ref(props.defaultSummon)
 
+// @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
+// draft, and the teammates / topics / broadcast tokens it can complete to.
+// Mirrors WorkspaceView's composer so the root-topic and 私聊 composers get the
+// same picker.
+const mentionQuery = computed(() => {
+  const m = draft.value.match(/@([^\s@]*)$/)
+  return m ? m[1] : null
+})
+interface MentionItem {
+  label: string
+  kind: 'member' | 'topic' | 'broadcast'
+  // Text written after the "@" when picked (a handle/name/token).
+  insert: string
+  // Secondary line: @handle for people, status for topics, hint for broadcast.
+  sub: string
+  agent: boolean
+}
+// 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
+// at the top. expandMentions turns them into <@all>/<@here>.
+const BROADCAST_ITEMS: MentionItem[] = [
+  { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知话题全体成员', agent: false },
+  { label: '在线成员', kind: 'broadcast', insert: 'here', sub: '@here · 通知在线成员', agent: false },
+]
+const mentionMatches = computed<MentionItem[]>(() => {
+  const q = mentionQuery.value
+  if (q === null) return []
+  const ql = q.toLowerCase()
+  const broadcast = BROADCAST_ITEMS.filter(
+    (b) => b.insert.startsWith(ql) || b.label.includes(q),
+  )
+  const rest: MentionItem[] = [
+    ...props.members.map((m) => ({
+      label: m.name || m.user_handle,
+      kind: 'member' as const,
+      insert: m.name || m.user_handle,
+      sub: `@${m.user_handle}`,
+      agent: m.user_handle === 'cheese',
+    })),
+    ...props.topicList
+      .filter((t) => t.kind !== 'root')
+      .map((t) => ({
+        label: t.title,
+        kind: 'topic' as const,
+        insert: t.title,
+        sub: t.status === 'archived' ? '已归档' : '进行中',
+        agent: false,
+      })),
+  ].filter((i) => i.label.toLowerCase().includes(ql))
+  return [...broadcast, ...rest].slice(0, 7)
+})
+function pickMention(item: MentionItem) {
+  draft.value = draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
+}
+
+// Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
+// token (<@handle> / <#topicId>) at send time — longest patterns first so
+// substrings don't mis-match. The backend re-canonicalizes as a backstop, so a
+// name typed without picking from the menu still resolves.
+function expandMentions(text: string): string {
+  const subs: { pat: string; token: string }[] = [
+    { pat: '@all', token: '<@all>' },
+    { pat: '@here', token: '<@here>' },
+    ...props.members.flatMap((m) => [
+      { pat: `@${m.name || m.user_handle}`, token: `<@${m.user_handle}>` },
+      { pat: `@${m.user_handle}`, token: `<@${m.user_handle}>` },
+    ]),
+    ...props.topicList
+      .filter((t) => t.kind !== 'root')
+      .map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
+  ].sort((a, b) => b.pat.length - a.pat.length)
+  let out = text
+  for (const s of subs) out = out.split(s.pat).join(s.token)
+  return out
+}
+
 // 图片输入: paste (screenshot) or pick images; they upload to the topic's
 // worktree immediately and wait in a preview strip until send.
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -644,7 +723,7 @@ function onFilePicked(e: Event) {
 }
 
 function sendDraft() {
-  if (send(draft.value, summon.value, pendingAtts.value.slice())) {
+  if (send(expandMentions(draft.value), summon.value, pendingAtts.value.slice())) {
     draft.value = ''
     clearPendingAtts()
   }
@@ -679,6 +758,11 @@ function onComposerKey(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
   e.preventDefault()
+  // While the @-menu is open, Enter picks the first match instead of sending.
+  if (mentionMatches.value.length) {
+    pickMention(mentionMatches.value[0])
+    return
+  }
   sendDraft()
 }
 
@@ -739,7 +823,7 @@ onBeforeUnmount(() => {
       <!-- Plain chat header — normal chat (飞书私聊 / 本体): title + 已连接 -->
       <div v-else class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2">
-          <span class="pr-title t-title">{{ topic.title }}</span>
+          <span class="pr-title t-title">{{ titleOverride || topic.title }}</span>
           <v-spacer />
           <span
             class="status-dot"
@@ -769,7 +853,9 @@ onBeforeUnmount(() => {
           <!-- action row: 芝士's cheese action this turn — a quiet system line
                (amber dot = platform act) with an inline amber link, no box. -->
           <div v-if="m.kind === 'event' && actionResource(m)" class="action-card">
-            <span class="action-verb">{{ actionText(m) }}</span>
+            <!-- actionText may carry a <@handle> actor token (编辑了文档): render
+                 through the shared token→chip path so the actor is clickable. -->
+            <span class="action-verb" v-html="renderPlain(actionText(m))" />
             <button
               v-if="ACTION_META[actionResource(m)!]?.btn"
               type="button"
@@ -781,9 +867,12 @@ onBeforeUnmount(() => {
               {{ ACTION_META[actionResource(m)!].btn }}
             </button>
           </div>
-          <!-- system / event blocks: centered, gray, small (Feishu 系统提示) -->
+          <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
+               Content may carry a <@handle> actor token (归档/编辑…): render it
+               through the SAME token→chip path as messages so the actor is a
+               clickable mention, not raw text. -->
           <div v-else-if="m.kind === 'event'" class="im-event text-caption">
-            <span>{{ m.content }}</span>
+            <span v-html="renderPlain(m.content)" />
           </div>
 
           <!-- message row -->
@@ -1017,6 +1106,35 @@ onBeforeUnmount(() => {
             </button>
             <v-spacer />
           </div>
+          <!-- @-autocomplete: pick a teammate / topic / broadcast while typing @ -->
+          <div v-if="mentionMatches.length" class="mention-menu">
+            <button
+              v-for="(mm, i) in mentionMatches"
+              :key="mm.kind + mm.insert"
+              type="button"
+              class="mention-menu-item"
+              @click="pickMention(mm)"
+            >
+              <span
+                v-if="mm.kind === 'broadcast'"
+                class="mention-avatar mention-avatar--broadcast"
+              >
+                <v-icon size="13">mdi-bullhorn-outline</v-icon>
+              </span>
+              <span
+                v-else-if="mm.kind === 'member'"
+                class="mention-avatar"
+                :class="{ 'mention-avatar--agent': mm.agent }"
+              >{{ mm.label.slice(0, 1).toUpperCase() }}</span>
+              <span v-else class="mention-avatar mention-avatar--topic">
+                <v-icon size="13">mdi-pound</v-icon>
+              </span>
+              <span class="mention-menu-name">{{ mm.label }}</span>
+              <span v-if="mm.agent" class="mention-agent-badge">Agent</span>
+              <span class="mention-menu-sub">{{ mm.sub }}</span>
+              <span v-if="i === 0" class="mention-menu-hint">Enter</span>
+            </button>
+          </div>
           <!-- 图片输入: images waiting to go with the next send. -->
           <div v-if="pendingAtts.length || attsUploading" class="att-strip">
             <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
@@ -1187,6 +1305,74 @@ onBeforeUnmount(() => {
 .composer-input :deep(textarea) {
   font-size: 14px;
   line-height: 1.5;
+}
+
+/* @-autocomplete popup — mirrors WorkspaceView's composer picker. */
+.mention-menu {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 6px;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+.mention-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  min-height: 36px;
+  text-align: left;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.mention-menu-item:hover {
+  background: var(--fill, #f5f5f5);
+}
+.mention-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fff;
+  background: #8a94a3;
+  flex: none;
+}
+.mention-avatar--agent {
+  background: var(--accent, #f57f17);
+}
+.mention-avatar--broadcast {
+  background: var(--ink, #33373d);
+}
+.mention-avatar--topic {
+  background: var(--fill, #f0f1f3);
+  color: var(--muted, #6b6b6b);
+}
+.mention-menu-name {
+  font-weight: 500;
+}
+.mention-agent-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.12);
+}
+.mention-menu-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted, #999);
+}
+.mention-menu-hint {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-muted, #aaa);
 }
 
 /* The ONE amber chip allowed: @芝士 toggle when ON. OFF = neutral. */

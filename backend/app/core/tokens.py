@@ -15,18 +15,24 @@ every write is still authorized against the actor's real membership/role
 """
 
 import secrets
-import uuid
 from typing import TypedDict
 
 import jwt
 
 from app.core.config import settings
 
-# A stable secret survives restarts (sessions stay valid across a redeploy) when
-# pinned via env; otherwise reuse the sandbox signing secret, else a per-process
-# random one. Resolved once at import — mirrors sandbox_auth.SANDBOX_TOKEN.
+# fusion unify P3: human session tokens are minted by main's
+# ``create_access_token`` (app.common.auth), which signs with
+# ``settings.jwt_secret``. The verifier MUST use that same secret or every real
+# login token is rejected here and the cheesex API layer sees an anonymous
+# actor. (Pre-merge cheesex minted its own tokens with auth_token_secret /
+# sandbox_token — kept only as a fallback for any legacy/sandbox-minted session
+# token, never for the primary human path.)
 _SECRET: str = (
-    settings.auth_token_secret or settings.sandbox_token or secrets.token_hex(24)
+    settings.jwt_secret
+    or settings.auth_token_secret
+    or settings.sandbox_token
+    or secrets.token_hex(24)
 )
 _ALG = "HS256"
 _TYPE = "access"
@@ -45,7 +51,7 @@ class TokenClaims(TypedDict):
 
 
 def mint_session_token(
-    *, handle: str, user_id: uuid.UUID | None, ttl_s: int | None = None
+    *, handle: str, user_id: int | None, ttl_s: int | None = None
 ) -> str:
     """Sign a session token for a logged-in human. ``ttl_s`` overrides the
     configured lifetime (used only by tests exercising expiry)."""

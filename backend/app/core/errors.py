@@ -46,11 +46,15 @@ class BadRequestError(BaseError):
 
 
 class NotFoundError(BaseError):
-    def __init__(self, message: str = "Resource not found", data: Any | None = None) -> None:
+    def __init__(
+        self, message: str = "Resource not found", data: Any | None = None
+    ) -> None:
         super().__init__(HTTP_404_NOT_FOUND, message, data)
 
     @classmethod
-    def for_resource(cls, resource_type: str, resource_id: int | str) -> "NotFoundError":
+    def for_resource(
+        cls, resource_type: str, resource_id: int | str
+    ) -> "NotFoundError":
         return cls(
             message=f"Resource {resource_type} not found",
             data={"type": resource_type, "id": resource_id},
@@ -105,7 +109,9 @@ class AccessDeniedError(ForbiddenError):
 
 
 class PermissionDeniedError(ForbiddenError):
-    def __init__(self, message: str = "Permission denied", data: Any | None = None) -> None:
+    def __init__(
+        self, message: str = "Permission denied", data: Any | None = None
+    ) -> None:
         super().__init__(message, data)
 
 
@@ -150,7 +156,9 @@ def format_error_response(status_code: int, message: str) -> dict:
     }
 
 
-async def base_error_handler(request: Request, exc: BaseError) -> JSONResponse:
+async def base_error_handler(
+    request: Request, exc: BaseError
+) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
     if "text/event-stream" in accept:
         body = f"event: error\ndata: {exc.args[0]}\n\n"
@@ -184,7 +192,9 @@ async def validation_exception_handler(
     if "text/event-stream" in accept:
         body = f"event: error\ndata: {message}\n\n"
         return PlainTextResponse(
-            content=body, status_code=HTTP_400_BAD_REQUEST, media_type="text/event-stream"
+            content=body,
+            status_code=HTTP_400_BAD_REQUEST,
+            media_type="text/event-stream",
         )
     data = {"details": exc.errors()}
     body = BadRequestError(message, data=data).to_response_body()

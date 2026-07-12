@@ -19,7 +19,9 @@ from app.domain.avatars.services import AvatarService
 
 router = APIRouter(prefix="/avatars", tags=["Avatars"])
 
-AVATAR_STORAGE_DIR = os.path.join(os.path.abspath(settings.storage_local_path), "avatars")
+AVATAR_STORAGE_DIR = os.path.join(
+    os.path.abspath(settings.storage_local_path), "avatars"
+)
 
 
 async def get_avatar_service(db=Depends(get_db)) -> AvatarService:
@@ -101,7 +103,7 @@ async def get_default_avatar(
         media_type="image/png",
         headers={
             "Cache-Control": "public, max-age=31536000",
-            "Content-Disposition": f"inline; filename*=UTF-8''{quote(avatar.name, safe='')}",
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(avatar.name, safe='')}",  # noqa: E501
             "ETag": f'"{etag}"',
             "Last-Modified": last_modified,
         },
@@ -163,7 +165,7 @@ async def get_avatar_by_id(
         media_type="image/png",
         headers={
             "Cache-Control": "public, max-age=31536000",
-            "Content-Disposition": f"inline; filename*=UTF-8''{quote(avatar.name, safe='')}",
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(avatar.name, safe='')}",  # noqa: E501
             "ETag": f'"{etag}"',
             "Last-Modified": last_modified,
         },

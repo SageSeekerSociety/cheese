@@ -34,10 +34,18 @@ def _dist_dir() -> Path:
 
 
 def _origin(request: Request) -> str:
-    """The externally-reachable base URL. Prefer the configured public base so
-    the script resolves behind an edge/proxy; fall back to the request's own."""
-    base = settings.connector_public_base or str(request.base_url).rstrip("/")
-    return base.rstrip("/")
+    """The externally-reachable base URL the installed agent talks back to.
+
+    The script runs on the user's machine and must reach the *same* host they
+    downloaded it from, so the incoming request's own base URL is the correct
+    default — it's right regardless of which port/host actually serves us. Only
+    when `connector_public_base` is set to a real public origin (i.e. NOT the
+    localhost dev default) do we prefer it, so a deployment behind an edge/proxy
+    can pin the externally-reachable name."""
+    configured = settings.connector_public_base.rstrip("/")
+    if configured and "localhost" not in configured and "127.0.0.1" not in configured:
+        return configured
+    return str(request.base_url).rstrip("/")
 
 
 @router.get("/install.sh")

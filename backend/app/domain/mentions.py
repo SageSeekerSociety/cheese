@@ -37,8 +37,10 @@ def expand_mention_names(
     token (<@handle> / <#id>) — deterministic exact-match against the
     roster/topics, longest first. Both the display name AND the handle work:
     in chat people are labeled by handle, so "@andyl" must resolve even when
-    andyl's display name differs. Tokens already present are untouched (they
-    don't match the @name patterns)."""
+    andyl's display name differs. Matching is case-insensitive so "@Alice"
+    (display name "Alice", or the handle typed in the wrong case) still resolves
+    to the canonical lowercase handle token <@alice>. Tokens already present are
+    untouched (they don't match the @name patterns)."""
     subs: list[tuple[str, str]] = []
     for m in roster:
         tok = f"<@{m['handle']}>"
@@ -55,9 +57,15 @@ def expand_mention_names(
         boundary = _ASCII_BOUNDARY if _ASCII_WORD.search(pat) else ""
         # (?<!<) keeps already-encoded tokens intact: the "@handle" inside a
         # produced "<@handle>" must not be re-wrapped by a later pattern.
-        # bind tok per-iteration (B023): a bare closure would see the last tok
+        # bind tok per-iteration (B023): a bare closure would see the last tok.
+        # IGNORECASE: "@Alice" (name "Alice") and a mis-cased handle both map to
+        # the canonical lowercase token; the replacement tok is always the
+        # stored lowercase handle, so the emitted token is exactly <@alice>.
         text = re.sub(
-            r"(?<!<)" + re.escape(pat) + boundary, lambda _m, t=tok: t, text
+            r"(?<!<)" + re.escape(pat) + boundary,
+            lambda _m, t=tok: t,
+            text,
+            flags=re.IGNORECASE,
         )
     return text
 

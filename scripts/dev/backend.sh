@@ -11,9 +11,24 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)/backend"
 cd "$ROOT"
+# Kill the old server AND wait until :8799 is truly free before starting a new
+# one. A bare `pkill; sleep 2` is not enough (hard-won): `uv run uvicorn` is a
+# parent wrapper + child worker, zombies linger, and starting while an old
+# listener still holds the port leaves a stale process serving OLD code on the
+# same port — the new one silently loses the race. Symptom: your edits don't take
+# effect until you manually pkill. So: kill both patterns, then poll lsof until
+# the port is empty, force-killing any straggler each round.
 pkill -9 -f "uvicorn app.main" 2>/dev/null || true
-lsof -ti:8799 | xargs kill -9 2>/dev/null || true
-sleep 2
+pkill -9 -f "uv run uvicorn" 2>/dev/null || true
+for _ in $(seq 1 20); do
+  holders="$(lsof -ti:8799 2>/dev/null || true)"
+  [ -z "$holders" ] && break
+  echo "$holders" | xargs kill -9 2>/dev/null || true
+  sleep 0.5
+done
+if [ -n "$(lsof -ti:8799 2>/dev/null || true)" ]; then
+  echo "ERROR: :8799 still held after kill — refusing to start a second server"; exit 1
+fi
 env -u ANTHROPIC_API_KEY -u ANTHROPIC_MODEL -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
     -u ANTHROPIC_VERTEX_PROJECT_ID -u AI_AGENT -u ANTHROPIC_AUTH_TOKEN \
     -u ANTHROPIC_BASE_URL -u OPENAI_API_KEY \

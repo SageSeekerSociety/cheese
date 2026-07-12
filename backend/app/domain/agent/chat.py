@@ -37,12 +37,12 @@ from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_skills
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.cx_notification.models import NotifKind, NotifLevel
+from app.domain.cx_notification.services import NotificationService
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import memory_store
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
-from app.domain.cx_notification.models import NotifKind, NotifLevel
-from app.domain.cx_notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
@@ -264,8 +264,6 @@ def _cheese_resource(command: str) -> str | None:
     return None
 
 
-
-
 # B2 (引用语法遵循): a bare "backend/app/x.py" inside an injected memory fact is
 # a bad few-shot example — the model imitates whatever shape the prompt shows,
 # so bare paths in memories beget bare paths in docs/replies. Wrap path-looking
@@ -298,7 +296,7 @@ def _build_system_prompt(
             "## 本轮第一件事：先给本话题起名（先于一切）\n"
             "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
             "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
-            "`cheese title \"<标题>\"` 起个 ≤12 字简短标题，然后再照常回应、干活。"
+            '`cheese title "<标题>"` 起个 ≤12 字简短标题，然后再照常回应、干活。'
             "这条优先于「先回应，再干活」：起标题只是一条命令，几乎不花时间。"
             "（只起一次，定了别反复改。）"
         )
@@ -600,9 +598,7 @@ class ChatService:
             if topic is None:
                 return None
             project = await ProjectRepository(session).get(topic.project_id)
-            balance = await ComputeGrantRepository(session).summary(
-                topic.project_id
-            )
+            balance = await ComputeGrantRepository(session).summary(topic.project_id)
         max_concurrent = settings.max_concurrent_turns
         override = ((project.settings if project else None) or {}).get(
             "max_concurrent_turns"
@@ -618,9 +614,7 @@ class ChatService:
             ),
         }
 
-    async def _save_session_pointer(
-        self, topic_id: uuid.UUID, session_id: str
-    ) -> None:
+    async def _save_session_pointer(self, topic_id: uuid.UUID, session_id: str) -> None:
         """Best-effort: point the topic at the (possibly partial) session so the
         next summon resumes it. Never raises — used on failure paths."""
         try:
@@ -656,6 +650,25 @@ class ChatService:
             payloads: list[dict] = []
             anchor_id: uuid.UUID | None = None
             if content:
+                # Same backstop the doc/chat-reply paths already had, but the
+                # human chat-send path used to skip it: a friendly "@Alice /
+                # @handle / @话题名" is canonicalized into the structured token
+                # (<@alice> / <#id>) BEFORE the block is stored, so it renders
+                # as a clickable chip instead of leaking raw "@Alice" text.
+                # Private topics have no roster to resolve against (and expose
+                # no member list), so they store the content verbatim.
+                roster = (
+                    []
+                    if topic.is_private
+                    else await ProjectRepository(session).list_members(topic.project_id)
+                )
+                if roster:
+                    topic_refs = [
+                        {"id": str(t.id), "title": t.title}
+                        for t in await topics.list_for_project(topic.project_id)
+                        if t.kind != TopicKind.root and t.id != topic.id
+                    ]
+                    content = expand_mention_names(content, roster, topic_refs)
                 user_block = await blocks.add(
                     project_id=topic.project_id,
                     topic_id=topic.id,
@@ -667,13 +680,6 @@ class ChatService:
                     reply_to=_parse_uuid(reply_to),  # B3: thread under another
                 )
                 # Resolve <@handle> mentions in the human message → strong notify.
-                roster = (
-                    []
-                    if topic.is_private
-                    else await ProjectRepository(session).list_members(
-                        topic.project_id
-                    )
-                )
                 resolved, _unresolved = await self._notify_mentions(
                     session, topic, author, content, roster
                 )
@@ -713,9 +719,7 @@ class ChatService:
         try:
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
-                await blocks.add_reaction_if_absent(
-                    user_block_id, "✅", CHEESE_AUTHOR
-                )
+                await blocks.add_reaction_if_absent(user_block_id, "✅", CHEESE_AUTHOR)
                 reactions = await blocks.reactions_for_block(user_block_id)
                 await session.commit()
             return {"block_id": str(user_block_id), "reactions": reactions}
@@ -847,14 +851,10 @@ class ChatService:
             # Expand @all/@here to the topic's members. @here should be the
             # ACTIVE members, but there's no presence signal yet, so it equals
             # @all for now (TODO: intersect with presence once it lands).
-            members = await TopicMembershipRepository(session).list_for_topic(
-                topic.id
-            )
+            members = await TopicMembershipRepository(session).list_for_topic(topic.id)
             concrete += [m.member_handle for m in members]
         targets = [
-            h
-            for h in dict.fromkeys(concrete)
-            if h not in (author, CHEESE_AUTHOR)
+            h for h in dict.fromkeys(concrete) if h not in (author, CHEESE_AUTHOR)
         ]
         if targets:
             notifs = NotificationService(session)
@@ -915,9 +915,7 @@ class ChatService:
                 if b.kind in (BlockKind.message, BlockKind.attachment)
                 and b.author_type == AuthorType.human
             ]
-            prompt_text = (
-                "\n".join(_prompt_line(b) for b in pending) or content
-            )
+            prompt_text = "\n".join(_prompt_line(b) for b in pending) or content
             # 图片输入: every pending image rides this turn's user message as a
             # NATIVE base64 image block (Claude Code native image input) — the
             # provider side that has the file does the embedding.
@@ -946,9 +944,7 @@ class ChatService:
             )
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             roster = (
-                []
-                if is_private
-                else await projects_repo.list_members(topic.project_id)
+                [] if is_private else await projects_repo.list_members(topic.project_id)
             )
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
             topic_refs = []
@@ -1057,10 +1053,7 @@ class ChatService:
                         resource = _cheese_resource(str(args.get("command", "")))
                         if resource:
                             yield {"type": "state", "resource": resource}
-                            if (
-                                resource in _ACTION_LABEL
-                                and resource not in actions
-                            ):
+                            if resource in _ACTION_LABEL and resource not in actions:
                                 actions.append(resource)
                 elif isinstance(event, AgentResult):
                     final_text = event.text
@@ -1088,7 +1081,10 @@ class ChatService:
             # provider detail quoted for the record.
             logger.warning(
                 "turn %s provider error topic=%s rate_limit=%s api_status=%s",
-                turn_id, topic_id, rate_limit, api_error_status,
+                turn_id,
+                topic_id,
+                rate_limit,
+                api_error_status,
             )
             detail = final_text.strip()
             quoted = f"（服务原话：{detail}）" if detail else ""
@@ -1121,9 +1117,7 @@ class ChatService:
                 resets = datetime.fromtimestamp(
                     rate_limit["resets_at"], tz=ZoneInfo("Asia/Shanghai")
                 )
-                recover = (
-                    "恢复后我会自动接着跑" if not is_resume else "到点再 @ 它"
-                )
+                recover = "恢复后我会自动接着跑" if not is_resume else "到点再 @ 它"
                 fail_text = (
                     f"⚠️ 芝士的 AI 座位额度用完了，北京时间 "
                     f"{resets:%m-%d %H:%M} 恢复，{recover}。{quoted}"
@@ -1481,8 +1475,10 @@ class ChatService:
             if not m.due_date:
                 return "未定"
             d = (m.due_date.date() - today).days
-            return f"{m.due_date.date().isoformat()}（剩 {d} 天）" if d >= 0 else (
-                f"{m.due_date.date().isoformat()}（已逾期 {-d} 天）"
+            return (
+                f"{m.due_date.date().isoformat()}（剩 {d} 天）"
+                if d >= 0
+                else (f"{m.due_date.date().isoformat()}（已逾期 {-d} 天）")
             )
 
         milestone_lines = "\n".join(

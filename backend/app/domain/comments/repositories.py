@@ -139,7 +139,9 @@ class CommentRepository:
             counts[attitude] = count
         return counts
 
-    async def bulk_count_votes(self, comment_ids: list[int]) -> dict[int, dict[str, int]]:
+    async def bulk_count_votes(
+        self, comment_ids: list[int]
+    ) -> dict[int, dict[str, int]]:
         """Aggregate POSITIVE/NEGATIVE counts for many comments in one query."""
         if not comment_ids:
             return {}
@@ -156,10 +158,14 @@ class CommentRepository:
             cid: {"POSITIVE": 0, "NEGATIVE": 0} for cid in comment_ids
         }
         for attitudable_id, attitude, count in result.all():
-            out.setdefault(attitudable_id, {"POSITIVE": 0, "NEGATIVE": 0})[attitude] = count
+            out.setdefault(attitudable_id, {"POSITIVE": 0, "NEGATIVE": 0})[attitude] = (
+                count
+            )
         return out
 
-    async def bulk_get_user_votes(self, comment_ids: list[int], user_id: int) -> dict[int, str]:
+    async def bulk_get_user_votes(
+        self, comment_ids: list[int], user_id: int
+    ) -> dict[int, str]:
         if not comment_ids or user_id is None or user_id <= 0:
             return {}
         stmt: Select[tuple[Attitude]] = select(Attitude).where(
@@ -170,8 +176,10 @@ class CommentRepository:
         result = await self._session.execute(stmt)
         return {a.attitudable_id: a.attitude for a in result.scalars().all()}
 
-    async def list_sub_comments(self, parent_comment_ids: list[int]) -> dict[int, list[Comment]]:
-        """Fetch direct sub-comments (commentable_type=COMMENT) for the given parent ids."""
+    async def list_sub_comments(
+        self, parent_comment_ids: list[int]
+    ) -> dict[int, list[Comment]]:
+        """Fetch direct sub-comments (commentable_type=COMMENT) for the given parent ids."""  # noqa: E501
         if not parent_comment_ids:
             return {}
         stmt: Select[tuple[Comment]] = (

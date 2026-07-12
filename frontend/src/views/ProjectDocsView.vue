@@ -6,15 +6,14 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
   deleteMemory,
-  getDoc,
   getProject,
   getProjectDecisions,
   listMemory,
   listTopics,
-  putDoc,
 } from '../api'
 import type { MemoryEntryOut } from '../api'
 import { relTime } from '../lib/relTime'
+import DocEditor from '../components/DocEditor.vue'
 import type { Block, Topic } from '../cx_types'
 
 // 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集. Shown either as a standalone
@@ -59,14 +58,33 @@ function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
 }
 
-// ---- 章程: the root topic's living doc (改了就等于给芝士下指令) ----
+// ---- 章程: the root topic's living doc (改了就等于给芝士下指令). The rich
+// editor (DocEditor) owns loading/saving the doc's markdown via the same
+// getDoc/putDoc API DocPanel uses. Like the workspace DocPanel, it is ALWAYS
+// editable and autosaves (debounce + ⌘S + blur) — no 编辑 toggle. Here we only
+// mirror the save-status indicator it emits. ----
 const rootTopicId = ref<string | null>(null)
-const charterMd = ref<string>('')
-const lastSavedMd = ref<string>('')
-const editing = ref(false)
 const saving = ref(false)
 const savedAt = ref<number | null>(null)
-const charterDirty = computed<boolean>(() => charterMd.value !== lastSavedMd.value)
+const charterDirty = ref(false)
+
+function onCharterSaving() {
+  saving.value = true
+  savedAt.value = null
+}
+function onCharterSaved() {
+  saving.value = false
+  charterDirty.value = false
+  savedAt.value = Date.now()
+}
+function onCharterDirty() {
+  charterDirty.value = true
+  savedAt.value = null
+}
+function onCharterError(message: string) {
+  saving.value = false
+  error.value = message
+}
 
 // ---- 决策记录 ----
 const decisions = ref<Block[]>([])
@@ -94,23 +112,14 @@ async function load() {
   loading.value = true
   error.value = null
   savedAt.value = null
-  editing.value = false
   try {
     const project = await getProject(props.projectId)
     projectName.value = project.name
 
     if (kind.value === 'charter') {
-      const rid = project.root_topic_id ?? null
-      rootTopicId.value = rid
-      if (!rid) {
-        charterMd.value = ''
-        lastSavedMd.value = ''
-      } else {
-        const block = await getDoc(rid)
-        const md = block?.content ?? ''
-        charterMd.value = md
-        lastSavedMd.value = md
-      }
+      // DocEditor loads/persists the doc itself once rootTopicId is set.
+      rootTopicId.value = project.root_topic_id ?? null
+      charterDirty.value = false
     } else if (kind.value === 'decisions') {
       const payload = await getProjectDecisions(props.projectId)
       decisions.value = payload.data
@@ -125,29 +134,6 @@ async function load() {
   } finally {
     loading.value = false
   }
-}
-
-async function saveCharter() {
-  const rid = rootTopicId.value
-  if (!rid || !charterDirty.value) return
-  saving.value = true
-  error.value = null
-  try {
-    await putDoc(rid, charterMd.value, AUTHOR)
-    lastSavedMd.value = charterMd.value
-    savedAt.value = Date.now()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存失败'
-  } finally {
-    saving.value = false
-  }
-}
-
-function toggleEditing() {
-  if (editing.value && charterDirty.value) {
-    saveCharter()
-  }
-  editing.value = !editing.value
 }
 
 // 返回工作台: project workspace (defaults to the root topic).
@@ -202,16 +188,6 @@ watch([kind, () => props.projectId], load)
               <span class="status-dot status-dot--ok" />已保存
             </span>
             <span v-else-if="charterDirty" class="t-meta">未保存</span>
-            <v-btn
-              v-if="rootTopicId"
-              size="small"
-              variant="text"
-              :class="editing ? 'btn-toggle--on' : 'c-muted'"
-              :prepend-icon="editing ? 'mdi-check' : 'mdi-pencil-outline'"
-              @click="toggleEditing"
-            >
-              {{ editing ? '完成编辑' : '编辑' }}
-            </v-btn>
           </template>
         </div>
         <div v-if="kind === 'charter'" class="t-meta mt-1">
@@ -257,44 +233,28 @@ watch([kind, () => props.projectId], load)
           </v-card>
         </template>
 
-        <!-- ===== 章程: project root doc, read/edit ===== -->
+        <!-- ===== 章程: project root doc, read/edit with the rich tiptap
+             editor — the SAME editing experience as the workspace doc panel
+             (drag handle, tables, task lists, code highlighting), persisted via
+             the same getDoc/putDoc API. ===== -->
         <template v-else-if="kind === 'charter'">
           <v-card class="charter-card">
             <div class="charter-body">
-              <v-textarea
-                v-if="editing"
-                v-model="charterMd"
-                variant="outlined"
-                auto-grow
-                rows="14"
-                hide-details
-                class="charter-input"
-                placeholder="芝士会在这里维护项目章程，你也可以直接编辑（Markdown）"
+              <DocEditor
+                v-if="rootTopicId"
+                :topic-id="rootTopicId"
+                :editable="true"
+                placeholder="芝士还没写章程——它会在你定下项目方向后维护这份根文档。直接在这里写就行，会自动保存。"
+                @saving="onCharterSaving"
+                @saved="onCharterSaved"
+                @dirty="onCharterDirty"
+                @error="onCharterError"
               />
-              <template v-else>
-                <div
-                  v-if="charterMd"
-                  class="md-content"
-                  v-html="renderMarkdown(charterMd)"
-                />
-                <div v-else class="text-medium-emphasis text-body-2 py-2">
-                  芝士还没写章程——它会在你定下项目方向后维护这份根文档。点「编辑」可以自己写。
-                </div>
-              </template>
+              <div v-else class="text-medium-emphasis text-body-2 py-2">
+                这个项目还没有根话题，暂时无法编辑章程。
+              </div>
             </div>
           </v-card>
-          <div v-if="editing" class="d-flex justify-end mt-3">
-            <v-btn
-              color="primary"
-              variant="flat"
-              prepend-icon="mdi-content-save-outline"
-              :loading="saving"
-              :disabled="!charterDirty"
-              @click="saveCharter"
-            >
-              保存
-            </v-btn>
-          </div>
         </template>
 
         <!-- ===== 决策记录 ===== -->
@@ -381,23 +341,12 @@ watch([kind, () => props.projectId], load)
   background: var(--canvas);
 }
 
-/* Edit toggle when on — neutral ink, not amber. */
-.btn-toggle--on {
-  color: var(--ink) !important;
-  background: var(--fill);
-}
-
 /* 章程 card: a clean document sheet. */
 .charter-card {
   background: var(--surface);
 }
 .charter-body {
   padding: 28px 32px;
-}
-.charter-input :deep(textarea) {
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-  line-height: 1.7;
 }
 
 /* 决策记录 cards: quiet left rule (源自原始话题) — neutral, not amber. */
