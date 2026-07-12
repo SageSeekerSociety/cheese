@@ -283,18 +283,6 @@ export function getMemberSummary(
   )
 }
 
-// 极简登录 (Phase 0): get-or-create by handle, no password.
-export function login(handle: string, name = ''): Promise<Me> {
-  return request<Me>('/users/login', {
-    method: 'POST',
-    body: JSON.stringify({ handle, name }),
-  })
-}
-
-export function listUsers(): Promise<ListPayload<Me>> {
-  return request<ListPayload<Me>>('/users')
-}
-
 // 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2). Cross-project résumé:
 // header + skills/interests + 芝士 understanding + per-project contributions.
 export function getUserProfile(handle: string): Promise<UserProfile> {

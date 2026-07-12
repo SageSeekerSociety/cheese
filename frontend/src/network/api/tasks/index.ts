@@ -314,12 +314,6 @@ export namespace TasksApi {
       method: 'GET',
     })
 
-  export const getAIAdviceConversations = (taskId: number) =>
-    NewApiInstance.request<{ conversations: TaskAIAdviceConversation[] }>({
-      url: `/tasks/${taskId}/ai-advice/conversations`,
-      method: 'GET',
-    })
-
   // 获取按会话ID分组的对话历史
   export const getGroupedConversations = (taskId: number) =>
     NewApiInstance.request<{ conversations: ConversationGroupSummary[] }>({

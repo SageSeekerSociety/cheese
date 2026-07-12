@@ -33,7 +33,6 @@ import { zodI18nMap } from 'zod-i18n-map'
 import translation from 'zod-i18n-map/locales/zh-CN/zod.json'
 
 import App from './App.vue'
-import { registerDirectives } from './directives'
 
 // Plugins
 import { registerPlugins } from '@/plugins'
@@ -63,7 +62,6 @@ AccountService.init()
 const app = createApp(App)
 
 registerPlugins(app)
-registerDirectives(app)
 app.mount('#app')
 
 // Initialize i18next

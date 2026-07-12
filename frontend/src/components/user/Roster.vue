@@ -6,7 +6,7 @@
       :key="user.id"
       exact
       link
-      :to="{ name: 'UserQuestion', params: { id: user.id } }"
+      :to="{ name: 'UserDetail', params: { id: user.id } }"
     >
       <v-row>
         <v-col cols="1">
