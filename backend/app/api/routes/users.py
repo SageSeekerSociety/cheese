@@ -3859,7 +3859,7 @@ async def deactivate_invite_code(
 
 
 @router.get(
-    "/{userId}/oauth-connections",
+    "/{userId}/oauth/connections",
     summary="List user OAuth connections",
 )
 async def list_oauth_connections(
@@ -3882,7 +3882,7 @@ async def list_oauth_connections(
 
 
 @router.delete(
-    "/{userId}/oauth-connections/{connectionId}",
+    "/{userId}/oauth/connections/{connectionId}",
     summary="Unbind OAuth connection",
 )
 async def delete_oauth_connection(
