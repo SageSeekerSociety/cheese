@@ -31,6 +31,7 @@ from app.domain.review import models as review  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
 from app.domain.task import models as task  # noqa: F401
 from app.domain.team import models as team  # noqa: F401
+from app.domain.team_project import models as team_project  # noqa: F401
 from app.domain.topic import models as topic  # noqa: F401
 from app.domain.topics import models as topics  # noqa: F401
 from app.domain.usage import models as usage  # noqa: F401
