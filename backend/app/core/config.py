@@ -203,6 +203,33 @@ class Settings(BaseSettings):
         "soul",
     ]
 
+    # --- OAuth login providers (read via getattr in app.domain.oauth.services;
+    # they MUST be declared here — Settings has extra="ignore", so undeclared
+    # env vars are silently dropped and the feature can never be configured) ---
+    oauth_enabled_providers: str = ""  # comma-separated: "github,google,ruc"
+    oauth_github_client_id: str | None = None
+    oauth_github_client_secret: str | None = None
+    oauth_github_redirect_url: str | None = None
+    oauth_google_client_id: str | None = None
+    oauth_google_client_secret: str | None = None
+    oauth_google_redirect_url: str | None = None
+    oauth_ruc_client_id: str | None = None
+    oauth_ruc_client_secret: str | None = None
+    oauth_ruc_redirect_url: str | None = None
+
+    # --- WebAuthn / passkeys (same declare-or-dropped rule as above) ---
+    webauthn_rp_id: str = "localhost"
+    webauthn_rp_name: str = "Cheese Community"
+    webauthn_origin: str = "http://localhost:5173"
+
+    # --- S3 storage (used when storage_type == "s3") ---
+    s3_bucket: str = "cheese"
+    s3_endpoint_url: str | None = None
+    s3_access_key: str | None = None
+    s3_secret_key: str | None = None
+    s3_region: str = "us-east-1"
+    s3_public_url: str | None = None
+
     # --- Human auth (P1 agent-as-user / 真鉴权) ---
     # Session tokens (JWT HS256) are signed AND verified with the one
     # ``jwt_secret`` (same secret as main's access/refresh tokens) — no
