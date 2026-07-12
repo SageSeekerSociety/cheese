@@ -93,6 +93,10 @@ jobs:
           # LLM tests mock the completions; the client just needs to construct
           # (the openai SDK errors without any credentials). Dummy key.
           OPENAI_API_KEY: test-key
+          # The default AI pool is "available" only when its gateway credential is
+          # present (AgentProfile.available = bool(auth_token)); the market test
+          # asserts availability. Dummy token — no real calls are made.
+          ANTHROPIC_AUTH_TOKEN: test-token
         run: uv run pytest tests/ -n auto --tb=short -k "not kotlin"
 
   lint:
