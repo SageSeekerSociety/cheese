@@ -6,6 +6,12 @@ from fastapi.testclient import TestClient
 from tests.integration.conftest import UserCreator, unique_int
 
 
+@pytest.mark.skip(
+    reason="main's gantt-style int Project REST API (POST/PATCH/DELETE /projects "
+    "with teamId/leaderId) was never ported to Python and its tables were dropped "
+    "in the fusion merge (unify P2). The single project entity is now cheesex's "
+    "uuid Project at /api/projects, which has a different shape."
+)
 class TestProjectIntegration:
     @pytest.fixture
     def setup_project(self, user_client: UserCreator, api_client: TestClient) -> dict:

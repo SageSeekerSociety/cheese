@@ -5,12 +5,14 @@ approve requires a logged-in human.
 """
 
 from app.core.tokens import verify_session_token
+from tests.conftest import seed_user
 
 
 def _login(client, handle: str) -> str:
-    r = client.post("/api/users/login", json={"handle": handle})
-    assert r.status_code == 200
-    return r.json()["data"]["token"]
+    # POST /api/users/login (cheesex Phase-0 handle login) was retired in the fusion
+    # merge (unify P3). Device approval binds the token's int user id as the owner,
+    # so seed a real user + a numeric-sub token.
+    return seed_user(client, handle)
 
 
 def _bearer(token: str) -> dict:

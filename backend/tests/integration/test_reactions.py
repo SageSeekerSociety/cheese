@@ -6,11 +6,7 @@ import asyncio
 import uuid
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
-import app.models  # noqa: F401  (registers all tables on Base.metadata)
-from app.core.db import Base
 from app.domain.agent.chat import ChatService
 from tests.conftest import StubAgent
 
@@ -142,17 +138,12 @@ def test_unsummoned_message_gets_no_receipt(client):
 
 
 @pytest.mark.anyio
-async def test_resume_turn_adds_no_receipt(tmp_path):
+async def test_resume_turn_adds_no_receipt(client, tmp_path):
     """A system-initiated turn (自动续跑 / nudge) has no human summon message —
     nothing gets ✅-acked and no reaction frame is emitted."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Use the shared Postgres-backed factory: the merged Base.metadata now carries
+    # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
+    factory = client.test_factory  # type: ignore[attr-defined]
 
     svc = ChatService(
         session_factory=factory,
@@ -191,5 +182,4 @@ async def test_resume_turn_adds_no_receipt(tmp_path):
     async with factory() as session:
         rows = (await session.scalars(select(BlockReaction))).all()
     assert rows == []
-    await asyncio.sleep(0)  # let any stray tasks settle before engine dispose
-    await engine.dispose()
+    await asyncio.sleep(0)  # let any stray tasks settle

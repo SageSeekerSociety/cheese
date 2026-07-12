@@ -2,16 +2,15 @@
 resolved from the verified token (not the body), the Phase-0 handle fallback
 still works, and a token-authenticated outsider is denied (越权)."""
 
-from app.core.tokens import verify_session_token
+from app.core.tokens import mint_session_token, verify_session_token
 
 
 def _login(client, handle: str) -> str:
-    r = client.post("/api/users/login", json={"handle": handle})
-    assert r.status_code == 200
-    data = r.json()["data"]
-    assert data["handle"] == handle
-    assert data["token"]
-    return data["token"]
+    # The cheesex Phase-0 handle-login endpoint (POST /api/users/login) was retired
+    # in the fusion merge (unify P3: auth unified to main's SRP login). The actor
+    # here is identified purely by the token's ``handle`` claim, so mint a session
+    # token directly to exercise the (still-present) token-actor resolution.
+    return mint_session_token(handle=handle, user_id=None)
 
 
 def _bearer(token: str) -> dict:

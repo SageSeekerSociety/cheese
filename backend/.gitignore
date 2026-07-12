@@ -29,3 +29,4 @@ connector-dist/
 # connector build cache (frozen cli/ extracted from git — see scripts/build-connector.sh)
 backend/.cli-src/
 .cli-src/
+uploads/

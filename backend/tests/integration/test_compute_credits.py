@@ -9,7 +9,7 @@ refused with the platform's structured event; unlinked projects are unlimited.
 
 import pytest
 
-from tests.conftest import wait_turns_idle
+from tests.conftest import seed_space, wait_turns_idle
 
 # The stub agent reports usage of 10 input + 5 output tokens per turn; at the
 # default rate (1 credit = 10k tokens) one turn costs 0.0015 credits.
@@ -25,7 +25,7 @@ def _mk_project(client, name: str = "Demo") -> str:
 
 def _mk_task(client, *, compute_credits: float | None) -> str:
     """space → template (with a compute_credits resource pack) → task."""
-    space_id = client.post("/api/spaces", json={"name": "信院"}).json()["data"]["id"]
+    space_id = seed_space(client, "信院")
     pack = {} if compute_credits is None else {"compute_credits": compute_credits}
     template_id = client.post(
         f"/api/spaces/{space_id}/templates",

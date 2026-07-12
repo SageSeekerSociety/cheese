@@ -4,6 +4,7 @@ import asyncio
 import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
+from tests.conftest import seed_space
 
 
 def _seed_block(client, project_id, topic_id, author, author_type, kind):
@@ -85,9 +86,9 @@ def test_project_overview(client):
 
 def test_space_board_lists_linked_teams(client):
     # Build Space → template → task, then link a project.
-    space = client.post("/api/spaces", json={"name": "明理书院"}).json()["data"]
+    space_id = seed_space(client, "明理书院")
     tmpl = client.post(
-        f"/api/spaces/{space['id']}/templates", json={"name": "入驻"}
+        f"/api/spaces/{space_id}/templates", json={"name": "入驻"}
     ).json()["data"]
     task = client.post(
         f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
@@ -95,14 +96,14 @@ def test_space_board_lists_linked_teams(client):
     p = client.post("/api/projects", json={"name": "队伍A"}).json()["data"]
     client.post(f"/api/projects/{p['id']}/tasks", json={"task_id": task["id"]})
 
-    board = client.get(f"/api/spaces/{space['id']}/dashboard").json()["data"]
+    board = client.get(f"/api/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 1
     assert board["teams"][0]["name"] == "队伍A"
 
 
 def test_space_board_empty_for_space_without_links(client):
-    space = client.post("/api/spaces", json={"name": "空书院"}).json()["data"]
-    board = client.get(f"/api/spaces/{space['id']}/dashboard").json()["data"]
+    space_id = seed_space(client, "空书院")
+    board = client.get(f"/api/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 0
 
 

@@ -7,11 +7,7 @@ import asyncio
 import uuid
 
 import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
-import app.models  # noqa: F401  (registers all tables on Base.metadata)
-from app.core.db import Base
 from app.domain.agent.chat import ChatService
 from app.domain.agent.service import (
     AgentDelta,
@@ -49,15 +45,10 @@ class SlowAgent(AgentService):
 
 
 @pytest.mark.anyio
-async def test_post_lands_while_agent_turn_is_running(tmp_path):
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+async def test_post_lands_while_agent_turn_is_running(client, tmp_path):
+    # Use the shared Postgres-backed factory: the merged Base.metadata now carries
+    # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
+    factory = client.test_factory  # type: ignore[attr-defined]
 
     agent = SlowAgent()
     svc = ChatService(
@@ -136,15 +127,10 @@ class LimitAgent(AgentService):
 
 
 @pytest.mark.anyio
-async def test_error_result_never_becomes_cheeses_reply(tmp_path):
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+async def test_error_result_never_becomes_cheeses_reply(client, tmp_path):
+    # Use the shared Postgres-backed factory: the merged Base.metadata now carries
+    # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
+    factory = client.test_factory  # type: ignore[attr-defined]
 
     # 1755000000 = 2025-08-12 20:00 Asia/Shanghai — the platform must translate
     # the structured reset timestamp into 北京时间 wording.
@@ -230,16 +216,11 @@ class FlakyAgent(AgentService):
 
 
 @pytest.mark.anyio
-async def test_transient_api_error_is_retried(tmp_path, monkeypatch):
+async def test_transient_api_error_is_retried(client, tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "sleep", _fast_sleep)  # skip the real backoff
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Use the shared Postgres-backed factory: the merged Base.metadata now carries
+    # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
+    factory = client.test_factory  # type: ignore[attr-defined]
 
     agent = FlakyAgent()
     svc = ChatService(
@@ -296,19 +277,14 @@ class MidCrashAgent(AgentService):
 
 
 @pytest.mark.anyio
-async def test_mid_stream_crash_saves_session_pointer(tmp_path, monkeypatch):
+async def test_mid_stream_crash_saves_session_pointer(client, tmp_path, monkeypatch):
     """Resume, not replay: a turn that dies after producing output must leave
     the topic pointing at the PARTIAL session, so the next summon continues
     from where it stopped instead of redoing (and re-side-effecting) the work."""
     monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Use the shared Postgres-backed factory: the merged Base.metadata now carries
+    # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
+    factory = client.test_factory  # type: ignore[attr-defined]
 
     svc = ChatService(
         session_factory=factory,

@@ -247,3 +247,72 @@ async def python_client(_pg_schema, stub_agent: StubAgent, tmp_path):
 
     app.dependency_overrides.clear()
     await engine.dispose()
+
+
+# --- shared seed helpers -----------------------------------------------------
+
+
+def seed_space(client: TestClient, name: str = "信院") -> int:
+    """Insert a 知是 Space row directly and return its int id.
+
+    The cheesex ``POST /api/spaces`` uuid stub was retired in the fusion merge
+    (unify P1b/c: one Space = main int). The task-template market still lives on
+    top of a Space, so tests that need one seed it through the DB here.
+    """
+    import asyncio as _asyncio
+    from datetime import UTC, datetime
+
+    from app.domain.space.models import Space
+
+    holder: dict[str, int] = {}
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            now = datetime.now(UTC)
+            space = Space(
+                name=name,
+                intro="",
+                description="",
+                announcements=[],
+                task_templates=[],
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(space)
+            await session.flush()
+            holder["id"] = space.id
+            await session.commit()
+
+    _asyncio.run(_seed())
+    return holder["id"]
+
+
+def seed_user(client: TestClient, handle: str) -> str:
+    """Get-or-create a real 知是 User for ``handle`` and return a session token
+    whose ``sub`` is the int user id (so ActorResolver resolves ``user_id``).
+
+    The cheesex POST /api/users/login handle-login was retired in the fusion
+    merge (unify P3). Flows that need a genuine logged-in human with a DB-backed
+    user id (e.g. device approval binding an owner) use this instead of a bare
+    handle token.
+    """
+    import asyncio as _asyncio
+
+    from app.common.auth import create_access_token
+    from app.domain.user.repositories import UserRepository
+
+    holder: dict[str, int] = {}
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            repo = UserRepository(session)
+            user = await repo.get_by_username(handle)
+            if user is None:
+                user = await repo.create_user(
+                    username=handle, email=f"{handle}@example.com"
+                )
+            holder["id"] = user.id
+            await session.commit()
+
+    _asyncio.run(_seed())
+    return create_access_token(holder["id"], handle=handle)

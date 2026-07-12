@@ -4,6 +4,7 @@ import asyncio
 import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
+from tests.conftest import seed_space
 from tests.conftest import wait_turns_idle as _wait_turns_idle
 
 
@@ -27,9 +28,9 @@ def test_project_create_autocreates_root_topic(client):
 
 def test_link_task_and_duplicate(client):
     p = _project(client)
-    space = client.post("/api/spaces", json={"name": "S"}).json()["data"]
+    space_id = seed_space(client, "S")
     tmpl = client.post(
-        f"/api/spaces/{space['id']}/templates", json={"name": "T"}
+        f"/api/spaces/{space_id}/templates", json={"name": "T"}
     ).json()["data"]
     task = client.post(
         f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
@@ -48,9 +49,9 @@ def test_link_task_and_duplicate(client):
 def test_unlink_task(client):
     # 退出 Task 协议 (§4): a project can break its link to a task.
     p = _project(client)
-    space = client.post("/api/spaces", json={"name": "S"}).json()["data"]
+    space_id = seed_space(client, "S")
     tmpl = client.post(
-        f"/api/spaces/{space['id']}/templates", json={"name": "T"}
+        f"/api/spaces/{space_id}/templates", json={"name": "T"}
     ).json()["data"]
     task = client.post(
         f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
@@ -68,9 +69,9 @@ def test_unlink_task(client):
 def test_link_task_inherits_template_default_role(client):
     p = _project(client)  # no expert_role
     assert p.get("expert_role") in (None, "")
-    space = client.post("/api/spaces", json={"name": "S"}).json()["data"]
+    space_id = seed_space(client, "S")
     tmpl = client.post(
-        f"/api/spaces/{space['id']}/templates",
+        f"/api/spaces/{space_id}/templates",
         json={"name": "T", "default_role": "academic-research"},
     ).json()["data"]
     task = client.post(

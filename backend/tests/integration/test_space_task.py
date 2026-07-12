@@ -1,60 +1,23 @@
-"""Integration tests for the Space + Task domain (REST CRUD).
+"""Integration tests for the Task Template market on top of a Space.
 
-Exercises the full chain space -> template -> task, listing each, and the
-404 paths, through the FastAPI TestClient with an in-memory SQLite DB.
+The cheesex uuid Space CRUD stub (POST/GET /api/spaces) was retired in the
+fusion merge (unify P1b/c: one Space = 知是's int Space, served at main's
+/spaces with a different shape). What survives — and what these tests cover — is
+the task-template + task chain that lives on top of a Space:
+space -> template -> task, plus the 404 paths. The Space itself is seeded
+directly (see tests.conftest.seed_space).
 """
 
 import uuid
 
+from tests.conftest import seed_space
 
-def test_create_and_get_space(client):
-    r = client.post(
-        "/api/spaces",
-        json={"name": "信院", "kind": "school", "description": "School of Info"},
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["code"] == 200
-    space = body["data"]
-    assert space["name"] == "信院"
-    assert space["kind"] == "school"
-    assert space["description"] == "School of Info"
-    space_id = space["id"]
-
-    r = client.get(f"/api/spaces/{space_id}")
-    assert r.json()["code"] == 200
-    assert r.json()["data"]["id"] == space_id
-
-
-def test_create_space_defaults_kind_other(client):
-    r = client.post("/api/spaces", json={"name": "书院"})
-    assert r.status_code == 200
-    data = r.json()["data"]
-    assert data["kind"] == "other"
-    assert data["description"] == ""
-
-
-def test_list_spaces(client):
-    client.post("/api/spaces", json={"name": "A"})
-    client.post("/api/spaces", json={"name": "B"})
-
-    r = client.get("/api/spaces")
-    body = r.json()
-    assert body["code"] == 200
-    assert body["data"]["total"] == 2
-    assert len(body["data"]["data"]) == 2
-
-
-def test_get_space_404(client):
-    r = client.get(f"/api/spaces/{uuid.uuid4()}")
-    assert r.status_code == 404
-    assert r.json()["code"] == 404
-    assert r.json()["data"] is None
+# A Space id that does not exist (int PKs start at 1).
+MISSING_SPACE_ID = 999_999_999
 
 
 def test_full_chain_space_template_task(client):
-    # Space
-    space_id = client.post("/api/spaces", json={"name": "创研课"}).json()["data"]["id"]
+    space_id = seed_space(client, "创研课")
 
     # Template under space
     r = client.post(
@@ -108,7 +71,7 @@ def test_full_chain_space_template_task(client):
 
 
 def test_template_defaults(client):
-    space_id = client.post("/api/spaces", json={"name": "S"}).json()["data"]["id"]
+    space_id = seed_space(client, "S")
     r = client.post(f"/api/spaces/{space_id}/templates", json={"name": "T"})
     data = r.json()["data"]
     assert data["resource_pack"] == {}
@@ -118,20 +81,21 @@ def test_template_defaults(client):
 
 
 def test_create_template_for_missing_space_404(client):
-    r = client.post(f"/api/spaces/{uuid.uuid4()}/templates", json={"name": "T"})
+    r = client.post(f"/api/spaces/{MISSING_SPACE_ID}/templates", json={"name": "T"})
     assert r.status_code == 404
     assert r.json()["code"] == 404
 
 
 def test_list_templates_for_missing_space_404(client):
-    r = client.get(f"/api/spaces/{uuid.uuid4()}/templates")
+    r = client.get(f"/api/spaces/{MISSING_SPACE_ID}/templates")
     assert r.status_code == 404
 
 
 def test_get_template_404(client):
     r = client.get(f"/api/templates/{uuid.uuid4()}")
     assert r.status_code == 404
-    assert r.json()["data"] is None
+    # Merged error envelope nests data under ``error`` (no top-level ``data``).
+    assert r.json()["error"]["data"] is None
 
 
 def test_create_task_for_missing_template_404(client):
@@ -147,4 +111,4 @@ def test_list_tasks_for_missing_template_404(client):
 def test_get_task_404(client):
     r = client.get(f"/api/tasks/{uuid.uuid4()}")
     assert r.status_code == 404
-    assert r.json()["data"] is None
+    assert r.json()["error"]["data"] is None

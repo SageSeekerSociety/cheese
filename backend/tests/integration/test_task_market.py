@@ -7,9 +7,13 @@ ProjectTaskLink + notification) or declines. State machine and idempotency.
 
 import uuid
 
+from tests.conftest import seed_space
 
-def _make_space(client, name: str = "信院") -> str:
-    return client.post("/api/spaces", json={"name": name}).json()["data"]["id"]
+
+def _make_space(client, name: str = "信院") -> int:
+    # The cheesex POST /api/spaces uuid stub was retired (fusion unify P1b/c); the
+    # task-template market now lives on a 知是 int Space, seeded directly.
+    return seed_space(client, name)
 
 
 def _make_template(client, space_id: str, name: str = "创研课 2026 秋") -> str:

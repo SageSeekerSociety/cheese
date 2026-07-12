@@ -213,7 +213,11 @@ async def _may_view_screen(
     claims = verify_session_token(token)
     if claims is None:
         return False
-    handle = claims["sub"]
+    # main-minted tokens carry the int user id in ``sub`` and the handle in the
+    # ``handle`` claim; membership is keyed by handle, so prefer it (mirrors
+    # _token_verifier / the rest of the auth layer). Falling back to ``sub`` keeps
+    # legacy cheesex handle-in-sub tokens working.
+    handle = claims["handle"] or claims["sub"]
     if screen.project_id is not None:
         if await MemberRepository(session).get(
             project_id=screen.project_id, user_handle=handle

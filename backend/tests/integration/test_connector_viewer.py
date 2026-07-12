@@ -8,13 +8,22 @@ import uuid
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
+from app.core.tokens import mint_session_token
 from app.domain.agent.device_hub import HubScreen, device_hub
+from tests.conftest import seed_user
 
 
 def _login(client, handle: str) -> str:
-    r = client.post("/api/users/login", json={"handle": handle})
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["token"]
+    # POST /api/users/login (cheesex Phase-0 handle login) was retired in the fusion
+    # merge (unify P3). The 现场 viewer authz keys off the token's ``sub`` (= handle),
+    # so mint a handle-scoped session token directly.
+    return mint_session_token(handle=handle, user_id=None)
+
+
+def _login_real(client, handle: str) -> str:
+    # Device enrollment/management binds the token's int user id as the owner, so it
+    # needs a real DB user + a numeric-sub token (not the handle-only token above).
+    return seed_user(client, handle)
 
 
 def _bearer(token: str) -> dict:
@@ -162,7 +171,7 @@ def test_my_devices_list_rename_and_unbind(client):
     project = client.post(
         "/api/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
-    alice = _login(client, "alice")
+    alice = _login_real(client, "alice")
     enrolled = _enroll_device(client, alice, project_id=project["id"])
     device_id = enrolled["device_id"]
 
@@ -194,10 +203,10 @@ def test_my_devices_list_rename_and_unbind(client):
 
 
 def test_only_owner_may_manage_a_device(client):
-    alice = _login(client, "alice")
+    alice = _login_real(client, "alice")
     enrolled = _enroll_device(client, alice)
     device_id = enrolled["device_id"]
-    bob = _login(client, "bob")
+    bob = _login_real(client, "bob")
 
     # Bob doesn't own it → rename/delete are forbidden, and it isn't in his list.
     r = client.patch(

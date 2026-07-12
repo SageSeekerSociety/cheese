@@ -88,13 +88,15 @@ def test_create_notification_missing_project_404(client):
     assert r.status_code == 404
 
 
-def test_create_notification_invalid_level_422(client):
+def test_create_notification_invalid_level_rejected(client):
     pid = _create_project(client)
     r = client.post(
         f"/api/projects/{pid}/notifications",
         json={"level": "loud", "kind": "heartbeat", "title": "x"},
     )
-    assert r.status_code == 422
+    # The merged app maps request-validation errors to 400 (知是 convention),
+    # not FastAPI's default 422 (app/core/errors.validation_exception_handler).
+    assert r.status_code == 400
 
 
 def test_list_newest_first_and_filters(client):

@@ -1,12 +1,14 @@
 """Task Template protocol enforcement on accept (spec §4.2/§4.4)."""
 
+from tests.conftest import seed_space
+
 
 def _setup_with_mentor_condition(client) -> tuple[str, str]:
     """Project linked to a Task whose template requires mentor acceptance for
     a 结题 topic. Returns (project_id, topic_id of a 结题答辩 topic)."""
-    space = client.post("/api/spaces", json={"name": "信院"}).json()["data"]
+    space_id = seed_space(client, "信院")
     tmpl = client.post(
-        f"/api/spaces/{space['id']}/templates",
+        f"/api/spaces/{space_id}/templates",
         json={
             "name": "创研课",
             "conditions": [{"required_topic": "结题", "reviewer_role": "mentor"}],
