@@ -29,9 +29,9 @@ def test_project_create_autocreates_root_topic(client):
 def test_link_task_and_duplicate(client):
     p = _project(client)
     space_id = seed_space(client, "S")
-    tmpl = client.post(
-        f"/api/spaces/{space_id}/templates", json={"name": "T"}
-    ).json()["data"]
+    tmpl = client.post(f"/api/spaces/{space_id}/templates", json={"name": "T"}).json()[
+        "data"
+    ]
     task = client.post(
         f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
     ).json()["data"]
@@ -50,9 +50,9 @@ def test_unlink_task(client):
     # 退出 Task 协议 (§4): a project can break its link to a task.
     p = _project(client)
     space_id = seed_space(client, "S")
-    tmpl = client.post(
-        f"/api/spaces/{space_id}/templates", json={"name": "T"}
-    ).json()["data"]
+    tmpl = client.post(f"/api/spaces/{space_id}/templates", json={"name": "T"}).json()[
+        "data"
+    ]
     task = client.post(
         f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
     ).json()["data"]

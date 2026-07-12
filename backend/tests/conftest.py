@@ -208,10 +208,22 @@ def _create_and_migrate(db_name: str, db_url: str) -> None:
     # DROP/CREATE DATABASE can't run inside a transaction and psql wraps multiple
     # statements in one -c into a single transaction.
     subprocess.run(
-        ["docker", "exec", "cheesex-pg", "psql", "-U", "cheesex", "-d", "postgres",
-         "-c", f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)',
-         "-c", f'CREATE DATABASE "{db_name}"'],
-        check=True, capture_output=True,
+        [
+            "docker",
+            "exec",
+            "cheesex-pg",
+            "psql",
+            "-U",
+            "cheesex",
+            "-d",
+            "postgres",
+            "-c",
+            f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)',
+            "-c",
+            f'CREATE DATABASE "{db_name}"',
+        ],
+        check=True,
+        capture_output=True,
     )
     # DATABASE_URL maps to settings.database_url, which alembic/env.py reads.
     subprocess.run(

@@ -221,9 +221,7 @@ async def set_collective_status(
 
 
 @router.get("/notifications/{notification_id}")
-async def get_notification(
-    notification_id: int, user: AuthUser, db: DbSession
-) -> dict:
+async def get_notification(notification_id: int, user: AuthUser, db: DbSession) -> dict:
     service = _read_service(db)
     notification = await service.get_notification_by_id_for_current_user(
         user.user_id, notification_id
