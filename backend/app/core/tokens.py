@@ -14,7 +14,6 @@ every write is still authorized against the actor's real membership/role
 (``app.domain.authz``).
 """
 
-import secrets
 from typing import TypedDict
 
 import jwt
@@ -25,15 +24,9 @@ from app.core.config import settings
 # ``create_access_token`` (app.common.auth), which signs with
 # ``settings.jwt_secret``. The verifier MUST use that same secret or every real
 # login token is rejected here and the cheesex API layer sees an anonymous
-# actor. (Pre-merge cheesex minted its own tokens with auth_token_secret /
-# sandbox_token — kept only as a fallback for any legacy/sandbox-minted session
-# token, never for the primary human path.)
-_SECRET: str = (
-    settings.jwt_secret
-    or settings.auth_token_secret
-    or settings.sandbox_token
-    or secrets.token_hex(24)
-)
+# actor. ONE secret, no legacy chain: pre-merge cheesex tokens (signed with
+# auth_token_secret / sandbox_token) simply fail verification and re-login.
+_SECRET: str = settings.jwt_secret
 _ALG = "HS256"
 _TYPE = "access"
 

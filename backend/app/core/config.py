@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     # --- 主仓产品配置并入 (fusion merge I3-config): fields main's product
     # domains (avatars/materials/storage/auth) read from settings. Superset so
     # the adopted product routes boot. Defaults mirror deploy/.env.prod.example.
-    avatar_base_url: str = "http://localhost:8081"
+    # Public origin of THIS merged backend (it serves /avatars itself) — used to
+    # build absolute avatar URLs in notification DTOs. Default matches the
+    # scripts/dev flow (:8799); the docker dev flow and prod override it via env.
+    avatar_base_url: str = "http://127.0.0.1:8799"
     storage_type: str = "local"
     storage_local_path: str = "./uploads"
     storage_local_url: str = "/uploads"
@@ -201,11 +204,9 @@ class Settings(BaseSettings):
     ]
 
     # --- Human auth (P1 agent-as-user / 真鉴权) ---
-    # Signing secret for human session tokens (JWT HS256). Empty → derived from
-    # sandbox_token when set, else a per-process random secret (fine for a single
-    # worker; pin it for multi-worker / stable-across-restart deployments so a
-    # redeploy doesn't invalidate every logged-in session).
-    auth_token_secret: str = ""
+    # Session tokens (JWT HS256) are signed AND verified with the one
+    # ``jwt_secret`` (same secret as main's access/refresh tokens) — no
+    # per-module signing secret.
     # Session token lifetime. Login is passwordless (handle IS the identity), so
     # this only bounds how long a minted token stays valid before re-login.
     auth_token_ttl_s: int = 7 * 24 * 3600
