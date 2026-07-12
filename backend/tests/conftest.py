@@ -33,9 +33,9 @@ from sqlalchemy.pool import NullPool
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 
-# Bind BOTH app engine modules (app.core.db, app.db.session) to THIS worker's
-# integration DB — must happen before any app import (they build their engine from
-# settings.database_url at import time). ---------------------------------------
+# Bind the app engine (app.core.db — the single pool; app.db.session re-exports
+# it) to THIS worker's integration DB — must happen before any app import (the
+# engine is built from settings.database_url at import time). -------------------
 from app.core.config import settings  # noqa: E402
 
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (serial)
@@ -50,6 +50,9 @@ _PG_BASE = os.environ.get(
 )
 settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
+# Tests run many event loops per process; the shared app engine must not pool
+# asyncpg connections across them (app.core.db reads this before building it).
+os.environ["CHEESEX_TEST_NULLPOOL"] = "1"
 
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
 from app.api.deps import get_broker, get_chat_service, get_turn_runner  # noqa: E402
@@ -288,17 +291,10 @@ async def python_client(_pg_schema, stub_agent: StubAgent, tmp_path):
             workspace_root=str(tmp_path / "ws"),
         )
 
-    # The merged app has TWO get_db symbols with their own module-level engines:
-    # cheesex routes depend on app.core.db.get_db, but the 知是 routes (spaces,
-    # teams, tasks, questions, materials, …) depend on app.db.session.get_db,
-    # whose pooled engine is loop-bound. Override BOTH onto the per-worker test
-    # factory (NullPool) so every route reads the isolated test DB on the calling
-    # loop — otherwise 知是 endpoints hit the real dev engine and crash with
-    # "attached to a different loop" once a second event loop touches the pool.
-    from app.db.session import get_db as get_db_zhishi
-
+    # ONE get_db across the whole app (app.db.session re-exports app.core.db's),
+    # so a single override moves every route — cheesex and 知是 alike — onto the
+    # per-worker test factory (NullPool, isolated DB, loop-safe).
     app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_db_zhishi] = override_get_db
     app.dependency_overrides[get_chat_service] = override_get_chat_service
 
     transport = ASGITransport(app=app)
