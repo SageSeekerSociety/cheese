@@ -200,8 +200,14 @@ class TestTopicsSearchIntegration:
         data3 = response3.json()
         assert data3["code"] == 200
         assert len(data3["data"]["topics"]) >= 1
-        assert data3["data"]["topics"][0]["id"] == data2["data"]["page"]["nextStart"]
+        # The cursor (id >= page_start) is an INCLUSIVE lower bound, and next_start
+        # is last.id+1 — under xdist the topic id sequence is shared, so ids aren't
+        # contiguous and the next page's first id may be > next_start (it lands in
+        # a gap). Assert the cursor invariant, not exact-id equality.
+        assert data3["data"]["topics"][0]["id"] >= data2["data"]["page"]["nextStart"]
         assert self.topic_code in data3["data"]["topics"][0]["name"]
+        # pageStart in the response is the first returned item's id (which may be
+        # > the requested cursor when ids aren't contiguous — see above).
         assert data3["data"]["page"]["pageStart"] == data3["data"]["topics"][0]["id"]
         assert data3["data"]["page"]["hasPrev"] is True
         assert data3["data"]["page"]["prevStart"] == data2["data"]["topics"][0]["id"]

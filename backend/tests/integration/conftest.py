@@ -207,7 +207,7 @@ def _portal() -> Generator["BlockingPortal"]:
 
 
 @pytest.fixture(scope="session")
-def db_connection(_portal: "BlockingPortal") -> Generator[AsyncConnection]:
+def db_connection(_pg_schema, _portal: "BlockingPortal") -> Generator[AsyncConnection]:
     """A single PG connection shared by every test in the session.
 
     Opened on the session portal's loop so that every per-test transaction

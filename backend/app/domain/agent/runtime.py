@@ -73,6 +73,15 @@ class InProcessBroker:
         self._buffer: dict[str, list[Frame]] = {}
         self._replay_size = replay_size
 
+    def reset(self) -> None:
+        """Drop all buffered frames + subscriptions. The broker is a process-wide
+        singleton (get_broker is lru_cached); tests that TRUNCATE ... RESTART
+        IDENTITY reuse channel ids (topic id 1, 2, …) across tests, so without this
+        a prior test's buffered frames would replay into the next test on the same
+        reused channel. Called between tests by the client/python_client fixtures."""
+        self._subs.clear()
+        self._buffer.clear()
+
     async def publish(self, channel: str, frame: Frame) -> None:
         # Reaction frames are standalone state updates, not turn progress: they
         # can fire on an idle channel (a human reacting between turns) and are

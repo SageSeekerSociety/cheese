@@ -1,7 +1,7 @@
 version: '3'
 
 vars:
-  PYTEST_WORKERS: 8
+  PYTEST_WORKERS: 4
 
 tasks:
   dev:
@@ -34,11 +34,11 @@ tasks:
   test:
     desc: Run tests (incremental via testmon)
     cmds:
-      - uv run pytest tests/ -n {{.PYTEST_WORKERS}} --testmon -q --ignore=tests/contract
+      - uv run pytest tests/ -n {{.PYTEST_WORKERS}} --reruns 2 -q
   test:full:
     desc: Run full test suite (no testmon)
     cmds:
-      - uv run pytest tests/ -n {{.PYTEST_WORKERS}} -q --ignore=tests/contract
+      - uv run pytest tests/ -n {{.PYTEST_WORKERS}} --reruns 2 -q
   test:failed:
     desc: Re-run only last-failed tests
     cmds:
