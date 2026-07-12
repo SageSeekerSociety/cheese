@@ -94,11 +94,22 @@ class TestTOTPService:
         assert totp_service.verify_code(secret, "000000") is False
 
     @pytest.mark.anyio
-    async def test_start_2fa_setup(self, totp_service, mock_redis) -> None:
-        result = await totp_service.start_2fa_setup(123, "test@example.com")
-        assert "secret" in result
-        assert "provisioningUri" in result
-        mock_redis.setex.assert_called_once()
+    async def test_enable_2fa_valid_code_persists_secret(
+        self, totp_service, mock_redis
+    ) -> None:
+        import pyotp
+
+        secret = pyotp.random_base32()
+        code = pyotp.TOTP(secret).now()
+        assert await totp_service.enable_2fa(123, secret, code) is True
+        mock_redis.set.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_enable_2fa_invalid_code_rejected(
+        self, totp_service, mock_redis
+    ) -> None:
+        assert await totp_service.enable_2fa(123, "JBSWY3DPEHPK3PXP", "000000") is False
+        mock_redis.set.assert_not_called()
 
     @pytest.mark.anyio
     async def test_is_2fa_enabled_true(self, totp_service, mock_redis) -> None:
@@ -131,30 +142,37 @@ class TestTOTPServiceExtended:
         return TOTPService(mock_redis)
 
     @pytest.mark.anyio
-    async def test_confirm_2fa_setup_no_pending_secret(self, totp_service, mock_redis):
-        mock_redis.get.return_value = None
-        result = await totp_service.confirm_2fa_setup(123, "123456")
-        assert result is None
+    async def test_generate_backup_codes_shape_and_storage(
+        self, totp_service, mock_redis
+    ):
+        from unittest.mock import MagicMock
+
+        pipe = MagicMock()
+        pipe.execute = AsyncMock()
+        mock_redis.pipeline = MagicMock(return_value=pipe)
+
+        codes = await totp_service.generate_backup_codes(123)
+        assert len(codes) == 10
+        assert all(len(c) == 8 for c in codes)
+        pipe.delete.assert_called_once()
+        pipe.sadd.assert_called_once()
+        # stored values are digests, never the raw codes
+        stored = pipe.sadd.call_args.args[1:]
+        assert not set(codes) & set(stored)
 
     @pytest.mark.anyio
-    async def test_confirm_2fa_setup_invalid_code(self, totp_service, mock_redis):
-        mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
-        result = await totp_service.confirm_2fa_setup(123, "000000")
-        assert result is None
+    async def test_verify_backup_code_one_time(self, totp_service, mock_redis):
+        mock_redis.srem.return_value = 1
+        assert await totp_service.verify_backup_code(123, "a1b2c3d4") is True
+        mock_redis.srem.return_value = 0
+        assert await totp_service.verify_backup_code(123, "a1b2c3d4") is False
 
     @pytest.mark.anyio
-    async def test_confirm_2fa_setup_valid_code(self, totp_service, mock_redis):
-        import pyotp
-
-        secret = pyotp.random_base32()
-        totp = pyotp.TOTP(secret)
-        code = totp.now()
-        mock_redis.get.return_value = secret.encode()
-
-        result = await totp_service.confirm_2fa_setup(123, code)
-        assert result == secret
+    async def test_always_required_flag(self, totp_service, mock_redis):
+        mock_redis.exists.return_value = 1
+        assert await totp_service.is_always_required(123) is True
+        await totp_service.set_always_required(123, False)
         mock_redis.delete.assert_called_once()
-        mock_redis.set.assert_called_once()
 
     @pytest.mark.anyio
     async def test_verify_2fa_no_secret(self, totp_service, mock_redis):

@@ -19,14 +19,14 @@ logger = logging.getLogger(__name__)
 LOGIN_ATTEMPTS_PREFIX = "cheese:login_attempts:"
 LOGIN_LOCKOUT_PREFIX = "cheese:login_lockout:"
 TOTP_SECRET_PREFIX = "cheese:totp_secret:"
-TOTP_PENDING_PREFIX = "cheese:totp_pending:"
+TOTP_BACKUP_PREFIX = "cheese:totp_backup:"
+TOTP_ALWAYS_PREFIX = "cheese:totp_always:"
 SESSION_PREFIX = "cheese:session:"
 USER_SESSIONS_PREFIX = "cheese:user_sessions:"
 PASSWORD_RESET_PREFIX = "cheese:password_reset:"
 
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 15 * 60
-TOTP_PENDING_TTL = 10 * 60
 PASSWORD_RESET_TTL = 30 * 60
 SESSION_TTL = 30 * 24 * 60 * 60
 
@@ -84,34 +84,6 @@ class TOTPService:
         totp = pyotp.TOTP(secret)
         return totp.verify(code, valid_window=1)
 
-    async def start_2fa_setup(self, user_id: int, email: str) -> dict:
-        secret = self.generate_secret()
-        uri = self.get_provisioning_uri(secret, email)
-
-        key = f"{TOTP_PENDING_PREFIX}{user_id}"
-        await self._redis.setex(key, TOTP_PENDING_TTL, secret)
-
-        return {
-            "secret": secret,
-            "provisioningUri": uri,
-        }
-
-    async def confirm_2fa_setup(self, user_id: int, code: str) -> str | None:
-        key = f"{TOTP_PENDING_PREFIX}{user_id}"
-        secret = await self._redis.get(key)
-        if not secret:
-            return None
-
-        secret_str = secret.decode() if isinstance(secret, bytes) else secret
-        if not self.verify_code(secret_str, code):
-            return None
-
-        await self._redis.delete(key)
-        secret_key = f"{TOTP_SECRET_PREFIX}{user_id}"
-        await self._redis.set(secret_key, secret_str)
-
-        return secret_str
-
     async def is_2fa_enabled(self, user_id: int) -> bool:
         key = f"{TOTP_SECRET_PREFIX}{user_id}"
         return await self._redis.exists(key) > 0
@@ -125,10 +97,59 @@ class TOTPService:
         secret_str = secret.decode() if isinstance(secret, bytes) else secret
         return self.verify_code(secret_str, code)
 
+    async def enable_2fa(self, user_id: int, secret: str, code: str) -> bool:
+        """Confirm setup against a client-round-tripped secret (reference
+        contract: init hands the secret to the client, confirm sends it back
+        with a live code) and persist it. Returns False on a bad code."""
+        if not self.verify_code(secret, code):
+            return False
+        await self._redis.set(f"{TOTP_SECRET_PREFIX}{user_id}", secret)
+        return True
+
     async def disable_2fa(self, user_id: int) -> bool:
-        key = f"{TOTP_SECRET_PREFIX}{user_id}"
-        deleted = await self._redis.delete(key)
+        deleted = await self._redis.delete(
+            f"{TOTP_SECRET_PREFIX}{user_id}",
+            f"{TOTP_BACKUP_PREFIX}{user_id}",
+            f"{TOTP_ALWAYS_PREFIX}{user_id}",
+        )
         return deleted > 0
+
+    # --- Backup codes (reference parity): 10 one-time codes, 8 hex chars,
+    # stored as SHA-256 digests so a Redis dump does not leak usable codes. ---
+
+    async def generate_backup_codes(self, user_id: int) -> list[str]:
+        import hashlib
+        import secrets as _secrets
+
+        codes = [_secrets.token_hex(4) for _ in range(10)]
+        key = f"{TOTP_BACKUP_PREFIX}{user_id}"
+        pipe = self._redis.pipeline()
+        pipe.delete(key)
+        pipe.sadd(key, *[hashlib.sha256(c.encode()).hexdigest() for c in codes])
+        await pipe.execute()
+        return codes
+
+    async def verify_backup_code(self, user_id: int, code: str) -> bool:
+        """One-time: a matching code is atomically removed on use."""
+        import hashlib
+
+        digest = hashlib.sha256(code.strip().lower().encode()).hexdigest()
+        removed = await self._redis.srem(f"{TOTP_BACKUP_PREFIX}{user_id}", digest)
+        return removed > 0
+
+    # --- always_required flag (surfaced in /2fa/status and /2fa/settings).
+    # With no trusted-device feature, login asks for 2FA whenever it is
+    # enabled, so the flag currently only affects what the UI reports. ---
+
+    async def is_always_required(self, user_id: int) -> bool:
+        return await self._redis.exists(f"{TOTP_ALWAYS_PREFIX}{user_id}") > 0
+
+    async def set_always_required(self, user_id: int, value: bool) -> None:
+        key = f"{TOTP_ALWAYS_PREFIX}{user_id}"
+        if value:
+            await self._redis.set(key, b"1")
+        else:
+            await self._redis.delete(key)
 
 
 class SessionManager:

@@ -21,6 +21,7 @@ dependencies = [
     "pyotp>=2.10.0",
     "python-dotenv>=1.2.2",
     "redis>=8.0.1",
+    "segno>=1.6.6",
     "sqlalchemy[asyncio]>=2.0",
     "srp-rs",
     "structlog>=26.1.0",

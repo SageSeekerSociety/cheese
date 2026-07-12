@@ -1354,12 +1354,17 @@ async def user_login(
 
         if requires_2fa:
             if not totp_code:
+                from app.common.auth import create_2fa_pending_token
+
+                # tempToken lets the client finish via POST /auth/verify-2fa
+                # (same contract as the SRP path).
                 return {
                     "code": 200,
                     "message": "2FA required",
                     "data": {
                         "requires2FA": True,
                         "userId": user.id,
+                        "tempToken": create_2fa_pending_token(user.id),
                     },
                 }
             if not await totp_service.verify_2fa(user.id, totp_code):
@@ -1602,6 +1607,98 @@ async def srp_login_verify(
                 "accessToken": access_token,
                 "serverProof": server_proof_hex,
                 "requires2FA": False,
+                "sessionId": session_id,
+            },
+        }
+    finally:
+        await redis.aclose()
+
+
+@router.post(
+    "/auth/verify-2fa",
+    summary="Complete a 2FA-gated login",
+)
+async def verify_2fa_login(
+    payload: dict,
+    response: Response,
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    """Second step of a 2FA login: exchange the short-lived ``2fa_pending``
+    token from the password/SRP step plus a TOTP code (or a one-time backup
+    code) for real session tokens. Reference contract: POST {temp_token, code}."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.common.auth import create_access_token, create_refresh_token
+    from app.core.config import settings
+    from app.domain.user.login_security import SessionManager, TOTPService
+
+    temp_token = payload.get("temp_token") or ""
+    code = (payload.get("code") or "").strip()
+    if not temp_token or not code:
+        raise BadRequestError("temp_token and code are required")
+
+    claims = decode_token(temp_token)
+    if claims.get("type") != "2fa_pending":
+        raise AuthenticationRequiredError("Invalid 2FA session token")
+    try:
+        user_id = int(claims.get("sub") or "")
+    except (TypeError, ValueError) as exc:
+        raise AuthenticationRequiredError("Invalid 2FA session token") from exc
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        totp_service = TOTPService(redis)
+        used_backup_code = False
+        if not await totp_service.verify_2fa(user_id, code):
+            if await totp_service.verify_backup_code(user_id, code):
+                used_backup_code = True
+            else:
+                raise AuthenticationRequiredError("Invalid 2FA code")
+
+        try:
+            user, profile = await auth_service.get_user_with_profile(user_id)
+        except ValueError as exc:
+            raise AuthenticationRequiredError(str(exc)) from exc
+
+        access_token = create_access_token(user.id, handle=user.username)
+        refresh_token = create_refresh_token(user.id)
+        session_id = await SessionManager(redis).create_session(user.id)
+
+        response.set_cookie(
+            "REFRESH_TOKEN",
+            refresh_token,
+            httponly=True,
+            secure=settings.environment not in ("development", "test"),
+            samesite="lax",
+            path="/",
+        )
+        response.set_cookie(
+            "SESSION_ID",
+            session_id,
+            httponly=True,
+            secure=settings.environment not in ("development", "test"),
+            samesite="lax",
+            path="/",
+        )
+
+        user_dto = await auth_service.build_user_dto(
+            user=user,
+            profile=profile,
+            viewer_id=user.id,
+        )
+        return {
+            "code": 201,
+            "message": (
+                "Login successfully. Note: This backup code has expired. "
+                "Please generate a new backup code for future use."
+                if used_backup_code
+                else "Login successfully."
+            ),
+            "data": {
+                "user": user_dto,
+                "accessToken": access_token,
+                "requires2FA": False,
+                "usedBackupCode": used_backup_code,
                 "sessionId": session_id,
             },
         }
@@ -1969,146 +2066,6 @@ async def get_user_identity_access_logs(
         "page": page,
     }
     return {"code": 200, "message": "Success", "data": data}
-
-
-@router.post(
-    "/auth/2fa/enable",
-    summary="Start 2FA setup",
-)
-async def enable_2fa(
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    auth_service: UserAuthService = Depends(get_user_auth_service),
-) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import TOTPService
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
-
-        if await totp_service.is_2fa_enabled(auth_user.user_id):
-            raise BadRequestError("2FA is already enabled")
-
-        user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
-        result = await totp_service.start_2fa_setup(
-            auth_user.user_id, user.email or user.username
-        )
-
-        return {
-            "code": 200,
-            "message": "2FA setup started. Scan the QR code with your authenticator app.",  # noqa: E501
-            "data": {
-                "secret": result["secret"],
-                "provisioningUri": result["provisioningUri"],
-            },
-        }
-    finally:
-        await redis.aclose()
-
-
-@router.post(
-    "/auth/2fa/verify",
-    summary="Verify and complete 2FA setup",
-)
-async def verify_2fa_setup(
-    payload: TwoFactorCodeRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import TOTPService
-
-    code = payload.code
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
-
-        if await totp_service.is_2fa_enabled(auth_user.user_id):
-            raise BadRequestError("2FA is already enabled")
-
-        result = await totp_service.confirm_2fa_setup(auth_user.user_id, code)
-        if not result:
-            raise BadRequestError("Invalid or expired verification code")
-
-        return {
-            "code": 200,
-            "message": "2FA enabled successfully.",
-            "data": {
-                "enabled": True,
-            },
-        }
-    finally:
-        await redis.aclose()
-
-
-@router.delete(
-    "/auth/2fa",
-    summary="Disable 2FA",
-)
-async def disable_2fa(
-    payload: TwoFactorCodeRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import TOTPService
-
-    code = payload.code
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
-
-        if not await totp_service.is_2fa_enabled(auth_user.user_id):
-            raise BadRequestError("2FA is not enabled")
-
-        if not await totp_service.verify_2fa(auth_user.user_id, code):
-            raise AuthenticationRequiredError("Invalid 2FA code")
-
-        await totp_service.disable_2fa(auth_user.user_id)
-
-        return {
-            "code": 200,
-            "message": "2FA disabled successfully.",
-            "data": {
-                "enabled": False,
-            },
-        }
-    finally:
-        await redis.aclose()
-
-
-@router.get(
-    "/auth/2fa/status",
-    summary="Get 2FA status",
-)
-async def get_2fa_status(
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import TOTPService
-
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-    try:
-        totp_service = TOTPService(redis)
-        enabled = await totp_service.is_2fa_enabled(auth_user.user_id)
-
-        return {
-            "code": 200,
-            "message": "OK",
-            "data": {
-                "enabled": enabled,
-            },
-        }
-    finally:
-        await redis.aclose()
 
 
 @router.get(
@@ -2653,9 +2610,17 @@ async def list_users(
     }
 
 
+def _qr_data_uri(payload: str) -> str:
+    """PNG data URI of a QR code (reference contract returns a ready-to-render
+    <img src> value alongside the otpauth URL)."""
+    import segno
+
+    return segno.make(payload).png_data_uri(scale=5)
+
+
 @router.post(
     "/{userId}/2fa/enable",
-    summary="Start 2FA setup for user",
+    summary="Start or confirm 2FA setup for user",
 )
 async def enable_user_2fa(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
@@ -2663,6 +2628,10 @@ async def enable_user_2fa(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
+    """Two-phase, reference contract: no body → generate a secret and hand it
+    to the client (nothing persisted yet); {secret, code} → verify the live
+    code against that secret, persist it, and return the one-time backup
+    codes."""
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
@@ -2678,32 +2647,41 @@ async def enable_user_2fa(
     try:
         totp_service = TOTPService(redis)
 
-        if secret and code:
-            if await totp_service.is_2fa_enabled(auth_user.user_id):
-                raise BadRequestError("2FA is already enabled")
-            result = await totp_service.confirm_2fa_setup(auth_user.user_id, code)
-            if not result:
+        if await totp_service.is_2fa_enabled(auth_user.user_id):
+            raise BadRequestError("2FA is already enabled")
+
+        user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
+        account_name = user.email or user.username
+
+        if code:
+            if not secret:
+                raise BadRequestError("secret is required for confirmation")
+            ok = await totp_service.enable_2fa(auth_user.user_id, secret, code)
+            if not ok:
                 raise UnprocessableEntityError("Invalid or expired verification code")
+            backup_codes = await totp_service.generate_backup_codes(auth_user.user_id)
+            otpauth_url = totp_service.get_provisioning_uri(secret, account_name)
             return {
-                "code": 200,
-                "message": "2FA enabled successfully.",
-                "data": {"enabled": True},
+                "code": 201,
+                "message": "2FA enabled successfully",
+                "data": {
+                    "secret": secret,
+                    "otpauth_url": otpauth_url,
+                    "qrcode": _qr_data_uri(otpauth_url),
+                    "backup_codes": backup_codes,
+                },
             }
 
-        if await totp_service.is_2fa_enabled(auth_user.user_id):
-            raise ForbiddenError("2FA is already enabled")
-
-        user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
-        result = await totp_service.start_2fa_setup(
-            auth_user.user_id, user.email or user.username
-        )
-
+        new_secret = totp_service.generate_secret()
+        otpauth_url = totp_service.get_provisioning_uri(new_secret, account_name)
         return {
             "code": 200,
-            "message": "2FA setup started. Scan the QR code with your authenticator app.",  # noqa: E501
+            "message": "TOTP secret generated successfully",
             "data": {
-                "secret": result["secret"],
-                "provisioningUri": result["provisioningUri"],
+                "secret": new_secret,
+                "otpauth_url": otpauth_url,
+                "qrcode": _qr_data_uri(otpauth_url),
+                "backup_codes": [],
             },
         }
     finally:
@@ -2736,17 +2714,17 @@ async def disable_user_2fa(
         if not await totp_service.is_2fa_enabled(auth_user.user_id):
             raise BadRequestError("2FA is not enabled")
 
-        if not code:
-            raise BadRequestError("2FA code is required to disable 2FA")
-        if not await totp_service.verify_2fa(auth_user.user_id, code):
+        # Reference contract: no code in the request body (the client gates
+        # this behind sudo re-verification). If one IS provided, check it.
+        if code and not await totp_service.verify_2fa(auth_user.user_id, code):
             raise AuthenticationRequiredError("Invalid 2FA code")
 
         await totp_service.disable_2fa(auth_user.user_id)
 
         return {
             "code": 200,
-            "message": "2FA disabled successfully.",
-            "data": {"enabled": False},
+            "message": "2FA disabled successfully",
+            "data": {"success": True},
         }
     finally:
         await redis.aclose()
@@ -2759,6 +2737,7 @@ async def disable_user_2fa(
 async def get_user_2fa_status(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -2772,11 +2751,84 @@ async def get_user_2fa_status(
     try:
         totp_service = TOTPService(redis)
         enabled = await totp_service.is_2fa_enabled(user_id)
+        always_required = await totp_service.is_always_required(user_id)
+        passkeys = await PasskeyRepository(session).list_by_user(user_id)
 
         return {
             "code": 200,
-            "message": "OK",
-            "data": {"enabled": enabled},
+            "message": "Get 2FA status successfully",
+            "data": {
+                "enabled": enabled,
+                "has_passkey": len(passkeys) > 0,
+                "always_required": always_required,
+            },
+        }
+    finally:
+        await redis.aclose()
+
+
+@router.post(
+    "/{userId}/2fa/backup-codes",
+    summary="Regenerate 2FA backup codes",
+)
+async def regenerate_backup_codes(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.config import settings
+    from app.domain.user.login_security import TOTPService
+
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can manage backup codes.")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        totp_service = TOTPService(redis)
+
+        if not await totp_service.is_2fa_enabled(user_id):
+            raise BadRequestError("2FA is not enabled")
+
+        backup_codes = await totp_service.generate_backup_codes(user_id)
+        return {
+            "code": 201,
+            "message": "New backup codes generated successfully",
+            "data": {"backup_codes": backup_codes},
+        }
+    finally:
+        await redis.aclose()
+
+
+@router.put(
+    "/{userId}/2fa/settings",
+    summary="Update 2FA settings",
+)
+async def update_2fa_settings(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: dict = Body(default={}),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+) -> dict:
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.core.config import settings
+    from app.domain.user.login_security import TOTPService
+
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can change 2FA settings.")
+
+    always_required = payload.get("always_required")
+    if not isinstance(always_required, bool):
+        raise BadRequestError("always_required (boolean) is required")
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        totp_service = TOTPService(redis)
+        await totp_service.set_always_required(user_id, always_required)
+        return {
+            "code": 200,
+            "message": "2FA settings updated successfully",
+            "data": {"success": True, "always_required": always_required},
         }
     finally:
         await redis.aclose()
