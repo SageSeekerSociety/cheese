@@ -2,7 +2,18 @@ import asyncio
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response, status
+import jwt
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    Form,
+    Path,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -3118,6 +3129,150 @@ def _oauth_frontend_url(path: str, **params: str | None) -> str:
     return f"{settings.frontend_url}{path}" + (f"?{query}" if query else "")
 
 
+# --- OAuth client-completion flow (reference contract) --------------------
+# When the callback cannot resolve the account by itself it hands the browser
+# to a frontend page with either a stateless stateToken (decision page) or a
+# Redis-backed pending session (credential-verify page). 15-minute TTL both.
+
+_OAUTH_STATE_TTL_S = 15 * 60
+_OAUTH_PENDING_PREFIX = "oauth:pending:"
+
+
+def _mint_oauth_state_token(provider_id: str, user_info: dict) -> str:
+    import time
+
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "type": "oauth_state",
+            "provider": provider_id,
+            "info": user_info,
+            "iat": now,
+            "exp": now + _OAUTH_STATE_TTL_S,
+        },
+        settings.jwt_secret,
+        algorithm="HS256",
+    )
+
+
+def _decode_oauth_state_token(token: str) -> tuple[str, dict]:
+    try:
+        claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    except jwt.PyJWTError as exc:
+        raise AuthenticationRequiredError(
+            "Invalid or expired OAuth state token"
+        ) from exc
+    if claims.get("type") != "oauth_state":
+        raise AuthenticationRequiredError("Invalid or expired OAuth state token")
+    return str(claims["provider"]), dict(claims["info"])
+
+
+def _oauth_user_info_dict(user_info) -> dict:
+    return {
+        "id": user_info.id,
+        "email": user_info.email,
+        "name": user_info.name,
+        "username": user_info.username,
+        "preferredUsername": user_info.preferred_username,
+    }
+
+
+async def _store_oauth_pending(session_id: str, data: dict) -> None:
+    import json
+
+    from redis.asyncio import Redis as AsyncRedis
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        await redis.setex(
+            f"{_OAUTH_PENDING_PREFIX}{session_id}", _OAUTH_STATE_TTL_S, json.dumps(data)
+        )
+    finally:
+        await redis.aclose()
+
+
+async def _pop_oauth_pending(session_id: str) -> dict | None:
+    """Fetch-and-delete (one-shot; replay protection)."""
+    import json
+
+    from redis.asyncio import Redis as AsyncRedis
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        key = f"{_OAUTH_PENDING_PREFIX}{session_id}"
+        pipe = redis.pipeline()
+        pipe.get(key)
+        pipe.delete(key)
+        raw, _ = await pipe.execute()
+        return json.loads(raw) if raw else None
+    finally:
+        await redis.aclose()
+
+
+def _clean_nickname(raw: str) -> str:
+    cleaned = "".join(
+        ch if (ch.isalnum() or ch == "_" or "一" <= ch <= "龥") else "_" for ch in raw
+    )
+    return cleaned[:16] or "user"
+
+
+async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, str]:
+    """(suggestedUsername, suggestedNickname) — username de-duplicated."""
+    import secrets as _secrets
+
+    base_raw = (
+        user_info.get("preferredUsername")
+        or user_info.get("username")
+        or user_info.get("name")
+        or f"user_{user_info.get('id')}"
+    )
+    base = "".join(ch for ch in str(base_raw) if ch.isalnum() or ch in "_-") or "user"
+    username = base
+    while await auth_service.is_username_taken(username):
+        username = f"{base}_{_secrets.token_hex(3)}"
+    nickname = _clean_nickname(
+        str(user_info.get("name") or user_info.get("preferredUsername") or username)
+    )
+    return username, nickname
+
+
+async def _oauth_login_redirect(
+    auth_service, user_id: int, provider_id: str, **extra: str | None
+) -> RedirectResponse:
+    """Issue tokens for a resolved OAuth login and land on the success page."""
+    user_obj, _profile = await auth_service.get_user_with_profile(user_id)
+    access_token_jwt = create_access_token(user_id, handle=user_obj.username)
+    refresh_token = create_refresh_token(user_id)
+    redirect = RedirectResponse(
+        _oauth_frontend_url(
+            settings.frontend_oauth_success_path,
+            token=access_token_jwt,
+            email=user_obj.email or user_obj.username,
+            provider=provider_id,
+            **extra,
+        ),
+        status_code=302,
+    )
+    redirect.set_cookie(
+        "REFRESH_TOKEN",
+        refresh_token,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        path="/",
+    )
+    return redirect
+
+
+def _oauth_error_redirect(error_code: str, message: str) -> RedirectResponse:
+    return RedirectResponse(
+        _oauth_frontend_url(
+            settings.frontend_oauth_error_path, error_code=error_code, error=message
+        ),
+        status_code=302,
+    )
+
+
 @router.get(
     "/auth/oauth/login/{providerId}",
     summary="Redirect to the OAuth provider's authorization page",
@@ -3171,45 +3326,77 @@ async def handle_oauth_callback(
             status_code=302,
         )
 
-    # Step 2: resolve the local account — existing binding, else match by email,
-    # else auto-provision a password-less account — then link and issue tokens.
-    # oauth_service and auth_service share this request's session, so a rollback
-    # here undoes any partial user/connection writes.
+    # Step 2 — resolve the local account (reference contract):
+    #   A. existing binding → straight to the success page.
+    #   B. the provider email already belongs to a local account → the user must
+    #      prove ownership on the verify page (Redis pending session — never
+    #      silently link by email).
+    #   C. unknown identity → the decision page (signed stateToken) lets the
+    #      user create an account or bind an existing one.
     try:
         existing = await oauth_service.get_connection_by_provider(
             provider_id=provider_id,
             provider_user_id=user_info.id,
         )
-
-        linked: str | None = None
         if existing:
-            user_id = existing["userId"]
-        else:
-            user = None
-            if user_info.email:
-                user = await auth_service.get_user_by_email(user_info.email)
-            if user is None:
-                email = user_info.email or f"ruc-{user_info.id}@oauth.ruc.local"
-                user, _profile = await auth_service.register_from_oauth(
-                    email=email,
-                    nickname=user_info.name
-                    or user_info.preferred_username
-                    or email.split("@")[0],
-                    preferred_username=user_info.preferred_username
-                    or user_info.username,
-                )
-            user_id = user.id
-            await oauth_service.create_connection(
-                user_id=user_id,
-                provider_id=provider_id,
-                provider_user_id=user_info.id,
-                raw_profile={"email": user_info.email, "name": user_info.name},
+            return await _oauth_login_redirect(
+                auth_service, existing["userId"], provider_id
             )
-            linked = "true"
 
-        user_obj, _profile = await auth_service.get_user_with_profile(user_id)
-        access_token_jwt = create_access_token(user_id)
-        refresh_token = create_refresh_token(user_id)
+        info_dict = _oauth_user_info_dict(user_info)
+
+        conflict_user = None
+        if user_info.email:
+            conflict_user = await auth_service.get_user_by_email(user_info.email)
+
+        if conflict_user is not None:
+            import secrets as _secrets
+            import time as _time
+
+            hashed = conflict_user.hashed_password or ""
+            is_srp = hashed.startswith("SRP:")
+            verification_type = "srp" if is_srp else "password"
+            session_id = (
+                f"oauth_{verification_type}_{provider_id}_{user_info.id}_"
+                f"{int(_time.time() * 1000)}_{_secrets.token_hex(4)}"
+            )
+            pending: dict = {
+                "type": verification_type,
+                "providerId": provider_id,
+                "userInfo": info_dict,
+                "userId": conflict_user.id,
+                # SRP identity string: the verifier was derived with the
+                # USERNAME, so the client must derive with the same value.
+                "username": conflict_user.username,
+            }
+            params: dict[str, str | None] = {
+                "type": verification_type,
+                "email": conflict_user.username,
+                "sessionId": session_id,
+            }
+            if is_srp:
+                parts = hashed.split(":", 2)
+                if len(parts) != 3:
+                    raise ValueError("Malformed SRP credential record")
+                salt, verifier = parts[1], parts[2]
+                server_public, server_secret = _srp_generate_ephemeral(verifier)
+                pending.update(
+                    {"salt": salt, "verifier": verifier, "serverSecret": server_secret}
+                )
+                params.update({"salt": salt, "serverPublicEphemeral": server_public})
+            await _store_oauth_pending(session_id, pending)
+            return RedirectResponse(
+                _oauth_frontend_url(settings.frontend_oauth_verify_path, **params),
+                status_code=302,
+            )
+
+        state_token = _mint_oauth_state_token(provider_id, info_dict)
+        return RedirectResponse(
+            _oauth_frontend_url(
+                settings.frontend_oauth_complete_path, stateToken=state_token
+            ),
+            status_code=302,
+        )
     except Exception:
         await session.rollback()
         logger.exception(
@@ -3224,25 +3411,334 @@ async def handle_oauth_callback(
             status_code=302,
         )
 
-    redirect = RedirectResponse(
-        _oauth_frontend_url(
-            settings.frontend_oauth_success_path,
-            token=access_token_jwt,
-            email=user_obj.email,
-            provider=provider_id,
-            linked=linked,
-        ),
-        status_code=302,
+
+@router.get(
+    "/auth/oauth/state",
+    summary="Decode the OAuth decision-page state token",
+)
+async def get_oauth_state(
+    token: str = Query(...),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    provider_id, user_info = _decode_oauth_state_token(token)
+    suggested_username, suggested_nickname = await _suggest_oauth_identity(
+        auth_service, user_info
     )
-    redirect.set_cookie(
-        "REFRESH_TOKEN",
-        refresh_token,
-        httponly=True,
-        secure=settings.environment not in ("development", "test"),
-        samesite="lax",
-        path="/",
+    email_conflict = False
+    if user_info.get("email"):
+        email_conflict = (
+            await auth_service.get_user_by_email(user_info["email"]) is not None
+        )
+    return {
+        "code": 200,
+        "message": "Get OAuth state successfully.",
+        "data": {
+            "providerId": provider_id,
+            "userInfo": user_info,
+            "suggestedUsername": suggested_username,
+            "suggestedNickname": suggested_nickname,
+            "emailConflict": email_conflict,
+        },
+    }
+
+
+async def _complete_oauth_binding(
+    *,
+    auth_service: UserAuthService,
+    oauth_service: OAuthService,
+    user_id: int,
+    provider_id: str,
+    user_info: dict,
+    **extra: str | None,
+) -> RedirectResponse:
+    """Create the provider↔user connection (idempotence guard) and log in."""
+    existing = await oauth_service.get_connection_by_provider(
+        provider_id=provider_id, provider_user_id=str(user_info.get("id"))
     )
-    return redirect
+    if existing:
+        if existing["userId"] != user_id:
+            return _oauth_error_redirect(
+                "ALREADY_LINKED", "This OAuth account is linked to another user"
+            )
+    else:
+        await oauth_service.create_connection(
+            user_id=user_id,
+            provider_id=provider_id,
+            provider_user_id=str(user_info.get("id")),
+            raw_profile={
+                "email": user_info.get("email"),
+                "name": user_info.get("name"),
+            },
+        )
+    return await _oauth_login_redirect(auth_service, user_id, provider_id, **extra)
+
+
+@router.post(
+    "/auth/oauth/verify",
+    summary="Prove ownership of an email-conflicting account (verify page)",
+)
+async def oauth_verify_conflict(
+    payload: dict = Body(default={}),
+    session: AsyncSession = Depends(get_db),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> RedirectResponse:
+    """Reference contract: responds with a 302 on success AND failure — the
+    verify page follows the redirect to the success/error landing page."""
+    session_id = payload.get("sessionId") or ""
+    pending = await _pop_oauth_pending(session_id) if session_id else None
+    if not pending or pending.get("type") not in ("srp", "password"):
+        return _oauth_error_redirect("SESSION_EXPIRED", "OAuth session expired")
+
+    user_id = int(pending["userId"])
+    try:
+        if pending["type"] == "password":
+            password = payload.get("password") or ""
+            user, _profile = await auth_service.get_user_with_profile(user_id)
+            hashed = user.hashed_password or ""
+            if hashed.startswith("SRP:") or not hashed or not password:
+                return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
+            import bcrypt
+
+            if not await asyncio.to_thread(
+                bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
+            ):
+                return _oauth_error_redirect("INVALID_PASSWORD", "Invalid password")
+        else:
+            success, _proof = _srp_verify_session(
+                server_secret_hex=pending["serverSecret"],
+                client_public_hex=payload.get("clientPublicEphemeral") or "",
+                salt_hex=pending["salt"],
+                username=pending["username"],
+                verifier_hex=pending["verifier"],
+                client_proof_hex=payload.get("clientProof") or "",
+            )
+            if not success:
+                return _oauth_error_redirect(
+                    "INVALID_SRP_PROOF", "Security verification failed"
+                )
+
+        return await _complete_oauth_binding(
+            auth_service=auth_service,
+            oauth_service=oauth_service,
+            user_id=user_id,
+            provider_id=pending["providerId"],
+            user_info=pending["userInfo"],
+            linked="true",
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception("OAuth verify: binding failed")
+        return _oauth_error_redirect("VERIFICATION_FAILED", "Verification failed")
+
+
+@router.post(
+    "/oauth/create",
+    summary="Create a new account from the OAuth decision page (form post)",
+)
+async def oauth_create_user(
+    stateToken: str = Form(...),
+    username: str = Form(...),
+    nickname: str = Form(...),
+    passwordMode: str = Form(default="none"),
+    srpSalt: str | None = Form(default=None),
+    srpVerifier: str | None = Form(default=None),
+    session: AsyncSession = Depends(get_db),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> RedirectResponse:
+    import re
+
+    try:
+        provider_id, user_info = _decode_oauth_state_token(stateToken)
+    except AuthenticationRequiredError:
+        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{4,32}", username):
+        return _oauth_error_redirect("INVALID_USERNAME", "Invalid username format")
+    if passwordMode not in ("none", "srp"):
+        return _oauth_error_redirect("INVALID_AUTH_MODE", "Invalid auth mode")
+    if passwordMode == "srp" and not (srpSalt and srpVerifier):
+        return _oauth_error_redirect(
+            "INVALID_SRP_CREDENTIALS", "Missing SRP credentials"
+        )
+    if await auth_service.is_username_taken(username):
+        return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
+
+    try:
+        email = (
+            user_info.get("email")
+            or f"oauth-{provider_id}-{user_info.get('id')}@placeholder.internal"
+        )
+        user, _profile = await auth_service.register_oauth_decision(
+            email=email,
+            username=username,
+            nickname=_clean_nickname(nickname),
+            srp_salt=srpSalt if passwordMode == "srp" else None,
+            srp_verifier=srpVerifier if passwordMode == "srp" else None,
+        )
+        return await _complete_oauth_binding(
+            auth_service=auth_service,
+            oauth_service=oauth_service,
+            user_id=user.id,
+            provider_id=provider_id,
+            user_info=user_info,
+            created="true",
+            authMode=passwordMode,
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception("OAuth create: account creation failed")
+        return _oauth_error_redirect("CREATION_FAILED", "Account creation failed")
+
+
+@router.post(
+    "/oauth/bind",
+    summary="Bind OAuth to a legacy-password account (decision page, form post)",
+)
+async def oauth_bind_user(
+    stateToken: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(default=""),
+    session: AsyncSession = Depends(get_db),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> RedirectResponse:
+    try:
+        provider_id, user_info = _decode_oauth_state_token(stateToken)
+    except AuthenticationRequiredError:
+        return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
+
+    user = await auth_service._user_repo.get_by_username(username)
+    if user is None:
+        return _oauth_error_redirect("USER_NOT_FOUND", "User not found")
+    hashed = user.hashed_password or ""
+    if hashed.startswith("SRP:") or not hashed:
+        # SRP accounts must use the bind/srp/init + verify pair.
+        return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
+
+    import bcrypt
+
+    if not password or not await asyncio.to_thread(
+        bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
+    ):
+        return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
+
+    try:
+        return await _complete_oauth_binding(
+            auth_service=auth_service,
+            oauth_service=oauth_service,
+            user_id=user.id,
+            provider_id=provider_id,
+            user_info=user_info,
+            bound="true",
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception("OAuth bind: binding failed")
+        return _oauth_error_redirect("BINDING_FAILED", "Binding failed")
+
+
+@router.post(
+    "/oauth/bind/srp/init",
+    summary="Start SRP verification for binding OAuth to an existing account",
+)
+async def oauth_bind_srp_init(
+    payload: dict = Body(default={}),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+) -> dict:
+    state_token = payload.get("stateToken") or ""
+    username = payload.get("username") or ""
+    try:
+        provider_id, user_info = _decode_oauth_state_token(state_token)
+    except AuthenticationRequiredError:
+        raise AuthenticationRequiredError("Session expired, please try again") from None
+
+    user = await auth_service._user_repo.get_by_username(username)
+    if user is None:
+        raise NotFoundError("User not found")
+    hashed = user.hashed_password or ""
+    if not hashed.startswith("SRP:"):
+        raise BadRequestError("User does not support SRP authentication")
+    parts = hashed.split(":", 2)
+    if len(parts) != 3:
+        raise BadRequestError("User does not support SRP authentication")
+    salt, verifier = parts[1], parts[2]
+
+    import secrets as _secrets
+    import time as _time
+
+    server_public, server_secret = _srp_generate_ephemeral(verifier)
+    session_id = (
+        f"oauth_srp_{provider_id}_{user_info.get('id')}_"
+        f"{int(_time.time() * 1000)}_{_secrets.token_hex(4)}"
+    )
+    await _store_oauth_pending(
+        session_id,
+        {
+            "type": "srp_bind",
+            "providerId": provider_id,
+            "userInfo": user_info,
+            "userId": user.id,
+            "username": user.username,
+            "salt": salt,
+            "verifier": verifier,
+            "serverSecret": server_secret,
+        },
+    )
+    return {
+        "code": 200,
+        "message": "SRP binding initialized successfully.",
+        "data": {
+            "sessionId": session_id,
+            "salt": salt,
+            "serverPublicEphemeral": server_public,
+        },
+    }
+
+
+@router.post(
+    "/oauth/bind/srp/verify",
+    summary="Finish SRP verification for OAuth binding (form post)",
+)
+async def oauth_bind_srp_verify(
+    sessionId: str = Form(...),
+    clientPublicEphemeral: str = Form(...),
+    clientProof: str = Form(...),
+    session: AsyncSession = Depends(get_db),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
+    oauth_service: OAuthService = Depends(get_oauth_service),
+) -> RedirectResponse:
+    pending = await _pop_oauth_pending(sessionId)
+    if not pending or pending.get("type") != "srp_bind":
+        return _oauth_error_redirect("SESSION_EXPIRED", "OAuth session expired")
+
+    success, _proof = _srp_verify_session(
+        server_secret_hex=pending["serverSecret"],
+        client_public_hex=clientPublicEphemeral,
+        salt_hex=pending["salt"],
+        username=pending["username"],
+        verifier_hex=pending["verifier"],
+        client_proof_hex=clientProof,
+    )
+    if not success:
+        return _oauth_error_redirect(
+            "INVALID_SRP_PROOF", "Security verification failed"
+        )
+
+    try:
+        return await _complete_oauth_binding(
+            auth_service=auth_service,
+            oauth_service=oauth_service,
+            user_id=int(pending["userId"]),
+            provider_id=pending["providerId"],
+            user_info=pending["userInfo"],
+            bound="true",
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception("OAuth SRP bind: binding failed")
+        return _oauth_error_redirect("SRP_VERIFICATION_FAILED", "Binding failed")
 
 
 @router.post(

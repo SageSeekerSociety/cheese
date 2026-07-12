@@ -30,8 +30,11 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     environment: str = "development"
     frontend_url: str = "http://localhost:5200"
-    frontend_oauth_success_path: str = "/"
-    frontend_oauth_error_path: str = "/login"
+    # OAuth browser-flow landing pages (must match the frontend router).
+    frontend_oauth_success_path: str = "/account/oauth/success"
+    frontend_oauth_error_path: str = "/account/oauth/error"
+    frontend_oauth_verify_path: str = "/account/oauth/verify"
+    frontend_oauth_complete_path: str = "/account/oauth/complete"
     require_invite_code: bool = False
     jwt_secret: str = "dev-secret"
     access_token_expires_seconds: int = 15 * 60
