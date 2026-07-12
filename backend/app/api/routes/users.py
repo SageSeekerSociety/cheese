@@ -150,16 +150,6 @@ class ResetPasswordRequest(BaseModel):
     srp_verifier: str | None = Field(default=None, alias="srpVerifier")
 
 
-class PasskeyRegisterVerifyRequest(BaseModel):
-    challenge: str = Field(..., min_length=1)
-    credential: dict
-
-
-class PasskeyAuthenticateVerifyRequest(BaseModel):
-    challenge: str = Field(..., min_length=1)
-    credential: dict
-
-
 class LinkOAuthRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -2834,11 +2824,31 @@ async def update_2fa_settings(
         await redis.aclose()
 
 
+def _challenge_from_credential(credential: dict) -> str:
+    """Recover the challenge echoed inside the WebAuthn clientDataJSON. The
+    reference contract sends only the credential — the server must not trust a
+    separately-supplied challenge anyway."""
+    import base64
+    import json as _json
+
+    try:
+        raw = credential["response"]["clientDataJSON"]
+        padded = raw + "=" * (-len(raw) % 4)
+        client_data = _json.loads(base64.urlsafe_b64decode(padded))
+        challenge = client_data["challenge"]
+        if not isinstance(challenge, str) or not challenge:
+            raise KeyError("challenge")
+        return challenge
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BadRequestError("Malformed WebAuthn credential") from exc
+
+
 @router.post(
-    "/auth/passkey/register/challenge",
-    summary="Generate passkey registration challenge",
+    "/{userId}/passkeys/options",
+    summary="Generate passkey registration options",
 )
 async def passkey_register_challenge(
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
     passkey_service: PasskeyService = Depends(get_passkey_service),
@@ -2848,6 +2858,9 @@ async def passkey_register_challenge(
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
+
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can register a passkey.")
 
     user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
 
@@ -2874,11 +2887,12 @@ async def passkey_register_challenge(
 
 
 @router.post(
-    "/auth/passkey/register/verify",
+    "/{userId}/passkeys",
     summary="Verify passkey registration",
 )
 async def passkey_register_verify(
-    payload: PasskeyRegisterVerifyRequest,
+    user_id: Annotated[int, Path(ge=0, alias="userId")],
+    payload: dict = Body(default={}),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
@@ -2886,8 +2900,13 @@ async def passkey_register_verify(
 
     from app.core.config import settings
 
-    challenge = payload.challenge
-    credential = payload.credential
+    if auth_user.user_id != user_id:
+        raise ForbiddenError("Only the user themselves can register a passkey.")
+
+    credential = payload.get("response")
+    if not isinstance(credential, dict):
+        raise BadRequestError("response (WebAuthn credential) is required")
+    challenge = _challenge_from_credential(credential)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -2913,8 +2932,8 @@ async def passkey_register_verify(
 
 
 @router.post(
-    "/auth/passkey/authenticate/challenge",
-    summary="Generate passkey authentication challenge",
+    "/auth/passkey/options",
+    summary="Generate passkey authentication options",
 )
 async def passkey_authenticate_challenge(
     payload: dict = Body(default={}),
@@ -2948,12 +2967,12 @@ async def passkey_authenticate_challenge(
 
 
 @router.post(
-    "/auth/passkey/authenticate/verify",
+    "/auth/passkey/verify",
     summary="Verify passkey authentication",
 )
 async def passkey_authenticate_verify(
-    payload: PasskeyAuthenticateVerifyRequest,
     response: Response,
+    payload: dict = Body(default={}),
     passkey_service: PasskeyService = Depends(get_passkey_service),
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
@@ -2962,8 +2981,10 @@ async def passkey_authenticate_verify(
     from app.core.config import settings
     from app.domain.user.login_security import SessionManager
 
-    challenge = payload.challenge
-    credential = payload.credential
+    credential = payload.get("response")
+    if not isinstance(credential, dict):
+        raise BadRequestError("response (WebAuthn credential) is required")
+    challenge = _challenge_from_credential(credential)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
