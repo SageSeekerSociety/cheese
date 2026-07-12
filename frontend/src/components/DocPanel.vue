@@ -2598,6 +2598,12 @@ onBeforeUnmount(() => {
   font-weight: 500;
   cursor: pointer;
 }
+/* @person handle reads as a link: persistent accent underline. File/topic
+   refs (📄/#) keep their chip look and only underline on hover, below. */
+.doc-editor :deep(.mention:not(.file-ref):not(.topic-ref)) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .doc-editor :deep(.mention:hover) {
   text-decoration: underline;
 }

@@ -39,6 +39,7 @@ import type {
   WsServerFrame,
 } from '../cx_types'
 import CheeseAvatar from './CheeseAvatar.vue'
+import { avatarColor } from '../utils/avatar'
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
@@ -886,7 +887,7 @@ onBeforeUnmount(() => {
             <div class="im-gutter">
               <template v-if="isRunStart(i)">
                 <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" />
-                <div v-else class="im-avatar">
+                <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(m.author) }">
                   {{ m.author.slice(0, 1).toUpperCase() }}
                 </div>
               </template>
@@ -1456,7 +1457,8 @@ onBeforeUnmount(() => {
   width: 28px;
   flex: 0 0 28px;
 }
-/* Human avatar: --fill bg + --muted initial. No saturated per-user colors. */
+/* Human avatar: colored initial on a per-user deterministic background
+   (hash → hue), matching the Space avatars' visual language. */
 .im-avatar {
   width: 28px;
   height: 28px;
@@ -1464,7 +1466,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   background: var(--fill);
-  color: var(--muted);
+  color: #fff;
   font-size: 12px;
   font-weight: 600;
   border-radius: 8px;
@@ -1612,6 +1614,12 @@ onBeforeUnmount(() => {
   padding: 0 3px;
   font-weight: 500;
   cursor: pointer;
+}
+/* @person handle reads as a link: persistent accent underline. File/topic
+   refs (📄/#) keep their chip look and only underline on hover, below. */
+.im-text :deep(.mention:not(.file-ref):not(.topic-ref)) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .im-text :deep(.mention:hover) {
   text-decoration: underline;

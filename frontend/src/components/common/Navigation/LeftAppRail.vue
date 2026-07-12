@@ -12,27 +12,44 @@
       transition="scale-transition"
     >
       <template #activator="{ props }">
-        <v-avatar v-tooltip="userMenu.nickname.value" class="cursor-pointer elevation-1 mb-4" size="32" v-bind="props">
+        <v-avatar
+          v-tooltip="userMenu.nickname.value"
+          class="cursor-pointer elevation-1 mb-4"
+          size="32"
+          :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
+          v-bind="props"
+        >
           <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
             <!-- avatar service (localhost:8081) may be down in the merged demo:
-                 fall back to the account icon instead of a broken white tile -->
+                 fall back to a colored initial instead of a broken white tile -->
             <template #error>
-              <v-icon icon="mdi-account" />
+              <span class="rail-avatar-char" :style="{ backgroundColor: userMenu.avatarColor.value }">{{
+                userMenu.avatarInitial.value
+              }}</span>
             </template>
           </v-img>
-          <v-icon v-else icon="mdi-account" />
+          <span v-else class="rail-avatar-char">{{ userMenu.avatarInitial.value }}</span>
         </v-avatar>
       </template>
 
       <v-card class="user-menu-card rounded-lg elevation-1 border pa-0" min-width="300">
         <v-card-item class="user-header pa-4 pb-3">
-          <v-avatar size="56" class="mb-2" elevation="1">
+          <v-avatar
+            size="56"
+            class="mb-2"
+            elevation="1"
+            :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
+          >
             <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
               <template #error>
-                <v-icon icon="mdi-account" size="large" />
+                <span
+                  class="rail-avatar-char rail-avatar-char--lg"
+                  :style="{ backgroundColor: userMenu.avatarColor.value }"
+                  >{{ userMenu.avatarInitial.value }}</span
+                >
               </template>
             </v-img>
-            <v-icon v-else icon="mdi-account" size="large" />
+            <span v-else class="rail-avatar-char rail-avatar-char--lg">{{ userMenu.avatarInitial.value }}</span>
           </v-avatar>
           <div>
             <v-card-title class="px-0 py-0 text-h6 font-weight-bold">{{ userMenu.nickname.value }}</v-card-title>
@@ -153,5 +170,22 @@ const userMenu = useUserMenu()
 .logo {
   width: 48px;
   height: 48px;
+}
+
+/* Colored-initial fallback for the default user avatar (no uploaded image). */
+.rail-avatar-char {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  line-height: 1;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+
+  &--lg {
+    font-size: 22px;
+  }
 }
 </style>

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { relTime } from '../lib/relTime'
 import type { Project, ProjectMemberRow, Topic } from '../cx_types'
 import CheeseAvatar from './CheeseAvatar.vue'
+import { avatarColor } from '../utils/avatar'
 
 const props = defineProps<{
   projects: Project[]
@@ -533,7 +534,9 @@ const onMemory = computed(() => props.activeDocs === 'memory')
             >
               <template #prepend>
                 <span class="private-avatar-slot">
-                  <span class="dm-avatar">{{ dm.name.slice(0, 1).toUpperCase() }}</span>
+                  <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
+                    dm.name.slice(0, 1).toUpperCase()
+                  }}</span>
                 </span>
               </template>
               <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)">
@@ -821,7 +824,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   height: 18px;
   border-radius: 50%;
   background: var(--fill, #e8e8ec);
-  color: var(--muted, #6b6b76);
+  color: #fff;
   font-size: 10px;
   font-weight: 600;
   line-height: 1;

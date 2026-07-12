@@ -1735,10 +1735,14 @@ onUnmounted(() => {
 
 /* 群聊感 (fusion-design §3): compact roster indicator overlaid at the top-right
    of the chat column's header row (pr-header), so the chat header and the doc
-   header line up. Vertically centered on the ~45px pr-header row. */
+   header line up. Span the full pr-header row and flex-center so the members
+   count shares a vertical center with the 进行中/已归档 status badge instead of
+   riding on a magic top offset (which read as misaligned). The pr-header row is
+   the 15px/1.4 title (~21px) plus py-3 (12px×2) padding = ~45px tall. */
 .topic-members-slot {
   position: absolute;
-  top: 9px;
+  top: 0;
+  height: 45px;
   z-index: 3;
   display: flex;
   align-items: center;
