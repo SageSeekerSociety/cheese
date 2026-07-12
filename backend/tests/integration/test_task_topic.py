@@ -39,11 +39,15 @@ class TestTaskTopicIntegration:
         _portal: BlockingPortal,
     ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         suffix = unique_int(10000000, 99999999)
 
         topic_names = [f"Test Topic ({suffix}) ({i})" for i in range(1, 5)]
-        topic_ids = create_topics_in_db(db_session, _portal, topic_names, creator.user_id)
+        topic_ids = create_topics_in_db(
+            db_session, _portal, topic_names, creator.user_id
+        )
 
         space_resp = api_client.post(
             "/spaces",
@@ -57,7 +61,9 @@ class TestTaskTopicIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert space_resp.status_code == 201, f"Space creation failed: {space_resp.text}"
+        assert space_resp.status_code == 201, (
+            f"Space creation failed: {space_resp.text}"
+        )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
         default_category_id = space_data["defaultCategoryId"]
@@ -70,7 +76,9 @@ class TestTaskTopicIntegration:
             "topic_names": topic_names,
         }
 
-    def test_create_task_with_topics(self, setup_task_topics: dict, api_client: TestClient):
+    def test_create_task_with_topics(
+        self, setup_task_topics: dict, api_client: TestClient
+    ):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
@@ -96,11 +104,15 @@ class TestTaskTopicIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["task"]
         assert data["name"] == task_name
 
-    def test_get_task_with_topics(self, setup_task_topics: dict, api_client: TestClient):
+    def test_get_task_with_topics(
+        self, setup_task_topics: dict, api_client: TestClient
+    ):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
@@ -132,7 +144,9 @@ class TestTaskTopicIntegration:
             params={"queryTopics": "true"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
 
     def test_update_task_topics(self, setup_task_topics: dict, api_client: TestClient):
         creator = setup_task_topics["creator"]
@@ -172,7 +186,9 @@ class TestTaskTopicIntegration:
             f"Expected 200, got {patch_resp.status_code}: {patch_resp.text}"
         )
 
-    def test_get_task_with_updated_topics(self, setup_task_topics: dict, api_client: TestClient):
+    def test_get_task_with_updated_topics(
+        self, setup_task_topics: dict, api_client: TestClient
+    ):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
@@ -209,15 +225,21 @@ class TestTaskTopicIntegration:
             params={"queryTopics": "true"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         task_data = resp.json()["data"]["task"]
         topics = task_data.get("topics", [])
         topic_id_set = {t["id"] for t in topics}
         assert topic_ids[1] in topic_id_set, "Topic 1 should be in the updated task"
         assert topic_ids[2] in topic_id_set, "Topic 2 should be in the updated task"
-        assert topic_ids[0] not in topic_id_set, "Topic 0 should not be in the updated task"
+        assert topic_ids[0] not in topic_id_set, (
+            "Topic 0 should not be in the updated task"
+        )
 
-    def test_enumerate_tasks_by_topics(self, setup_task_topics: dict, api_client: TestClient):
+    def test_enumerate_tasks_by_topics(
+        self, setup_task_topics: dict, api_client: TestClient
+    ):
         creator = setup_task_topics["creator"]
         space_id = setup_task_topics["space_id"]
         category_id = setup_task_topics["default_category_id"]
@@ -262,7 +284,9 @@ class TestTaskTopicIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         tasks = resp.json()["data"]["tasks"]
         assert any(t["id"] == task_id for t in tasks), (
             f"Task {task_id} not found in filtered results"
@@ -277,7 +301,9 @@ class TestTaskTopicIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp2.status_code == 200, f"Expected 200, got {resp2.status_code}: {resp2.text}"
+        assert resp2.status_code == 200, (
+            f"Expected 200, got {resp2.status_code}: {resp2.text}"
+        )
         tasks2 = resp2.json()["data"]["tasks"]
         assert not any(t["id"] == task_id for t in tasks2), (
             f"Task {task_id} should not be in results filtered by topic {topic_ids[0]}"

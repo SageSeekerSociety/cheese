@@ -295,7 +295,9 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(r)
         repo = DiscussionReactionRepository(session)
 
-        result = await repo.get_reaction(discussion_id=1, user_id=50, reaction_type_id=1)
+        result = await repo.get_reaction(
+            discussion_id=1, user_id=50, reaction_type_id=1
+        )
         assert result is r
 
     @pytest.mark.anyio
@@ -355,7 +357,10 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(1)
         repo = DiscussionReactionRepository(session)
 
-        assert await repo.has_user_reacted(discussion_id=1, user_id=50, reaction_type_id=1) is True
+        assert (
+            await repo.has_user_reacted(discussion_id=1, user_id=50, reaction_type_id=1)
+            is True
+        )
 
     @pytest.mark.anyio
     async def test_has_user_reacted_false(self):
@@ -363,4 +368,7 @@ class TestDiscussionReactionRepository:
         session.execute.return_value = _mock_scalar(None)
         repo = DiscussionReactionRepository(session)
 
-        assert await repo.has_user_reacted(discussion_id=1, user_id=50, reaction_type_id=1) is False
+        assert (
+            await repo.has_user_reacted(discussion_id=1, user_id=50, reaction_type_id=1)
+            is False
+        )

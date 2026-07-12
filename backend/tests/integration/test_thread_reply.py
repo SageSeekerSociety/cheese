@@ -3,16 +3,21 @@
 
 def _topic(client) -> str:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    t = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "T"}
-    ).json()["data"]
+    t = client.post("/api/topics", json={"project_id": p["id"], "title": "T"}).json()[
+        "data"
+    ]
     return t["id"]
 
 
 def _post(ws, content, reply_to=None):
     ws.send_json(
-        {"type": "message", "content": content, "author": "u", "summon": False,
-         "reply_to": reply_to}
+        {
+            "type": "message",
+            "content": content,
+            "author": "u",
+            "summon": False,
+            "reply_to": reply_to,
+        }
     )
     # human-only post → user_block then done
     block = None

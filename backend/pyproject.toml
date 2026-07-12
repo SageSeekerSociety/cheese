@@ -54,6 +54,11 @@ select = ["E", "F", "I", "UP", "B"]
 # it rather than risk a subtle behaviour change for a stylistic modernization.
 ignore = ["UP042"]
 
+[tool.ruff.lint.per-file-ignores]
+# Alembic migrations are generated/historical and carry long inline seed-data
+# strings; line length there is noise, not a defect.
+"alembic/versions/*" = ["E501"]
+
 # FastAPI's dependency-injection markers are CALLED in parameter defaults
 # (`x = Depends(dep)`, `q = Query(...)`) — that's the framework's idiom, not the
 # B008 "mutable/expensive default" anti-pattern. Whitelist them so B008 flags
@@ -75,6 +80,11 @@ extend-immutable-calls = [
 ]
 
 [tool.pyright]
+# Type-check the application source only. Tests deliberately pass SimpleNamespace
+# / Mock ducks where typed objects are declared, and scripts/ are one-off spikes —
+# holding either to strict typing yields hundreds of false positives with no
+# app-correctness value. (Project standard: pyright zero errors in app code.)
+include = ["app"]
 typeCheckingMode = "basic"
 pythonVersion = "3.13"
 venvPath = "."

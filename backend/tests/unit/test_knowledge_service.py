@@ -325,7 +325,9 @@ class TestUpdate:
         repo = AsyncMock()
         entity = _entity(id=5, team_id=10)
         repo.get_by_id.return_value = entity
-        updated = _entity(id=5, name="Updated", description="New desc", content={"text": "hi"})
+        updated = _entity(
+            id=5, name="Updated", description="New desc", content={"text": "hi"}
+        )
         repo.update_entity.return_value = updated
         _stub_dto_deps(repo, updated, labels=["new-label"])
 

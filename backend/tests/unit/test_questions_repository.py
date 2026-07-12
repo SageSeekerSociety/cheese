@@ -232,7 +232,11 @@ class TestQuestionRepository:
         repo = QuestionRepository(session)
 
         rows, total = await repo.search(
-            keyword="testing", limit=10, offset=0, sort_by="createdAt", sort_order="desc"
+            keyword="testing",
+            limit=10,
+            offset=0,
+            sort_by="createdAt",
+            sort_order="desc",
         )
         assert rows == []
         assert total == 0
@@ -393,7 +397,9 @@ class TestQuestionRepository:
         session = _mock_session()
         repo = QuestionRepository(session)
 
-        await repo.log_query(question_id=10, viewer_id=50, ip="127.0.0.1", user_agent="Mozilla")
+        await repo.log_query(
+            question_id=10, viewer_id=50, ip="127.0.0.1", user_agent="Mozilla"
+        )
         session.add.assert_called_once()
         session.flush.assert_awaited_once()
 
@@ -557,7 +563,9 @@ class TestQuestionRepository:
         q = _question()
         repo = QuestionRepository(session)
 
-        result = await repo.update_question(q, title="New Title", content="New Content", type_=2)
+        result = await repo.update_question(
+            q, title="New Title", content="New Content", type_=2
+        )
         assert result.title == "New Title"
         assert result.content == "New Content"
         assert result.type == 2

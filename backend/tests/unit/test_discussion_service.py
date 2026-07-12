@@ -24,7 +24,9 @@ def _make_entity(**overrides) -> SimpleNamespace:
         "sender_id": 99,
         "content": {
             "type": "doc",
-            "content": [{"type": "paragraph", "content": [{"type": "text", "text": "hello"}]}],
+            "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "hello"}]}
+            ],
         },
         "mentioned_user_ids": [],
         "created_at": _NOW,
@@ -217,15 +219,19 @@ class TestReactionServiceGetSummary:
     @pytest.mark.anyio
     async def test_builds_summary_for_active_types(self):
         svc, r_repo, rt_repo = _make_reaction_service()
-        like = _make_reaction_type(id=1, code="LIKE", name="Like", description="thumbs up")
-        cheers = _make_reaction_type(id=2, code="CHEERS", name="Cheers", description="celebration")
+        like = _make_reaction_type(
+            id=1, code="LIKE", name="Like", description="thumbs up"
+        )
+        cheers = _make_reaction_type(
+            id=2, code="CHEERS", name="Cheers", description="celebration"
+        )
         rt_repo.list_active.return_value = [like, cheers]
         r_repo.count_by_discussion.return_value = {1: 5, 2: 0}
         r_repo.has_user_reacted.return_value = True
 
         result = await svc.get_reaction_summary(discussion_id=10, current_user_id=7)
 
-        # NT DiscussionReactionSummary: [{reactionType: {id, code, ...}, count, hasReacted}]
+        # NT DiscussionReactionSummary: [{reactionType: {id, code, ...}, count, hasReacted}]  # noqa: E501
         assert len(result) == 2
         like_entry = result[0]
         assert like_entry["reactionType"]["id"] == 1
@@ -287,7 +293,11 @@ class TestReactionServiceListTypes:
             id=1, code="LIKE", name="Like", description="thumbs up", display_order=0
         )
         cheers = _make_reaction_type(
-            id=2, code="CHEERS", name="Cheers", description="celebration", display_order=1
+            id=2,
+            code="CHEERS",
+            name="Cheers",
+            description="celebration",
+            display_order=1,
         )
         rt_repo.list_active.return_value = [like, cheers]
 
@@ -363,7 +373,10 @@ class TestReactionTypeToDict:
 
 class TestCreateDiscussion:
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.publish_notification_event", new_callable=AsyncMock)
+    @patch(
+        "app.domain.discussion.services.publish_notification_event",
+        new_callable=AsyncMock,
+    )
     async def test_creates_and_returns_dto(self, mock_publish):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(id=42, sender_id=5, mentioned_user_ids=[])
@@ -388,11 +401,17 @@ class TestCreateDiscussion:
         mock_publish.assert_not_awaited()
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.publish_notification_event", new_callable=AsyncMock)
+    @patch(
+        "app.domain.discussion.services.publish_notification_event",
+        new_callable=AsyncMock,
+    )
     async def test_publishes_notification_for_mentions(self, mock_publish):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(
-            id=42, sender_id=5, mentioned_user_ids=[10, 20], content="hey @user10 @user20"
+            id=42,
+            sender_id=5,
+            mentioned_user_ids=[10, 20],
+            content="hey @user10 @user20",
         )
         repo.create.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
@@ -454,10 +473,15 @@ class TestCreateDiscussion:
             )
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.publish_notification_event", new_callable=AsyncMock)
+    @patch(
+        "app.domain.discussion.services.publish_notification_event",
+        new_callable=AsyncMock,
+    )
     async def test_filters_non_positive_mention_ids(self, mock_publish):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
-        entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[10], content="hello")
+        entity = _make_entity(
+            id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
+        )
         repo.create.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
@@ -479,10 +503,15 @@ class TestCreateDiscussion:
         assert create_kwargs["mentioned_user_ids"] == [10]
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.publish_notification_event", new_callable=AsyncMock)
+    @patch(
+        "app.domain.discussion.services.publish_notification_event",
+        new_callable=AsyncMock,
+    )
     async def test_deduplicates_mention_ids(self, mock_publish):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
-        entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[10], content="hello")
+        entity = _make_entity(
+            id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
+        )
         repo.create.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
@@ -504,7 +533,10 @@ class TestCreateDiscussion:
         assert create_kwargs["mentioned_user_ids"] == [10]
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.publish_notification_event", new_callable=AsyncMock)
+    @patch(
+        "app.domain.discussion.services.publish_notification_event",
+        new_callable=AsyncMock,
+    )
     async def test_model_type_uppercased(self, mock_publish):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
@@ -525,7 +557,10 @@ class TestCreateDiscussion:
         assert create_kwargs["model_type"] == "PROJECT"
 
     @pytest.mark.anyio
-    @patch("app.domain.discussion.services.publish_notification_event", new_callable=AsyncMock)
+    @patch(
+        "app.domain.discussion.services.publish_notification_event",
+        new_callable=AsyncMock,
+    )
     async def test_content_is_stripped(self, mock_publish):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
@@ -738,7 +773,9 @@ class TestUpdateDiscussion:
             sender_id=7,
             content={
                 "type": "doc",
-                "content": [{"type": "paragraph", "content": [{"type": "text", "text": "new"}]}],
+                "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "new"}]}
+                ],
             },
         )
         repo.update_content.return_value = updated_entity
@@ -849,7 +886,9 @@ class TestDiscussionServiceToggleReaction:
         svc, _repo, rxn_svc, _pr = _make_discussion_service()
         rxn_svc.toggle.return_value = {"active": True, "summary": []}
 
-        result = await svc.toggle_reaction(discussion_id=10, reaction_type_id=1, user_id=7)
+        result = await svc.toggle_reaction(
+            discussion_id=10, reaction_type_id=1, user_id=7
+        )
 
         assert result == {"active": True, "summary": []}
         rxn_svc.toggle.assert_awaited_once_with(
@@ -870,7 +909,9 @@ class TestDiscussionServiceRemoveReaction:
         svc, _repo, rxn_svc, _pr = _make_discussion_service()
         rxn_svc.remove.return_value = {"removed": True, "summary": []}
 
-        result = await svc.remove_reaction(discussion_id=10, reaction_type_id=1, user_id=7)
+        result = await svc.remove_reaction(
+            discussion_id=10, reaction_type_id=1, user_id=7
+        )
 
         assert result == {"removed": True, "summary": []}
         rxn_svc.remove.assert_awaited_once_with(

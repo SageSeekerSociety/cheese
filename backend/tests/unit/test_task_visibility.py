@@ -131,14 +131,16 @@ class TestCanViewTaskEmailDomain:
 
     @pytest.mark.anyio
     async def test_domain_case_insensitive_match(self):
-        """Domain check should be case-insensitive: User's Cs.EdU.Cn matches CS.EDU.CN."""
+        """Domain check should be case-insensitive: User's Cs.EdU.Cn matches CS.EDU.CN."""  # noqa: E501
         t = _task(creator_id=99, access_control_enabled=True)
         admin_repo = AsyncMock()
         admin_repo.get_relation.return_value = None
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(email_domain="Cs.EdU.Cn")
         session = _mock_session({"task_access_domain": 1})
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is True
 
     @pytest.mark.anyio
@@ -164,7 +166,9 @@ class TestCanViewTaskEmailDomain:
             email_domain=None,
         )
         session = _mock_session({"task_access_domain": 1})  # physics.edu.cn matches
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is True
 
     @pytest.mark.anyio
@@ -190,7 +194,9 @@ class TestCanViewTaskEmailDomain:
             email_domain="cs.edu.cn",
         )
         session = _mock_session({"task_access_domain": 1})  # cs.edu.cn matches
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is True
 
     @pytest.mark.anyio
@@ -202,8 +208,12 @@ class TestCanViewTaskEmailDomain:
         user_repo = AsyncMock()
         # email_domain stored as uppercase, but the service lowercases it
         user_repo.get_by_id.return_value = _user(email_domain="CS.EDU.CN")
-        session = _mock_session({"task_access_domain": 1})  # TaskAccessDomain has lowercase
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        session = _mock_session(
+            {"task_access_domain": 1}
+        )  # TaskAccessDomain has lowercase
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is True
 
 
@@ -240,14 +250,16 @@ class TestCanViewTaskRoleBypass:
 
     @pytest.mark.anyio
     async def test_non_creator_non_admin_non_participant_denied(self):
-        """Ordinary user with no role cannot view a restricted task unless domain matches."""
+        """Ordinary user with no role cannot view a restricted task unless domain matches."""  # noqa: E501
         t = _task(creator_id=99, access_control_enabled=True)
         admin_repo = AsyncMock()
         admin_repo.get_relation.return_value = None
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(email_domain="other.edu.cn")
         session = _mock_session({"task_access_domain": None})
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is False
 
     @pytest.mark.anyio
@@ -308,7 +320,9 @@ class TestSnapshotPolicy:
         user_repo.get_by_id.return_value = _user(email_domain="cs.edu.cn")
         # The presence of the TAD row is what matters — NOT any domain group
         session = _mock_session({"task_access_domain": 1})  # domain found in TAD
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is True
 
     @pytest.mark.anyio
@@ -321,7 +335,9 @@ class TestSnapshotPolicy:
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(email_domain="new-domain.edu.cn")
         session = _mock_session({"task_access_domain": None})  # NOT in TAD snapshot
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is False
 
     @pytest.mark.anyio
@@ -350,7 +366,9 @@ class TestSnapshotPolicy:
 
         session = AsyncMock()
         session.execute = AsyncMock(side_effect=_capture)
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         result = await svc.can_view_task(task=t, user_id=42)
         assert result is True
         # Verify it queries task_access_domain, NOT any domain_group table
@@ -369,7 +387,9 @@ class TestSnapshotPolicy:
         user_repo.get_by_id.return_value = _user(email_domain="cs.edu.cn")
         # All TAD rows soft-deleted → none active → domain match fails
         session = _mock_session({"task_access_domain": None})  # no active TAD row
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is False
 
 
@@ -384,7 +404,7 @@ class TestDetailAccessNotFound:
 
     @pytest.mark.anyio
     async def test_get_task_returns_404_when_not_visible(self):
-        """Simulate the get_task route logic: if visibility check fails → NotFoundError."""
+        """Simulate the get_task route logic: if visibility check fails → NotFoundError."""  # noqa: E501
         from app.core.errors import NotFoundError
 
         # Build a restricted task where the user is not the creator, admin,
@@ -396,14 +416,18 @@ class TestDetailAccessNotFound:
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(email_domain="stranger.edu.cn")
         session = _mock_session({"task_access_domain": None, "task_membership": None})
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
 
         can_view = await svc.can_view_task(task=task, user_id=42)
         assert can_view is False
 
         with pytest.raises(NotFoundError):
             if not can_view:
-                raise NotFoundError("Resource task not found", data={"type": "task", "id": task.id})
+                raise NotFoundError(
+                    "Resource task not found", data={"type": "task", "id": task.id}
+                )
 
     @pytest.mark.anyio
     async def test_get_task_visible_when_creator(self):
@@ -574,7 +598,9 @@ class TestResolveUserEmailDomain:
         from app.api.routes.tasks import _resolve_user_email_domain
 
         user_repo = AsyncMock()
-        user_repo.get_by_id.return_value = _user(email="plain-string", email_domain=None)
+        user_repo.get_by_id.return_value = _user(
+            email="plain-string", email_domain=None
+        )
         mock_db = AsyncMock()
 
         with patch(
@@ -604,7 +630,9 @@ class TestDomainComparisonEdgeCases:
         user_repo.get_by_id.return_value = _user(email_domain="math.edu.cn")
         # Multiple TAD rows exist; one matches
         session = _mock_session({"task_access_domain": 1})
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is True
 
     @pytest.mark.anyio
@@ -617,7 +645,9 @@ class TestDomainComparisonEdgeCases:
         user_repo.get_by_id.return_value = _user(email_domain="ai.cs.edu.cn")
         # TAD has cs.edu.cn (NOT ai.cs.edu.cn) — exact match required
         session = _mock_session({"task_access_domain": None})
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is False
 
     @pytest.mark.anyio
@@ -630,7 +660,9 @@ class TestDomainComparisonEdgeCases:
         user_repo = AsyncMock()
         user_repo.get_by_id.return_value = _user(email_domain="cs.edu.cn")
         session = _mock_session({"task_access_domain": None})  # zero TAD rows
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         assert await svc.can_view_task(task=t, user_id=42) is False
 
 
@@ -658,10 +690,14 @@ class TestUserEdgeCases:
         admin_repo = AsyncMock()
         admin_repo.get_relation.return_value = None
         user_repo = AsyncMock()
-        user_repo.get_by_id.return_value = _user(email="user@cs.edu.cn  ", email_domain=None)
+        user_repo.get_by_id.return_value = _user(
+            email="user@cs.edu.cn  ", email_domain=None
+        )
         # The service lowercases the whole split result including trailing spaces.
         # cs.edu.cn with trailing space != cs.edu.cn, so we should verify behavior.
         session = _mock_session({"task_access_domain": None})
-        svc = _visibility_svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
+        svc = _visibility_svc(
+            session=session, user_repo=user_repo, admin_repo=admin_repo
+        )
         # Trailing spaces are included in the domain → no match
         assert await svc.can_view_task(task=t, user_id=42) is False

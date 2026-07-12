@@ -62,7 +62,9 @@ def load_api_catalog(openapi_file: Path) -> list[dict[str, Any]]:
                 "deprecated": bool(spec.get("deprecated", False)),
                 "hasRequestBody": "requestBody" in spec,
                 "parameters": _summarize_parameters(spec.get("parameters", [])),
-                "responseCodes": sorted(_collect_response_codes(spec.get("responses", {}))),
+                "responseCodes": sorted(
+                    _collect_response_codes(spec.get("responses", {}))
+                ),
             }
             entries.append(entry)
 
@@ -100,7 +102,9 @@ def _collect_response_codes(responses: dict[str, Any]) -> list[str]:
 def parse_args() -> argparse.Namespace:
     default_openapi, default_output = _default_paths()
 
-    parser = argparse.ArgumentParser(description="Generate API catalog JSON from NT OpenAPI spec.")
+    parser = argparse.ArgumentParser(
+        description="Generate API catalog JSON from NT OpenAPI spec."
+    )
     parser.add_argument(
         "--openapi",
         type=Path,
@@ -111,7 +115,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=default_output,
-        help="Where to write the generated catalog JSON (defaults to tests/contract/api_catalog.json)",
+        help="Where to write the generated catalog JSON (defaults to tests/contract/api_catalog.json)",  # noqa: E501
     )
     return parser.parse_args()
 

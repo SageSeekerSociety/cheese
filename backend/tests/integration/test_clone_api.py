@@ -56,9 +56,7 @@ def test_clone_unsupported_on_sdk_backend(client, monkeypatch):
     monkeypatch.setattr(settings, "agent_backend", "sdk")
     _, src, dst = _project_and_topics(client)
     _seed_session(client, src, "sess-src")
-    r = client.post(
-        f"/api/topics/{dst}/clone-from", json={"source_topic_id": src}
-    )
+    r = client.post(f"/api/topics/{dst}/clone-from", json={"source_topic_id": src})
     assert r.status_code == 422
     assert "克隆" in r.json()["message"]
 
@@ -66,9 +64,7 @@ def test_clone_unsupported_on_sdk_backend(client, monkeypatch):
 def test_clone_source_without_session_is_422(client, monkeypatch):
     monkeypatch.setattr(settings, "agent_backend", "tmux")
     _, src, dst = _project_and_topics(client)
-    r = client.post(
-        f"/api/topics/{dst}/clone-from", json={"source_topic_id": src}
-    )
+    r = client.post(f"/api/topics/{dst}/clone-from", json={"source_topic_id": src})
     assert r.status_code == 422
     assert "还没跑过" in r.json()["message"]
 
@@ -84,9 +80,7 @@ def test_clone_forks_transcript_onto_target(client, monkeypatch, tmp_path):
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    monkeypatch.setattr(
-        "app.domain.topic.services.ws.session_dir", fake_session_dir
-    )
+    monkeypatch.setattr("app.domain.topic.services.ws.session_dir", fake_session_dir)
 
     _, src, dst = _project_and_topics(client)
     old_sid = "source-session-uuid"
@@ -95,13 +89,9 @@ def test_clone_forks_transcript_onto_target(client, monkeypatch, tmp_path):
     # Lay down a source transcript where the (faked) mount would hold it.
     src_file = clone.transcript_file(fake_session_dir(None, uuid.UUID(src)), old_sid)
     src_file.parent.mkdir(parents=True, exist_ok=True)
-    src_file.write_text(
-        f'{{"sessionId":"{old_sid}","text":"hi"}}', encoding="utf-8"
-    )
+    src_file.write_text(f'{{"sessionId":"{old_sid}","text":"hi"}}', encoding="utf-8")
 
-    r = client.post(
-        f"/api/topics/{dst}/clone-from", json={"source_topic_id": src}
-    )
+    r = client.post(f"/api/topics/{dst}/clone-from", json={"source_topic_id": src})
     assert r.status_code == 200
     # TopicOut doesn't surface session_id, so read the fork's new id from the DB.
     new_sid = _read_session(client, dst)

@@ -86,9 +86,7 @@ def test_quality_gate_settings_roundtrip(client):
     assert r.json()["data"] == {"check_command": "", "approvals_required": 1}
 
     _set_gate(client, pid, "echo hi")
-    r = client.put(
-        f"/api/projects/{pid}/quality-gate", json={"approvals_required": 3}
-    )
+    r = client.put(f"/api/projects/{pid}/quality-gate", json={"approvals_required": 3})
     assert r.status_code == 200
     r = client.get(f"/api/projects/{pid}/quality-gate")
     assert r.json()["data"] == {"check_command": "echo hi", "approvals_required": 3}
@@ -102,9 +100,7 @@ def test_quality_gate_settings_roundtrip(client):
 
 def test_quality_gate_rejects_bad_approvals(client):
     pid = _make_project(client)
-    r = client.put(
-        f"/api/projects/{pid}/quality-gate", json={"approvals_required": 0}
-    )
+    r = client.put(f"/api/projects/{pid}/quality-gate", json={"approvals_required": 0})
     assert r.status_code == 422
 
 

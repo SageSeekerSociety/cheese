@@ -69,7 +69,9 @@ class TestOAuthConnectionRepository:
         session = _mock_session()
         repo = OAuthConnectionRepository(session)
 
-        result = await repo.create(user_id=10, provider_id="github", provider_user_id="gh_123")
+        result = await repo.create(
+            user_id=10, provider_id="github", provider_user_id="gh_123"
+        )
         assert result.user_id == 10
         assert result.provider_id == "github"
         assert result.provider_user_id == "gh_123"

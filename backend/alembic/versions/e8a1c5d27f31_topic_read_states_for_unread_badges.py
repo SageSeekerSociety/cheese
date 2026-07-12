@@ -5,17 +5,18 @@ Revises: d3b8f1c2e5a6
 Create Date: 2026-07-02 06:00:00.000000
 
 """
-from typing import Sequence, Union
 
-from alembic import op
+from collections.abc import Sequence
+
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "e8a1c5d27f31"
-down_revision: Union[str, Sequence[str], None] = "d3b8f1c2e5a6"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "d3b8f1c2e5a6"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -49,7 +50,5 @@ def downgrade() -> None:
     op.drop_index(
         op.f("ix_topic_read_states_user_handle"), table_name="topic_read_states"
     )
-    op.drop_index(
-        op.f("ix_topic_read_states_topic_id"), table_name="topic_read_states"
-    )
+    op.drop_index(op.f("ix_topic_read_states_topic_id"), table_name="topic_read_states")
     op.drop_table("topic_read_states")

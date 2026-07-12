@@ -3,9 +3,9 @@
 
 def _topic(client) -> str:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    t = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "T"}
-    ).json()["data"]
+    t = client.post("/api/topics", json={"project_id": p["id"], "title": "T"}).json()[
+        "data"
+    ]
     return t["id"]
 
 
@@ -65,9 +65,9 @@ def test_answer_records_choice_and_posts_reply(client):
                 break
     blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
     debug = [(b["author"], b["kind"], b["content"][:30]) for b in blocks]
-    assert any(
-        b["author"] == "user-1" and b["content"] == "cursor" for b in blocks
-    ), f"choice message never landed: {debug}"
+    assert any(b["author"] == "user-1" and b["content"] == "cursor" for b in blocks), (
+        f"choice message never landed: {debug}"
+    )
 
 
 def test_answer_validates_option_and_single_shot(client):

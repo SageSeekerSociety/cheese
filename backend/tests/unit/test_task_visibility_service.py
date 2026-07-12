@@ -1,4 +1,4 @@
-"""Unit tests for TaskVisibilityService — covering visibility rules and predicate building."""
+"""Unit tests for TaskVisibilityService — covering visibility rules and predicate building."""  # noqa: E501
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -164,7 +164,9 @@ class TestCanViewTask:
         admin_repo = AsyncMock()
         admin_repo.get_relation.return_value = None
         user_repo = AsyncMock()
-        user_repo.get_by_id.return_value = _user(email="student@cs.edu.cn", email_domain=None)
+        user_repo.get_by_id.return_value = _user(
+            email="student@cs.edu.cn", email_domain=None
+        )
         session = _mock_session({"task_access_domain": 1})  # cs.edu.cn matches
         svc = _svc(session=session, user_repo=user_repo, admin_repo=admin_repo)
         assert await svc.can_view_task(task=t, user_id=42) is True

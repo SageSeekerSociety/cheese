@@ -40,7 +40,7 @@ def upgrade() -> None:
 
     # avatar uses autoincrement
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('avatar', 'id'), (SELECT COALESCE(MAX(id),0) FROM avatar), true)"
+        "SELECT setval(pg_get_serial_sequence('avatar', 'id'), (SELECT COALESCE(MAX(id),0) FROM avatar), true)"  # noqa: E501
     )
 
     # ── Users ────────────────────────────────────────────────────────
@@ -67,7 +67,9 @@ def upgrade() -> None:
             ON CONFLICT DO NOTHING
         """)
     # Advance user_id_seq past our manually-inserted IDs
-    op.execute("SELECT setval('user_id_seq', (SELECT COALESCE(MAX(id),0) FROM \"user\"), true)")
+    op.execute(
+        "SELECT setval('user_id_seq', (SELECT COALESCE(MAX(id),0) FROM \"user\"), true)"
+    )
 
     # ── Topics ───────────────────────────────────────────────────────
     topics = [
@@ -90,7 +92,7 @@ def upgrade() -> None:
     """)
     # topic uses autoincrement (implicit sequence topic_id_seq)
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('topic', 'id'), (SELECT COALESCE(MAX(id),0) FROM topic), true)"
+        "SELECT setval(pg_get_serial_sequence('topic', 'id'), (SELECT COALESCE(MAX(id),0) FROM topic), true)"  # noqa: E501
     )
 
     # ── Teams ────────────────────────────────────────────────────────
@@ -123,7 +125,9 @@ def upgrade() -> None:
             VALUES ({tid}, '{name}', '{intro}', '{desc}', {avatar_id}, {NOW}, {NOW})
             ON CONFLICT (id) DO NOTHING
         """)
-    op.execute("SELECT setval('team_seq', (SELECT COALESCE(MAX(id),0) FROM team), true)")
+    op.execute(
+        "SELECT setval('team_seq', (SELECT COALESCE(MAX(id),0) FROM team), true)"
+    )
 
     # Team members: (team_id, user_id, role)  0=OWNER 1=ADMIN 2=MEMBER
     team_members = [
@@ -186,7 +190,9 @@ def upgrade() -> None:
                     {NOW}, {NOW})
             ON CONFLICT (id) DO NOTHING
         """)
-    op.execute("SELECT setval('space_seq', (SELECT COALESCE(MAX(id),0) FROM space), true)")
+    op.execute(
+        "SELECT setval('space_seq', (SELECT COALESCE(MAX(id),0) FROM space), true)"
+    )
 
     # Space admins
     space_admins = [
@@ -233,7 +239,7 @@ def upgrade() -> None:
             1,
             "手写数字识别模型训练",
             "使用 MNIST 数据集训练一个手写数字分类器",
-            "请使用 PyTorch 或 TensorFlow 实现一个卷积神经网络，在 MNIST 数据集上达到 98% 以上的测试准确率。"
+            "请使用 PyTorch 或 TensorFlow 实现一个卷积神经网络，在 MNIST 数据集上达到 98% 以上的测试准确率。"  # noqa: E501
             "需要提交训练代码、模型文件和实验报告。",
             1,
             1,
@@ -314,7 +320,19 @@ def upgrade() -> None:
             1209600000,
         ),
     ]
-    for tid, name, intro, desc, creator_id, sid, cid, stype, approved, plimit, deadline_ms in tasks:
+    for (
+        tid,
+        name,
+        intro,
+        desc,
+        creator_id,
+        sid,
+        cid,
+        stype,
+        approved,
+        plimit,
+        deadline_ms,
+    ) in tasks:
         op.execute(f"""
             INSERT INTO task (id, name, intro, description, creator_id, space_id, category_id,
                               submitter_type, approved, participant_limit,
@@ -329,7 +347,9 @@ def upgrade() -> None:
                     {NOW}, {NOW})
             ON CONFLICT (id) DO NOTHING
         """)
-    op.execute("SELECT setval('task_seq', (SELECT COALESCE(MAX(id),0) FROM task), true)")
+    op.execute(
+        "SELECT setval('task_seq', (SELECT COALESCE(MAX(id),0) FROM task), true)"
+    )
 
     # Task submission schemas (what to submit)
     schemas = [
@@ -381,7 +401,7 @@ def upgrade() -> None:
             1,
             3,
             "如何选择合适的深度学习框架？",
-            "目前主流的框架有 PyTorch、TensorFlow、JAX 等，各有优劣。想请教大家在实际项目中是如何选择的？",
+            "目前主流的框架有 PyTorch、TensorFlow、JAX 等，各有优劣。想请教大家在实际项目中是如何选择的？",  # noqa: E501
             0,
             5,
         ),
@@ -389,7 +409,7 @@ def upgrade() -> None:
             2,
             4,
             "Python 异步编程最佳实践有哪些？",
-            "在使用 asyncio 和 FastAPI 开发时，遇到了一些并发问题。希望了解异步编程的最佳实践和常见陷阱。",
+            "在使用 asyncio 和 FastAPI 开发时，遇到了一些并发问题。希望了解异步编程的最佳实践和常见陷阱。",  # noqa: E501
             0,
             0,
         ),
@@ -430,7 +450,7 @@ def upgrade() -> None:
 
     # question uses autoincrement
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('question', 'id'), (SELECT COALESCE(MAX(id),0) FROM question), true)"
+        "SELECT setval(pg_get_serial_sequence('question', 'id'), (SELECT COALESCE(MAX(id),0) FROM question), true)"  # noqa: E501
     )
 
     # Question-topic relations
@@ -450,7 +470,7 @@ def upgrade() -> None:
             ON CONFLICT (id) DO NOTHING
         """)
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('question_topic_relation', 'id'), (SELECT COALESCE(MAX(id),0) FROM question_topic_relation), true)"
+        "SELECT setval(pg_get_serial_sequence('question_topic_relation', 'id'), (SELECT COALESCE(MAX(id),0) FROM question_topic_relation), true)"  # noqa: E501
     )
 
     # ── Answers ──────────────────────────────────────────────────────
@@ -496,12 +516,12 @@ def upgrade() -> None:
 
     # answer uses autoincrement
     op.execute(
-        "SELECT setval(pg_get_serial_sequence('answer', 'id'), (SELECT COALESCE(MAX(id),0) FROM answer), true)"
+        "SELECT setval(pg_get_serial_sequence('answer', 'id'), (SELECT COALESCE(MAX(id),0) FROM answer), true)"  # noqa: E501
     )
 
     # Set accepted answer for Q1
     op.execute(
-        "UPDATE question SET accepted_answer_id = 1 WHERE id = 1 AND accepted_answer_id IS NULL"
+        "UPDATE question SET accepted_answer_id = 1 WHERE id = 1 AND accepted_answer_id IS NULL"  # noqa: E501
     )
 
     # ── Knowledge ────────────────────────────────────────────────────
@@ -529,7 +549,7 @@ def upgrade() -> None:
             "数据可视化工具对比",
             "Matplotlib、Seaborn、Plotly、ECharts 对比分析",
             "TEXT",
-            '{"text": "Matplotlib 功能最全但语法繁琐，Plotly 适合交互式图表，ECharts 适合前端集成"}',
+            '{"text": "Matplotlib 功能最全但语法繁琐，Plotly 适合交互式图表，ECharts 适合前端集成"}',  # noqa: E501
             3,
             3,
         ),
@@ -538,7 +558,7 @@ def upgrade() -> None:
             "Git 工作流规范",
             "团队 Git 分支管理和 commit 规范",
             "TEXT",
-            '{"text": "推荐使用 trunk-based development，配合 conventional commits 规范"}',
+            '{"text": "推荐使用 trunk-based development，配合 conventional commits 规范"}',  # noqa: E501
             2,
             2,
         ),
@@ -553,7 +573,9 @@ def upgrade() -> None:
                     {team_id}, {creator}, 'MANUAL', {NOW}, {NOW})
             ON CONFLICT (id) DO NOTHING
         """)
-    op.execute("SELECT setval('knowledge_seq', (SELECT COALESCE(MAX(id),0) FROM knowledge), true)")
+    op.execute(
+        "SELECT setval('knowledge_seq', (SELECT COALESCE(MAX(id),0) FROM knowledge), true)"  # noqa: E501
+    )
 
     # Knowledge labels
     k_labels = [

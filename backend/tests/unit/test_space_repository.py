@@ -510,7 +510,9 @@ class TestSpaceClassificationTopicsRepository:
         session = _mock_session()
         old_rel = SimpleNamespace(deleted_at=None, updated_at=None)
         inner_mock = MagicMock()
-        inner_mock.scalars.return_value = MagicMock(all=MagicMock(return_value=[old_rel]))
+        inner_mock.scalars.return_value = MagicMock(
+            all=MagicMock(return_value=[old_rel])
+        )
         session.execute.return_value = inner_mock
         repo = SpaceClassificationTopicsRepository(session)
 

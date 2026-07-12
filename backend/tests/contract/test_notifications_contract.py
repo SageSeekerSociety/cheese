@@ -51,7 +51,7 @@ async def test_kotlin_get_notification_by_id_not_found(kotlin_base_url: str) -> 
 
 @pytest.mark.anyio
 async def test_python_unread_count_shape(python_client: AsyncClient) -> None:
-    """Python 后端：/notifications/unread-count 响应结构检查（不要求与 Kotlin 值相等）。"""
+    """Python 后端：/notifications/unread-count 响应结构检查（不要求与 Kotlin 值相等）。"""  # noqa: E501
     resp = await python_client.get(
         "/notifications/unread-count",
         headers={"X-User-Id": "1"},
@@ -91,7 +91,9 @@ async def test_python_list_notifications_shape(python_client: AsyncClient) -> No
 
 
 @pytest.mark.anyio
-async def test_python_bulk_update_notifications_shape(python_client: AsyncClient) -> None:
+async def test_python_bulk_update_notifications_shape(
+    python_client: AsyncClient,
+) -> None:
     """Python 后端：PATCH /notifications（批量更新）结构检查。"""
     payload = {"updates": [{"id": 1, "read": True}, {"id": 2, "read": True}]}
     resp = await python_client.patch(
@@ -123,7 +125,9 @@ async def test_python_collective_status_shape(python_client: AsyncClient) -> Non
 
 
 @pytest.mark.anyio
-async def test_python_update_notification_status_not_found(python_client: AsyncClient) -> None:
+async def test_python_update_notification_status_not_found(
+    python_client: AsyncClient,
+) -> None:
     """Python 后端：PATCH /notifications/{id} 不存在资源时返回 404/400/422。"""
     resp = await python_client.patch(
         "/notifications/0",

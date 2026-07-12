@@ -313,9 +313,7 @@ async def main() -> None:
         await page.wait_for_timeout(2500)
         topics = api_get(f"/api/topics?project_id={project_id}")["data"]
         work_id = next(
-            t["id"]
-            for t in topics
-            if t["kind"] == "topic" and t["title"] == "新话题"
+            t["id"] for t in topics if t["kind"] == "topic" and t["title"] == "新话题"
         )
         _log(f"work topic: {work_id} (untitled, awaiting 芝士 title)")
         # handleCreateTopic already selected the new topic in the UI.

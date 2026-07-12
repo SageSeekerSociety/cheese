@@ -93,10 +93,14 @@ def _mock_category_repo(session=None):
         )
 
     async def get_by_id(category_id):
-        return SimpleNamespace(id=category_id, space_id=100, archived_at=None, deleted_at=None)
+        return SimpleNamespace(
+            id=category_id, space_id=100, archived_at=None, deleted_at=None
+        )
 
     async def get_by_id_and_space(category_id, space_id):
-        return SimpleNamespace(id=category_id, space_id=space_id, archived_at=None, deleted_at=None)
+        return SimpleNamespace(
+            id=category_id, space_id=space_id, archived_at=None, deleted_at=None
+        )
 
     return SimpleNamespace(
         get_default_category=get_default_category,
@@ -133,7 +137,9 @@ class TestCreateTaskRequestValidation:
         assert req.access_domain_group_ids == []
 
     def test_create_request_accepts_access_domain_group_ids(self):
-        payload = _create_payload(accessControlEnabled=True, accessDomainGroupIds=[1, 2, 3])
+        payload = _create_payload(
+            accessControlEnabled=True, accessDomainGroupIds=[1, 2, 3]
+        )
         req = CreateTaskRequest.model_validate(payload)
         assert req.access_control_enabled is True
         assert req.access_domain_group_ids == [1, 2, 3]
@@ -392,7 +398,9 @@ class TestListGroupIdsByDomains:
         mock_session.execute.return_value = mock_result
 
         repo = SpaceDomainGroupDomainRepository(session=mock_session)
-        result = await repo.list_group_ids_by_domains(space_id=100, domains=["nonexistent.edu.cn"])
+        result = await repo.list_group_ids_by_domains(
+            space_id=100, domains=["nonexistent.edu.cn"]
+        )
 
         assert result == set()
 
@@ -448,7 +456,9 @@ class TestEnrichTaskModelsAccessDomainGroups:
             ),
             patch(
                 "app.api.routes.tasks.SpaceDomainGroupDomainRepository",
-                return_value=SimpleNamespace(list_group_ids_by_domains=_list_group_ids_by_domains),
+                return_value=SimpleNamespace(
+                    list_group_ids_by_domains=_list_group_ids_by_domains
+                ),
             ),
             patch(
                 "app.api.routes.tasks.SpaceCategoryRepository",
@@ -472,7 +482,9 @@ class TestEnrichTaskModelsAccessDomainGroups:
             ),
             patch(
                 "app.api.routes.tasks.UserProfileRepository",
-                return_value=SimpleNamespace(get_profiles_by_user_ids=AsyncMock(return_value={})),
+                return_value=SimpleNamespace(
+                    get_profiles_by_user_ids=AsyncMock(return_value={})
+                ),
             ),
             patch(
                 "app.api.routes.tasks.TaskMembershipRepository",
@@ -540,7 +552,9 @@ class TestEnrichTaskModelsAccessDomainGroups:
             ),
             patch(
                 "app.api.routes.tasks.UserProfileRepository",
-                return_value=SimpleNamespace(get_profiles_by_user_ids=AsyncMock(return_value={})),
+                return_value=SimpleNamespace(
+                    get_profiles_by_user_ids=AsyncMock(return_value={})
+                ),
             ),
             patch(
                 "app.api.routes.tasks.TaskMembershipRepository",
@@ -604,7 +618,9 @@ class TestEnrichTaskModelsAccessDomainGroups:
             ),
             patch(
                 "app.api.routes.tasks.UserProfileRepository",
-                return_value=SimpleNamespace(get_profiles_by_user_ids=AsyncMock(return_value={})),
+                return_value=SimpleNamespace(
+                    get_profiles_by_user_ids=AsyncMock(return_value={})
+                ),
             ),
             patch(
                 "app.api.routes.tasks.TaskMembershipRepository",

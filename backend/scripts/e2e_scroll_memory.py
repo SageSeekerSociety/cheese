@@ -9,7 +9,8 @@ chat's scrollTop is restored. Pure UI behavior, so it lives as an E2E, not in th
 pytest suite.
 
 Run (PG + backend:8099 + frontend:5173 up):
-    cd backend && PYTHONPATH=. uv run --with playwright python scripts/e2e_scroll_memory.py
+    cd backend && PYTHONPATH=. uv run --with playwright \
+        python scripts/e2e_scroll_memory.py
 """
 
 import asyncio
@@ -147,7 +148,9 @@ async def main() -> int:
         for f in failures:
             print("  -", f, flush=True)
         return 1
-    print("\nPASS: scroll position restored after topic switch and view nav", flush=True)
+    print(
+        "\nPASS: scroll position restored after topic switch and view nav", flush=True
+    )
     return 0
 
 

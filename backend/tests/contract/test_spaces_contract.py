@@ -46,7 +46,9 @@ async def test_python_get_spaces_shape(python_client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_python_list_space_categories_shape(python_client: AsyncClient) -> None:
     """GET /spaces/{id}/categories 结构检查。"""
-    resp = await python_client.get("/spaces/1/categories", params={"includeArchived": False})
+    resp = await python_client.get(
+        "/spaces/1/categories", params={"includeArchived": False}
+    )
     assert resp.status_code in (200, 404)
     if resp.status_code != 200:
         return

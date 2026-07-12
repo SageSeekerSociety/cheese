@@ -32,8 +32,15 @@ class SlowAgent(AgentService):
         self.release = asyncio.Event()
 
     async def stream_reply(
-        self, *, prompt, system_prompt, cwd, resume_session_id,
-        sandbox=None, allowed_tools=None, **_,
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
     ):
         self.started.set()
         yield AgentDelta(text="thinking…")
@@ -61,9 +68,7 @@ async def test_post_lands_while_agent_turn_is_running(tmp_path):
     )
 
     async with factory() as session:
-        project = await ProjectService(session).create(
-            name="P", owner_handle="user-1"
-        )
+        project = await ProjectService(session).create(name="P", owner_handle="user-1")
         topic = await TopicService(session).create(
             project_id=project.id, title="讨论", created_by="user-1"
         )
@@ -111,8 +116,15 @@ class LimitAgent(AgentService):
         self._extra = extra
 
     async def stream_reply(
-        self, *, prompt, system_prompt, cwd, resume_session_id,
-        sandbox=None, allowed_tools=None, **_,
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
     ):
         yield AgentResult(
             text="You've hit your session limit · resets 12:10pm (UTC)",
@@ -140,7 +152,9 @@ async def test_error_result_never_becomes_cheeses_reply(tmp_path):
         session_factory=factory,
         agent=LimitAgent(
             rate_limit={
-                "status": "rejected", "resets_at": 1755000000, "type": "five_hour"
+                "status": "rejected",
+                "resets_at": 1755000000,
+                "type": "five_hour",
             }
         ),
         base_system_prompt="你是芝士。",
@@ -191,14 +205,24 @@ class FlakyAgent(AgentService):
         self.calls = 0
 
     async def stream_reply(
-        self, *, prompt, system_prompt, cwd, resume_session_id,
-        sandbox=None, allowed_tools=None, **_,
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
     ):
         self.calls += 1
         if self.calls == 1:
             yield AgentResult(
-                text="API Error (529 Overloaded)", session_id="s1",
-                usage=None, is_error=True, api_error_status=529,
+                text="API Error (529 Overloaded)",
+                session_id="s1",
+                usage=None,
+                is_error=True,
+                api_error_status=529,
             )
         else:
             yield AgentDelta(text="搞定")
@@ -256,8 +280,15 @@ class MidCrashAgent(AgentService):
         super().__init__(model="stub")
 
     async def stream_reply(
-        self, *, prompt, system_prompt, cwd, resume_session_id,
-        sandbox=None, allowed_tools=None, **_,
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
     ):
         yield AgentSessionInfo(session_id="s-partial")
         yield AgentDelta(text="干着呢")

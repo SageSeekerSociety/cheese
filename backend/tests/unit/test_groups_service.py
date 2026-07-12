@@ -4,7 +4,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from app.core.errors import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.domain.groups.services import (
     GroupQuestionService,
     GroupsService,
@@ -32,7 +37,9 @@ def _group(*, id: int = 1, name: str = "Study Group", **kw):
     return SimpleNamespace(**defaults)
 
 
-def _profile(*, group_id: int = 1, intro: str = "Welcome!", avatar_id: int | None = 42, **kw):
+def _profile(
+    *, group_id: int = 1, intro: str = "Welcome!", avatar_id: int | None = 42, **kw
+):
     defaults = {
         "id": 100,
         "group_id": group_id,
@@ -109,7 +116,9 @@ async def test_create_group_success():
     profile_repo.create_profile.assert_awaited_once_with(
         group_id=10, intro="We play chess", avatar_id=5
     )
-    membership_repo.add_member.assert_awaited_once_with(group_id=10, member_id=1, role="OWNER")
+    membership_repo.add_member.assert_awaited_once_with(
+        group_id=10, member_id=1, role="OWNER"
+    )
     assert result["id"] == 10
     assert result["name"] == "Chess Club"
     assert result["intro"] == "We play chess"
@@ -139,7 +148,9 @@ async def test_create_group_strips_name():
         user_profile_repo=user_profile_repo,
     )
 
-    result = await svc.create_group(user_id=2, name="  Trimmed  ", intro="test", avatar_id=None)
+    result = await svc.create_group(
+        user_id=2, name="  Trimmed  ", intro="test", avatar_id=None
+    )
 
     repo.create_group.assert_awaited_once_with(name="Trimmed")
     # When user profile is None, owner should still have the id
@@ -182,7 +193,9 @@ async def test_get_group_success_anonymous():
     profile_repo.get_by_group_id.return_value = profile
     membership_repo.count_members.return_value = 3
     membership_repo.get_owner_id.return_value = 99
-    user_profile_repo.get_profile_by_user_id.return_value = _user_profile(nickname="Owner")
+    user_profile_repo.get_profile_by_user_id.return_value = _user_profile(
+        nickname="Owner"
+    )
 
     svc = _make_service(
         repo=repo,
@@ -324,10 +337,14 @@ async def test_update_group_as_owner():
         user_profile_repo=user_profile_repo,
     )
 
-    result = await svc.update_group(group_id=5, user_id=1, name="New Name", intro="New intro")
+    result = await svc.update_group(
+        group_id=5, user_id=1, name="New Name", intro="New intro"
+    )
 
     repo.update_group.assert_awaited_once_with(group, name="New Name")
-    profile_repo.update_profile.assert_awaited_once_with(profile, intro="New intro", avatar_id=None)
+    profile_repo.update_profile.assert_awaited_once_with(
+        profile, intro="New intro", avatar_id=None
+    )
     assert result["is_owner"] is True
     assert result["is_member"] is True
 
@@ -535,7 +552,9 @@ async def test_join_group_success():
 
     result = await svc.join_group(group_id=5, user_id=10)
 
-    membership_repo.add_member.assert_awaited_once_with(group_id=5, member_id=10, role="MEMBER")
+    membership_repo.add_member.assert_awaited_once_with(
+        group_id=5, member_id=10, role="MEMBER"
+    )
     assert result["memberCount"] == 4
 
 
@@ -662,7 +681,9 @@ async def test_list_groups_returns_items_and_page():
     }
     membership_repo.count_members.side_effect = [3, 7]
 
-    svc = _make_service(repo=repo, profile_repo=profile_repo, membership_repo=membership_repo)
+    svc = _make_service(
+        repo=repo, profile_repo=profile_repo, membership_repo=membership_repo
+    )
 
     items, page = await svc.list_groups(keyword="test", page_start=0, page_size=2)
 
@@ -697,7 +718,9 @@ async def test_list_groups_no_more_pages():
     }
     membership_repo.count_members.return_value = 1
 
-    svc = _make_service(repo=repo, profile_repo=profile_repo, membership_repo=membership_repo)
+    svc = _make_service(
+        repo=repo, profile_repo=profile_repo, membership_repo=membership_repo
+    )
 
     items, page = await svc.list_groups(keyword=None, page_start=None, page_size=10)
 
@@ -717,7 +740,9 @@ async def test_list_groups_empty():
 
     svc = _make_service(repo=repo, profile_repo=profile_repo)
 
-    items, page = await svc.list_groups(keyword="nonexistent", page_start=0, page_size=10)
+    items, page = await svc.list_groups(
+        keyword="nonexistent", page_start=0, page_size=10
+    )
 
     assert items == []
     assert page["total"] == 0
@@ -734,7 +759,9 @@ async def test_list_groups_with_user_filters():
     repo.search.return_value = ([], 0)
     profile_repo.get_profiles_by_group_ids.return_value = {}
 
-    svc = _make_service(repo=repo, profile_repo=profile_repo, membership_repo=membership_repo)
+    svc = _make_service(
+        repo=repo, profile_repo=profile_repo, membership_repo=membership_repo
+    )
 
     await svc.list_groups(
         keyword=None,
@@ -770,7 +797,9 @@ async def test_list_groups_profile_missing_for_some():
     }
     membership_repo.count_members.side_effect = [1, 1]
 
-    svc = _make_service(repo=repo, profile_repo=profile_repo, membership_repo=membership_repo)
+    svc = _make_service(
+        repo=repo, profile_repo=profile_repo, membership_repo=membership_repo
+    )
 
     items, _ = await svc.list_groups(keyword=None, page_start=0, page_size=10)
 
@@ -1444,7 +1473,9 @@ async def test_create_target_forbidden_member():
 
     svc = _make_target_service(group_repo=group_repo, membership_repo=membership_repo)
 
-    with pytest.raises(ForbiddenError, match="Only owners and admins can create targets"):
+    with pytest.raises(
+        ForbiddenError, match="Only owners and admins can create targets"
+    ):
         await svc.create_target(
             group_id=5,
             user_id=10,
@@ -1547,7 +1578,9 @@ async def test_update_target_forbidden_member():
 
     svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
 
-    with pytest.raises(ForbiddenError, match="Only owners and admins can update targets"):
+    with pytest.raises(
+        ForbiddenError, match="Only owners and admins can update targets"
+    ):
         await svc.update_target(group_id=5, target_id=10, user_id=10, name="X")
 
 
@@ -1576,7 +1609,9 @@ async def test_update_target_as_admin():
 
     svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
 
-    result = await svc.update_target(group_id=5, target_id=10, user_id=2, intro="Updated by admin")
+    result = await svc.update_target(
+        group_id=5, target_id=10, user_id=2, intro="Updated by admin"
+    )
 
     target_repo.update.assert_awaited_once()
     assert result["id"] == 10
@@ -1636,7 +1671,9 @@ async def test_delete_target_forbidden_member():
 
     svc = _make_target_service(target_repo=target_repo, membership_repo=membership_repo)
 
-    with pytest.raises(ForbiddenError, match="Only owners and admins can delete targets"):
+    with pytest.raises(
+        ForbiddenError, match="Only owners and admins can delete targets"
+    ):
         await svc.delete_target(group_id=5, target_id=10, user_id=10)
 
 
@@ -1717,7 +1754,9 @@ async def test_list_questions_no_more():
 
     svc = _make_question_service(group_repo=group_repo, question_repo=question_repo)
 
-    question_ids, page = await svc.list_questions(group_id=5, page_start=None, page_size=10)
+    question_ids, page = await svc.list_questions(
+        group_id=5, page_start=None, page_size=10
+    )
 
     assert question_ids == [101]
     assert page["hasMore"] is False
@@ -1735,7 +1774,9 @@ async def test_list_questions_empty():
 
     svc = _make_question_service(group_repo=group_repo, question_repo=question_repo)
 
-    question_ids, page = await svc.list_questions(group_id=5, page_start=0, page_size=10)
+    question_ids, page = await svc.list_questions(
+        group_id=5, page_start=0, page_size=10
+    )
 
     assert question_ids == []
     assert page["total"] == 0
@@ -1769,7 +1810,9 @@ async def test_add_question_success():
     membership_repo.get_member_role.return_value = "OWNER"
 
     svc = _make_question_service(
-        group_repo=group_repo, question_repo=question_repo, membership_repo=membership_repo
+        group_repo=group_repo,
+        question_repo=question_repo,
+        membership_repo=membership_repo,
     )
 
     result = await svc.add_question(group_id=5, question_id=42, user_id=1)
@@ -1788,7 +1831,9 @@ async def test_add_question_as_admin():
     membership_repo.get_member_role.return_value = "ADMIN"
 
     svc = _make_question_service(
-        group_repo=group_repo, question_repo=question_repo, membership_repo=membership_repo
+        group_repo=group_repo,
+        question_repo=question_repo,
+        membership_repo=membership_repo,
     )
 
     result = await svc.add_question(group_id=5, question_id=43, user_id=2)
@@ -1817,7 +1862,9 @@ async def test_add_question_forbidden_member():
 
     svc = _make_question_service(group_repo=group_repo, membership_repo=membership_repo)
 
-    with pytest.raises(ForbiddenError, match="Only owners and admins can add questions"):
+    with pytest.raises(
+        ForbiddenError, match="Only owners and admins can add questions"
+    ):
         await svc.add_question(group_id=5, question_id=42, user_id=10)
 
 
@@ -1850,7 +1897,9 @@ async def test_remove_question_success():
     membership_repo.get_member_role.return_value = "OWNER"
 
     svc = _make_question_service(
-        group_repo=group_repo, question_repo=question_repo, membership_repo=membership_repo
+        group_repo=group_repo,
+        question_repo=question_repo,
+        membership_repo=membership_repo,
     )
 
     await svc.remove_question(group_id=5, question_id=42, user_id=1)
@@ -1868,7 +1917,9 @@ async def test_remove_question_as_admin():
     membership_repo.get_member_role.return_value = "ADMIN"
 
     svc = _make_question_service(
-        group_repo=group_repo, question_repo=question_repo, membership_repo=membership_repo
+        group_repo=group_repo,
+        question_repo=question_repo,
+        membership_repo=membership_repo,
     )
 
     await svc.remove_question(group_id=5, question_id=43, user_id=2)
@@ -1897,7 +1948,9 @@ async def test_remove_question_forbidden_member():
 
     svc = _make_question_service(group_repo=group_repo, membership_repo=membership_repo)
 
-    with pytest.raises(ForbiddenError, match="Only owners and admins can remove questions"):
+    with pytest.raises(
+        ForbiddenError, match="Only owners and admins can remove questions"
+    ):
         await svc.remove_question(group_id=5, question_id=42, user_id=10)
 
 

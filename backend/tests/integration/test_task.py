@@ -10,7 +10,9 @@ class TestTaskIntegration:
     @pytest.fixture
     def task_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -41,7 +43,9 @@ class TestTaskIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert space_resp.status_code == 201, f"Failed to create space: {space_resp.text}"
+        assert space_resp.status_code == 201, (
+            f"Failed to create space: {space_resp.text}"
+        )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
         category_id = space_data.get("defaultCategoryId")
@@ -343,7 +347,9 @@ class TestTaskIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert team_resp.status_code in [200, 201], f"Team creation failed: {team_resp.text}"
+        assert team_resp.status_code in [200, 201], (
+            f"Team creation failed: {team_resp.text}"
+        )
 
         create_resp = api_client.post(
             "/tasks",
@@ -452,7 +458,9 @@ class TestTaskIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         assert participants_resp.status_code == 200
-        member_ids = [p.get("memberId") for p in participants_resp.json()["data"]["participants"]]
+        member_ids = [
+            p.get("memberId") for p in participants_resp.json()["data"]["participants"]
+        ]
         assert participant.user_id in member_ids
 
     def test_delete_task(self, api_client: TestClient, task_setup: dict) -> None:
@@ -518,7 +526,9 @@ class TestTaskIntegration:
         )
         assert join_resp.status_code == 200
 
-        participants_resp = api_client.get(f"/tasks/{task_id}/participants", headers=headers)
+        participants_resp = api_client.get(
+            f"/tasks/{task_id}/participants", headers=headers
+        )
         assert participants_resp.status_code == 200
         data = participants_resp.json()
         assert "participants" in data["data"]
@@ -537,14 +547,20 @@ class TestTaskIntegration:
             if p["participant"].get("username") == participant.username:
                 participant_found = True
 
-        assert participant_found, "Joined participant should appear in participants list"
+        assert participant_found, (
+            "Joined participant should appear in participants list"
+        )
 
 
 class TestTaskEnumeration:
     @pytest.fixture
-    def multi_task_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def multi_task_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         suffix = unique_int(10000000, 99999999)
 
@@ -566,7 +582,9 @@ class TestTaskEnumeration:
 
         task_ids = []
         for i in range(5):
-            deadline_ms = int((datetime.now(UTC) + timedelta(days=i + 1)).timestamp() * 1000)
+            deadline_ms = int(
+                (datetime.now(UTC) + timedelta(days=i + 1)).timestamp() * 1000
+            )
             create_resp = api_client.post(
                 "/tasks",
                 json={
@@ -593,7 +611,9 @@ class TestTaskEnumeration:
             "suffix": suffix,
         }
 
-    def test_enumerate_tasks_by_owner(self, api_client: TestClient, multi_task_setup: dict) -> None:
+    def test_enumerate_tasks_by_owner(
+        self, api_client: TestClient, multi_task_setup: dict
+    ) -> None:
         creator = multi_task_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -767,7 +787,9 @@ class TestTaskApprovalWorkflow:
     @pytest.fixture
     def approval_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -800,7 +822,9 @@ class TestTaskApprovalWorkflow:
             "suffix": suffix,
         }
 
-    def test_disapprove_task(self, api_client: TestClient, approval_setup: dict) -> None:
+    def test_disapprove_task(
+        self, api_client: TestClient, approval_setup: dict
+    ) -> None:
         creator = approval_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -938,9 +962,13 @@ class TestTaskApprovalWorkflow:
 
 class TestParticipantManagement:
     @pytest.fixture
-    def participant_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def participant_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant1 = user_client.create_user()
         participant1.token = user_client.login(
@@ -1023,7 +1051,9 @@ class TestParticipantManagement:
                 json={},
                 headers={"Authorization": f"Bearer {p.token}"},
             )
-            assert join_resp.status_code == 200, f"Join failed for user: {join_resp.text}"
+            assert join_resp.status_code == 200, (
+                f"Join failed for user: {join_resp.text}"
+            )
 
         participants_resp = api_client.get(
             f"/tasks/{task_id}/participants",
@@ -1038,7 +1068,9 @@ class TestParticipantManagement:
         assert participant_setup["participant2"].user_id in participant_ids
         assert participant_setup["participant3"].user_id in participant_ids
 
-    def test_approve_participant(self, api_client: TestClient, participant_setup: dict) -> None:
+    def test_approve_participant(
+        self, api_client: TestClient, participant_setup: dict
+    ) -> None:
         creator = participant_setup["creator"]
         participant1 = participant_setup["participant1"]
         task_id = participant_setup["task_id"]
@@ -1057,7 +1089,9 @@ class TestParticipantManagement:
         )
         assert approve_resp.status_code == 200
 
-    def test_disapprove_participant(self, api_client: TestClient, participant_setup: dict) -> None:
+    def test_disapprove_participant(
+        self, api_client: TestClient, participant_setup: dict
+    ) -> None:
         creator = participant_setup["creator"]
         participant1 = participant_setup["participant1"]
         task_id = participant_setup["task_id"]
@@ -1148,16 +1182,22 @@ class TestParticipantManagement:
         )
         participant_id = join_resp.json()["data"]["participant"]["id"]
 
-        new_deadline_ms = int((datetime.now(UTC) + timedelta(days=14)).timestamp() * 1000)
+        new_deadline_ms = int(
+            (datetime.now(UTC) + timedelta(days=14)).timestamp() * 1000
+        )
 
         update_resp = api_client.patch(
             f"/tasks/{task_id}/participants/{participant_id}",
             json={"deadline": new_deadline_ms},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert update_resp.status_code == 200, f"Expected 200, got {update_resp.status_code}"
+        assert update_resp.status_code == 200, (
+            f"Expected 200, got {update_resp.status_code}"
+        )
 
-    def test_remove_participant(self, api_client: TestClient, participant_setup: dict) -> None:
+    def test_remove_participant(
+        self, api_client: TestClient, participant_setup: dict
+    ) -> None:
         participant1 = participant_setup["participant1"]
         task_id = participant_setup["task_id"]
 
@@ -1241,9 +1281,13 @@ class TestParticipantManagement:
 
 class TestTaskSubmission:
     @pytest.fixture
-    def submission_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def submission_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -1311,7 +1355,9 @@ class TestTaskSubmission:
             "participant_id": participant_id,
         }
 
-    def test_create_submission(self, api_client: TestClient, submission_setup: dict) -> None:
+    def test_create_submission(
+        self, api_client: TestClient, submission_setup: dict
+    ) -> None:
         participant = submission_setup["participant"]
         task_id = submission_setup["task_id"]
         participant_id = submission_setup["participant_id"]
@@ -1324,7 +1370,9 @@ class TestTaskSubmission:
         assert submission_resp.status_code == 200
         assert "submission" in submission_resp.json()["data"]
 
-    def test_list_submissions(self, api_client: TestClient, submission_setup: dict) -> None:
+    def test_list_submissions(
+        self, api_client: TestClient, submission_setup: dict
+    ) -> None:
         participant = submission_setup["participant"]
         task_id = submission_setup["task_id"]
         participant_id = submission_setup["participant_id"]
@@ -1347,7 +1395,9 @@ class TestTaskReview:
     @pytest.fixture
     def review_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -1494,7 +1544,9 @@ class TestTeamTask:
     @pytest.fixture
     def team_task_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         suffix = unique_int(10000000, 99999999)
 
@@ -1534,7 +1586,9 @@ class TestTeamTask:
             "suffix": suffix,
         }
 
-    def test_create_team_task(self, api_client: TestClient, team_task_setup: dict) -> None:
+    def test_create_team_task(
+        self, api_client: TestClient, team_task_setup: dict
+    ) -> None:
         creator = team_task_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -1559,7 +1613,9 @@ class TestTeamTask:
         task = create_resp.json()["data"]["task"]
         assert task["id"] > 0
 
-    def test_add_team_to_task(self, api_client: TestClient, team_task_setup: dict) -> None:
+    def test_add_team_to_task(
+        self, api_client: TestClient, team_task_setup: dict
+    ) -> None:
         creator = team_task_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -1594,7 +1650,9 @@ class TestTeamTask:
         )
         assert join_resp.status_code == 200, f"Join failed: {join_resp.text}"
 
-    def test_get_teams_for_task(self, api_client: TestClient, team_task_setup: dict) -> None:
+    def test_get_teams_for_task(
+        self, api_client: TestClient, team_task_setup: dict
+    ) -> None:
         creator = team_task_setup["creator"]
         headers = {"Authorization": f"Bearer {creator.token}"}
 
@@ -1627,7 +1685,9 @@ class TestCategoryIntegration:
     @pytest.fixture
     def category_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         suffix = unique_int(10000000, 99999999)
 
@@ -1654,7 +1714,9 @@ class TestCategoryIntegration:
             "suffix": suffix,
         }
 
-    def test_create_category(self, api_client: TestClient, category_setup: dict) -> None:
+    def test_create_category(
+        self, api_client: TestClient, category_setup: dict
+    ) -> None:
         creator = category_setup["creator"]
         space_id = category_setup["space_id"]
         headers = {"Authorization": f"Bearer {creator.token}"}
@@ -1667,10 +1729,14 @@ class TestCategoryIntegration:
             },
             headers=headers,
         )
-        assert create_resp.status_code == 201, f"Create category failed: {create_resp.text}"
+        assert create_resp.status_code == 201, (
+            f"Create category failed: {create_resp.text}"
+        )
         assert "category" in create_resp.json()["data"]
 
-    def test_list_categories(self, api_client: TestClient, category_setup: dict) -> None:
+    def test_list_categories(
+        self, api_client: TestClient, category_setup: dict
+    ) -> None:
         creator = category_setup["creator"]
         space_id = category_setup["space_id"]
         headers = {"Authorization": f"Bearer {creator.token}"}
@@ -1685,12 +1751,16 @@ class TestCategoryIntegration:
 
 class TestTaskPermissions:
     @pytest.fixture
-    def permission_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def permission_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         owner = user_client.create_user()
         owner.token = user_client.login(api_client, owner.username, owner.password)
 
         other_user = user_client.create_user()
-        other_user.token = user_client.login(api_client, other_user.username, other_user.password)
+        other_user.token = user_client.login(
+            api_client, other_user.username, other_user.password
+        )
 
         suffix = unique_int(10000000, 99999999)
 
@@ -1837,7 +1907,9 @@ class TestTaskPermissions:
             json={},
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert join_resp.status_code == 400, f"Expected 400, got {join_resp.status_code}"
+        assert join_resp.status_code == 400, (
+            f"Expected 400, got {join_resp.status_code}"
+        )
 
     def test_enumerate_unapproved_tasks_as_space_admin(
         self, api_client: TestClient, permission_setup: dict
@@ -1981,7 +2053,9 @@ class TestTaskJoinedFilter:
     @pytest.fixture
     def joined_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -2044,7 +2118,9 @@ class TestTaskJoinedFilter:
             "task_ids": task_ids,
         }
 
-    def test_enumerate_tasks_joined_true(self, api_client: TestClient, joined_setup: dict) -> None:
+    def test_enumerate_tasks_joined_true(
+        self, api_client: TestClient, joined_setup: dict
+    ) -> None:
         participant = joined_setup["participant"]
         space_id = joined_setup["space_id"]
 
@@ -2061,7 +2137,9 @@ class TestTaskJoinedFilter:
         assert len(tasks) == 1
         assert tasks[0]["id"] == joined_setup["task_ids"][0]
 
-    def test_enumerate_tasks_joined_false(self, api_client: TestClient, joined_setup: dict) -> None:
+    def test_enumerate_tasks_joined_false(
+        self, api_client: TestClient, joined_setup: dict
+    ) -> None:
         participant = joined_setup["participant"]
         space_id = joined_setup["space_id"]
 
@@ -2084,7 +2162,9 @@ class TestParticipantEdgeCases:
     @pytest.fixture
     def edge_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -2155,7 +2235,9 @@ class TestParticipantEdgeCases:
         )
         assert add_resp.status_code == 200, f"Add participant failed: {add_resp.text}"
 
-    def test_get_single_participant(self, api_client: TestClient, edge_setup: dict) -> None:
+    def test_get_single_participant(
+        self, api_client: TestClient, edge_setup: dict
+    ) -> None:
         creator = edge_setup["creator"]
         participant = edge_setup["participant"]
         task_id = edge_setup["task_id"]
@@ -2174,7 +2256,9 @@ class TestParticipantEdgeCases:
         assert get_resp.status_code == 200
         assert get_resp.json()["data"]["participant"]["id"] == participant_id
 
-    def test_remove_self_from_task(self, api_client: TestClient, edge_setup: dict) -> None:
+    def test_remove_self_from_task(
+        self, api_client: TestClient, edge_setup: dict
+    ) -> None:
         participant = edge_setup["participant"]
         task_id = edge_setup["task_id"]
 
@@ -2194,9 +2278,13 @@ class TestParticipantEdgeCases:
 
 class TestTaskFullUpdate:
     @pytest.fixture
-    def full_update_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def full_update_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         suffix = unique_int(10000000, 99999999)
 
@@ -2246,7 +2334,9 @@ class TestTaskFullUpdate:
         )
         task_id = create_resp.json()["data"]["task"]["id"]
 
-        new_deadline_ms = int((datetime.now(UTC) + timedelta(days=14)).timestamp() * 1000)
+        new_deadline_ms = int(
+            (datetime.now(UTC) + timedelta(days=14)).timestamp() * 1000
+        )
 
         patch_resp = api_client.patch(
             f"/tasks/{task_id}",
@@ -2349,9 +2439,13 @@ class TestParticipantPermissions:
 
 class TestTeamParticipant:
     @pytest.fixture
-    def team_participant_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def team_participant_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         suffix = unique_int(10000000, 99999999)
 
@@ -2412,7 +2506,9 @@ class TestTeamParticipant:
             "task_id": task_id,
         }
 
-    def test_add_team_to_task(self, api_client: TestClient, team_participant_setup: dict) -> None:
+    def test_add_team_to_task(
+        self, api_client: TestClient, team_participant_setup: dict
+    ) -> None:
         creator = team_participant_setup["creator"]
         team_id = team_participant_setup["team_id"]
         task_id = team_participant_setup["task_id"]
@@ -2423,7 +2519,9 @@ class TestTeamParticipant:
             json={},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert add_resp.status_code == 200, f"Add team participant failed: {add_resp.text}"
+        assert add_resp.status_code == 200, (
+            f"Add team participant failed: {add_resp.text}"
+        )
 
     def test_add_team_again_fails(
         self, api_client: TestClient, team_participant_setup: dict
@@ -2505,7 +2603,9 @@ class TestParticipantWorkflow:
     @pytest.fixture
     def workflow_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         users = []
         for _ in range(4):
@@ -2560,7 +2660,9 @@ class TestParticipantWorkflow:
             "task_id": task_id,
         }
 
-    def test_full_participant_workflow(self, api_client: TestClient, workflow_setup: dict) -> None:
+    def test_full_participant_workflow(
+        self, api_client: TestClient, workflow_setup: dict
+    ) -> None:
         creator = workflow_setup["creator"]
         users = workflow_setup["users"]
         task_id = workflow_setup["task_id"]
@@ -2621,7 +2723,9 @@ class TestParticipantWorkflow:
         none_status = none_resp.json()["data"]["participants"]
         assert len(none_status) == 2
 
-    def test_participants_remove_self(self, api_client: TestClient, workflow_setup: dict) -> None:
+    def test_participants_remove_self(
+        self, api_client: TestClient, workflow_setup: dict
+    ) -> None:
         creator = workflow_setup["creator"]
         users = workflow_setup["users"]
         task_id = workflow_setup["task_id"]
@@ -2651,9 +2755,13 @@ class TestParticipantWorkflow:
 
 class TestCategoryDeletion:
     @pytest.fixture
-    def category_delete_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def category_delete_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         suffix = unique_int(10000000, 99999999)
 
@@ -2733,7 +2841,9 @@ class TestCategoryDeletion:
             f"/spaces/{space_id}/categories/{default_category_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
 
     def test_delete_category_with_tasks_fails(
         self, api_client: TestClient, category_delete_setup: dict
@@ -2750,7 +2860,9 @@ class TestCategoryDeletion:
             f"/spaces/{space_id}/categories/{custom_category_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
 
     def test_delete_empty_category_succeeds(
         self, api_client: TestClient, category_delete_setup: dict
@@ -2767,7 +2879,9 @@ class TestCategoryDeletion:
             f"/spaces/{space_id}/categories/{empty_category_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
         get_resp = api_client.get(
             f"/spaces/{space_id}/categories/{empty_category_id}",
@@ -2778,12 +2892,18 @@ class TestCategoryDeletion:
 
 class TestArchivedCategoryAndRejectReason:
     @pytest.fixture
-    def archived_category_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def archived_category_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         non_admin = user_client.create_user()
-        non_admin.token = user_client.login(api_client, non_admin.username, non_admin.password)
+        non_admin.token = user_client.login(
+            api_client, non_admin.username, non_admin.password
+        )
 
         suffix = unique_int(10000000, 99999999)
 
@@ -2873,7 +2993,9 @@ class TestArchivedCategoryAndRejectReason:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
 
     def test_list_categories_including_archived(
         self, api_client: TestClient, archived_category_setup: dict
@@ -2903,7 +3025,9 @@ class TestArchivedCategoryAndRejectReason:
             json={"rejectReason": "Some reason"},
             headers={"Authorization": f"Bearer {non_admin.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
     def test_patch_reject_reason_success_for_admin(
         self, api_client: TestClient, archived_category_setup: dict
@@ -2917,7 +3041,9 @@ class TestArchivedCategoryAndRejectReason:
             json={"rejectReason": "Needs more details"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         task = resp.json()["data"]["task"]
         assert task.get("rejectReason") == "Needs more details"
 
@@ -2937,14 +3063,20 @@ class TestArchivedCategoryAndRejectReason:
             json={"categoryId": archived_category_id},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
 
 
 class TestRegistrationStartTime:
     @pytest.fixture
-    def registration_start_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def registration_start_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -2970,7 +3102,9 @@ class TestRegistrationStartTime:
         space_id = space_data["id"]
         default_category_id = space_data.get("defaultCategoryId")
 
-        registration_start_at = int((datetime.now(UTC) + timedelta(days=2)).timestamp() * 1000)
+        registration_start_at = int(
+            (datetime.now(UTC) + timedelta(days=2)).timestamp() * 1000
+        )
         deadline_ms = int((datetime.now(UTC) + timedelta(days=10)).timestamp() * 1000)
 
         return {
@@ -3077,7 +3211,9 @@ class TestTaskAccessDomainGroupIntegration:
     @pytest.fixture
     def domain_task_setup(self, user_client, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         suffix = unique_int(10000000, 99999999)
         space_resp = api_client.post(
@@ -3092,7 +3228,9 @@ class TestTaskAccessDomainGroupIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert space_resp.status_code == 201, f"Failed to create space: {space_resp.text}"
+        assert space_resp.status_code == 201, (
+            f"Failed to create space: {space_resp.text}"
+        )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
         category_id = space_data.get("defaultCategoryId")
@@ -3107,7 +3245,9 @@ class TestTaskAccessDomainGroupIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert group_resp.status_code == 201, f"Failed to create domain group: {group_resp.text}"
+        assert group_resp.status_code == 201, (
+            f"Failed to create domain group: {group_resp.text}"
+        )
         group_id = group_resp.json()["data"]["group"]["id"]
 
         return {
@@ -3148,7 +3288,9 @@ class TestTaskAccessDomainGroupIntegration:
             },
             headers=headers,
         )
-        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        assert create_resp.status_code == 200, (
+            f"Failed to create task: {create_resp.text}"
+        )
         task_id = create_resp.json()["data"]["task"]["id"]
 
         get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
@@ -3185,7 +3327,9 @@ class TestTaskAccessDomainGroupIntegration:
             },
             headers=headers,
         )
-        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        assert create_resp.status_code == 200, (
+            f"Failed to create task: {create_resp.text}"
+        )
         task_id = create_resp.json()["data"]["task"]["id"]
 
         get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
@@ -3241,7 +3385,9 @@ class TestTaskAccessDomainGroupIntegration:
             },
             headers=headers,
         )
-        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        assert create_resp.status_code == 200, (
+            f"Failed to create task: {create_resp.text}"
+        )
         task_id = create_resp.json()["data"]["task"]["id"]
 
         get_resp = api_client.get(f"/tasks/{task_id}", headers=headers)
@@ -3281,7 +3427,9 @@ class TestTaskAccessDomainGroupIntegration:
             },
             headers=headers,
         )
-        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        assert create_resp.status_code == 200, (
+            f"Failed to create task: {create_resp.text}"
+        )
         task_id = create_resp.json()["data"]["task"]["id"]
 
         # Patch: enable access control with domain group
@@ -3330,7 +3478,9 @@ class TestTaskAccessDomainGroupIntegration:
             },
             headers=headers,
         )
-        assert create_resp.status_code == 200, f"Failed to create task: {create_resp.text}"
+        assert create_resp.status_code == 200, (
+            f"Failed to create task: {create_resp.text}"
+        )
         task_id = create_resp.json()["data"]["task"]["id"]
 
         # Patch: disable access control
@@ -3385,7 +3535,9 @@ class TestTaskAccessDomainGroupIntegration:
         assert list_resp.status_code == 200, f"Failed to list tasks: {list_resp.text}"
         tasks = list_resp.json()["data"]["tasks"]
 
-        domain_task = next((t for t in tasks if str(suffix) in str(t.get("name", ""))), None)
+        domain_task = next(
+            (t for t in tasks if str(suffix) in str(t.get("name", ""))), None
+        )
         assert domain_task is not None, "Task not found in list response"
         assert domain_task.get("accessControlEnabled") is True
         assert domain_task.get("accessDomainGroupIds") == [group_id]

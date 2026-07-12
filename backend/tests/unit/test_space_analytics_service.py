@@ -22,7 +22,11 @@ def _task(id: int, space_id: int, category_id: int, approved: int, creator_id: i
 
 
 def _membership(
-    task_id: int, member_id: int, approved: int, space_id: int, completion_status="NOT_SUBMITTED"
+    task_id: int,
+    member_id: int,
+    approved: int,
+    space_id: int,
+    completion_status="NOT_SUBMITTED",
 ):
     return SimpleNamespace(
         task_id=task_id,
@@ -56,7 +60,9 @@ class DummyMembershipRepo:
         self._memberships = memberships
 
     async def list_memberships_for_space(self, space_id: int):
-        return [m for m in self._memberships if getattr(m, "space_id", space_id) == space_id]
+        return [
+            m for m in self._memberships if getattr(m, "space_id", space_id) == space_id
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +77,9 @@ class TestPublishersParticipationNameResolution:
         tasks = [_task(1, 5, 1, 0, 10)]
         memberships = []
         profile_repo = SimpleNamespace(
-            get_profiles_by_user_ids=lambda ids: {10: SimpleNamespace(nickname="Prof Nick")},
+            get_profiles_by_user_ids=lambda ids: {
+                10: SimpleNamespace(nickname="Prof Nick")
+            },
         )
         # Make async
 
@@ -97,7 +105,7 @@ class TestPublishersParticipationNameResolution:
 
     @pytest.mark.anyio
     async def test_name_from_user_when_profile_has_no_nickname(self):
-        """Line 113, 127-128: profile exists but nickname is None, fallback to username."""
+        """Line 113, 127-128: profile exists but nickname is None, fallback to username."""  # noqa: E501
         tasks = [_task(1, 5, 1, 0, 10)]
         memberships = []
 

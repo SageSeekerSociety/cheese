@@ -25,7 +25,9 @@ class TestLoginRateLimiter:
         assert await rate_limiter.is_locked_out("testuser") is True
 
     @pytest.mark.anyio
-    async def test_record_failed_attempt_increments(self, rate_limiter, mock_redis) -> None:
+    async def test_record_failed_attempt_increments(
+        self, rate_limiter, mock_redis
+    ) -> None:
         mock_redis.incr.return_value = 1
         attempts = await rate_limiter.record_failed_attempt("testuser")
         assert attempts == 1
@@ -199,7 +201,9 @@ class TestLoginRateLimiterExtended:
         assert result == 300
 
     @pytest.mark.anyio
-    async def test_get_remaining_lockout_seconds_not_locked(self, rate_limiter, mock_redis):
+    async def test_get_remaining_lockout_seconds_not_locked(
+        self, rate_limiter, mock_redis
+    ):
         mock_redis.ttl.return_value = -1
         result = await rate_limiter.get_remaining_lockout_seconds("testuser")
         assert result == 0
@@ -289,7 +293,9 @@ class TestSessionManager:
         mock_redis.expire.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_list_user_sessions_with_stale(self, session_manager, mock_redis) -> None:
+    async def test_list_user_sessions_with_stale(
+        self, session_manager, mock_redis
+    ) -> None:
         """Sessions that no longer exist in Redis get cleaned from the set."""
         mock_redis.smembers.return_value = {b"alive", b"stale"}
         mock_redis.hgetall.side_effect = [
@@ -308,7 +314,9 @@ class TestSessionManager:
         assert mock_redis.delete.call_count == 3
 
     @pytest.mark.anyio
-    async def test_revoke_all_sessions_except_current(self, session_manager, mock_redis) -> None:
+    async def test_revoke_all_sessions_except_current(
+        self, session_manager, mock_redis
+    ) -> None:
         mock_redis.smembers.return_value = {b"s1", b"s2", b"s3"}
         count = await session_manager.revoke_all_sessions(123, except_session_id="s2")
         assert count == 2  # s2 is excluded
@@ -331,7 +339,9 @@ class TestPasswordResetService:
 
     @pytest.mark.anyio
     async def test_create_reset_token(self, reset_service, mock_redis) -> None:
-        token = await reset_service.create_reset_token(123, "test@example.com", username="testuser")
+        token = await reset_service.create_reset_token(
+            123, "test@example.com", username="testuser"
+        )
         assert token is not None
         mock_redis.hset.assert_called()
         mock_redis.expire.assert_called()
@@ -347,7 +357,9 @@ class TestPasswordResetService:
         assert data["user_id"] == "123"
 
     @pytest.mark.anyio
-    async def test_validate_reset_token_invalid(self, reset_service, mock_redis) -> None:
+    async def test_validate_reset_token_invalid(
+        self, reset_service, mock_redis
+    ) -> None:
         mock_redis.hgetall.return_value = {}
         data = await reset_service.validate_reset_token("invalid-token")
         assert data is None

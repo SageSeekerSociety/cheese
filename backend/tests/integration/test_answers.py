@@ -49,7 +49,9 @@ class TestAnswersCreateIntegration:
         self.portal = _portal
         self.test_prefix = f"A{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         self.question_ids: list[int] = []
         self.answer_ids: list[int] = []
         for i in range(6):
@@ -170,7 +172,9 @@ class TestAnswersGetIntegration:
         self.portal = _portal
         self.test_prefix = f"A{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         create_q_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -186,7 +190,9 @@ class TestAnswersGetIntegration:
         answer_resp = self.client.post(
             f"/questions/{self.question_id}/answers",
             headers=self.aux_headers,
-            json={"content": "你说得对，但是原神是一款由米哈游自主研发的开放世界游戏，后面忘了"},
+            json={
+                "content": "你说得对，但是原神是一款由米哈游自主研发的开放世界游戏，后面忘了"  # noqa: E501
+            },
         )
         self.answer_id = answer_resp.json()["data"]["id"]
 
@@ -259,7 +265,9 @@ class TestAnswersByQuestionIntegration:
         self.portal = _portal
         self.test_prefix = f"A{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         create_q_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -395,7 +403,9 @@ class TestAnswersByUserIntegration:
         self.portal = _portal
         self.test_prefix = f"A{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         self.aux_user, self.aux_headers = self._create_aux_user()
         self.answer_ids: list[int] = []
         for i in range(5):
@@ -500,7 +510,9 @@ class TestAnswersUpdateIntegration:
         self.portal = _portal
         self.test_prefix = f"A{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         q_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -588,7 +600,9 @@ class TestAnswersDeleteIntegration:
         self.portal = _portal
         self.test_prefix = f"A{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         self.question_ids: list[int] = []
         self.answer_ids: list[int] = []
         for i in range(3):
@@ -667,7 +681,9 @@ class TestAnswersFavoriteIntegration:
         self.portal = _portal
         self.test_prefix = f"A{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         self.question_ids: list[int] = []
         self.answer_ids: list[int] = []
         for i in range(5):
@@ -764,7 +780,9 @@ class TestAnswersAttitudeIntegration:
         self.portal = _portal
         self.test_prefix = f"A{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         q_resp = self.client.post(
             "/questions",
             headers=self.headers,

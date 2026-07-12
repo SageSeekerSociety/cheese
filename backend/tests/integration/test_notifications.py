@@ -24,9 +24,9 @@ def _post_notif(client, project_id: str, **body) -> dict:
 def test_notification_quota_per_topic(client):
     # spec §8.5: ≤2 light/day and ≤1 strong/week per topic; silent uncapped.
     pid = _create_project(client)
-    tid = client.post(
-        "/api/topics", json={"project_id": pid, "title": "T"}
-    ).json()["data"]["id"]
+    tid = client.post("/api/topics", json={"project_id": pid, "title": "T"}).json()[
+        "data"
+    ]["id"]
     p, t = uuid.UUID(pid), uuid.UUID(tid)
 
     async def run():
@@ -209,9 +209,7 @@ def test_inbox_only_unread_decision_and_accept(client):
     r = client.get(f"/api/projects/{pid}/inbox", params={"target_handle": "alice"})
     assert r.json()["data"]["total"] == 1
 
-    client.post(
-        f"/api/notifications/{decision['id']}/resolve", json={"chosen": "随便"}
-    )
+    client.post(f"/api/notifications/{decision['id']}/resolve", json={"chosen": "随便"})
     r = client.get(f"/api/projects/{pid}/inbox", params={"target_handle": "alice"})
     assert r.json()["data"]["total"] == 0
 
@@ -251,9 +249,7 @@ def test_resolve_records_choice_and_posts_block(client):
         title="再来一个",
         payload={"options": ["A", "B"]},
     )
-    bad = client.post(
-        f"/api/notifications/{n2['id']}/resolve", json={"chosen": "C"}
-    )
+    bad = client.post(f"/api/notifications/{n2['id']}/resolve", json={"chosen": "C"})
     assert bad.status_code == 422
 
 

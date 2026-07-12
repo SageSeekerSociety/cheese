@@ -83,16 +83,22 @@ class TestNotificationIntegration:
         _portal: BlockingPortal,
     ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
-        notification_ids = create_notifications_in_db(db_session, _portal, creator.user_id, count=3)
+        notification_ids = create_notifications_in_db(
+            db_session, _portal, creator.user_id, count=3
+        )
 
         yield {
             "creator": creator,
             "notification_ids": notification_ids,
         }
 
-    def test_list_notifications(self, setup_notifications: dict, api_client: TestClient):
+    def test_list_notifications(
+        self, setup_notifications: dict, api_client: TestClient
+    ):
         creator = setup_notifications["creator"]
 
         resp = api_client.get(
@@ -100,7 +106,9 @@ class TestNotificationIntegration:
             params={"pageSize": 10},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "notifications" in data
         assert "page" in data
@@ -114,16 +122,33 @@ class TestNotificationIntegration:
         _portal: BlockingPortal,
     ):
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         create_notifications_in_db(
-            db_session, _portal, creator.user_id, count=2, notification_type="MENTION", read=False
+            db_session,
+            _portal,
+            creator.user_id,
+            count=2,
+            notification_type="MENTION",
+            read=False,
         )
         create_notifications_in_db(
-            db_session, _portal, creator.user_id, count=1, notification_type="MENTION", read=True
+            db_session,
+            _portal,
+            creator.user_id,
+            count=1,
+            notification_type="MENTION",
+            read=True,
         )
         create_notifications_in_db(
-            db_session, _portal, creator.user_id, count=1, notification_type="REPLY", read=False
+            db_session,
+            _portal,
+            creator.user_id,
+            count=1,
+            notification_type="REPLY",
+            read=False,
         )
 
         resp = api_client.get(
@@ -131,7 +156,9 @@ class TestNotificationIntegration:
             params={"pageSize": 20, "type": "MENTION", "read": "false"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         notifications = data["notifications"]
         assert len(notifications) == 2
@@ -166,12 +193,16 @@ class TestNotificationIntegration:
             "/notifications/unread-count",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "count" in data
         assert data["count"] >= 3
 
-    def test_get_notification_by_id(self, setup_notifications: dict, api_client: TestClient):
+    def test_get_notification_by_id(
+        self, setup_notifications: dict, api_client: TestClient
+    ):
         creator = setup_notifications["creator"]
         notification_ids = setup_notifications["notification_ids"]
         notification_id = notification_ids[0]
@@ -180,21 +211,29 @@ class TestNotificationIntegration:
             f"/notifications/{notification_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "notification" in data
         assert data["notification"]["id"] == notification_id
 
-    def test_get_notification_not_found(self, setup_notifications: dict, api_client: TestClient):
+    def test_get_notification_not_found(
+        self, setup_notifications: dict, api_client: TestClient
+    ):
         creator = setup_notifications["creator"]
 
         resp = api_client.get(
             "/notifications/999999999",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_update_notification_status(self, setup_notifications: dict, api_client: TestClient):
+    def test_update_notification_status(
+        self, setup_notifications: dict, api_client: TestClient
+    ):
         creator = setup_notifications["creator"]
         notification_ids = setup_notifications["notification_ids"]
         notification_id = notification_ids[0]
@@ -204,7 +243,9 @@ class TestNotificationIntegration:
             json={"read": True},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert data["notification"]["read"] is True
 
@@ -213,11 +254,15 @@ class TestNotificationIntegration:
             json={"read": False},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp2.status_code == 200, f"Expected 200, got {resp2.status_code}: {resp2.text}"
+        assert resp2.status_code == 200, (
+            f"Expected 200, got {resp2.status_code}: {resp2.text}"
+        )
         data2 = resp2.json()["data"]
         assert data2["notification"]["read"] is False
 
-    def test_update_notification_not_found(self, setup_notifications: dict, api_client: TestClient):
+    def test_update_notification_not_found(
+        self, setup_notifications: dict, api_client: TestClient
+    ):
         creator = setup_notifications["creator"]
 
         resp = api_client.patch(
@@ -225,9 +270,13 @@ class TestNotificationIntegration:
             json={"read": True},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_bulk_update_notifications(self, setup_notifications: dict, api_client: TestClient):
+    def test_bulk_update_notifications(
+        self, setup_notifications: dict, api_client: TestClient
+    ):
         creator = setup_notifications["creator"]
         notification_ids = setup_notifications["notification_ids"]
 
@@ -241,7 +290,9 @@ class TestNotificationIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "updatedIds" in data
 
@@ -253,7 +304,9 @@ class TestNotificationIntegration:
             json={"read": True},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "count" in data
 
@@ -267,9 +320,13 @@ class TestNotificationIntegration:
             json={"read": False},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_delete_notification(self, setup_notifications: dict, api_client: TestClient):
+    def test_delete_notification(
+        self, setup_notifications: dict, api_client: TestClient
+    ):
         creator = setup_notifications["creator"]
         notification_ids = setup_notifications["notification_ids"]
         notification_id = notification_ids[-1]
@@ -278,22 +335,30 @@ class TestNotificationIntegration:
             f"/notifications/{notification_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
         resp2 = api_client.get(
             f"/notifications/{notification_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp2.status_code == 404, f"Expected 404 after delete, got {resp2.status_code}"
+        assert resp2.status_code == 404, (
+            f"Expected 404 after delete, got {resp2.status_code}"
+        )
 
-    def test_delete_notification_not_found(self, setup_notifications: dict, api_client: TestClient):
+    def test_delete_notification_not_found(
+        self, setup_notifications: dict, api_client: TestClient
+    ):
         creator = setup_notifications["creator"]
 
         resp = api_client.delete(
             "/notifications/999999999",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
+        )
 
     def test_list_notifications_with_pagination(
         self,
@@ -303,7 +368,9 @@ class TestNotificationIntegration:
         _portal: BlockingPortal,
     ):
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         create_notifications_in_db(db_session, _portal, creator.user_id, count=5)
 
@@ -312,7 +379,9 @@ class TestNotificationIntegration:
             params={"pageSize": 2},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert len(data["notifications"]) <= 2
         assert "page" in data
@@ -320,15 +389,21 @@ class TestNotificationIntegration:
         if page.get("hasMore"):
             assert page.get("nextStart") is not None
 
-    def test_list_notifications_empty(self, user_client: UserCreator, api_client: TestClient):
+    def test_list_notifications_empty(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         resp = api_client.get(
             "/notifications",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "notifications" in data
         assert isinstance(data["notifications"], list)

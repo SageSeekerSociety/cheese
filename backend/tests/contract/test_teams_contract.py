@@ -45,7 +45,9 @@ async def test_python_get_my_teams_shape(python_client: AsyncClient) -> None:
 async def test_python_get_team_members_shape(python_client: AsyncClient) -> None:
     """Python 后端：GET /teams/{teamId}/members 结构检查（不依赖具体数据）。"""
     # teamId 使用 1 作为占位，实际是否存在由调用环境决定
-    resp = await python_client.get("/teams/1/members", params={"queryRealNameStatus": False})
+    resp = await python_client.get(
+        "/teams/1/members", params={"queryRealNameStatus": False}
+    )
     # 允许 200 或 404，只有 200 时检查结构
     assert resp.status_code in (200, 404)
     if resp.status_code != 200:

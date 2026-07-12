@@ -55,7 +55,9 @@ def test_expect_list_with_unexpected_type_raises():
 def test_create_space_visible_task_limit_accepts_null_and_zero():
     from app.api.routes.spaces import CreateSpaceRequest
 
-    assert CreateSpaceRequest(name="s", visibleTaskLimit=None).visible_task_limit is None
+    assert (
+        CreateSpaceRequest(name="s", visibleTaskLimit=None).visible_task_limit is None
+    )
     assert CreateSpaceRequest(name="s", visibleTaskLimit=0).visible_task_limit == 0
 
 

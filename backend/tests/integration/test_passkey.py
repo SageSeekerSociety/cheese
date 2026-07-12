@@ -4,12 +4,16 @@ from tests.integration.conftest import CreatedUser, UserCreator
 
 
 class TestPasskeyIntegration:
-    def test_register_challenge(self, authenticated_user: CreatedUser, api_client: TestClient):
+    def test_register_challenge(
+        self, authenticated_user: CreatedUser, api_client: TestClient
+    ):
         resp = api_client.post(
             "/users/auth/passkey/register/challenge",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "options" in data
         options = data["options"]
@@ -24,7 +28,9 @@ class TestPasskeyIntegration:
             "/users/auth/passkey/authenticate/challenge",
             json={},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "options" in data
         options = data["options"]
@@ -39,16 +45,22 @@ class TestPasskeyIntegration:
             "/users/auth/passkey/authenticate/challenge",
             json={"userId": authenticated_user.user_id},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "options" in data
 
-    def test_list_passkeys_empty(self, authenticated_user: CreatedUser, api_client: TestClient):
+    def test_list_passkeys_empty(
+        self, authenticated_user: CreatedUser, api_client: TestClient
+    ):
         resp = api_client.get(
             f"/users/{authenticated_user.user_id}/passkeys",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "passkeys" in data
         assert isinstance(data["passkeys"], list)
@@ -63,7 +75,9 @@ class TestPasskeyIntegration:
             f"/users/{user2.user_id}/passkeys",
             headers={"Authorization": f"Bearer {user1.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
     def test_delete_passkey_not_found(
         self, authenticated_user: CreatedUser, api_client: TestClient
@@ -72,7 +86,9 @@ class TestPasskeyIntegration:
             f"/users/{authenticated_user.user_id}/passkeys/nonexistent-credential-id",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
         )
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
+        )
 
     def test_register_verify_invalid_challenge(
         self, authenticated_user: CreatedUser, api_client: TestClient
@@ -85,7 +101,9 @@ class TestPasskeyIntegration:
             },
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
 
     def test_authenticate_verify_invalid_challenge(self, api_client: TestClient):
         resp = api_client.post(
@@ -95,4 +113,6 @@ class TestPasskeyIntegration:
                 "credential": {"id": "test", "type": "public-key"},
             },
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )

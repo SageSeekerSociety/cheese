@@ -6,7 +6,9 @@ from tests.integration.conftest import UserCreator, unique_int
 
 class TestTeamRecruitment:
     @pytest.fixture
-    def recruitment_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def recruitment_setup(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         """Create a team with an owner, admin, member, and outsider."""
         owner = user_client.create_user()
         owner.token = user_client.login(api_client, owner.username, owner.password)
@@ -18,7 +20,9 @@ class TestTeamRecruitment:
         member.token = user_client.login(api_client, member.username, member.password)
 
         outsider = user_client.create_user()
-        outsider.token = user_client.login(api_client, outsider.username, outsider.password)
+        outsider.token = user_client.login(
+            api_client, outsider.username, outsider.password
+        )
 
         suffix = unique_int()
         # Create team
@@ -73,7 +77,9 @@ class TestTeamRecruitment:
 
     # ----- CREATE -----
 
-    def test_owner_can_create_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
+    def test_owner_can_create_post(
+        self, api_client: TestClient, recruitment_setup: dict
+    ) -> None:
         owner = recruitment_setup["owner"]
         team_id = recruitment_setup["team_id"]
 
@@ -102,7 +108,9 @@ class TestTeamRecruitment:
         assert post["updatedAt"] is not None
         assert post["expiresAt"] is None
 
-    def test_admin_can_create_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
+    def test_admin_can_create_post(
+        self, api_client: TestClient, recruitment_setup: dict
+    ) -> None:
         admin = recruitment_setup["admin"]
         team_id = recruitment_setup["team_id"]
 
@@ -239,7 +247,9 @@ class TestTeamRecruitment:
 
     # ----- EDIT -----
 
-    def test_creator_can_edit_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
+    def test_creator_can_edit_post(
+        self, api_client: TestClient, recruitment_setup: dict
+    ) -> None:
         owner = recruitment_setup["owner"]
         team_id = recruitment_setup["team_id"]
 
@@ -252,7 +262,11 @@ class TestTeamRecruitment:
 
         patch_resp = api_client.patch(
             f"/recruitment/{post_id}",
-            json={"title": "Updated Title", "content": "Updated content", "status": "CLOSED"},
+            json={
+                "title": "Updated Title",
+                "content": "Updated content",
+                "status": "CLOSED",
+            },
             headers={"Authorization": f"Bearer {owner.token}"},
         )
         assert patch_resp.status_code == 200
@@ -284,7 +298,9 @@ class TestTeamRecruitment:
 
     # ----- DELETE -----
 
-    def test_owner_can_delete_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
+    def test_owner_can_delete_post(
+        self, api_client: TestClient, recruitment_setup: dict
+    ) -> None:
         owner = recruitment_setup["owner"]
         team_id = recruitment_setup["team_id"]
 
@@ -306,7 +322,9 @@ class TestTeamRecruitment:
         post_ids = [p["id"] for p in plaza_resp.json()["data"]["posts"]]
         assert post_id not in post_ids
 
-    def test_admin_can_delete_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
+    def test_admin_can_delete_post(
+        self, api_client: TestClient, recruitment_setup: dict
+    ) -> None:
         owner = recruitment_setup["owner"]
         admin = recruitment_setup["admin"]
         team_id = recruitment_setup["team_id"]
@@ -392,7 +410,9 @@ class TestTeamRecruitment:
         )
         assert resp.status_code == 400
 
-    def test_delete_nonexistent_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
+    def test_delete_nonexistent_post(
+        self, api_client: TestClient, recruitment_setup: dict
+    ) -> None:
         owner = recruitment_setup["owner"]
         resp = api_client.delete(
             "/recruitment/999999999",
@@ -400,7 +420,9 @@ class TestTeamRecruitment:
         )
         assert resp.status_code == 404
 
-    def test_edit_nonexistent_post(self, api_client: TestClient, recruitment_setup: dict) -> None:
+    def test_edit_nonexistent_post(
+        self, api_client: TestClient, recruitment_setup: dict
+    ) -> None:
         owner = recruitment_setup["owner"]
         resp = api_client.patch(
             "/recruitment/999999999",

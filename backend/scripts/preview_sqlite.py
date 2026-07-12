@@ -37,7 +37,7 @@ _FILES = {
         '"""教务处脱敏数据加载（演示文件）."""\n'
     ),
     "backend/eval/metrics/recall.py": (
-        '"""Recall@K 评测指标（演示文件）."""\n\n\ndef recall_at_k(pred, truth, k=10):\n'
+        '"""Recall@K 评测指标（演示文件）."""\n\n\ndef recall_at_k(pred, truth, k=10):\n'  # noqa: E501
         "    ...\n"
     ),
     "backend/eval/run_eval.py": '"""离线评测入口（演示文件）."""\n',
@@ -65,7 +65,7 @@ async def main() -> None:
                 author_type=AuthorType.ai,
                 author="cheese",
                 content=(
-                    "算法骨架写好了：核心相似度在 <&backend/app/domain/recommend/cf_model.py>，"
+                    "算法骨架写好了：核心相似度在 <&backend/app/domain/recommend/cf_model.py>，"  # noqa: E501
                     "评测指标在 <&backend/eval/metrics/recall.py>，"
                     "入口是 <&backend/eval/run_eval.py>。点开看看。"
                 ),

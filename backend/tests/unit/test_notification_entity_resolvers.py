@@ -26,7 +26,9 @@ class TestTeamEntityResolver:
     def _make_resolver(self, teams_by_id=None):
         team_service = AsyncMock()
         team_service.get_teams_by_ids.return_value = teams_by_id or {}
-        return TeamEntityResolver(team_service, avatar_base_url="https://cdn.example.com/")
+        return TeamEntityResolver(
+            team_service, avatar_base_url="https://cdn.example.com/"
+        )
 
     def test_supported_entity_type(self):
         resolver = self._make_resolver()
@@ -92,7 +94,9 @@ class TestUserEntityResolver:
     def _make_resolver(self, users_by_id=None):
         user_service = AsyncMock()
         user_service.get_users_by_ids.return_value = users_by_id or {}
-        return UserEntityResolver(user_service, avatar_base_url="https://cdn.example.com/")
+        return UserEntityResolver(
+            user_service, avatar_base_url="https://cdn.example.com/"
+        )
 
     def test_supported_entity_type(self):
         resolver = self._make_resolver()

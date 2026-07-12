@@ -10,7 +10,9 @@ class TestProjectIntegration:
     @pytest.fixture
     def setup_project(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         suffix = unique_int(10000000, 99999999)
         team_resp = api_client.post(
             "/teams",
@@ -50,7 +52,9 @@ class TestProjectIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Expected 201, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["project"]
         assert data["name"] == "Test Project"
 
@@ -77,7 +81,9 @@ class TestProjectIntegration:
             params={"team_id": team_id},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         projects = resp.json()["data"]["projects"]
         assert isinstance(projects, list)
 
@@ -111,7 +117,9 @@ class TestProjectIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["project"]
         assert data["name"] == "Updated Project"
         assert data["description"] == "Updated Description"
@@ -142,4 +150,6 @@ class TestProjectIntegration:
             f"/projects/{project_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )

@@ -128,9 +128,7 @@ async def main() -> int:
         )
         log(f"approved (human /connect simulated) → device_id={device.device_id}")
 
-        r = await client.post(
-            "/connector/auth/device/poll", json={"device_code": code}
-        )
+        r = await client.post("/connector/auth/device/poll", json={"device_code": code})
         r.raise_for_status()
         poll = r.json()
         assert poll["status"] == "approved" and poll["token"], poll
@@ -157,8 +155,13 @@ async def main() -> int:
     cli_env["PATH"] = extra_path + ":" + cli_env.get("PATH", "")
     cli_log = (LOG_DIR / "cli.log").open("w", encoding="utf-8")
     cli_proc = await asyncio.create_subprocess_exec(
-        CLI_BIN, "run", "--config", str(cfg_path),
-        stdout=cli_log, stderr=asyncio.subprocess.STDOUT, env=cli_env,
+        CLI_BIN,
+        "run",
+        "--config",
+        str(cfg_path),
+        stdout=cli_log,
+        stderr=asyncio.subprocess.STDOUT,
+        env=cli_env,
     )
     log(f"launched frozen cli: {CLI_BIN} run (pid={cli_proc.pid}) — dialing out…")
 

@@ -53,15 +53,19 @@ async def clean() -> None:
                 print(f"skip {p.name!r}: no root_topic_id")
                 continue
             doc = (
-                await s.execute(
-                    select(Block)
-                    .where(
-                        Block.topic_id == p.root_topic_id,
-                        Block.kind == BlockKind.doc,
+                (
+                    await s.execute(
+                        select(Block)
+                        .where(
+                            Block.topic_id == p.root_topic_id,
+                            Block.kind == BlockKind.doc,
+                        )
+                        .order_by(Block.created_at)
                     )
-                    .order_by(Block.created_at)
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if doc is None:
                 print(f"skip {p.name!r}: no charter doc (already clean/empty)")
                 continue
@@ -74,7 +78,9 @@ async def clean() -> None:
                             Block.kind == BlockKind.doc_node,
                         )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
 
             already_empty = not doc.content.strip() and not nodes

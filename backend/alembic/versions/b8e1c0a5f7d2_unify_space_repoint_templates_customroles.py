@@ -1,4 +1,4 @@
-"""fusion unify P1c: repoint task_templates + custom_roles to main Space (int), drop cheesex spaces stub
+"""fusion unify P1c: repoint task_templates + custom_roles to main Space (int), drop cheesex spaces stub  # noqa: E501
 
 Revision ID: b8e1c0a5f7d2
 Revises: 4006c4e8b583
@@ -10,27 +10,25 @@ The cheesex `spaces` table (uuid, 3-col stub) duplicated main-cheese's `space`
 (int). Both tables are empty at merge time, so the uuid→int column swap needs no
 data conversion.
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "b8e1c0a5f7d2"
-down_revision: Union[str, Sequence[str], None] = "4006c4e8b583"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "4006c4e8b583"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     # task_templates.space_id: uuid → int (dropping the column cascades its FK +
     # index in PostgreSQL; the table is empty so NOT NULL re-add is safe).
     op.drop_column("task_templates", "space_id")
-    op.add_column(
-        "task_templates", sa.Column("space_id", sa.Integer(), nullable=False)
-    )
-    op.create_index(
-        "ix_task_templates_space_id", "task_templates", ["space_id"]
-    )
+    op.add_column("task_templates", sa.Column("space_id", sa.Integer(), nullable=False))
+    op.create_index("ix_task_templates_space_id", "task_templates", ["space_id"])
     op.create_foreign_key(
         "fk_task_templates_space_id",
         "task_templates",
@@ -42,9 +40,7 @@ def upgrade() -> None:
 
     # custom_roles.space_id: uuid → int (nullable; NULL = personal role).
     op.drop_column("custom_roles", "space_id")
-    op.add_column(
-        "custom_roles", sa.Column("space_id", sa.Integer(), nullable=True)
-    )
+    op.add_column("custom_roles", sa.Column("space_id", sa.Integer(), nullable=True))
     op.create_index("ix_custom_roles_space_id", "custom_roles", ["space_id"])
     op.create_foreign_key(
         "fk_custom_roles_space_id",

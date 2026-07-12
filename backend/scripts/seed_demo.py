@@ -13,13 +13,15 @@ It TRUNCATEs all tables first (dev/demo DB only) then inserts a fresh scenario.
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+from app.domain.cx_space.models import Space, SpaceKind
 from sqlalchemy import text
 
 from app.core.db import async_session_factory
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.cx_notification.models import Notification, NotifKind, NotifLevel
+from app.domain.cx_task.models import Task, TaskTemplate
 from app.domain.memory.models import MemoryEntry, MemoryScope
 from app.domain.milestone.models import Milestone, MilestoneStatus
-from app.domain.cx_notification.models import Notification, NotifKind, NotifLevel
 from app.domain.project.models import (
     AiMode,
     Project,
@@ -28,8 +30,6 @@ from app.domain.project.models import (
     ProjectTaskLink,
 )
 from app.domain.review.models import AcceptCard
-from app.domain.cx_space.models import Space, SpaceKind
-from app.domain.cx_task.models import Task, TaskTemplate
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.user.models import User
 

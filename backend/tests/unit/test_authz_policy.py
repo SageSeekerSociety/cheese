@@ -79,13 +79,16 @@ async def test_can_manage_roster_owner_admin_only():
     async def role_member(_t, _h):
         return TopicRole.member
 
-    assert await can_manage_roster(
-        _actor("token"), topic_id=TID, topic_role=role_owner
-    ) is True
-    assert await can_manage_roster(
-        _actor("token"), topic_id=TID, topic_role=role_member
-    ) is False
+    assert (
+        await can_manage_roster(_actor("token"), topic_id=TID, topic_role=role_owner)
+        is True
+    )
+    assert (
+        await can_manage_roster(_actor("token"), topic_id=TID, topic_role=role_member)
+        is False
+    )
     # Fallback path defers to the service's own role check → permissive here.
-    assert await can_manage_roster(
-        _actor("handle"), topic_id=TID, topic_role=role_member
-    ) is True
+    assert (
+        await can_manage_roster(_actor("handle"), topic_id=TID, topic_role=role_member)
+        is True
+    )

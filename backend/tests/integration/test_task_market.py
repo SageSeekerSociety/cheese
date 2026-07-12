@@ -93,15 +93,19 @@ def test_market_keyword_filter(client):
     assert body["data"][0]["id"] == t2
 
     # Space name matches too; LIKE wildcards in the keyword match literally.
-    assert client.get("/api/market/tasks", params={"q": "信院"}).json()["data"][
-        "total"
-    ] == 2
-    assert client.get("/api/market/tasks", params={"q": "%"}).json()["data"][
-        "total"
-    ] == 0
-    assert client.get("/api/market/tasks", params={"q": "没有这个"}).json()["data"][
-        "total"
-    ] == 0
+    assert (
+        client.get("/api/market/tasks", params={"q": "信院"}).json()["data"]["total"]
+        == 2
+    )
+    assert (
+        client.get("/api/market/tasks", params={"q": "%"}).json()["data"]["total"] == 0
+    )
+    assert (
+        client.get("/api/market/tasks", params={"q": "没有这个"}).json()["data"][
+            "total"
+        ]
+        == 0
+    )
 
 
 def test_apply_pending_and_idempotent(client):
@@ -177,9 +181,7 @@ def test_accept_creates_task_link_and_notification(client):
     # The project got a notification carrying the structured payload.
     notes = client.get(f"/api/projects/{project_id}/notifications").json()["data"]
     matching = [
-        n
-        for n in notes["data"]
-        if n["payload"].get("application_id") == application_id
+        n for n in notes["data"] if n["payload"].get("application_id") == application_id
     ]
     assert len(matching) == 1
     assert matching[0]["kind"] == "change_alert"
@@ -194,17 +196,18 @@ def test_accept_creates_task_link_and_notification(client):
     assert (
         client.get(f"/api/templates/{template_id}/tasks").json()["data"]["total"] == 1
     )
-    assert (
-        client.get(f"/api/projects/{project_id}/tasks").json()["data"]["total"] == 1
-    )
+    assert client.get(f"/api/projects/{project_id}/tasks").json()["data"]["total"] == 1
     notes2 = client.get(f"/api/projects/{project_id}/notifications").json()["data"]
-    assert len(
-        [
-            n
-            for n in notes2["data"]
-            if n["payload"].get("application_id") == application_id
-        ]
-    ) == 1
+    assert (
+        len(
+            [
+                n
+                for n in notes2["data"]
+                if n["payload"].get("application_id") == application_id
+            ]
+        )
+        == 1
+    )
 
 
 def test_accept_inherits_default_role(client):
@@ -242,9 +245,7 @@ def test_decline_and_terminal_states(client):
     assert (
         client.get(f"/api/templates/{template_id}/tasks").json()["data"]["total"] == 0
     )
-    assert (
-        client.get(f"/api/projects/{project_id}/tasks").json()["data"]["total"] == 0
-    )
+    assert client.get(f"/api/projects/{project_id}/tasks").json()["data"]["total"] == 0
     notes = client.get(f"/api/projects/{project_id}/notifications").json()["data"]
     assert any(
         n["payload"].get("application_id") == application_id for n in notes["data"]

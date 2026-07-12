@@ -19,9 +19,9 @@ def _bearer(token: str) -> dict:
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": owner}
-    ).json()["data"]
+    p = client.post("/api/projects", json={"name": "P", "owner_handle": owner}).json()[
+        "data"
+    ]
     t = client.post(
         "/api/topics",
         json={"project_id": p["id"], "title": "T", "created_by": owner},
@@ -110,9 +110,7 @@ def test_ws_outsider_token_rejected(client):
     """越权: an outsider's token on the chat WS is refused before any message."""
     _, tid = _project_topic(client, owner="alice")
     outsider = _login(client, "mallory")
-    with client.websocket_connect(
-        f"/api/topics/{tid}/chat?token={outsider}"
-    ) as ws:
+    with client.websocket_connect(f"/api/topics/{tid}/chat?token={outsider}") as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
 

@@ -78,7 +78,5 @@ def test_agent_ws_rejects_unknown_token(client):
 
     # An unknown device token must be rejected at the handshake (1008).
     with contextlib.suppress(WebSocketDisconnect):
-        with client.websocket_connect(
-            "/connector/agent?token=bogus"
-        ) as ws:
+        with client.websocket_connect("/connector/agent?token=bogus") as ws:
             ws.receive_text()  # should not get here; the server closes 1008

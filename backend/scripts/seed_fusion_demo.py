@@ -21,7 +21,9 @@ from app.domain.project.models import (
     ProjectMember,
     ProjectRole,
 )
-from app.domain.team.models import Team  # noqa: F401 — register `team` for Project.team_id FK
+from app.domain.team.models import (
+    Team,  # noqa: F401 — register `team` for Project.team_id FK
+)
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -57,8 +59,10 @@ async def seed() -> None:
         for name, team_id, summary, first_topic in DEMO_PROJECTS:
             # Idempotent: drop any prior instance (cascades to topics/members).
             existing = (
-                await s.execute(select(Project).where(Project.name == name))
-            ).scalars().all()
+                (await s.execute(select(Project).where(Project.name == name)))
+                .scalars()
+                .all()
+            )
             for p in existing:
                 await s.execute(delete(Topic).where(Topic.project_id == p.id))
                 await s.execute(

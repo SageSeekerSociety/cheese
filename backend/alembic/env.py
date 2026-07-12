@@ -17,12 +17,11 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Make the application package importable and pull in settings + Base.
-from app.core.config import settings  # noqa: E402
-from app.core.db import Base  # noqa: E402
-
 # Import every model so its tables register on Base.metadata. Without this,
 # autogenerate would see an empty metadata and drop all tables.
 import app.models  # noqa: E402, F401
+from app.core.config import settings  # noqa: E402
+from app.core.db import Base  # noqa: E402
 
 # Inject the runtime database URL instead of hardcoding it in alembic.ini.
 config.set_main_option("sqlalchemy.url", settings.database_url)

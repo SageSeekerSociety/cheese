@@ -9,17 +9,20 @@ binding, never a column. This creates the ``agent_bindings`` table and seeds
 芝士 (handle ``cheese``) as a real ``users`` row with one ``platform`` binding —
 idempotently, so re-running or a pre-existing cheese row never duplicates.
 """
-import uuid
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c5f1a9d24e07"
-down_revision: Union[str, Sequence[str], None] = "a1c9f3e70b21"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = "a95752502bb0"  # fusion A2: needs main user table
+down_revision: str | Sequence[str] | None = "a1c9f3e70b21"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = (
+    "a95752502bb0"  # fusion A2: needs main user table
+)
 
 
 def upgrade() -> None:

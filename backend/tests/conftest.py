@@ -6,13 +6,14 @@ model. The live agent is exercised separately by the smoke script.
 """
 
 import asyncio
+import os
 import time
 from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401  (registers all tables on Base.metadata)
 from app.api.deps import get_chat_service, get_turn_runner
@@ -92,26 +93,20 @@ def stub_agent() -> StubAgent:
 
 
 @pytest.fixture
-def client(stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+def client(_pg_schema, stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
+    # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
+    # Sequences and ENUM types that sqlite's compiler can't render, and the schema
+    # is defined by the alembic migrations (create_all can't build the pg ENUMs).
+    # NullPool → every connection is created fresh in its calling event loop, so
+    # the TestClient's portal loop and this fixture's setup loop never share an
+    # asyncpg connection (which is loop-bound). Isolation is per-test TRUNCATE.
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     test_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    # aiosqlite keeps its single StaticPool connection in a dedicated thread,
-    # so creating the schema here (own loop) is visible to the TestClient loop.
-    async def _create_schema() -> None:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    asyncio.run(_create_schema())
+    asyncio.run(_truncate_all(engine))
 
     # agent-as-user baseline (P1): 芝士 is a real user with a platform agent-
-    # binding — seeded by the migration in prod, seeded here for the sqlite DB so
-    # the derived is-agent flag matches. StaticPool shares the one connection, so
-    # this own-loop write is visible to the TestClient loop (like the schema).
+    # binding — seeded by the migration in prod, re-seeded here after the truncate.
     async def _seed_agent_user() -> None:
         from app.domain.identity.services import IdentityService
 
@@ -155,3 +150,100 @@ def client(stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
 
     app.dependency_overrides.clear()
     asyncio.run(engine.dispose())
+
+
+# --- PostgreSQL test-DB plumbing (shared by client / python_client) -----------
+
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://cheesex:cheesex@localhost:5433/cheesex_test",
+)
+
+
+async def _truncate_all(engine) -> None:
+    """Wipe every table for a clean per-test slate (fast; keeps the schema)."""
+    tables = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
+    if not tables:
+        return
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
+
+
+@pytest.fixture(scope="session")
+def _pg_schema():
+    """Build the test DB schema ONCE per session via the alembic migrations —
+    exactly how production is built (create_all can't render the pg ENUM types).
+    Requires the Docker postgres on :5433. Runs in a subprocess so alembic's env
+    picks up the test DB URL cleanly."""
+    import subprocess
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    backend_dir = Path(__file__).resolve().parent.parent
+    # DATABASE_URL maps to settings.database_url, which alembic/env.py reads.
+    env = {**os.environ, "DATABASE_URL": TEST_DATABASE_URL}
+    # Drop + recreate the public schema so each session starts from bare metal,
+    # then migrate to head. Uses the sync psql in the running container.
+    db_name = urlparse(TEST_DATABASE_URL.replace("+asyncpg", "")).path.lstrip("/")
+    subprocess.run(
+        ["docker", "exec", "cheesex-pg", "psql", "-U", "cheesex", "-d", db_name,
+         "-c", "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        [str(backend_dir / ".venv/bin/alembic"), "upgrade", "head"],
+        cwd=backend_dir,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    yield
+
+
+@pytest.fixture
+async def python_client(_pg_schema, stub_agent: StubAgent, tmp_path):
+    """Async httpx client bound to the app over ASGI — the async counterpart to
+    `client`. Inherited contract/route tests written against the main backend use
+    it. Same postgres test DB + truncate isolation + agent seed as `client`, but
+    awaitable inside anyio tests."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.domain.identity.services import IdentityService
+
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    test_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await _truncate_all(engine)
+    async with test_factory() as session:
+        await IdentityService(session).ensure_agent_user()
+        await session.commit()
+
+    async def override_get_db():
+        async with test_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    def override_get_chat_service() -> ChatService:
+        return ChatService(
+            session_factory=test_factory,
+            agent=stub_agent,
+            base_system_prompt="你是芝士。",
+            workspace_root=str(tmp_path / "ws"),
+        )
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_chat_service] = override_get_chat_service
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"X-Cheese-Token": SANDBOX_TOKEN},
+    ) as c:
+        yield c
+
+    app.dependency_overrides.clear()
+    await engine.dispose()

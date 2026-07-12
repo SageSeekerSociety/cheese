@@ -50,20 +50,27 @@ def test_sandbox_config_uses_project_image(monkeypatch, tmp_path):
     monkeypatch.setattr(ws, "topic_worktree", lambda p, t: tmp_path / "wt")
     monkeypatch.setattr(ws, "container_name", lambda t: "c")
     monkeypatch.setattr(ws, "session_dir", lambda p, t: tmp_path / "sess")
-    monkeypatch.setattr(
-        "app.domain.agent.compute.mint_scoped_token", lambda **_: "tok"
-    )
+    monkeypatch.setattr("app.domain.agent.compute.mint_scoped_token", lambda **_: "tok")
     prov = LocalDockerProvider(
         agent=None, workspace_root=str(tmp_path), sandbox_enabled=True
     )
     pid, tid = uuid.uuid4(), uuid.uuid4()
     sbx, _ = prov._sandbox_config(
-        pid, tid, memory_scope=None, owner=None, turn_id=None,
+        pid,
+        tid,
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
         sandbox_image="cheesex-dev:v0",
     )
     assert sbx["env"]["SBX_IMAGE"] == "cheesex-dev:v0"
 
     sbx2, _ = prov._sandbox_config(
-        pid, tid, memory_scope=None, owner=None, turn_id=None, sandbox_image=None,
+        pid,
+        tid,
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        sandbox_image=None,
     )
     assert sbx2["env"]["SBX_IMAGE"] == settings.sandbox_image

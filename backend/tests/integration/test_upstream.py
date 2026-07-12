@@ -16,9 +16,7 @@ def _make_upstream(tmp_path: Path, name: str = "up") -> Path:
     repo.mkdir()
 
     def git(*args: str) -> None:
-        subprocess.run(
-            ["git", "-C", str(repo), *args], check=True, capture_output=True
-        )
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
     git("init", "-q", "-b", "main")
     git("config", "user.email", "t@t")
@@ -152,7 +150,8 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
     branch = f"dogfood/{tuid.hex[:8]}"
     out = subprocess.run(
         ["git", "-C", str(up), "show", f"{branch}:work.txt"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert out.returncode == 0 and "accepted work" in out.stdout
     # The detached hook runs asynchronously — give it a moment.

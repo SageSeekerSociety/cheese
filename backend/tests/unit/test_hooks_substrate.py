@@ -52,9 +52,7 @@ def test_baked_forwarder_matches_the_single_source():
 
 async def _drain(queue, **kw):
     events = []
-    async for e in run_hooks_turn(
-        queue=queue, resume_session_id=None, **kw
-    ):
+    async for e in run_hooks_turn(queue=queue, resume_session_id=None, **kw):
         events.append(e)
     return events
 

@@ -111,8 +111,12 @@ def test_summon_gets_cheese_check_receipt(client):
     topic_id = _create_topic(client)
     with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
         ws.send_json(
-            {"type": "message", "content": "芝士帮我看看", "author": "alice",
-             "summon": True}
+            {
+                "type": "message",
+                "content": "芝士帮我看看",
+                "author": "alice",
+                "summon": True,
+            }
         )
         frames = []
         while True:

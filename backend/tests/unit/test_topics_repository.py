@@ -158,7 +158,9 @@ class TestTopicRepository:
         ]
         repo = TopicRepository(session)
 
-        rows, prev_id, has_more, next_id = await repo.list_topics_cursor(page_start=5, page_size=10)
+        rows, prev_id, has_more, next_id = await repo.list_topics_cursor(
+            page_start=5, page_size=10
+        )
         assert rows == [t]
         assert prev_id == 3  # last of prev_ids
 

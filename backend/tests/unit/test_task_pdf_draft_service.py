@@ -6,7 +6,9 @@ from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 
 
 class _FakeLLMClient:
-    def __init__(self, content: str, *, configured: bool = True, total_tokens: int = 1200) -> None:
+    def __init__(
+        self, content: str, *, configured: bool = True, total_tokens: int = 1200
+    ) -> None:
         self.is_configured = configured
         self._content = content
         self._total_tokens = total_tokens
@@ -24,13 +26,18 @@ class _FakeLLMClient:
 @pytest.mark.anyio
 async def test_generate_payload_from_text_only_builds_content_draft() -> None:
     llm = _FakeLLMClient(
-        '{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}'
+        '{"name":"AI 赛题","intro":"简述","description":"详细说明","defaultDeadline":"45","resubmittable":"false"}'  # noqa: E501
     )
     service = TaskPdfDraftService(llm_client=llm)
 
     payload, tokens = await service.generate_task_payload_from_text(
         text="这是一个关于图像识别的赛题说明。",
-        template={"editable": False, "submitterType": "TEAM", "minTeamSize": 2, "maxTeamSize": 5},
+        template={
+            "editable": False,
+            "submitterType": "TEAM",
+            "minTeamSize": 2,
+            "maxTeamSize": 5,
+        },
         space_id=7,
         category_id=9,
         forced_submitter_type=None,

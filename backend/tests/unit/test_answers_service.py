@@ -75,7 +75,9 @@ def _make_service(
     repo.is_favorited.return_value = False
     repo.get_user_vote.return_value = None
     profile_repo.get_profiles_by_user_ids.return_value = {}
-    svc = AnswersService(repo=repo, question_repo=question_repo, profile_repo=profile_repo)
+    svc = AnswersService(
+        repo=repo, question_repo=question_repo, profile_repo=profile_repo
+    )
     return svc, repo, question_repo, profile_repo
 
 
@@ -193,7 +195,9 @@ class TestListAnswers:
             100: _profile(user_id=100, nickname="bob"),
         }
 
-        items, page = await svc.list_answers(question_id=10, page_start=None, page_size=2)
+        items, page = await svc.list_answers(
+            question_id=10, page_start=None, page_size=2
+        )
 
         assert len(items) == 2
         assert items[0]["id"] == 1
@@ -242,7 +246,9 @@ class TestListAnswers:
         repo.list_answers_for_question.return_value = []
         p_repo.get_profiles_by_user_ids.return_value = {}
 
-        items, page = await svc.list_answers(question_id=10, page_start=None, page_size=10)
+        items, page = await svc.list_answers(
+            question_id=10, page_start=None, page_size=10
+        )
 
         assert items == []
         assert page["pageStart"] == 0
@@ -260,7 +266,9 @@ class TestListAnswers:
         p_repo.get_profiles_by_user_ids.return_value = {99: _profile()}
 
         # page_start=999 does not exist in [1,2,3], so falls back to index 0
-        items, page = await svc.list_answers(question_id=10, page_start=999, page_size=1)
+        items, page = await svc.list_answers(
+            question_id=10, page_start=999, page_size=1
+        )
 
         assert page["pageStart"] == 1
         assert page["hasPrev"] is False
@@ -516,7 +524,9 @@ class TestUpdateAnswer:
         repo.update_answer.return_value = updated
         p_repo.get_profile_by_user_id.return_value = _profile()
 
-        result = await svc.update_answer(answer_id=3, user_id=99, content="Updated content")
+        result = await svc.update_answer(
+            answer_id=3, user_id=99, content="Updated content"
+        )
 
         repo.update_answer.assert_awaited_once_with(original, content="Updated content")
         assert result["content"] == "Updated content"

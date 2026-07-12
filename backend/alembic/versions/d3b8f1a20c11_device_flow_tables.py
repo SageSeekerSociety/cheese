@@ -10,16 +10,19 @@ codes live in ``device_auth_code``; ``device_project`` records which projects a 
 may run agents in. Additive only — no existing table is touched.
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d3b8f1a20c11"
-down_revision: Union[str, Sequence[str], None] = "c5f1a9d24e07"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = "a95752502bb0"  # fusion A2: needs main user table
+down_revision: str | Sequence[str] | None = "c5f1a9d24e07"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = (
+    "a95752502bb0"  # fusion A2: needs main user table
+)
 
 
 def upgrade() -> None:
@@ -60,12 +63,17 @@ def upgrade() -> None:
         sa.Column("project_id", sa.Uuid(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["device_id"], ["device.device_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["device_id"], ["device.device_id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("device_id", "project_id", name="uq_device_project"),
     )
     op.create_index(
-        op.f("ix_device_project_device_id"), "device_project", ["device_id"], unique=False
+        op.f("ix_device_project_device_id"),
+        "device_project",
+        ["device_id"],
+        unique=False,
     )
     op.create_index(
         op.f("ix_device_project_project_id"),

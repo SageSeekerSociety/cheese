@@ -3,9 +3,9 @@
 
 def _project_and_topic(client) -> str:
     pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
-    tid = client.post(
-        "/api/topics", json={"project_id": pid, "title": "T"}
-    ).json()["data"]["id"]
+    tid = client.post("/api/topics", json={"project_id": pid, "title": "T"}).json()[
+        "data"
+    ]["id"]
     return tid
 
 

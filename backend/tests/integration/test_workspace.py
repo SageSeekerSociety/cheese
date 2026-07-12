@@ -18,9 +18,7 @@ def _mkproject(client) -> uuid.UUID:
     return uuid.UUID(resp["data"]["id"])
 
 
-def _native_edit(
-    pid: uuid.UUID, topic_id: uuid.UUID, path: str, content: str
-) -> None:
+def _native_edit(pid: uuid.UUID, topic_id: uuid.UUID, path: str, content: str) -> None:
     """Simulate a sandbox turn: native tools write a file into the topic's jj
     workspace, then the platform snapshots it (as converse does after a turn)."""
     wt = ws.topic_worktree(pid, topic_id)

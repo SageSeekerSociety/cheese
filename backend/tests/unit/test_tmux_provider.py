@@ -124,12 +124,8 @@ def _stub_env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(tp, "_docker", fake_docker)
     monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
-    monkeypatch.setattr(
-        tp.ws, "session_dir", lambda p, t: tmp_path / "session"
-    )
-    monkeypatch.setattr(
-        tp.ws, "topic_worktree", lambda p, t: tmp_path / "work"
-    )
+    monkeypatch.setattr(tp.ws, "session_dir", lambda p, t: tmp_path / "session")
+    monkeypatch.setattr(tp.ws, "topic_worktree", lambda p, t: tmp_path / "work")
     (tmp_path / "session").mkdir()
     (tmp_path / "work").mkdir()
     return sent
@@ -148,12 +144,18 @@ async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
         _stub_env["prompt"] = prompt
         for hook in [
             {"hook_event_name": "SessionStart", "session_id": "sess-1"},
-            {"hook_event_name": "PreToolUse", "tool_name": "Bash",
-             "tool_input": {"command": "echo hi"}},
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo hi"},
+            },
             {"hook_event_name": "PostToolUse", "tool_name": "Bash"},
             {"hook_event_name": "MessageDisplay", "delta": "在看了"},
-            {"hook_event_name": "Stop", "last_assistant_message": "搞定",
-             "session_id": "sess-1"},
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "搞定",
+                "session_id": "sess-1",
+            },
         ]:
             router.push(topic_key, hook)
 

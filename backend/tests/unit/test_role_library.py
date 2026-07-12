@@ -21,7 +21,7 @@ def test_parse_frontmatter_and_body():
 
 def test_parse_quoted_values_and_comments():
     meta, body = parse_role_markdown(
-        '---\nname: "quoted-role"\n# a comment line\ntitle: \'单引号\'\n\n---\n'
+        "---\nname: \"quoted-role\"\n# a comment line\ntitle: '单引号'\n\n---\n"
         "body here"
     )
     assert meta["name"] == "quoted-role"

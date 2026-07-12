@@ -14,7 +14,9 @@ def _space(enable_rank: bool = True):
     return SimpleNamespace(enable_rank=enable_rank)
 
 
-def _make_service(space_repo=None, rank_repo=None) -> tuple[SpaceRankService, AsyncMock, AsyncMock]:
+def _make_service(
+    space_repo=None, rank_repo=None
+) -> tuple[SpaceRankService, AsyncMock, AsyncMock]:
     space_repo = space_repo or AsyncMock()
     rank_repo = rank_repo or AsyncMock()
     svc = SpaceRankService(space_repo=space_repo, rank_repo=rank_repo)
@@ -49,7 +51,9 @@ class TestAwardRank:
 
         assert result is True
         space_repo.get_by_id.assert_awaited_once_with(1)
-        rank_repo.increment_rank.assert_awaited_once_with(space_id=1, user_id=42, delta=3)
+        rank_repo.increment_rank.assert_awaited_once_with(
+            space_id=1, user_id=42, delta=3
+        )
 
     @pytest.mark.anyio
     async def test_default_delta_is_one(self):
@@ -59,7 +63,9 @@ class TestAwardRank:
         result = await svc.award_rank(space_id=1, user_id=42)
 
         assert result is True
-        rank_repo.increment_rank.assert_awaited_once_with(space_id=1, user_id=42, delta=1)
+        rank_repo.increment_rank.assert_awaited_once_with(
+            space_id=1, user_id=42, delta=1
+        )
 
     @pytest.mark.anyio
     async def test_space_id_none_returns_false(self):

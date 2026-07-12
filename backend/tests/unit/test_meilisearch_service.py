@@ -60,7 +60,9 @@ class TestMeilisearchSearchIds:
     @pytest.mark.anyio
     async def test_passes_filter_and_sort(self, monkeypatch):
         mock_client = MagicMock()
-        mock_client.search = AsyncMock(return_value={"hits": [], "estimatedTotalHits": 0})
+        mock_client.search = AsyncMock(
+            return_value={"hits": [], "estimatedTotalHits": 0}
+        )
         monkeypatch.setattr(ms_mod, "get_search_client", lambda: mock_client)
         from app.domain.search.search_helper import meilisearch_search_ids
 
@@ -98,7 +100,9 @@ class TestIndexDocument:
         from app.domain.search.search_helper import index_document
 
         await index_document("questions", {"id": 1, "title": "test"})
-        mock_client.add_documents.assert_called_once_with("questions", [{"id": 1, "title": "test"}])
+        mock_client.add_documents.assert_called_once_with(
+            "questions", [{"id": 1, "title": "test"}]
+        )
 
     @pytest.mark.anyio
     async def test_swallows_exception(self, monkeypatch):

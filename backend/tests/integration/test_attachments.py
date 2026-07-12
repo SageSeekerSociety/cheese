@@ -69,15 +69,11 @@ def test_raw_rejects_non_image_and_traversal(client):
     _, topic_id = _create_project_and_topic(client)
     _upload(client, topic_id)  # ensure the worktree exists
     for bad in ("uploads/../secret.txt", "docs/readme.md"):
-        r = client.get(
-            f"/api/topics/{topic_id}/attachments/raw", params={"path": bad}
-        )
+        r = client.get(f"/api/topics/{topic_id}/attachments/raw", params={"path": bad})
         assert r.status_code == 422, bad
 
 
-def test_message_with_attachment_creates_block_and_prompts_agent(
-    client, stub_agent
-):
+def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_agent):
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
 

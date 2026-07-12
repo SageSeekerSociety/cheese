@@ -29,7 +29,9 @@ async def test_python_put_user_identity_shape(python_client: AsyncClient) -> Non
         "major": "CS",
         "className": "1",
     }
-    resp = await python_client.put("/users/1/identity", json=payload, headers=USER_HEADER)
+    resp = await python_client.put(
+        "/users/1/identity", json=payload, headers=USER_HEADER
+    )
     assert resp.status_code in (200, 401)
     if resp.status_code != 200:
         return
@@ -41,7 +43,9 @@ async def test_python_put_user_identity_shape(python_client: AsyncClient) -> Non
 
 
 @pytest.mark.anyio
-async def test_python_get_user_identity_access_logs_shape(python_client: AsyncClient) -> None:
+async def test_python_get_user_identity_access_logs_shape(
+    python_client: AsyncClient,
+) -> None:
     """GET /users/{userId}/identity/access-logs 响应结构检查。"""
     resp = await python_client.get(
         "/users/1/identity/access-logs", params={"pageSize": 10}, headers=USER_HEADER

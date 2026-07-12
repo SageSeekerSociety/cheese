@@ -1,4 +1,4 @@
-"""fusion unify P2: retire the dead int `project` table (cheesex `projects` is the only project)
+"""fusion unify P2: retire the dead int `project` table (cheesex `projects` is the only project)  # noqa: E501
 
 Revision ID: c9f2a3b40e15
 Revises: b8e1c0a5f7d2
@@ -12,15 +12,17 @@ ends. cheesex's `projects` (uuid) is the one live project entity, so we drop the
 dead pair. `knowledge.project_id` is a bare nullable int (no FK); it's left in
 place, harmless.
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "c9f2a3b40e15"
-down_revision: Union[str, Sequence[str], None] = "b8e1c0a5f7d2"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "b8e1c0a5f7d2"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -31,9 +33,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.create_table(
         "project",
-        sa.Column(
-            "id", sa.BigInteger(), sa.Sequence("project_seq"), nullable=False
-        ),
+        sa.Column("id", sa.BigInteger(), sa.Sequence("project_seq"), nullable=False),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("description", sa.Text(), nullable=False),
         sa.Column("color_code", sa.String(7), nullable=False),

@@ -51,7 +51,9 @@ def _make_bundle(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**defaults)
 
 
-def _make_material_service(repo: AsyncMock | None = None) -> tuple[MaterialService, AsyncMock]:
+def _make_material_service(
+    repo: AsyncMock | None = None,
+) -> tuple[MaterialService, AsyncMock]:
     repo = repo or AsyncMock()
     return MaterialService(repo=repo), repo
 
@@ -62,7 +64,11 @@ def _make_bundle_service(
 ) -> tuple[MaterialBundleService, AsyncMock, AsyncMock]:
     repo = repo or AsyncMock()
     material_repo = material_repo or AsyncMock()
-    return MaterialBundleService(repo=repo, material_repo=material_repo), repo, material_repo
+    return (
+        MaterialBundleService(repo=repo, material_repo=material_repo),
+        repo,
+        material_repo,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +340,9 @@ class TestBundleServiceListBundles:
         repo.list_all_bundle_ids.return_value = [1, 2]
         repo.list_bundles.return_value = bundles
 
-        items, page = await svc.list_bundles(keyword=None, page_start=None, page_size=10)
+        items, page = await svc.list_bundles(
+            keyword=None, page_start=None, page_size=10
+        )
 
         assert len(items) == 2
         assert page["pageStart"] == 1
@@ -379,7 +387,9 @@ class TestBundleServiceListBundles:
         repo.list_all_bundle_ids.return_value = []
         repo.list_bundles.return_value = []
 
-        items, page = await svc.list_bundles(keyword=None, page_start=None, page_size=10)
+        items, page = await svc.list_bundles(
+            keyword=None, page_start=None, page_size=10
+        )
 
         assert items == []
         assert page["pageStart"] == 0
@@ -393,7 +403,9 @@ class TestBundleServiceListBundles:
         repo.list_all_bundle_ids.return_value = [3, 2, 1]
         repo.list_bundles.return_value = [_make_bundle(id=3)]
 
-        await svc.list_bundles(keyword=None, page_start=None, page_size=1, sort="newest")
+        await svc.list_bundles(
+            keyword=None, page_start=None, page_size=1, sort="newest"
+        )
 
         repo.list_all_bundle_ids.assert_awaited_once_with(
             keyword=None,
@@ -414,7 +426,9 @@ class TestBundleServiceListBundles:
         repo.list_all_bundle_ids.return_value = [1]
         repo.list_bundles.return_value = [_make_bundle(id=1)]
 
-        await svc.list_bundles(keyword=None, page_start=None, page_size=10, sort="oldest")
+        await svc.list_bundles(
+            keyword=None, page_start=None, page_size=10, sort="oldest"
+        )
 
         repo.list_all_bundle_ids.assert_awaited_once_with(
             keyword=None,
@@ -428,7 +442,9 @@ class TestBundleServiceListBundles:
         repo.list_all_bundle_ids.return_value = [1]
         repo.list_bundles.return_value = [_make_bundle(id=1)]
 
-        await svc.list_bundles(keyword="title:math id:>=5", page_start=None, page_size=10)
+        await svc.list_bundles(
+            keyword="title:math id:>=5", page_start=None, page_size=10
+        )
 
         repo.list_all_bundle_ids.assert_awaited_once_with(
             keyword="math",
@@ -654,7 +670,9 @@ class TestBundleServiceUpdateBundle:
             content="New body",
         )
 
-        repo.update.assert_awaited_once_with(bundle, title="Updated", content="New body")
+        repo.update.assert_awaited_once_with(
+            bundle, title="Updated", content="New body"
+        )
         assert dto["id"] == 10
         assert dto["materialIds"] == [1]
 

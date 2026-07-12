@@ -9,7 +9,9 @@ from app.domain.notification.services import NotificationQueryService
 
 
 class _StubResolver(EntityInfoResolver):
-    def __init__(self, entity_type: str, mapping: dict[str, ResolvedEntityInfoDTO | None]) -> None:
+    def __init__(
+        self, entity_type: str, mapping: dict[str, ResolvedEntityInfoDTO | None]
+    ) -> None:
         self._entity_type = entity_type
         self._mapping = mapping
 

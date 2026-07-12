@@ -26,7 +26,9 @@ class TestBug5TeamLockingPolicy:
         member.token = user_client.login(api_client, member.username, member.password)
 
         outsider = user_client.create_user()
-        outsider.token = user_client.login(api_client, outsider.username, outsider.password)
+        outsider.token = user_client.login(
+            api_client, outsider.username, outsider.password
+        )
 
         suffix = unique_int()
 
@@ -134,23 +136,34 @@ class TestBug5TeamLockingPolicy:
             "task_id": task_id,
         }
 
-    def test_cannot_remove_member_when_locked(self, api_client: TestClient, setup: dict) -> None:
+    def test_cannot_remove_member_when_locked(
+        self, api_client: TestClient, setup: dict
+    ) -> None:
         """Removing a team member should fail when team is locked."""
         resp = api_client.delete(
             f"/teams/{setup['team_id']}/members/{setup['member'].user_id}",
             headers={"Authorization": f"Bearer {setup['owner'].token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
-        assert "locked" in resp.json().get("message", "").lower() or "locked" in resp.text.lower()
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
+        assert (
+            "locked" in resp.json().get("message", "").lower()
+            or "locked" in resp.text.lower()
+        )
 
-    def test_cannot_add_member_when_locked(self, api_client: TestClient, setup: dict) -> None:
+    def test_cannot_add_member_when_locked(
+        self, api_client: TestClient, setup: dict
+    ) -> None:
         """Adding a new member should fail when team is locked."""
         resp = api_client.post(
             f"/teams/{setup['team_id']}/members",
             json={"userId": setup["outsider"].user_id, "role": "MEMBER"},
             headers={"Authorization": f"Bearer {setup['owner'].token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
     def test_no_lock_policy_allows_member_changes(
         self, user_client: UserCreator, api_client: TestClient

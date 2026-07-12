@@ -27,7 +27,7 @@ def test_build_screen_launch_shapes_command_and_env():
     assert command[0] == "bash" and command[1] == "-lc"
     script = command[2]
     # Self-contained launcher: writes settings + forwarder, then execs claude.
-    assert "cat > \"$HOME/.claude/settings.json\"" in script
+    assert 'cat > "$HOME/.claude/settings.json"' in script
     assert "cheese-hook" in script
     assert "exec claude --dangerously-skip-permissions" in script
     # Env carries the hook wiring, home/work, model, and the gateway var.
@@ -45,8 +45,8 @@ def test_build_screen_launch_shapes_command_and_env():
 
 def test_forwarder_posts_hook_json_with_token():
     script = device_launch.build_launch_script()
-    assert 'X-Cheese-Token: $CHEESE_TOKEN' in script
+    assert "X-Cheese-Token: $CHEESE_TOKEN" in script
     assert "--data-binary @-" in script
     # Per-project trust is pre-accepted for the RESOLVED work dir (canonicalized).
-    assert 'pwd -P' in script
+    assert "pwd -P" in script
     assert "hasTrustDialogAccepted: true" in script

@@ -148,16 +148,12 @@ def test_cheese_call_without_screen_header_is_not_the_agent(client):
 
 
 def _enroll_device(client, owner_token: str, project_id: str | None = None) -> dict:
-    start = client.post(
-        "/connector/auth/device/start", json={"device_name": "macbook"}
-    )
+    start = client.post("/connector/auth/device/start", json={"device_name": "macbook"})
     code = start.json()["device_code"]
     body: dict = {"device_code": code}
     if project_id:
         body["project_id"] = project_id
-    connect = client.post(
-        "/connector/connect", json=body, headers=_bearer(owner_token)
-    )
+    connect = client.post("/connector/connect", json=body, headers=_bearer(owner_token))
     assert connect.status_code == 200, connect.text
     return connect.json()
 
@@ -210,13 +206,12 @@ def test_only_owner_may_manage_a_device(client):
         headers=_bearer(bob),
     )
     assert r.status_code == 403
-    r = client.delete(
-        f"/connector/my/devices/{device_id}", headers=_bearer(bob)
-    )
+    r = client.delete(f"/connector/my/devices/{device_id}", headers=_bearer(bob))
     assert r.status_code == 403
-    assert client.get("/connector/my/devices", headers=_bearer(bob)).json()[
-        "devices"
-    ] == []
+    assert (
+        client.get("/connector/my/devices", headers=_bearer(bob)).json()["devices"]
+        == []
+    )
 
 
 def test_my_devices_requires_login(client):

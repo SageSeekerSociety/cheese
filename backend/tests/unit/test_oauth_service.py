@@ -188,7 +188,9 @@ class TestGitHubProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             result = await provider.exchange_code("my-code")
 
         assert result == {"access_token": "tok123"}
@@ -222,7 +224,9 @@ class TestGitHubProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             info = await provider.get_user_info("token123")
 
         assert info.id == "12345"
@@ -256,7 +260,9 @@ class TestGitHubProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             info = await provider.get_user_info("token123")
 
         assert info.email == "primary@github.com"
@@ -282,7 +288,9 @@ class TestGitHubProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             info = await provider.get_user_info("token123")
 
         assert info.email is None
@@ -311,7 +319,9 @@ class TestGitHubProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             info = await provider.get_user_info("token123")
 
         assert info.email is None
@@ -335,7 +345,9 @@ class TestGoogleProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             result = await provider.exchange_code("goog-code")
 
         assert result == {"access_token": "goog-tok"}
@@ -367,7 +379,9 @@ class TestGoogleProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             info = await provider.get_user_info("goog-token")
 
         assert info.id == "goog-id-1"
@@ -391,7 +405,9 @@ class TestGoogleProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             info = await provider.get_user_info("goog-token")
 
         assert info.email is None
@@ -440,7 +456,9 @@ class TestRUCProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             result = await provider.exchange_code("ruc-code")
 
         assert result == {"access_token": "ruc-tok"}
@@ -472,7 +490,9 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             info = await provider.get_user_info("ruc-token")
 
         # uid coerced to str; primary identity's stno used as username
@@ -495,7 +515,9 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
             info = await provider.get_user_info("ruc-token")
 
         assert info.id == "u-9"
@@ -516,7 +538,9 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch("app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client),
+            patch(
+                "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+            ),
             pytest.raises(BadRequestError),
         ):
             await provider.get_user_info("ruc-token")
@@ -551,7 +575,9 @@ class TestOAuthServiceInitialize:
             mock_settings.oauth_enabled_providers = "github"
             mock_settings.oauth_github_client_id = "gh-cid"
             mock_settings.oauth_github_client_secret = "gh-sec"
-            mock_settings.oauth_github_redirect_url = "https://example.com/callback/github"
+            mock_settings.oauth_github_redirect_url = (
+                "https://example.com/callback/github"
+            )
             svc._initialize()
         assert "github" in svc._providers
         assert isinstance(svc._providers["github"], GitHubProvider)
@@ -562,7 +588,9 @@ class TestOAuthServiceInitialize:
             mock_settings.oauth_enabled_providers = "google"
             mock_settings.oauth_google_client_id = "goog-cid"
             mock_settings.oauth_google_client_secret = "goog-sec"
-            mock_settings.oauth_google_redirect_url = "https://example.com/callback/google"
+            mock_settings.oauth_google_redirect_url = (
+                "https://example.com/callback/google"
+            )
             svc._initialize()
         assert "google" in svc._providers
         assert isinstance(svc._providers["google"], GoogleProvider)
@@ -573,10 +601,14 @@ class TestOAuthServiceInitialize:
             mock_settings.oauth_enabled_providers = "github, google"
             mock_settings.oauth_github_client_id = "gh-cid"
             mock_settings.oauth_github_client_secret = "gh-sec"
-            mock_settings.oauth_github_redirect_url = "https://example.com/callback/github"
+            mock_settings.oauth_github_redirect_url = (
+                "https://example.com/callback/github"
+            )
             mock_settings.oauth_google_client_id = "goog-cid"
             mock_settings.oauth_google_client_secret = "goog-sec"
-            mock_settings.oauth_google_redirect_url = "https://example.com/callback/google"
+            mock_settings.oauth_google_redirect_url = (
+                "https://example.com/callback/google"
+            )
             svc._initialize()
         assert len(svc._providers) == 2
 
@@ -597,7 +629,9 @@ class TestOAuthServiceInitialize:
             mock_settings.oauth_enabled_providers = "gitlab"
             mock_settings.oauth_gitlab_client_id = "gl-cid"
             mock_settings.oauth_gitlab_client_secret = "gl-sec"
-            mock_settings.oauth_gitlab_redirect_url = "https://example.com/callback/gitlab"
+            mock_settings.oauth_gitlab_redirect_url = (
+                "https://example.com/callback/gitlab"
+            )
             svc._initialize()
         # gitlab config returns None from _get_provider_config for unknown providers
         assert svc._providers == {}
@@ -797,7 +831,9 @@ class TestHandleCallback:
 
         mock_provider = AsyncMock()
         mock_provider.exchange_code.return_value = {"access_token": "tok123"}
-        mock_provider.get_user_info.return_value = OAuthUserInfo(id="uid-1", email="user@test.com")
+        mock_provider.get_user_info.return_value = OAuthUserInfo(
+            id="uid-1", email="user@test.com"
+        )
         svc._providers = {"github": mock_provider}
 
         access_token, user_info = await svc.handle_callback("github", "auth-code")
@@ -839,7 +875,9 @@ class TestGetConnectionByProvider:
     @pytest.mark.anyio
     async def test_found(self):
         svc, repo = _make_service()
-        conn = _connection(id=10, user_id=42, provider_id="github", provider_user_id="gh-123")
+        conn = _connection(
+            id=10, user_id=42, provider_id="github", provider_user_id="gh-123"
+        )
         repo.get_by_provider.return_value = conn
 
         result = await svc.get_connection_by_provider("github", "gh-123")
@@ -870,7 +908,9 @@ class TestCreateConnection:
     @pytest.mark.anyio
     async def test_success(self):
         svc, repo = _make_service()
-        conn = _connection(id=99, user_id=5, provider_id="google", provider_user_id="goog-42")
+        conn = _connection(
+            id=99, user_id=5, provider_id="google", provider_user_id="goog-42"
+        )
         repo.create.return_value = conn
 
         result = await svc.create_connection(
@@ -924,7 +964,9 @@ class TestCreateConnection:
 class TestConnectionToDict:
     def test_with_created_at(self):
         svc, _repo = _make_service()
-        conn = _connection(id=3, user_id=7, provider_id="github", provider_user_id="gh-99")
+        conn = _connection(
+            id=3, user_id=7, provider_id="github", provider_user_id="gh-99"
+        )
 
         result = svc._connection_to_dict(conn)
 

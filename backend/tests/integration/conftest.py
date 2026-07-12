@@ -196,7 +196,7 @@ def app() -> "FastAPI":
 
 
 @pytest.fixture(scope="session")
-def _portal() -> Generator["BlockingPortal", None, None]:
+def _portal() -> Generator["BlockingPortal"]:
     """Session-wide anyio blocking portal so sync test code can call async ORM
     on the same event loop as the FastAPI TestClient.
     """
@@ -207,7 +207,7 @@ def _portal() -> Generator["BlockingPortal", None, None]:
 
 
 @pytest.fixture(scope="session")
-def db_connection(_portal: "BlockingPortal") -> Generator[AsyncConnection, None, None]:
+def db_connection(_portal: "BlockingPortal") -> Generator[AsyncConnection]:
     """A single PG connection shared by every test in the session.
 
     Opened on the session portal's loop so that every per-test transaction
@@ -278,7 +278,7 @@ def db_connection(_portal: "BlockingPortal") -> Generator[AsyncConnection, None,
 def db_session(
     db_connection: AsyncConnection,
     _portal: "BlockingPortal",
-) -> Generator[AsyncSession, None, None]:
+) -> Generator[AsyncSession]:
     """Per-test AsyncSession nested in a SAVEPOINT inside an outer transaction.
 
     With ``join_transaction_mode="create_savepoint"``, calls to
@@ -321,7 +321,7 @@ def api_client(
     app: "FastAPI",
     db_session: AsyncSession,
     _portal: "BlockingPortal",
-) -> Generator["TestClient", None, None]:
+) -> Generator["TestClient"]:
     """In-process FastAPI TestClient with ``get_db`` overridden to share the
     per-test transactional session. The TestClient is forced to use the
     session-wide portal so all async work runs on a single event loop.
@@ -332,7 +332,7 @@ def api_client(
 
     from app.db.session import get_db
 
-    async def _get_test_db() -> AsyncGenerator[AsyncSession, None]:
+    async def _get_test_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
     app.dependency_overrides[get_db] = _get_test_db

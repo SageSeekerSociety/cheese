@@ -6,15 +6,21 @@ from tests.integration.conftest import UserCreator, unique_int
 
 class TestTeamApplicationIntegration:
     @pytest.fixture
-    def setup_team_application(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def setup_team_application(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         owner = user_client.create_user()
         owner.token = user_client.login(api_client, owner.username, owner.password)
 
         requester = user_client.create_user()
-        requester.token = user_client.login(api_client, requester.username, requester.password)
+        requester.token = user_client.login(
+            api_client, requester.username, requester.password
+        )
 
         invitee = user_client.create_user()
-        invitee.token = user_client.login(api_client, invitee.username, invitee.password)
+        invitee.token = user_client.login(
+            api_client, invitee.username, invitee.password
+        )
 
         suffix = unique_int(10000000, 99999999)
 
@@ -38,7 +44,9 @@ class TestTeamApplicationIntegration:
             "team_id": team_id,
         }
 
-    def test_request_to_join_team(self, setup_team_application: dict, api_client: TestClient):
+    def test_request_to_join_team(
+        self, setup_team_application: dict, api_client: TestClient
+    ):
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
@@ -47,7 +55,9 @@ class TestTeamApplicationIntegration:
             json={"message": "Please let me join!"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Expected 201, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "application" in data
         assert data["application"]["id"] > 0
@@ -69,7 +79,9 @@ class TestTeamApplicationIntegration:
             params={"status": "PENDING"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "requests" in data
         assert isinstance(data["requests"], list)
@@ -92,11 +104,15 @@ class TestTeamApplicationIntegration:
             params={"status": "PENDING"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "applications" in data
 
-    def test_approve_join_request(self, setup_team_application: dict, api_client: TestClient):
+    def test_approve_join_request(
+        self, setup_team_application: dict, api_client: TestClient
+    ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
@@ -112,9 +128,13 @@ class TestTeamApplicationIntegration:
             f"/teams/{team_id}/requests/{request_id}/approve",
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_reject_join_request(self, setup_team_application: dict, api_client: TestClient):
+    def test_reject_join_request(
+        self, setup_team_application: dict, api_client: TestClient
+    ):
         owner = setup_team_application["owner"]
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
@@ -130,9 +150,13 @@ class TestTeamApplicationIntegration:
             f"/teams/{team_id}/requests/{request_id}/reject",
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_cancel_join_request(self, setup_team_application: dict, api_client: TestClient):
+    def test_cancel_join_request(
+        self, setup_team_application: dict, api_client: TestClient
+    ):
         requester = setup_team_application["requester"]
         team_id = setup_team_application["team_id"]
 
@@ -147,9 +171,13 @@ class TestTeamApplicationIntegration:
             f"/users/me/team-requests/{request_id}",
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_invite_user_to_team(self, setup_team_application: dict, api_client: TestClient):
+    def test_invite_user_to_team(
+        self, setup_team_application: dict, api_client: TestClient
+    ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -159,12 +187,16 @@ class TestTeamApplicationIntegration:
             json={"userId": invitee.user_id, "role": "MEMBER"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Expected 201, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "invitation" in data
         assert data["invitation"]["id"] > 0
 
-    def test_list_invitations_for_user(self, setup_team_application: dict, api_client: TestClient):
+    def test_list_invitations_for_user(
+        self, setup_team_application: dict, api_client: TestClient
+    ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -180,11 +212,15 @@ class TestTeamApplicationIntegration:
             params={"status": "PENDING"},
             headers={"Authorization": f"Bearer {invitee.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "invitations" in data
 
-    def test_accept_invitation(self, setup_team_application: dict, api_client: TestClient):
+    def test_accept_invitation(
+        self, setup_team_application: dict, api_client: TestClient
+    ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -200,9 +236,13 @@ class TestTeamApplicationIntegration:
             f"/users/me/team-invitations/{invitation_id}/accept",
             headers={"Authorization": f"Bearer {invitee.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_decline_invitation(self, setup_team_application: dict, api_client: TestClient):
+    def test_decline_invitation(
+        self, setup_team_application: dict, api_client: TestClient
+    ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -218,9 +258,13 @@ class TestTeamApplicationIntegration:
             f"/users/me/team-invitations/{invitation_id}/decline",
             headers={"Authorization": f"Bearer {invitee.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_cancel_invitation(self, setup_team_application: dict, api_client: TestClient):
+    def test_cancel_invitation(
+        self, setup_team_application: dict, api_client: TestClient
+    ):
         owner = setup_team_application["owner"]
         invitee = setup_team_application["invitee"]
         team_id = setup_team_application["team_id"]
@@ -236,7 +280,9 @@ class TestTeamApplicationIntegration:
             f"/teams/{team_id}/invitations/{invitation_id}",
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
     def test_verify_membership_after_request_approval(
         self, setup_team_application: dict, api_client: TestClient
@@ -263,7 +309,9 @@ class TestTeamApplicationIntegration:
         )
         assert members_resp.status_code == 200
         members = members_resp.json()["data"]["members"]
-        member = next((m for m in members if m["user"]["id"] == requester.user_id), None)
+        member = next(
+            (m for m in members if m["user"]["id"] == requester.user_id), None
+        )
         assert member is not None, "Requester should be a member after approval"
         assert member["role"] == "MEMBER"
 
@@ -315,7 +363,9 @@ class TestTeamApplicationIntegration:
             params={"status": "PENDING"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "invitations" in data
         found = next((i for i in data["invitations"] if i["id"] == invitation_id), None)
@@ -615,7 +665,9 @@ class TestTeamApplicationIntegration:
             json={"message": "Second request after rejection"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Expected 201, got {resp.status_code}: {resp.text}"
+        )
 
     def test_user_can_request_again_after_cancellation(
         self, setup_team_application: dict, api_client: TestClient
@@ -640,7 +692,9 @@ class TestTeamApplicationIntegration:
             json={"message": "Second request after cancellation"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Expected 201, got {resp.status_code}: {resp.text}"
+        )
 
     def test_owner_can_invite_again_after_decline(
         self, setup_team_application: dict, api_client: TestClient
@@ -666,7 +720,9 @@ class TestTeamApplicationIntegration:
             json={"userId": invitee.user_id, "role": "ADMIN"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Expected 201, got {resp.status_code}: {resp.text}"
+        )
 
     def test_invite_user_as_admin_and_verify_role(
         self, setup_team_application: dict, api_client: TestClient
@@ -735,7 +791,9 @@ class TestTeamApplicationIntegration:
             json={"message": "Third request after rejection and cancellation"},
             headers={"Authorization": f"Bearer {requester.token}"},
         )
-        assert third_resp.status_code == 201, f"Expected 201, got {third_resp.status_code}"
+        assert third_resp.status_code == 201, (
+            f"Expected 201, got {third_resp.status_code}"
+        )
         third_id = third_resp.json()["data"]["application"]["id"]
 
         api_client.post(
@@ -770,7 +828,8 @@ class TestTeamApplicationIntegration:
         assert resp.status_code == 200
         invitations = resp.json()["data"]["invitations"]
         admin_invitation = next(
-            (inv for inv in invitations if inv.get("team", {}).get("id") == team_id), None
+            (inv for inv in invitations if inv.get("team", {}).get("id") == team_id),
+            None,
         )
         assert admin_invitation is not None
         assert admin_invitation.get("role") == "ADMIN"

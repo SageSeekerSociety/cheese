@@ -55,9 +55,7 @@ async def main() -> int:
 
     # 1. Streaming + memory injection.
     print("\n[turn 1] memory-backed answer (代号 = Tomato)")
-    sys_with_mem = (
-        f"{base}\n\n## 项目记忆\n- 这个项目的内部代号是 Tomato。"
-    )
+    sys_with_mem = f"{base}\n\n## 项目记忆\n- 这个项目的内部代号是 Tomato。"
     text1, session1, deltas1 = await _run_turn(
         agent,
         prompt="这个项目的内部代号是什么？只回代号。",
@@ -83,9 +81,7 @@ async def main() -> int:
             resume=session1,
         )
         if "代号" not in text2 and "Tomato" not in text2:
-            failures.append(
-                f"resume did not recall prior turn; got: {text2!r}"
-            )
+            failures.append(f"resume did not recall prior turn; got: {text2!r}")
 
     print("\n" + "=" * 40)
     if failures:

@@ -40,7 +40,9 @@ class TestMeilisearchQuestionSearch:
         self, user_client: UserCreator, api_client: TestClient, _ensure_indices
     ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         h = {"Authorization": f"Bearer {creator.token}"}
 
         # Create questions with distinctive Chinese content
@@ -89,9 +91,12 @@ class TestMeilisearchQuestionSearch:
         return {
             "creator": creator,
             "headers": h,
-            "q1_id": q1.json()["data"].get("id") or q1.json()["data"].get("question", {}).get("id"),
-            "q2_id": q2.json()["data"].get("id") or q2.json()["data"].get("question", {}).get("id"),
-            "q3_id": q3.json()["data"].get("id") or q3.json()["data"].get("question", {}).get("id"),
+            "q1_id": q1.json()["data"].get("id")
+            or q1.json()["data"].get("question", {}).get("id"),
+            "q2_id": q2.json()["data"].get("id")
+            or q2.json()["data"].get("question", {}).get("id"),
+            "q3_id": q3.json()["data"].get("id")
+            or q3.json()["data"].get("question", {}).get("id"),
         }
 
     def test_chinese_keyword_search(self, search_setup: dict, api_client: TestClient):
@@ -104,7 +109,9 @@ class TestMeilisearchQuestionSearch:
         assert resp.status_code == 200
         questions = resp.json()["data"]["questions"]
         titles = [q["title"] for q in questions]
-        assert any("深度学习" in t for t in titles), f"Expected '深度学习' in results: {titles}"
+        assert any("深度学习" in t for t in titles), (
+            f"Expected '深度学习' in results: {titles}"
+        )
 
     def test_typo_tolerant_search(self, search_setup: dict, api_client: TestClient):
         """Meilisearch typo tolerance finds results despite typos."""
@@ -132,7 +139,9 @@ class TestMeilisearchQuestionSearch:
             f"Partial search failed: {titles}"
         )
 
-    def test_no_results_for_unrelated_term(self, search_setup: dict, api_client: TestClient):
+    def test_no_results_for_unrelated_term(
+        self, search_setup: dict, api_client: TestClient
+    ):
         """Unrelated search term returns empty."""
         resp = api_client.get(
             "/questions",

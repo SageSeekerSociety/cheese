@@ -10,17 +10,18 @@ Revises: b7d2e9a41c53
 Create Date: 2026-07-04 00:02:44.339360
 
 """
-from typing import Sequence, Union
 
-from alembic import op
+from collections.abc import Sequence
+
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "24f052347875"
-down_revision: Union[str, Sequence[str], None] = "b7d2e9a41c53"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "b7d2e9a41c53"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -34,12 +35,8 @@ def upgrade() -> None:
         sa.Column("credits_used", sa.Float(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["project_id"], ["projects.id"], ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["source_task_id"], ["tasks.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["source_task_id"], ["tasks.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
@@ -52,7 +49,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_index(
-        op.f("ix_compute_grants_project_id"), table_name="compute_grants"
-    )
+    op.drop_index(op.f("ix_compute_grants_project_id"), table_name="compute_grants")
     op.drop_table("compute_grants")

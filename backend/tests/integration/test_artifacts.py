@@ -4,9 +4,9 @@ which becomes the topic's current preview (spec §9.1)."""
 
 def _topic(client) -> tuple[str, str]:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    t = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "T"}
-    ).json()["data"]
+    t = client.post("/api/topics", json={"project_id": p["id"], "title": "T"}).json()[
+        "data"
+    ]
     return p["id"], t["id"]
 
 
@@ -73,9 +73,9 @@ def test_artifact_rejects_path_traversal(client):
 
 def test_artifact_requires_path(client):
     _pid, tid = _topic(client)
-    assert client.post(
-        f"/api/topics/{tid}/artifact", json={"path": ""}
-    ).status_code == 422
+    assert (
+        client.post(f"/api/topics/{tid}/artifact", json={"path": ""}).status_code == 422
+    )
 
 
 def test_app_artifact_and_preview(client, monkeypatch):

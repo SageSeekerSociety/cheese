@@ -301,17 +301,26 @@ class TestListConversations:
     async def test_list_conversations(self):
         conv_repo = AsyncMock()
         convs = [_make_conversation(id=1), _make_conversation(id=2)]
-        page_info = {"pageStart": 1, "pageSize": 20, "hasMore": False, "nextStart": None}
+        page_info = {
+            "pageStart": 1,
+            "pageSize": 20,
+            "hasMore": False,
+            "nextStart": None,
+        }
         conv_repo.list_by_user.return_value = (convs, page_info)
         svc = _build_chat_service(conv_repo=conv_repo)
 
-        result, page = await svc.list_conversations(user_id=42, page_start=None, page_size=20)
+        result, page = await svc.list_conversations(
+            user_id=42, page_start=None, page_size=20
+        )
 
         assert len(result) == 2
         assert result[0]["id"] == 1
         assert result[1]["id"] == 2
         assert page == page_info
-        conv_repo.list_by_user.assert_awaited_once_with(42, page_start=None, page_size=20)
+        conv_repo.list_by_user.assert_awaited_once_with(
+            42, page_start=None, page_size=20
+        )
 
     @pytest.mark.anyio
     async def test_list_conversations_with_pagination(self):
@@ -321,7 +330,9 @@ class TestListConversations:
         conv_repo.list_by_user.return_value = (convs, page_info)
         svc = _build_chat_service(conv_repo=conv_repo)
 
-        result, page = await svc.list_conversations(user_id=42, page_start=5, page_size=10)
+        result, page = await svc.list_conversations(
+            user_id=42, page_start=5, page_size=10
+        )
 
         assert len(result) == 1
         assert page["hasMore"] is True
@@ -427,7 +438,9 @@ class TestUpdateConversationTitle:
         svc = _build_chat_service(conv_repo=conv_repo)
 
         with pytest.raises(NotFoundError, match="Conversation not found"):
-            await svc.update_conversation_title(conversation_id=999, user_id=42, title="Title")
+            await svc.update_conversation_title(
+                conversation_id=999, user_id=42, title="Title"
+            )
 
     @pytest.mark.anyio
     async def test_update_title_wrong_owner(self):
@@ -437,7 +450,9 @@ class TestUpdateConversationTitle:
         svc = _build_chat_service(conv_repo=conv_repo)
 
         with pytest.raises(ForbiddenError, match="Access denied"):
-            await svc.update_conversation_title(conversation_id=1, user_id=99, title="Title")
+            await svc.update_conversation_title(
+                conversation_id=1, user_id=99, title="Title"
+            )
 
     @pytest.mark.anyio
     async def test_update_title_returns_none_after_ownership_check(self):
@@ -449,7 +464,9 @@ class TestUpdateConversationTitle:
         svc = _build_chat_service(conv_repo=conv_repo)
 
         with pytest.raises(NotFoundError, match="Conversation not found"):
-            await svc.update_conversation_title(conversation_id=1, user_id=42, title="Title")
+            await svc.update_conversation_title(
+                conversation_id=1, user_id=42, title="Title"
+            )
 
 
 class TestChat:
@@ -484,7 +501,9 @@ class TestChat:
         # quota consume after response
         quota_repo.consume.return_value = (4.85, NOW)
 
-        svc = _build_chat_service(conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo)
+        svc = _build_chat_service(
+            conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
+        )
         svc._client = AsyncMock()
         svc._client.chat.completions.create.return_value = openai_response
 
@@ -519,7 +538,9 @@ class TestChat:
 
         quota_repo.consume.return_value = (4.9, NOW)
 
-        svc = _build_chat_service(conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo)
+        svc = _build_chat_service(
+            conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
+        )
         svc._client = AsyncMock()
         svc._client.chat.completions.create.return_value = openai_response
 
@@ -589,7 +610,9 @@ class TestChat:
 
         quota_repo.consume.return_value = (4.8, NOW)
 
-        svc = _build_chat_service(conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo)
+        svc = _build_chat_service(
+            conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
+        )
         svc._client = AsyncMock()
         svc._client.chat.completions.create.return_value = openai_response
 
@@ -624,7 +647,9 @@ class TestChat:
 
         quota_repo.consume.return_value = (4.95, NOW)
 
-        svc = _build_chat_service(conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo)
+        svc = _build_chat_service(
+            conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
+        )
         svc._client = AsyncMock()
         svc._client.chat.completions.create.return_value = openai_response
 
@@ -657,7 +682,9 @@ class TestChat:
 
         quota_repo.consume.return_value = (5.0, NOW)
 
-        svc = _build_chat_service(conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo)
+        svc = _build_chat_service(
+            conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
+        )
         svc._client = AsyncMock()
         svc._client.chat.completions.create.return_value = openai_response
 
@@ -690,7 +717,9 @@ class TestChat:
 
         quota_repo.consume.return_value = (4.99, NOW)
 
-        svc = _build_chat_service(conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo)
+        svc = _build_chat_service(
+            conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
+        )
         svc._client = AsyncMock()
         svc._client.chat.completions.create.return_value = openai_response
 
@@ -723,7 +752,9 @@ class TestChat:
 
         quota_repo.consume.return_value = (4.95, NOW)
 
-        svc = _build_chat_service(conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo)
+        svc = _build_chat_service(
+            conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
+        )
         svc._client = AsyncMock()
         svc._client.chat.completions.create.return_value = openai_response
 

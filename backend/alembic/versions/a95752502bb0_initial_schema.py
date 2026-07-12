@@ -8,8 +8,9 @@ Create Date: 2026-03-05
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a95752502bb0"
@@ -37,8 +38,14 @@ comment_commentable_type_enum = postgresql.ENUM(
 
 def upgrade() -> None:
     # -- Sequences --
-    op.execute(sa.schema.CreateSequence(sa.Sequence("ai_conversation_seq", start=1, increment=50)))
-    op.execute(sa.schema.CreateSequence(sa.Sequence("ai_message_seq", start=1, increment=50)))
+    op.execute(
+        sa.schema.CreateSequence(
+            sa.Sequence("ai_conversation_seq", start=1, increment=50)
+        )
+    )
+    op.execute(
+        sa.schema.CreateSequence(sa.Sequence("ai_message_seq", start=1, increment=50))
+    )
     op.execute(sa.schema.CreateSequence(sa.Sequence("discussion_seq")))
     op.execute(sa.schema.CreateSequence(sa.Sequence("discussion_reaction_seq")))
     op.execute(sa.schema.CreateSequence(sa.Sequence("knowledge_seq")))
@@ -61,9 +68,15 @@ def upgrade() -> None:
     op.execute(sa.schema.CreateSequence(sa.Sequence("team_seq")))
     op.execute(sa.schema.CreateSequence(sa.Sequence("team_user_relation_seq")))
     op.execute(sa.schema.CreateSequence(sa.Sequence("team_membership_application_seq")))
-    op.execute(sa.schema.CreateSequence(sa.Sequence("user_ai_quota_seq", start=1, increment=50)))
+    op.execute(
+        sa.schema.CreateSequence(
+            sa.Sequence("user_ai_quota_seq", start=1, increment=50)
+        )
+    )
     op.execute(sa.schema.CreateSequence(sa.Sequence("user_id_seq")))
-    op.execute(sa.schema.CreateSequence(sa.Sequence("user_following_relationship_id_seq")))
+    op.execute(
+        sa.schema.CreateSequence(sa.Sequence("user_following_relationship_id_seq"))
+    )
     # task_submission_schema_seq is not in metadata (composite PK table)
 
     # -----------------------------------------------------------------------
@@ -196,7 +209,9 @@ def upgrade() -> None:
 
     op.create_table(
         "discussion_reaction",
-        sa.Column("id", sa.Integer(), sa.Sequence("discussion_reaction_seq"), nullable=False),
+        sa.Column(
+            "id", sa.Integer(), sa.Sequence("discussion_reaction_seq"), nullable=False
+        ),
         sa.Column("discussion_id", sa.Integer(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("reaction_type_id", sa.Integer(), nullable=False),
@@ -287,7 +302,9 @@ def upgrade() -> None:
 
     op.create_table(
         "knowledge_label",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("knowledge_label_seq"), nullable=False),
+        sa.Column(
+            "id", sa.BigInteger(), sa.Sequence("knowledge_label_seq"), nullable=False
+        ),
         sa.Column("knowledge_id", sa.BigInteger(), nullable=False),
         sa.Column("label", sa.String(50), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -364,7 +381,9 @@ def upgrade() -> None:
 
     op.create_table(
         "notification",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("notification_seq"), nullable=False),
+        sa.Column(
+            "id", sa.BigInteger(), sa.Sequence("notification_seq"), nullable=False
+        ),
         sa.Column("receiver_id", sa.BigInteger(), nullable=False),
         sa.Column("type", sa.String(255), nullable=False),
         sa.Column("metadata", postgresql.JSONB(), nullable=True),
@@ -537,7 +556,12 @@ def upgrade() -> None:
 
     op.create_table(
         "space_admin_relation",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("space_admin_relation_seq"), nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger(),
+            sa.Sequence("space_admin_relation_seq"),
+            nullable=False,
+        ),
         sa.Column("space_id", sa.BigInteger(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("role", sa.SmallInteger(), nullable=False),
@@ -549,7 +573,9 @@ def upgrade() -> None:
 
     op.create_table(
         "space_categories",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("space_categories_seq"), nullable=False),
+        sa.Column(
+            "id", sa.BigInteger(), sa.Sequence("space_categories_seq"), nullable=False
+        ),
         sa.Column("space_id", sa.BigInteger(), nullable=False),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
@@ -563,7 +589,9 @@ def upgrade() -> None:
 
     op.create_table(
         "space_user_rank",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("space_user_rank_seq"), nullable=False),
+        sa.Column(
+            "id", sa.BigInteger(), sa.Sequence("space_user_rank_seq"), nullable=False
+        ),
         sa.Column("space_id", sa.BigInteger(), nullable=False),
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("rank", sa.Integer(), nullable=False),
@@ -662,7 +690,10 @@ def upgrade() -> None:
     op.create_table(
         "user_following_relationship",
         sa.Column(
-            "id", sa.Integer(), sa.Sequence("user_following_relationship_id_seq"), nullable=False
+            "id",
+            sa.Integer(),
+            sa.Sequence("user_following_relationship_id_seq"),
+            nullable=False,
         ),
         sa.Column("followee_id", sa.Integer(), nullable=False),
         sa.Column("follower_id", sa.Integer(), nullable=False),
@@ -684,7 +715,9 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_user_o_auth_connection_user_id", "user_o_auth_connection", ["user_id"])
+    op.create_index(
+        "ix_user_o_auth_connection_user_id", "user_o_auth_connection", ["user_id"]
+    )
 
     op.create_table(
         "user_profile",
@@ -762,7 +795,9 @@ def upgrade() -> None:
 
     op.create_table(
         "project_membership",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("project_membership_seq"), nullable=False),
+        sa.Column(
+            "id", sa.BigInteger(), sa.Sequence("project_membership_seq"), nullable=False
+        ),
         sa.Column("project_id", sa.BigInteger(), nullable=False),
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("role", sa.SmallInteger(), nullable=False),
@@ -794,7 +829,12 @@ def upgrade() -> None:
 
     op.create_table(
         "task_ai_advice_context",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("task_ai_advice_context_seq"), nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger(),
+            sa.Sequence("task_ai_advice_context_seq"),
+            nullable=False,
+        ),
         sa.Column("task_id", sa.BigInteger(), nullable=False),
         sa.Column("section", sa.String(64), nullable=True),
         sa.Column("section_index", sa.Integer(), nullable=True),
@@ -807,7 +847,9 @@ def upgrade() -> None:
 
     op.create_table(
         "task_membership",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("task_membership_seq"), nullable=False),
+        sa.Column(
+            "id", sa.BigInteger(), sa.Sequence("task_membership_seq"), nullable=False
+        ),
         sa.Column("task_id", sa.BigInteger(), nullable=False),
         sa.Column("member_id", sa.BigInteger(), nullable=False),
         sa.Column("participant_uuid", postgresql.UUID(as_uuid=True), nullable=False),
@@ -836,7 +878,12 @@ def upgrade() -> None:
 
     op.create_table(
         "task_topics_relation",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("task_topics_relation_seq"), nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger(),
+            sa.Sequence("task_topics_relation_seq"),
+            nullable=False,
+        ),
         sa.Column("task_id", sa.BigInteger(), nullable=False),
         sa.Column("topic_id", sa.BigInteger(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
@@ -849,7 +896,10 @@ def upgrade() -> None:
     op.create_table(
         "team_membership_application",
         sa.Column(
-            "id", sa.BigInteger(), sa.Sequence("team_membership_application_seq"), nullable=False
+            "id",
+            sa.BigInteger(),
+            sa.Sequence("team_membership_application_seq"),
+            nullable=False,
         ),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("team_id", sa.BigInteger(), nullable=False),
@@ -869,7 +919,9 @@ def upgrade() -> None:
 
     op.create_table(
         "team_user_relation",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("team_user_relation_seq"), nullable=False),
+        sa.Column(
+            "id", sa.BigInteger(), sa.Sequence("team_user_relation_seq"), nullable=False
+        ),
         sa.Column("team_id", sa.BigInteger(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("role", sa.SmallInteger(), nullable=False),
@@ -882,7 +934,9 @@ def upgrade() -> None:
 
     op.create_table(
         "task_submission",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("task_submission_seq"), nullable=False),
+        sa.Column(
+            "id", sa.BigInteger(), sa.Sequence("task_submission_seq"), nullable=False
+        ),
         sa.Column("membership_id", sa.BigInteger(), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("submitter_id", sa.Integer(), nullable=False),
@@ -895,7 +949,12 @@ def upgrade() -> None:
 
     op.create_table(
         "task_submission_entry",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("task_submission_entry_seq"), nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger(),
+            sa.Sequence("task_submission_entry_seq"),
+            nullable=False,
+        ),
         sa.Column("task_submission_id", sa.BigInteger(), nullable=False),
         sa.Column("index", sa.Integer(), nullable=False),
         sa.Column("content_text", sa.Text(), nullable=True),
@@ -909,7 +968,12 @@ def upgrade() -> None:
 
     op.create_table(
         "task_submission_review",
-        sa.Column("id", sa.BigInteger(), sa.Sequence("task_submission_review_seq"), nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger(),
+            sa.Sequence("task_submission_review_seq"),
+            nullable=False,
+        ),
         sa.Column("submission_id", sa.BigInteger(), nullable=False),
         sa.Column("accepted", sa.Boolean(), nullable=False),
         sa.Column("score", sa.Integer(), nullable=False),
@@ -985,7 +1049,9 @@ def downgrade() -> None:
     op.drop_table("ai_conversation")
 
     # Drop sequences
-    op.execute(sa.schema.DropSequence(sa.Sequence("user_following_relationship_id_seq")))
+    op.execute(
+        sa.schema.DropSequence(sa.Sequence("user_following_relationship_id_seq"))
+    )
     op.execute(sa.schema.DropSequence(sa.Sequence("user_id_seq")))
     op.execute(sa.schema.DropSequence(sa.Sequence("user_ai_quota_seq")))
     op.execute(sa.schema.DropSequence(sa.Sequence("team_membership_application_seq")))

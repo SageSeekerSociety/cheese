@@ -43,9 +43,7 @@ def _credits(client, project_id: str) -> dict:
 
 
 def _mk_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "聊聊"}
-    )
+    r = client.post("/api/topics", json={"project_id": project_id, "title": "聊聊"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -126,9 +124,7 @@ def test_deduction_drains_oldest_grant_first(client):
     data = _credits(client, project_id)
     by_task = {g["source_task_id"]: g for g in data["grants"]}
     assert by_task[task_a]["credits_used"] == pytest.approx(0.001)
-    assert by_task[task_b]["credits_used"] == pytest.approx(
-        CREDITS_PER_TURN - 0.001
-    )
+    assert by_task[task_b]["credits_used"] == pytest.approx(CREDITS_PER_TURN - 0.001)
     assert data["credits_used"] == pytest.approx(CREDITS_PER_TURN)
 
 

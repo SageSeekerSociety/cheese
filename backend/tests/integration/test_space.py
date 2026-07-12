@@ -8,7 +8,9 @@ class TestSpaceIntegration:
     @pytest.fixture
     def setup_space(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         suffix = unique_int(10000000, 99999999)
         space_name = f"Test Space ({suffix})"
         resp = api_client.post(
@@ -32,7 +34,9 @@ class TestSpaceIntegration:
             "space_name": space_name,
         }
 
-    def test_get_space_not_found(self, user_client: UserCreator, api_client: TestClient):
+    def test_get_space_not_found(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
         user = user_client.create_user()
         user.token = user_client.login(api_client, user.username, user.password)
         resp = api_client.get(
@@ -45,7 +49,9 @@ class TestSpaceIntegration:
 
     def test_create_space(self, user_client: UserCreator, api_client: TestClient):
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         suffix = unique_int(10000000, 99999999)
         space_name = f"Test Space ({suffix})"
         resp = api_client.post(
@@ -80,7 +86,9 @@ class TestSpaceIntegration:
         assert data["id"] == space_id
         assert data["name"] == space_name
 
-    def test_create_space_with_existing_name_fails(self, setup_space: dict, api_client: TestClient):
+    def test_create_space_with_existing_name_fails(
+        self, setup_space: dict, api_client: TestClient
+    ):
         creator = setup_space["creator"]
         space_name = setup_space["space_name"]
         resp = api_client.post(
@@ -95,7 +103,9 @@ class TestSpaceIntegration:
         )
         assert resp.status_code == 409, f"Expected 409 Conflict, got {resp.status_code}"
 
-    def test_patch_space_with_empty_request(self, setup_space: dict, api_client: TestClient):
+    def test_patch_space_with_empty_request(
+        self, setup_space: dict, api_client: TestClient
+    ):
         creator = setup_space["creator"]
         space_id = setup_space["space_id"]
         resp = api_client.patch(
@@ -103,11 +113,15 @@ class TestSpaceIntegration:
             json={},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["space"]
         assert data["id"] == space_id
 
-    def test_patch_space_with_full_request(self, setup_space: dict, api_client: TestClient):
+    def test_patch_space_with_full_request(
+        self, setup_space: dict, api_client: TestClient
+    ):
         creator = setup_space["creator"]
         space_id = setup_space["space_id"]
         updated_name = f"Updated Space ({unique_int(10000000, 99999999)})"
@@ -125,7 +139,9 @@ class TestSpaceIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["space"]
         assert data["name"] == updated_name
         assert data["intro"] == updated_intro
@@ -138,7 +154,9 @@ class TestSpaceIntegration:
             f"/spaces/{space_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
         resp = api_client.get(
             f"/spaces/{space_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
@@ -149,7 +167,9 @@ class TestSpaceIntegration:
 class TestSpaceEnumeration:
     def test_enumerate_spaces(self, user_client: UserCreator, api_client: TestClient):
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         for i in range(3):
             suffix = unique_int(10000000, 99999999)
             api_client.post(
@@ -172,9 +192,13 @@ class TestSpaceEnumeration:
         assert "spaces" in data
         assert "page" in data
 
-    def test_enumerate_spaces_pagination(self, user_client: UserCreator, api_client: TestClient):
+    def test_enumerate_spaces_pagination(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         for i in range(5):
             suffix = unique_int(10000000, 99999999)
             api_client.post(
@@ -199,9 +223,13 @@ class TestSpaceEnumeration:
 
 class TestSpaceCategories:
     @pytest.fixture
-    def setup_space_with_category(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def setup_space_with_category(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         suffix = unique_int(10000000, 99999999)
         resp = api_client.post(
             "/spaces",
@@ -222,7 +250,9 @@ class TestSpaceCategories:
             "default_category_id": default_cat_id,
         }
 
-    def test_create_category(self, setup_space_with_category: dict, api_client: TestClient):
+    def test_create_category(
+        self, setup_space_with_category: dict, api_client: TestClient
+    ):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         resp = api_client.post(
@@ -239,7 +269,9 @@ class TestSpaceCategories:
         assert data["name"] == "Backend Tasks"
         assert data["displayOrder"] == 10
 
-    def test_list_categories(self, setup_space_with_category: dict, api_client: TestClient):
+    def test_list_categories(
+        self, setup_space_with_category: dict, api_client: TestClient
+    ):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         api_client.post(
@@ -260,7 +292,9 @@ class TestSpaceCategories:
         categories = resp.json()["data"]["categories"]
         assert len(categories) >= 2
 
-    def test_update_category(self, setup_space_with_category: dict, api_client: TestClient):
+    def test_update_category(
+        self, setup_space_with_category: dict, api_client: TestClient
+    ):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         create_resp = api_client.post(
@@ -272,15 +306,23 @@ class TestSpaceCategories:
         cat_id = create_resp.json()["data"]["category"]["id"]
         resp = api_client.patch(
             f"/spaces/{space_id}/categories/{cat_id}",
-            json={"name": "Updated Name", "description": "Updated Desc", "displayOrder": 15},
+            json={
+                "name": "Updated Name",
+                "description": "Updated Desc",
+                "displayOrder": 15,
+            },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["category"]
         assert data["name"] == "Updated Name"
         assert data["displayOrder"] == 15
 
-    def test_set_default_category(self, setup_space_with_category: dict, api_client: TestClient):
+    def test_set_default_category(
+        self, setup_space_with_category: dict, api_client: TestClient
+    ):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         create_resp = api_client.post(
@@ -295,10 +337,14 @@ class TestSpaceCategories:
             json={"defaultCategoryId": new_default_id},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         assert resp.json()["data"]["space"]["defaultCategoryId"] == new_default_id
 
-    def test_archive_category(self, setup_space_with_category: dict, api_client: TestClient):
+    def test_archive_category(
+        self, setup_space_with_category: dict, api_client: TestClient
+    ):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         create_resp = api_client.post(
@@ -312,15 +358,23 @@ class TestSpaceCategories:
             f"/spaces/{space_id}/categories/{cat_id}/archive",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         assert resp.json()["data"]["category"]["archivedAt"] is not None
 
-    def test_unarchive_category(self, setup_space_with_category: dict, api_client: TestClient):
+    def test_unarchive_category(
+        self, setup_space_with_category: dict, api_client: TestClient
+    ):
         creator = setup_space_with_category["creator"]
         space_id = setup_space_with_category["space_id"]
         create_resp = api_client.post(
             f"/spaces/{space_id}/categories",
-            json={"name": "To Archive and Unarchive", "description": "Desc", "displayOrder": 1},
+            json={
+                "name": "To Archive and Unarchive",
+                "description": "Desc",
+                "displayOrder": 1,
+            },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         assert create_resp.status_code == 201
@@ -329,12 +383,16 @@ class TestSpaceCategories:
             f"/spaces/{space_id}/categories/{cat_id}/archive",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert archive_resp.status_code == 200, f"Archive failed: {archive_resp.status_code}"
+        assert archive_resp.status_code == 200, (
+            f"Archive failed: {archive_resp.status_code}"
+        )
         resp = api_client.delete(
             f"/spaces/{space_id}/categories/{cat_id}/archive",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         assert resp.json()["data"]["category"]["archivedAt"] is None
 
     def test_list_categories_excludes_archived(
@@ -370,7 +428,11 @@ class TestSpaceCategories:
         space_id = setup_space_with_category["space_id"]
         create_resp = api_client.post(
             f"/spaces/{space_id}/categories",
-            json={"name": "Will Archive Include", "description": "Desc", "displayOrder": 1},
+            json={
+                "name": "Will Archive Include",
+                "description": "Desc",
+                "displayOrder": 1,
+            },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         cat_id = create_resp.json()["data"]["category"]["id"]
@@ -404,7 +466,9 @@ class TestSpaceCategories:
             f"/spaces/{space_id}/categories/{cat_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
 
 class TestSpacePermissions:
@@ -433,7 +497,9 @@ class TestSpacePermissions:
             "space_id": space_id,
         }
 
-    def test_patch_space_fails_for_non_admin(self, setup_two_users: dict, api_client: TestClient):
+    def test_patch_space_fails_for_non_admin(
+        self, setup_two_users: dict, api_client: TestClient
+    ):
         other = setup_two_users["other"]
         space_id = setup_two_users["space_id"]
         resp = api_client.patch(
@@ -441,27 +507,37 @@ class TestSpacePermissions:
             json={"name": "Hacked Name"},
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403 Forbidden, got {resp.status_code}"
+        assert resp.status_code == 403, (
+            f"Expected 403 Forbidden, got {resp.status_code}"
+        )
 
-    def test_delete_space_fails_for_non_admin(self, setup_two_users: dict, api_client: TestClient):
+    def test_delete_space_fails_for_non_admin(
+        self, setup_two_users: dict, api_client: TestClient
+    ):
         other = setup_two_users["other"]
         space_id = setup_two_users["space_id"]
         resp = api_client.delete(
             f"/spaces/{space_id}",
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403 Forbidden, got {resp.status_code}"
+        assert resp.status_code == 403, (
+            f"Expected 403 Forbidden, got {resp.status_code}"
+        )
 
 
 class TestSpaceAdmins:
     @pytest.fixture
-    def setup_space_with_admin(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def setup_space_with_admin(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         owner = user_client.create_user()
         owner.token = user_client.login(api_client, owner.username, owner.password)
         admin = user_client.create_user()
         admin.token = user_client.login(api_client, admin.username, admin.password)
         new_owner = user_client.create_user()
-        new_owner.token = user_client.login(api_client, new_owner.username, new_owner.password)
+        new_owner.token = user_client.login(
+            api_client, new_owner.username, new_owner.password
+        )
         suffix = unique_int(10000000, 99999999)
         resp = api_client.post(
             "/spaces",
@@ -482,7 +558,9 @@ class TestSpaceAdmins:
             "space_id": space_id,
         }
 
-    def test_add_space_admin(self, setup_space_with_admin: dict, api_client: TestClient):
+    def test_add_space_admin(
+        self, setup_space_with_admin: dict, api_client: TestClient
+    ):
         owner = setup_space_with_admin["owner"]
         admin = setup_space_with_admin["admin"]
         space_id = setup_space_with_admin["space_id"]
@@ -493,7 +571,9 @@ class TestSpaceAdmins:
         )
         assert resp.status_code == 201
 
-    def test_list_space_admins(self, setup_space_with_admin: dict, api_client: TestClient):
+    def test_list_space_admins(
+        self, setup_space_with_admin: dict, api_client: TestClient
+    ):
         owner = setup_space_with_admin["owner"]
         admin = setup_space_with_admin["admin"]
         space_id = setup_space_with_admin["space_id"]
@@ -510,7 +590,9 @@ class TestSpaceAdmins:
         managers = resp.json()["data"]["managers"]
         assert len(managers) >= 2
 
-    def test_remove_space_admin(self, setup_space_with_admin: dict, api_client: TestClient):
+    def test_remove_space_admin(
+        self, setup_space_with_admin: dict, api_client: TestClient
+    ):
         owner = setup_space_with_admin["owner"]
         admin = setup_space_with_admin["admin"]
         space_id = setup_space_with_admin["space_id"]
@@ -523,9 +605,13 @@ class TestSpaceAdmins:
             f"/spaces/{space_id}/managers/{admin.user_id}",
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_transfer_ownership(self, setup_space_with_admin: dict, api_client: TestClient):
+    def test_transfer_ownership(
+        self, setup_space_with_admin: dict, api_client: TestClient
+    ):
         owner = setup_space_with_admin["owner"]
         new_owner = setup_space_with_admin["new_owner"]
         space_id = setup_space_with_admin["space_id"]
@@ -534,7 +620,9 @@ class TestSpaceAdmins:
             json={"userId": new_owner.user_id, "role": "OWNER"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Expected 201, got {resp.status_code}: {resp.text}"
+        )
 
     def test_add_admin_fails_after_losing_ownership(
         self, setup_space_with_admin: dict, api_client: TestClient
@@ -548,7 +636,9 @@ class TestSpaceAdmins:
             json={"userId": new_owner.user_id, "role": "OWNER"},
             headers={"Authorization": f"Bearer {owner.token}"},
         )
-        assert transfer_resp.status_code == 201, f"Transfer failed: {transfer_resp.status_code}"
+        assert transfer_resp.status_code == 201, (
+            f"Transfer failed: {transfer_resp.status_code}"
+        )
         resp = api_client.post(
             f"/spaces/{space_id}/managers",
             json={"userId": admin.user_id, "role": "ADMIN"},
@@ -569,7 +659,9 @@ class TestSpaceDomainGroups:
     """
 
     @pytest.fixture
-    def setup_space_with_groups(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def setup_space_with_groups(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         """Create a space owned by *owner*, then create 2 domain groups as owner."""
         owner = user_client.create_user()
         owner.token = user_client.login(api_client, owner.username, owner.password)
@@ -590,7 +682,11 @@ class TestSpaceDomainGroups:
         # Create two domain groups
         g1 = api_client.post(
             f"/spaces/{space_id}/domain-groups",
-            json={"name": "北京大学", "description": "北大邮箱", "domains": ["pku.edu.cn"]},
+            json={
+                "name": "北京大学",
+                "description": "北大邮箱",
+                "domains": ["pku.edu.cn"],
+            },
             headers={"Authorization": f"Bearer {owner.token}"},
         )
         assert g1.status_code == 201
@@ -630,7 +726,10 @@ class TestSpaceDomainGroups:
         assert names == {"北京大学", "清华大学"}
 
     def test_non_admin_can_list_domain_groups(
-        self, setup_space_with_groups: dict, user_client: UserCreator, api_client: TestClient
+        self,
+        setup_space_with_groups: dict,
+        user_client: UserCreator,
+        api_client: TestClient,
     ):
         """Regression test: non-admin users must be able to list domain groups
         so they can select access-control domains when publishing/editing tasks."""
@@ -642,7 +741,9 @@ class TestSpaceDomainGroups:
             f"/spaces/{space_id}/domain-groups",
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         groups = resp.json()["data"]["groups"]
         assert len(groups) == 2
         # Response should include domain list per group
@@ -673,7 +774,10 @@ class TestSpaceDomainGroups:
         assert resp.json()["data"]["group"]["name"] == "人民大学"
 
     def test_non_admin_cannot_create_domain_group(
-        self, setup_space_with_groups: dict, user_client: UserCreator, api_client: TestClient
+        self,
+        setup_space_with_groups: dict,
+        user_client: UserCreator,
+        api_client: TestClient,
     ):
         space_id = setup_space_with_groups["space_id"]
         other = user_client.create_user()
@@ -703,7 +807,10 @@ class TestSpaceDomainGroups:
         assert resp.json()["data"]["group"]["name"] == "北京大学（已更新）"
 
     def test_non_admin_cannot_update_domain_group(
-        self, setup_space_with_groups: dict, user_client: UserCreator, api_client: TestClient
+        self,
+        setup_space_with_groups: dict,
+        user_client: UserCreator,
+        api_client: TestClient,
     ):
         space_id = setup_space_with_groups["space_id"]
         gid = setup_space_with_groups["group1_id"]
@@ -739,7 +846,10 @@ class TestSpaceDomainGroups:
         assert len(list_resp.json()["data"]["groups"]) == 1
 
     def test_non_admin_cannot_delete_domain_group(
-        self, setup_space_with_groups: dict, user_client: UserCreator, api_client: TestClient
+        self,
+        setup_space_with_groups: dict,
+        user_client: UserCreator,
+        api_client: TestClient,
     ):
         space_id = setup_space_with_groups["space_id"]
         gid = setup_space_with_groups["group1_id"]

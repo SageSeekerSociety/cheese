@@ -4,22 +4,28 @@ Revision ID: d1a2b3c4e5f6
 Revises: c9f2a3b40e15
 Create Date: 2026-07-11 22:00:00.000000
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "d1a2b3c4e5f6"
-down_revision: Union[str, Sequence[str], None] = "c9f2a3b40e15"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "c9f2a3b40e15"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     op.add_column("projects", sa.Column("team_id", sa.BigInteger(), nullable=True))
     op.create_index("ix_projects_team_id", "projects", ["team_id"])
     op.create_foreign_key(
-        "fk_projects_team_id", "projects", "team", ["team_id"], ["id"],
+        "fk_projects_team_id",
+        "projects",
+        "team",
+        ["team_id"],
+        ["id"],
         ondelete="SET NULL",
     )
 
