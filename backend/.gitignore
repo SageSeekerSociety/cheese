@@ -24,10 +24,11 @@ __pycache__/
 .viking/
 
 # self-hosted connector binaries (built artifacts, not source; see
-# scripts/build-connector.sh). The cli source lives in the main repo.
+# scripts/build-connector.sh). The cli source is vendored at the repo root cli/.
 connector-dist/
 
-# connector build cache (frozen cli/ extracted from git — see scripts/build-connector.sh)
+# legacy connector build cache (cli/ is now vendored in-repo; kept ignored so any
+# stale extraction from the old build flow never gets committed).
 backend/.cli-src/
 .cli-src/
 uploads/
