@@ -86,3 +86,18 @@ async def test_no_online_device_returns_none_and_pins_nothing():
 
     assert await resolve_pinned_device(service, _online(), project, topic) is None
     assert await service.topic_device(topic) is None
+
+
+async def test_project_device_online_is_scoped_to_the_project_context():
+    # The self-hosted compute pool is available for a project only when THAT
+    # project has an online enrolled machine — compute belongs to the context,
+    # not globally (v4). A device online but assigned elsewhere doesn't count.
+    service = _service()
+    project_a, project_b = uuid.uuid4(), uuid.uuid4()
+    dev_a = await _device_on_project(service, project_a, "A")
+
+    # A's device online → available for A, but NOT for B (which has no device).
+    assert await service.project_has_online_device(project_a, _online(dev_a)) is True
+    assert await service.project_has_online_device(project_b, _online(dev_a)) is False
+    # Assigned but offline → not available.
+    assert await service.project_has_online_device(project_a, _online()) is False

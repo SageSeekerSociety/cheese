@@ -109,6 +109,19 @@ def test_select_falls_back_to_default_for_unknown_or_none():
     assert pool.select(provider_id="gpu").name == "local-docker"
 
 
+def test_build_pool_registers_device_alongside_local():
+    # In the default (sdk) deployment the self-hosted device pool rides alongside
+    # local-docker, so a topic can route to the user's own machine — but the
+    # default stays local-docker (device is opt-in per topic).
+    from app.domain.agent.compute import build_compute_pool
+
+    pool = build_compute_pool(_RecordingAgent())
+    assert pool.has("local-docker")
+    assert pool.has("device")
+    assert pool.default().name == "local-docker"
+    assert pool.select(provider_id="device").name == "device"
+
+
 def test_resolve_compute_id_topic_wins_then_project_sticky():
     from app.domain.agent.chat import _resolve_compute_id
 

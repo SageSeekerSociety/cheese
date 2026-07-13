@@ -23,7 +23,8 @@ const menuOpen = ref(false)
 // machine vs. GPU. Unknown ids fall back to a generic compute icon.
 const POOL_ICON: Record<string, string> = {
   'local-docker': 'mdi-server',
-  'remote-cheesed': 'mdi-laptop',
+  device: 'mdi-laptop',
+  'remote-cheesed': 'mdi-server-network',
   gpu: 'mdi-expansion-card',
 }
 function iconFor(id: string): string {

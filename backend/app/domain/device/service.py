@@ -182,6 +182,17 @@ class DeviceService:
     async def list_devices_for_project(self, project_id: uuid.UUID) -> list[Device]:
         return await self._repo.list_devices_by_project(project_id)
 
+    async def project_has_online_device(
+        self, project_id: uuid.UUID, is_online: Callable[[str], bool]
+    ) -> bool:
+        """Whether this project has an enrolled machine connected right now — the
+        honest availability of the self-hosted compute pool for THIS project's
+        context (compute belongs to the project/team, not globally, v4)."""
+        return any(
+            is_online(d.device_id)
+            for d in await self.list_devices_for_project(project_id)
+        )
+
     # -- topic → device pin (affinity, execution-architecture v4) ----------
 
     async def topic_device(self, topic_id: uuid.UUID) -> str | None:

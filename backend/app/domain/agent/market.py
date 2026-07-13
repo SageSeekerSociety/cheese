@@ -18,6 +18,7 @@ from app.domain.agent.profiles import ProfileRegistry
 # Compute provider names (match ComputeProvider.name in compute.py).
 COMPUTE_LOCAL = "local-docker"
 COMPUTE_REMOTE = "remote-cheesed"
+COMPUTE_DEVICE = "device"
 COMPUTE_GPU = "gpu"
 
 
@@ -72,10 +73,28 @@ def ai_listings(
     return out
 
 
-def compute_listings(settings) -> list[PoolListing]:  # type: ignore[no-untyped-def]
-    """Every compute pool in the catalog. Local is always on; remote is on only
-    when a node is wired; GPU is a request-only market listing for now."""
+def compute_listings(
+    settings,  # type: ignore[no-untyped-def]
+    *,
+    device_online: bool | None = None,
+) -> list[PoolListing]:
+    """Every compute pool in the catalog. Local is always on; the self-hosted
+    device pool is on when a relevant machine is connected; remote is on only when
+    a cheesed node is wired; GPU is request-only for now.
+
+    ``device_online`` scopes the device pool's availability to a CONTEXT: a route
+    that knows the project passes whether THAT project has an online enrolled
+    machine (compute belongs to the project/team, not globally). Left as ``None``
+    (the global 市场 catalog) it falls back to 'is any device connected at all'."""
     remote_ready = bool(settings.cheesed_url) and settings.compute_provider == "remote"
+    # A device is real compute the moment a relevant machine is connected (DeviceHub
+    # presence) — the honest `available` flag. Per-project when the caller knows the
+    # context; else the global 'any device online'.
+    if device_online is None:
+        from app.domain.agent.device_hub import device_hub
+
+        device_online = bool(device_hub.online_device_ids())
+    device_ready = device_online
     return [
         PoolListing(
             kind="compute",
@@ -89,11 +108,20 @@ def compute_listings(settings) -> list[PoolListing]:  # type: ignore[no-untyped-
         ),
         PoolListing(
             kind="compute",
+            id=COMPUTE_DEVICE,
+            label="自托管设备（我的机器）",
+            tier="byo",
+            price="自备",
+            description="在你自己连接的机器上跑，工作树与数据留在本地；先到『我的设备』连接一台。",
+            available=device_ready,
+        ),
+        PoolListing(
+            kind="compute",
             id=COMPUTE_REMOTE,
-            label="远程节点（自带机器）",
+            label="远程节点（cheesed）",
             tier="byo",
             price="自备 / 接入报价",
-            description="把算力接到你自己的机器（cheesed 节点），数据不出你的环境。",
+            description="把算力接到你自己的 cheesed 节点，数据不出你的环境。",
             available=remote_ready,
         ),
         PoolListing(
@@ -108,9 +136,18 @@ def compute_listings(settings) -> list[PoolListing]:  # type: ignore[no-untyped-
     ]
 
 
-def compute_selectable(settings) -> list[PoolListing]:  # type: ignore[no-untyped-def]
-    """The compute pools a project can actually pick right now (deployed)."""
-    return [p for p in compute_listings(settings) if p.available]
+def compute_selectable(
+    settings,  # type: ignore[no-untyped-def]
+    *,
+    device_online: bool | None = None,
+) -> list[PoolListing]:
+    """The compute pools a project can actually pick right now (deployed). Pass
+    ``device_online`` to scope the self-hosted pool to a project's own machines."""
+    return [
+        p
+        for p in compute_listings(settings, device_online=device_online)
+        if p.available
+    ]
 
 
 def compute_default_name() -> str:

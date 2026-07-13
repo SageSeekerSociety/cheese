@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_profile_registry
+from app.api.deps import get_profile_registry, project_device_online
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -236,7 +236,10 @@ async def list_compute_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
     if project is None:
         raise NotFoundError("Project not found")
     current = (project.settings or {}).get("compute_profile") or compute_default_name()
-    profiles = [asdict(v) for v in compute_selectable(settings)]
+    device_online = await project_device_online(db, project_id)
+    profiles = [
+        asdict(v) for v in compute_selectable(settings, device_online=device_online)
+    ]
     return ok({"current": current, "profiles": profiles})
 
 
@@ -248,7 +251,8 @@ async def set_compute_profile(project_id: uuid.UUID, body: dict, db: DbSession) 
     if project is None:
         raise NotFoundError("Project not found")
     name = (body.get("profile") or "").strip() or compute_default_name()
-    allowed = {v.id for v in compute_selectable(settings)}
+    device_online = await project_device_online(db, project_id)
+    allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
     if name not in allowed:
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
     project.settings = {**(project.settings or {}), "compute_profile": name}

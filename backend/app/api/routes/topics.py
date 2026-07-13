@@ -9,7 +9,12 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_broker, get_chat_service, get_turn_runner
+from app.api.deps import (
+    get_broker,
+    get_chat_service,
+    get_turn_runner,
+    project_device_online,
+)
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -253,13 +258,17 @@ async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
     topic = await TopicService(db).get_or_404(topic_id)
     project = await ProjectRepository(db).get(topic.project_id)
     sticky = (project.settings or {}).get("compute_profile") if project else None
+    device_online = await project_device_online(db, topic.project_id)
     return ok(
         {
             "current": topic.compute_profile or sticky or compute_default_name(),
             "locked": topic.session_id is not None,
             "inherited": topic.compute_profile is None,
             "sticky": sticky or compute_default_name(),
-            "profiles": [asdict(v) for v in compute_selectable(settings)],
+            "profiles": [
+                asdict(v)
+                for v in compute_selectable(settings, device_online=device_online)
+            ],
         }
     )
 
@@ -276,7 +285,8 @@ async def set_topic_compute_profile(
     if topic.session_id is not None:
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
     name = (body.get("profile") or "").strip() or compute_default_name()
-    allowed = {v.id for v in compute_selectable(settings)}
+    device_online = await project_device_online(db, topic.project_id)
+    allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
     if name not in allowed:
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
     topic.compute_profile = name

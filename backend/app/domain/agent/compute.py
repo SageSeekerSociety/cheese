@@ -368,6 +368,13 @@ def build_compute_pool(agent: AgentService) -> ComputePool:
             sandbox_enabled=settings.agent_sandbox_enabled,
         )
     ]
+    # The self-hosted device pool rides alongside local-docker: a topic can choose
+    # to run on the user's own enrolled machine (with topic affinity — the pin
+    # freezes on the first turn). Selectable only when a device is online (gated in
+    # the market listing), so this is opt-in and the default stays local-docker.
+    from app.domain.agent.device_provider import DeviceProvider
+
+    providers.append(DeviceProvider(turn_timeout_s=settings.device_turn_timeout_s))
     if settings.cheesed_url:
         providers.append(
             RemoteCheesedProvider(
