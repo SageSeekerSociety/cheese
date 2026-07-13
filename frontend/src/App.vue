@@ -50,6 +50,15 @@
             :disabled="creatingProject"
             @keyup.enter="confirmNewProject"
           />
+          <v-alert
+            v-if="newProjectError"
+            type="error"
+            density="compact"
+            variant="tonal"
+            class="mt-3"
+          >
+            {{ newProjectError }}
+          </v-alert>
         </v-card-text>
         <v-card-actions class="px-4 pb-3">
           <v-spacer />
@@ -177,9 +186,11 @@ const navItems = computed<NavGenericItem[]>(() => [
 const newProjectDialog = ref(false)
 const newProjectName = ref('')
 const creatingProject = ref(false)
+const newProjectError = ref<string | null>(null)
 
 function createNewProject() {
   newProjectName.value = ''
+  newProjectError.value = null
   newProjectDialog.value = true
 }
 
@@ -187,13 +198,15 @@ async function confirmNewProject() {
   const name = newProjectName.value.trim()
   if (!name || creatingProject.value) return
   creatingProject.value = true
+  newProjectError.value = null
   try {
     const project = await createProject(name, myHandle())
     await loadCxProjects()
     newProjectDialog.value = false
     router.push(`/project/${project.id}`)
-  } catch {
-    window.alert('创建项目失败')
+  } catch (e) {
+    // Inline error inside the dialog — not a native alert() chrome.
+    newProjectError.value = e instanceof Error ? e.message : '创建项目失败'
   } finally {
     creatingProject.value = false
   }

@@ -11,8 +11,8 @@ mount the connector router at ``/connector`` so ``base = …/connector``):
 
 Two invariants (fusion-design §4):
   * **approve is behind a human login** — ``approve`` takes the logged-in
-    ``owner_user_id`` (injected at the trust boundary) plus the ``agent_user_id``
-    minted for the device, and binds them. There is no bare approve button.
+    ``owner_user_id`` (injected at the trust boundary) and binds the device to it. The
+    device is pure compute (no agent identity). There is no bare approve button.
   * **a token is necessary, not sufficient** — ``verify_token`` only identifies the
     device; the caller still authorizes the resolved actor against real permissions.
 """
@@ -72,23 +72,27 @@ class DeviceService:
         code_value: str,
         *,
         owner_user_id: int,
-        agent_user_id: int,
+        name: str | None = None,
     ) -> Device:
-        """Approve a pending flow on behalf of the logged-in ``owner_user_id``,
-        binding the device to that human as its owner and to ``agent_user_id`` as the
-        agent identity a screen on it acts as, and minting its durable token.
+        """Approve a pending flow on behalf of the logged-in ``owner_user_id``, binding
+        the device to that human as its owner and minting its durable token. The device
+        is pure compute — it gets no agent identity (execution-architecture v3). The
+        agent a screen runs as is resolved per project/topic at turn time.
+
+        ``name`` is the human-chosen compute-node name from the approval page; blank
+        keeps the name the cli proposed at start (avoids an "unnamed" node).
         Idempotent: approving an already-approved code returns the same device."""
         entry = await self._live_code(code_value)
         if entry.status == DeviceStatus.APPROVED and entry.device_id is not None:
             existing = await self._repo.get_device(entry.device_id)
             if existing is not None:
                 return existing
+        chosen = (name or "").strip() or entry.device_name
         device = Device(
             device_id=uuid.uuid4().hex[:12],
-            name=entry.device_name,
+            name=chosen,
             token=secrets.token_urlsafe(24),
             owner_user_id=owner_user_id,
-            agent_user_id=agent_user_id,
             created_at=self._now(),
         )
         await self._repo.save_device(device)
@@ -124,8 +128,8 @@ class DeviceService:
         return await self._repo.get_device(device_id)
 
     async def code_device_name(self, code_value: str) -> str | None:
-        """The human-proposed device name recorded on a pending code (for the approve
-        route to name the minted agent-user). ``None`` if the code is unknown."""
+        """The human-proposed device name recorded on a pending code (so the approval
+        page can show/prefill it). ``None`` if the code is unknown."""
         entry = await self._repo.get_code(code_value)
         return entry.device_name if entry is not None else None
 

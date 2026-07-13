@@ -13,15 +13,15 @@ from typing import Protocol
 
 @dataclass
 class Device:
-    """An enrolled machine + its durable token. ``owner_user_id`` is the human who
-    approved it; ``agent_user_id`` is the agent-user minted for it at approval (the
-    identity a screen on this device acts as — 一个 agent 是一个屏幕)."""
+    """An enrolled compute machine + its durable token. ``owner_user_id`` is the human
+    who approved it. A device is PURE COMPUTE (execution-architecture v3: a ComputePool
+    node) — it carries NO agent identity; the agent a screen acts as is resolved per
+    project/topic (fusion-design §5: agent = screen), not from the host machine."""
 
     device_id: str
     name: str
     token: str
     owner_user_id: int
-    agent_user_id: int
     created_at: datetime
     project_ids: list[uuid.UUID] = field(default_factory=list)
 

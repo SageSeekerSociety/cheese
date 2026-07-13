@@ -1,10 +1,10 @@
-"""P3 device flow over HTTP (real app + DB): start → approve (mint agent-user +
-device binding, bind owner) → poll → the durable token identifies the device, and
-the device→project assignment holds. Also: the /agent WS rejects a bad token, and
-approve requires a logged-in human.
+"""P3 device flow over HTTP (real app + DB): start → approve (bind owner, mint durable
+token) → poll → the durable token identifies the device, and the device→project
+assignment holds. A device is PURE COMPUTE (execution-architecture v3) — approval mints
+NO agent. Also: the /agent WS rejects a bad token, and approve requires a logged-in
+human.
 """
 
-from app.core.tokens import verify_session_token
 from tests.conftest import seed_user
 
 
@@ -39,24 +39,27 @@ def test_full_device_flow_start_approve_poll(client):
     pending = client.post("/connector/auth/device/poll", json={"device_code": code})
     assert pending.json()["status"] == "pending"
 
-    # 3. connect — the logged-in human approves (mints agent-user + binds owner +
-    #    assigns the device to the project).
+    # 3. connect — the logged-in human approves (binds owner + assigns the device to
+    #    the project + names the compute node). No agent is minted: a device is pure
+    #    compute (execution-architecture v3); the agent that runs on it is resolved per
+    #    project/topic at turn time.
     connect = client.post(
         "/connector/connect",
-        json={"device_code": code, "project_id": project["id"]},
+        json={
+            "device_code": code,
+            "project_id": project["id"],
+            "device_name": "alice-studio",
+        },
         headers=_bearer(token),
     )
     assert connect.status_code == 200, connect.text
     approved = connect.json()
     device_id = approved["device_id"]
-    agent_handle = approved["agent_handle"]
-    assert agent_handle.startswith("agent-")
+    # The device is pure compute — the approval response carries no agent identity.
+    assert "agent_handle" not in approved
+    # The human-chosen name won over the cli-proposed one (fixes an "unnamed" node).
+    assert approved["device_name"] == "alice-studio"
     assert approved["project_id"] == project["id"]
-
-    # The minted agent identity is a real, verifiable user (agent-as-user).
-    # It carries an agent-binding → is_agent is derived true (checked via login token
-    # shape only here; the binding itself is covered by identity unit tests).
-    assert verify_session_token(token) is not None
 
     # 4. poll after approval → durable token + id the cli persists.
     done = client.post("/connector/auth/device/poll", json={"device_code": code})

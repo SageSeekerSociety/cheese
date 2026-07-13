@@ -21,7 +21,9 @@ class AgentBindingKind:
     """Execution-binding kinds (not an Enum column — additive, forward-compatible)."""
 
     platform = "platform"  # driven by the platform agent runtime (current)
-    device = "device"  # driven by a self-hosted device connector (P3)
+    # NOTE: no ``device`` kind — a self-hosted device is pure compute (a ComputePool
+    # node), not an agent (execution-architecture v3). Agents run ON compute; they are
+    # not minted BY it.
 
 
 class AgentBinding(UuidPk, Timestamps, Base):

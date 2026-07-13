@@ -4,10 +4,11 @@ Revision ID: d3b8f1a20c11
 Revises: c5f1a9d24e07
 Create Date: 2026-07-09 00:00:00.000000
 
-The self-hosted / BYO-compute device flow (fusion-design §5): an enrolled machine
-(``device``) holds a durable token and a minted agent-user; short-lived device-flow
-codes live in ``device_auth_code``; ``device_project`` records which projects a device
-may run agents in. Additive only — no existing table is touched.
+The self-hosted / BYO-compute device flow (fusion-design §5): an enrolled compute
+machine (``device``) holds a durable token; short-lived device-flow codes live in
+``device_auth_code``; ``device_project`` records which projects a device may run agents
+in. A device is PURE COMPUTE (execution-architecture v3: a ComputePool node) — it holds
+no agent identity. Additive only — no existing table is touched.
 """
 
 from collections.abc import Sequence
@@ -32,18 +33,13 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("token", sa.String(length=128), nullable=False),
         sa.Column("owner_user_id", sa.Integer(), nullable=False),
-        sa.Column("agent_user_id", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["owner_user_id"], ["user.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["agent_user_id"], ["user.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("device_id"),
     )
     op.create_index(op.f("ix_device_token"), "device", ["token"], unique=True)
     op.create_index(
         op.f("ix_device_owner_user_id"), "device", ["owner_user_id"], unique=False
-    )
-    op.create_index(
-        op.f("ix_device_agent_user_id"), "device", ["agent_user_id"], unique=False
     )
 
     op.create_table(
@@ -88,7 +84,6 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_device_project_device_id"), table_name="device_project")
     op.drop_table("device_project")
     op.drop_table("device_auth_code")
-    op.drop_index(op.f("ix_device_agent_user_id"), table_name="device")
     op.drop_index(op.f("ix_device_owner_user_id"), table_name="device")
     op.drop_index(op.f("ix_device_token"), table_name="device")
     op.drop_table("device")

@@ -43,11 +43,9 @@ from app.domain.agent.device_hub import HubScreen, ViewerTransport, device_hub
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
-from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
-from app.domain.user.models import User
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 
@@ -77,6 +75,9 @@ class DevicePollRequest(BaseModel):
 
 class ConnectRequest(BaseModel):
     device_code: str
+    # The human-chosen name for this compute node (optional — blank keeps the name the
+    # cli proposed at device-flow start, avoiding an "unnamed" node).
+    device_name: str | None = None
     project_id: uuid.UUID | None = None
 
 
@@ -123,15 +124,14 @@ async def device_connect(
     if not actor.authenticated or actor.user_id is None:
         raise UnauthorizedError("Approving a device requires a logged-in user")
 
-    # The pending code carries the human-proposed device name; mint the agent-user
-    # for it, then approve (binding owner + agent + minting the durable token).
-    identity = IdentityService(db)
-    device_name = await service.code_device_name(body.device_code) or "device"
-    agent_user = await identity.create_device_agent(name=f"{device_name} · agent")
+    # Approve binds the device to its owner + mints the durable token. The device is
+    # PURE COMPUTE (execution-architecture v3: a ComputePool node) — enrolling a machine
+    # does NOT mint an agent. The agent a screen runs as is resolved per project/topic
+    # at turn time (fusion-design §5: agent = screen), independent of the host.
     device = await service.approve(
         body.device_code,
         owner_user_id=actor.user_id,
-        agent_user_id=agent_user.id,
+        name=body.device_name,
     )
     if body.project_id is not None:
         await service.assign_to_project(
@@ -140,7 +140,6 @@ async def device_connect(
     return {
         "device_id": device.device_id,
         "device_name": device.name,
-        "agent_handle": agent_user.username,
         "project_id": str(body.project_id) if body.project_id else None,
     }
 
@@ -328,13 +327,13 @@ def _device_screens(device_id: str) -> list[dict[str, Any]]:
     return out
 
 
-async def _device_view(db: AsyncSession, device: Device) -> dict[str, Any]:
-    agent = await db.get(User, device.agent_user_id)
+def _device_view(device: Device) -> dict[str, Any]:
+    # A device is pure compute — no ``agent_handle`` here. The agents actually running
+    # on it are the per-screen entries (each carries its own agent), surfaced below.
     return {
         "device_id": device.device_id,
         "name": device.name,
         "online": device_hub.is_online(device.device_id),
-        "agent_handle": agent.username if agent is not None else None,
         "project_ids": [str(p) for p in device.project_ids],
         "screens": _device_screens(device.device_id),
     }
@@ -342,12 +341,12 @@ async def _device_view(db: AsyncSession, device: Device) -> dict[str, Any]:
 
 @router.get("/my/devices")
 async def my_devices(
-    resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+    resolver: ActorResolverDep, service: DeviceServiceDep
 ) -> dict[str, Any]:
     """List the devices the logged-in human owns, with liveness + their open agents."""
     user_id = await _require_user(resolver)
     devices = await service.list_owned(user_id)
-    return {"devices": [await _device_view(db, d) for d in devices]}
+    return {"devices": [_device_view(d) for d in devices]}
 
 
 @router.patch("/my/devices/{device_id}")
@@ -356,12 +355,11 @@ async def rename_my_device(
     body: RenameDeviceRequest,
     resolver: ActorResolverDep,
     service: DeviceServiceDep,
-    db: DbSession,
 ) -> dict[str, Any]:
     """Rename a device the caller owns (the service enforces ownership)."""
     user_id = await _require_user(resolver)
     device = await service.rename_owned(device_id, body.name, actor_user_id=user_id)
-    return await _device_view(db, device)
+    return _device_view(device)
 
 
 @router.delete("/my/devices/{device_id}")

@@ -108,16 +108,19 @@ async function connectorRequest<T>(
   return (await res.json()) as T
 }
 
-// Approve a pending device flow (the `/connect` page): binds the machine to the
-// logged-in human as owner, mints its agent, optionally assigns it to a project.
+// Approve a pending device flow (the `/connect` page): binds the compute machine to
+// the logged-in human as owner (optionally naming it). A device is pure compute — no
+// agent is minted here; the agent that runs on it is resolved per session/project.
 export function connectDevice(
   deviceCode: string,
+  deviceName?: string,
   projectId?: string,
 ): Promise<import('./cx_types').DeviceApproval> {
   return connectorRequest<import('./cx_types').DeviceApproval>('/connect', {
     method: 'POST',
     body: JSON.stringify({
       device_code: deviceCode,
+      device_name: deviceName ?? null,
       project_id: projectId ?? null,
     }),
   })

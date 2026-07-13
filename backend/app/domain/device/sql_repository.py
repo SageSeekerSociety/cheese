@@ -60,7 +60,6 @@ class SqlDeviceRepository:
         row.name = device.name
         row.token = device.token
         row.owner_user_id = device.owner_user_id
-        row.agent_user_id = device.agent_user_id
         await self._session.flush()
 
     async def _to_device(self, row: DeviceRow) -> Device:
@@ -78,7 +77,6 @@ class SqlDeviceRepository:
             name=row.name,
             token=row.token,
             owner_user_id=row.owner_user_id,
-            agent_user_id=row.agent_user_id,
             created_at=_aware(row.created_at),
             project_ids=project_ids,
         )

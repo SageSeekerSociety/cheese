@@ -31,7 +31,8 @@ from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
-from app.domain.user.models import User
+from app.domain.identity.services import CHEESE_HANDLE
+from app.domain.user.repositories import UserRepository
 
 # Resolve an online device serving a project → (device_id, agent_user_id, agent_handle).
 DeviceResolver = Callable[[uuid.UUID], Awaitable["tuple[str, int, str] | None"]]
@@ -77,7 +78,16 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         self, project_id: uuid.UUID
     ) -> tuple[str, int, str] | None:
         """An online device serving ``project_id`` → ``(device_id, agent_user_id,
-        agent_handle)``, or ``None`` when no bound device is online."""
+        agent_handle)``, or ``None`` when no bound device is online.
+
+        The device is PURE COMPUTE (execution-architecture v3: AIPool ⊥ ComputePool) —
+        it carries no agent identity. The agent a screen runs as is the *project's*
+        agent, resolved independently of the host machine (fusion-design §5: agent =
+        screen, not machine). Today every project's agent is the platform 芝士 user —
+        the SAME identity the local tmux path authors as (``CHEESE_AUTHOR``) — so a
+        turn's author is identical whether it runs locally or on a self-hosted box.
+        When per-project agents land, only this resolution changes; the device stays
+        pure compute."""
         if self._device_resolver is not None:
             return await self._device_resolver(project_id)
         factory = self._session_factory
@@ -89,9 +99,10 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             service = DeviceService(SqlDeviceRepository(session))
             for device in await service.list_devices_for_project(project_id):
                 if self._hub.is_online(device.device_id):
-                    agent = await session.get(User, device.agent_user_id)
-                    handle = agent.username if agent is not None else "agent"
-                    return device.device_id, device.agent_user_id, handle
+                    agent = await UserRepository(session).get_by_handle(CHEESE_HANDLE)
+                    if agent is None:
+                        return None
+                    return device.device_id, agent.id, agent.username
         return None
 
     def _existing_screen(self, device_id: str, topic_id: uuid.UUID) -> HubScreen | None:

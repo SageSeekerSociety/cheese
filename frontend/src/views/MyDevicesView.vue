@@ -103,13 +103,27 @@ async function saveRename(d: MyDevice) {
   }
 }
 
-async function unbind(d: MyDevice) {
-  if (!confirm(`确定解绑设备「${d.name}」吗？它的登录令牌将失效。`)) return
+// Unbind confirmation runs through an in-app dialog (not the browser's native
+// confirm(), which shows an ugly "localhost:5200 says…" chrome and can't be styled).
+const unbindTarget = ref<MyDevice | null>(null)
+const unbinding = ref(false)
+
+function askUnbind(d: MyDevice) {
+  unbindTarget.value = d
+}
+
+async function confirmUnbind() {
+  const d = unbindTarget.value
+  if (!d) return
+  unbinding.value = true
   try {
     await unbindMyDevice(d.device_id)
     devices.value = devices.value.filter((x) => x.device_id !== d.device_id)
+    unbindTarget.value = null
   } catch (e) {
     error.value = e instanceof Error ? e.message : '解绑失败'
+  } finally {
+    unbinding.value = false
   }
 }
 
@@ -125,7 +139,13 @@ onMounted(load)
           <h1 class="t-page-title">我的设备</h1>
         </div>
         <v-spacer />
-        <v-btn variant="text" icon="mdi-refresh" class="mr-1" @click="load" />
+        <v-btn
+          variant="text"
+          icon="mdi-refresh"
+          class="mr-1"
+          :loading="loading"
+          @click="load"
+        />
         <v-btn
           v-if="isLoggedIn"
           color="primary"
@@ -158,7 +178,10 @@ onMounted(load)
         {{ error }}
       </v-alert>
 
-      <div v-if="loading" class="d-flex justify-center py-10">
+      <!-- Big spinner only on the FIRST load (list still empty). A refresh with data
+           already on screen keeps the list mounted — the refresh button spins instead
+           — so re-fetching never tears the list down and flashes. -->
+      <div v-if="loading && devices.length === 0" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
 
@@ -233,23 +256,26 @@ onMounted(load)
           </template>
 
           <v-spacer />
-          <span class="t-caption c-muted mr-3">
+          <span
+            class="t-caption mr-3"
+            :class="d.online ? 'text-success font-weight-medium' : 'c-muted'"
+          >
             {{ d.online ? '在线' : '离线' }}
           </span>
           <v-btn
             variant="text"
             size="small"
             color="error"
-            @click="unbind(d)"
+            @click="askUnbind(d)"
           >
             解绑
           </v-btn>
         </div>
 
+        <!-- A device is pure compute (算力节点), not an agent. Which agents run on it
+             are the 现场 chips below — each screen carries its own agent identity. -->
         <div class="t-caption c-muted mt-1">
-          agent 身份:
-          <strong v-if="d.agent_handle">@{{ d.agent_handle }}</strong>
-          <span v-else>—</span>
+          算力节点 · <span style="font-family: monospace">{{ d.device_id }}</span>
         </div>
 
         <div v-if="d.screens.length" class="mt-3">
@@ -332,6 +358,37 @@ onMounted(load)
         </div>
         <div style="height: 60vh">
           <DeviceLiveViewer :sid="liveScreen.sid" />
+        </div>
+      </v-card>
+    </v-dialog>
+
+    <!-- Unbind confirmation — an in-app dialog, not the browser's native confirm(). -->
+    <v-dialog
+      :model-value="unbindTarget !== null"
+      max-width="440"
+      @update:model-value="unbindTarget = null"
+    >
+      <v-card v-if="unbindTarget" class="pa-5">
+        <div class="d-flex align-center mb-3">
+          <v-icon color="error" class="mr-2">mdi-link-variant-off</v-icon>
+          <span class="t-title">解绑设备</span>
+        </div>
+        <div class="t-body mb-1">
+          确定解绑设备「<strong>{{ unbindTarget.name }}</strong>」吗？
+        </div>
+        <div class="t-caption c-muted mb-5">
+          它的登录令牌将立即失效，该机器需重新接入才能再次连接。
+        </div>
+        <div class="d-flex justify-end">
+          <v-btn variant="text" class="mr-2" @click="unbindTarget = null">取消</v-btn>
+          <v-btn
+            color="error"
+            variant="flat"
+            :loading="unbinding"
+            @click="confirmUnbind"
+          >
+            解绑
+          </v-btn>
         </div>
       </v-card>
     </v-dialog>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // 设备审批页 (P3 Phase B item 3): the frozen cli's device flow opens
 // `<origin>/connect?code=…`; the signed-in human lands here and approves —
-// which binds this machine to them as owner and mints its agent-user. Approval
-// deliberately does NOT ask which project the machine serves: a machine belongs
-// to *you*, and which project/session actually uses its compute is decided later
-// (on the device page, or when a session picks a machine), not up front.
+// which binds this machine to them as owner. A device is PURE COMPUTE (算力节点,
+// execution-architecture v3) — approving does NOT mint an agent; which agent runs
+// on it is decided per session/project later. Approval also deliberately does NOT
+// ask which project the machine serves: a machine belongs to *you*, and which
+// project uses its compute is decided later (device page / when a session picks it).
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { authToken, connectDevice } from '../api'
@@ -24,6 +25,9 @@ const loginLink = computed(() => ({
 const loading = ref(false)
 const error = ref<string | null>(null)
 const approved = ref<DeviceApproval | null>(null)
+// The human names their compute node here (so it isn't left "unnamed"). Optional —
+// blank falls back to the name the cli proposed.
+const deviceName = ref('')
 
 async function approve() {
   if (!code.value) {
@@ -33,7 +37,10 @@ async function approve() {
   loading.value = true
   error.value = null
   try {
-    approved.value = await connectDevice(code.value)
+    approved.value = await connectDevice(
+      code.value,
+      deviceName.value.trim() || undefined,
+    )
   } catch (e) {
     error.value = e instanceof Error ? e.message : '审批失败'
   } finally {
@@ -49,8 +56,8 @@ async function approve() {
         <div class="t-eyebrow mb-1">设备连接</div>
         <h1 class="t-page-title">批准这台设备</h1>
         <div class="t-body c-muted mt-1">
-          你的机器请求作为 self-hosted 计算接入芝士。批准后会为它铸一个
-          agent 身份，芝士的分身即可在这台机器上干活。
+          你的机器请求作为 self-hosted 算力节点接入芝士。批准后它成为归你所有的算力，
+          芝士的分身即可派到这台机器上干活。
         </div>
       </div>
 
@@ -79,6 +86,18 @@ async function approve() {
         <div class="t-caption c-muted mb-1">设备码</div>
         <div class="device-code mb-4">{{ code || '—' }}</div>
 
+        <v-text-field
+          v-model="deviceName"
+          label="给这台算力节点起个名字"
+          placeholder="例如：andy-macbook"
+          variant="outlined"
+          density="comfortable"
+          hide-details
+          class="mb-3"
+          :disabled="loading"
+          @keyup.enter="approve"
+        />
+
         <v-alert
           v-if="error"
           type="error"
@@ -105,11 +124,10 @@ async function approve() {
         </v-icon>
         <h2 class="t-title mb-1">设备已连接</h2>
         <div class="t-body c-muted mb-3">
-          «{{ approved.device_name }}» 已绑定到你，agent 身份
-          <strong>@{{ approved.agent_handle }}</strong>。
+          算力节点 «<strong>{{ approved.device_name }}</strong>» 已绑定到你。
         </div>
         <div class="t-caption c-muted mb-4">
-          回到 cli，它会自动完成登录并保持在线。
+          回到 cli 运行 <code>cheese link connect</code>，它就会保持在线、接受派活。
         </div>
         <v-btn variant="tonal" :to="{ name: 'my-devices' }">
           去「我的设备」

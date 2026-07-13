@@ -565,20 +565,20 @@ export interface DeviceScreen {
   topic_id: string | null
 }
 
-// A machine the signed-in human enrolled + the agent identity minted for it.
+// A compute machine (算力节点) the signed-in human enrolled. A device is pure compute
+// — it has NO agent identity; the agents running on it are `screens` (each carries its
+// own agent). See execution-architecture v3 / fusion-design §5.
 export interface MyDevice {
   device_id: string
   name: string
   online: boolean
-  agent_handle: string | null
   project_ids: string[]
   screens: DeviceScreen[]
 }
 
-// The result of approving a pending device flow (binds owner + mints its agent).
+// The result of approving a pending device flow (binds the machine to its owner).
 export interface DeviceApproval {
   device_id: string
   device_name: string
-  agent_handle: string
   project_id: string | null
 }

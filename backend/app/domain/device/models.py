@@ -1,7 +1,7 @@
 """SQLAlchemy models backing the device flow (SQL repository).
 
 Three tables mirror the storage-agnostic dataclasses in ``repository.py``:
-``device`` (enrolled machines + durable token + minted agent-user), ``device_auth_code``
+``device`` (enrolled compute machines + durable token), ``device_auth_code``
 (short-lived device-flow codes) and ``device_project`` (device↔project assignments).
 ``SqlDeviceRepository`` converts between these rows and the dataclasses; the service
 never sees them.
@@ -30,10 +30,10 @@ class DeviceRow(Base):
     owner_user_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    # The agent-user minted for this device: the identity a screen on it acts as.
-    agent_user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    # NOTE: a device is PURE COMPUTE (execution-architecture v3: AIPool ⊥ ComputePool;
+    # a self-hosted device is a ComputePool node). It carries NO agent identity — the
+    # agent a screen acts as is resolved per project/topic (fusion-design §5: agent =
+    # screen), independent of which machine hosts it.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

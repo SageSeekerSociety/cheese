@@ -15,13 +15,15 @@ from app.domain.device.service import DeviceService
 
 async def _enrolled() -> tuple[DeviceService, Device, uuid.UUID, uuid.UUID]:
     repo = InMemoryDeviceRepository()
+    # The device is pure compute (no agent identity). ``agent`` is a standalone agent
+    # id used only by the screen test — a screen carries its own agent, independent of
+    # the host machine.
     owner, agent = uuid.uuid4(), uuid.uuid4()
     device = Device(
         device_id="d1",
         name="m",
         token="dev-token",
         owner_user_id=owner,
-        agent_user_id=agent,
         created_at=datetime(2026, 7, 9, tzinfo=UTC),
     )
     await repo.save_device(device)

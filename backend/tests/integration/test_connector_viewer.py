@@ -175,13 +175,14 @@ def test_my_devices_list_rename_and_unbind(client):
     enrolled = _enroll_device(client, alice, project_id=project["id"])
     device_id = enrolled["device_id"]
 
-    # List — the owner sees their device + its minted agent handle.
+    # List — the owner sees their compute device. It is pure compute, so the view
+    # carries no agent identity (agents show up per-screen, not per-device).
     listing = client.get("/connector/my/devices", headers=_bearer(alice))
     assert listing.status_code == 200, listing.text
     devices = listing.json()["devices"]
     assert any(d["device_id"] == device_id for d in devices)
     mine = next(d for d in devices if d["device_id"] == device_id)
-    assert mine["agent_handle"] == enrolled["agent_handle"]
+    assert "agent_handle" not in mine
     assert project["id"] in mine["project_ids"]
 
     # Rename.
