@@ -11,6 +11,7 @@ from app.domain.device.models import (
     DeviceAuthCodeRow,
     DeviceProjectRow,
     DeviceRow,
+    DeviceTopicRow,
 )
 from app.domain.device.repository import AuthCode, Device
 
@@ -96,6 +97,9 @@ class SqlDeviceRepository:
             delete(DeviceProjectRow).where(DeviceProjectRow.device_id == device_id)
         )
         await self._session.execute(
+            delete(DeviceTopicRow).where(DeviceTopicRow.device_id == device_id)
+        )
+        await self._session.execute(
             delete(DeviceRow).where(DeviceRow.device_id == device_id)
         )
         await self._session.flush()
@@ -159,3 +163,17 @@ class SqlDeviceRepository:
             )
         )
         return row is not None
+
+    # -- topic→device pin (affinity, v4) -----------------------------------
+
+    async def topic_device(self, topic_id: uuid.UUID) -> str | None:
+        return await self._session.scalar(
+            select(DeviceTopicRow.device_id).where(DeviceTopicRow.topic_id == topic_id)
+        )
+
+    async def bind_topic_device(self, topic_id: uuid.UUID, device_id: str) -> None:
+        # write-once: never overwrite an existing pin (affinity is permanent).
+        if await self._session.get(DeviceTopicRow, topic_id) is not None:
+            return
+        self._session.add(DeviceTopicRow(topic_id=topic_id, device_id=device_id))
+        await self._session.flush()

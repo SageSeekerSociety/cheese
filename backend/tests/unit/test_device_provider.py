@@ -49,7 +49,7 @@ class FakeHub:
 
 
 def _provider(hub: FakeHub, router: HookRouter, agent_id: uuid.UUID) -> DeviceProvider:
-    async def resolver(_project_id):
+    async def resolver(_project_id, _topic_id):
         return ("dev1", agent_id, "agent-x")
 
     return DeviceProvider(
@@ -125,7 +125,7 @@ async def test_no_topic_is_a_clean_error():
 async def test_no_online_device_is_a_clean_error():
     hub = FakeHub()
 
-    async def resolver(_project_id):
+    async def resolver(_project_id, _topic_id):
         return None  # nothing online / bound
 
     provider = DeviceProvider(

@@ -1,10 +1,10 @@
 """SQLAlchemy models backing the device flow (SQL repository).
 
-Three tables mirror the storage-agnostic dataclasses in ``repository.py``:
+Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 ``device`` (enrolled compute machines + durable token), ``device_auth_code``
-(short-lived device-flow codes) and ``device_project`` (device↔project assignments).
-``SqlDeviceRepository`` converts between these rows and the dataclasses; the service
-never sees them.
+(short-lived device-flow codes), ``device_project`` (device↔project assignments) and
+``device_topic`` (a topic's pinned device — affinity, v4). ``SqlDeviceRepository``
+converts between these rows and the dataclasses; the service never sees them.
 """
 
 import uuid
@@ -66,3 +66,21 @@ class DeviceProjectRow(Timestamps, Base):
         ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
     )
     project_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+
+
+class DeviceTopicRow(Base):
+    """A topic→device pin (execution-architecture v4 §affinity). The device a topic's
+    turns run on, frozen on the first turn: the topic's work tree + resumable claude
+    session live on that one machine, so every later turn MUST return to it — never
+    drift to another online device (which would silently start from an empty tree and
+    corrupt session resume). 1:1 — ``topic_id`` is the primary key. ``project_id`` /
+    ``topics.id`` are stored as bare Uuids (no cross-table FK, matching
+    ``device_project.project_id``); the device FK cascades so a removed device drops
+    its pins."""
+
+    __tablename__ = "device_topic"
+
+    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    device_id: Mapped[str] = mapped_column(
+        ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
+    )

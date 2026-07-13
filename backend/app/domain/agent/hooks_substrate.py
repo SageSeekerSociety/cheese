@@ -153,13 +153,13 @@ class HooksTurnProvider[ScreenT]:
     def available(self) -> bool:
         return True
 
-    async def _precheck(self, project_id: uuid.UUID) -> object:
+    async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the hook
         queue is claimed (preserves the pre-refactor ordering: a turn that can't
         run at all never touches the router — review finding). Raise
         ``ScreenSetupError`` to end the turn with a clean error result. The return
         value is handed to ``_ensure_ready`` as ``precheck`` so a subclass doesn't
-        resolve twice (e.g. the device backend resolves its device here)."""
+        resolve twice (e.g. the device backend resolves its pinned device here)."""
         return None
 
     async def _ensure_ready(
@@ -217,7 +217,7 @@ class HooksTurnProvider[ScreenT]:
         # device): a turn that can't run must never evict a live queue or widen
         # the stale-hook window (review finding — matches pre-refactor ordering).
         try:
-            precheck = await self._precheck(project_id)
+            precheck = await self._precheck(project_id, topic_id)
         except ScreenSetupError as exc:
             yield AgentResult(
                 text=str(exc), session_id=resume_session_id, is_error=True

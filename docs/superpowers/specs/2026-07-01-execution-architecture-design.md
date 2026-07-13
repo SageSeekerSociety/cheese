@@ -225,3 +225,46 @@ ExecutionProfile(project):
 2. 建 `ComputePool` + `LocalDockerProvider`（v2 的 run_turn 接缝）——与 AIPool **对称**：providers 注册表 + select + 默认实现 + 测试。
 3. 两池接进 `ExecutionProfile`（项目各选一）+ 计量计费 + 三级看板。
 4. 远端 compute provider / 多 AI provider 按已定接口填空。
+
+---
+
+# v4 修订（算力：归属=团队 context / 选择=会话级 / 默认=项目 sticky / session_id 冻结锁）
+
+v3 把 compute 选择挂在**项目层**（`ComputePool.select(project)`）。经与 andyl 过 UI/IA 后细化：算力的**归属**在团队(context)、**选择**在会话(topic)、**默认**靠项目 sticky 记忆；并把"话题实例化后钉住、绝不漂"这条**数据正确性红线**写死（原始 PR bug 的定稿修复）。与上文冲突处以本节为准。
+
+> 前提：产品形态 = **一套代码的 N 个隔离部署**（每机构一个 + 消费版），deployment = 机构/租户。v3 "三级可见"的**机构级 = 部署本身**，不再是 in-app 多空间。归属层（团队/工作区一等公民、项目归属收敛到团队）由 **Space refactor**（独立 issue #47）承载；本节算力模型踩在它上面，但**下面的 §affinity 冻结不依赖它，可独立落地**。
+
+## §归属：算力属于团队(context)，deployment 隔离机构
+
+- **Device = 一个 daemon 实例**（enroll 一次 = 一个 config/WS/在线态 = 一个 `device_id`；**一台机器可跑多个**：多用户/多项目各自 daemon）。归属一个**团队/工作区**——个人 = 单人工作区（真实的 solo context，非虚）。
+- **可见性 = 同 context**：一个项目能选的算力 = **它所属团队的设备 + 平台**。无跨团队借用；想共享给别的团队 = 改设备归属（显式动作）。deployment 已隔离机构，故无跨租户算力。
+- 这取代了早先的 `device_project` N:N「登记」争论：归属在团队、项目可见性由团队派生。
+
+## §选择：团队池 → 项目 sticky → 会话选择（三级，各管各的）
+
+| 层 | 管什么 | 载体 |
+|---|---|---|
+| **团队** | 算力池（self-hosted 设备 / 虚拟 GPU 节点 / 平台默认）+ 团队默认 | 团队页（成员+算力） |
+| **项目** | **记住上次用的算力**（sticky，初始=团队默认），作新会话起点 | `Project.sticky_compute`（隐式记忆，**无独立配置页**） |
+| **会话(topic)** | 建时默认沿用项目 sticky，**发第一条消息前可切**；切了同时更新项目 sticky | `Topic.compute`（冻结的 target） |
+
+即：**团队给池 → 项目记住上次 → 新会话默认沿用、可改、发消息即锁**。零配置页，却不用每次手选。
+
+## §affinity：实例化冻结（数据正确性红线，独立可落地）
+
+- **分界线 = `Topic.session_id`**（首轮捕获，已有字段）。`session_id IS NULL` = 未实例化，算力可切；**非空 = 已落地，锁定**。
+- 首轮把选择**物化**成具体 compute target 写回 `Topic.compute`，此后只读。
+- **自托管设备离线 → 该会话排队 / 报"算力离线"，绝不漂到别处**：工作树 + `~/.claude` session 都在那台机器，漂移 = 静默丢历史 + resume 损坏。这条是原始 bug（"话题实例化后会漂到别的在线设备"）的定稿修复，**不依赖归属/IA 重构，可先落地**。
+- 平台/虚拟节点无漂移问题（provider 内部保证逻辑节点稳定，虚拟化 reuse 对上层透明）。
+
+## §compute target 多态（承接 v2 R2/R9 + v3 ComputePool）
+
+- 一个 target 解析到一个 provider：`LocalDocker`(平台默认) / `SelfHosted`(设备) / `GpuProvider`(**虚拟节点**如 H100:8——平台 GPU 池 provision + **虚拟化 reuse**)。
+- **平台不是特例，是"默认那个 provider"**：解析 + 冻结对所有 target **统一**；平台/设备只在最后 provider 派发时分叉。
+- 每个 provider **自管 backing 与 reuse**：GPU 池的虚拟化/复用是 `GpuProvider` 内部实现，**不进** device↔项目 的关系模型（澄清早先"团队共享物理 GPU 靠 N:N"的误判——那是平台侧虚拟化）。
+
+## §对 v2/v3 落点的修正
+
+- v3 `ComputePool.select(project)` → 细化为 `select(team-context)` 得池、`resolve(topic)` 得该会话冻结的 target。`Topic` 增 `compute` 字段；`Project` 增 `sticky_compute`；冻结分界线复用已有 `Topic.session_id`。
+- v2 R1 `topic_turn` lease / R2 `run_turn` 契约不变；**affinity 冻结与 lease 正交**（lease 管"同话题串行"，affinity 管"钉在哪台"）。
+- UI 落点（实现细节，非本 spec）：会话算力选择器落在**新建话题流程 / 草稿话题 composer 那条**（`# 本话题 · @芝士` 旁），锁定态显示 🔒。

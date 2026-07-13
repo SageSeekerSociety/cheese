@@ -13,6 +13,7 @@ class InMemoryDeviceRepository:
     def __init__(self) -> None:
         self._codes: dict[str, AuthCode] = {}
         self._devices: dict[str, Device] = {}
+        self._topic_device: dict[uuid.UUID, str] = {}
 
     async def save_code(self, code: AuthCode) -> None:
         self._codes[code.code] = code
@@ -58,3 +59,10 @@ class InMemoryDeviceRepository:
     async def is_assigned(self, device_id: str, project_id: uuid.UUID) -> bool:
         device = self._devices.get(device_id)
         return device is not None and project_id in device.project_ids
+
+    async def topic_device(self, topic_id: uuid.UUID) -> str | None:
+        return self._topic_device.get(topic_id)
+
+    async def bind_topic_device(self, topic_id: uuid.UUID, device_id: str) -> None:
+        # write-once: an existing pin is permanent (affinity never drifts).
+        self._topic_device.setdefault(topic_id, device_id)

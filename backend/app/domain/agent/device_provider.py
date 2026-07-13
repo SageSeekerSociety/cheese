@@ -34,8 +34,44 @@ from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.identity.services import CHEESE_HANDLE
 from app.domain.user.repositories import UserRepository
 
-# Resolve an online device serving a project → (device_id, agent_user_id, agent_handle).
-DeviceResolver = Callable[[uuid.UUID], Awaitable["tuple[str, int, str] | None"]]
+# Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
+# agent_handle). Takes both ids because the device is chosen with topic affinity, not
+# just per project (execution-architecture v4 §affinity).
+DeviceResolver = Callable[
+    [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
+]
+
+
+async def resolve_pinned_device(
+    service: DeviceService,
+    is_online: Callable[[str], bool],
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+) -> str | None:
+    """The device this topic's turn must run on (execution-architecture v4 §affinity).
+
+    A topic's work tree + resumable claude session live on ONE machine. So:
+      * already pinned → return it **iff online**; if the pinned device is offline,
+        raise (queue/retry) — NEVER fall back to another device, which would start
+        from an empty tree and corrupt session resume (the original drift bug);
+      * not yet pinned (first turn) → pick an online device serving the project and
+        **pin it** (write-once), so every later turn returns to the same machine.
+
+    Returns the device id, or ``None`` when no bound device is online at all (the
+    caller turns that into a clean "no online device" turn error)."""
+    pinned = await service.topic_device(topic_id)
+    if pinned is not None:
+        if is_online(pinned):
+            return pinned
+        raise ScreenSetupError(
+            "话题绑定的算力设备已离线，请重新连接该设备再继续本轮"
+            "（不会漂到别的设备，以免工作树/会话错乱）"
+        )
+    for device in await service.list_devices_for_project(project_id):
+        if is_online(device.device_id):
+            await service.bind_topic_device(topic_id, device.device_id)
+            return device.device_id
+    return None
 
 
 class DeviceProvider(HooksTurnProvider[HubScreen]):
@@ -75,10 +111,16 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
     # --- device / screen resolution ----------------------------------------
 
     async def _resolve_device_agent(
-        self, project_id: uuid.UUID
+        self, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> tuple[str, int, str] | None:
-        """An online device serving ``project_id`` → ``(device_id, agent_user_id,
-        agent_handle)``, or ``None`` when no bound device is online.
+        """The device this topic's turn runs on + its agent identity →
+        ``(device_id, agent_user_id, agent_handle)``, or ``None`` when no bound device
+        is online. Raises ``ScreenSetupError`` when the topic's *pinned* device is
+        offline (queue, don't drift — v4 §affinity).
+
+        Device pick has **topic affinity** (``resolve_pinned_device``): a topic freezes
+        to the device its first turn ran on and every later turn returns to it — never
+        drifts to another online device (which would lose the work tree / break resume).
 
         The device is PURE COMPUTE (execution-architecture v3: AIPool ⊥ ComputePool) —
         it carries no agent identity. The agent a screen runs as is the *project's*
@@ -89,7 +131,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         When per-project agents land, only this resolution changes; the device stays
         pure compute."""
         if self._device_resolver is not None:
-            return await self._device_resolver(project_id)
+            return await self._device_resolver(project_id, topic_id)
         factory = self._session_factory
         if factory is None:
             from app.core.db import async_session_factory
@@ -97,13 +139,18 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             factory = async_session_factory
         async with factory() as session:
             service = DeviceService(SqlDeviceRepository(session))
-            for device in await service.list_devices_for_project(project_id):
-                if self._hub.is_online(device.device_id):
-                    agent = await UserRepository(session).get_by_handle(CHEESE_HANDLE)
-                    if agent is None:
-                        return None
-                    return device.device_id, agent.id, agent.username
-        return None
+            device_id = await resolve_pinned_device(
+                service, self._hub.is_online, project_id, topic_id
+            )
+            if device_id is None:
+                return None
+            agent = await UserRepository(session).get_by_handle(CHEESE_HANDLE)
+            if agent is None:
+                return None
+            # Persist the pin created above (first turn) before the turn proceeds, so a
+            # concurrent/next turn sees the same device.
+            await session.commit()
+            return device_id, agent.id, agent.username
 
     def _existing_screen(self, device_id: str, topic_id: uuid.UUID) -> HubScreen | None:
         for screen in self._hub.all_online_screens():
@@ -161,11 +208,14 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
     # --- turn --------------------------------------------------------------
 
-    async def _precheck(self, project_id: uuid.UUID) -> tuple[str, int, str]:
-        """Resolve an online bound device + its agent identity BEFORE the base
-        claims the topic's hook queue (pre-refactor ordering, review finding).
-        The resolved tuple is handed back to ``_ensure_ready`` via ``precheck``."""
-        resolved = await self._resolve_device_agent(project_id)
+    async def _precheck(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> tuple[str, int, str]:
+        """Resolve the topic's pinned/online device + its agent identity BEFORE the
+        base claims the topic's hook queue (pre-refactor ordering, review finding).
+        The resolved tuple is handed back to ``_ensure_ready`` via ``precheck``.
+        Raises ``ScreenSetupError`` (offline pinned device, or none online)."""
+        resolved = await self._resolve_device_agent(project_id, topic_id)
         if resolved is None:
             raise ScreenSetupError(
                 "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"

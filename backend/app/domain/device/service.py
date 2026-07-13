@@ -182,6 +182,18 @@ class DeviceService:
     async def list_devices_for_project(self, project_id: uuid.UUID) -> list[Device]:
         return await self._repo.list_devices_by_project(project_id)
 
+    # -- topic → device pin (affinity, execution-architecture v4) ----------
+
+    async def topic_device(self, topic_id: uuid.UUID) -> str | None:
+        """The device a topic is frozen to (``None`` before its first turn). Its work
+        tree + resumable session live there; later turns must return to it."""
+        return await self._repo.topic_device(topic_id)
+
+    async def bind_topic_device(self, topic_id: uuid.UUID, device_id: str) -> None:
+        """Pin a topic to the device its first turn ran on. Write-once — an existing
+        pin is never overwritten (affinity is permanent for the topic's lifetime)."""
+        await self._repo.bind_topic_device(topic_id, device_id)
+
     async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)
         if device is None:

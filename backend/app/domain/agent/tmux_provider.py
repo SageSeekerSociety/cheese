@@ -323,9 +323,10 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             merged["CHEESE_TURN"] = str(turn_id)
         return merged
 
-    async def _precheck(self, project_id: uuid.UUID) -> object:
+    async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Fail fast when Docker is absent — BEFORE the base claims the topic's
-        hook queue (pre-refactor ordering, review finding)."""
+        hook queue (pre-refactor ordering, review finding). ``topic_id`` is unused
+        here (the local backend has no per-topic device affinity)."""
         if not self.available():
             raise ScreenSetupError(self._needs_topic_message)
         return None
