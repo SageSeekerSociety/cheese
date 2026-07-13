@@ -60,6 +60,20 @@ class InMemoryDeviceRepository:
         device = self._devices.get(device_id)
         return device is not None and project_id in device.project_ids
 
+    async def assign_team(self, device_id: str, team_id: int) -> None:
+        device = self._devices.get(device_id)
+        if device is not None and team_id not in device.team_ids:
+            device.team_ids.append(team_id)
+
+    async def unassign_team(self, device_id: str, team_id: int) -> None:
+        device = self._devices.get(device_id)
+        if device is not None and team_id in device.team_ids:
+            device.team_ids.remove(team_id)
+
+    async def list_team_ids(self, device_id: str) -> list[int]:
+        device = self._devices.get(device_id)
+        return list(device.team_ids) if device is not None else []
+
     async def topic_device(self, topic_id: uuid.UUID) -> str | None:
         return self._topic_device.get(topic_id)
 

@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import UnauthorizedError
+from app.core.errors import ForbiddenError, NotFoundError, UnauthorizedError
 from app.core.tokens import verify_session_token
 from app.domain.agent.device_hub import HubScreen, ViewerTransport, device_hub
 from app.domain.device.repository import Device
@@ -45,6 +45,7 @@ from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.repositories import TeamRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -312,6 +313,10 @@ class RenameDeviceRequest(BaseModel):
     name: str
 
 
+class BindTeamRequest(BaseModel):
+    team_id: int
+
+
 async def _require_user(resolver: ActorResolverDep) -> int:
     actor = await resolver.resolve(fallback_handle=None)
     if not actor.authenticated or actor.user_id is None:
@@ -345,6 +350,9 @@ def _device_view(device: Device) -> dict[str, Any]:
         "name": device.name,
         "online": device_hub.is_online(device.device_id),
         "project_ids": [str(p) for p in device.project_ids],
+        # Teams this machine is registered for (为团队注册设备): every project of
+        # these teams may run on it.
+        "team_ids": list(device.team_ids),
         "screens": _device_screens(device.device_id),
     }
 
@@ -380,3 +388,41 @@ async def unbind_my_device(
     user_id = await _require_user(resolver)
     await service.delete_owned(device_id, actor_user_id=user_id)
     return {"deleted": True, "device_id": device_id}
+
+
+@router.post("/my/devices/{device_id}/teams")
+async def register_device_for_team(
+    device_id: str,
+    body: BindTeamRequest,
+    resolver: ActorResolverDep,
+    service: DeviceServiceDep,
+    db: DbSession,
+) -> dict[str, Any]:
+    """为团队注册设备 (execution-architecture v4): bind a machine the caller owns to a
+    team they belong to, so every project of that team can run on it. Owner-only, and
+    the owner must be a member of the target team."""
+    user_id = await _require_user(resolver)
+    device = await service.get_device(device_id)
+    if device is None or device.owner_user_id != user_id:
+        raise NotFoundError("设备不存在或不属于你")
+    if not await TeamRepository(db).is_team_member(body.team_id, user_id):
+        raise ForbiddenError("你不是该团队成员，不能把设备注册给它")
+    await service.assign_to_team(device_id, body.team_id, actor_user_id=user_id)
+    device = await service.get_device(device_id)
+    return _device_view(device)  # type: ignore[arg-type]
+
+
+@router.delete("/my/devices/{device_id}/teams/{team_id}")
+async def unregister_device_from_team(
+    device_id: str,
+    team_id: int,
+    resolver: ActorResolverDep,
+    service: DeviceServiceDep,
+) -> dict[str, Any]:
+    """Unbind a machine the caller owns from a team (为自己 / 换团队). Owner-only."""
+    user_id = await _require_user(resolver)
+    await service.unassign_from_team(device_id, team_id, actor_user_id=user_id)
+    device = await service.get_device(device_id)
+    if device is None:
+        raise NotFoundError("设备不存在")
+    return _device_view(device)

@@ -586,7 +586,17 @@ export interface MyDevice {
   name: string
   online: boolean
   project_ids: string[]
+  // Teams this machine is registered for (为团队注册设备, v4): every project of
+  // these teams may run on it.
+  team_ids: number[]
   screens: DeviceScreen[]
+}
+
+// A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what
+// the device team-binding selector needs.
+export interface MyTeam {
+  id: number
+  name: string
 }
 
 // The result of approving a pending device flow (binds the machine to its owner).

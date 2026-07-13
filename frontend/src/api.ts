@@ -150,6 +150,28 @@ export function unbindMyDevice(deviceId: string): Promise<{ deleted: boolean; de
   })
 }
 
+// 为团队注册设备 (v4): bind/unbind a machine to a team so the team's projects can
+// run on it. Both return the updated device view.
+export function registerDeviceForTeam(deviceId: string, teamId: number): Promise<import('./cx_types').MyDevice> {
+  return connectorRequest<import('./cx_types').MyDevice>(`/my/devices/${encodeURIComponent(deviceId)}/teams`, {
+    method: 'POST',
+    body: JSON.stringify({ team_id: teamId }),
+  })
+}
+export function unregisterDeviceFromTeam(deviceId: string, teamId: number): Promise<import('./cx_types').MyDevice> {
+  return connectorRequest<import('./cx_types').MyDevice>(
+    `/my/devices/${encodeURIComponent(deviceId)}/teams/${teamId}`,
+    { method: 'DELETE' }
+  )
+}
+
+// The teams the signed-in user belongs to (for the device team-binding selector).
+export function listMyTeams(): Promise<import('./cx_types').MyTeam[]> {
+  return request<{ teams: Array<{ id: number; name: string }> }>('/teams/my-teams').then((r) =>
+    r.teams.map((t) => ({ id: t.id, name: t.name }))
+  )
+}
+
 // Absolute WS URL for a device screen's 现场 (read-only terminal). The session token
 // rides as ?token= (browsers can't set an Authorization header on a WebSocket); the
 // backend authorizes the viewer against the screen's project/topic membership.

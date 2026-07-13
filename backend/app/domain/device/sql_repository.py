@@ -11,11 +11,11 @@ from app.domain.device.models import (
     DeviceAuthCodeRow,
     DeviceProjectRow,
     DeviceRow,
+    DeviceTeamRow,
     DeviceTopicRow,
 )
 from app.domain.device.repository import AuthCode, Device
 from app.domain.project.models import Project
-from app.domain.team.models import TeamUserRelation
 
 
 def _aware(dt: datetime) -> datetime:
@@ -75,6 +75,15 @@ class SqlDeviceRepository:
                 )
             ).all()
         )
+        team_ids = list(
+            (
+                await self._session.scalars(
+                    select(DeviceTeamRow.team_id).where(
+                        DeviceTeamRow.device_id == row.device_id
+                    )
+                )
+            ).all()
+        )
         return Device(
             device_id=row.device_id,
             name=row.name,
@@ -82,6 +91,7 @@ class SqlDeviceRepository:
             owner_user_id=row.owner_user_id,
             created_at=_aware(row.created_at),
             project_ids=project_ids,
+            team_ids=team_ids,
         )
 
     async def get_device(self, device_id: str) -> Device | None:
@@ -97,6 +107,9 @@ class SqlDeviceRepository:
     async def delete_device(self, device_id: str) -> None:
         await self._session.execute(
             delete(DeviceProjectRow).where(DeviceProjectRow.device_id == device_id)
+        )
+        await self._session.execute(
+            delete(DeviceTeamRow).where(DeviceTeamRow.device_id == device_id)
         )
         await self._session.execute(
             delete(DeviceTopicRow).where(DeviceTopicRow.device_id == device_id)
@@ -116,10 +129,10 @@ class SqlDeviceRepository:
 
     async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:
         """Machines a project may run on = explicit per-project assignments UNION the
-        project's TEAM's devices (execution-architecture v4: compute belongs to the
-        team). A team device is one whose owner is an active member of the project's
-        team — enroll a machine once for the team and every team project can use it.
-        A personal project (single-member team) resolves to just that member's."""
+        devices bound to the project's TEAM (execution-architecture v4: compute
+        belongs to the team — 为团队注册设备). Bind a machine to a team once and every
+        project of that team can run on it. A project with no team (or none bound)
+        resolves to just its explicit device_project assignments."""
         explicit = (
             await self._session.scalars(
                 select(DeviceProjectRow.device_id).where(
@@ -127,22 +140,15 @@ class SqlDeviceRepository:
                 )
             )
         ).all()
-        team_owned = (
+        team_bound = (
             await self._session.scalars(
-                select(DeviceRow.device_id)
-                .join(
-                    TeamUserRelation,
-                    TeamUserRelation.user_id == DeviceRow.owner_user_id,
-                )
-                .join(Project, Project.team_id == TeamUserRelation.team_id)
-                .where(
-                    Project.id == project_id,
-                    TeamUserRelation.deleted_at.is_(None),
-                )
+                select(DeviceTeamRow.device_id)
+                .join(Project, Project.team_id == DeviceTeamRow.team_id)
+                .where(Project.id == project_id)
             )
         ).all()
         out: list[Device] = []
-        for did in dict.fromkeys([*explicit, *team_owned]):  # de-dup, keep order
+        for did in dict.fromkeys([*explicit, *team_bound]):  # de-dup, keep order
             device = await self.get_device(did)
             if device is not None:
                 out.append(device)
@@ -184,6 +190,40 @@ class SqlDeviceRepository:
             )
         )
         return row is not None
+
+    # -- device↔team bindings (为团队注册设备, v4) --------------------------
+
+    async def assign_team(self, device_id: str, team_id: int) -> None:
+        existing = await self._session.scalar(
+            select(DeviceTeamRow.id).where(
+                DeviceTeamRow.device_id == device_id,
+                DeviceTeamRow.team_id == team_id,
+            )
+        )
+        if existing is not None:
+            return  # idempotent — keep the existing bind
+        self._session.add(DeviceTeamRow(device_id=device_id, team_id=team_id))
+        await self._session.flush()
+
+    async def unassign_team(self, device_id: str, team_id: int) -> None:
+        await self._session.execute(
+            delete(DeviceTeamRow).where(
+                DeviceTeamRow.device_id == device_id,
+                DeviceTeamRow.team_id == team_id,
+            )
+        )
+        await self._session.flush()
+
+    async def list_team_ids(self, device_id: str) -> list[int]:
+        return list(
+            (
+                await self._session.scalars(
+                    select(DeviceTeamRow.team_id).where(
+                        DeviceTeamRow.device_id == device_id
+                    )
+                )
+            ).all()
+        )
 
     # -- topic→device pin (affinity, v4) -----------------------------------
 

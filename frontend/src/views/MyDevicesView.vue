@@ -2,15 +2,21 @@
 // 「我的设备 / Agent」(P3 Phase B item 4): the machines the signed-in human enrolled
 // via the device flow. List them with liveness, rename/unbind, and open the 现场 of any
 // agent (screen) currently running on them — a read-only real terminal in the browser.
+import type { DeviceScreen, MyDevice, MyTeam } from '../cx_types'
+
 import { computed, onMounted, ref } from 'vue'
+
 import {
   listMyDevices,
+  listMyTeams,
+  registerDeviceForTeam,
   renameMyDevice,
   unbindMyDevice,
+  unregisterDeviceFromTeam,
 } from '../api'
-import accountService from '@/services/account'
-import type { DeviceScreen, MyDevice } from '../cx_types'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
+
+import accountService from '@/services/account'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
 // it: AccountService.loggedIn (set from localStorage `accessToken` + `user` at
@@ -29,6 +35,38 @@ const devices = ref<MyDevice[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 
+// 为团队注册设备 (v4): the teams the user belongs to, and per-device bind state.
+const myTeams = ref<MyTeam[]>([])
+const teamBusy = ref<string | null>(null) // `${device_id}:${team_id}` in flight
+function teamName(id: number): string {
+  return myTeams.value.find((t) => t.id === id)?.name ?? `团队 #${id}`
+}
+function bindableTeams(d: MyDevice): MyTeam[] {
+  return myTeams.value.filter((t) => !d.team_ids.includes(t.id))
+}
+
+async function bindTeam(d: MyDevice, teamId: number) {
+  teamBusy.value = `${d.device_id}:${teamId}`
+  try {
+    Object.assign(d, await registerDeviceForTeam(d.device_id, teamId))
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '注册到团队失败'
+  } finally {
+    teamBusy.value = null
+  }
+}
+
+async function unbindTeam(d: MyDevice, teamId: number) {
+  teamBusy.value = `${d.device_id}:${teamId}`
+  try {
+    Object.assign(d, await unregisterDeviceFromTeam(d.device_id, teamId))
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '取消团队注册失败'
+  } finally {
+    teamBusy.value = null
+  }
+}
+
 // The screen whose 现场 is open in the viewer dialog.
 const liveScreen = ref<DeviceScreen | null>(null)
 
@@ -42,9 +80,7 @@ const draftName = ref('')
 // the reachable backend from the user's browser — never hardcoded to a dead port.
 const addDeviceOpen = ref(false)
 const copied = ref(false)
-const installCommand = computed(
-  () => `curl -fsSL ${window.location.origin}/connector/install.sh | sh`,
-)
+const installCommand = computed(() => `curl -fsSL ${window.location.origin}/connector/install.sh | sh`)
 
 async function copyInstall() {
   try {
@@ -65,6 +101,8 @@ async function load() {
   error.value = null
   try {
     devices.value = (await listMyDevices()).devices
+    // Teams for the bind selector — best-effort, never blocks the device list.
+    myTeams.value = await listMyTeams().catch(() => [])
   } catch (e) {
     const msg = e instanceof Error ? e.message : '加载设备失败'
     // We are (client-side) authoritatively signed in, so the connector's
@@ -139,162 +177,134 @@ onMounted(load)
           <h1 class="t-page-title">我的设备</h1>
         </div>
         <v-spacer />
-        <v-btn
-          variant="text"
-          icon="mdi-refresh"
-          class="mr-1"
-          :loading="loading"
-          @click="load"
-        />
-        <v-btn
-          v-if="isLoggedIn"
-          color="primary"
-          variant="flat"
-          prepend-icon="mdi-plus"
-          @click="addDeviceOpen = true"
-        >
+        <v-btn variant="text" icon="mdi-refresh" class="mr-1" :loading="loading" @click="load" />
+        <v-btn v-if="isLoggedIn" color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true">
           添加设备
         </v-btn>
       </div>
 
-      <v-alert
-        v-if="!isLoggedIn"
-        type="info"
-        density="comfortable"
-        class="mb-4"
-      >
+      <v-alert v-if="!isLoggedIn" type="info" density="comfortable" class="mb-4">
         登录后即可管理接入的客户机 / Agent。
       </v-alert>
 
       <template v-else>
-      <v-alert
-        v-if="error"
-        type="error"
-        density="comfortable"
-        class="mb-4"
-        closable
-        @click:close="error = null"
-      >
-        {{ error }}
-      </v-alert>
+        <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
+          {{ error }}
+        </v-alert>
 
-      <!-- Big spinner only on the FIRST load (list still empty). A refresh with data
+        <!-- Big spinner only on the FIRST load (list still empty). A refresh with data
            already on screen keeps the list mounted — the refresh button spins instead
            — so re-fetching never tears the list down and flashes. -->
-      <div v-if="loading && devices.length === 0" class="d-flex justify-center py-10">
-        <v-progress-circular indeterminate color="primary" />
-      </div>
-
-      <div v-else-if="devices.length === 0" class="empty-state text-center py-10">
-        <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
-        <div class="t-body c-muted mb-1">还没有连接的设备。</div>
-        <div class="t-caption c-muted mb-5">
-          在你的机器上运行下面这条命令，按提示批准，设备就会出现在这里。
+        <div v-if="loading && devices.length === 0" class="d-flex justify-center py-10">
+          <v-progress-circular indeterminate color="primary" />
         </div>
 
-        <!-- Copyable install one-liner, right in the empty-state so the user can
+        <div v-else-if="devices.length === 0" class="empty-state text-center py-10">
+          <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
+          <div class="t-body c-muted mb-1">还没有连接的设备。</div>
+          <div class="t-caption c-muted mb-5">在你的机器上运行下面这条命令，按提示批准，设备就会出现在这里。</div>
+
+          <!-- Copyable install one-liner, right in the empty-state so the user can
              act without hunting for a dialog. -->
-        <div class="install-cmd mx-auto mb-4">
-          <code class="install-cmd__code">{{ installCommand }}</code>
-          <v-btn
-            :color="copied ? 'success' : 'primary'"
-            variant="text"
-            size="small"
-            :prepend-icon="copied ? 'mdi-check' : 'mdi-content-copy'"
-            @click="copyInstall"
-          >
-            {{ copied ? '已复制' : '复制' }}
-          </v-btn>
-        </div>
-
-        <v-btn
-          color="primary"
-          variant="flat"
-          prepend-icon="mdi-plus"
-          @click="addDeviceOpen = true"
-        >
-          添加设备
-        </v-btn>
-      </div>
-
-      <v-card
-        v-for="d in devices"
-        :key="d.device_id"
-        class="mb-3 pa-4"
-        variant="outlined"
-      >
-        <div class="d-flex align-center">
-          <v-icon
-            :color="d.online ? 'success' : 'grey'"
-            size="12"
-            class="mr-2"
-          >
-            mdi-circle
-          </v-icon>
-
-          <template v-if="renaming === d.device_id">
-            <v-text-field
-              v-model="draftName"
-              density="compact"
-              variant="outlined"
-              hide-details
-              autofocus
-              style="max-width: 260px"
-              @keyup.enter="saveRename(d)"
-              @blur="saveRename(d)"
-            />
-          </template>
-          <template v-else>
-            <span class="t-title">{{ d.name }}</span>
+          <div class="install-cmd mx-auto mb-4">
+            <code class="install-cmd__code">{{ installCommand }}</code>
             <v-btn
+              :color="copied ? 'success' : 'primary'"
               variant="text"
-              size="x-small"
-              icon="mdi-pencil"
-              class="ml-1"
-              @click="startRename(d)"
-            />
-          </template>
-
-          <v-spacer />
-          <span
-            class="t-caption mr-3"
-            :class="d.online ? 'text-success font-weight-medium' : 'c-muted'"
-          >
-            {{ d.online ? '在线' : '离线' }}
-          </span>
-          <v-btn
-            variant="text"
-            size="small"
-            color="error"
-            @click="askUnbind(d)"
-          >
-            解绑
-          </v-btn>
-        </div>
-
-        <!-- A device is pure compute (算力节点), not an agent. Which agents run on it
-             are the 现场 chips below — each screen carries its own agent identity. -->
-        <div class="t-caption c-muted mt-1">
-          算力节点 · <span style="font-family: monospace">{{ d.device_id }}</span>
-        </div>
-
-        <div v-if="d.screens.length" class="mt-3">
-          <div class="t-caption c-muted mb-1">运行中的 agent 现场</div>
-          <div class="d-flex flex-wrap ga-2">
-            <v-chip
-              v-for="s in d.screens"
-              :key="s.sid"
-              color="primary"
-              variant="tonal"
               size="small"
-              @click="liveScreen = s"
+              :prepend-icon="copied ? 'mdi-check' : 'mdi-content-copy'"
+              @click="copyInstall"
             >
-              <v-icon start size="14">mdi-monitor-eye</v-icon>
-              看现场 · @{{ s.agent_handle }}
-            </v-chip>
+              {{ copied ? '已复制' : '复制' }}
+            </v-btn>
           </div>
+
+          <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="addDeviceOpen = true"> 添加设备 </v-btn>
         </div>
-      </v-card>
+
+        <v-card v-for="d in devices" :key="d.device_id" class="mb-3 pa-4" variant="outlined">
+          <div class="d-flex align-center">
+            <v-icon :color="d.online ? 'success' : 'grey'" size="12" class="mr-2"> mdi-circle </v-icon>
+
+            <template v-if="renaming === d.device_id">
+              <v-text-field
+                v-model="draftName"
+                density="compact"
+                variant="outlined"
+                hide-details
+                autofocus
+                style="max-width: 260px"
+                @keyup.enter="saveRename(d)"
+                @blur="saveRename(d)"
+              />
+            </template>
+            <template v-else>
+              <span class="t-title">{{ d.name }}</span>
+              <v-btn variant="text" size="x-small" icon="mdi-pencil" class="ml-1" @click="startRename(d)" />
+            </template>
+
+            <v-spacer />
+            <span class="t-caption mr-3" :class="d.online ? 'text-success font-weight-medium' : 'c-muted'">
+              {{ d.online ? '在线' : '离线' }}
+            </span>
+            <v-btn variant="text" size="small" color="error" @click="askUnbind(d)"> 解绑 </v-btn>
+          </div>
+
+          <!-- A device is pure compute (算力节点), not an agent. Which agents run on it
+             are the 现场 chips below — each screen carries its own agent identity. -->
+          <div class="t-caption c-muted mt-1">
+            算力节点 · <span style="font-family: monospace">{{ d.device_id }}</span>
+          </div>
+
+          <!-- 为团队注册设备 (v4): bind this machine to a team so the team's projects
+             can run on it. Bound teams show as removable chips; the menu adds more. -->
+          <div class="mt-3">
+            <div class="t-caption c-muted mb-1">算力归属团队</div>
+            <div class="d-flex flex-wrap align-center ga-2">
+              <v-chip
+                v-for="tid in d.team_ids"
+                :key="tid"
+                size="small"
+                variant="tonal"
+                color="primary"
+                closable
+                :disabled="teamBusy === `${d.device_id}:${tid}`"
+                @click:close="unbindTeam(d, tid)"
+              >
+                <v-icon start size="14">mdi-account-group</v-icon>
+                {{ teamName(tid) }}
+              </v-chip>
+              <span v-if="!d.team_ids.length" class="t-caption c-muted">
+                未注册给任何团队（仅你在项目里显式分配时可用）
+              </span>
+              <v-menu v-if="bindableTeams(d).length" location="bottom start">
+                <template #activator="{ props: menuProps }">
+                  <v-btn v-bind="menuProps" size="x-small" variant="text" prepend-icon="mdi-plus"> 注册给团队 </v-btn>
+                </template>
+                <v-list density="compact">
+                  <v-list-item v-for="t in bindableTeams(d)" :key="t.id" :title="t.name" @click="bindTeam(d, t.id)" />
+                </v-list>
+              </v-menu>
+            </div>
+          </div>
+
+          <div v-if="d.screens.length" class="mt-3">
+            <div class="t-caption c-muted mb-1">运行中的 agent 现场</div>
+            <div class="d-flex flex-wrap ga-2">
+              <v-chip
+                v-for="s in d.screens"
+                :key="s.sid"
+                color="primary"
+                variant="tonal"
+                size="small"
+                @click="liveScreen = s"
+              >
+                <v-icon start size="14">mdi-monitor-eye</v-icon>
+                看现场 · @{{ s.agent_handle }}
+              </v-chip>
+            </div>
+          </div>
+        </v-card>
       </template>
     </v-container>
 
@@ -307,9 +317,7 @@ onMounted(load)
           <v-spacer />
           <v-btn variant="text" icon="mdi-close" size="small" @click="addDeviceOpen = false" />
         </div>
-        <div class="t-caption c-muted mb-4">
-          在你想接入的机器上运行下面这条命令，即可把它连接到 CheeseX。
-        </div>
+        <div class="t-caption c-muted mb-4">在你想接入的机器上运行下面这条命令，即可把它连接到 CheeseX。</div>
 
         <div class="install-cmd mb-5">
           <code class="install-cmd__code">{{ installCommand }}</code>
@@ -345,11 +353,7 @@ onMounted(load)
       </v-card>
     </v-dialog>
 
-    <v-dialog
-      :model-value="liveScreen !== null"
-      max-width="900"
-      @update:model-value="liveScreen = null"
-    >
+    <v-dialog :model-value="liveScreen !== null" max-width="900" @update:model-value="liveScreen = null">
       <v-card v-if="liveScreen" class="pa-3">
         <div class="d-flex align-center mb-2">
           <span class="t-title">现场 · @{{ liveScreen.agent_handle }}</span>
@@ -363,32 +367,20 @@ onMounted(load)
     </v-dialog>
 
     <!-- Unbind confirmation — an in-app dialog, not the browser's native confirm(). -->
-    <v-dialog
-      :model-value="unbindTarget !== null"
-      max-width="440"
-      @update:model-value="unbindTarget = null"
-    >
+    <v-dialog :model-value="unbindTarget !== null" max-width="440" @update:model-value="unbindTarget = null">
       <v-card v-if="unbindTarget" class="pa-5">
         <div class="d-flex align-center mb-3">
           <v-icon color="error" class="mr-2">mdi-link-variant-off</v-icon>
           <span class="t-title">解绑设备</span>
         </div>
         <div class="t-body mb-1">
-          确定解绑设备「<strong>{{ unbindTarget.name }}</strong>」吗？
+          确定解绑设备「<strong>{{ unbindTarget.name }}</strong
+          >」吗？
         </div>
-        <div class="t-caption c-muted mb-5">
-          它的登录令牌将立即失效，该机器需重新接入才能再次连接。
-        </div>
+        <div class="t-caption c-muted mb-5">它的登录令牌将立即失效，该机器需重新接入才能再次连接。</div>
         <div class="d-flex justify-end">
           <v-btn variant="text" class="mr-2" @click="unbindTarget = null">取消</v-btn>
-          <v-btn
-            color="error"
-            variant="flat"
-            :loading="unbinding"
-            @click="confirmUnbind"
-          >
-            解绑
-          </v-btn>
+          <v-btn color="error" variant="flat" :loading="unbinding" @click="confirmUnbind"> 解绑 </v-btn>
         </div>
       </v-card>
     </v-dialog>

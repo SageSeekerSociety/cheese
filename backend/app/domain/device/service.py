@@ -174,6 +174,24 @@ class DeviceService:
     async def list_projects(self, device_id: str) -> list[uuid.UUID]:
         return await self._repo.list_project_ids(device_id)
 
+    async def assign_to_team(
+        self, device_id: str, team_id: int, *, actor_user_id: int
+    ) -> None:
+        """Bind the device to a team (为团队注册设备, v4): every project of that team
+        may then run on it. Only the device's owner may bind; the caller separately
+        checks the owner is a member of that team."""
+        await self._require_owned(device_id, actor_user_id)
+        await self._repo.assign_team(device_id, team_id)
+
+    async def unassign_from_team(
+        self, device_id: str, team_id: int, *, actor_user_id: int
+    ) -> None:
+        await self._require_owned(device_id, actor_user_id)
+        await self._repo.unassign_team(device_id, team_id)
+
+    async def list_teams(self, device_id: str) -> list[int]:
+        return await self._repo.list_team_ids(device_id)
+
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
         """Whether the device is assigned to the project — the precondition for
         running an agent (screen) there."""

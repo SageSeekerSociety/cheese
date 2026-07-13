@@ -2,7 +2,8 @@
 
 Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 ``device`` (enrolled compute machines + durable token), ``device_auth_code``
-(short-lived device-flow codes), ``device_project`` (device↔project assignments) and
+(short-lived device-flow codes), ``device_project`` (device↔project assignments),
+``device_team`` (device↔team bindings — compute belongs to the team, v4) and
 ``device_topic`` (a topic's pinned device — affinity, v4). ``SqlDeviceRepository``
 converts between these rows and the dataclasses; the service never sees them.
 """
@@ -10,7 +11,15 @@ converts between these rows and the dataclasses; the service never sees them.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, Uuid
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -66,6 +75,22 @@ class DeviceProjectRow(Timestamps, Base):
         ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
     )
     project_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+
+
+class DeviceTeamRow(Timestamps, Base):
+    """A device↔team binding (execution-architecture v4: compute belongs to the team).
+    A device bound to a team is usable by every project of that team — 为团队注册设备.
+    The device's owner manages these (many-to-many). ``team_id`` is a bare BigInteger
+    (no cross-table FK, matching ``device_project.project_id``)."""
+
+    __tablename__ = "device_team"
+    __table_args__ = (UniqueConstraint("device_id", "team_id", name="uq_device_team"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    device_id: Mapped[str] = mapped_column(
+        ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    team_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
 
 
 class DeviceTopicRow(Base):

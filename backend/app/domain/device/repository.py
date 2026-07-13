@@ -24,6 +24,9 @@ class Device:
     owner_user_id: int
     created_at: datetime
     project_ids: list[uuid.UUID] = field(default_factory=list)
+    # Teams this device is bound to (为团队注册设备, v4): every project of these
+    # teams may run on it. Empty = personal (usable only via explicit project assign).
+    team_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -55,6 +58,12 @@ class DeviceRepository(Protocol):
     async def unassign_project(self, device_id: str, project_id: uuid.UUID) -> None: ...
     async def list_project_ids(self, device_id: str) -> list[uuid.UUID]: ...
     async def is_assigned(self, device_id: str, project_id: uuid.UUID) -> bool: ...
+
+    # device↔team bindings (为团队注册设备, v4): a device bound to a team is usable by
+    # every project of that team. ``assign`` is idempotent (an existing bind is kept).
+    async def assign_team(self, device_id: str, team_id: int) -> None: ...
+    async def unassign_team(self, device_id: str, team_id: int) -> None: ...
+    async def list_team_ids(self, device_id: str) -> list[int]: ...
 
     # topic→device pin (affinity, v4): the device a topic is frozen to on its
     # first turn. ``bind`` is write-once — an existing pin is never overwritten.
