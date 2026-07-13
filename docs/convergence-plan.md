@@ -13,7 +13,7 @@
 | P3 | self-hosted 设备连接器：**他们 frozen cli 零改动拨入我们后端、跑真 turn、hooks 感知回流 + screen 中继**（Phase A 真机实证）；device 域/hub/link.Msg/attribution/DeviceProvider 全我们代码 | 439，Phase A logs |
 | P4 | clone agent（transcript-fork，bind-mount 宿主文件直读）；resume 接通；cheese CLI raw-api 逃生口（带 token 不绕鉴权） | 460 |
 
-统一状态：alembic 单 head `d3b8f1a20c11`、ruff/pyright 零错、后端 460 passed、前端 53。
+统一状态（P0–P4 收敛时的历史快照，非当前值——现状以 `alembic heads` 与门禁输出为准）：alembic 单 head `d3b8f1a20c11`、ruff/pyright 零错、后端 460 passed、前端 53。
 
 ## 2. 收敛方向（我们 ⇄ 主 repo）
 

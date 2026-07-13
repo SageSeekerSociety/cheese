@@ -23,7 +23,7 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright
 
 ## Development Commands
 
-Backend runs locally via `uv run` from `backend/`. Infrastructure (PG, Valkey, ES) in Docker. Use Taskfile:
+Backend runs locally via `uv run` from `backend/`. Infrastructure (PG, Valkey) in Docker. Use Taskfile:
 
 ```bash
 task check                # all checks (backend + frontend)

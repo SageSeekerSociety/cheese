@@ -16,10 +16,8 @@ import type {
   MarketNodes,
   MarketPools,
   MarketTask,
-  Me,
   MemberSummary,
   MilestoneFull,
-  Notification,
   PreviewInfo,
   Project,
   ProjectCredits,
@@ -27,8 +25,6 @@ import type {
   ProjectOverview,
   ReactionAgg,
   SandboxImageInfo,
-  Space,
-  SpaceDashboard,
   TaskApplication,
   Topic,
   TopicMemberRow,
@@ -63,65 +59,6 @@ export function authToken(): string {
 function authHeaders(): Record<string, string> {
   const token = authToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
-// ---- Fusion merge (A5): the original 知是 product API lives at the ROOT
-// (no /api prefix) and is authed by the real access token (account.ts, stored
-// under 'accessToken'). These helpers let our shell log in with a real account
-// and read the product surfaces (spaces/tasks/teams). ----
-export function productToken(): string {
-  return localStorage.getItem('accessToken') ?? ''
-}
-
-async function productRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = productToken()
-  const res = await fetch(path, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-  })
-  const envelope = (await res.json()) as { code: number; message: string; data: T }
-  if (envelope.code !== 200 && envelope.code !== 201) {
-    throw new Error(envelope.message || `product API error ${envelope.code}`)
-  }
-  return envelope.data
-}
-
-export interface ProductSpace {
-  id: number
-  name: string
-  intro?: string
-  description?: string
-  avatar?: string
-}
-
-export interface ProductTeam {
-  id: number
-  name: string
-  intro?: string
-}
-
-/** Real login against the product auth (username/password). Returns the token +
- * user; the caller stores it via account.ts so product calls are authed. */
-export function loginProduct(
-  username: string,
-  password: string,
-): Promise<{ accessToken: string; user: { id: number; username: string; nickname?: string } }> {
-  return productRequest('/users/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ username, password }),
-  })
-}
-
-export function listProductSpaces(): Promise<{ spaces: ProductSpace[] }> {
-  return productRequest('/spaces?pageStart=0&pageSize=50')
-}
-
-export function listProductTeams(): Promise<{ teams: ProductTeam[] }> {
-  return productRequest('/teams?pageStart=0&pageSize=50')
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -570,16 +507,6 @@ export function sendFeedback(
 }
 
 // 机构看板 / Space 看板 (eval F3).
-export function listSpaces(): Promise<ListPayload<Space>> {
-  return request<ListPayload<Space>>('/spaces')
-}
-
-export function getSpaceDashboard(spaceId: string): Promise<SpaceDashboard> {
-  return request<SpaceDashboard>(
-    `/spaces/${encodeURIComponent(spaceId)}/dashboard`,
-  )
-}
-
 export function listBlocks(topicId: string): Promise<ListPayload<Block>> {
   return request<ListPayload<Block>>(
     `/topics/${encodeURIComponent(topicId)}/blocks`,
@@ -991,90 +918,6 @@ export function listMilestones(
 ): Promise<ListPayload<MilestoneFull>> {
   return request<ListPayload<MilestoneFull>>(
     `/projects/${encodeURIComponent(projectId)}/milestones`,
-  )
-}
-
-// ---- 通知中心 (G2/G3) ----
-
-// Project notifications addressed to a handle (badge counts unread = read_at null).
-export function getNotifications(
-  projectId: string,
-  targetHandle: string,
-): Promise<ListPayload<Notification>> {
-  return request<ListPayload<Notification>>(
-    `/projects/${encodeURIComponent(projectId)}/notifications?target_handle=${encodeURIComponent(
-      targetHandle,
-    )}`,
-  )
-}
-
-// Server-side bell badge: unread, non-silent, visible to this user.
-export function getNotificationUnreadCount(
-  projectId: string,
-  targetHandle: string,
-): Promise<{ unread: number }> {
-  return request<{ unread: number }>(
-    `/projects/${encodeURIComponent(projectId)}/notifications/unread-count?target_handle=${encodeURIComponent(
-      targetHandle,
-    )}`,
-  )
-}
-
-// 全部标记已读 (Feishu-style).
-export function markAllNotificationsRead(
-  projectId: string,
-  targetHandle: string,
-): Promise<{ marked: number }> {
-  return request<{ marked: number }>(
-    `/projects/${encodeURIComponent(projectId)}/notifications/read-all?target_handle=${encodeURIComponent(
-      targetHandle,
-    )}`,
-    { method: 'POST' },
-  )
-}
-
-export function markNotificationRead(
-  notificationId: string,
-): Promise<Notification> {
-  return request<Notification>(
-    `/notifications/${encodeURIComponent(notificationId)}/read`,
-    { method: 'POST' },
-  )
-}
-
-export function sendNotificationFeedback(
-  notificationId: string,
-  feedback: 'up' | 'down',
-): Promise<Notification> {
-  return request<Notification>(
-    `/notifications/${encodeURIComponent(notificationId)}/feedback`,
-    { method: 'POST', body: JSON.stringify({ feedback }) },
-  )
-}
-
-// 拍板 (spec G2): resolve a decision request by choosing one of its options.
-export function resolveNotification(
-  notificationId: string,
-  chosen: string,
-): Promise<Notification> {
-  return request<Notification>(
-    `/notifications/${encodeURIComponent(notificationId)}/resolve`,
-    { method: 'POST', body: JSON.stringify({ chosen }) },
-  )
-}
-
-// ---- 记一笔 / 导入 (E1/E3) ----
-
-// Ingest raw offline input; 芝士 digests it into a structured [活动] topic.
-// Takes a few seconds. Returns whatever the digestion produced.
-export function ingestActivity(
-  projectId: string,
-  text: string,
-  author: string,
-): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>(
-    `/projects/${encodeURIComponent(projectId)}/activities`,
-    { method: 'POST', body: JSON.stringify({ text, author }) },
   )
 }
 

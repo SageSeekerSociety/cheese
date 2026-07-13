@@ -77,7 +77,7 @@ tasks:
       - task: be:check:full
 
   infra:
-    desc: Start infrastructure services (PG, Valkey, ES)
+    desc: Start infrastructure services (PG, Valkey)
     cmds:
       - docker compose up -d
     status:
