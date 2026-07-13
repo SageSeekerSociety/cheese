@@ -14,6 +14,8 @@ from app.domain.device.models import (
     DeviceTopicRow,
 )
 from app.domain.device.repository import AuthCode, Device
+from app.domain.project.models import Project
+from app.domain.team.models import TeamUserRelation
 
 
 def _aware(dt: datetime) -> datetime:
@@ -113,15 +115,34 @@ class SqlDeviceRepository:
         return [await self._to_device(r) for r in rows]
 
     async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:
-        device_ids = (
+        """Machines a project may run on = explicit per-project assignments UNION the
+        project's TEAM's devices (execution-architecture v4: compute belongs to the
+        team). A team device is one whose owner is an active member of the project's
+        team — enroll a machine once for the team and every team project can use it.
+        A personal project (single-member team) resolves to just that member's."""
+        explicit = (
             await self._session.scalars(
                 select(DeviceProjectRow.device_id).where(
                     DeviceProjectRow.project_id == project_id
                 )
             )
         ).all()
+        team_owned = (
+            await self._session.scalars(
+                select(DeviceRow.device_id)
+                .join(
+                    TeamUserRelation,
+                    TeamUserRelation.user_id == DeviceRow.owner_user_id,
+                )
+                .join(Project, Project.team_id == TeamUserRelation.team_id)
+                .where(
+                    Project.id == project_id,
+                    TeamUserRelation.deleted_at.is_(None),
+                )
+            )
+        ).all()
         out: list[Device] = []
-        for did in device_ids:
+        for did in dict.fromkeys([*explicit, *team_owned]):  # de-dup, keep order
             device = await self.get_device(did)
             if device is not None:
                 out.append(device)
