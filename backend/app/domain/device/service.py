@@ -49,10 +49,15 @@ class DeviceService:
 
     async def start(self, device_name: str | None) -> str:
         """Begin a flow; return the opaque ``device_code`` the client polls on. The
-        route wraps this with the ``approve_url`` (built from its request base)."""
+        route wraps this with the ``approve_url`` (built from its request base).
+
+        The cli often sends no name (``cheesehost auth login`` posts none), so fall
+        back to a readable generated default — never the literal "unnamed". The human
+        can still (re)name the node on the approval page or later."""
         code = AuthCode(
             code=uuid.uuid4().hex,
-            device_name=(device_name or "unnamed").strip() or "unnamed",
+            device_name=(device_name or "").strip()
+            or f"算力节点-{uuid.uuid4().hex[:6]}",
             status=DeviceStatus.PENDING,
             created_at=self._now(),
         )

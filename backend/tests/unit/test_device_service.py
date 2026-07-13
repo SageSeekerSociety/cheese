@@ -46,16 +46,26 @@ async def test_start_then_poll_pending_then_approved():
 
 async def test_approve_name_override_else_keeps_cli_name():
     service, _ = _service()
-    # Blank/omitted name keeps the name the cli proposed at start...
-    code1 = await service.start("cli-proposed")
+    # Blank/omitted name keeps the name the cli proposed at start (its hostname)...
+    code1 = await service.start("Andys-MacBook-Pro-510")
     d1 = await service.approve(code1, owner_user_id=uuid.uuid4())
-    assert d1.name == "cli-proposed"
-    # ...a name from the approval page overrides it (fixes an "unnamed" node).
-    code2 = await service.start("unnamed")
+    assert d1.name == "Andys-MacBook-Pro-510"
+    # ...a name from the approval page overrides it.
+    code2 = await service.start("Andys-MacBook-Pro-510")
     d2 = await service.approve(
-        code2, owner_user_id=uuid.uuid4(), name="  andy-macbook  "
+        code2, owner_user_id=uuid.uuid4(), name="  andy-studio  "
     )
-    assert d2.name == "andy-macbook"
+    assert d2.name == "andy-studio"
+
+
+async def test_start_generates_a_real_name_never_unnamed():
+    service, _ = _service()
+    # The cli may send no name; the fallback must be a real generated label, never the
+    # literal "unnamed" (which is what the user saw before).
+    for empty in (None, "", "   "):
+        code = await service.start(empty)
+        device = await service.approve(code, owner_user_id=uuid.uuid4())
+        assert device.name and device.name != "unnamed"
 
 
 async def test_verify_token_identifies_device_only_when_valid():

@@ -110,6 +110,16 @@ async def device_poll(
     return await service.poll(body.device_code)
 
 
+@router.get("/auth/device/proposed-name")
+async def device_proposed_name(
+    code: str, service: DeviceServiceDep
+) -> dict[str, str | None]:
+    """The name the cli proposed for a pending ``code`` (this machine's hostname) so
+    the approval page can prefill it — editable. Behind the code (the approval secret),
+    same trust level as start/poll; ``null`` when the code is unknown/expired."""
+    return {"device_name": await service.code_device_name(code)}
+
+
 @router.post("/connect")
 async def device_connect(
     body: ConnectRequest,

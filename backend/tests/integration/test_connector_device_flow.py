@@ -68,6 +68,26 @@ def test_full_device_flow_start_approve_poll(client):
     assert dd["device_id"] == device_id and dd["token"]
 
 
+def test_proposed_name_lets_approval_page_prefill_hostname(client):
+    # The cli posts this machine's hostname at start; the approval page reads it back
+    # (by code) to prefill an editable default — never a blank "unnamed" field.
+    start = client.post(
+        "/connector/auth/device/start",
+        json={"device_name": "Andys-MacBook-Pro-510"},
+    )
+    code = start.json()["device_code"]
+    r = client.get(f"/connector/auth/device/proposed-name?code={code}")
+    assert r.status_code == 200, r.text
+    assert r.json()["device_name"] == "Andys-MacBook-Pro-510"
+    # An unknown code yields null (no enumeration, no error).
+    assert (
+        client.get("/connector/auth/device/proposed-name?code=nope").json()[
+            "device_name"
+        ]
+        is None
+    )
+
+
 def test_connect_requires_login(client):
     start = client.post("/connector/auth/device/start", json={"device_name": "m"})
     code = start.json()["device_code"]

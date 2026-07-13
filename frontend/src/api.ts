@@ -108,6 +108,16 @@ async function connectorRequest<T>(
   return (await res.json()) as T
 }
 
+// The name the cli proposed for a pending code (this machine's hostname), so the
+// approval page can prefill an editable default instead of leaving it blank.
+export function deviceProposedName(
+  code: string,
+): Promise<{ device_name: string | null }> {
+  return connectorRequest<{ device_name: string | null }>(
+    `/auth/device/proposed-name?code=${encodeURIComponent(code)}`,
+  )
+}
+
 // Approve a pending device flow (the `/connect` page): binds the compute machine to
 // the logged-in human as owner (optionally naming it). A device is pure compute — no
 // agent is minted here; the agent that runs on it is resolved per session/project.

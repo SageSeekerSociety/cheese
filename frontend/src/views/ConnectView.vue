@@ -6,9 +6,9 @@
 // on it is decided per session/project later. Approval also deliberately does NOT
 // ask which project the machine serves: a machine belongs to *you*, and which
 // project uses its compute is decided later (device page / when a session picks it).
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { authToken, connectDevice } from '../api'
+import { authToken, connectDevice, deviceProposedName } from '../api'
 import type { DeviceApproval } from '../cx_types'
 
 const route = useRoute()
@@ -25,9 +25,21 @@ const loginLink = computed(() => ({
 const loading = ref(false)
 const error = ref<string | null>(null)
 const approved = ref<DeviceApproval | null>(null)
-// The human names their compute node here (so it isn't left "unnamed"). Optional —
-// blank falls back to the name the cli proposed.
+// The compute-node name, prefilled with the name the cli proposed (this machine's
+// hostname) so the human sees a real default and can just edit it — never "unnamed".
 const deviceName = ref('')
+
+// Prefill from the cli-proposed name (the device's hostname). Best-effort: if the
+// lookup fails the field stays blank and the server still falls back to a real name.
+onMounted(async () => {
+  if (!code.value) return
+  try {
+    const r = await deviceProposedName(code.value)
+    if (r.device_name) deviceName.value = r.device_name
+  } catch {
+    // leave blank; approval still names the node from the server-side default
+  }
+})
 
 async function approve() {
   if (!code.value) {
