@@ -324,10 +324,22 @@ class ComputePool:
         provider = DeviceProvider(turn_timeout_s=turn_timeout_s)
         return cls([provider], provider.name)
 
-    def select(self, *, env_spec: dict | None = None) -> ComputeProvider:
-        """Pick a provider for this turn. Single-provider today → the default
-        (always available); caps/quota/queue routing arrives with more providers
-        (design §3 pick_provider, v2 R9)."""
+    def has(self, provider_id: str) -> bool:
+        return provider_id in self._providers
+
+    def select(
+        self, *, provider_id: str | None = None, env_spec: dict | None = None
+    ) -> ComputeProvider:
+        """Pick a provider for this turn (execution-architecture v4 会话级选择).
+
+        ``provider_id`` is the compute a topic/project chose (resolved upstream from
+        ``topic.compute_profile`` → project sticky). A registered id routes the turn
+        to that provider; an unknown / None id falls back to the pool default (which
+        is always available) — so a stored selection that isn't deployed here never
+        breaks a turn. caps/quota/queue routing arrives with ``env_spec`` (design §3
+        pick_provider, v2 R9)."""
+        if provider_id is not None and provider_id in self._providers:
+            return self._providers[provider_id]
         return self.default()
 
 
@@ -344,12 +356,28 @@ def build_compute_pool(agent: AgentService) -> ComputePool:
     if settings.agent_backend == "device":
         # Self-hosted / BYO compute (P3): relocate the turn to a user's own machine.
         return ComputePool.device(turn_timeout_s=settings.device_turn_timeout_s)
-    if settings.compute_provider == "remote":
-        return ComputePool.remote(
-            cheesed_url=settings.cheesed_url, cheese_api=settings.cheesed_cheese_api
+    # local/remote path: register EVERY deployed provider so a topic can pick
+    # between them per turn (v4 会话级选择). local-docker is always on; the remote
+    # cheesed node joins the pool whenever it's wired. The default preserves the
+    # pre-v4 behaviour — a turn that selects nothing runs exactly where it did
+    # before — so this is purely additive.
+    providers: list[ComputeProvider] = [
+        LocalDockerProvider(
+            agent=agent,
+            workspace_root=settings.workspace_root,
+            sandbox_enabled=settings.agent_sandbox_enabled,
         )
-    return ComputePool.local(
-        agent=agent,
-        workspace_root=settings.workspace_root,
-        sandbox_enabled=settings.agent_sandbox_enabled,
+    ]
+    if settings.cheesed_url:
+        providers.append(
+            RemoteCheesedProvider(
+                cheesed_url=settings.cheesed_url,
+                cheese_api=settings.cheesed_cheese_api,
+            )
+        )
+    default_name = (
+        RemoteCheesedProvider.name
+        if settings.compute_provider == "remote" and settings.cheesed_url
+        else LocalDockerProvider.name
     )
+    return ComputePool(providers, default_name)

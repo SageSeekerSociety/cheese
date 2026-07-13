@@ -1,6 +1,7 @@
 """Topic routes."""
 
 import uuid
+from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, UploadFile
@@ -10,14 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_turn_runner
 from app.api.response import ok, page
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
+from app.domain.agent.market import compute_default_name, compute_selectable
 from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.mentions import canonicalize_refs
+from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.schemas import (
     ConclusionIn,
@@ -236,6 +240,51 @@ async def edit_topic_doc(
         topic_id=topic_id, content=content, author=actor.handle
     )
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
+
+
+@router.get("/{topic_id}/compute-profile")
+async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """The compute this topic runs on (execution-architecture v4 会话级选择).
+
+    `current` is the effective pool (topic选择 → project sticky → default).
+    `locked` is true once the topic has run (session_id set) — the picker freezes
+    then, matching the device-affinity boundary. `sticky` is the project default a
+    new topic would inherit; `profiles` are the pools actually selectable here."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    project = await ProjectRepository(db).get(topic.project_id)
+    sticky = (project.settings or {}).get("compute_profile") if project else None
+    return ok(
+        {
+            "current": topic.compute_profile or sticky or compute_default_name(),
+            "locked": topic.session_id is not None,
+            "inherited": topic.compute_profile is None,
+            "sticky": sticky or compute_default_name(),
+            "profiles": [asdict(v) for v in compute_selectable(settings)],
+        }
+    )
+
+
+@router.put("/{topic_id}/compute-profile")
+async def set_topic_compute_profile(
+    topic_id: uuid.UUID, body: dict, db: DbSession
+) -> dict:
+    """Pick the topic's compute pool. Allowed only before the first turn
+    (session_id NULL); once the topic has run the pin is frozen so its work tree /
+    session never move. The choice also updates the project's sticky default, so
+    the next new topic inherits it (spec v4: 选了之后持久化，除非新 session 又改)."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    if topic.session_id is not None:
+        raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
+    name = (body.get("profile") or "").strip() or compute_default_name()
+    allowed = {v.id for v in compute_selectable(settings)}
+    if name not in allowed:
+        raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
+    topic.compute_profile = name
+    project = await ProjectRepository(db).get(topic.project_id)
+    if project is not None:
+        project.settings = {**(project.settings or {}), "compute_profile": name}
+    await db.flush()
+    return ok({"current": name, "locked": False, "inherited": False})
 
 
 @router.post("/{topic_id}/ask")

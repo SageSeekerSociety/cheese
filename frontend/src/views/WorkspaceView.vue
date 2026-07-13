@@ -18,6 +18,7 @@ import DocPanel from '../components/DocPanel.vue'
 import ProjectDocsView from './ProjectDocsView.vue'
 import TopicSidebar from '../components/TopicSidebar.vue'
 import TopicMembers from '../components/TopicMembers.vue'
+import TopicComputePicker from '../components/TopicComputePicker.vue'
 import {
   acceptCard,
   addComment,
@@ -1393,6 +1394,9 @@ onUnmounted(() => {
               @芝士
             </button>
             <v-spacer />
+            <!-- 会话级算力 (v4): pick where this topic's turns run; locks on the
+                 first message. Keyed by topic so it reloads on switch. -->
+            <TopicComputePicker :key="selectedTopic.id" :topic-id="selectedTopic.id" />
           </div>
           <!-- 评论模式: quote chip above the input — what this send will
                comment on. ✕ / Esc exits back to normal message mode. -->

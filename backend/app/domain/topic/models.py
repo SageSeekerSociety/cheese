@@ -64,6 +64,11 @@ class Topic(UuidPk, Timestamps, Base):
     )
     # Claude Agent SDK session id, captured after the first turn; used to resume.
     session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Compute pool this topic's turns run on (execution-architecture v4 会话级选择).
+    # NULL = inherit the project's sticky default (project.settings.compute_profile).
+    # Switchable only while session_id IS NULL (before the first turn) — once the
+    # topic has run it is frozen, matching the device-affinity boundary.
+    compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # git branch backing this topic (spec §6.3); sub-topics branch from parent.
     branch_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 

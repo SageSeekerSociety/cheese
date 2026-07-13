@@ -75,3 +75,52 @@ def test_pool_select_returns_available_default(tmp_path):
 def test_pool_rejects_unknown_default():
     with pytest.raises(ValueError):
         ComputePool([], "missing")
+
+
+class _FakeProvider:
+    """Minimal provider stand-in for routing tests (v4 会话级选择)."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def available(self) -> bool:
+        return True
+
+
+def _two_provider_pool() -> ComputePool:
+    local = _FakeProvider("local-docker")
+    remote = _FakeProvider("remote-cheesed")
+    return ComputePool([local, remote], "local-docker")
+
+
+def test_select_routes_to_the_named_provider():
+    pool = _two_provider_pool()
+    assert pool.select(provider_id="remote-cheesed").name == "remote-cheesed"
+    assert pool.select(provider_id="local-docker").name == "local-docker"
+
+
+def test_select_falls_back_to_default_for_unknown_or_none():
+    pool = _two_provider_pool()
+    # None (topic/project chose nothing) → the pool default.
+    assert pool.select(provider_id=None).name == "local-docker"
+    assert pool.select().name == "local-docker"
+    # A stored id that isn't deployed here (e.g. "gpu") must never break a turn —
+    # it degrades to the default, not an error.
+    assert pool.select(provider_id="gpu").name == "local-docker"
+
+
+def test_resolve_compute_id_topic_wins_then_project_sticky():
+    from app.domain.agent.chat import _resolve_compute_id
+
+    # Topic's own选择 wins over the project sticky.
+    assert (
+        _resolve_compute_id({"compute_profile": "local-docker"}, "remote-cheesed")
+        == "remote-cheesed"
+    )
+    # No topic选择 → project sticky.
+    assert _resolve_compute_id({"compute_profile": "remote-cheesed"}, None) == (
+        "remote-cheesed"
+    )
+    # Neither → None (pool default).
+    assert _resolve_compute_id({}, None) is None
+    assert _resolve_compute_id(None, None) is None

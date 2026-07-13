@@ -518,6 +518,19 @@ export interface ComputeProfiles {
   profiles: PoolListing[]
 }
 
+// GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
+// `current` is the effective pool (topic选择 → project sticky → default);
+// `locked` freezes the picker once the topic has run (session started);
+// `inherited` = still following the project sticky (no own选择 yet);
+// `sticky` = the project default a new topic would inherit.
+export interface TopicComputeProfile {
+  current: string
+  locked: boolean
+  inherited: boolean
+  sticky: string
+  profiles: PoolListing[]
+}
+
 // GET /projects/{id}/sandbox-image (spec §9.1 environment): which image runs the
 // project's agent. current=null → using the pool default base image.
 export interface SandboxImageOption {

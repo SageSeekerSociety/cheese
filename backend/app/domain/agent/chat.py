@@ -237,6 +237,18 @@ _ACTION_LABEL = {
 _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 
 
+def _resolve_compute_id(
+    project_settings: dict | None, topic_compute_profile: str | None = None
+) -> str | None:
+    """The compute pool a turn runs on (execution-architecture v4 会话级选择): the
+    topic's own selection wins, else the project's sticky default, else None (the
+    ComputePool default). An id that isn't deployed here is ignored by
+    ``ComputePool.select`` and degrades to the default — never breaks a turn."""
+    if topic_compute_profile:
+        return topic_compute_profile
+    return (project_settings or {}).get("compute_profile")
+
+
 def _transient_provider_error(result: AgentResult) -> bool:
     rl = result.rate_limit or {}
     if rl.get("status") == "rejected":
@@ -957,6 +969,10 @@ class ChatService:
             project_id = topic.project_id
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
+            # Which compute this topic runs on (v4): topic选择 → project sticky.
+            compute_id = _resolve_compute_id(
+                project.settings if project else None, topic.compute_profile
+            )
 
         # --- streaming: no DB transaction held open ---
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
@@ -981,7 +997,7 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        provider = self._compute.select()
+        provider = self._compute.select(provider_id=compute_id)
         model_kwargs = await self._model_kwargs(project_id)
 
         tool_events: list[tuple[str, dict, bool]] = []  # (name, args, platform)
@@ -1380,6 +1396,7 @@ class ChatService:
             )
             memories = await memory.recall(MemoryScope.project, str(project_id))
             topic_id = topic.id
+            compute_id = _resolve_compute_id(project.settings)
             await session.commit()
 
         # --- run 芝士 with the activity-digestion skill + tools ---
@@ -1392,7 +1409,7 @@ class ChatService:
             "如果这是个关键节点就用 cheese 钉成里程碑；"
             "需要分派的待办用 cheese 通知到人。\n\n---\n" + text
         )
-        provider = self._compute.select()
+        provider = self._compute.select(provider_id=compute_id)
         final_text = ""
         new_session_id = None
         tools_used: list[str] = []
@@ -1463,6 +1480,7 @@ class ChatService:
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
             root_topic_id = project.root_topic_id
+            compute_id = _resolve_compute_id(project.settings)
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}] ({t.kind.value})"
@@ -1500,7 +1518,7 @@ class ChatService:
             "然后只对真正需要的事用 cheese 发分级通知（level=silent/light/"
             "strong，kind=heartbeat），别骚扰。\n\n" + context
         )
-        provider = self._compute.select()
+        provider = self._compute.select(provider_id=compute_id)
         final_text = ""
         tools_used: list[str] = []
         async for event in provider.run_turn(
@@ -1547,6 +1565,7 @@ class ChatService:
             upcoming = await milestones.list_calendar(project_id)
             memories = await memory.recall(MemoryScope.project, str(project_id))
             role = await resolve_role_description(session, project.expert_role)
+            compute_id = _resolve_compute_id(project.settings)
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}]"
@@ -1578,7 +1597,7 @@ class ChatService:
         # Pure text generation (no platform actions) — still runs through the
         # provider (root-topic sandbox when present) for a single execution path;
         # topic_id None (no root topic) degrades to a plain model turn.
-        provider = self._compute.select()
+        provider = self._compute.select(provider_id=compute_id)
         final_text = ""
         async for event in provider.run_turn(
             project_id=project_id,
