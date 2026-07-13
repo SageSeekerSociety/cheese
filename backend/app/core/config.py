@@ -221,9 +221,14 @@ class Settings(BaseSettings):
     oauth_ruc_redirect_url: str | None = None
 
     # --- WebAuthn / passkeys (same declare-or-dropped rule as above) ---
+    # webauthn_origin MUST exactly match the scheme://host:port in the browser
+    # address bar or registration fails ("Unexpected client data origin"). rp_id
+    # is the registrable domain only (no port), so localhost covers every local
+    # port. Default matches the vite prod port (3000, = `task dev` and e2e);
+    # override WEBAUTHN_ORIGIN for other ports (the demo runs vite on :5200).
     webauthn_rp_id: str = "localhost"
     webauthn_rp_name: str = "Cheese Community"
-    webauthn_origin: str = "http://localhost:5173"
+    webauthn_origin: str = "http://localhost:3000"
 
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"

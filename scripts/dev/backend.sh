@@ -29,9 +29,12 @@ done
 if [ -n "$(lsof -ti:8799 2>/dev/null || true)" ]; then
   echo "ERROR: :8799 still held after kill — refusing to start a second server"; exit 1
 fi
+# The demo serves vite on :5200, so passkeys must be registered/verified against
+# that exact origin (WebAuthn rejects a mismatch). Overridable for other setups.
 env -u ANTHROPIC_API_KEY -u ANTHROPIC_MODEL -u ANTHROPIC_DEFAULT_HAIKU_MODEL \
     -u ANTHROPIC_VERTEX_PROJECT_ID -u AI_AGENT -u ANTHROPIC_AUTH_TOKEN \
     -u ANTHROPIC_BASE_URL -u OPENAI_API_KEY \
+    WEBAUTHN_ORIGIN="${WEBAUTHN_ORIGIN:-http://localhost:5200}" \
     nohup uv run uvicorn app.main:app --host 127.0.0.1 --port 8799 --log-level warning \
     > /tmp/fusion-be-8799.log 2>&1 &
 for i in $(seq 1 15); do
