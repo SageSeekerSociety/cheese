@@ -359,6 +359,10 @@ watch(() => props.projectId, load)
             <span class="ln-section-title">算力池</span>
           </div>
           <div class="ln-body">
+            <p class="t-body c-muted mb-2" style="font-size: 0.82rem">
+              这是<strong>新话题的默认算力</strong>；每个话题在发第一条消息前，都能在输入栏
+              单独切换、之后锁定。「自托管设备」来自小队注册的机器（在「我的设备」里注册给小队）。
+            </p>
             <button
               v-for="p in compute?.profiles ?? []"
               :key="p.id"

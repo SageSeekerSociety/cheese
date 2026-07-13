@@ -197,6 +197,15 @@
         >
           <v-list-item-title>知识库</v-list-item-title>
         </v-list-item>
+
+        <v-list-item
+          :to="{ name: 'TeamsDetailCompute', params: route.params }"
+          prepend-icon="mdi-server-network"
+          rounded="lg"
+          class="function-item"
+        >
+          <v-list-item-title>算力</v-list-item-title>
+        </v-list-item>
       </v-list>
     </div>
 

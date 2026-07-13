@@ -165,6 +165,12 @@ export function unregisterDeviceFromTeam(deviceId: string, teamId: number): Prom
   )
 }
 
+// 团队算力 (v4): the machines registered for a team — the team's compute, with
+// liveness. Any team member may view.
+export function listTeamDevices(teamId: number): Promise<{ devices: import('./cx_types').MyDevice[] }> {
+  return connectorRequest<{ devices: import('./cx_types').MyDevice[] }>(`/teams/${teamId}/devices`)
+}
+
 // The teams the signed-in user belongs to (for the device team-binding selector).
 export function listMyTeams(): Promise<import('./cx_types').MyTeam[]> {
   return request<{ teams: Array<{ id: number; name: string }> }>('/teams/my-teams').then((r) =>

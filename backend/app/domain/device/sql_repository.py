@@ -154,6 +154,19 @@ class SqlDeviceRepository:
                 out.append(device)
         return out
 
+    async def list_devices_by_team(self, team_id: int) -> list[Device]:
+        device_ids = (
+            await self._session.scalars(
+                select(DeviceTeamRow.device_id).where(DeviceTeamRow.team_id == team_id)
+            )
+        ).all()
+        out: list[Device] = []
+        for did in device_ids:
+            device = await self.get_device(did)
+            if device is not None:
+                out.append(device)
+        return out
+
     # -- assignments -------------------------------------------------------
 
     async def assign_project(self, device_id: str, project_id: uuid.UUID) -> None:

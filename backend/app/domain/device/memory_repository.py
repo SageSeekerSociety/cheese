@@ -42,6 +42,9 @@ class InMemoryDeviceRepository:
     async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:
         return [d for d in self._devices.values() if project_id in d.project_ids]
 
+    async def list_devices_by_team(self, team_id: int) -> list[Device]:
+        return [d for d in self._devices.values() if team_id in d.team_ids]
+
     async def assign_project(self, device_id: str, project_id: uuid.UUID) -> None:
         device = self._devices.get(device_id)
         if device is not None and project_id not in device.project_ids:

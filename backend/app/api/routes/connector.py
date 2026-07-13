@@ -412,6 +412,23 @@ async def register_device_for_team(
     return _device_view(device)  # type: ignore[arg-type]
 
 
+@router.get("/teams/{team_id}/devices")
+async def team_devices(
+    team_id: int,
+    resolver: ActorResolverDep,
+    service: DeviceServiceDep,
+    db: DbSession,
+) -> dict[str, Any]:
+    """The machines registered for a team (为团队注册设备, v4) — the team's compute,
+    with liveness. Any team member may view; every project of the team may run on
+    these."""
+    user_id = await _require_user(resolver)
+    if not await TeamRepository(db).is_team_member(team_id, user_id):
+        raise ForbiddenError("你不是该团队成员")
+    devices = await service.list_devices_for_team(team_id)
+    return {"devices": [_device_view(d) for d in devices]}
+
+
 @router.delete("/my/devices/{device_id}/teams/{team_id}")
 async def unregister_device_from_team(
     device_id: str,

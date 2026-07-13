@@ -81,6 +81,21 @@ def test_project_can_use_a_device_registered_for_its_team(client):
     # A project NOT on that team does not — compute is scoped to the team context.
     assert "devteam01" not in asyncio.run(devices_for(other_pid))
 
+    # The team's own compute view lists exactly its registered machines.
+    async def team_devices(team_name: str) -> list[str]:
+        async with client.test_factory() as s:
+            from sqlalchemy import select
+
+            from app.domain.team.models import Team
+
+            tid = (
+                await s.scalars(select(Team.id).where(Team.name == team_name))
+            ).first()
+            found = await SqlDeviceRepository(s).list_devices_by_team(int(tid))
+            return [d.device_id for d in found]
+
+    assert asyncio.run(team_devices("Team Cheese")) == ["devteam01"]
+
 
 def test_device_team_binding_is_idempotent_and_removable(client):
     async def run() -> tuple[list[int], list[int]]:

@@ -49,6 +49,11 @@ export default {
           name: 'TeamsDetailKnowledge',
           component: () => import('@/views/teams/detail/Knowledge.vue'),
         },
+        {
+          path: 'compute',
+          name: 'TeamsDetailCompute',
+          component: () => import('@/views/teams/detail/Compute.vue'),
+        },
       ],
     },
   ],

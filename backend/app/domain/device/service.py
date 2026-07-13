@@ -192,6 +192,11 @@ class DeviceService:
     async def list_teams(self, device_id: str) -> list[int]:
         return await self._repo.list_team_ids(device_id)
 
+    async def list_devices_for_team(self, team_id: int) -> list[Device]:
+        """The machines registered for a team (为团队注册设备, v4) — the team's compute.
+        Every project of the team may run on these."""
+        return await self._repo.list_devices_by_team(team_id)
+
     async def serves_project(self, device_id: str, project_id: uuid.UUID) -> bool:
         """Whether the device is assigned to the project — the precondition for
         running an agent (screen) there."""
