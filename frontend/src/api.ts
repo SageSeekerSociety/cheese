@@ -182,11 +182,21 @@ export function listMyTeams(): Promise<import('./cx_types').MyTeam[]> {
 // Absolute WS URL for a device screen's 现场 (read-only terminal). The session token
 // rides as ?token= (browsers can't set an Authorization header on a WebSocket); the
 // backend authorizes the viewer against the screen's project/topic membership.
+// VITE_CONNECTOR_WS_BASE (a plain http(s) origin, runtime-injected in prod) reroutes
+// just this socket when the site origin sits behind a WS-stripping edge (校园前置
+// 反代); token-in-query means cross-origin needs no cookie/CORS handling.
 export function screenWsUrl(sid: string): string {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const token = authToken()
   const q = token ? `?token=${encodeURIComponent(token)}` : ''
-  return `${proto}://${window.location.host}/connector/session/${encodeURIComponent(sid)}/screen${q}`
+  const override = (import.meta.env.VITE_CONNECTOR_WS_BASE as string | undefined) ?? ''
+  let base: string
+  if (override && !override.startsWith('__')) {
+    base = override.replace(/^http/, 'ws').replace(/\/$/, '')
+  } else {
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    base = `${proto}://${window.location.host}`
+  }
+  return `${base}/connector/session/${encodeURIComponent(sid)}/screen${q}`
 }
 
 export function listProjects(teamId?: number): Promise<ListPayload<Project>> {

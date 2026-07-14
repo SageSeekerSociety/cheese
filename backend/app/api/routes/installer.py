@@ -48,14 +48,42 @@ def _origin(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
+def _ws_control_url(origin: str) -> str:
+    """The pre-derived control-channel URL for a WS-stripping edge, or "".
+
+    ``connector_ws_overrides`` maps the friendly install origin to a plain
+    http(s) origin that CAN carry WebSockets. Everything else (login, approve
+    page, binary downloads, hook POSTs) stays on the friendly origin — only the
+    persistent control channel `cheesehost run` dials out on is redirected, by
+    pre-writing the cli's "ws" config key (dialed verbatim; `cheesehost auth
+    login` preserves it). Empty → the cli derives wss://<base>/agent itself."""
+    override = settings.connector_ws_overrides.get(
+        origin.rstrip("/")
+    ) or settings.connector_ws_overrides.get(origin.rstrip("/") + "/", "")
+    if not override:
+        return ""
+    override = override.rstrip("/")
+    if override.startswith("https://"):
+        ws = "wss://" + override.removeprefix("https://")
+    elif override.startswith("http://"):
+        ws = "ws://" + override.removeprefix("http://")
+    else:  # already ws(s):// — use as-is
+        ws = override
+    # The cli's base carries the /connector path, so the control channel it
+    # would derive lives at /connector/agent — mirror that on the override.
+    return ws + "/connector/agent"
+
+
 @router.get("/install.sh")
 async def install_script(request: Request) -> PlainTextResponse:
     origin = _origin(request)
+    ws_url = _ws_control_url(origin)
     script = f"""#!/bin/sh
 # cheesehost installer — connects this machine to CheeseX so your sessions can
 # run here. No secrets; enrollment is the device flow (cheesehost auth login).
 set -eu
 ORIGIN="{origin}"
+WS_URL="${{CHEESE_WS_URL:-{ws_url}}}"
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$os" in
   linux) os=linux ;;
@@ -76,6 +104,32 @@ curl -fsSL "$ORIGIN/connector/latest/$target/cheesehost" -o "$dest/cheesehost"
 chmod +x "$dest/cheesehost"
 echo "installed to $dest/cheesehost"
 case ":$PATH:" in *":$dest:"*) : ;; *) echo "add $dest to your PATH" ;; esac
+# WS-stripping edge (e.g. a campus front proxy that only forwards HTTP): the
+# server baked a WS-capable control-channel URL above. Pre-write it into the
+# cli config's "ws" key — `cheesehost auth login` loads-then-saves, so it
+# survives login. Login/approve/API/downloads all stay on ORIGIN.
+if [ -n "$WS_URL" ]; then
+  CFG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/cheese"
+  CFG="$CFG_DIR/config.json"
+  mkdir -p "$CFG_DIR"
+  if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$CFG" "$WS_URL" <<'PY'
+import json, sys
+path, ws = sys.argv[1], sys.argv[2]
+try:
+    cfg = json.load(open(path))
+except Exception:
+    cfg = {{}}
+cfg["ws"] = ws
+json.dump(cfg, open(path, "w"), indent=2)
+PY
+  elif [ ! -f "$CFG" ]; then
+    printf '{{\\n  "ws": "%s"\\n}}\\n' "$WS_URL" > "$CFG"
+  else
+    echo "note: set \\"ws\\": \\"$WS_URL\\" in $CFG by hand (python3 not found)"
+  fi
+  echo "control channel pinned to $WS_URL (WS-stripping edge)"
+fi
 echo "next: cheesehost auth login $ORIGIN/connector"
 """
     return PlainTextResponse(script, media_type="text/x-shellscript")

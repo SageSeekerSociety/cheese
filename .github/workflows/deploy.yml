@@ -4,6 +4,14 @@ on:
   release:
     types: [published]
 
+# GitHub tightened the default GITHUB_TOKEN to read-only contents — the
+# wait-on-check-action needs checks:read to list check-runs (every release
+# deploy since 2026-06 failed with 403 without this).
+permissions:
+  contents: read
+  checks: read
+  actions: read
+
 concurrency:
   group: deploy-production
   cancel-in-progress: false

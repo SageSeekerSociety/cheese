@@ -114,6 +114,17 @@ class Settings(BaseSettings):
     # link is built from it. For a NAT'd device this must be publicly reachable
     # (outbound-only for the link WS; the hook POST is a normal outbound request).
     connector_public_base: str = "http://localhost:8099"
+    # Optional per-install-origin override for the device's persistent control
+    # channel, keyed by the origin install.sh was fetched from and mapping to a
+    # plain http(s) origin that CAN carry WebSockets, e.g.
+    #   {"https://cheese.ruc.edu.cn": "https://119pve.ghg.org.cn"}
+    # Use it when the friendly public origin sits behind an edge that strips the
+    # WebSocket Upgrade (校园前置反代 rucfd does): users still install from and
+    # log in at the friendly origin — only the cheesehost control-channel WS is
+    # pointed at the mapped endpoint (install.sh pre-writes the cli's "ws" key).
+    # Empty (default) → behaviour unchanged. Ported from design/cheese-agent-layer
+    # (CONNECTOR_WS_OVERRIDES, commits ce30e62 + 6327c7e).
+    connector_ws_overrides: dict[str, str] = {}
     # Per-turn wall-clock ceiling for a device turn (mirrors agent_turn_timeout_s).
     device_turn_timeout_s: float = 900.0
 

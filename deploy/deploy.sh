@@ -21,9 +21,21 @@ fi
 echo "==> Pulling latest images..."
 docker compose -f docker-compose.prod.yml pull backend frontend
 
+echo "==> Pulling agent sandbox image..."
+# Sibling-container image for 芝士 turns; referenced by SANDBOX_IMAGE in the
+# compose file. Pulled onto the HOST dockerd (that's where turns run).
+docker pull "ghcr.io/sageseekersociety/cheese-backend-py/sandbox:${IMAGE_TAG:-main}" \
+    || echo "  WARNING: sandbox image pull failed — agent turns will be unavailable"
+
+echo "==> Ensuring workspace root..."
+# Must exist host-side before compose bind-mounts it (same path in-container).
+mkdir -p /opt/cheese-data/workspaces
+
 echo "==> Running database migrations..."
+# Plain alembic from the image's venv (on PATH) — the production image ships
+# no pyproject, so `uv run` has no project to resolve.
 docker compose -f docker-compose.prod.yml run --rm backend \
-    sh -c "uv run alembic upgrade head"
+    sh -c "alembic upgrade head"
 
 echo "==> Restarting backend + frontend..."
 docker compose -f docker-compose.prod.yml up -d --no-deps backend frontend
