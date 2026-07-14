@@ -186,6 +186,13 @@ class TestNotificationEventHandler:
     ):
         session = session or AsyncMock()
         session.add = session.add if hasattr(session, "add") else MagicMock()
+        # begin_nested() is used as `async with self._session.begin_nested()` — a
+        # *sync* call returning an async context manager. AsyncMock makes the call
+        # itself a coroutine, so use a plain MagicMock returning an async-CM double.
+        nested_cm = MagicMock()
+        nested_cm.__aenter__ = AsyncMock(return_value=None)
+        nested_cm.__aexit__ = AsyncMock(return_value=None)
+        session.begin_nested = MagicMock(return_value=nested_cm)
         return NotificationEventHandler(
             session,
             deduplicator=deduplicator,
