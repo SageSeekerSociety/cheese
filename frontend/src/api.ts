@@ -189,14 +189,15 @@ export function screenWsUrl(sid: string): string {
   return `${proto}://${window.location.host}/connector/session/${encodeURIComponent(sid)}/screen${q}`
 }
 
-export function listProjects(): Promise<ListPayload<Project>> {
-  return request<ListPayload<Project>>('/projects')
+export function listProjects(teamId?: number): Promise<ListPayload<Project>> {
+  const q = teamId != null ? `?team_id=${teamId}` : ''
+  return request<ListPayload<Project>>(`/projects${q}`)
 }
 
-export function createProject(name: string, ownerHandle?: string): Promise<Project> {
+export function createProject(name: string, ownerHandle?: string, teamId?: number): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
-    body: JSON.stringify({ name, owner_handle: ownerHandle }),
+    body: JSON.stringify({ name, owner_handle: ownerHandle, team_id: teamId }),
   })
 }
 

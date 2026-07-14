@@ -13,6 +13,9 @@ class ProjectCreate(BaseModel):
     owner_handle: str | None = None
     ai_mode: AiMode = AiMode.collaborative
     expert_role: str | None = None
+    # 项目归团队 (v4): the shared team this project belongs to. Omitted → the
+    # owner's personal team is resolved server-side.
+    team_id: int | None = None
 
 
 class ProjectOut(BaseModel):

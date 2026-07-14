@@ -15,29 +15,11 @@ export default {
       component: () => import('@/views/teams/Detail.vue'),
       children: [
         {
+          // 项目 is the team's default tab (项目归团队, v4). Channels/discussions
+          // were retired with them — project topics are the conversation surface.
           path: '',
           name: 'TeamsDetailDefault',
-          component: () => import('@/views/teams/detail/Projects.vue'),
-        },
-        {
-          path: 'channels/:channelId',
-          name: 'TeamsDetailChannels',
-          component: () => import('@/views/teams/detail/Projects.vue'),
-        },
-        {
-          path: 'discussions/:discussionId',
-          name: 'TeamsDetailDiscussion',
-          components: {
-            default: () => import('@/views/teams/detail/DiscussionDetail.vue'),
-            header: () => import('@/views/teams/detail/DiscussionHeader.vue'),
-          },
-          meta: {
-            isDiscussionDetail: true,
-          },
-          props: {
-            default: true,
-            header: true,
-          },
+          component: () => import('@/views/teams/detail/TeamProjects.vue'),
         },
         {
           path: 'members',

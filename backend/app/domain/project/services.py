@@ -16,6 +16,7 @@ from app.domain.usage.repositories import ComputeGrantRepository
 
 class ProjectService:
     def __init__(self, session: AsyncSession):
+        self._session = session
         self._repo = ProjectRepository(session)
         self._topics = TopicRepository(session)
         self._tasks = TaskRepository(session)
@@ -30,13 +31,25 @@ class ProjectService:
         owner_handle: str | None = None,
         ai_mode: AiMode = AiMode.collaborative,
         expert_role: str | None = None,
+        team_id: int | None = None,
     ) -> Project:
-        """Create a project and its root topic (= 项目本身, spec §6)."""
+        """Create a project and its root topic (= 项目本身, spec §6).
+
+        Every project belongs to a team (项目归团队, v4): pass ``team_id`` for a
+        shared team; with None the owner's PERSONAL team is resolved (个人 =
+        单人真团队), so 个人项目 is just 个人团队的项目. Only when the owner
+        handle doesn't resolve to a user (agent handles, bare test fixtures)
+        does the row keep the legacy ``team_id NULL``.
+        """
+        owner_handle = owner_handle or None  # '' would seed a broken root roster
+        if team_id is None and owner_handle:
+            team_id = await self._resolve_personal_team_id(owner_handle)
         project = await self._repo.add(
             name=name,
             owner_handle=owner_handle,
             ai_mode=ai_mode,
             expert_role=expert_role,
+            team_id=team_id,
         )
         root = await self._topics.add(
             project_id=project.id,
@@ -58,6 +71,22 @@ class ProjectService:
         )
         return project
 
+    async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
+        """owner_handle == User.username (fusion A1) → that user's personal team,
+        provisioning it if needed. None when the handle isn't a real user."""
+        # Local imports: project ↔ team would otherwise be an import cycle.
+        from app.domain.team.repositories import TeamRepository
+        from app.domain.team.services import TeamService
+        from app.domain.user.repositories import UserRepository
+
+        user = await UserRepository(session=self._session).get_by_handle(owner_handle)
+        if user is None:
+            return None
+        team = await TeamService(
+            TeamRepository(session=self._session)
+        ).ensure_personal_team(user.id)
+        return team.id
+
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self._repo.get(project_id)
         if project is None:
@@ -66,6 +95,25 @@ class ProjectService:
 
     async def list_all(self) -> tuple[list[Project], int]:
         return await self._repo.list_all(), await self._repo.count()
+
+    async def list_for_team(self, team_id: int) -> list[Project]:
+        """A team's 项目 page. For a personal team this also folds in the owner's
+        legacy team-less projects (rows created before 项目归团队), newest first."""
+        from app.domain.team.repositories import TeamRepository
+        from app.domain.user.repositories import UserRepository
+
+        projects = await self._repo.list_by_team(team_id)
+        team = await TeamRepository(session=self._session).get_by_id(team_id)
+        if team is not None and team.personal_owner_user_id is not None:
+            owner = await UserRepository(session=self._session).get_by_id(
+                team.personal_owner_user_id
+            )
+            if owner is not None:
+                projects = projects + await self._repo.list_personal_legacy(
+                    owner.username
+                )
+                projects.sort(key=lambda p: p.created_at, reverse=True)
+        return projects
 
     async def link_task(
         self, *, project_id: uuid.UUID, task_id: uuid.UUID

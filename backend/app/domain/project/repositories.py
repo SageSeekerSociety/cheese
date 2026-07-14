@@ -25,12 +25,14 @@ class ProjectRepository:
         owner_handle: str | None = None,
         ai_mode: AiMode = AiMode.collaborative,
         expert_role: str | None = None,
+        team_id: int | None = None,
     ) -> Project:
         project = Project(
             name=name,
             owner_handle=owner_handle,
             ai_mode=ai_mode,
             expert_role=expert_role,
+            team_id=team_id,
         )
         self._session.add(project)
         await self._session.flush()
@@ -52,6 +54,26 @@ class ProjectRepository:
 
     async def list_all(self) -> list[Project]:
         stmt = select(Project).order_by(Project.created_at.desc())
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_by_team(self, team_id: int) -> list[Project]:
+        """All projects owned by a team (项目归团队), newest first."""
+        stmt = (
+            select(Project)
+            .where(Project.team_id == team_id)
+            .order_by(Project.created_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_personal_legacy(self, owner_handle: str) -> list[Project]:
+        """Pre-personal-team rows: team-less projects of one owner. New personal
+        projects carry the personal team's id; these are the NULL-team leftovers
+        that must still show on the personal team's 项目 page."""
+        stmt = (
+            select(Project)
+            .where(Project.team_id.is_(None), Project.owner_handle == owner_handle)
+            .order_by(Project.created_at.desc())
+        )
         return list((await self._session.scalars(stmt)).all())
 
     async def count(self) -> int:

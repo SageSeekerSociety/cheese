@@ -44,13 +44,21 @@ async def create_project(body: ProjectCreate, db: DbSession) -> dict:
         owner_handle=body.owner_handle,
         ai_mode=body.ai_mode,
         expert_role=body.expert_role,
+        team_id=body.team_id,
     )
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
 @router.get("")
-async def list_projects(db: DbSession) -> dict:
-    projects, total = await ProjectService(db).list_all()
+async def list_projects(db: DbSession, team_id: int | None = None) -> dict:
+    """All projects, or — with ``team_id`` — one team's 项目 page (a personal
+    team also folds in its owner's legacy team-less projects)."""
+    service = ProjectService(db)
+    if team_id is not None:
+        projects = await service.list_for_team(team_id)
+        total = len(projects)
+    else:
+        projects, total = await service.list_all()
     items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
     return ok(page(items, total))
 
