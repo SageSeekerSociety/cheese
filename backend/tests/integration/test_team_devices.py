@@ -14,7 +14,9 @@ from datetime import UTC, datetime
 from app.domain.device.models import DeviceRow
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.project.repositories import ProjectRepository
-from app.domain.team.models import Team
+from app.domain.team.models import Team, TeamMemberRole
+from app.domain.team.repositories import TeamRepository
+from app.domain.team.services import TeamService
 from app.domain.user.models import User
 
 
@@ -128,3 +130,114 @@ def test_device_team_binding_is_idempotent_and_removable(client):
     bound, after = asyncio.run(run())
     assert bound == [7, 9]
     assert after == [9]
+
+
+def test_personal_project_uses_owners_personal_team_devices(client):
+    """个人 = 单人真团队 (v4): a project with NO team resolves compute through its
+    owner's personal team — a machine registered there reaches every personal
+    project of that user with zero per-project setup."""
+    personal_pid = _project(client, "andyl-personal")
+
+    async def seed() -> str:
+        async with client.test_factory() as s:
+            # `_project` creates projects with owner_handle="andyl"; handle ==
+            # User.username, so this user is the owner of `personal_pid`.
+            user = User(
+                username="andyl",
+                email="andyl@example.io",
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            stranger = User(
+                username="mallory",
+                email="mallory@example.io",
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            s.add_all([user, stranger])
+            await s.flush()
+            svc = TeamService(TeamRepository(session=s))
+            mine = await svc.ensure_personal_team(user.id)
+            again = await svc.ensure_personal_team(user.id)
+            assert again.id == mine.id  # idempotent — one personal team per user
+            theirs = await svc.ensure_personal_team(stranger.id)
+            for did, owner in (("devper01", user), ("devper02", stranger)):
+                s.add(
+                    DeviceRow(
+                        device_id=did,
+                        name=f"{owner.username}'s box",
+                        token=f"tok-{did}",
+                        owner_user_id=owner.id,
+                        created_at=_now(),
+                    )
+                )
+            await s.flush()
+            repo = SqlDeviceRepository(s)
+            await repo.assign_team("devper01", mine.id)
+            await repo.assign_team("devper02", theirs.id)
+            await s.commit()
+            return str(mine.id)
+
+    async def devices_for(pid: str) -> list[str]:
+        async with client.test_factory() as s:
+            found = await SqlDeviceRepository(s).list_devices_by_project(uuid.UUID(pid))
+            return [d.device_id for d in found]
+
+    mine_id = int(asyncio.run(seed()))
+    found = asyncio.run(devices_for(personal_pid))
+    # The owner's personal-team machine routes to their team-less project…
+    assert "devper01" in found
+    # …but another user's personal machine never leaks in.
+    assert "devper02" not in found
+
+    # Once the project joins a shared team, the personal fallback is out of play:
+    # only explicit assignments + that team's machines apply.
+    async def move_to_shared_team() -> None:
+        async with client.test_factory() as s:
+            team = Team(
+                name="Shared",
+                intro="i",
+                description="d",
+                avatar_id=0,
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            s.add(team)
+            await s.flush()
+            proj = await ProjectRepository(s).get(uuid.UUID(personal_pid))
+            proj.team_id = team.id
+            await s.commit()
+
+    asyncio.run(move_to_shared_team())
+    assert "devper01" not in asyncio.run(devices_for(personal_pid))
+    assert mine_id > 0  # sanity: the personal team really was provisioned
+
+
+def test_ensure_personal_team_makes_a_real_single_member_team(client):
+    """The personal team is a REAL team: one row flagged personal_owner_user_id,
+    with the user as its OWNER member — not a synthetic no-team state."""
+
+    async def run() -> tuple[bool, int, int]:
+        async with client.test_factory() as s:
+            user = User(
+                username="frank",
+                email="frank@example.io",
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            s.add(user)
+            await s.flush()
+            repo = TeamRepository(session=s)
+            team = await TeamService(repo).ensure_personal_team(user.id)
+            members = await repo.list_members_of_team(team.id)
+            await s.commit()
+            return (
+                team.personal_owner_user_id == user.id,
+                len(members),
+                members[0].role,
+            )
+
+    flagged, member_count, role = asyncio.run(run())
+    assert flagged
+    assert member_count == 1
+    assert role == TeamMemberRole.OWNER

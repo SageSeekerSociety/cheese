@@ -6,14 +6,7 @@ import type { DeviceScreen, MyDevice, MyTeam } from '../cx_types'
 
 import { computed, onMounted, ref } from 'vue'
 
-import {
-  listMyDevices,
-  listMyTeams,
-  registerDeviceForTeam,
-  renameMyDevice,
-  unbindMyDevice,
-  unregisterDeviceFromTeam,
-} from '../api'
+import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
 
 import accountService from '@/services/account'
@@ -35,36 +28,12 @@ const devices = ref<MyDevice[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 
-// 为团队注册设备 (v4): the teams the user belongs to, and per-device bind state.
+// This page is the 认证 (enrollment) layer: enroll / rename / forget machines, and
+// see at a glance which teams each machine serves. 归属 (加机器/移出) lives on each
+// team's 「算力」 page — the chips here are read-only links into those pages.
 const myTeams = ref<MyTeam[]>([])
-const teamBusy = ref<string | null>(null) // `${device_id}:${team_id}` in flight
 function teamName(id: number): string {
-  return myTeams.value.find((t) => t.id === id)?.name ?? `团队 #${id}`
-}
-function bindableTeams(d: MyDevice): MyTeam[] {
-  return myTeams.value.filter((t) => !d.team_ids.includes(t.id))
-}
-
-async function bindTeam(d: MyDevice, teamId: number) {
-  teamBusy.value = `${d.device_id}:${teamId}`
-  try {
-    Object.assign(d, await registerDeviceForTeam(d.device_id, teamId))
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '注册到团队失败'
-  } finally {
-    teamBusy.value = null
-  }
-}
-
-async function unbindTeam(d: MyDevice, teamId: number) {
-  teamBusy.value = `${d.device_id}:${teamId}`
-  try {
-    Object.assign(d, await unregisterDeviceFromTeam(d.device_id, teamId))
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '取消团队注册失败'
-  } finally {
-    teamBusy.value = null
-  }
+  return myTeams.value.find((t) => t.id === id)?.name ?? `小队 #${id}`
 }
 
 // The screen whose 现场 is open in the viewer dialog.
@@ -101,7 +70,7 @@ async function load() {
   error.value = null
   try {
     devices.value = (await listMyDevices()).devices
-    // Teams for the bind selector — best-effort, never blocks the device list.
+    // Team names for the read-only chips — best-effort, never blocks the list.
     myTeams.value = await listMyTeams().catch(() => [])
   } catch (e) {
     const msg = e instanceof Error ? e.message : '加载设备失败'
@@ -256,10 +225,11 @@ onMounted(load)
             算力节点 · <span style="font-family: monospace">{{ d.device_id }}</span>
           </div>
 
-          <!-- 为团队注册设备 (v4): bind this machine to a team so the team's projects
-             can run on it. Bound teams show as removable chips; the menu adds more. -->
+          <!-- Read-only 归属 overview: which teams this machine serves (personal team
+             included). Registering/removing happens on each team's 「算力」 page —
+             each chip links straight there. -->
           <div class="mt-3">
-            <div class="t-caption c-muted mb-1">算力归属团队</div>
+            <div class="t-caption c-muted mb-1">在为这些小队提供算力</div>
             <div class="d-flex flex-wrap align-center ga-2">
               <v-chip
                 v-for="tid in d.team_ids"
@@ -267,24 +237,14 @@ onMounted(load)
                 size="small"
                 variant="tonal"
                 color="primary"
-                closable
-                :disabled="teamBusy === `${d.device_id}:${tid}`"
-                @click:close="unbindTeam(d, tid)"
+                :to="{ name: 'TeamsDetailCompute', params: { teamId: tid } }"
               >
                 <v-icon start size="14">mdi-account-group</v-icon>
                 {{ teamName(tid) }}
               </v-chip>
               <span v-if="!d.team_ids.length" class="t-caption c-muted">
-                未注册给任何团队（仅你在项目里显式分配时可用）
+                还没有小队在用 — 去小队页面的「算力」里「加机器」
               </span>
-              <v-menu v-if="bindableTeams(d).length" location="bottom start">
-                <template #activator="{ props: menuProps }">
-                  <v-btn v-bind="menuProps" size="x-small" variant="text" prepend-icon="mdi-plus"> 注册给团队 </v-btn>
-                </template>
-                <v-list density="compact">
-                  <v-list-item v-for="t in bindableTeams(d)" :key="t.id" :title="t.name" @click="bindTeam(d, t.id)" />
-                </v-list>
-              </v-menu>
             </div>
           </div>
 

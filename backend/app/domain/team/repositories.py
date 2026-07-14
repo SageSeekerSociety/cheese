@@ -191,6 +191,31 @@ class TeamRepository:
             return False
         return rel.role in (TeamMemberRole.OWNER, TeamMemberRole.ADMIN)
 
+    async def get_personal_team(self, user_id: int) -> Team | None:
+        """The user's personal single-member team (个人 = 单人真团队, v4), or None."""
+        stmt = select(Team).where(
+            Team.personal_owner_user_id == user_id, Team.deleted_at.is_(None)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def create_personal_team(self, user_id: int, name: str) -> Team:
+        """Provision a user's personal team directly (bypasses the name-uniqueness
+        check of the public create flow — personal teams are internal, one per user)."""
+        now = datetime.now(UTC)
+        team = Team(
+            name=name,
+            intro="",
+            description="",
+            avatar_id=0,
+            personal_owner_user_id=user_id,
+            created_at=now,
+            updated_at=now,
+            deleted_at=None,
+        )
+        self._session.add(team)
+        await self._session.flush()
+        return team
+
     async def add_member(
         self, team_id: int, user_id: int, role: int
     ) -> TeamUserRelation:

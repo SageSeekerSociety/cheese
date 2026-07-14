@@ -61,6 +61,17 @@ class TeamService:
         """Return teams joined by the given user (simplified)."""
         return await self._repo.list_teams_of_user(user_id=user_id)
 
+    async def ensure_personal_team(self, user_id: int) -> Team:
+        """Get or create the user's personal single-member team (个人 = 单人真团队,
+        v4). It owns the user's personal compute and backs their personal projects —
+        so 为自己注册设备 is just 注册给个人团队. Idempotent (safe on every read)."""
+        existing = await self._repo.get_personal_team(user_id)
+        if existing is not None:
+            return existing
+        team = await self._repo.create_personal_team(user_id, name="个人")
+        await self._repo.add_member(team.id, user_id, TeamMemberRole.OWNER)
+        return team
+
     async def get_team_members(self, team_id: int) -> Sequence[TeamUserRelation]:
         """Return raw membership records for a team."""
         return await self._repo.list_members_of_team(team_id=team_id)

@@ -188,6 +188,8 @@ def _team_to_api_model(
         "intro": team.intro,
         "description": team.description,
         "avatarId": team.avatar_id,
+        # 个人 = 单人真团队 (v4): the frontend labels/orders the personal team.
+        "personal": team.personal_owner_user_id is not None,
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
@@ -423,7 +425,12 @@ async def get_my_teams(
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
-    teams = await service.get_teams_of_user(user_id=auth_user.user_id)
+    # Every user has a personal single-member team (个人 = 单人真团队, v4) — provision
+    # it lazily here so it always shows in 我的小队 (first), with its own device page.
+    await service.ensure_personal_team(auth_user.user_id)
+    teams = list(await service.get_teams_of_user(user_id=auth_user.user_id))
+    # Personal team first, then the rest by recency (stable for the sidebar).
+    teams.sort(key=lambda t: (t.personal_owner_user_id is None, -t.id))
     items = []
     for team in teams:
         members = list(await service.get_team_members(team_id=team.id))

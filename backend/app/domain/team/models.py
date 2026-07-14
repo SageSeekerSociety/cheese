@@ -30,6 +30,13 @@ class Team(Base):
     intro: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(String, nullable=False)
     avatar_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # A user's personal single-member team (v4: 个人 = 单人真团队).
+    # NULL = a normal shared team; set = the personal team of that user (one per user,
+    # auto-provisioned). Personal projects belong to it, and it can own compute like
+    # any team — so 为自己注册设备 is just 注册给个人团队.
+    personal_owner_user_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

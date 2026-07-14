@@ -16,6 +16,8 @@ from app.domain.device.models import (
 )
 from app.domain.device.repository import AuthCode, Device
 from app.domain.project.models import Project
+from app.domain.team.models import Team
+from app.domain.user.models import User
 
 
 def _aware(dt: datetime) -> datetime:
@@ -131,8 +133,9 @@ class SqlDeviceRepository:
         """Machines a project may run on = explicit per-project assignments UNION the
         devices bound to the project's TEAM (execution-architecture v4: compute
         belongs to the team — 为团队注册设备). Bind a machine to a team once and every
-        project of that team can run on it. A project with no team (or none bound)
-        resolves to just its explicit device_project assignments."""
+        project of that team can run on it. A project with NO team is a personal
+        project: it resolves through its owner's PERSONAL team (个人 = 单人真团队),
+        so 为自己注册的设备 reach personal projects with zero per-project setup."""
         explicit = (
             await self._session.scalars(
                 select(DeviceProjectRow.device_id).where(
@@ -147,8 +150,25 @@ class SqlDeviceRepository:
                 .where(Project.id == project_id)
             )
         ).all()
+        # Personal-project route: owner_handle == User.username → that user's
+        # personal team. Resolved at read time so it needs no backfill and keeps
+        # working for projects created before personal teams existed.
+        personal_bound = (
+            await self._session.scalars(
+                select(DeviceTeamRow.device_id)
+                .join(Team, Team.id == DeviceTeamRow.team_id)
+                .join(User, User.id == Team.personal_owner_user_id)
+                .join(Project, Project.owner_handle == User.username)
+                .where(
+                    Project.id == project_id,
+                    Project.team_id.is_(None),
+                    Team.deleted_at.is_(None),
+                )
+            )
+        ).all()
+        combined = [*explicit, *team_bound, *personal_bound]
         out: list[Device] = []
-        for did in dict.fromkeys([*explicit, *team_bound]):  # de-dup, keep order
+        for did in dict.fromkeys(combined):  # de-dup, keep order
             device = await self.get_device(did)
             if device is not None:
                 out.append(device)

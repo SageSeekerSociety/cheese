@@ -593,10 +593,12 @@ export interface MyDevice {
 }
 
 // A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what
-// the device team-binding selector needs.
+// the device pages need. Includes the auto-provisioned personal team (个人 =
+// 单人真团队), which the backend sorts first and flags `personal`.
 export interface MyTeam {
   id: number
   name: string
+  personal?: boolean
 }
 
 // The result of approving a pending device flow (binds the machine to its owner).

@@ -171,10 +171,11 @@ export function listTeamDevices(teamId: number): Promise<{ devices: import('./cx
   return connectorRequest<{ devices: import('./cx_types').MyDevice[] }>(`/teams/${teamId}/devices`)
 }
 
-// The teams the signed-in user belongs to (for the device team-binding selector).
+// The teams the signed-in user belongs to. Includes the auto-provisioned personal
+// team (个人 = 单人真团队), which the backend sorts first and flags `personal`.
 export function listMyTeams(): Promise<import('./cx_types').MyTeam[]> {
-  return request<{ teams: Array<{ id: number; name: string }> }>('/teams/my-teams').then((r) =>
-    r.teams.map((t) => ({ id: t.id, name: t.name }))
+  return request<{ teams: Array<{ id: number; name: string; personal?: boolean }> }>('/teams/my-teams').then((r) =>
+    r.teams.map((t) => ({ id: t.id, name: t.name, personal: t.personal === true }))
   )
 }
 
