@@ -45,10 +45,14 @@ class TaskAIAdviceService:
         self._quota_service = quota_service
         self._llm_client = llm_client or LLMClient()
 
-    async def request_advice(self, *, task_id: int, user_id: int) -> tuple[str, QuotaInfo]:
+    async def request_advice(
+        self, *, task_id: int, user_id: int
+    ) -> tuple[str, QuotaInfo]:
         advice = await self._advice_repo.get_latest(task_id)
         if advice is None or advice.status != TaskAIAdviceStatus.COMPLETED.value:
-            has_quota = await self._quota_service.check_quota(user_id=user_id, amount=1.0)
+            has_quota = await self._quota_service.check_quota(
+                user_id=user_id, amount=1.0
+            )
             if not has_quota:
                 raise QuotaExceededError("AI quota exhausted")
             advice = await self._generate_advice(task_id)
@@ -82,8 +86,14 @@ class TaskAIAdviceService:
 
         convo = None
         if conversation_id:
-            convo = await self._conversation_repo.get_by_conversation_id(conversation_id)
-            if convo is None or convo.context_id != task_id or convo.owner_id != user_id:
+            convo = await self._conversation_repo.get_by_conversation_id(
+                conversation_id
+            )
+            if (
+                convo is None
+                or convo.context_id != task_id
+                or convo.owner_id != user_id
+            ):
                 raise ValueError("Conversation not found")
         else:
             conversation_id = secrets.token_hex(12)
@@ -112,7 +122,9 @@ class TaskAIAdviceService:
         )
 
         history = await self._build_message_history(convo.id, task_id, context)
-        llm_response = await self._llm_client.get_completion_with_history(messages=history)
+        llm_response = await self._llm_client.get_completion_with_history(
+            messages=history
+        )
 
         await self._message_repo.create_message(
             conversation_id=convo.id,
@@ -145,8 +157,14 @@ class TaskAIAdviceService:
 
         convo = None
         if conversation_id:
-            convo = await self._conversation_repo.get_by_conversation_id(conversation_id)
-            if convo is None or convo.context_id != task_id or convo.owner_id != user_id:
+            convo = await self._conversation_repo.get_by_conversation_id(
+                conversation_id
+            )
+            if (
+                convo is None
+                or convo.context_id != task_id
+                or convo.owner_id != user_id
+            ):
                 raise ValueError("Conversation not found")
         else:
             conversation_id = secrets.token_hex(12)
@@ -168,7 +186,9 @@ class TaskAIAdviceService:
         full_content = ""
         total_tokens = 0
 
-        async for chunk in self._llm_client.stream_completion_with_history(messages=history):
+        async for chunk in self._llm_client.stream_completion_with_history(
+            messages=history
+        ):
             if chunk.content:
                 full_content += chunk.content
             if chunk.total_tokens:
@@ -184,7 +204,9 @@ class TaskAIAdviceService:
         )
 
         if total_tokens > 0:
-            await self._quota_service.consume_tokens(user_id=user_id, tokens=total_tokens)
+            await self._quota_service.consume_tokens(
+                user_id=user_id, tokens=total_tokens
+            )
 
     async def _build_message_history(
         self,
@@ -196,9 +218,7 @@ class TaskAIAdviceService:
         task = await self._task_repo.get_by_id(task_id)
         task_context = ""
         if task:
-            task_context = (
-                f"任务：{task.name}\n简介：{task.intro or ''}\n描述：{task.description or ''}"
-            )
+            task_context = f"任务：{task.name}\n简介：{task.intro or ''}\n描述：{task.description or ''}"  # noqa: E501
 
         context_info = ""
         if context:
@@ -220,7 +240,9 @@ class TaskAIAdviceService:
 
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
 
-        existing_messages = await self._message_repo.list_for_conversation(conversation_db_id)
+        existing_messages = await self._message_repo.list_for_conversation(
+            conversation_db_id
+        )
         for msg in existing_messages:
             messages.append({"role": msg.role, "content": msg.content})
 

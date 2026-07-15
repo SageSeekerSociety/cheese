@@ -67,7 +67,9 @@ class TeamRepository:
         if query:
             try:
                 query_id = int(query)
-                stmt = stmt.where(or_(self._name_search_filter(query), Team.id == query_id))
+                stmt = stmt.where(
+                    or_(self._name_search_filter(query), Team.id == query_id)
+                )
             except ValueError:
                 stmt = stmt.where(self._name_search_filter(query))
         stmt = stmt.order_by(Team.id.desc()).limit(limit).offset(offset)
@@ -87,7 +89,10 @@ class TeamRepository:
     async def list_teams_of_user(self, user_id: int) -> Sequence[Team]:
         """Return teams joined by the given user using team_user_relation."""
         rel_stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
-            and_(TeamUserRelation.user_id == user_id, TeamUserRelation.deleted_at.is_(None))
+            and_(
+                TeamUserRelation.user_id == user_id,
+                TeamUserRelation.deleted_at.is_(None),
+            )
         )
         rel_result = await self._session.execute(rel_stmt)
         relations = list(rel_result.scalars().all())
@@ -100,7 +105,9 @@ class TeamRepository:
         team_result = await self._session.execute(team_stmt)
         return list(team_result.scalars().all())
 
-    async def list_teams_user_can_use_to_join_task(self, user_id: int) -> Sequence[Team]:
+    async def list_teams_user_can_use_to_join_task(
+        self, user_id: int
+    ) -> Sequence[Team]:
         """Teams the user is OWNER or ADMIN of (eligible to join a TEAM task with).
 
         Mirrors NT TeamRepository.getTeamsThatUserCanUseToJoinTask. The Python
@@ -128,12 +135,17 @@ class TeamRepository:
     async def list_members_of_team(self, team_id: int) -> Sequence[TeamUserRelation]:
         """Return membership rows for a given team."""
         stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
-            and_(TeamUserRelation.team_id == team_id, TeamUserRelation.deleted_at.is_(None))
+            and_(
+                TeamUserRelation.team_id == team_id,
+                TeamUserRelation.deleted_at.is_(None),
+            )
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_member_relation(self, team_id: int, user_id: int) -> TeamUserRelation | None:
+    async def get_member_relation(
+        self, team_id: int, user_id: int
+    ) -> TeamUserRelation | None:
         stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
             TeamUserRelation.team_id == team_id,
             TeamUserRelation.user_id == user_id,
@@ -179,7 +191,34 @@ class TeamRepository:
             return False
         return rel.role in (TeamMemberRole.OWNER, TeamMemberRole.ADMIN)
 
-    async def add_member(self, team_id: int, user_id: int, role: int) -> TeamUserRelation:
+    async def get_personal_team(self, user_id: int) -> Team | None:
+        """The user's personal single-member team (个人 = 单人真团队, v4), or None."""
+        stmt = select(Team).where(
+            Team.personal_owner_user_id == user_id, Team.deleted_at.is_(None)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def create_personal_team(self, user_id: int, name: str) -> Team:
+        """Provision a user's personal team directly (bypasses the name-uniqueness
+        check of the public create flow — personal teams are internal, one per user)."""
+        now = datetime.now(UTC)
+        team = Team(
+            name=name,
+            intro="",
+            description="",
+            avatar_id=0,
+            personal_owner_user_id=user_id,
+            created_at=now,
+            updated_at=now,
+            deleted_at=None,
+        )
+        self._session.add(team)
+        await self._session.flush()
+        return team
+
+    async def add_member(
+        self, team_id: int, user_id: int, role: int
+    ) -> TeamUserRelation:
         existing = await self.get_member_relation(team_id, user_id)
         if existing is not None:
             raise ConflictError(
@@ -221,15 +260,21 @@ class TeamMembershipApplicationRepository:
         return app
 
     async def get_by_id(self, application_id: int) -> TeamMembershipApplication | None:
-        stmt: Select[tuple[TeamMembershipApplication]] = select(TeamMembershipApplication).where(
+        stmt: Select[tuple[TeamMembershipApplication]] = select(
+            TeamMembershipApplication
+        ).where(
             TeamMembershipApplication.id == application_id,
             TeamMembershipApplication.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def exists_pending_for_user_and_team(self, user_id: int, team_id: int) -> bool:
-        stmt: Select[tuple[TeamMembershipApplication]] = select(TeamMembershipApplication.id).where(  # type: ignore[assignment]
+    async def exists_pending_for_user_and_team(
+        self, user_id: int, team_id: int
+    ) -> bool:
+        stmt: Select[tuple[TeamMembershipApplication]] = select(
+            TeamMembershipApplication.id
+        ).where(  # type: ignore[assignment]
             TeamMembershipApplication.user_id == user_id,
             TeamMembershipApplication.team_id == team_id,
             TeamMembershipApplication.status == ApplicationStatus.PENDING.value,
@@ -245,7 +290,9 @@ class TeamMembershipApplicationRepository:
         initiator_id: int,
         type_: ApplicationType,
     ) -> TeamMembershipApplication | None:
-        stmt: Select[tuple[TeamMembershipApplication]] = select(TeamMembershipApplication).where(
+        stmt: Select[tuple[TeamMembershipApplication]] = select(
+            TeamMembershipApplication
+        ).where(
             TeamMembershipApplication.id == application_id,
             TeamMembershipApplication.initiator_id == initiator_id,
             TeamMembershipApplication.type == type_.value,
@@ -262,7 +309,9 @@ class TeamMembershipApplicationRepository:
         user_id: int,
         type_: ApplicationType,
     ) -> TeamMembershipApplication | None:
-        stmt: Select[tuple[TeamMembershipApplication]] = select(TeamMembershipApplication).where(
+        stmt: Select[tuple[TeamMembershipApplication]] = select(
+            TeamMembershipApplication
+        ).where(
             TeamMembershipApplication.id == application_id,
             TeamMembershipApplication.user_id == user_id,
             TeamMembershipApplication.type == type_.value,
@@ -279,7 +328,9 @@ class TeamMembershipApplicationRepository:
         team_id: int,
         type_: ApplicationType,
     ) -> TeamMembershipApplication | None:
-        stmt: Select[tuple[TeamMembershipApplication]] = select(TeamMembershipApplication).where(
+        stmt: Select[tuple[TeamMembershipApplication]] = select(
+            TeamMembershipApplication
+        ).where(
             TeamMembershipApplication.id == application_id,
             TeamMembershipApplication.team_id == team_id,
             TeamMembershipApplication.type == type_.value,
@@ -298,14 +349,20 @@ class TeamMembershipApplicationRepository:
         limit: int,
         offset: int = 0,
     ) -> tuple[list[TeamMembershipApplication], int]:
-        stmt: Select[tuple[TeamMembershipApplication]] = select(TeamMembershipApplication).where(
+        stmt: Select[tuple[TeamMembershipApplication]] = select(
+            TeamMembershipApplication
+        ).where(
             TeamMembershipApplication.user_id == user_id,
             TeamMembershipApplication.type == type_.value,
             TeamMembershipApplication.deleted_at.is_(None),
         )
         if status is not None:
             stmt = stmt.where(TeamMembershipApplication.status == status.value)
-        stmt = stmt.order_by(TeamMembershipApplication.id.desc()).limit(limit).offset(offset)
+        stmt = (
+            stmt.order_by(TeamMembershipApplication.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
 
@@ -315,7 +372,9 @@ class TeamMembershipApplicationRepository:
             TeamMembershipApplication.deleted_at.is_(None),
         )
         if status is not None:
-            count_stmt = count_stmt.where(TeamMembershipApplication.status == status.value)
+            count_stmt = count_stmt.where(
+                TeamMembershipApplication.status == status.value
+            )
         count_result = await self._session.execute(count_stmt)
         total = int(count_result.scalar_one() or 0)
         return rows, total
@@ -329,14 +388,20 @@ class TeamMembershipApplicationRepository:
         limit: int,
         offset: int = 0,
     ) -> tuple[list[TeamMembershipApplication], int]:
-        stmt: Select[tuple[TeamMembershipApplication]] = select(TeamMembershipApplication).where(
+        stmt: Select[tuple[TeamMembershipApplication]] = select(
+            TeamMembershipApplication
+        ).where(
             TeamMembershipApplication.team_id == team_id,
             TeamMembershipApplication.type == type_.value,
             TeamMembershipApplication.deleted_at.is_(None),
         )
         if status is not None:
             stmt = stmt.where(TeamMembershipApplication.status == status.value)
-        stmt = stmt.order_by(TeamMembershipApplication.id.desc()).limit(limit).offset(offset)
+        stmt = (
+            stmt.order_by(TeamMembershipApplication.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
 
@@ -346,7 +411,9 @@ class TeamMembershipApplicationRepository:
             TeamMembershipApplication.deleted_at.is_(None),
         )
         if status is not None:
-            count_stmt = count_stmt.where(TeamMembershipApplication.status == status.value)
+            count_stmt = count_stmt.where(
+                TeamMembershipApplication.status == status.value
+            )
         count_result = await self._session.execute(count_stmt)
         total = int(count_result.scalar_one() or 0)
         return rows, total

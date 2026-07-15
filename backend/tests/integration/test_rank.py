@@ -10,7 +10,9 @@ class TestRankIntegration:
     @pytest.fixture
     def setup_rank_test(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -32,7 +34,9 @@ class TestRankIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert space_resp.status_code == 201, f"Space creation failed: {space_resp.text}"
+        assert space_resp.status_code == 201, (
+            f"Space creation failed: {space_resp.text}"
+        )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
         default_category_id = space_data["defaultCategoryId"]
@@ -56,7 +60,9 @@ class TestRankIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert task1_resp.status_code == 200, f"Task 1 creation failed: {task1_resp.text}"
+        assert task1_resp.status_code == 200, (
+            f"Task 1 creation failed: {task1_resp.text}"
+        )
         task1_id = task1_resp.json()["data"]["task"]["id"]
 
         api_client.patch(
@@ -82,7 +88,9 @@ class TestRankIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert task2_resp.status_code == 200, f"Task 2 creation failed: {task2_resp.text}"
+        assert task2_resp.status_code == 200, (
+            f"Task 2 creation failed: {task2_resp.text}"
+        )
         task2_id = task2_resp.json()["data"]["task"]["id"]
 
         api_client.patch(
@@ -125,7 +133,9 @@ class TestRankIntegration:
             "submission1_id": submission1_id,
         }
 
-    def test_get_space_with_rank_disabled(self, setup_rank_test: dict, api_client: TestClient):
+    def test_get_space_with_rank_disabled(
+        self, setup_rank_test: dict, api_client: TestClient
+    ):
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
 
@@ -134,7 +144,9 @@ class TestRankIntegration:
             params={"queryMyRank": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert data["space"]["id"] == space_id
         assert data["myRank"] == 0 or data.get("myRank") is None
@@ -148,11 +160,15 @@ class TestRankIntegration:
             json={"enableRank": True},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["space"]
         assert data["enableRank"] is True
 
-    def test_get_space_with_rank_enabled(self, setup_rank_test: dict, api_client: TestClient):
+    def test_get_space_with_rank_enabled(
+        self, setup_rank_test: dict, api_client: TestClient
+    ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -168,7 +184,9 @@ class TestRankIntegration:
             params={"queryMyRank": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert data["space"]["id"] == space_id
         assert data["myRank"] == 0
@@ -203,9 +221,13 @@ class TestRankIntegration:
             json={},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_review_submission_upgrades_rank(self, setup_rank_test: dict, api_client: TestClient):
+    def test_review_submission_upgrades_rank(
+        self, setup_rank_test: dict, api_client: TestClient
+    ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -224,7 +246,9 @@ class TestRankIntegration:
             json={"accepted": True, "score": 5, "comment": "Well done!"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
 
         space_resp = api_client.get(
             f"/spaces/{space_id}",
@@ -256,7 +280,9 @@ class TestRankIntegration:
             json={"accepted": False, "score": 2, "comment": "Needs improvement"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
 
         space_resp = api_client.get(
             f"/spaces/{space_id}",
@@ -302,7 +328,9 @@ class TestRankIntegration:
             json={"accepted": True, "score": 5, "comment": "Actually well done!"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
 
         space_resp2 = api_client.get(
             f"/spaces/{space_id}",
@@ -341,9 +369,13 @@ class TestRankIntegration:
             json={},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_rank_visible_in_space_response(self, setup_rank_test: dict, api_client: TestClient):
+    def test_rank_visible_in_space_response(
+        self, setup_rank_test: dict, api_client: TestClient
+    ):
         creator = setup_rank_test["creator"]
         participant = setup_rank_test["participant"]
         space_id = setup_rank_test["space_id"]
@@ -400,7 +432,9 @@ class TestRankIntegration:
         task2 = resp2.json()["data"]["task"]
         assert task2.get("rank") == 2
 
-    def test_update_space_disable_rank(self, setup_rank_test: dict, api_client: TestClient):
+    def test_update_space_disable_rank(
+        self, setup_rank_test: dict, api_client: TestClient
+    ):
         creator = setup_rank_test["creator"]
         space_id = setup_rank_test["space_id"]
 
@@ -440,7 +474,9 @@ class TestRankIntegration:
             params={"queryMyRank": "true", "pageSize": 50},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "spaces" in data
         target_space = next((s for s in data["spaces"] if s["id"] == space_id), None)
@@ -465,16 +501,22 @@ class TestRankIntegration:
             params={"queryMyRank": "true", "pageSize": 50},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "spaces" in data
         target_space = next((s for s in data["spaces"] if s["id"] == space_id), None)
         assert target_space is not None, f"Space {space_id} not found in response"
         assert target_space.get("myRank") == 0
 
-    def test_rank2_review_upgrades_to_rank2(self, user_client: UserCreator, api_client: TestClient):
+    def test_rank2_review_upgrades_to_rank2(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         participant = user_client.create_user()
         participant.token = user_client.login(
             api_client, participant.username, participant.password
@@ -606,7 +648,9 @@ class TestRankIntegration:
         self, user_client: UserCreator, api_client: TestClient
     ):
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         participant = user_client.create_user()
         participant.token = user_client.login(
             api_client, participant.username, participant.password
@@ -733,7 +777,10 @@ class TestRankIntegration:
             json={"accepted": True, "score": 5, "comment": "Good"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert review_resp.json()["data"]["review"].get("hasUpgradedParticipantRank") is False
+        assert (
+            review_resp.json()["data"]["review"].get("hasUpgradedParticipantRank")
+            is False
+        )
 
         space_check2 = api_client.get(
             f"/spaces/{space_id}",

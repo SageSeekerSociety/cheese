@@ -39,17 +39,23 @@
 
             <!-- 小队列表 -->
             <v-list v-else class="my-teams-list pa-0">
+              <!-- The personal team (个人 = 单人真团队) arrives first from the
+                   backend and behaves exactly like any other team — click in to
+                   manage its projects and 算力. Only the badge marks it apart. -->
               <v-list-item
                 v-for="team in myTeams"
                 :key="team.id"
                 :title="team.name"
-                :subtitle="team.intro"
+                :subtitle="team.personal ? '只有你自己的小队 · 个人项目与个人算力都在这里' : team.intro"
                 :prepend-avatar="getAvatarUrl(team.avatarId)"
-                :to="{ name: 'TeamsDetail', params: { teamId: team.id } }"
+                :to="{ name: 'TeamsDetailDefault', params: { teamId: team.id } }"
                 rounded="md"
                 class="my-team-item mb-2"
               >
                 <template #append>
+                  <v-chip v-if="team.personal" size="x-small" variant="tonal" color="primary" class="mr-2">
+                    个人
+                  </v-chip>
                   <v-icon icon="mdi-chevron-right" color="grey-darken-1"></v-icon>
                 </template>
               </v-list-item>

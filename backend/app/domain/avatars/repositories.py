@@ -12,7 +12,9 @@ class AvatarRepository:
 
     async def list_by_type(self, avatar_type: str) -> list[Avatar]:
         stmt: Select[tuple[Avatar]] = (
-            select(Avatar).where(Avatar.avatar_type == avatar_type).order_by(Avatar.id.asc())
+            select(Avatar)
+            .where(Avatar.avatar_type == avatar_type)
+            .order_by(Avatar.id.asc())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
@@ -24,7 +26,10 @@ class AvatarRepository:
 
     async def get_default(self) -> Avatar | None:
         stmt: Select[tuple[Avatar]] = (
-            select(Avatar).where(Avatar.avatar_type == "default").order_by(Avatar.id.asc()).limit(1)
+            select(Avatar)
+            .where(Avatar.avatar_type == "default")
+            .order_by(Avatar.id.asc())
+            .limit(1)
         )
         result = await self._session.execute(stmt)
         row = result.scalar_one_or_none()

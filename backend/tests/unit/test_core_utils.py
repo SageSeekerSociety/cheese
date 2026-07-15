@@ -526,7 +526,9 @@ def test_registry_key_generation_without_labels():
 # ===========================================================================
 
 
-def _mock_settings_for_crypto(*, encryption_key: str = "", jwt_secret: str = "test-jwt-secret"):
+def _mock_settings_for_crypto(
+    *, encryption_key: str = "", jwt_secret: str = "test-jwt-secret"
+):
     """Return a SimpleNamespace that looks like settings for crypto tests."""
     return SimpleNamespace(
         realname_encryption_key=encryption_key,

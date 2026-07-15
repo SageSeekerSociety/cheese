@@ -116,7 +116,8 @@ class RedisEmailQueueNotificationHandler:
             await self._redis.rpush(self._queue_key, *items)  # type: ignore[misc]
         except Exception:
             logger.exception(
-                "Failed to enqueue notification batch into Redis queue %s", self._queue_key
+                "Failed to enqueue notification batch into Redis queue %s",
+                self._queue_key,
             )
 
 
@@ -142,7 +143,9 @@ class NotificationEventHandler:
             dedup = await self._deduplicator.should_process(event)
             if not dedup.should_process:
                 logger.debug(
-                    "Skip duplicate notification event %s (cache=%s)", event.type, dedup.cache_key
+                    "Skip duplicate notification event %s (cache=%s)",
+                    event.type,
+                    dedup.cache_key,
                 )
                 return
 
@@ -236,12 +239,22 @@ class NotificationEventHandler:
         await self._dispatch_to_handlers(deliveries)
         return finalized
 
-    async def _dispatch_to_handlers(self, deliveries: Sequence[NotificationDelivery]) -> None:
+    async def _dispatch_to_handlers(
+        self, deliveries: Sequence[NotificationDelivery]
+    ) -> None:
         if not deliveries:
             return
         for handler in self._channel_handlers:
             try:
-                await handler.send_batch(deliveries)
+                # A savepoint, not just a try/except: a DB-writing handler
+                # (in-app) can fail mid-flush (e.g. a non-ASCII payload against
+                # a non-UTF8 database), which leaves the whole shared session's
+                # transaction aborted in Postgres even though the Python
+                # exception is caught here — silently breaking the caller's own
+                # later commit. The savepoint scopes that failure to just this
+                # handler's writes, so the caller's transaction stays usable.
+                async with self._session.begin_nested():
+                    await handler.send_batch(deliveries)
             except Exception:  # pragma: no cover - defensive guardrail
                 logger.exception("Notification handler %s failed", handler.name)
 
@@ -299,10 +312,13 @@ class NotificationEventHandler:
                 reactor_ids.append(new_reactor_id)
             current["reactorIds"] = reactor_ids
             total = current.get("totalCount")
-            try:
-                base = int(total)
-            except Exception:
+            if total is None:
                 base = len(reactor_ids)
+            else:
+                try:
+                    base = int(total)
+                except Exception:
+                    base = len(reactor_ids)
             current["totalCount"] = max(base, len(reactor_ids))
             for k, v in new_payload.items():
                 current.setdefault(k, v)

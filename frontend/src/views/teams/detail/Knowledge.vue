@@ -451,22 +451,7 @@
                   <p class="text-body-2 mt-1">{{ selectedResource.originalMessage.content }}</p>
                 </div>
               </div>
-              <div class="d-flex justify-end mt-2">
-                <v-btn
-                  color="primary"
-                  variant="text"
-                  size="small"
-                  :to="{
-                    name: 'TeamsDetailChannels',
-                    params: { teamId: teamId },
-                    query: { channelId: selectedResource.sourceChannel?.id },
-                  }"
-                  @click="resourceDetailDialog = false"
-                >
-                  <v-icon start size="small">mdi-arrow-right</v-icon>
-                  跳转到原始讨论
-                </v-btn>
-              </div>
+              <!-- 频道已退役（都归项目）：原始消息就地展示，不再提供跳转。 -->
             </div>
             <div v-else class="text-center py-4 text-body-2 text-medium-emphasis">没有关联的原始讨论信息</div>
           </v-sheet>

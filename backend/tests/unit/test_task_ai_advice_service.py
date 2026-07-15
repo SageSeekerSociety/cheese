@@ -196,7 +196,9 @@ class TestRequestAdvice:
     async def test_generates_new_advice_when_not_completed(self):
         """If latest advice exists but is not COMPLETED, generate fresh advice."""
         advice_repo = AsyncMock()
-        advice_repo.get_latest.return_value = _make_advice(status=TaskAIAdviceStatus.FAILED.value)
+        advice_repo.get_latest.return_value = _make_advice(
+            status=TaskAIAdviceStatus.FAILED.value
+        )
 
         new_advice = _make_advice()
         advice_repo.create.return_value = new_advice
@@ -362,7 +364,9 @@ class TestCreateConversation:
         quota_service.check_quota.return_value = True
         quota_service.consume_tokens.return_value = _make_quota()
 
-        convo = _make_conversation(conversation_id="existing123", context_id=1, owner_id=42)
+        convo = _make_conversation(
+            conversation_id="existing123", context_id=1, owner_id=42
+        )
         conversation_repo = AsyncMock()
         conversation_repo.get_by_conversation_id.return_value = convo
 
@@ -1042,7 +1046,9 @@ class TestBuildMessageHistory:
         message_repo.list_for_conversation.return_value = []
 
         svc = _build_service(task_repo=task_repo, message_repo=message_repo)
-        history = await svc._build_message_history(100, 1, context={"section": "knowledge_fields"})
+        history = await svc._build_message_history(
+            100, 1, context={"section": "knowledge_fields"}
+        )
 
         assert "knowledge_fields" in history[0]["content"]
 
@@ -1320,8 +1326,16 @@ class TestEnsureContexts:
         await svc._ensure_contexts(1, payload)
 
         calls = context_repo.get_or_create.call_args_list
-        assert calls[0].kwargs == {"task_id": 1, "section": "knowledge_fields", "section_index": 0}
-        assert calls[1].kwargs == {"task_id": 1, "section": "knowledge_fields", "section_index": 1}
+        assert calls[0].kwargs == {
+            "task_id": 1,
+            "section": "knowledge_fields",
+            "section_index": 0,
+        }
+        assert calls[1].kwargs == {
+            "task_id": 1,
+            "section": "knowledge_fields",
+            "section_index": 1,
+        }
 
 
 # ---------------------------------------------------------------------------

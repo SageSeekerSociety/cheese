@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
+from typing import overload
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +14,11 @@ from app.domain.groups.models import (
 )
 
 
-def _to_date(dt_or_date) -> date | None:
+@overload
+def _to_date(dt_or_date: datetime | date) -> date: ...
+@overload
+def _to_date(dt_or_date: None) -> None: ...
+def _to_date(dt_or_date: datetime | date | None) -> date | None:
     if dt_or_date is None:
         return None
     if isinstance(dt_or_date, datetime):
@@ -135,7 +140,9 @@ class GroupProfileRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_profiles_by_group_ids(self, group_ids: Sequence[int]) -> dict[int, GroupProfile]:
+    async def get_profiles_by_group_ids(
+        self, group_ids: Sequence[int]
+    ) -> dict[int, GroupProfile]:
         if not group_ids:
             return {}
         stmt: Select[tuple[GroupProfile]] = select(GroupProfile).where(
@@ -334,7 +341,9 @@ class GroupMembershipRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _get_membership(self, group_id: int, member_id: int) -> GroupMembership | None:
+    async def _get_membership(
+        self, group_id: int, member_id: int
+    ) -> GroupMembership | None:
         stmt: Select[tuple[GroupMembership]] = select(GroupMembership).where(
             GroupMembership.group_id == group_id,
             GroupMembership.member_id == member_id,
@@ -462,7 +471,9 @@ class GroupQuestionRepository:
         total = int(count_result.scalar_one() or 0)
         return question_ids, total
 
-    async def add_question(self, *, group_id: int, question_id: int) -> GroupQuestionRelationship:
+    async def add_question(
+        self, *, group_id: int, question_id: int
+    ) -> GroupQuestionRelationship:
         existing = await self._get_relationship(group_id, question_id)
         now = datetime.now(UTC)
         if existing is not None:

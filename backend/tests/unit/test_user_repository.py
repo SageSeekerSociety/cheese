@@ -280,7 +280,9 @@ class TestUserProfileRepository:
         session = _mock_session()
         repo = UserProfileRepository(session)
 
-        result = await repo.create_profile(user_id=1, nickname="Alice", intro="Hi", avatar_id=5)
+        result = await repo.create_profile(
+            user_id=1, nickname="Alice", intro="Hi", avatar_id=5
+        )
         assert result.user_id == 1
         assert result.nickname == "Alice"
         assert result.intro == "Hi"
@@ -303,7 +305,9 @@ class TestUserProfileRepository:
         p = _profile()
         repo = UserProfileRepository(session)
 
-        result = await repo.update_profile(p, nickname="NewName", intro="NewIntro", avatar_id=10)
+        result = await repo.update_profile(
+            p, nickname="NewName", intro="NewIntro", avatar_id=10
+        )
         assert result.nickname == "NewName"
         assert result.intro == "NewIntro"
         assert result.avatar_id == 10

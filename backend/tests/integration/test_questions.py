@@ -189,7 +189,9 @@ class TestQuestionsGetIntegration:
         self.portal = _portal
         self.question_prefix = f"Q{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -203,7 +205,9 @@ class TestQuestionsGetIntegration:
         self.question_id = create_resp.json()["data"]["id"]
 
     def test_get_question(self):
-        response = self.client.get(f"/questions/{self.question_id}", headers=self.headers)
+        response = self.client.get(
+            f"/questions/{self.question_id}", headers=self.headers
+        )
         assert response.status_code == 200
         question = response.json()["data"]["question"]
         assert question["id"] == self.question_id
@@ -253,7 +257,9 @@ class TestQuestionsListByUserIntegration:
         self.portal = _portal
         self.question_prefix = f"Q{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         self.question_ids = []
         for i in range(6):
             resp = self.client.post(
@@ -327,7 +333,9 @@ class TestQuestionsSearchIntegration:
         self.question_code = str(unique_int(100000, 999999))
         self.question_prefix = f"[Test({self.question_code}) Question]"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         for i in range(6):
             self.client.post(
                 "/questions",
@@ -436,7 +444,9 @@ class TestQuestionsUpdateIntegration:
         )
         assert response.status_code == 200
 
-        get_resp = self.client.get(f"/questions/{self.question_id}", headers=self.headers)
+        get_resp = self.client.get(
+            f"/questions/{self.question_id}", headers=self.headers
+        )
         question = get_resp.json()["data"]["question"]
         assert "flag" in question["title"]
         assert "flag" in question["content"]
@@ -489,7 +499,9 @@ class TestQuestionsDeleteIntegration:
         self.portal = _portal
         self.question_prefix = f"Q{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -525,10 +537,14 @@ class TestQuestionsDeleteIntegration:
         assert response.status_code == 403
 
     def test_delete_question(self):
-        response = self.client.delete(f"/questions/{self.question_id}", headers=self.headers)
+        response = self.client.delete(
+            f"/questions/{self.question_id}", headers=self.headers
+        )
         assert response.status_code in (200, 204)
 
-        get_resp = self.client.get(f"/questions/{self.question_id}", headers=self.headers)
+        get_resp = self.client.get(
+            f"/questions/{self.question_id}", headers=self.headers
+        )
         assert get_resp.status_code == 404
 
 
@@ -553,7 +569,9 @@ class TestQuestionsFollowIntegration:
         self.portal = _portal
         self.question_prefix = f"Q{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         self.question_ids = []
         for i in range(5):
             resp = self.client.post(
@@ -750,7 +768,9 @@ class TestQuestionsAttitudeIntegration:
         self.portal = _portal
         self.question_prefix = f"Q{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -806,7 +826,9 @@ class TestQuestionsAttitudeIntegration:
             headers=self.headers,
             json={"attitude_type": "POSITIVE"},
         )
-        response = self.client.get(f"/questions/{self.question_id}", headers=self.headers)
+        response = self.client.get(
+            f"/questions/{self.question_id}", headers=self.headers
+        )
         assert response.status_code == 200
         attitudes = response.json()["data"]["question"]["attitudes"]
         assert attitudes["positive_count"] == 1
@@ -856,7 +878,9 @@ class TestQuestionsAttitudeIntegration:
             headers=aux_headers,
             json={"attitude_type": "NEGATIVE"},
         )
-        response = self.client.get(f"/questions/{self.question_id}", headers=self.headers)
+        response = self.client.get(
+            f"/questions/{self.question_id}", headers=self.headers
+        )
         attitudes = response.json()["data"]["question"]["attitudes"]
         assert attitudes["positive_count"] == 1
         assert attitudes["negative_count"] == 1
@@ -884,7 +908,9 @@ class TestQuestionsInvitationsIntegration:
         self.portal = _portal
         self.question_prefix = f"Q{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -1070,7 +1096,9 @@ class TestQuestionsBountyIntegration:
         self.portal = _portal
         self.question_prefix = f"Q{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -1120,7 +1148,9 @@ class TestQuestionsBountyIntegration:
             headers=self.headers,
             json={"bounty": 15},
         )
-        response = self.client.get(f"/questions/{self.question_id}", headers=self.headers)
+        response = self.client.get(
+            f"/questions/{self.question_id}", headers=self.headers
+        )
         assert response.json()["data"]["question"]["bounty"] == 15
 
     def test_set_bounty_not_owner(self):
@@ -1190,7 +1220,9 @@ class TestQuestionsAcceptAnswerIntegration:
         self.portal = _portal
         self.question_prefix = f"Q{unique_int(100000, 999999)}"
         topic_name = f"Topic_{unique_int(100000, 999999)}"
-        self.topic_id = create_topic_in_db(self.db, self.portal, topic_name, self.user.user_id)
+        self.topic_id = create_topic_in_db(
+            self.db, self.portal, topic_name, self.user.user_id
+        )
         create_resp = self.client.post(
             "/questions",
             headers=self.headers,
@@ -1230,8 +1262,13 @@ class TestQuestionsAcceptAnswerIntegration:
             headers=self.headers,
             params={"answer_id": self.answer_id},
         )
-        response = self.client.get(f"/questions/{self.question_id}", headers=self.headers)
-        assert response.json()["data"]["question"]["accepted_answer"]["id"] == self.answer_id
+        response = self.client.get(
+            f"/questions/{self.question_id}", headers=self.headers
+        )
+        assert (
+            response.json()["data"]["question"]["accepted_answer"]["id"]
+            == self.answer_id
+        )
 
     def test_accept_question_not_found(self):
         response = self.client.put(

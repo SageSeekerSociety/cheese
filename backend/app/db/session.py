@@ -1,27 +1,17 @@
-from collections.abc import AsyncGenerator
+"""Compat module: 知是 routes/services import their session machinery from here.
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+Fusion unify: there is ONE engine / ONE connection pool for the whole app —
+``app.core.db``. This module only re-exports it under the names the 知是 half
+has always used, so both halves share the same pool and a request that spans
+them cannot end up on two connections.
+"""
 
-from app.core.config import settings
+from app.core.db import (
+    async_session_factory as AsyncSessionLocal,
+)
+from app.core.db import (
+    engine,
+    get_db,
+)
 
-db_url = settings.database_url
-if db_url.startswith("postgresql://"):
-    async_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-elif db_url.startswith("postgresql+psycopg2://"):
-    async_url = db_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
-else:
-    async_url = db_url
-
-engine = create_async_engine(async_url, future=True, echo=False)
-
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-
-
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+__all__ = ["AsyncSessionLocal", "engine", "get_db"]

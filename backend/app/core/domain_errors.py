@@ -38,7 +38,7 @@ class TaskParticipantNotApprovedError(ForbiddenError):
 class YourRankIsNotHighEnoughError(BadRequestError):
     def __init__(self, required_rank: int, current_rank: int) -> None:
         super().__init__(
-            message=f"Your rank ({current_rank}) is not high enough. Required: {required_rank}",
+            message=f"Your rank ({current_rank}) is not high enough. Required: {required_rank}",  # noqa: E501
             data={"requiredRank": required_rank, "currentRank": current_rank},
         )
 
@@ -99,7 +99,7 @@ class EmailOrPhoneRequiredError(BadRequestError):
 class YourTeamMemberRankIsNotHighEnoughError(ForbiddenError):
     def __init__(self, member_id: int, required_rank: int, current_rank: int) -> None:
         super().__init__(
-            message=f"Team member rank ({current_rank}) is not high enough. Required: {required_rank}",
+            message=f"Team member rank ({current_rank}) is not high enough. Required: {required_rank}",  # noqa: E501
             data={
                 "memberId": member_id,
                 "requiredRank": required_rank,
@@ -117,7 +117,9 @@ class TeamLockedError(ForbiddenError):
 
 
 class TeamRoleConflictError(ConflictError):
-    def __init__(self, team_id: int, user_id: int, current_role: str, requested_role: str) -> None:
+    def __init__(
+        self, team_id: int, user_id: int, current_role: str, requested_role: str
+    ) -> None:
         super().__init__(
             message=f"Role conflict: user already has role {current_role}",
             data={

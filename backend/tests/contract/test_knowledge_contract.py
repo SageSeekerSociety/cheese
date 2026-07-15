@@ -1,20 +1,17 @@
 import pytest
 from httpx import AsyncClient
 
-USER_HEADER = {"X-User-Id": "1", "Authorization": "Bearer token"}
-
 
 @pytest.mark.anyio
-async def test_python_list_knowledge_shape(python_client: AsyncClient) -> None:
-    """GET /knowledge 列表结构检查。"""
-    resp = await python_client.get(
+async def test_python_list_knowledge_shape(
+    authed_client: AsyncClient, seeded_team: int
+) -> None:
+    """GET /knowledge 列表结构检查。列表按 team 过滤，且要求调用者是该 team 成员。"""
+    resp = await authed_client.get(
         "/knowledge",
-        params={"teamId": 1, "pageSize": 10},
-        headers=USER_HEADER,
+        params={"teamId": seeded_team, "pageSize": 10},
     )
-    assert resp.status_code in (200, 401)
-    if resp.status_code != 200:
-        return
+    assert resp.status_code == 200
 
     body = resp.json()
     assert set(body.keys()) == {"code", "message", "data"}
@@ -24,18 +21,19 @@ async def test_python_list_knowledge_shape(python_client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_python_create_knowledge_shape(python_client: AsyncClient) -> None:
-    """POST /knowledge 结构检查。"""
+async def test_python_create_knowledge_shape(
+    authed_client: AsyncClient, seeded_team: int
+) -> None:
+    """POST /knowledge 结构检查。``teamId`` 必填，且要求调用者是该 team 成员。"""
     payload = {
         "name": "Test",
         "type": "TEXT",
         "content": "content",
         "description": "desc",
+        "teamId": seeded_team,
     }
-    resp = await python_client.post("/knowledge", json=payload, headers=USER_HEADER)
-    assert resp.status_code in (200, 401)
-    if resp.status_code != 200:
-        return
+    resp = await authed_client.post("/knowledge", json=payload)
+    assert resp.status_code == 201
 
     body = resp.json()
     assert set(body.keys()) == {"code", "message", "data"}

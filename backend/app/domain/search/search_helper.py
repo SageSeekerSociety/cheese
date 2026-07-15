@@ -42,7 +42,9 @@ async def meilisearch_search_ids(
         total = result.get("estimatedTotalHits", len(ids))
         return ids, total
     except Exception:
-        _logger.debug("Meilisearch search failed, falling back to PG FTS", exc_info=True)
+        _logger.debug(
+            "Meilisearch search failed, falling back to PG FTS", exc_info=True
+        )
         return None
 
 

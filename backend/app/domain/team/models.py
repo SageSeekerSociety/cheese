@@ -30,10 +30,23 @@ class Team(Base):
     intro: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(String, nullable=False)
     avatar_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # A user's personal single-member team (v4: 个人 = 单人真团队).
+    # NULL = a normal shared team; set = the personal team of that user (one per user,
+    # auto-provisioned). Personal projects belong to it, and it can own compute like
+    # any team — so 为自己注册设备 is just 注册给个人团队.
+    personal_owner_user_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TeamMemberRole:
@@ -45,14 +58,24 @@ class TeamMemberRole:
 class TeamUserRelation(Base):
     __tablename__ = "team_user_relation"
 
-    id: Mapped[int] = mapped_column(BigInteger, team_user_relation_seq, primary_key=True)
-    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("team.id"), nullable=False)
+    id: Mapped[int] = mapped_column(
+        BigInteger, team_user_relation_seq, primary_key=True
+    )
+    team_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("team.id"), nullable=False
+    )
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     role: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ApplicationType(str, Enum):
@@ -72,22 +95,38 @@ class ApplicationStatus(str, Enum):
 class TeamMembershipApplication(Base):
     __tablename__ = "team_membership_application"
 
-    id: Mapped[int] = mapped_column(BigInteger, team_membership_application_seq, primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger, team_membership_application_seq, primary_key=True
+    )
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("team.id"), nullable=False)
+    team_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("team.id"), nullable=False
+    )
     initiator_id: Mapped[int] = mapped_column(Integer, nullable=False)
 
     type: Mapped[str] = mapped_column(String(length=255), nullable=False)
-    status: Mapped[str] = mapped_column(String(length=255), nullable=False, default="PENDING")
-    role: Mapped[str] = mapped_column(String(length=255), nullable=False, default="MEMBER")
+    status: Mapped[str] = mapped_column(
+        String(length=255), nullable=False, default="PENDING"
+    )
+    role: Mapped[str] = mapped_column(
+        String(length=255), nullable=False, default="MEMBER"
+    )
 
     message: Mapped[str | None] = mapped_column(String, nullable=True)
     processed_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class RecruitmentStatus(str, Enum):
@@ -104,7 +143,9 @@ class TeamRecruitmentPost(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("team.id"), nullable=False)
+    team_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("team.id"), nullable=False
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -112,7 +153,15 @@ class TeamRecruitmentPost(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="OPEN")
     created_by: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

@@ -1,0 +1,20 @@
+# CheeseX backend systemd unit (deployed at /etc/systemd/system/cheesex.service on etrip)
+# Env comes from /opt/cheesex/backend/.env (read by pydantic-settings, no EnvironmentFile needed).
+# Logs: journalctl -u cheesex -f
+[Unit]
+Description=CheeseX backend (FastAPI/uvicorn)
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/cheesex/backend
+ExecStart=/root/.local/bin/uv run uvicorn app.main:app --host 127.0.0.1 --port 8099
+Restart=always
+RestartSec=3
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

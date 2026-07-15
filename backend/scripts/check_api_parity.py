@@ -15,11 +15,13 @@ from pathlib import Path
 
 from app.main import app
 
-CATALOG_PATH = Path(__file__).resolve().parents[1] / "tests" / "contract" / "api_catalog.json"
+CATALOG_PATH = (
+    Path(__file__).resolve().parents[1] / "tests" / "contract" / "api_catalog.json"
+)
 
 
 def canonicalize(path: str) -> str:
-    """Replace placeholder names with '{}' to compare templates ignoring parameter casing."""
+    """Replace placeholder names with '{}' to compare templates ignoring parameter casing."""  # noqa: E501
     return re.sub(r"\{[^{}]+\}", "{}", path)
 
 
@@ -84,7 +86,9 @@ def main() -> None:
         canonical_mismatches.append((key[0], key[1], spec_paths, app_paths))
 
     if canonical_mismatches:
-        print("\nParameter/placeholder mismatches (same canonical shape, different names):")
+        print(
+            "\nParameter/placeholder mismatches (same canonical shape, different names):"  # noqa: E501
+        )
         for method, canon, spec_paths, app_paths in canonical_mismatches:
             print(f"- {method} {canon}")
             print(f"    spec paths: {sorted(spec_paths)}")

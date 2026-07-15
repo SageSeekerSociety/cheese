@@ -25,7 +25,9 @@ class TestLoginRateLimiter:
         assert await rate_limiter.is_locked_out("testuser") is True
 
     @pytest.mark.anyio
-    async def test_record_failed_attempt_increments(self, rate_limiter, mock_redis) -> None:
+    async def test_record_failed_attempt_increments(
+        self, rate_limiter, mock_redis
+    ) -> None:
         mock_redis.incr.return_value = 1
         attempts = await rate_limiter.record_failed_attempt("testuser")
         assert attempts == 1
@@ -92,11 +94,22 @@ class TestTOTPService:
         assert totp_service.verify_code(secret, "000000") is False
 
     @pytest.mark.anyio
-    async def test_start_2fa_setup(self, totp_service, mock_redis) -> None:
-        result = await totp_service.start_2fa_setup(123, "test@example.com")
-        assert "secret" in result
-        assert "provisioningUri" in result
-        mock_redis.setex.assert_called_once()
+    async def test_enable_2fa_valid_code_persists_secret(
+        self, totp_service, mock_redis
+    ) -> None:
+        import pyotp
+
+        secret = pyotp.random_base32()
+        code = pyotp.TOTP(secret).now()
+        assert await totp_service.enable_2fa(123, secret, code) is True
+        mock_redis.set.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_enable_2fa_invalid_code_rejected(
+        self, totp_service, mock_redis
+    ) -> None:
+        assert await totp_service.enable_2fa(123, "JBSWY3DPEHPK3PXP", "000000") is False
+        mock_redis.set.assert_not_called()
 
     @pytest.mark.anyio
     async def test_is_2fa_enabled_true(self, totp_service, mock_redis) -> None:
@@ -129,30 +142,37 @@ class TestTOTPServiceExtended:
         return TOTPService(mock_redis)
 
     @pytest.mark.anyio
-    async def test_confirm_2fa_setup_no_pending_secret(self, totp_service, mock_redis):
-        mock_redis.get.return_value = None
-        result = await totp_service.confirm_2fa_setup(123, "123456")
-        assert result is None
+    async def test_generate_backup_codes_shape_and_storage(
+        self, totp_service, mock_redis
+    ):
+        from unittest.mock import MagicMock
+
+        pipe = MagicMock()
+        pipe.execute = AsyncMock()
+        mock_redis.pipeline = MagicMock(return_value=pipe)
+
+        codes = await totp_service.generate_backup_codes(123)
+        assert len(codes) == 10
+        assert all(len(c) == 8 for c in codes)
+        pipe.delete.assert_called_once()
+        pipe.sadd.assert_called_once()
+        # stored values are digests, never the raw codes
+        stored = pipe.sadd.call_args.args[1:]
+        assert not set(codes) & set(stored)
 
     @pytest.mark.anyio
-    async def test_confirm_2fa_setup_invalid_code(self, totp_service, mock_redis):
-        mock_redis.get.return_value = b"JBSWY3DPEHPK3PXP"
-        result = await totp_service.confirm_2fa_setup(123, "000000")
-        assert result is None
+    async def test_verify_backup_code_one_time(self, totp_service, mock_redis):
+        mock_redis.srem.return_value = 1
+        assert await totp_service.verify_backup_code(123, "a1b2c3d4") is True
+        mock_redis.srem.return_value = 0
+        assert await totp_service.verify_backup_code(123, "a1b2c3d4") is False
 
     @pytest.mark.anyio
-    async def test_confirm_2fa_setup_valid_code(self, totp_service, mock_redis):
-        import pyotp
-
-        secret = pyotp.random_base32()
-        totp = pyotp.TOTP(secret)
-        code = totp.now()
-        mock_redis.get.return_value = secret.encode()
-
-        result = await totp_service.confirm_2fa_setup(123, code)
-        assert result == secret
+    async def test_always_required_flag(self, totp_service, mock_redis):
+        mock_redis.exists.return_value = 1
+        assert await totp_service.is_always_required(123) is True
+        await totp_service.set_always_required(123, False)
         mock_redis.delete.assert_called_once()
-        mock_redis.set.assert_called_once()
 
     @pytest.mark.anyio
     async def test_verify_2fa_no_secret(self, totp_service, mock_redis):
@@ -199,7 +219,9 @@ class TestLoginRateLimiterExtended:
         assert result == 300
 
     @pytest.mark.anyio
-    async def test_get_remaining_lockout_seconds_not_locked(self, rate_limiter, mock_redis):
+    async def test_get_remaining_lockout_seconds_not_locked(
+        self, rate_limiter, mock_redis
+    ):
         mock_redis.ttl.return_value = -1
         result = await rate_limiter.get_remaining_lockout_seconds("testuser")
         assert result == 0
@@ -289,7 +311,9 @@ class TestSessionManager:
         mock_redis.expire.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_list_user_sessions_with_stale(self, session_manager, mock_redis) -> None:
+    async def test_list_user_sessions_with_stale(
+        self, session_manager, mock_redis
+    ) -> None:
         """Sessions that no longer exist in Redis get cleaned from the set."""
         mock_redis.smembers.return_value = {b"alive", b"stale"}
         mock_redis.hgetall.side_effect = [
@@ -308,7 +332,9 @@ class TestSessionManager:
         assert mock_redis.delete.call_count == 3
 
     @pytest.mark.anyio
-    async def test_revoke_all_sessions_except_current(self, session_manager, mock_redis) -> None:
+    async def test_revoke_all_sessions_except_current(
+        self, session_manager, mock_redis
+    ) -> None:
         mock_redis.smembers.return_value = {b"s1", b"s2", b"s3"}
         count = await session_manager.revoke_all_sessions(123, except_session_id="s2")
         assert count == 2  # s2 is excluded
@@ -331,7 +357,9 @@ class TestPasswordResetService:
 
     @pytest.mark.anyio
     async def test_create_reset_token(self, reset_service, mock_redis) -> None:
-        token = await reset_service.create_reset_token(123, "test@example.com", username="testuser")
+        token = await reset_service.create_reset_token(
+            123, "test@example.com", username="testuser"
+        )
         assert token is not None
         mock_redis.hset.assert_called()
         mock_redis.expire.assert_called()
@@ -347,7 +375,9 @@ class TestPasswordResetService:
         assert data["user_id"] == "123"
 
     @pytest.mark.anyio
-    async def test_validate_reset_token_invalid(self, reset_service, mock_redis) -> None:
+    async def test_validate_reset_token_invalid(
+        self, reset_service, mock_redis
+    ) -> None:
         mock_redis.hgetall.return_value = {}
         data = await reset_service.validate_reset_token("invalid-token")
         assert data is None

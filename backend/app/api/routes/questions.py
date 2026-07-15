@@ -32,7 +32,10 @@ async def get_questions_service(db=Depends(get_db)) -> QuestionsService:
     answer_repo = AnswerRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
     return QuestionsService(
-        repo=repo, topic_repo=topic_repo, answer_repo=answer_repo, profile_repo=profile_repo
+        repo=repo,
+        topic_repo=topic_repo,
+        answer_repo=answer_repo,
+        profile_repo=profile_repo,
     )
 
 
@@ -136,9 +139,14 @@ async def add_question(
 ) -> dict:
     title = payload.get("title") or ""
     content = payload.get("content") or ""
-    type_ = int(payload.get("type", 0))
+    # `type`/`bounty` must be numeric — a non-numeric value is a client error (400),
+    # not an unhandled 500 from a bare int().
+    try:
+        type_ = int(payload.get("type", 0))
+        bounty = int(payload.get("bounty", 0))
+    except (TypeError, ValueError):
+        raise BadRequestError("type and bounty must be integers") from None
     group_id = payload.get("groupId")
-    bounty = int(payload.get("bounty", 0))
     topic_ids = payload.get("topics") or payload.get("topicIds") or []
     if not isinstance(topic_ids, list):
         raise BadRequestError("topics must be an array")
@@ -207,7 +215,9 @@ async def follow_question(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    changed = await service.follow_question(question_id=question_id, user_id=auth_user.user_id)
+    changed = await service.follow_question(
+        question_id=question_id, user_id=auth_user.user_id
+    )
     if not changed:
         raise BadRequestError("Already followed")
     follow_count = await service._repo.count_followers(question_id)
@@ -223,7 +233,9 @@ async def unfollow_question(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    changed = await service.unfollow_question(question_id=question_id, user_id=auth_user.user_id)
+    changed = await service.unfollow_question(
+        question_id=question_id, user_id=auth_user.user_id
+    )
     if not changed:
         raise BadRequestError("Not followed")
     return {"code": 200, "message": "OK", "data": {"unfollowed": True}}
@@ -251,10 +263,14 @@ async def accept_answer(
 )
 async def unaccept_answer(
     question_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = require_permission(Action.ADMIN, Resource.QUESTION, "question_id"),
+    auth_user: AuthUserInfo = require_permission(
+        Action.ADMIN, Resource.QUESTION, "question_id"
+    ),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    question = await service.unaccept_answer(question_id=question_id, user_id=auth_user.user_id)
+    question = await service.unaccept_answer(
+        question_id=question_id, user_id=auth_user.user_id
+    )
     return {"code": 200, "message": "OK", "data": {"question": question}}
 
 
@@ -284,7 +300,9 @@ async def remove_question_vote(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    result = await service.remove_question_vote(question_id=question_id, user_id=auth_user.user_id)
+    result = await service.remove_question_vote(
+        question_id=question_id, user_id=auth_user.user_id
+    )
     return {"code": 200, "message": "OK", "data": result}
 
 
@@ -555,7 +573,10 @@ async def invite_user_to_answer(
     return {
         "code": 201,
         "message": "Created",
-        "data": {"invitationId": result["invitation_id"], "invitation": result["invitation"]},
+        "data": {
+            "invitationId": result["invitation_id"],
+            "invitation": result["invitation"],
+        },
     }
 
 
@@ -597,5 +618,7 @@ async def delete_invitation(
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
     _ = question_id
-    await service.delete_invitation(invitation_id=invitation_id, user_id=auth_user.user_id)
+    await service.delete_invitation(
+        invitation_id=invitation_id, user_id=auth_user.user_id
+    )
     return {"code": 200, "message": "OK", "data": {"deleted": True}}

@@ -27,12 +27,10 @@ info:
     url: https://github.com/SageSeekerSociety/cheese-backend-py
 
 servers:
+  - url: http://127.0.0.1:8799
+    description: Merged backend (scripts/dev flow)
   - url: http://localhost:8081
-    description: Python backend (cheese-backend-py)
-  - url: http://localhost:7777
-    description: Legacy NestJS backend (cheese-backend)
-  - url: http://localhost:8080
-    description: Legacy Kotlin backend (cheese-backend-nt)
+    description: Merged backend (docker dev flow)
 
 tags:
   - name: Users

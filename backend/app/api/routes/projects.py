@@ -1,424 +1,401 @@
+"""Project routes."""
+
 import re
+import uuid
+from dataclasses import asdict
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.checker import require_auth_user
-from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
-from app.db.session import get_db
-from app.domain.project.models import Project, ProjectMemberRole, ProjectMembership
-from app.domain.project.repositories import ProjectMembershipRepository, ProjectRepository
+from app.api.deps import get_profile_registry, project_device_online
+from app.api.response import ok, page
+from app.core.config import settings
+from app.core.db import get_db
+from app.core.errors import NotFoundError, ValidationError
+from app.domain.agent.market import compute_default_name, compute_selectable
+from app.domain.agent.profiles import ProfileRegistry
+from app.domain.agent.roles import resolve_role_description
+from app.domain.block.models import BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
+from app.domain.project.repositories import ProjectRepository
+from app.domain.project.schemas import (
+    ProjectCreate,
+    ProjectOut,
+    TaskLinkCreate,
+    TaskLinkOut,
+)
 from app.domain.project.services import ProjectService
-from app.domain.team.models import Team
-from app.domain.team.repositories import TeamRepository
-from app.domain.user.models import User, UserProfile
-from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.topic.schemas import TopicOut
+from app.domain.topic.services import TopicService
+from app.domain.workspace import service as ws
 
-# ── Request Models ────────────────────────────────────────────────────────────
+router = APIRouter(prefix="/api/projects", tags=["projects"])
 
-
-class CreateProjectRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    name: str = Field(..., min_length=1)
-    description: str = ""
-    color_code: str | None = Field(default=None, alias="colorCode")
-    team_id: int = Field(..., alias="teamId", gt=0)
-    leader_id: int = Field(..., alias="leaderId", gt=0)
-    start_date: int = Field(..., alias="startDate")
-    end_date: int = Field(..., alias="endDate")
-    content: str | None = None
-    parent_id: int | None = Field(default=None, alias="parentId")
-    external_task_id: int | None = Field(default=None, alias="externalTaskId")
-    github_repo: str | None = Field(default=None, alias="githubRepo")
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
-class PatchProjectRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    name: str | None = None
-    description: str | None = None
-    color_code: str | None = Field(default=None, alias="colorCode")
-    archived: bool | None = None
-
-
-class AddProjectMemberRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    user_id: int = Field(..., alias="userId", gt=0)
-    role: str = "MEMBER"
-    notes: str | None = None
-
-
-router = APIRouter(prefix="/projects", tags=["Projects"])
-
-
-async def get_project_service(db=Depends(get_db)) -> ProjectService:
-    repo = ProjectRepository(session=db)
-    membership_repo = ProjectMembershipRepository(session=db)
-    return ProjectService(repo, membership_repo)
-
-
-# Frontend's ProjectMemberRole = 'LEADER' | 'MEMBER' | 'EXTERNAL'.
-# Python's ProjectMemberRole = MEMBER (0) | ADMIN (1) | OWNER (2).
-# OWNER is the project lead; ADMIN has no frontend counterpart so we surface
-# it as MEMBER (frontend role-color logic only special-cases LEADER).
-_PROJECT_ROLE_TO_FRONTEND = {
-    ProjectMemberRole.MEMBER.value: "MEMBER",
-    ProjectMemberRole.ADMIN.value: "MEMBER",
-    ProjectMemberRole.OWNER.value: "LEADER",
-}
-
-
-def _team_summary(team: Team | None) -> dict | None:
-    if team is None:
-        return None
-    return {
-        "id": team.id,
-        "name": team.name,
-        "intro": team.intro or "",
-        "avatarId": team.avatar_id,
-    }
-
-
-def _user_summary(user: User | None, profile: UserProfile | None) -> dict | None:
-    if user is None:
-        return None
-    return {
-        "id": user.id,
-        "username": user.username,
-        "nickname": profile.nickname if profile else user.username,
-        "avatarId": profile.avatar_id if profile else None,
-        "intro": profile.intro if profile else "",
-    }
-
-
-async def _project_to_api_model(project: Project, *, db: AsyncSession) -> dict:
-    team_repo = TeamRepository(session=db)
-    user_repo = UserRepository(session=db)
-    profile_repo = UserProfileRepository(session=db)
-    membership_repo = ProjectMembershipRepository(session=db)
-
-    team = await team_repo.get_by_id(project.team_id)
-    leader = await user_repo.get_by_id(project.leader_id)
-    leader_profile = (
-        await profile_repo.get_profile_by_user_id(project.leader_id) if leader is not None else None
+@router.post("")
+async def create_project(body: ProjectCreate, db: DbSession) -> dict:
+    project = await ProjectService(db).create(
+        name=body.name,
+        owner_handle=body.owner_handle,
+        ai_mode=body.ai_mode,
+        expert_role=body.expert_role,
+        team_id=body.team_id,
     )
+    return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
-    memberships, total = await membership_repo.list_members(project.id, limit=5, offset=0)
-    member_user_ids = [m.user_id for m in memberships]
-    users_by_id = await user_repo.get_by_ids(member_user_ids) if member_user_ids else {}
-    profiles_by_id = (
-        await profile_repo.get_profiles_by_user_ids(member_user_ids) if member_user_ids else {}
+
+@router.get("")
+async def list_projects(db: DbSession, team_id: int | None = None) -> dict:
+    """All projects, or — with ``team_id`` — one team's 项目 page (a personal
+    team also folds in its owner's legacy team-less projects)."""
+    service = ProjectService(db)
+    if team_id is not None:
+        projects = await service.list_for_team(team_id)
+        total = len(projects)
+    else:
+        projects, total = await service.list_all()
+    items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
+    return ok(page(items, total))
+
+
+@router.get("/by-team/{team_id}")
+async def project_for_team(team_id: int, db: DbSession) -> dict:
+    """The AI-workspace project for a 知是 Team (P4). ``data`` is null when the
+    team has no project yet — the team page uses this to show/hide its 「AI 工作台」
+    entry."""
+    project = await ProjectRepository(db).get_by_team(team_id)
+    data = (
+        ProjectOut.model_validate(project).model_dump(mode="json")
+        if project is not None
+        else None
     )
-    examples: list[dict] = []
-    for m in memberships:
-        u = users_by_id.get(m.user_id)
-        if u is None:
-            continue
-        p = profiles_by_id.get(m.user_id)
-        examples.append(
-            {
-                "id": m.id,
-                "user": _user_summary(u, p),
-                "role": _PROJECT_ROLE_TO_FRONTEND.get(m.role, "MEMBER"),
-                "createdAt": int(m.created_at.timestamp() * 1000) if m.created_at else 0,
-                "updatedAt": int(m.updated_at.timestamp() * 1000) if m.updated_at else 0,
-            }
-        )
-
-    created_at_ms = (
-        int(project.created_at.timestamp() * 1000) if project.created_at is not None else 0
-    )
-    updated_at_ms = (
-        int(project.updated_at.timestamp() * 1000) if project.updated_at is not None else 0
-    )
-    start_date_ms = (
-        int(project.start_date.timestamp() * 1000) if project.start_date is not None else 0
-    )
-    end_date_ms = int(project.end_date.timestamp() * 1000) if project.end_date is not None else 0
-    return {
-        "id": project.id,
-        "name": project.name,
-        "description": project.description,
-        "colorCode": project.color_code,
-        "content": project.content or "",
-        "startDate": start_date_ms,
-        "endDate": end_date_ms,
-        "teamId": project.team_id,
-        "leaderId": project.leader_id,
-        "parentId": project.parent_id,
-        "externalTaskId": project.external_task_id,
-        "githubRepo": project.github_repo,
-        "archived": project.archived,
-        "team": _team_summary(team),
-        "leader": _user_summary(leader, leader_profile),
-        "members": {"count": total, "examples": examples},
-        "createdAt": created_at_ms,
-        "updatedAt": updated_at_ms,
-    }
+    return ok(data)
 
 
-def _validate_color_code(value: str | None) -> str:
-    if not isinstance(value, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", value):
-        raise BadRequestError("colorCode must match ^#[0-9A-Fa-f]{6}$")
-    return value
+@router.get("/{project_id}")
+async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
+    project = await ProjectService(db).get_or_404(project_id)
+    return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
-@router.post(
-    "",
-    summary="Create Project",
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_project(
-    payload: CreateProjectRequest,
-    service: ProjectService = Depends(get_project_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    if auth_user.user_id == 0:
-        raise ForbiddenError("Authentication required")
-
-    # Check team membership
-    team_repo = TeamRepository(session=db)
-    is_member = await team_repo.is_team_member(payload.team_id, auth_user.user_id)
-    if not is_member:
-        raise ForbiddenError("You must be a team member to create a project")
-
-    color_code = _validate_color_code(payload.color_code)
-
-    project = await service.create_project(
-        name=payload.name.strip(),
-        description=payload.description,
-        color_code=color_code,
-        team_id=payload.team_id,
-        leader_id=payload.leader_id,
-        start_date=payload.start_date,
-        end_date=payload.end_date,
-        content=payload.content,
-        parent_id=payload.parent_id,
-        external_task_id=payload.external_task_id,
-        github_repo=payload.github_repo,
-    )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"project": await _project_to_api_model(project, db=db)},
-    }
-
-
-@router.get(
-    "/{projectId}",
-    summary="Query Project",
-)
-async def get_project(
-    project_id: Annotated[int, Path(ge=1, alias="projectId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: ProjectService = Depends(get_project_service),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    _ = auth_user
-    project = await service.get_project(project_id=project_id)
+@router.put("/{project_id}/expert-role")
+async def set_expert_role(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Set which expert persona 芝士 loads for this project (spec §8.2). Any
+    known role name is accepted (custom shadows built-in); empty clears."""
+    project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    name = str(body.get("role") or "").strip()
+    if name and await resolve_role_description(db, name) is None:
+        raise ValidationError(f"角色 {name!r} 不存在")
+    project.expert_role = name or None
+    await db.flush()
+    return ok({"current": project.expert_role})
 
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {"project": await _project_to_api_model(project, db=db)},
-    }
+
+@router.post("/{project_id}/tasks")
+async def link_task(project_id: uuid.UUID, body: TaskLinkCreate, db: DbSession) -> dict:
+    link = await ProjectService(db).link_task(
+        project_id=project_id, task_id=body.task_id
+    )
+    return ok(TaskLinkOut.model_validate(link).model_dump(mode="json"))
 
 
-@router.patch(
-    "/{projectId}",
-    summary="Update Project",
-)
-async def patch_project(
-    project_id: Annotated[int, Path(ge=1, alias="projectId")],
-    payload: PatchProjectRequest,
-    service: ProjectService = Depends(get_project_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db: AsyncSession = Depends(get_db),
+@router.get("/{project_id}/tasks")
+async def list_linked_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
+    links, total = await ProjectService(db).list_links(project_id)
+    items = [TaskLinkOut.model_validate(link).model_dump(mode="json") for link in links]
+    return ok(page(items, total))
+
+
+@router.delete("/{project_id}/tasks/{task_id}")
+async def unlink_task(project_id: uuid.UUID, task_id: uuid.UUID, db: DbSession) -> dict:
+    """退出 Task 协议 (§4): break the project↔task link."""
+    await ProjectService(db).unlink_task(project_id=project_id, task_id=task_id)
+    return ok({"unlinked": True})
+
+
+@router.get("/{project_id}/decisions")
+async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
+    """决策记录 (spec §7.1): project-wide decision blocks, each traceable to its
+    source topic via topic_id."""
+    await ProjectService(db).get_or_404(project_id)
+    blocks = await BlockRepository(db).list_by_kind_for_project(
+        project_id, BlockKind.decision
+    )
+    items = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
+    return ok(page(items, len(items)))
+
+
+@router.post("/{project_id}/memory")
+async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """记入记忆 — used by the `cheese remember` CLI. Defaults to project memory
+    (spec §8.4); with scope="user"+owner it writes that member's personal memory
+    (private chat, spec §8.4 个人记忆跟着人走)."""
+    from app.domain.memory.models import MemoryScope
+    from app.domain.memory.store import memory_store
+
+    await ProjectService(db).get_or_404(project_id)
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise ValidationError("content 不能为空")
+    if (body.get("scope") or "project") == "user":
+        owner = (body.get("owner") or "").strip()
+        if not owner:
+            raise ValidationError("owner 不能为空（个人记忆需要 owner）")
+        await memory_store(db).remember(MemoryScope.user, owner, content)
+    else:
+        await memory_store(db).remember(MemoryScope.project, str(project_id), content)
+    return ok({"remembered": True})
+
+
+@router.post("/{project_id}/memory/search")
+async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """记忆检索 — used by the `cheese recall` CLI. Defaults to project memory;
+    with scope="user"+owner it searches that member's personal memory. On the
+    OpenViking backend this is semantic search returning L0 abstracts; the flat
+    DB backend falls back to a substring filter."""
+    from app.domain.memory.models import MemoryScope
+    from app.domain.memory.store import memory_store
+
+    await ProjectService(db).get_or_404(project_id)
+    query = (body.get("query") or "").strip()
+    if not query:
+        raise ValidationError("query 不能为空")
+    if (body.get("scope") or "project") == "user":
+        owner = (body.get("owner") or "").strip()
+        if not owner:
+            raise ValidationError("owner 不能为空（个人记忆需要 owner）")
+        scope, scope_id = MemoryScope.user, owner
+    else:
+        scope, scope_id = MemoryScope.project, str(project_id)
+    hits = await memory_store(db).search(scope, scope_id, query)
+    return ok({"hits": [h.as_dict() for h in hits]})
+
+
+@router.get("/{project_id}/private-chat")
+async def get_private_chat(
+    project_id: uuid.UUID,
+    user_handle: str,
+    db: DbSession,
+    peer_handle: str | None = None,
 ) -> dict:
-    if auth_user.user_id == 0:
-        raise ForbiddenError("Authentication required")
-    project = await service.get_project(project_id=project_id)
+    """Get-or-create a 1:1 private chat (spec §1).
+
+    Without ``peer_handle`` this is the member's 1:1 with 芝士. With
+    ``peer_handle`` it is a person-to-person DM between the two humans, shared
+    by both regardless of who opens it first.
+    """
+    topic = await TopicService(db).get_or_create_private(
+        project_id=project_id, user_handle=user_handle, peer_handle=peer_handle
+    )
+    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
+# --- ExecutionProfile (design §2): which model/provider this project runs on ---
+
+
+@router.get("/{project_id}/execution-profiles")
+async def list_execution_profiles(
+    project_id: uuid.UUID, db: DbSession, registry: Registry
+) -> dict:
+    """Profiles this project may select (credentialed + permitted for its owner),
+    plus the current selection. Default = our AI pool."""
+    project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    if project.leader_id != auth_user.user_id:
-        raise ForbiddenError("Only the project leader can update this project")
+    current = (project.settings or {}).get("execution_profile") or "default"
+    profiles = [asdict(v) for v in registry.selectable(project.owner_handle)]
+    return ok({"current": current, "profiles": profiles})
 
-    color_code = (
-        _validate_color_code(payload.color_code) if payload.color_code is not None else None
+
+@router.put("/{project_id}/execution-profile")
+async def set_execution_profile(
+    project_id: uuid.UUID, body: dict, db: DbSession, registry: Registry
+) -> dict:
+    """Set the project's execution profile. Only a profile that's selectable for
+    this owner is accepted (a testing-tier profile on a non-dogfood project is
+    rejected — review Finding 7)."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    name = (body.get("profile") or "").strip() or "default"
+    allowed = {v.name for v in registry.selectable(project.owner_handle)}
+    if name not in allowed:
+        raise ValidationError(f"执行档案 {name!r} 对本项目不可用")
+    project.settings = {**(project.settings or {}), "execution_profile": name}
+    await db.flush()
+    return ok({"current": name})
+
+
+# --- Compute pool (design §3): which machine runs this project's sandbox ---
+
+
+@router.get("/{project_id}/compute-profiles")
+async def list_compute_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
+    """Compute pools this project may select (only the ones actually deployed),
+    plus the current selection. Default = 知是本地算力."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    current = (project.settings or {}).get("compute_profile") or compute_default_name()
+    device_online = await project_device_online(db, project_id)
+    profiles = [
+        asdict(v) for v in compute_selectable(settings, device_online=device_online)
+    ]
+    return ok({"current": current, "profiles": profiles})
+
+
+@router.put("/{project_id}/compute-profile")
+async def set_compute_profile(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Set the project's compute pool. Only a deployed (available) pool is
+    accepted, so a project never selects compute that isn't actually there."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    name = (body.get("profile") or "").strip() or compute_default_name()
+    device_online = await project_device_online(db, project_id)
+    allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
+    if name not in allowed:
+        raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
+    project.settings = {**(project.settings or {}), "compute_profile": name}
+    await db.flush()
+    return ok({"current": name})
+
+
+# --- Environment (spec §9.1): which sandbox image runs this project's agent ---
+
+# A docker image reference, e.g. "cheesex-dev:v0". Kept strict so the value can't
+# smuggle anything into the sandbox shim's `docker run "$SBX_IMAGE"`.
+_IMAGE_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/-]*(:[a-zA-Z0-9._-]+)?$")
+
+# Curated env images the UI offers. The default (None) = the pool's base image;
+# cheesex-dev bakes this repo's toolchain for dogfooding on 知是 itself.
+_SANDBOX_IMAGE_OPTIONS = [
+    {"image": "cheesex-dev:v0", "label": "cheesex-dev（本仓库工具链 · dogfooding）"},
+]
+
+
+@router.get("/{project_id}/sandbox-image")
+async def get_sandbox_image(project_id: uuid.UUID, db: DbSession) -> dict:
+    """The project's env image: `current` (None = using the pool default),
+    the `default` base image, and a few curated `options`."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    current = (project.settings or {}).get("sandbox_image")
+    return ok(
+        {
+            "current": current,
+            "default": settings.sandbox_image,
+            "options": _SANDBOX_IMAGE_OPTIONS,
+        }
     )
 
-    updated = await service.update_project(
-        project,
-        name=payload.name.strip() if payload.name and payload.name.strip() else None,
-        description=payload.description,
-        color_code=color_code,
-        archived=payload.archived,
+
+@router.put("/{project_id}/sandbox-image")
+async def set_sandbox_image(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Point a project at a specific env image (e.g. cheesex-dev:v0 for dogfooding),
+    or clear it (empty → back to the pool default)."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    image = (body.get("image") or "").strip()
+    new_settings = {**(project.settings or {})}
+    if not image:
+        new_settings.pop("sandbox_image", None)  # revert to the pool default
+        current = None
+    else:
+        if not _IMAGE_RE.match(image):
+            raise ValidationError(f"镜像名不合法：{image!r}")
+        new_settings["sandbox_image"] = image
+        current = image
+    project.settings = new_settings
+    await db.flush()
+    return ok({"current": current})
+
+
+# --- Quality gate (spec §4.4/§9, eval C2): 平台硬门 configuration -------------
+
+
+@router.get("/{project_id}/quality-gate")
+async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
+    """The project's 硬门 settings: `check_command` (run in the topic workspace
+    before an accept card reaches the reviewer; empty = no gate) and
+    `approvals_required` (distinct approvals an accept needs; default 1)."""
+    from app.domain.review.services import approvals_required_of, check_command_of
+
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    return ok(
+        {
+            "check_command": check_command_of(project) or "",
+            "approvals_required": approvals_required_of(project),
+        }
     )
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {"project": await _project_to_api_model(updated, db=db)},
-    }
 
 
-@router.delete(
-    "/{projectId}",
-    summary="Delete Project",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_project(
-    project_id: Annotated[int, Path(ge=1, alias="projectId")],
-    service: ProjectService = Depends(get_project_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-) -> None:
-    if auth_user.user_id == 0:
-        raise ForbiddenError("Authentication required")
-    project = await service.get_project(project_id=project_id)
+@router.put("/{project_id}/quality-gate")
+async def set_quality_gate(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Update 硬门 settings. Only the keys present in the body change; an empty
+    check_command removes the gate."""
+    from app.domain.review.services import approvals_required_of, check_command_of
+
+    project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    if project.leader_id != auth_user.user_id:
-        raise ForbiddenError("Only the project leader can delete this project")
-    await service.soft_delete_project(project)
-
-
-@router.get(
-    "",
-    summary="List Projects",
-)
-async def get_projects(
-    team_id: int = Query(..., description="Team ID"),
-    parent_id: int | None = Query(default=None),
-    leader_id: int | None = Query(default=None),
-    member_id: int | None = Query(default=None),
-    archived: bool | None = Query(default=None),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: ProjectService = Depends(get_project_service),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    _ = auth_user
-    projects = await service.list_projects(
-        team_id=team_id,
-        parent_id=parent_id,
-        leader_id=leader_id,
-        member_id=member_id,
-        archived=archived,
+    new_settings = {**(project.settings or {})}
+    if "check_command" in body:
+        command = str(body.get("check_command") or "").strip()
+        if command:
+            new_settings["check_command"] = command
+        else:
+            new_settings.pop("check_command", None)
+    if "approvals_required" in body:
+        try:
+            required = int(body.get("approvals_required") or 0)
+        except (TypeError, ValueError):
+            raise ValidationError("approvals_required 必须是整数") from None
+        if required < 1:
+            raise ValidationError("approvals_required 至少为 1")
+        new_settings["approvals_required"] = required
+    project.settings = new_settings
+    await db.flush()
+    return ok(
+        {
+            "check_command": check_command_of(project) or "",
+            "approvals_required": approvals_required_of(project),
+        }
     )
-    items = [await _project_to_api_model(p, db=db) for p in projects]
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {"projects": items},
-    }
 
 
-async def _get_project_or_404(service: ProjectService, project_id: int) -> None:
-    project = await service.get_project(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
+@router.get("/{project_id}/upstream")
+async def get_project_upstream(project_id: uuid.UUID, db: DbSession) -> dict:
+    """The project's linked upstream repo (关联已有 repo, spec §6.3), if any."""
+    await ProjectService(db).get_or_404(project_id)
+    return ok({"url": ws.get_upstream(project_id)})
 
 
-def _membership_to_api_model(m: ProjectMembership) -> dict:
-    role_names = {
-        ProjectMemberRole.MEMBER.value: "MEMBER",
-        ProjectMemberRole.ADMIN.value: "ADMIN",
-        ProjectMemberRole.OWNER.value: "OWNER",
-    }
-    return {
-        "userId": m.user_id,
-        "role": role_names.get(m.role, "MEMBER"),
-        "notes": m.notes or "",
-        "createdAt": int(m.created_at.timestamp() * 1000) if m.created_at else 0,
-        "updatedAt": int(m.updated_at.timestamp() * 1000) if m.updated_at else 0,
-    }
-
-
-@router.get(
-    "/{projectId}/members",
-    summary="Enumerate Project Members",
-)
-async def get_project_members(
-    project_id: Annotated[int, Path(ge=1, alias="projectId")],
-    page_start: str | None = Query(default=None, alias="pageStart"),
-    page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: ProjectService = Depends(get_project_service),
+@router.put("/{project_id}/upstream")
+async def set_project_upstream(
+    project_id: uuid.UUID, body: dict, db: DbSession
 ) -> dict:
-    _ = auth_user
-    await _get_project_or_404(service, project_id)
-    offset = int(page_start) if page_start and page_start.isdigit() else 0
-    members, total = await service.list_members(project_id, limit=page_size, offset=offset)
-    next_offset = offset + len(members)
-    has_more = next_offset < total
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {
-            "members": [_membership_to_api_model(m) for m in members],
-            "page": {
-                "pageStart": page_start or "0",
-                "pageSize": len(members),
-                "hasMore": has_more,
-                "nextStart": str(next_offset) if has_more else None,
-                "total": total,
-            },
-        },
-    }
+    """Link the project to an existing git repo (empty url → unlink). The repo's
+    history then flows in via 同步上游, and stays syncable afterwards."""
+    await ProjectService(db).get_or_404(project_id)
+    url = ws.set_upstream(project_id, str(body.get("url") or ""))
+    return ok({"url": url})
 
 
-@router.post(
-    "/{projectId}/members",
-    summary="Add Project Member",
-    status_code=status.HTTP_201_CREATED,
-)
-async def add_project_member(
-    project_id: Annotated[int, Path(ge=1, alias="projectId")],
-    payload: AddProjectMemberRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: ProjectService = Depends(get_project_service),
-) -> dict:
-    project = await service.get_project(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    if project.leader_id != auth_user.user_id:
-        raise ForbiddenError("Only the project leader can add members")
-    if payload.role.upper() == "LEADER":
-        raise BadRequestError("Cannot add a member with role LEADER")
-
-    membership = await service.add_member(
-        project_id=project_id,
-        user_id=payload.user_id,
-        role=payload.role.upper(),
-        notes=payload.notes or "",
-    )
-    return {
-        "code": 201,
-        "message": "Member added",
-        "data": {"member": _membership_to_api_model(membership)},
-    }
-
-
-@router.delete(
-    "/{projectId}/members/{userId}",
-    summary="Remove Project Member",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_project_member(
-    project_id: Annotated[int, Path(ge=1, alias="projectId")],
-    user_id: Annotated[int, Path(ge=1, alias="userId")],
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: ProjectService = Depends(get_project_service),
-) -> None:
-    project = await service.get_project(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    if project.leader_id != auth_user.user_id:
-        raise ForbiddenError("Only the project leader can remove members")
-    await service.remove_member(project_id=project_id, user_id=user_id)
+@router.post("/{project_id}/upstream/sync")
+async def sync_project_upstream(project_id: uuid.UUID, db: DbSession) -> dict:
+    """同步上游: fetch + merge the upstream default branch into the project base.
+    Conflicts abort cleanly and come back as {"synced": false, "reason": ...}."""
+    await ProjectService(db).get_or_404(project_id)
+    return ok(ws.sync_upstream(project_id))

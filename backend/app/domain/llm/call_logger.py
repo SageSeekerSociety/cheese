@@ -22,11 +22,15 @@ class LLMCallLog(Base):
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_seu: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    request_type: Mapped[str] = mapped_column(String(32), nullable=False, default="chat")
+    request_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="chat"
+    )
     context_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     context_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 @dataclass

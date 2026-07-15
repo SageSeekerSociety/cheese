@@ -7,8 +7,12 @@ from app.domain.user.repositories import UserProfileRepository
 
 
 def _answer_to_dto(answer: Answer, author: dict | None = None) -> dict:
-    created_at_ms = int(answer.created_at.timestamp() * 1000) if answer.created_at else 0
-    updated_at_ms = int(answer.updated_at.timestamp() * 1000) if answer.updated_at else 0
+    created_at_ms = (
+        int(answer.created_at.timestamp() * 1000) if answer.created_at else 0
+    )
+    updated_at_ms = (
+        int(answer.updated_at.timestamp() * 1000) if answer.updated_at else 0
+    )
     return {
         "id": answer.id,
         "question_id": answer.question_id,
@@ -59,11 +63,13 @@ class AnswersService:
             cursor_id=page_start if page_start else (all_ids[0] if all_ids else None),
         )
         profiles = await self._profile_repo.get_profiles_by_user_ids(
-            {row.created_by_id for row in rows}
+            list({row.created_by_id for row in rows})
         )
         items: list[dict] = []
         for row in rows:
-            dto = _answer_to_dto(row, author=_profile_to_dto(profiles.get(row.created_by_id)))
+            dto = _answer_to_dto(
+                row, author=_profile_to_dto(profiles.get(row.created_by_id))
+            )
             await self._attach_answer_stats(dto, answer_id=row.id, viewer_id=viewer_id)
             items.append(dto)
 
@@ -150,7 +156,9 @@ class AnswersService:
             raise NotFoundError("Answer not found", data={"id": answer_id})
         return answer
 
-    async def vote_answer(self, *, answer_id: int, user_id: int, vote_type: str) -> dict:
+    async def vote_answer(
+        self, *, answer_id: int, user_id: int, vote_type: str
+    ) -> dict:
         await self._ensure_answer_exists(answer_id)
         if vote_type not in (VoteType.POSITIVE.value, VoteType.NEGATIVE.value):
             raise BadRequestError("Invalid vote type", data={"vote_type": vote_type})
@@ -184,7 +192,9 @@ class AnswersService:
             "userVote": user_vote,
         }
 
-    async def get_answer(self, *, answer_id: int, user_id: int | None) -> tuple[dict, dict]:
+    async def get_answer(
+        self, *, answer_id: int, user_id: int | None
+    ) -> tuple[dict, dict | None]:
         answer = await self._ensure_answer_exists(answer_id)
         profile = await self._profile_repo.get_profile_by_user_id(answer.created_by_id)
         dto = _answer_to_dto(answer, author=_profile_to_dto(profile))
@@ -193,12 +203,18 @@ class AnswersService:
         question = await self._question_repo.get_by_id(answer.question_id)
         question_dto = None
         if question:
-            author_profile = await self._profile_repo.get_profile_by_user_id(question.created_by_id)
+            author_profile = await self._profile_repo.get_profile_by_user_id(
+                question.created_by_id
+            )
             created_at_ms = (
-                int(question.created_at.timestamp() * 1000) if question.created_at else 0
+                int(question.created_at.timestamp() * 1000)
+                if question.created_at
+                else 0
             )
             updated_at_ms = (
-                int(question.updated_at.timestamp() * 1000) if question.updated_at else 0
+                int(question.updated_at.timestamp() * 1000)
+                if question.updated_at
+                else 0
             )
             question_dto = {
                 "id": question.id,
@@ -215,7 +231,9 @@ class AnswersService:
             }
         return dto, question_dto
 
-    async def update_answer(self, *, answer_id: int, user_id: int, content: str) -> dict:
+    async def update_answer(
+        self, *, answer_id: int, user_id: int, content: str
+    ) -> dict:
         answer = await self._ensure_answer_exists(answer_id)
         if answer.created_by_id != user_id:
             raise ForbiddenError("Only the answer owner can update this answer")

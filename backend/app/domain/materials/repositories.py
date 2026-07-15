@@ -12,7 +12,9 @@ class MaterialRepository:
         self._session = session
 
     async def get_by_id(self, material_id: int) -> Material | None:
-        stmt: Select[tuple[Material]] = select(Material).where(Material.id == material_id)
+        stmt: Select[tuple[Material]] = select(Material).where(
+            Material.id == material_id
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -118,7 +120,9 @@ class MaterialBundleRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def create(self, *, title: str, content: str, creator_id: int) -> MaterialBundle:
+    async def create(
+        self, *, title: str, content: str, creator_id: int
+    ) -> MaterialBundle:
         now = datetime.now(UTC)
         bundle = MaterialBundle(
             title=title,
@@ -177,11 +181,14 @@ class MaterialBundleRepository:
         self._session.add(rel)
         await self._session.flush()
 
-    async def remove_material_from_bundle(self, *, bundle_id: int, material_id: int) -> bool:
+    async def remove_material_from_bundle(
+        self, *, bundle_id: int, material_id: int
+    ) -> bool:
         stmt = delete(MaterialBundleRelation).where(
             MaterialBundleRelation.bundle_id == bundle_id,
             MaterialBundleRelation.material_id == material_id,
         )
         result = await self._session.execute(stmt)
         await self._session.flush()
-        return result.rowcount > 0
+        # rowcount exists on CursorResult returned by execute() for DML at runtime
+        return result.rowcount > 0  # type: ignore[attr-defined]

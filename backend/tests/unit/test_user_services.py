@@ -3,7 +3,8 @@
 Covers:
   - app.domain.user.services        (UserService, UserProfileService, UserAuthService)
   - app.domain.user.realname_services (UserRealNameService)
-  - app.domain.user.verification_service (generate_verification_code, EmailVerificationService)
+  - app.domain.user.verification_service
+    (generate_verification_code, EmailVerificationService)
 """
 
 from datetime import datetime
@@ -100,7 +101,9 @@ class TestUserService:
         return UserService(repo=profile_repo)
 
     @pytest.mark.anyio
-    async def test_get_users_by_ids_delegates_to_repo(self, service, profile_repo) -> None:
+    async def test_get_users_by_ids_delegates_to_repo(
+        self, service, profile_repo
+    ) -> None:
         p1 = _profile(user_id=1)
         p2 = _profile(user_id=2, nickname="Bob")
         profile_repo.get_profiles_by_user_ids.return_value = {1: p1, 2: p2}
@@ -511,7 +514,9 @@ class TestUserAuthService:
         dto = await service.build_user_dto(user, profile, viewer_id=99)
 
         assert dto["is_follow"] is True
-        repos["follow_repo"].is_following.assert_awaited_once_with(follower_id=99, followee_id=5)
+        repos["follow_repo"].is_following.assert_awaited_once_with(
+            follower_id=99, followee_id=5
+        )
 
     @pytest.mark.anyio
     async def test_build_user_dto_viewer_does_not_follow(self, service, repos) -> None:
@@ -613,7 +618,10 @@ class TestUserRealNameService:
             "className": "Class-1",
         }
 
-    @patch("app.domain.user.realname_services.decrypt_text", side_effect=lambda v: f"DEC({v})")
+    @patch(
+        "app.domain.user.realname_services.decrypt_text",
+        side_effect=lambda v: f"DEC({v})",
+    )
     def test_identity_dict_decrypt_encrypted(self, mock_decrypt, service) -> None:
         ident = _identity(
             encrypted=True,
@@ -669,7 +677,9 @@ class TestUserRealNameService:
     # --- get_user_identity ---
 
     @pytest.mark.anyio
-    async def test_get_user_identity_success(self, service, user_repo, realname_repo) -> None:
+    async def test_get_user_identity_success(
+        self, service, user_repo, realname_repo
+    ) -> None:
         user_repo.get_by_id.return_value = _user()
         ident = _identity(encrypted=False)
         realname_repo.get_identity.return_value = ident
@@ -697,7 +707,9 @@ class TestUserRealNameService:
     # --- get_fuzzy_user_identity ---
 
     @pytest.mark.anyio
-    async def test_get_fuzzy_user_identity(self, service, user_repo, realname_repo) -> None:
+    async def test_get_fuzzy_user_identity(
+        self, service, user_repo, realname_repo
+    ) -> None:
         user_repo.get_by_id.return_value = _user()
         ident = _identity(encrypted=False, real_name="Zhang San", student_id="2024001")
         realname_repo.get_identity.return_value = ident
@@ -712,7 +724,10 @@ class TestUserRealNameService:
     # --- create_or_update_user_identity ---
 
     @pytest.mark.anyio
-    @patch("app.domain.user.realname_services.encrypt_text", side_effect=lambda v: f"ENC({v})")
+    @patch(
+        "app.domain.user.realname_services.encrypt_text",
+        side_effect=lambda v: f"ENC({v})",
+    )
     async def test_create_or_update_identity_success(
         self, mock_enc, service, user_repo, realname_repo
     ) -> None:
@@ -752,7 +767,9 @@ class TestUserRealNameService:
         assert "realName" in result
 
     @pytest.mark.anyio
-    async def test_create_or_update_identity_user_missing(self, service, user_repo) -> None:
+    async def test_create_or_update_identity_user_missing(
+        self, service, user_repo
+    ) -> None:
         user_repo.get_by_id.return_value = None
         with pytest.raises(NotFoundError):
             await service.create_or_update_user_identity(
@@ -765,7 +782,9 @@ class TestUserRealNameService:
             )
 
     @pytest.mark.anyio
-    async def test_create_or_update_identity_missing_fields(self, service, user_repo) -> None:
+    async def test_create_or_update_identity_missing_fields(
+        self, service, user_repo
+    ) -> None:
         user_repo.get_by_id.return_value = _user()
         with pytest.raises(BadRequestError, match="All real-name fields are required"):
             await service.create_or_update_user_identity(
@@ -778,7 +797,9 @@ class TestUserRealNameService:
             )
 
     @pytest.mark.anyio
-    async def test_create_or_update_identity_all_empty(self, service, user_repo) -> None:
+    async def test_create_or_update_identity_all_empty(
+        self, service, user_repo
+    ) -> None:
         user_repo.get_by_id.return_value = _user()
         with pytest.raises(BadRequestError):
             await service.create_or_update_user_identity(
@@ -820,7 +841,9 @@ class TestUserRealNameService:
         )
 
     @pytest.mark.anyio
-    async def test_log_access_without_module(self, service, user_repo, realname_repo) -> None:
+    async def test_log_access_without_module(
+        self, service, user_repo, realname_repo
+    ) -> None:
         user_repo.get_by_id.return_value = _user()
         realname_repo.create_access_log.return_value = _access_log()
 
@@ -880,11 +903,13 @@ class TestUserRealNameService:
         profile_repo.get_profiles_by_user_ids.return_value = {
             2: _profile(user_id=2, nickname="Bob", avatar_id=3, intro="hi")
         }
-        # get_by_id will be called for user_id=1 (_ensure_user_exists) then for accessor 2
+        # get_by_id will be called for user_id=1 (_ensure_user_exists) then for accessor 2  # noqa: E501
         accessor_user = _user(id=2, username="bob")
         user_repo.get_by_id.side_effect = [_user(id=1), accessor_user]
 
-        logs, page = await service.get_access_logs(target_user_id=1, page_size=10, page_start=None)
+        logs, page = await service.get_access_logs(
+            target_user_id=1, page_size=10, page_start=None
+        )
 
         assert len(logs) == 1
         assert logs[0]["accessor"]["id"] == 2
@@ -928,7 +953,9 @@ class TestUserRealNameService:
         realname_repo.list_access_logs.return_value = ([], 0)
         profile_repo.get_profiles_by_user_ids.return_value = {}
 
-        _, page = await service.get_access_logs(target_user_id=1, page_size=10, page_start=None)
+        _, page = await service.get_access_logs(
+            target_user_id=1, page_size=10, page_start=None
+        )
         assert page["pageStart"] == 0
 
     @pytest.mark.anyio
@@ -944,7 +971,9 @@ class TestUserRealNameService:
             2: _profile(user_id=2, nickname="Bob")
         }
 
-        _, page = await service.get_access_logs(target_user_id=1, page_size=2, page_start=0)
+        _, page = await service.get_access_logs(
+            target_user_id=1, page_size=2, page_start=0
+        )
 
         assert page["hasMore"] is True
         assert page["nextStart"] == 1
@@ -962,9 +991,15 @@ class TestUserRealNameService:
         profile_repo.get_profiles_by_user_ids.return_value = {
             3: _profile(user_id=3, nickname="Charlie")
         }
-        user_repo.get_by_id.side_effect = [_user(id=1), _user(id=2, username="bob"), None]
+        user_repo.get_by_id.side_effect = [
+            _user(id=1),
+            _user(id=2, username="bob"),
+            None,
+        ]
 
-        logs, page = await service.get_access_logs(target_user_id=1, page_size=10, page_start=0)
+        logs, page = await service.get_access_logs(
+            target_user_id=1, page_size=10, page_start=0
+        )
 
         # log1 skipped (no profile), log2 skipped (no user)
         assert len(logs) == 0
@@ -974,7 +1009,7 @@ class TestUserRealNameService:
     async def test_get_access_logs_deduplicates_accessor_lookups(
         self, service, user_repo, profile_repo, realname_repo
     ) -> None:
-        """When multiple logs have the same accessor_id, get_by_id is only called once."""
+        """When multiple logs have the same accessor_id, get_by_id is only called once."""  # noqa: E501
         user_repo.get_by_id.return_value = _user(id=1)
         log1 = _access_log(accessor_id=2)
         log2 = _access_log(accessor_id=2)
@@ -985,17 +1020,21 @@ class TestUserRealNameService:
             2: _profile(user_id=2, nickname="Bob", avatar_id=3, intro="hi")
         }
 
-        logs, _ = await service.get_access_logs(target_user_id=1, page_size=10, page_start=0)
+        logs, _ = await service.get_access_logs(
+            target_user_id=1, page_size=10, page_start=0
+        )
 
         assert len(logs) == 2
-        # get_by_id called twice total: once for _ensure_user_exists, once for accessor 2
+        # get_by_id called twice total: once for _ensure_user_exists, once for accessor 2  # noqa: E501
         assert user_repo.get_by_id.await_count == 2
 
     @pytest.mark.anyio
     async def test_get_access_logs_user_not_found(self, service, user_repo) -> None:
         user_repo.get_by_id.return_value = None
         with pytest.raises(NotFoundError):
-            await service.get_access_logs(target_user_id=999, page_size=10, page_start=0)
+            await service.get_access_logs(
+                target_user_id=999, page_size=10, page_start=0
+            )
 
     @pytest.mark.anyio
     async def test_get_access_logs_empty(
@@ -1005,7 +1044,9 @@ class TestUserRealNameService:
         realname_repo.list_access_logs.return_value = ([], 0)
         profile_repo.get_profiles_by_user_ids.return_value = {}
 
-        logs, page = await service.get_access_logs(target_user_id=1, page_size=10, page_start=0)
+        logs, page = await service.get_access_logs(
+            target_user_id=1, page_size=10, page_start=0
+        )
 
         assert logs == []
         assert page["hasMore"] is False
@@ -1025,7 +1066,9 @@ class TestUserRealNameService:
             2: _profile(user_id=2, nickname="Bob")
         }
 
-        _, page = await service.get_access_logs(target_user_id=1, page_size=10, page_start=0)
+        _, page = await service.get_access_logs(
+            target_user_id=1, page_size=10, page_start=0
+        )
 
         assert page["hasMore"] is False
         assert page["nextStart"] is None
@@ -1096,7 +1139,9 @@ class TestEmailVerificationService:
         sender.send.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_send_code_existing_but_enough_time_passed(self, service, redis, sender) -> None:
+    async def test_send_code_existing_but_enough_time_passed(
+        self, service, redis, sender
+    ) -> None:
         redis.get.return_value = b"123456"
         redis.ttl.return_value = 500  # 500 < 600 - 60 = 540 -> enough time passed
         sender.send.return_value = True
@@ -1111,7 +1156,9 @@ class TestEmailVerificationService:
         redis.get.return_value = b"123456"
         redis.ttl.return_value = 580  # 580 > 600 - 60 = 540 -> too soon
 
-        with pytest.raises(BadRequestError, match="Please wait before requesting a new code"):
+        with pytest.raises(
+            BadRequestError, match="Please wait before requesting a new code"
+        ):
             await service.send_verification_code("test@example.com")
 
     @pytest.mark.anyio
@@ -1157,7 +1204,9 @@ class TestEmailVerificationService:
         result = await service.verify_code("test@example.com", "654321")
 
         assert result is True
-        redis.delete.assert_awaited_once_with("cheese:email_verification:test@example.com")
+        redis.delete.assert_awaited_once_with(
+            "cheese:email_verification:test@example.com"
+        )
 
     @pytest.mark.anyio
     async def test_verify_code_wrong_code(self, service, redis) -> None:

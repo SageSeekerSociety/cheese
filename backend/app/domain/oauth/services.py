@@ -152,7 +152,9 @@ class GoogleProvider(OAuthProvider):
                 id=data["id"],
                 email=data.get("email"),
                 name=data.get("name"),
-                username=data.get("email", "").split("@")[0] if data.get("email") else None,
+                username=data.get("email", "").split("@")[0]
+                if data.get("email")
+                else None,
             )
 
 
@@ -190,7 +192,9 @@ class RUCProvider(OAuthProvider):
 
             uid = profile.get("uid")
             if not uid:
-                raise BadRequestError("RUC profile response missing unique user id (uid)")
+                raise BadRequestError(
+                    "RUC profile response missing unique user id (uid)"
+                )
 
             profiles = profile.get("profiles") or []
             primary = next((p for p in profiles if p.get("isprimary") is True), {})
@@ -213,7 +217,9 @@ PROVIDER_CLASSES = {
 
 
 class OAuthService:
-    def __init__(self, repo: OAuthConnectionRepository, redis: Any | None = None) -> None:
+    def __init__(
+        self, repo: OAuthConnectionRepository, redis: Any | None = None
+    ) -> None:
         self._repo = repo
         self._redis = redis
         self._providers: dict[str, OAuthProvider] = {}
@@ -299,7 +305,9 @@ class OAuthService:
             raise NotFoundError(f"OAuth provider '{provider_id}' not found")
         return provider
 
-    def generate_authorization_url(self, provider_id: str, state: str | None = None) -> str:
+    def generate_authorization_url(
+        self, provider_id: str, state: str | None = None
+    ) -> str:
         provider = self.get_provider(provider_id)
         if not state:
             state = secrets.token_urlsafe(32)

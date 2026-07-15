@@ -47,7 +47,9 @@ async def upload_material(
 
     valid_prefixes = TYPE_MIME_PREFIXES.get(type, [])
     if not any(file_mime.startswith(prefix) for prefix in valid_prefixes):
-        raise UnprocessableEntityError(f"MIME type {file_mime} does not match type {type}")
+        raise UnprocessableEntityError(
+            f"MIME type {file_mime} does not match type {type}"
+        )
 
     import io
 
@@ -93,7 +95,11 @@ async def get_material_detail(
     service: MaterialService = Depends(get_material_service),
 ) -> dict:
     material = await service.get_material(material_id)
-    return {"code": 200, "message": "Get Material successfully", "data": {"material": material}}
+    return {
+        "code": 200,
+        "message": "Get Material successfully",
+        "data": {"material": material},
+    }
 
 
 @router.delete(

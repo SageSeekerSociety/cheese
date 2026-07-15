@@ -26,10 +26,10 @@ cp backend/.env.example backend/.env    # edit if needed
 task setup
 
 # 4. Start development (backend + frontend in parallel)
-task dev        # backend on localhost:8081, frontend on localhost:5173
+task dev        # backend on localhost:8081, frontend on localhost:3000
 ```
 
-Open http://localhost:5173 in your browser.
+Open http://localhost:3000 in your browser.
 
 ## Project Structure
 
@@ -45,7 +45,7 @@ cheese-backend-py/
 │   └── Dockerfile           # production image (nginx)
 ├── e2e/                     # Playwright E2E tests
 ├── deploy/                  # production deployment configs
-├── docker-compose.yml       # dev infrastructure (PG, Redis, ES)
+├── docker-compose.yml       # dev infrastructure (PG, Valkey)
 ├── docker-compose.dev.yml   # optional: backend in Docker (Windows without WSL)
 └── Taskfile.yml             # unified task runner
 ```
@@ -71,7 +71,7 @@ task fe:check                # lint + typecheck + build
 task fe:build                # production build
 
 # Infrastructure
-task infra                   # start PG/Redis/ES
+task infra                   # start PG/Valkey
 task infra:down              # stop all
 task infra:logs              # tail logs
 
@@ -94,11 +94,11 @@ Without WSL:
 
 ```bash
 # First-time: start infrastructure + backend in Docker
-task dev:docker              # PG, Redis, ES + backend on localhost:8081
+task dev:docker              # PG, Valkey + backend on localhost:8081
 
 # Frontend runs natively (install Node + pnpm first)
 cd frontend && pnpm install
-task dev:fe                  # Vite dev server on localhost:5173
+task dev:fe                  # Vite dev server on localhost:3000
 
 # Run backend checks inside the container
 docker compose exec backend sh -c "uv run ruff check . && uv run pyright"
@@ -121,7 +121,7 @@ Release-based deployment with approval gate. See [`deploy/`](deploy/) for produc
 |-------|-----------|
 | Backend | Python 3.11+, FastAPI, SQLAlchemy 2.x (async), Pydantic v2 |
 | Frontend | Vue 3, TypeScript, Vuetify, Vite |
-| Database | PostgreSQL 16 (ParadeDB), Valkey (Redis), Elasticsearch |
+| Database | PostgreSQL 16 (ParadeDB), Valkey (Redis); search via Meilisearch (optional, PG FTS fallback) |
 | Auth | JWT + SRP-6a + WebAuthn (Passkey) + TOTP 2FA |
 | Package mgmt | uv (Python), pnpm (JS) |
 | Task runner | [Taskfile](https://taskfile.dev/) |

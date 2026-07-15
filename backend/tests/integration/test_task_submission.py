@@ -8,9 +8,13 @@ from tests.integration.conftest import UserCreator, unique_int
 
 class TestTaskSubmissionIntegration:
     @pytest.fixture
-    def setup_task_for_submission(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def setup_task_for_submission(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -37,7 +41,9 @@ class TestTaskSubmissionIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert space_resp.status_code == 201, f"Space creation failed: {space_resp.text}"
+        assert space_resp.status_code == 201, (
+            f"Space creation failed: {space_resp.text}"
+        )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
         category_id = space_data["defaultCategoryId"]
@@ -113,11 +119,13 @@ class TestTaskSubmissionIntegration:
             headers={"Authorization": f"Bearer {creator_token}"},
         )
         assert approve_member_resp.status_code == 200, (
-            f"Member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"
+            f"Member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"  # noqa: E501
         )
         return membership_id
 
-    def test_submit_task_first_time(self, setup_task_for_submission: dict, api_client: TestClient):
+    def test_submit_task_first_time(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
         data = setup_task_for_submission
         creator = data["creator"]
         participant = data["participant"]
@@ -138,7 +146,9 @@ class TestTaskSubmissionIntegration:
             json=[{"text": "This is my first submission."}],
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submission = resp.json()["data"]["submission"]
         assert submission["version"] == 1
         assert submission["member"]["id"] == participant.user_id
@@ -173,7 +183,9 @@ class TestTaskSubmissionIntegration:
             json=[{"text": "Second submission"}],
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submission = resp.json()["data"]["submission"]
         assert submission["version"] == 2
 
@@ -207,7 +219,9 @@ class TestTaskSubmissionIntegration:
             json=[{"text": "Second submission"}],
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
 
     def test_edit_submission_when_editable(
         self, setup_task_for_submission: dict, api_client: TestClient
@@ -239,10 +253,14 @@ class TestTaskSubmissionIntegration:
             json=[{"text": "Edited text"}],
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submission = resp.json()["data"]["submission"]
         assert submission["version"] == 1
-        text_content = next((c for c in submission["content"] if c["type"] == "TEXT"), None)
+        text_content = next(
+            (c for c in submission["content"] if c["type"] == "TEXT"), None
+        )
         assert text_content is not None
         assert text_content["contentText"] == "Edited text"
 
@@ -276,7 +294,9 @@ class TestTaskSubmissionIntegration:
             json=[{"text": "Edited text"}],
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
 
     def test_get_submissions_for_participant(
         self, setup_task_for_submission: dict, api_client: TestClient
@@ -306,7 +326,9 @@ class TestTaskSubmissionIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions",
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 1
         assert submissions[0]["version"] == 1
@@ -346,7 +368,9 @@ class TestTaskSubmissionIntegration:
             params={"allVersions": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 2
 
@@ -378,7 +402,9 @@ class TestTaskSubmissionIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 1
 
@@ -414,7 +440,9 @@ class TestTaskSubmissionIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions",
             headers={"Authorization": f"Bearer {participant2.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
     def test_submit_fails_before_participant_approval(
         self, setup_task_for_submission: dict, api_client: TestClient
@@ -444,9 +472,13 @@ class TestTaskSubmissionIntegration:
             json=[{"text": "My submission"}],
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_delete_task_as_owner(self, setup_task_for_submission: dict, api_client: TestClient):
+    def test_delete_task_as_owner(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
         data = setup_task_for_submission
         creator = data["creator"]
 
@@ -462,7 +494,9 @@ class TestTaskSubmissionIntegration:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 204, f"Expected 204, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 204, (
+            f"Expected 204, got {resp.status_code}: {resp.text}"
+        )
 
         get_resp = api_client.get(
             f"/tasks/{task_id}",
@@ -489,9 +523,13 @@ class TestTaskSubmissionIntegration:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_update_task_properties(self, setup_task_for_submission: dict, api_client: TestClient):
+    def test_update_task_properties(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
         data = setup_task_for_submission
         creator = data["creator"]
 
@@ -510,7 +548,9 @@ class TestTaskSubmissionIntegration:
             json={"resubmittable": True, "editable": True},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         task = resp.json()["data"]["task"]
         assert task["resubmittable"] is True
         assert task["editable"] is True
@@ -535,7 +575,9 @@ class TestTaskSubmissionIntegration:
             params={"queryJoinability": "true", "querySubmittability": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         task = resp.json()["data"]["task"]
         assert task["submitterType"] == "USER"
         eligibility = task.get("participationEligibility")
@@ -567,7 +609,9 @@ class TestTaskSubmissionIntegration:
             params={"queryJoinability": "true", "querySubmittability": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         task = resp.json()["data"]["task"]
         assert task.get("submittable") is True
         eligibility = task.get("participationEligibility")
@@ -601,7 +645,9 @@ class TestTaskSubmissionIntegration:
             json=[{"text": "User 2 submission."}],
             headers={"Authorization": f"Bearer {participant2.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submission = resp.json()["data"]["submission"]
         assert submission["version"] == 1
         assert submission["member"]["id"] == participant2.user_id
@@ -677,7 +723,9 @@ class TestTaskSubmissionIntegration:
             json={"resubmittable": True},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
     def test_get_submissions_default_returns_latest(
         self, setup_task_for_submission: dict, api_client: TestClient
@@ -748,7 +796,9 @@ class TestTaskSubmissionIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions",
             headers={"Authorization": f"Bearer {irrelevant.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
     def test_update_task_name_and_intro(
         self, setup_task_for_submission: dict, api_client: TestClient
@@ -772,12 +822,16 @@ class TestTaskSubmissionIntegration:
             json={"name": new_name, "intro": new_intro},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         task = resp.json()["data"]["task"]
         assert task["name"] == new_name
         assert task["intro"] == new_intro
 
-    def test_update_task_deadline(self, setup_task_for_submission: dict, api_client: TestClient):
+    def test_update_task_deadline(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
         data = setup_task_for_submission
         creator = data["creator"]
 
@@ -796,7 +850,9 @@ class TestTaskSubmissionIntegration:
             json={"deadline": new_deadline},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
 
         get_resp = api_client.get(
             f"/tasks/{task_id}",
@@ -804,7 +860,9 @@ class TestTaskSubmissionIntegration:
         )
         assert get_resp.status_code == 200
         task = get_resp.json()["data"]["task"]
-        assert (task.get("deadline") - new_deadline) < 1000  # Allow for small time differences
+        assert (
+            task.get("deadline") - new_deadline
+        ) < 1000  # Allow for small time differences
 
     def test_update_submission_schema(
         self, setup_task_for_submission: dict, api_client: TestClient
@@ -830,7 +888,9 @@ class TestTaskSubmissionIntegration:
             json={"submissionSchema": new_schema},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
 
         get_resp = api_client.get(
             f"/tasks/{task_id}",
@@ -881,7 +941,9 @@ class TestTaskSubmissionIntegration:
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 3
 
-    def test_edit_preserves_version(self, setup_task_for_submission: dict, api_client: TestClient):
+    def test_edit_preserves_version(
+        self, setup_task_for_submission: dict, api_client: TestClient
+    ):
         data = setup_task_for_submission
         creator = data["creator"]
         participant = data["participant"]
@@ -973,7 +1035,9 @@ class TestTaskSubmissionIntegration:
             json={"approved": "APPROVED"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data_resp = resp.json()["data"]
         participants = data_resp.get("participants", [])
         if participants:
@@ -994,7 +1058,9 @@ class TestTaskSubmissionIntegration:
         self, user_client: UserCreator, api_client: TestClient
     ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         team_creator = user_client.create_user()
         team_creator.token = user_client.login(
@@ -1099,7 +1165,7 @@ class TestTaskSubmissionIntegration:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert approve_resp.status_code == 200, (
-            f"Team task approval failed: {approve_resp.status_code}: {approve_resp.text}"
+            f"Team task approval failed: {approve_resp.status_code}: {approve_resp.text}"  # noqa: E501
         )
         return task_id
 
@@ -1125,7 +1191,7 @@ class TestTaskSubmissionIntegration:
             headers={"Authorization": f"Bearer {space_creator_token}"},
         )
         assert approve_member_resp.status_code == 200, (
-            f"Team member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"
+            f"Team member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"  # noqa: E501
         )
         return membership_id
 
@@ -1153,7 +1219,9 @@ class TestTaskSubmissionIntegration:
             json=[{"text": "Team submission content."}],
             headers={"Authorization": f"Bearer {team_creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submission = resp.json()["data"]["submission"]
         assert submission["version"] == 1
         assert submission["member"]["id"] == team_id
@@ -1193,7 +1261,9 @@ class TestTaskSubmissionIntegration:
         eligibility = task.get("participationEligibility")
         if eligibility:
             teams = eligibility.get("teams", [])
-            team_status = next((t for t in teams if t.get("team", {}).get("id") == team_id), None)
+            team_status = next(
+                (t for t in teams if t.get("team", {}).get("id") == team_id), None
+            )
             if team_status:
                 assert team_status["eligibility"]["eligible"] is False
                 reasons = team_status["eligibility"].get("reasons", [])
@@ -1214,7 +1284,9 @@ class TestTaskSubmissionIntegration:
             data["category_id"],
             data["suffix"],
         )
-        self._add_team_participant(api_client, task_id, team_id, team_creator.token, creator.token)
+        self._add_team_participant(
+            api_client, task_id, team_id, team_creator.token, creator.token
+        )
 
         resp = api_client.get(
             f"/tasks/{task_id}",
@@ -1260,7 +1332,9 @@ class TestTaskSubmissionIntegration:
             params={"member": participant.user_id},
             headers={"Authorization": f"Bearer {participant2.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
     def test_get_submissions_succeeds_via_member_query_param(
         self, setup_task_for_submission: dict, api_client: TestClient
@@ -1291,7 +1365,9 @@ class TestTaskSubmissionIntegration:
             params={"member": participant.user_id},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 1
         assert submissions[0]["member"]["id"] == participant.user_id
@@ -1321,7 +1397,9 @@ class TestTaskSubmissionIntegration:
             json=[{"text": "Submission by team member."}],
             headers={"Authorization": f"Bearer {team_member.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submission = resp.json()["data"]["submission"]
         assert submission["member"]["id"] == team_id
         assert submission["submitter"]["id"] == team_member.user_id
@@ -1355,12 +1433,15 @@ class TestTaskSubmissionIntegration:
             json={"approved": "APPROVED"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data_resp = resp.json()["data"]
         participants = data_resp.get("participants", [])
         if participants:
             approved = next(
-                (p for p in participants if p.get("member", {}).get("id") == team_id), None
+                (p for p in participants if p.get("member", {}).get("id") == team_id),
+                None,
             )
             if approved:
                 assert approved.get("approved") == "APPROVED"
@@ -1393,7 +1474,9 @@ class TestTaskSubmissionIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         submissions = resp.json()["data"]["submissions"]
         assert len(submissions) == 1
         assert submissions[0]["member"]["id"] == participant.user_id

@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.domain.materials.repositories import MaterialBundleRepository, MaterialRepository
+from app.domain.materials.repositories import (
+    MaterialBundleRepository,
+    MaterialRepository,
+)
 
 NOW = datetime(2025, 6, 1, 12, 0, 0)
 

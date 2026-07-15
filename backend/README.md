@@ -1,6 +1,10 @@
 # Cheese Backend (Python)
 
-Python FastAPI backend migrated from NestJS (cheese-backend) and Kotlin Spring Boot (cheese-backend-nt).
+The ONE merged backend: 知是/Cheese product domains (spaces, tasks, teams,
+questions, knowledge, …) at the root paths + the cheesex AI layer (projects,
+topics, blocks, agent, memory, …) under `/api/*`. Migrated/unified from the
+legacy NestJS (`cheese-backend`) and Kotlin (`cheese-backend-nt`) services,
+which are retired.
 
 ## Tech Stack
 
@@ -14,81 +18,37 @@ Python FastAPI backend migrated from NestJS (cheese-backend) and Kotlin Spring B
 ## Quick Start
 
 ```bash
-# Install dependencies
-uv sync
+# Infra: Postgres (host :5433) + Redis via docker
+docker compose up -d          # from backend/
+bash ../scripts/dev/db-reset.sh   # create + migrate the dev DB
 
-# Run database migrations
-uv run alembic upgrade head
+# Backend on :8799 (and vite on :5200) — the fusion demo entrypoint
+bash ../scripts/dev/up.sh
+# or backend only:
+bash ../scripts/dev/backend.sh
 
-# Start server
-DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/postgres" \
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8081
-
-# Run tests
-DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/postgres" \
-RUN_INTEGRATION_TESTS=1 uv run pytest tests/integration/ -v
+# Run the test suite (provisions per-worker DBs on the docker PG)
+uv run pytest tests/ -n 4
 ```
 
 ## Project Structure
 
 ```
 app/
-├── api/routes/          # FastAPI routes
+├── api/routes/          # FastAPI routes (auto-discovered — every APIRouter here is mounted)
 ├── auth/                # Authentication & authorization
-├── core/                # Config, errors, storage
-├── db/                  # Database session
-├── domain/              # Business domain modules
-│   ├── answers/
-│   ├── attachment/
-│   ├── avatars/
-│   ├── comments/
-│   ├── discussion/
-│   ├── groups/
-│   ├── knowledge/
-│   ├── llm/
-│   ├── materials/
-│   ├── notification/
-│   ├── project/
-│   ├── questions/
-│   ├── space/
-│   ├── task/
-│   ├── team/
-│   ├── topics/
-│   └── user/
+├── core/                # Config, errors, db engine (the ONE pool), storage
+├── db/                  # Session compat re-exports (→ app.core.db)
+├── domain/              # Business domains: 知是 product (space, task, team,
+│                        # questions, knowledge, …) + cheesex AI layer (agent,
+│                        # topic, block, project, memory, workspace, …)
 └── middleware/          # Middleware
 ```
 
-## Test Status
-
-| Type | Count | Status |
-|------|-------|--------|
-| Integration Tests | 636 | ✅ All Passing |
-
-## Migration Status
-
-| Phase | Status |
-|-------|--------|
-| Phase 0: Infrastructure | ✅ Complete |
-| Phase 1: Contract Tests | ✅ Complete |
-| Phase 2: Domain Migration | ✅ Complete |
-| Phase 3: Cross-cutting Concerns | ✅ Complete |
-| Phase 4: Production Deployment | ⏳ Pending |
-
-See `PYTHON_MIGRATION_GUIDE.md` in the project root for detailed migration documentation.
-
-## Port Configuration
-
-| Service | Port |
-|---------|------|
-| cheese-backend-py | 8081 |
-| cheese-backend (legacy NestJS) | 7777 |
-| cheese-backend-nt (legacy Kotlin) | 8080 |
-| PostgreSQL | 5432 |
-| Redis | 6379 |
-
 ## Database Migrations
 
-Alembic configuration is in `migrations/` directory, using `DATABASE_URL` environment variable.
+Alembic configuration is in `alembic/`, using the `DATABASE_URL` environment
+variable.
 
 ```bash
 # Create new migration

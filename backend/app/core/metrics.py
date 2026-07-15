@@ -35,7 +35,19 @@ class Histogram:
     name: str
     labels: dict[str, str] = field(default_factory=dict)
     buckets: list[float] = field(
-        default_factory=lambda: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+        default_factory=lambda: [
+            0.005,
+            0.01,
+            0.025,
+            0.05,
+            0.1,
+            0.25,
+            0.5,
+            1.0,
+            2.5,
+            5.0,
+            10.0,
+        ]
     )
     _counts: list[int] = field(default_factory=list)
     _sum: float = 0.0
@@ -77,7 +89,10 @@ class MetricsRegistry:
             return self._gauges[key]
 
     def histogram(
-        self, name: str, labels: dict[str, str] | None = None, buckets: list[float] | None = None
+        self,
+        name: str,
+        labels: dict[str, str] | None = None,
+        buckets: list[float] | None = None,
     ) -> Histogram:
         key = self._key(name, labels)
         with self._lock:
@@ -97,7 +112,9 @@ class MetricsRegistry:
     def export(self) -> dict[str, Any]:
         with self._lock:
             return {
-                "uptime_seconds": (datetime.now(UTC) - self._start_time).total_seconds(),
+                "uptime_seconds": (
+                    datetime.now(UTC) - self._start_time
+                ).total_seconds(),
                 "counters": {
                     k: {"name": v.name, "labels": v.labels, "value": v.value}
                     for k, v in self._counters.items()
@@ -113,7 +130,11 @@ class MetricsRegistry:
                         "count": v._count,
                         "sum": v._sum,
                         "buckets": dict(
-                            zip([str(b) for b in v.buckets] + ["+Inf"], v._counts, strict=False)
+                            zip(
+                                [str(b) for b in v.buckets] + ["+Inf"],
+                                v._counts,
+                                strict=False,
+                            )
                         ),
                     }
                     for k, v in self._histograms.items()

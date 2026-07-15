@@ -12,19 +12,46 @@
       transition="scale-transition"
     >
       <template #activator="{ props }">
-        <v-avatar v-tooltip="userMenu.nickname.value" class="cursor-pointer elevation-1 mb-4" size="32" v-bind="props">
-          <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value" />
-          <v-icon v-else icon="mdi-account" />
+        <v-avatar
+          v-tooltip="userMenu.nickname.value"
+          class="cursor-pointer elevation-1 mb-4"
+          size="32"
+          :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
+          v-bind="props"
+        >
+          <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+            <!-- avatar service (localhost:8081) may be down in the merged demo:
+                 fall back to a colored initial instead of a broken white tile -->
+            <template #error>
+              <span class="rail-avatar-char" :style="{ backgroundColor: userMenu.avatarColor.value }">{{
+                userMenu.avatarInitial.value
+              }}</span>
+            </template>
+          </v-img>
+          <span v-else class="rail-avatar-char">{{ userMenu.avatarInitial.value }}</span>
         </v-avatar>
       </template>
 
       <v-card class="user-menu-card rounded-lg elevation-1 border pa-0" min-width="300">
         <v-card-item class="user-header pa-4 pb-3">
-          <v-avatar size="56" class="mb-2" elevation="1">
-            <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value" />
-            <v-icon v-else icon="mdi-account" size="large" />
+          <v-avatar
+            size="56"
+            class="mb-2"
+            elevation="1"
+            :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
+          >
+            <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+              <template #error>
+                <span
+                  class="rail-avatar-char rail-avatar-char--lg"
+                  :style="{ backgroundColor: userMenu.avatarColor.value }"
+                  >{{ userMenu.avatarInitial.value }}</span
+                >
+              </template>
+            </v-img>
+            <span v-else class="rail-avatar-char rail-avatar-char--lg">{{ userMenu.avatarInitial.value }}</span>
           </v-avatar>
-          <div class="mt-2">
+          <div>
             <v-card-title class="px-0 py-0 text-h6 font-weight-bold">{{ userMenu.nickname.value }}</v-card-title>
             <v-card-subtitle class="px-0 pt-1 pb-0 text-body-2 text-medium-emphasis text-truncate" max-width="220">
               {{ userMenu.intro.value || '还没有个人简介' }}
@@ -85,6 +112,12 @@
               </template>
               <v-list-item-title>个人中心</v-list-item-title>
             </v-list-item>
+            <v-list-item :to="{ name: 'my-devices' }" rounded="lg" class="mb-1" color="primary">
+              <template #prepend>
+                <v-icon icon="mdi-server-network" class="me-2"></v-icon>
+              </template>
+              <v-list-item-title>我的设备</v-list-item-title>
+            </v-list-item>
             <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
               <template #prepend>
                 <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>
@@ -137,5 +170,22 @@ const userMenu = useUserMenu()
 .logo {
   width: 48px;
   height: 48px;
+}
+
+/* Colored-initial fallback for the default user avatar (no uploaded image). */
+.rail-avatar-char {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  line-height: 1;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+
+  &--lg {
+    font-size: 22px;
+  }
 }
 </style>

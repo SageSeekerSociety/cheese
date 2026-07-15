@@ -53,8 +53,13 @@ class TestPermissionRule:
 
         rule = PermissionRule(conditions=[is_owner_check])
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
-        assert rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": True}) is True
-        assert rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": False}) is False
+        assert (
+            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": True}) is True
+        )
+        assert (
+            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": False})
+            is False
+        )
 
     def test_or_conditions(self) -> None:
         def is_owner_check(user, action, resource, resource_id, context):
@@ -65,10 +70,20 @@ class TestPermissionRule:
 
         rule = PermissionRule(or_conditions=[[is_owner_check, is_admin_check]])
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
-        assert rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": True}) is True
-        assert rule.check(user, Action.READ, Resource.TEAM, 1, {"is_admin": True}) is True
         assert (
-            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": False, "is_admin": False})
+            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": True}) is True
+        )
+        assert (
+            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_admin": True}) is True
+        )
+        assert (
+            rule.check(
+                user,
+                Action.READ,
+                Resource.TEAM,
+                1,
+                {"is_owner": False, "is_admin": False},
+            )
             is False
         )
 
@@ -291,7 +306,9 @@ class TestCrossDomainPermission:
         assert allowed is True
 
     @pytest.mark.anyio
-    async def test_deny_project_update_without_membership(self, checker: PermissionChecker) -> None:
+    async def test_deny_project_update_without_membership(
+        self, checker: PermissionChecker
+    ) -> None:
         db = AsyncMock()
         config = PermissionConfig(Role.MEMBER, Action.UPDATE, Resource.PROJECT)
         checker.register_config(config)
@@ -312,7 +329,9 @@ class TestCrossDomainPermission:
         assert allowed is False
 
     @pytest.mark.anyio
-    async def test_create_permission_with_guest_role(self, checker: PermissionChecker) -> None:
+    async def test_create_permission_with_guest_role(
+        self, checker: PermissionChecker
+    ) -> None:
         db = AsyncMock()
         config = PermissionConfig(Role.GUEST, Action.CREATE, Resource.PROJECT)
         checker.register_config(config)
@@ -345,7 +364,9 @@ class TestOwnerOnlyPermission:
         assert result is False
 
     @pytest.mark.anyio
-    async def test_owner_can_edit_own_resource(self, checker: PermissionChecker) -> None:
+    async def test_owner_can_edit_own_resource(
+        self, checker: PermissionChecker
+    ) -> None:
         db = AsyncMock()
         rule = PermissionRule.owner_only("owner_id")
         config = PermissionConfig(Role.MEMBER, Action.UPDATE, Resource.TASK, rule=rule)
@@ -368,7 +389,9 @@ class TestOwnerOnlyPermission:
         assert allowed is True
 
     @pytest.mark.anyio
-    async def test_member_cannot_edit_others_resource(self, checker: PermissionChecker) -> None:
+    async def test_member_cannot_edit_others_resource(
+        self, checker: PermissionChecker
+    ) -> None:
         db = AsyncMock()
         rule = PermissionRule.owner_only("owner_id")
         config = PermissionConfig(Role.MEMBER, Action.UPDATE, Resource.TASK, rule=rule)
@@ -403,15 +426,33 @@ class TestCombinedConditions:
         user = AuthUserInfo(user_id=123, system_roles={SystemRole.USER})
 
         assert (
-            rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": True, "is_draft": True})
+            rule.check(
+                user,
+                Action.UPDATE,
+                Resource.TASK,
+                1,
+                {"is_owner": True, "is_draft": True},
+            )
             is True
         )
         assert (
-            rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": True, "is_draft": False})
+            rule.check(
+                user,
+                Action.UPDATE,
+                Resource.TASK,
+                1,
+                {"is_owner": True, "is_draft": False},
+            )
             is False
         )
         assert (
-            rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": False, "is_draft": True})
+            rule.check(
+                user,
+                Action.UPDATE,
+                Resource.TASK,
+                1,
+                {"is_owner": False, "is_draft": True},
+            )
             is False
         )
 
@@ -428,9 +469,18 @@ class TestCombinedConditions:
         rule = PermissionRule(or_conditions=[[is_owner, is_admin, is_super_user]])
         user = AuthUserInfo(user_id=123, system_roles={SystemRole.USER})
 
-        assert rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": True}) is True
-        assert rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_admin": True}) is True
-        assert rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_super_user": True}) is True
+        assert (
+            rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_owner": True})
+            is True
+        )
+        assert (
+            rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_admin": True})
+            is True
+        )
+        assert (
+            rule.check(user, Action.UPDATE, Resource.TASK, 1, {"is_super_user": True})
+            is True
+        )
         assert rule.check(user, Action.UPDATE, Resource.TASK, 1, {}) is False
 
 
@@ -440,7 +490,9 @@ class TestMultipleRoles:
         return PermissionChecker()
 
     @pytest.mark.anyio
-    async def test_user_with_multiple_domain_roles(self, checker: PermissionChecker) -> None:
+    async def test_user_with_multiple_domain_roles(
+        self, checker: PermissionChecker
+    ) -> None:
         db = AsyncMock()
         config = PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.TEAM)
         checker.register_config(config)

@@ -17,7 +17,9 @@ class TestBug7ParticipantUserInfo:
     @pytest.fixture
     def setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(

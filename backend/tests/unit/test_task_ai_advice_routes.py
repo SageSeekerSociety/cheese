@@ -38,7 +38,12 @@ class _StubTaskAIAdviceService:
                 "conversation_id": conversation_id,
             }
         )
-        payload = {"conversation": {"conversationId": conversation_id or "conv", "messages": []}}
+        payload = {
+            "conversation": {
+                "conversationId": conversation_id or "conv",
+                "messages": [],
+            }
+        }
         quota = _QuotaInfo(
             remaining=4.0,
             total=10.0,
@@ -67,7 +72,9 @@ async def test_create_ai_advice_conversation_forwards_context(python_client):
             "conversationId": "existing",
             "context": {"section": "knowledge_fields", "sectionIndex": 2},
         }
-        resp = await python_client.post("/tasks/42/ai-advice/conversations", json=payload)
+        resp = await python_client.post(
+            "/tasks/42/ai-advice/conversations", json=payload
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["data"]["conversation"]["conversationId"] == "existing"
@@ -91,7 +98,9 @@ async def test_create_ai_advice_conversation_forwards_context(python_client):
 
 
 @pytest.mark.anyio
-async def test_create_ai_advice_conversation_missing_question_returns_400(python_client):
+async def test_create_ai_advice_conversation_missing_question_returns_400(
+    python_client,
+):
     service = _StubTaskAIAdviceService()
 
     async def _service_override():

@@ -414,7 +414,9 @@ class TestGetQuestion:
         repo = AsyncMock()
         topic_repo = AsyncMock()
         answer_repo = AsyncMock()
-        svc = QuestionsService(repo=repo, topic_repo=topic_repo, answer_repo=answer_repo)
+        svc = QuestionsService(
+            repo=repo, topic_repo=topic_repo, answer_repo=answer_repo
+        )
 
         repo.get_by_id.return_value = _question(id=10)
         topic_repo.get_topics_for_question.return_value = []
@@ -447,7 +449,9 @@ class TestGetQuestion:
         repo = AsyncMock()
         topic_repo = AsyncMock()
         profile_repo = AsyncMock()
-        svc = QuestionsService(repo=repo, topic_repo=topic_repo, profile_repo=profile_repo)
+        svc = QuestionsService(
+            repo=repo, topic_repo=topic_repo, profile_repo=profile_repo
+        )
 
         repo.get_by_id.return_value = _question(id=10)
         topic_repo.get_topics_for_question.return_value = []
@@ -500,7 +504,11 @@ class TestSearchQuestions:
         topic_repo.list_topic_ids.return_value = {1: [10], 2: [20, 30]}
 
         items, page = await svc.search_questions(
-            keyword="test", page_size=2, page_start=0, sort_by="createdAt", sort_order="desc"
+            keyword="test",
+            page_size=2,
+            page_start=0,
+            sort_by="createdAt",
+            sort_order="desc",
         )
 
         assert len(items) == 2
@@ -522,7 +530,11 @@ class TestSearchQuestions:
         topic_repo.list_topic_ids.return_value = {5: []}
 
         items, page = await svc.search_questions(
-            keyword=None, page_size=10, page_start=4, sort_by="createdAt", sort_order="desc"
+            keyword=None,
+            page_size=10,
+            page_start=4,
+            sort_by="createdAt",
+            sort_order="desc",
         )
 
         assert len(items) == 1
@@ -536,7 +548,11 @@ class TestSearchQuestions:
         topic_repo.list_topic_ids.return_value = {}
 
         items, page = await svc.search_questions(
-            keyword="nothing", page_size=10, page_start=None, sort_by="createdAt", sort_order="desc"
+            keyword="nothing",
+            page_size=10,
+            page_start=None,
+            sort_by="createdAt",
+            sort_order="desc",
         )
 
         assert items == []
@@ -553,7 +569,11 @@ class TestSearchQuestions:
         topic_repo.list_topic_ids.return_value = {}
 
         await svc.search_questions(
-            keyword=None, page_size=10, page_start=-5, sort_by="createdAt", sort_order="desc"
+            keyword=None,
+            page_size=10,
+            page_start=-5,
+            sort_by="createdAt",
+            sort_order="desc",
         )
 
         call_kwargs = repo.search.call_args.kwargs
@@ -686,9 +706,13 @@ class TestVoteQuestion:
         repo.vote.return_value = None
         repo.count_votes.return_value = {"POSITIVE": 3, "NEGATIVE": 1}
 
-        result = await svc.vote_question(question_id=10, user_id=42, vote_type="POSITIVE")
+        result = await svc.vote_question(
+            question_id=10, user_id=42, vote_type="POSITIVE"
+        )
 
-        repo.vote.assert_awaited_once_with(question_id=10, user_id=42, vote_type="POSITIVE")
+        repo.vote.assert_awaited_once_with(
+            question_id=10, user_id=42, vote_type="POSITIVE"
+        )
         assert result["upvotes"] == 3
         assert result["downvotes"] == 1
         assert result["userVote"] == "POSITIVE"
@@ -700,7 +724,9 @@ class TestVoteQuestion:
         repo.vote.return_value = None
         repo.count_votes.return_value = {"POSITIVE": 0, "NEGATIVE": 2}
 
-        result = await svc.vote_question(question_id=10, user_id=42, vote_type="NEGATIVE")
+        result = await svc.vote_question(
+            question_id=10, user_id=42, vote_type="NEGATIVE"
+        )
 
         assert result["upvotes"] == 0
         assert result["downvotes"] == 2
@@ -851,7 +877,9 @@ class TestAcceptAnswer:
     async def test_answer_wrong_question(self):
         svc, repo, _t_repo, answer_repo, _p_repo = _make_service()
         repo.get_by_id.return_value = _question(id=10, created_by_id=50)
-        answer_repo.get_by_id.return_value = _answer(id=1, question_id=20)  # different question
+        answer_repo.get_by_id.return_value = _answer(
+            id=1, question_id=20
+        )  # different question
 
         with pytest.raises(BadRequestError, match="Answer does not belong"):
             await svc.accept_answer(question_id=10, answer_id=1, user_id=50)
@@ -876,7 +904,9 @@ class TestUnacceptAnswer:
     @pytest.mark.anyio
     async def test_success(self):
         svc, repo, topic_repo, _a_repo, _p_repo = _make_service()
-        repo.get_by_id.return_value = _question(id=10, created_by_id=50, accepted_answer_id=1)
+        repo.get_by_id.return_value = _question(
+            id=10, created_by_id=50, accepted_answer_id=1
+        )
         updated = _question(id=10, accepted_answer_id=None)
         repo.unaccept_answer.return_value = updated
         topic_repo.list_topic_ids.return_value = {10: [1]}
@@ -1043,7 +1073,9 @@ class TestSetBounty:
         svc, repo, _t_repo, _a_repo, _p_repo = _make_service()
         repo.get_by_id.return_value = _question(id=10, created_by_id=50)
 
-        with pytest.raises(ForbiddenError, match="Only the question owner can set bounty"):
+        with pytest.raises(
+            ForbiddenError, match="Only the question owner can set bounty"
+        ):
             await svc.set_bounty(question_id=10, user_id=77, bounty=5)
 
     @pytest.mark.anyio
@@ -1174,7 +1206,9 @@ class TestListFollowers:
         repo.get_by_id.return_value = _question(id=10)
         repo.list_followers.return_value = ([42, 43], 5)
 
-        follower_ids, page = await svc.list_followers(question_id=10, page_size=2, page_start=0)
+        follower_ids, page = await svc.list_followers(
+            question_id=10, page_size=2, page_start=0
+        )
 
         assert follower_ids == [42, 43]
         assert page["pageStart"] == 0
@@ -1189,7 +1223,9 @@ class TestListFollowers:
         repo.get_by_id.return_value = _question(id=10)
         repo.list_followers.return_value = ([45], 5)
 
-        follower_ids, page = await svc.list_followers(question_id=10, page_size=10, page_start=4)
+        follower_ids, page = await svc.list_followers(
+            question_id=10, page_size=10, page_start=4
+        )
 
         assert page["hasMore"] is False
         assert page["nextStart"] is None
@@ -1200,7 +1236,9 @@ class TestListFollowers:
         repo.get_by_id.return_value = _question(id=10)
         repo.list_followers.return_value = ([], 0)
 
-        follower_ids, page = await svc.list_followers(question_id=10, page_size=10, page_start=None)
+        follower_ids, page = await svc.list_followers(
+            question_id=10, page_size=10, page_start=None
+        )
 
         assert follower_ids == []
         assert page["hasMore"] is False
@@ -1229,12 +1267,16 @@ class TestCreateInvitation:
     async def test_success(self):
         svc, repo, q_repo, p_repo, _a_repo = _make_invitation_service()
         q_repo.get_by_id.return_value = _question(id=10)
-        p_repo.get_profile_by_user_id.return_value = _profile(user_id=99, nickname="bob")
+        p_repo.get_profile_by_user_id.return_value = _profile(
+            user_id=99, nickname="bob"
+        )
         repo._get_invitation.return_value = None
         inv = _invitation(id=7, question_id=10, user_id=99)
         repo.create_invitation.return_value = inv
 
-        result = await svc.create_invitation(question_id=10, inviter_id=50, invitee_id=99)
+        result = await svc.create_invitation(
+            question_id=10, inviter_id=50, invitee_id=99
+        )
 
         repo.create_invitation.assert_awaited_once_with(question_id=10, user_id=99)
         assert result["invitation_id"] == 7
@@ -1288,7 +1330,9 @@ class TestGetInvitation:
         svc, repo, _q_repo, p_repo, a_repo = _make_invitation_service()
         inv = _invitation(id=3, user_id=99, question_id=10)
         repo.get_by_id.return_value = inv
-        p_repo.get_profile_by_user_id.return_value = _profile(user_id=99, nickname="bob")
+        p_repo.get_profile_by_user_id.return_value = _profile(
+            user_id=99, nickname="bob"
+        )
         a_repo.has_user_answered_question.return_value = True
 
         result = await svc.get_invitation(invitation_id=3)
@@ -1401,7 +1445,9 @@ class TestListInvitations:
         }
         a_repo.get_answerer_user_ids.return_value = {99}
 
-        items, page = await svc.list_invitations(question_id=10, page_start=0, page_size=2)
+        items, page = await svc.list_invitations(
+            question_id=10, page_start=0, page_size=2
+        )
 
         assert len(items) == 2
         assert items[0]["user"]["nickname"] == "alice"
@@ -1428,7 +1474,9 @@ class TestListInvitations:
         repo.list_invitations.return_value = ([], 0)
         p_repo.get_profiles_by_user_ids.return_value = {}
 
-        items, page = await svc.list_invitations(question_id=10, page_start=None, page_size=10)
+        items, page = await svc.list_invitations(
+            question_id=10, page_start=None, page_size=10
+        )
 
         assert items == []
         assert page["hasMore"] is False

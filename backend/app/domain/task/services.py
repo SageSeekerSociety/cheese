@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,19 @@ from app.domain.task.repositories import (
     TaskSubmissionReviewRepository,
 )
 from app.domain.user.repositories import UserRealNameRepository
+
+
+@dataclass
+class _FallbackTeam:
+    """Lightweight stand-in for a Team when no TeamRepository is wired.
+
+    Exposes only the attributes the join-status loop reads off a team.
+    """
+
+    id: int
+    name: str
+    intro: str
+    avatar_id: int | None
 
 
 class TaskService:
@@ -137,7 +151,9 @@ class TaskMembershipService:
         task_id: int,
         approved: int | None = None,
     ) -> Sequence[TaskMembership]:
-        return await self._repo.list_memberships_for_task(task_id=task_id, approved=approved)
+        return await self._repo.list_memberships_for_task(
+            task_id=task_id, approved=approved
+        )
 
     async def get_user_membership(
         self,
@@ -152,8 +168,10 @@ class TaskMembershipService:
         task_id: int,
         user_id: int,
     ) -> Sequence[TaskMembership]:
-        """Return team-type memberships for this task where the user belongs to the team."""
-        return await self._repo.list_team_memberships_for_user(task_id=task_id, user_id=user_id)
+        """Return team-type memberships for this task where the user belongs to the team."""  # noqa: E501
+        return await self._repo.list_team_memberships_for_user(
+            task_id=task_id, user_id=user_id
+        )
 
     async def get_membership_by_id(self, membership_id: int) -> TaskMembership | None:
         return await self._repo.get_by_id(membership_id)
@@ -163,7 +181,9 @@ class TaskMembershipService:
         task_id: int,
         member_id: int,
     ) -> TaskMembership | None:
-        return await self._repo.get_by_task_and_member(task_id=task_id, member_id=member_id)
+        return await self._repo.get_by_task_and_member(
+            task_id=task_id, member_id=member_id
+        )
 
     async def create_membership(
         self,
@@ -179,10 +199,10 @@ class TaskMembershipService:
         personal_advantage: str | None,
         remark: str | None,
     ) -> TaskMembership:
-        """Create a new TaskMembership row with扩展校验（人数上限、报名窗口、实名等）。"""
+        """Create a new TaskMembership row with扩展校验（人数上限、报名窗口、实名等）。"""  # noqa: E501
 
         # 参与人数上限校验 — 仅在 enforce_task_participant_limit_check 开启时生效
-        # （对齐 NT TaskMembershipEligibilityService.ensureTaskParticipantNotReachedLimit
+        # （对齐 NT TaskMembershipEligibilityService.ensureTaskParticipantNotReachedLimit  # noqa: E501
         # 与 applicationConfig.enforceTaskParticipantLimitCheck 默认 false）。
         if (
             settings.enforce_task_participant_limit_check
@@ -205,7 +225,11 @@ class TaskMembershipService:
             task_id=task.id,
             member_id=member_id,  # type: ignore[arg-type]
         )
-        if existing is not None and existing.deleted_at is None and existing.approved != 1:
+        if (
+            existing is not None
+            and existing.deleted_at is None
+            and existing.approved != 1
+        ):
             raise BadRequestError("Member already participating in this task.")
 
         # requireRealName：简化为只校验提交者本人
@@ -260,10 +284,15 @@ class TaskMembershipService:
         is_approving = previous_approved != 0 and new_approved == 0
         if is_approving:
             # 人数上限检查 — 仅在 enforce_task_participant_limit_check 开启时生效
-            if settings.enforce_task_participant_limit_check and task.participant_limit is not None:
+            if (
+                settings.enforce_task_participant_limit_check
+                and task.participant_limit is not None
+            ):
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
-                    raise TaskParticipantsReachedLimitError(task.id, task.participant_limit)  # type: ignore[arg-type]
+                    raise TaskParticipantsReachedLimitError(
+                        task.id, task.participant_limit
+                    )  # type: ignore[arg-type]
 
             # TEAM 任务时，检查队伍规模是否在 min/maxTeamSize 范围内。
             if membership.is_team:
@@ -272,14 +301,16 @@ class TaskMembershipService:
                     raise TeamSizeNotEnoughError(task.min_team_size, team_size)
                 if task.max_team_size is not None and team_size > task.max_team_size:
                     raise TeamSizeTooLargeError(task.max_team_size, team_size)
-                # requireRealName 对 TEAM 的细粒度校验（所有成员实名）留待后续引入 team 视图服务时补齐。
+                # requireRealName 对 TEAM 的细粒度校验（所有成员实名）留待后续引入 team 视图服务时补齐。  # noqa: E501
             else:
                 # USER 任务 + requireRealName：检查该用户是否有实名。
                 if task.require_real_name and self._realname_repo is not None:
-                    has_identity = await self._realname_repo.has_identity(membership.member_id)
+                    has_identity = await self._realname_repo.has_identity(
+                        membership.member_id
+                    )
                     if not has_identity:
                         raise BadRequestError(
-                            "Cannot approve: user is missing required real name information."
+                            "Cannot approve: user is missing required real name information."  # noqa: E501
                         )
 
         # 应用字段更新
@@ -291,7 +322,7 @@ class TaskMembershipService:
             membership.email = email
         if phone is not None:
             membership.phone = phone
-        # TaskMembership 目前模型中不包含 rejectReason 等附加字段，仅在 Task 上维护，故此处忽略。
+        # TaskMembership 目前模型中不包含 rejectReason 等附加字段，仅在 Task 上维护，故此处忽略。  # noqa: E501
         _ = reject_reason
 
         membership.updated_at = datetime.now(UTC)
@@ -348,13 +379,16 @@ class TaskMembershipService:
                 )
 
             # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
-            if settings.enforce_task_participant_limit_check and task.participant_limit is not None:
+            if (
+                settings.enforce_task_participant_limit_check
+                and task.participant_limit is not None
+            ):
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(
                         {
                             "code": "PARTICIPANT_LIMIT_REACHED",
-                            "message": f"Task participant limit ({task.participant_limit}) reached.",
+                            "message": f"Task participant limit ({task.participant_limit}) reached.",  # noqa: E501
                         }
                     )
 
@@ -375,11 +409,11 @@ class TaskMembershipService:
                     reasons.append(
                         {
                             "code": "MISSING_REAL_NAME",
-                            "message": "Real name information is required for this task.",
+                            "message": "Real name information is required for this task.",  # noqa: E501
                         }
                     )
 
-            # Rank 规则：当空间启用 rank 且任务有 rank 要求时，若开启检查则限制「用户 rank + rank_jump >= task.rank」。
+            # Rank 规则：当空间启用 rank 且任务有 rank 要求时，若开启检查则限制「用户 rank + rank_jump >= task.rank」。  # noqa: E501
             if (
                 settings.rank_check_enforced
                 and isinstance(getattr(task, "space_id", None), int)
@@ -399,7 +433,7 @@ class TaskMembershipService:
                             reasons.append(
                                 {
                                     "code": "USER_RANK_NOT_HIGH_ENOUGH",
-                                    "message": f"Your rank ({actual_rank}) is not high enough. Required: {required_rank}.",
+                                    "message": f"Your rank ({actual_rank}) is not high enough. Required: {required_rank}.",  # noqa: E501
                                     "details": {
                                         "userId": user_id,
                                         "actualRank": actual_rank,
@@ -431,13 +465,15 @@ class TaskMembershipService:
         memberships_by_team_id = {m.member_id: m for m in existing_memberships}
 
         if self._team_repo is not None:
-            candidate_teams = await self._team_repo.list_teams_user_can_use_to_join_task(
-                user_id=user_id,
+            candidate_teams = (
+                await self._team_repo.list_teams_user_can_use_to_join_task(
+                    user_id=user_id,
+                )
             )
         else:
             # Fallback when no TeamRepository is wired: only existing memberships.
             candidate_teams = [
-                type("_T", (), {"id": m.member_id, "name": "", "intro": "", "avatar_id": None})()
+                _FallbackTeam(id=m.member_id, name="", intro="", avatar_id=None)
                 for m in existing_memberships
             ]
 
@@ -475,18 +511,21 @@ class TaskMembershipService:
                 )
 
             # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
-            if settings.enforce_task_participant_limit_check and task.participant_limit is not None:
+            if (
+                settings.enforce_task_participant_limit_check
+                and task.participant_limit is not None
+            ):
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(
                         {
                             "code": "PARTICIPANT_LIMIT_REACHED",
-                            "message": f"Task participant limit ({task.participant_limit}) reached.",
+                            "message": f"Task participant limit ({task.participant_limit}) reached.",  # noqa: E501
                         }
                     )
 
             # 已有 membership 记录（且未软删除）视为已参与
-            # NONE(待审批) 和 APPROVED(已批准) 不可重复加入，DISAPPROVED(已拒绝) 允许重新申请
+            # NONE(待审批) 和 APPROVED(已批准) 不可重复加入，DISAPPROVED(已拒绝) 允许重新申请  # noqa: E501
             if existing is not None and existing.approved != 1:
                 reasons.append(
                     {
@@ -499,26 +538,28 @@ class TaskMembershipService:
                 reasons.append(
                     {
                         "code": "TEAM_TOO_SMALL",
-                        "message": f"Team size ({team_size}) is below minimum ({task.min_team_size}).",
+                        "message": f"Team size ({team_size}) is below minimum ({task.min_team_size}).",  # noqa: E501
                     }
                 )
             if task.max_team_size is not None and team_size > task.max_team_size:
                 reasons.append(
                     {
                         "code": "TEAM_TOO_LARGE",
-                        "message": f"Team size ({team_size}) exceeds maximum ({task.max_team_size}).",
+                        "message": f"Team size ({team_size}) exceeds maximum ({task.max_team_size}).",  # noqa: E501
                     }
                 )
 
             # requireRealName: 若任务要求实名，TEAM 参与需要所有队员均有实名记录。
-            # NT checks allVerified from getTeamMembers(teamId, queryRealNameStatus=true).
+            # NT checks allVerified from getTeamMembers(teamId, queryRealNameStatus=true).  # noqa: E501
             if task.require_real_name and self._realname_repo is not None:
                 # Check all team members, not just the requesting user.
                 all_verified = True
                 if self._team_repo is not None:
                     members = await self._team_repo.list_members_of_team(team_id)
                     for member_rel in members:
-                        if not await self._realname_repo.has_identity(member_rel.user_id):
+                        if not await self._realname_repo.has_identity(
+                            member_rel.user_id
+                        ):
                             all_verified = False
                             break
                 else:
@@ -528,7 +569,7 @@ class TaskMembershipService:
                     reasons.append(
                         {
                             "code": "TEAM_MEMBER_MISSING_REAL_NAME",
-                            "message": "One or more team members missing real name info.",
+                            "message": "One or more team members missing real name info.",  # noqa: E501
                         }
                     )
 
@@ -552,7 +593,7 @@ class TaskMembershipService:
                             reasons.append(
                                 {
                                     "code": "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH",
-                                    "message": f"Your rank ({actual_rank}) is not high enough for this team task. Required: {required_rank}.",
+                                    "message": f"Your rank ({actual_rank}) is not high enough for this team task. Required: {required_rank}.",  # noqa: E501
                                     "details": {
                                         "userId": user_id,
                                         "actualRank": actual_rank,
@@ -629,7 +670,9 @@ class TaskSubmissionService:
             "intro": None,
         }
 
-    async def _build_review_dto(self, review: TaskSubmissionReview | None) -> dict | None:
+    async def _build_review_dto(
+        self, review: TaskSubmissionReview | None
+    ) -> dict | None:
         if review is None:
             return {"reviewed": False}
         return {
@@ -671,7 +714,8 @@ class TaskSubmissionService:
             }
 
         content_dtos = [
-            _entry_to_dto(i, e) for i, e in enumerate(sorted(entries, key=lambda en: en.index))
+            _entry_to_dto(i, e)
+            for i, e in enumerate(sorted(entries, key=lambda en: en.index))
         ]
 
         review_dto = await self._build_review_dto(review)
@@ -737,7 +781,9 @@ class TaskSubmissionService:
             entries=entry_tuples,
         )
 
-        entries = list(await self._entry_repo.list_by_submission_id(submission_id=submission.id))
+        entries = list(
+            await self._entry_repo.list_by_submission_id(submission_id=submission.id)
+        )
         review = await self._review_repo.get_by_submission_id(submission.id)
 
         return await self._build_submission_dto(
@@ -756,7 +802,7 @@ class TaskSubmissionService:
         version: int,
         contents: list[dict],
     ) -> dict:
-        """Modify an existing submission version by soft-deleting old entries and recreating."""
+        """Modify an existing submission version by soft-deleting old entries and recreating."""  # noqa: E501
         membership = await self._membership_repo.list_memberships_for_task(
             task_id=task_id,
             approved=None,
@@ -801,7 +847,9 @@ class TaskSubmissionService:
             entries=entry_tuples,
         )
 
-        entries = list(await self._entry_repo.list_by_submission_id(submission_id=submission.id))
+        entries = list(
+            await self._entry_repo.list_by_submission_id(submission_id=submission.id)
+        )
         review = await self._review_repo.get_by_submission_id(submission.id)
 
         return await self._build_submission_dto(
@@ -847,7 +895,9 @@ class TaskSubmissionService:
             task_id=task_id,
             approved=None,
         )
-        membership_map = {m.id: m for m in memberships_for_task if m.id in membership_ids}
+        membership_map = {
+            m.id: m for m in memberships_for_task if m.id in membership_ids
+        }
 
         items: list[dict] = []
         for submission in submissions:
@@ -855,7 +905,9 @@ class TaskSubmissionService:
             if membership is None:
                 continue
             entries = list(
-                await self._entry_repo.list_by_submission_id(submission_id=submission.id)
+                await self._entry_repo.list_by_submission_id(
+                    submission_id=submission.id
+                )
             )
             review: TaskSubmissionReview | None = None
             if query_review:

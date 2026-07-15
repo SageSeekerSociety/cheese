@@ -46,11 +46,15 @@ class BadRequestError(BaseError):
 
 
 class NotFoundError(BaseError):
-    def __init__(self, message: str = "Resource not found", data: Any | None = None) -> None:
+    def __init__(
+        self, message: str = "Resource not found", data: Any | None = None
+    ) -> None:
         super().__init__(HTTP_404_NOT_FOUND, message, data)
 
     @classmethod
-    def for_resource(cls, resource_type: str, resource_id: int | str) -> "NotFoundError":
+    def for_resource(
+        cls, resource_type: str, resource_id: int | str
+    ) -> "NotFoundError":
         return cls(
             message=f"Resource {resource_type} not found",
             data={"type": resource_type, "id": resource_id},
@@ -105,7 +109,9 @@ class AccessDeniedError(ForbiddenError):
 
 
 class PermissionDeniedError(ForbiddenError):
-    def __init__(self, message: str = "Permission denied", data: Any | None = None) -> None:
+    def __init__(
+        self, message: str = "Permission denied", data: Any | None = None
+    ) -> None:
         super().__init__(message, data)
 
 
@@ -150,7 +156,9 @@ def format_error_response(status_code: int, message: str) -> dict:
     }
 
 
-async def base_error_handler(request: Request, exc: BaseError) -> JSONResponse:
+async def base_error_handler(
+    request: Request, exc: BaseError
+) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
     if "text/event-stream" in accept:
         body = f"event: error\ndata: {exc.args[0]}\n\n"
@@ -184,8 +192,60 @@ async def validation_exception_handler(
     if "text/event-stream" in accept:
         body = f"event: error\ndata: {message}\n\n"
         return PlainTextResponse(
-            content=body, status_code=HTTP_400_BAD_REQUEST, media_type="text/event-stream"
+            content=body,
+            status_code=HTTP_400_BAD_REQUEST,
+            media_type="text/event-stream",
         )
     data = {"details": exc.errors()}
     body = BadRequestError(message, data=data).to_response_body()
     return JSONResponse(status_code=HTTP_400_BAD_REQUEST, content=body)
+
+
+# ---------------------------------------------------------------------------
+# cheesex 合并附加 (fusion §8.5 / I3-errors): the BaseError framework above is
+# adopted as canonical (main's product raises it). These are the cheesex-only
+# error names our agent/topic/chat code raises; they keep the {code,message,data}
+# envelope via the AppError handler registered below. NotFoundError/ForbiddenError
+# are NOT redefined here — cheesex call sites (raise NotFoundError("...")) are
+# ctor-compatible with main's BaseError versions.
+# ---------------------------------------------------------------------------
+from fastapi import FastAPI  # noqa: E402
+
+
+class AppError(Exception):
+    """Base for cheesex client-facing errors (kept for our agent/topic layer)."""
+
+    code: int = 400
+    message: str = "Bad request"
+
+    def __init__(self, message: str | None = None) -> None:
+        if message is not None:
+            self.message = message
+        super().__init__(self.message)
+
+
+class ValidationError(AppError):
+    code = 422
+    message = "Validation failed"
+
+
+class UnauthorizedError(AppError):
+    code = 401
+    message = "Unauthorized"
+
+
+def register_exception_handlers(app: FastAPI) -> None:
+    """Register BOTH error frameworks (fusion merge): main's BaseError family +
+    HTTP/validation handlers, and cheesex's AppError handler. Called from our
+    main.py; main's product code raises BaseError, ours raises AppError."""
+
+    @app.exception_handler(AppError)
+    async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.code,
+            content={"code": exc.code, "message": exc.message, "data": None},
+        )
+
+    app.add_exception_handler(BaseError, base_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore[arg-type]

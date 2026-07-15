@@ -255,7 +255,12 @@ class TestMaterialBundlesCreateIntegration:
             json={
                 "title": f"Bundle_{self.unique}_bad",
                 "content": "content",
-                "materials": [self.image_id, self.video_id, self.file_id, self.file_id + 30],
+                "materials": [
+                    self.image_id,
+                    self.video_id,
+                    self.file_id,
+                    self.file_id + 30,
+                ],
             },
         )
         assert response.status_code == 404

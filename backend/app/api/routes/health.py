@@ -24,7 +24,11 @@ async def detailed_health_check() -> dict[str, Any]:
     checks["database"] = await _check_database()
     checks["redis"] = await _check_redis()
 
-    overall = "healthy" if all(c.get("status") == "up" for c in checks.values()) else "degraded"
+    overall = (
+        "healthy"
+        if all(c.get("status") == "up" for c in checks.values())
+        else "degraded"
+    )
     return {"status": overall, "checks": checks}
 
 

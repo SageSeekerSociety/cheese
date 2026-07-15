@@ -16,20 +16,29 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def create_access_token(user_id: int) -> str:
-    """Create a short-lived access token for the given user."""
+def create_access_token(user_id: int, handle: str | None = None) -> str:
+    """Create a short-lived access token for the given user.
+
+    ``handle`` (= the user's username) is embedded as an extra claim so the ONE
+    token also satisfies the cheesex auth layer, which keys on handle (fusion
+    unify P3: one token for both API layers). Main auth reads ``sub`` (int id);
+    cheesex reads ``handle`` (falling back to ``sub``)."""
     now = _utcnow()
     payload = {
         "sub": str(user_id),
         "type": "access",
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(seconds=settings.access_token_expires_seconds)).timestamp()),
+        "exp": int(
+            (now + timedelta(seconds=settings.access_token_expires_seconds)).timestamp()
+        ),
     }
+    if handle:
+        payload["handle"] = handle
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
 def create_2fa_pending_token(user_id: int) -> str:
-    """Create a short-lived token that can ONLY be used for 2FA verification, not API access."""
+    """Create a short-lived token that can ONLY be used for 2FA verification, not API access."""  # noqa: E501
     now = _utcnow()
     payload = {
         "sub": str(user_id),
@@ -47,7 +56,11 @@ def create_refresh_token(user_id: int) -> str:
         "sub": str(user_id),
         "type": "refresh",
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(seconds=settings.refresh_token_expires_seconds)).timestamp()),
+        "exp": int(
+            (
+                now + timedelta(seconds=settings.refresh_token_expires_seconds)
+            ).timestamp()
+        ),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
@@ -61,7 +74,9 @@ def decode_token(token: str) -> dict:
 
 
 async def get_current_user_id(
-    x_user_id: Annotated[int | None, Header(alias="X-User-Id", convert_underscores=False)] = None,
+    x_user_id: Annotated[
+        int | None, Header(alias="X-User-Id", convert_underscores=False)
+    ] = None,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> int:
     """Resolve current user ID from Authorization bearer token or X-User-Id header.
@@ -75,8 +90,12 @@ async def get_current_user_id(
             token = token[7:].strip()
         payload = decode_token(token)
         if payload.get("type") != "access":
-            raise AuthenticationRequiredError("Invalid token type: expected access token")
+            raise AuthenticationRequiredError(
+                "Invalid token type: expected access token"
+            )
         sub = payload.get("sub")
+        if sub is None:
+            raise AuthenticationRequiredError("Invalid token subject")
         try:
             return int(sub)
         except (TypeError, ValueError) as exc:
@@ -86,14 +105,18 @@ async def get_current_user_id(
         from app.core.config import settings
 
         if settings.environment not in ("development", "test"):
-            raise AuthenticationRequiredError("X-User-Id header is not allowed in production")
+            raise AuthenticationRequiredError(
+                "X-User-Id header is not allowed in production"
+            )
         return x_user_id
 
     raise AuthenticationRequiredError("Authorization header is required")
 
 
 async def get_optional_user_id(
-    x_user_id: Annotated[int | None, Header(alias="X-User-Id", convert_underscores=False)] = None,
+    x_user_id: Annotated[
+        int | None, Header(alias="X-User-Id", convert_underscores=False)
+    ] = None,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> int | None:
     """Best-effort variant of get_current_user_id that returns None instead of 401.
@@ -104,6 +127,8 @@ async def get_optional_user_id(
     from app.core.errors import BaseError
 
     try:
-        return await get_current_user_id(x_user_id=x_user_id, authorization=authorization)
+        return await get_current_user_id(
+            x_user_id=x_user_id, authorization=authorization
+        )
     except (AuthenticationRequiredError, BaseError):
         return None

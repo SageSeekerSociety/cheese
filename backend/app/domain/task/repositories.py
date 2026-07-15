@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
-from sqlalchemy import Select, and_, exists, func, or_, select
+from sqlalchemy import Select, and_, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.llm.models import AIConversation, AIMessage
@@ -119,7 +119,11 @@ class TaskRepository:
             else:
                 stmt = stmt.where(~joined_predicate)
 
-        if viewer_user_id is not None and viewer_user_id > 0 and not viewer_is_space_admin:
+        if (
+            viewer_user_id is not None
+            and viewer_user_id > 0
+            and not viewer_is_space_admin
+        ):
             visibility_predicate = TaskVisibilityService.build_visibility_predicate(
                 user_id=viewer_user_id,
                 email_domain=viewer_email_domain,
@@ -235,7 +239,11 @@ class TaskRepository:
             else:
                 stmt = stmt.where(~joined_predicate)
 
-        if viewer_user_id is not None and viewer_user_id > 0 and not viewer_is_space_admin:
+        if (
+            viewer_user_id is not None
+            and viewer_user_id > 0
+            and not viewer_is_space_admin
+        ):
             visibility_predicate = TaskVisibilityService.build_visibility_predicate(
                 user_id=viewer_user_id,
                 email_domain=viewer_email_domain,
@@ -284,7 +292,10 @@ class TaskRepository:
             )
             return stmt.where(
                 Task.ended_at.is_(None),
-                or_(Task.participant_limit.is_(None), approved_count < Task.participant_limit),
+                or_(
+                    Task.participant_limit.is_(None),
+                    approved_count < Task.participant_limit,
+                ),
             )
         return stmt
 
@@ -485,7 +496,7 @@ class TaskMembershipRepository:
         task_id: int,
         user_id: int,
     ) -> Sequence[TaskMembership]:
-        """Return team-type memberships for this task where the user belongs to the team."""
+        """Return team-type memberships for this task where the user belongs to the team."""  # noqa: E501
         membership_stmt: Select[tuple[TaskMembership]] = select(TaskMembership).where(
             and_(
                 TaskMembership.task_id == task_id,
@@ -530,12 +541,16 @@ class TaskMembershipRepository:
 
     async def get_by_id(self, membership_id: int) -> TaskMembership | None:
         stmt: Select[tuple[TaskMembership]] = select(TaskMembership).where(
-            and_(TaskMembership.id == membership_id, TaskMembership.deleted_at.is_(None))
+            and_(
+                TaskMembership.id == membership_id, TaskMembership.deleted_at.is_(None)
+            )
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def list_memberships_for_space(self, space_id: int) -> Sequence[TaskMembership]:
+    async def list_memberships_for_space(
+        self, space_id: int
+    ) -> Sequence[TaskMembership]:
         stmt: Select[tuple[TaskMembership]] = (
             select(TaskMembership)
             .join(Task, Task.id == TaskMembership.task_id)
@@ -608,7 +623,9 @@ class TaskSubmissionRepository:
 
     async def get_by_id(self, submission_id: int) -> TaskSubmission | None:
         stmt: Select[tuple[TaskSubmission]] = select(TaskSubmission).where(
-            and_(TaskSubmission.id == submission_id, TaskSubmission.deleted_at.is_(None))
+            and_(
+                TaskSubmission.id == submission_id, TaskSubmission.deleted_at.is_(None)
+            )
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
@@ -676,7 +693,8 @@ class TaskSubmissionRepository:
 
         NOTE: 简化实现：
         - 使用 offset 分页；
-        - 当 all_versions=False 时，仅返回每个 membership 的最新版本（按 version 最大）。
+        - 当 all_versions=False 时，
+          仅返回每个 membership 的最新版本（按 version 最大）。
         """
         # Base query: join membership -> task for filtering
         stmt: Select[tuple[TaskSubmission]] = (
@@ -934,7 +952,9 @@ class TaskAIAdviceRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def find_by_model_hash(self, task_id: int, model_hash: str) -> TaskAIAdvice | None:
+    async def find_by_model_hash(
+        self, task_id: int, model_hash: str
+    ) -> TaskAIAdvice | None:
         stmt = select(TaskAIAdvice).where(
             TaskAIAdvice.task_id == task_id,
             TaskAIAdvice.model_hash == model_hash,
@@ -1030,7 +1050,9 @@ class AIConversationRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_by_conversation_id(self, conversation_id: str) -> AIConversation | None:
+    async def get_by_conversation_id(
+        self, conversation_id: str
+    ) -> AIConversation | None:
         stmt = select(AIConversation).where(
             AIConversation.conversation_id == conversation_id,
             AIConversation.deleted_at.is_(None),
@@ -1132,7 +1154,9 @@ class TaskSubmissionSchemaRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_by_task_id(self, task_id: int) -> Sequence[TaskSubmissionSchemaEntry]:
+    async def list_by_task_id(
+        self, task_id: int
+    ) -> Sequence[TaskSubmissionSchemaEntry]:
         stmt: Select[tuple[TaskSubmissionSchemaEntry]] = (
             select(TaskSubmissionSchemaEntry)
             .where(TaskSubmissionSchemaEntry.task_id == task_id)
@@ -1148,7 +1172,7 @@ class TaskSubmissionSchemaRepository:
     ) -> list[TaskSubmissionSchemaEntry]:
         type_map = {"TEXT": 0, "FILE": 1}
         await self._session.execute(
-            TaskSubmissionSchemaEntry.__table__.delete().where(
+            delete(TaskSubmissionSchemaEntry).where(
                 TaskSubmissionSchemaEntry.task_id == task_id
             )
         )

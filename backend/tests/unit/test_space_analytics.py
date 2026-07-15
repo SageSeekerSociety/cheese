@@ -40,7 +40,9 @@ class DummyMembershipRepo:
         self._memberships = memberships
 
     async def list_memberships_for_space(self, space_id: int):
-        return [m for m in self._memberships if getattr(m, "space_id", space_id) == space_id]
+        return [
+            m for m in self._memberships if getattr(m, "space_id", space_id) == space_id
+        ]
 
 
 def membership(task_id: int, member_id: int, approved: int, space_id: int):
@@ -55,7 +57,9 @@ def membership(task_id: int, member_id: int, approved: int, space_id: int):
 
 @pytest.mark.anyio
 async def test_space_analytics_distribution_counts():
-    repo = DummyTaskRepo([task(1, 7, 1, 0, 10), task(2, 7, 1, 2, 11), task(3, 7, 2, 0, 10)])
+    repo = DummyTaskRepo(
+        [task(1, 7, 1, 0, 10), task(2, 7, 1, 2, 11), task(3, 7, 2, 0, 10)]
+    )
     membership_repo = DummyMembershipRepo(
         [membership(1, 99, 0, 7), membership(2, 101, 2, 7), membership(3, 103, 0, 7)]
     )
@@ -74,7 +78,9 @@ async def test_space_analytics_distribution_counts():
 
 @pytest.mark.anyio
 async def test_space_analytics_filters_by_status():
-    repo = DummyTaskRepo([task(1, 7, 1, 0, 10), task(2, 7, 1, 1, 11), task(3, 7, 2, 0, 10)])
+    repo = DummyTaskRepo(
+        [task(1, 7, 1, 0, 10), task(2, 7, 1, 1, 11), task(3, 7, 2, 0, 10)]
+    )
     membership_repo = DummyMembershipRepo([])
     service = SpaceAnalyticsService(task_repo=repo, membership_repo=membership_repo)
 
@@ -105,7 +111,9 @@ async def test_space_analytics_rejects_invalid_status():
 
 @pytest.mark.anyio
 async def test_publishers_participation_groups_by_owner():
-    repo = DummyTaskRepo([task(1, 5, 1, 0, 10), task(2, 5, 1, 2, 11), task(3, 5, 2, 0, 10)])
+    repo = DummyTaskRepo(
+        [task(1, 5, 1, 0, 10), task(2, 5, 1, 2, 11), task(3, 5, 2, 0, 10)]
+    )
     membership_repo = DummyMembershipRepo(
         [membership(1, 201, 0, 5), membership(3, 202, 0, 5), membership(2, 203, 1, 5)]
     )

@@ -42,7 +42,9 @@ def _notification(
 class _FakeResolver:
     """Fake EntityInfoResolver for testing."""
 
-    def __init__(self, entity_type: str, results: dict[str, ResolvedEntityInfoDTO | None]):
+    def __init__(
+        self, entity_type: str, results: dict[str, ResolvedEntityInfoDTO | None]
+    ):
         self._type = entity_type
         self._results = results
 
@@ -89,7 +91,9 @@ async def test_get_notification_by_id_found():
     repo.get_by_id_for_user.return_value = notif
 
     svc = _make_service(repo=repo)
-    result = await svc.get_notification_by_id_for_current_user(user_id=10, notification_id=5)
+    result = await svc.get_notification_by_id_for_current_user(
+        user_id=10, notification_id=5
+    )
 
     repo.get_by_id_for_user.assert_awaited_once_with(user_id=10, notification_id=5)
     assert result is notif
@@ -101,7 +105,9 @@ async def test_get_notification_by_id_not_found():
     repo.get_by_id_for_user.return_value = None
 
     svc = _make_service(repo=repo)
-    result = await svc.get_notification_by_id_for_current_user(user_id=10, notification_id=999)
+    result = await svc.get_notification_by_id_for_current_user(
+        user_id=10, notification_id=999
+    )
 
     assert result is None
 
@@ -187,9 +193,13 @@ async def test_set_read_status():
     repo.set_read_status_for_user.return_value = 1
 
     svc = _make_service(repo=repo)
-    result = await svc.set_read_status(user_id=10, notification_id=5, desired_read_status=True)
+    result = await svc.set_read_status(
+        user_id=10, notification_id=5, desired_read_status=True
+    )
 
-    repo.set_read_status_for_user.assert_awaited_once_with(user_id=10, notification_id=5, read=True)
+    repo.set_read_status_for_user.assert_awaited_once_with(
+        user_id=10, notification_id=5, read=True
+    )
     assert result == 1
 
 
@@ -199,7 +209,9 @@ async def test_set_read_status_no_match():
     repo.set_read_status_for_user.return_value = 0
 
     svc = _make_service(repo=repo)
-    result = await svc.set_read_status(user_id=10, notification_id=999, desired_read_status=False)
+    result = await svc.set_read_status(
+        user_id=10, notification_id=999, desired_read_status=False
+    )
 
     assert result == 0
 
@@ -354,7 +366,9 @@ async def test_delete_notification_success():
     repo.soft_delete_for_user.return_value = True
 
     svc = _make_service(repo=repo)
-    result = await svc.delete_notification_for_current_user(user_id=10, notification_id=5)
+    result = await svc.delete_notification_for_current_user(
+        user_id=10, notification_id=5
+    )
 
     repo.soft_delete_for_user.assert_awaited_once_with(user_id=10, notification_id=5)
     assert result is True
@@ -366,7 +380,9 @@ async def test_delete_notification_not_found():
     repo.soft_delete_for_user.return_value = False
 
     svc = _make_service(repo=repo)
-    result = await svc.delete_notification_for_current_user(user_id=10, notification_id=999)
+    result = await svc.delete_notification_for_current_user(
+        user_id=10, notification_id=999
+    )
 
     assert result is False
 
@@ -410,7 +426,7 @@ async def test_resolve_entities_with_pointers():
 
 @pytest.mark.anyio
 async def test_resolve_entities_missing_resolver():
-    """When no resolver exists for an entity type, the pointer key still appears with None."""
+    """When no resolver exists for an entity type, the pointer key still appears with None."""  # noqa: E501
     svc = _make_service(resolvers=[])
     result = await svc.resolve_entities_from_metadata(
         [
@@ -419,7 +435,7 @@ async def test_resolve_entities_missing_resolver():
     )
 
     # The pointer is collected but no resolver handles "unknown_type",
-    # so resolved_by_type won't have "unknown_type" and flattened[path] = entity_map.get(id) = None
+    # so resolved_by_type won't have "unknown_type" and flattened[path] = entity_map.get(id) = None  # noqa: E501
     assert "actor" in result
     assert result["actor"] is None
 

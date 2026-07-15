@@ -47,9 +47,20 @@
                 <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4">
                   <v-card flat rounded="lg" class="space-card elevation-0 border" :to="`/spaces/${space.id}`">
                     <v-card-item>
-                      <v-avatar size="60" class="mt-2 mb-4">
-                        <v-img v-if="space.avatarId" :src="getAvatarUrl(space.avatarId)"></v-img>
-                        <v-icon v-else icon="mdi-google-maps" size="large" color="primary"></v-icon>
+                      <v-avatar size="60" color="primary" class="mt-2 mb-4">
+                        <v-img v-if="space.avatarId" :src="getAvatarUrl(space.avatarId)">
+                          <!-- seed avatars may be invalid; fall back to the initial.
+                               The #error slot fills the v-img, so the char must be a
+                               flex-centered fill or it sits top-left, not centered. -->
+                          <template #error>
+                            <span class="space-avatar-char text-h5 text-white font-weight-medium">{{
+                              (space.name || '·').trim().charAt(0)
+                            }}</span>
+                          </template>
+                        </v-img>
+                        <span v-else class="space-avatar-char text-h5 text-white font-weight-medium">{{
+                          (space.name || '·').trim().charAt(0)
+                        }}</span>
                       </v-avatar>
                       <v-card-title class="text-h6 mb-2">{{ space.name }}</v-card-title>
                       <v-card-subtitle class="text-body-2 text-medium-emphasis">{{ space.intro }}</v-card-subtitle>
@@ -147,6 +158,15 @@ onMounted(async () => {
   transition: all 0.2s ease;
   height: 100%;
   border: 1px solid transparent;
+}
+
+.space-avatar-char {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  line-height: 1;
 }
 
 .space-card:hover {

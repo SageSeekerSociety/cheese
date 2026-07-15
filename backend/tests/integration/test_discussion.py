@@ -8,9 +8,13 @@ from tests.integration.conftest import UserCreator, unique_int
 
 class TestDiscussionIntegration:
     @pytest.fixture
-    def setup_discussion(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def setup_discussion(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         suffix = unique_int(10000000, 99999999)
         space_resp = api_client.post(
             "/spaces",
@@ -63,12 +67,16 @@ class TestDiscussionIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Expected 201, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["discussion"]
         # content is stored as a string (plain text or JSON serialized string)
         assert "This is a test discussion comment." in data["content"]
 
-    def test_create_nested_discussion(self, setup_discussion: dict, api_client: TestClient):
+    def test_create_nested_discussion(
+        self, setup_discussion: dict, api_client: TestClient
+    ):
         creator = setup_discussion["creator"]
         task_id = setup_discussion["task_id"]
         parent_resp = api_client.post(
@@ -80,7 +88,9 @@ class TestDiscussionIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert parent_resp.status_code == 201, f"Expected 201, got {parent_resp.status_code}"
+        assert parent_resp.status_code == 201, (
+            f"Expected 201, got {parent_resp.status_code}"
+        )
         parent_id = parent_resp.json()["data"]["discussion"]["id"]
         reply_resp = api_client.post(
             "/discussions",
@@ -92,7 +102,9 @@ class TestDiscussionIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert reply_resp.status_code == 201, f"Expected 201, got {reply_resp.status_code}"
+        assert reply_resp.status_code == 201, (
+            f"Expected 201, got {reply_resp.status_code}"
+        )
 
     def test_list_discussions(self, setup_discussion: dict, api_client: TestClient):
         creator = setup_discussion["creator"]
@@ -136,7 +148,9 @@ class TestDiscussionIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 201, f"Create failed: {create_resp.status_code}"
+        assert create_resp.status_code == 201, (
+            f"Create failed: {create_resp.status_code}"
+        )
         discussion_id = create_resp.json()["data"]["discussion"]["id"]
         resp = api_client.get(
             f"/discussions/{discussion_id}",
@@ -157,7 +171,9 @@ class TestDiscussionIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert create_resp.status_code == 201, f"Create failed: {create_resp.status_code}"
+        assert create_resp.status_code == 201, (
+            f"Create failed: {create_resp.status_code}"
+        )
         discussion_id = create_resp.json()["data"]["discussion"]["id"]
         resp = api_client.delete(
             f"/discussions/{discussion_id}",

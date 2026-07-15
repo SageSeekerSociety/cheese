@@ -123,7 +123,9 @@ class TestParseTimestampParam:
 
     def test_invalid_timestamp(self):
         with pytest.raises(BadRequestError):
-            SpaceMemberPublishingService._parse_timestamp_param(99999999999999999, "from")
+            SpaceMemberPublishingService._parse_timestamp_param(
+                99999999999999999, "from"
+            )
 
 
 class TestParseApprovedFilter:
@@ -157,7 +159,9 @@ class TestNormalizeSortOrder:
 
 class TestNormalizeSortBy:
     def test_valid(self):
-        assert SpaceMemberPublishingService._normalize_sort_by("createdAt") == "createdAt"
+        assert (
+            SpaceMemberPublishingService._normalize_sort_by("createdAt") == "createdAt"
+        )
 
     def test_participant_count(self):
         assert (
@@ -364,9 +368,15 @@ class TestVisibilityStatus:
         )
 
     def test_compute_visible_ids_one_per_creator_prefers_earliest_published(self):
-        older = _task(id=1, creator_id=100, published_at=datetime(2025, 1, 1, tzinfo=UTC))
-        newer = _task(id=2, creator_id=100, published_at=datetime(2025, 1, 2, tzinfo=UTC))
-        other = _task(id=3, creator_id=200, published_at=datetime(2025, 1, 1, tzinfo=UTC))
+        older = _task(
+            id=1, creator_id=100, published_at=datetime(2025, 1, 1, tzinfo=UTC)
+        )
+        newer = _task(
+            id=2, creator_id=100, published_at=datetime(2025, 1, 2, tzinfo=UTC)
+        )
+        other = _task(
+            id=3, creator_id=200, published_at=datetime(2025, 1, 1, tzinfo=UTC)
+        )
         assert SpaceMemberPublishingService._compute_visible_approved_task_ids(
             tasks=[older, newer, other],
             visible_task_limit=1,

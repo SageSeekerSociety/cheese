@@ -8,9 +8,13 @@ from tests.integration.conftest import UserCreator, unique_int
 
 class TestTaskSubmissionReviewIntegration:
     @pytest.fixture
-    def setup_submission(self, user_client: UserCreator, api_client: TestClient) -> dict:
+    def setup_submission(
+        self, user_client: UserCreator, api_client: TestClient
+    ) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
 
         participant = user_client.create_user()
         participant.token = user_client.login(
@@ -32,7 +36,9 @@ class TestTaskSubmissionReviewIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert space_resp.status_code == 201, f"Space creation failed: {space_resp.text}"
+        assert space_resp.status_code == 201, (
+            f"Space creation failed: {space_resp.text}"
+        )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
         category_id = space_data["defaultCategoryId"]
@@ -84,7 +90,7 @@ class TestTaskSubmissionReviewIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         assert approve_member_resp.status_code == 200, (
-            f"Member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"
+            f"Member approval failed: {approve_member_resp.status_code}: {approve_member_resp.text}"  # noqa: E501
         )
 
         submit_resp = api_client.post(
@@ -104,7 +110,9 @@ class TestTaskSubmissionReviewIntegration:
             "submission_id": submission_id,
         }
 
-    def test_get_submissions_not_reviewed(self, setup_submission: dict, api_client: TestClient):
+    def test_get_submissions_not_reviewed(
+        self, setup_submission: dict, api_client: TestClient
+    ):
         participant = setup_submission["participant"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -114,7 +122,9 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "submissions" in data
         submissions = data["submissions"]
@@ -134,7 +144,9 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true", "reviewed": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert data["submissions"] == []
 
@@ -150,13 +162,17 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true", "reviewed": "false"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         submissions = data["submissions"]
         assert len(submissions) == 1
         assert submissions[0]["review"]["reviewed"] is False
 
-    def test_create_review_success(self, setup_submission: dict, api_client: TestClient):
+    def test_create_review_success(
+        self, setup_submission: dict, api_client: TestClient
+    ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -167,7 +183,9 @@ class TestTaskSubmissionReviewIntegration:
             json={"accepted": True, "score": 5, "comment": "Good job!"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         review = data["review"]
         assert review["reviewed"] is True
@@ -188,7 +206,9 @@ class TestTaskSubmissionReviewIntegration:
             json={"accepted": True, "score": 5, "comment": "Good job!"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
     def test_create_review_conflict_when_already_reviewed(
         self, setup_submission: dict, api_client: TestClient
@@ -209,9 +229,13 @@ class TestTaskSubmissionReviewIntegration:
             json={"accepted": True, "score": 5, "comment": "Good job!"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 409, f"Expected 409, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 409, (
+            f"Expected 409, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_update_review_empty_request(self, setup_submission: dict, api_client: TestClient):
+    def test_update_review_empty_request(
+        self, setup_submission: dict, api_client: TestClient
+    ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -228,7 +252,9 @@ class TestTaskSubmissionReviewIntegration:
             json={},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         review = data["review"]
         assert review["reviewed"] is True
@@ -236,7 +262,9 @@ class TestTaskSubmissionReviewIntegration:
         assert review["detail"]["score"] == 5
         assert review["detail"]["comment"] == "Good job!"
 
-    def test_update_review_success(self, setup_submission: dict, api_client: TestClient):
+    def test_update_review_success(
+        self, setup_submission: dict, api_client: TestClient
+    ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -253,7 +281,9 @@ class TestTaskSubmissionReviewIntegration:
             json={"accepted": False, "score": 4, "comment": "Could be better."},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         review = data["review"]
         assert review["reviewed"] is True
@@ -281,7 +311,9 @@ class TestTaskSubmissionReviewIntegration:
             json={"accepted": False, "score": 4, "comment": "Could be better."},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
     def test_get_submissions_after_review_update(
         self, setup_submission: dict, api_client: TestClient
@@ -308,7 +340,9 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         submissions = data["submissions"]
         assert len(submissions) == 1
@@ -337,7 +371,9 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true", "reviewed": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         submissions = data["submissions"]
         assert len(submissions) == 1
@@ -363,7 +399,9 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true", "reviewed": "false"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert data["submissions"] == []
 
@@ -386,9 +424,13 @@ class TestTaskSubmissionReviewIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions/{submission_id}/review",
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_delete_review_success(self, setup_submission: dict, api_client: TestClient):
+    def test_delete_review_success(
+        self, setup_submission: dict, api_client: TestClient
+    ):
         creator = setup_submission["creator"]
         task_id = setup_submission["task_id"]
         membership_id = setup_submission["membership_id"]
@@ -404,7 +446,9 @@ class TestTaskSubmissionReviewIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions/{submission_id}/review",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
 
     def test_get_submissions_after_review_delete(
         self, setup_submission: dict, api_client: TestClient
@@ -430,7 +474,9 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         submissions = data["submissions"]
         assert len(submissions) == 1
@@ -458,7 +504,9 @@ class TestTaskSubmissionReviewIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions/{submission_id}/review",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
+        )
 
     def test_update_review_not_found_when_deleted(
         self, setup_submission: dict, api_client: TestClient
@@ -483,7 +531,9 @@ class TestTaskSubmissionReviewIntegration:
             json={"accepted": False, "score": 4, "comment": "Could be better."},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
+        )
 
     def test_create_review_again_after_deletion(
         self, setup_submission: dict, api_client: TestClient
@@ -508,7 +558,9 @@ class TestTaskSubmissionReviewIntegration:
             json={"accepted": True, "score": 5, "comment": "Good job!"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         review = data["review"]
         assert review["reviewed"] is True
@@ -545,7 +597,9 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         submissions = data["submissions"]
         assert len(submissions) == 1
@@ -583,7 +637,9 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true", "reviewed": "true"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         submissions = data["submissions"]
         assert len(submissions) == 1
@@ -621,7 +677,9 @@ class TestTaskSubmissionReviewIntegration:
             params={"queryReview": "true", "reviewed": "false"},
             headers={"Authorization": f"Bearer {participant.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert data["submissions"] == []
 
@@ -643,7 +701,9 @@ class TestTaskSubmissionReviewIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions/{submission_id}/review",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         review = data["review"]
         assert review["reviewed"] is True
@@ -673,4 +733,6 @@ class TestTaskSubmissionReviewIntegration:
             f"/tasks/{task_id}/participants/{membership_id}/submissions/{submission_id}/review",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
+        )

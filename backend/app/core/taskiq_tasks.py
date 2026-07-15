@@ -92,7 +92,8 @@ async def process_email_queue_task() -> dict[str, int]:
 
                 for item_str in items:
                     try:
-                        item = json.loads(item_str)
+                        # redis stubs type items loosely; decode_responses=True -> str
+                        item = json.loads(item_str)  # type: ignore[arg-type]
                         recipient_id = item.get("recipientId")
                         if not recipient_id:
                             continue
@@ -105,7 +106,9 @@ async def process_email_queue_task() -> dict[str, int]:
 
                         notification_type = item.get("type", "notification")
                         subject = f"[Cheese] {notification_type}"
-                        body_html = f"<p>You have a new notification: {notification_type}</p>"
+                        body_html = (
+                            f"<p>You have a new notification: {notification_type}</p>"
+                        )
 
                         await sender.send(
                             to=email,

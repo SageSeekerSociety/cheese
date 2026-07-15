@@ -1,8 +1,9 @@
 """Regression tests: page objects must use camelCase keys.
 
-The frontend Page type expects { pageStart, pageSize, hasMore, nextStart, hasPrev, prevStart }.
-These tests verify that materials, groups, and topics pagination responses use camelCase keys
-and do NOT contain snake_case equivalents.
+The frontend Page type expects
+{ pageStart, pageSize, hasMore, nextStart, hasPrev, prevStart }.
+These tests verify that materials, groups, and topics pagination responses use
+camelCase keys and do NOT contain snake_case equivalents.
 """
 
 import io
@@ -13,7 +14,14 @@ from fastapi.testclient import TestClient
 from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 CAMEL_KEYS = {"pageStart", "pageSize", "hasMore", "nextStart", "hasPrev", "prevStart"}
-SNAKE_KEYS = {"page_start", "page_size", "has_more", "next_start", "has_prev", "prev_start"}
+SNAKE_KEYS = {
+    "page_start",
+    "page_size",
+    "has_more",
+    "next_start",
+    "has_prev",
+    "prev_start",
+}
 
 
 def _assert_page_keys_camel(page: dict) -> None:

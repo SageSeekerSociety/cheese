@@ -20,9 +20,15 @@ class Question(Base):
     bounty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     accepted_answer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class QuestionFollowerRelation(Base):
@@ -32,8 +38,12 @@ class QuestionFollowerRelation(Base):
     question_id: Mapped[int] = mapped_column(Integer, nullable=False)
     follower_id: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class QuestionTopicRelation(Base):
@@ -44,8 +54,12 @@ class QuestionTopicRelation(Base):
     topic_id: Mapped[int] = mapped_column(Integer, nullable=False)
     created_by_id: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class QuestionQueryLog(Base):
@@ -57,7 +71,9 @@ class QuestionQueryLog(Base):
     ip: Mapped[str] = mapped_column(String, nullable=False)
     user_agent: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class QuestionSearchLog(Base):
@@ -72,7 +88,9 @@ class QuestionSearchLog(Base):
     searcher_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ip: Mapped[str] = mapped_column(String, nullable=False)
     user_agent: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class VoteType(str, Enum):
@@ -94,17 +112,25 @@ class Attitude(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     attitudable_type: Mapped[str] = mapped_column(
-        PgEnum("COMMENT", "QUESTION", "ANSWER", name="AttitudableType", create_type=False),
+        PgEnum(
+            "COMMENT", "QUESTION", "ANSWER", name="AttitudableType", create_type=False
+        ),
         nullable=False,
     )
     attitudable_id: Mapped[int] = mapped_column(Integer, nullable=False)
     attitude: Mapped[str] = mapped_column(
-        PgEnum("POSITIVE", "NEGATIVE", name="AttitudeTypeNotUndefined", create_type=False),
+        PgEnum(
+            "POSITIVE", "NEGATIVE", name="AttitudeTypeNotUndefined", create_type=False
+        ),
         nullable=False,
     )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class QuestionInvitation(Base):
@@ -114,5 +140,9 @@ class QuestionInvitation(Base):
     question_id: Mapped[int] = mapped_column(Integer, nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )

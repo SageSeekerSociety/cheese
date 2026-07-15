@@ -112,7 +112,9 @@ class TestListDomainGroups:
         domain_repo = AsyncMock()
         domain_repo.list_domains_for_groups.return_value = {1: ["example.com"]}
 
-        svc = _svc(group_repo=group_repo, domain_repo=domain_repo, admin_repo=admin_repo)
+        svc = _svc(
+            group_repo=group_repo, domain_repo=domain_repo, admin_repo=admin_repo
+        )
         result = await svc.list_domain_groups(space_id=100, actor_user_id=42)
 
         assert len(result) == 1
@@ -317,7 +319,9 @@ class TestUpdateDomainGroup:
         )
 
         assert domains == ["new.edu.cn"]
-        domain_repo.replace_domains.assert_awaited_once_with(group_id=1, domains=["new.edu.cn"])
+        domain_repo.replace_domains.assert_awaited_once_with(
+            group_id=1, domains=["new.edu.cn"]
+        )
 
     @pytest.mark.anyio
     async def test_raises_when_group_not_found(self):

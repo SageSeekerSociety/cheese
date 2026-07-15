@@ -146,10 +146,16 @@ class TestNormalizeCompletionStatus:
         assert SpaceAnalyticsViewService._normalize_completion_status("") is None
 
     def test_valid(self):
-        assert SpaceAnalyticsViewService._normalize_completion_status("SUCCESS") == "SUCCESS"
+        assert (
+            SpaceAnalyticsViewService._normalize_completion_status("SUCCESS")
+            == "SUCCESS"
+        )
 
     def test_case_insensitive(self):
-        assert SpaceAnalyticsViewService._normalize_completion_status("success") == "SUCCESS"
+        assert (
+            SpaceAnalyticsViewService._normalize_completion_status("success")
+            == "SUCCESS"
+        )
 
     def test_invalid(self):
         with pytest.raises(BadRequestError):
@@ -169,7 +175,10 @@ class TestNormalizeRealNameFilter:
         assert SpaceAnalyticsViewService._normalize_real_name_filter("with") == "with"
 
     def test_without(self):
-        assert SpaceAnalyticsViewService._normalize_real_name_filter("without") == "without"
+        assert (
+            SpaceAnalyticsViewService._normalize_real_name_filter("without")
+            == "without"
+        )
 
     def test_invalid(self):
         with pytest.raises(BadRequestError):
@@ -203,7 +212,10 @@ class TestNormalizeGroupBy:
 
 class TestNormalizePublisherSortBy:
     def test_task_count(self):
-        assert SpaceAnalyticsViewService._normalize_publisher_sort_by("taskCount") == "taskCount"
+        assert (
+            SpaceAnalyticsViewService._normalize_publisher_sort_by("taskCount")
+            == "taskCount"
+        )
 
     def test_participant_count(self):
         assert (
@@ -223,10 +235,15 @@ class TestNormalizePublisherSortBy:
 
 class TestNormalizeTaskSortBy:
     def test_created_at(self):
-        assert SpaceAnalyticsViewService._normalize_task_sort_by("createdAt") == "createdAt"
+        assert (
+            SpaceAnalyticsViewService._normalize_task_sort_by("createdAt")
+            == "createdAt"
+        )
 
     def test_deadline(self):
-        assert SpaceAnalyticsViewService._normalize_task_sort_by("deadline") == "deadline"
+        assert (
+            SpaceAnalyticsViewService._normalize_task_sort_by("deadline") == "deadline"
+        )
 
     def test_invalid(self):
         with pytest.raises(BadRequestError):

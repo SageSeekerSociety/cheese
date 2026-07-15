@@ -135,7 +135,8 @@ class KnowledgeRepository:
                     )
                     .group_by(KnowledgeLabel.knowledge_id)
                     .having(
-                        func.count(func.distinct(KnowledgeLabel.label)) == len(normalized_labels)
+                        func.count(func.distinct(KnowledgeLabel.label))
+                        == len(normalized_labels)
                     )
                 )
                 stmt = stmt.where(Knowledge.id.in_(subq))
@@ -179,7 +180,8 @@ class KnowledgeRepository:
                     )
                     .group_by(KnowledgeLabel.knowledge_id)
                     .having(
-                        func.count(func.distinct(KnowledgeLabel.label)) == len(normalized_labels)
+                        func.count(func.distinct(KnowledgeLabel.label))
+                        == len(normalized_labels)
                     )
                 )
                 count_stmt = count_stmt.where(Knowledge.id.in_(subq))
@@ -188,7 +190,9 @@ class KnowledgeRepository:
         total = int(count_result.scalar_one() or 0)
         return rows, total
 
-    async def get_labels_map(self, knowledge_ids: Sequence[int]) -> dict[int, list[str]]:
+    async def get_labels_map(
+        self, knowledge_ids: Sequence[int]
+    ) -> dict[int, list[str]]:
         if not knowledge_ids:
             return {}
         stmt: Select[tuple[KnowledgeLabel]] = (

@@ -1,37 +1,46 @@
-# Python
-*.pyc
+# ---- OS ----
+.DS_Store
+
+# ---- Secrets / env ----
+.env
+.env.local
+*.env.local
+
+# ---- Logs & scratch (project-local, not versioned) ----
+*.log
+tmp_*.log
+tmp_review/
+tmp_backend.log
+tmp_frontend.log
+
+# ---- Tooling / local agent config ----
+.claude/
+
+# ---- Python ----
 __pycache__/
+*.pyc
+*.pyo
 .venv/
-.coverage
-.testmondata*
 .pytest_cache/
 .ruff_cache/
-htmlcov/
+.pyright/
 
-# Environment
-.env
-.env.prod
-deploy/deploy.log
+# ---- Agent-backed project repos (runtime git workspaces) ----
+.workspaces/
 
-# Uploads
-uploads/
-
-# Reference implementations (git clones, gitignored)
-/reference/
-
-# Task runner state
-.task/
-
-# Frontend
+# ---- Node ----
 node_modules/
+dist/
+dist-ssr/
+.porkbun-state.json
 
-# Docker Compose override (local development)
-docker-compose.override.yml
-docker-compose.dev.yml
-docker-compose.yml
+# Server-only proxy config — contains the personal airport subscription URL
+# (a secret). Lives at etrip:/etc/mihomo/config.yaml (root 600), never in git.
+scripts/ops/etrip-proxy.yaml
 
-# Rust
-srp_rs/target/
+# playwright run artifacts
+e2e/test-results/
+e2e/node_modules/
 
-# Misc
-new.md
+tmp/
+e2e/tmp/

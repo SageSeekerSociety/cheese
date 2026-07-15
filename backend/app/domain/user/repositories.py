@@ -7,8 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.answers.models import Answer
 from app.domain.knowledge.models import Knowledge
 from app.domain.questions.models import Question
-from app.domain.task.models import TaskMembership, TaskSubmission
-from app.domain.team.models import TeamUserRelation
 from app.domain.user.models import (
     User,
     UserFollowingRelationship,
@@ -23,6 +21,10 @@ class UserRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def get_by_handle(self, handle: str) -> User | None:
+        """cheesex compat (fusion A1): handle == main's User.username."""
+        return await self.get_by_username(handle)
 
     async def get_by_username(self, username: str) -> User | None:
         stmt: Select[tuple[User]] = select(User).where(
@@ -39,7 +41,9 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def is_username_taken(self, username: str) -> bool:
-        stmt = select(User.id).where(User.username == username, User.deleted_at.is_(None))
+        stmt = select(User.id).where(
+            User.username == username, User.deleted_at.is_(None)
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
 
@@ -99,7 +103,9 @@ class UserProfileRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get_profiles_by_user_ids(self, user_ids: Sequence[int]) -> dict[int, UserProfile]:
+    async def get_profiles_by_user_ids(
+        self, user_ids: Sequence[int]
+    ) -> dict[int, UserProfile]:
         if not user_ids:
             return {}
         stmt: Select[tuple[UserProfile]] = select(UserProfile).where(
@@ -210,7 +216,9 @@ class UserFollowingRepository:
         await self._session.flush()
 
     async def soft_delete_follow(self, follower_id: int, followee_id: int) -> bool:
-        stmt: Select[tuple[UserFollowingRelationship]] = select(UserFollowingRelationship).where(
+        stmt: Select[tuple[UserFollowingRelationship]] = select(
+            UserFollowingRelationship
+        ).where(
             UserFollowingRelationship.follower_id == follower_id,
             UserFollowingRelationship.followee_id == followee_id,
             UserFollowingRelationship.deleted_at.is_(None),
@@ -348,6 +356,8 @@ class UserStatisticsRepository:
         self._session = session
 
     async def count_teams(self, user_id: int) -> int:
+        from app.domain.team.models import TeamUserRelation
+
         stmt = select(func.count(TeamUserRelation.id)).where(
             TeamUserRelation.user_id == user_id,
             TeamUserRelation.deleted_at.is_(None),
@@ -356,6 +366,8 @@ class UserStatisticsRepository:
         return int(result.scalar_one() or 0)
 
     async def count_task_memberships(self, user_id: int) -> int:
+        from app.domain.task.models import TaskMembership
+
         stmt = select(func.count(TaskMembership.id)).where(
             TaskMembership.member_id == user_id,
             TaskMembership.is_team.is_(False),
@@ -373,6 +385,8 @@ class UserStatisticsRepository:
         return int(result.scalar_one() or 0)
 
     async def count_submissions(self, user_id: int) -> int:
+        from app.domain.task.models import TaskSubmission
+
         stmt = select(func.count(TaskSubmission.id)).where(
             TaskSubmission.submitter_id == user_id,
             TaskSubmission.deleted_at.is_(None),

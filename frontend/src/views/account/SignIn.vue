@@ -25,7 +25,15 @@
             <div class="mb-4">
               <v-text-field v-model="username" label="用户名" variant="outlined" v-bind="usernameProps" class="mb-4" />
 
-              <v-text-field v-model="password" label="密码" type="password" variant="outlined" v-bind="passwordProps" />
+              <v-text-field
+                v-model="password"
+                label="密码"
+                :type="showPassword ? 'text' : 'password'"
+                variant="outlined"
+                :append-inner-icon="showPassword ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+                v-bind="passwordProps"
+                @click:append-inner="showPassword = !showPassword"
+              />
             </div>
 
             <!-- 功能选项行 -->
@@ -157,6 +165,17 @@ import AccountService from '@/services/account'
 const router = useRouter()
 const route = useRoute()
 
+// Where to land after login. Honour a ?redirect=… (e.g. the device-approval page
+// sends the human here and wants them back), but only an internal path — never an
+// absolute/external URL — so login can't be used as an open redirect.
+function postLoginTarget(): string {
+  const r = route.query.redirect
+  const path = Array.isArray(r) ? r[0] : r
+  return typeof path === 'string' && path.startsWith('/') && !path.startsWith('//')
+    ? path
+    : '/'
+}
+
 const { handleSubmit, defineField, isSubmitting } = useForm({
   validationSchema: toTypedSchema(
     z.object({
@@ -174,6 +193,7 @@ const [password, passwordProps] = defineField('password', vuetifyConfig)
 const [agree, agreeProps] = defineField('agree', vuetifyConfig)
 
 const errorMessage = ref('')
+const showPassword = ref(false)
 const isPasskeyLoading = ref(false)
 const webAuthnSupported = ref(browserSupportsWebAuthn())
 const oAuthProviders = ref<OAuthProvider[]>([])
@@ -234,7 +254,7 @@ const login = handleSubmit(async (value) => {
 
       AccountService.login(accessToken!, user!)
       toast.success('登录成功')
-      router.replace('/')
+      router.replace(postLoginTarget())
     } else {
       // 使用传统登录流程
       const { data } = await UserApi.login(value)
@@ -247,7 +267,7 @@ const login = handleSubmit(async (value) => {
       }
       AccountService.login(data.accessToken!, data.user!)
       toast.success('登录成功')
-      router.replace('/')
+      router.replace(postLoginTarget())
     }
   } catch (e) {
     if (e instanceof ServerError) {

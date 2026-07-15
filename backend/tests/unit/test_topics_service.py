@@ -75,7 +75,9 @@ class TestListTopics:
     async def test_whitespace_keyword_returns_empty(self):
         svc, repo = _make_service()
 
-        items, page = await svc.list_topics(keyword="   ", page_start=None, page_size=10)
+        items, page = await svc.list_topics(
+            keyword="   ", page_start=None, page_size=10
+        )
 
         assert items == []
         assert page["pageSize"] == 0
@@ -131,7 +133,9 @@ class TestListTopics:
         svc, repo = _make_service()
         repo.list_topics_cursor.return_value = ([], None, False, None)
 
-        items, page = await svc.list_topics(keyword="xyz", page_start=None, page_size=10)
+        items, page = await svc.list_topics(
+            keyword="xyz", page_start=None, page_size=10
+        )
 
         assert items == []
         assert page["pageSize"] == 0

@@ -33,18 +33,35 @@ import { zodI18nMap } from 'zod-i18n-map'
 import translation from 'zod-i18n-map/locales/zh-CN/zod.json'
 
 import App from './App.vue'
-import { registerDirectives } from './directives'
 
 // Plugins
 import { registerPlugins } from '@/plugins'
 import AccountService from '@/services/account'
+
+// Fusion merge (C): our topic/agent views (grafted into the cheese shell) use
+// cheesex's design tokens (--ink/--accent) and cheesex's identity (handle).
+// Load our stylesheet, and bridge the logged-in product account -> a cheesex
+// identity so our views have a handle (= username) when embedded here.
+import './style.css'
+
+try {
+  const raw = localStorage.getItem('user')
+  if (raw && !localStorage.getItem('cheesex.me')) {
+    const u = JSON.parse(raw)
+    localStorage.setItem(
+      'cheesex.me',
+      JSON.stringify({ handle: u.username, name: u.nickname || u.username, token: '' }),
+    )
+  }
+} catch {
+  // non-fatal
+}
 
 AccountService.init()
 
 const app = createApp(App)
 
 registerPlugins(app)
-registerDirectives(app)
 app.mount('#app')
 
 // Initialize i18next

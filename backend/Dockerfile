@@ -12,6 +12,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
+        git \
         postgresql-client \
         build-essential \
     && apt-get clean \
@@ -65,10 +66,23 @@ WORKDIR /app
 # Copy dependencies from deps stage
 COPY --from=deps /app/.venv /app/.venv
 
-# Copy application code
+# Copy application code (fusion unified the migration chain under alembic/)
 COPY app ./app
-COPY migrations ./migrations
+COPY alembic ./alembic
 COPY alembic.ini ./
+
+# Agent workspace toolchain: worktrees are managed with jj (colocated git) by
+# the backend process itself, and sandboxed turns spawn SIBLING containers
+# through the host's docker.sock — so the image needs the docker CLI (client
+# only, no daemon). Same jj install as backend/sandbox/Dockerfile.
+ARG JJ_VERSION=0.42.0
+RUN curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
+      | tar xz -C /usr/local/bin ./jj \
+    && jj --version
+ARG DOCKER_CLI_VERSION=27.5.1
+RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_CLI_VERSION}.tgz" \
+      | tar xz --strip-components=1 -C /usr/local/bin docker/docker \
+    && docker --version
 
 # Create non-root user
 RUN addgroup --system --gid 1001 python \

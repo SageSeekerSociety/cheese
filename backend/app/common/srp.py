@@ -5,6 +5,11 @@ The Rust extension (srp_rs) is a PyO3 binding of the same SRP-6a logic used in
 `secure-remote-password` JS frontend library.
 """
 
-from srp_rs import generate_server_ephemeral, verify_session
+# srp_rs is a compiled Rust extension (PyO3) with no type stubs, so pyright can't
+# see its exported functions — they exist at runtime (verified via dir(srp_rs)).
+from srp_rs import (
+    generate_server_ephemeral,  # type: ignore[attr-defined]
+    verify_session,  # type: ignore[attr-defined]
+)
 
 __all__ = ["generate_server_ephemeral", "verify_session"]

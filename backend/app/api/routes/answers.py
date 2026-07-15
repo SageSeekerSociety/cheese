@@ -125,7 +125,9 @@ async def remove_answer_vote(
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     _ = question_id
-    result = await service.remove_answer_vote(answer_id=answer_id, user_id=auth_user.user_id)
+    result = await service.remove_answer_vote(
+        answer_id=answer_id, user_id=auth_user.user_id
+    )
     return {"code": 200, "message": "OK", "data": result}
 
 
@@ -255,7 +257,11 @@ async def get_answer(
         user_agent=request.headers.get("user-agent"),
     )
 
-    return {"code": 200, "message": "OK", "data": {"answer": answer, "question": question}}
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"answer": answer, "question": question},
+    }
 
 
 @router.put(
@@ -271,7 +277,9 @@ async def update_answer(
 ) -> dict:
     from app.core.errors import NotFoundError
 
-    answer_data, _ = await service.get_answer(answer_id=answer_id, user_id=auth_user.user_id)
+    answer_data, _ = await service.get_answer(
+        answer_id=answer_id, user_id=auth_user.user_id
+    )
     if answer_data["question_id"] != question_id:
         raise NotFoundError("Answer not found for this question")
     content = payload.get("content")
@@ -297,7 +305,9 @@ async def delete_answer(
 ) -> dict:
     from app.core.errors import NotFoundError
 
-    answer_data, _ = await service.get_answer(answer_id=answer_id, user_id=auth_user.user_id)
+    answer_data, _ = await service.get_answer(
+        answer_id=answer_id, user_id=auth_user.user_id
+    )
     if answer_data["question_id"] != question_id:
         raise NotFoundError("Answer not found for this question")
     await service.delete_answer(answer_id=answer_id, user_id=auth_user.user_id)
@@ -330,7 +340,9 @@ async def unfavorite_answer(
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
     _ = question_id
-    result = await service.remove_favorite(answer_id=answer_id, user_id=auth_user.user_id)
+    result = await service.remove_favorite(
+        answer_id=answer_id, user_id=auth_user.user_id
+    )
     return {"code": 200, "message": "OK", "data": result}
 
 
@@ -349,7 +361,9 @@ async def attitude_answer(
     attitude_type = payload.get("attitude_type", "UNDEFINED")
     vote_type = attitude_type if attitude_type in ("POSITIVE", "NEGATIVE") else None
     if vote_type is None:
-        result = await service.remove_answer_vote(answer_id=answer_id, user_id=auth_user.user_id)
+        result = await service.remove_answer_vote(
+            answer_id=answer_id, user_id=auth_user.user_id
+        )
     else:
         result = await service.vote_answer(
             answer_id=answer_id, user_id=auth_user.user_id, vote_type=vote_type

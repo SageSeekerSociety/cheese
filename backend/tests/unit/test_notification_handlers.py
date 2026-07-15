@@ -112,7 +112,9 @@ class TestRedisEmailQueueNotificationHandler:
     @pytest.mark.anyio
     async def test_send_batch_enqueues_messages(self):
         redis = AsyncMock()
-        handler = RedisEmailQueueNotificationHandler(redis, queue_key="notifications:email")
+        handler = RedisEmailQueueNotificationHandler(
+            redis, queue_key="notifications:email"
+        )
 
         deliveries = [
             NotificationDelivery(
@@ -184,6 +186,13 @@ class TestNotificationEventHandler:
     ):
         session = session or AsyncMock()
         session.add = session.add if hasattr(session, "add") else MagicMock()
+        # begin_nested() is used as `async with self._session.begin_nested()` — a
+        # *sync* call returning an async context manager. AsyncMock makes the call
+        # itself a coroutine, so use a plain MagicMock returning an async-CM double.
+        nested_cm = MagicMock()
+        nested_cm.__aenter__ = AsyncMock(return_value=None)
+        nested_cm.__aexit__ = AsyncMock(return_value=None)
+        session.begin_nested = MagicMock(return_value=nested_cm)
         return NotificationEventHandler(
             session,
             deduplicator=deduplicator,
@@ -216,7 +225,9 @@ class TestNotificationEventHandler:
         )
         mock_channel = AsyncMock()
         mock_channel.name = "test"
-        handler = self._make_handler(deduplicator=dedup, channel_handlers=[mock_channel])
+        handler = self._make_handler(
+            deduplicator=dedup, channel_handlers=[mock_channel]
+        )
 
         event = NotificationTriggerEvent(
             source="test",
@@ -235,7 +246,9 @@ class TestNotificationEventHandler:
         )
         mock_channel = AsyncMock()
         mock_channel.name = "test"
-        handler = self._make_handler(deduplicator=dedup, channel_handlers=[mock_channel])
+        handler = self._make_handler(
+            deduplicator=dedup, channel_handlers=[mock_channel]
+        )
 
         event = NotificationTriggerEvent(
             source="test",
@@ -396,7 +409,10 @@ class TestNotificationEventHandler:
 
         meta = handler._initial_metadata(
             NotificationType.REACTION,
-            {"actor": {"id": "1", "type": "user"}, "target": {"id": "100", "type": "discussion"}},
+            {
+                "actor": {"id": "1", "type": "user"},
+                "target": {"id": "100", "type": "discussion"},
+            },
         )
         assert meta["reactorIds"] == ["1"]
         assert meta["totalCount"] == 1
@@ -430,7 +446,9 @@ class TestNotificationEventHandler:
             "actor": {"id": "2", "type": "user"},
             "target": {"id": "100", "type": "discussion"},
         }
-        merged = handler._merge_metadata(existing, new_payload, NotificationType.REACTION)
+        merged = handler._merge_metadata(
+            existing, new_payload, NotificationType.REACTION
+        )
         assert "2" in merged["reactorIds"]
         assert merged["totalCount"] == 2
 
@@ -439,7 +457,9 @@ class TestNotificationEventHandler:
 
         existing = {"reactorIds": ["1"], "totalCount": 1}
         new_payload = {"actor": {"id": "1", "type": "user"}}
-        merged = handler._merge_metadata(existing, new_payload, NotificationType.REACTION)
+        merged = handler._merge_metadata(
+            existing, new_payload, NotificationType.REACTION
+        )
         assert merged["reactorIds"] == ["1"]
         assert merged["totalCount"] == 1
 
@@ -448,7 +468,9 @@ class TestNotificationEventHandler:
 
         existing = {"reactorIds": ["1"], "totalCount": "invalid"}
         new_payload = {"actor": {"id": "2", "type": "user"}}
-        merged = handler._merge_metadata(existing, new_payload, NotificationType.REACTION)
+        merged = handler._merge_metadata(
+            existing, new_payload, NotificationType.REACTION
+        )
         assert merged["totalCount"] == 2  # falls back to len(reactorIds)
 
     def test_merge_metadata_non_reaction(self):
@@ -456,7 +478,9 @@ class TestNotificationEventHandler:
 
         existing = {"key1": "value1"}
         new_payload = {"key2": "value2", "key1": "overwrite_attempt"}
-        merged = handler._merge_metadata(existing, new_payload, NotificationType.MENTION)
+        merged = handler._merge_metadata(
+            existing, new_payload, NotificationType.MENTION
+        )
         assert merged["key1"] == "value1"  # setdefault preserves existing
         assert merged["key2"] == "value2"
 
@@ -465,7 +489,9 @@ class TestNotificationEventHandler:
 
         existing = {"reactorIds": ["1"], "totalCount": 1}
         new_payload = {"target": {"id": "100", "type": "discussion"}}
-        merged = handler._merge_metadata(existing, new_payload, NotificationType.REACTION)
+        merged = handler._merge_metadata(
+            existing, new_payload, NotificationType.REACTION
+        )
         assert merged["reactorIds"] == ["1"]
 
     def test_merge_metadata_reaction_actor_not_dict(self):
@@ -473,7 +499,9 @@ class TestNotificationEventHandler:
 
         existing = {"reactorIds": ["1"], "totalCount": 1}
         new_payload = {"actor": "string_actor"}
-        merged = handler._merge_metadata(existing, new_payload, NotificationType.REACTION)
+        merged = handler._merge_metadata(
+            existing, new_payload, NotificationType.REACTION
+        )
         assert merged["reactorIds"] == ["1"]
 
     def test_merge_metadata_reaction_actor_id_not_str(self):
@@ -481,7 +509,9 @@ class TestNotificationEventHandler:
 
         existing = {"reactorIds": ["1"], "totalCount": 1}
         new_payload = {"actor": {"id": 2, "type": "user"}}
-        merged = handler._merge_metadata(existing, new_payload, NotificationType.REACTION)
+        merged = handler._merge_metadata(
+            existing, new_payload, NotificationType.REACTION
+        )
         assert merged["reactorIds"] == ["1"]
 
     def test_initial_metadata_reaction_actor_not_dict(self):

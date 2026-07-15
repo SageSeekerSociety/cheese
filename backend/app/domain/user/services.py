@@ -1,5 +1,4 @@
 import asyncio
-import secrets
 from collections.abc import Sequence
 
 import bcrypt
@@ -80,7 +79,9 @@ class UserAuthService:
             return None
 
         if not await asyncio.to_thread(
-            bcrypt.checkpw, password.encode("utf-8"), user.hashed_password.encode("utf-8")
+            bcrypt.checkpw,
+            password.encode("utf-8"),
+            user.hashed_password.encode("utf-8"),
         ):
             return None
 
@@ -106,7 +107,9 @@ class UserAuthService:
 
     async def update_password(self, user_id: int, new_password: str) -> None:
         hashed = (
-            await asyncio.to_thread(bcrypt.hashpw, new_password.encode("utf-8"), bcrypt.gensalt())
+            await asyncio.to_thread(
+                bcrypt.hashpw, new_password.encode("utf-8"), bcrypt.gensalt()
+            )
         ).decode("utf-8")
         await self._user_repo.update_password(user_id, hashed)
 
@@ -137,7 +140,9 @@ class UserAuthService:
             raise ValueError("EMAIL_TAKEN")
 
         hashed = (
-            await asyncio.to_thread(bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt())
+            await asyncio.to_thread(
+                bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt()
+            )
         ).decode("utf-8")
         user = await self._user_repo.create_user(
             username=username,
@@ -186,32 +191,24 @@ class UserAuthService:
         )
         return user, profile
 
-    async def register_from_oauth(
+    async def register_oauth_decision(
         self,
         *,
         email: str,
+        username: str,
         nickname: str,
-        preferred_username: str | None = None,
+        srp_salt: str | None = None,
+        srp_verifier: str | None = None,
         default_avatar_id: int = 1,
     ) -> tuple[User, UserProfile]:
-        """Provision a password-less account for a first-time OAuth login.
-
-        The account has no password (hashed_password stays NULL); the user
-        authenticates solely through the linked OAuth provider. A unique
-        username is derived from the provider identity and de-duplicated.
-        """
-        base = "".join(
-            ch for ch in (preferred_username or email.split("@", 1)[0]) if ch.isalnum() or ch in "_-"
-        )
-        base = base or "ruc_user"
-        username = base
-        while await self._user_repo.is_username_taken(username):
-            username = f"{base}_{secrets.token_hex(3)}"
-
+        """Create the account chosen on the OAuth decision page. The user picked
+        the username/nickname and optionally set a password (SRP credentials);
+        without one the account authenticates solely through the provider."""
+        hashed = f"SRP:{srp_salt}:{srp_verifier}" if srp_salt and srp_verifier else None
         user = await self._user_repo.create_user(
             username=username,
             email=email,
-            hashed_password=None,
+            hashed_password=hashed,
         )
         profile = await self._profile_repo.create_profile(
             user_id=user.id,
@@ -237,7 +234,7 @@ class UserAuthService:
         profile: UserProfile,
         viewer_id: int | None = None,
     ) -> dict:
-        """Map User + UserProfile into a UserDto-compatible dict with counts & follow flag."""
+        """Map User + UserProfile into a UserDto-compatible dict with counts & follow flag."""  # noqa: E501
         base = self._base_user_dto(user, profile)
         followers = await self._follow_repo.count_followers(user.id)
         following = await self._follow_repo.count_following(user.id)

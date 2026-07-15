@@ -94,7 +94,9 @@ class TestBug3TeamEligibilityByDesign:
             "task_id": task_id,
         }
 
-    def test_owner_sees_team_in_eligibility(self, api_client: TestClient, setup: dict) -> None:
+    def test_owner_sees_team_in_eligibility(
+        self, api_client: TestClient, setup: dict
+    ) -> None:
         """OWNER should see the team in eligibility list."""
         resp = api_client.get(
             f"/tasks/{setup['task_id']}",

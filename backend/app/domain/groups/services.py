@@ -1,6 +1,11 @@
 from datetime import UTC, datetime
 
-from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from app.core.errors import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.domain.groups.models import Group, GroupProfile, GroupTarget
 from app.domain.groups.repositories import (
     GroupMembershipRepository,
@@ -117,7 +122,7 @@ class GroupsService:
             role="OWNER",
         )
         user_profile = await self._user_profile_repo.get_profile_by_user_id(user_id)
-        owner_dto = {"id": user_id}
+        owner_dto: dict = {"id": user_id}
         if user_profile:
             owner_dto["nickname"] = user_profile.nickname
             owner_dto["avatarId"] = user_profile.avatar_id
@@ -176,7 +181,9 @@ class GroupsService:
         await self._repo.update_group(group, name=name)
         profile = await self._profile_repo.get_by_group_id(group_id)
         if profile:
-            await self._profile_repo.update_profile(profile, intro=intro, avatar_id=avatar_id)
+            await self._profile_repo.update_profile(
+                profile, intro=intro, avatar_id=avatar_id
+            )
         member_count = await self._membership_repo.count_members(group_id)
         owner_dto = await self._build_owner_dto(group_id)
         is_member = role is not None
@@ -238,7 +245,9 @@ class GroupsService:
             group_id=group_id, cursor=page_start, limit=page_size
         )
         member_ids = {m.member_id for m in memberships}
-        profiles = await self._user_profile_repo.get_profiles_by_user_ids(list(member_ids))
+        profiles = await self._user_profile_repo.get_profiles_by_user_ids(
+            list(member_ids)
+        )
 
         members = []
         for m in memberships:
@@ -269,7 +278,9 @@ class GroupsService:
             raise NotFoundError("Group not found", data={"id": group_id})
         if await self._membership_repo.is_member(group_id, user_id):
             raise ConflictError("Already a member")
-        await self._membership_repo.add_member(group_id=group_id, member_id=user_id, role="MEMBER")
+        await self._membership_repo.add_member(
+            group_id=group_id, member_id=user_id, role="MEMBER"
+        )
         member_count = await self._membership_repo.count_members(group_id)
         return {"memberCount": member_count}
 
@@ -300,7 +311,9 @@ def _date_to_ms(d) -> int:
 def _target_to_dto(target: GroupTarget) -> dict:
     started_at_ms = _date_to_ms(target.started_at)
     ended_at_ms = _date_to_ms(target.ended_at)
-    created_at_ms = int(target.created_at.timestamp() * 1000) if target.created_at else 0
+    created_at_ms = (
+        int(target.created_at.timestamp() * 1000) if target.created_at else 0
+    )
     return {
         "id": target.id,
         "groupId": target.group_id,
@@ -408,7 +421,9 @@ class GroupTargetService:
         )
         return _target_to_dto(target)
 
-    async def delete_target(self, *, group_id: int, target_id: int, user_id: int) -> None:
+    async def delete_target(
+        self, *, group_id: int, target_id: int, user_id: int
+    ) -> None:
         target = await self._target_repo.get_by_id(target_id)
         if target is None or target.group_id != group_id:
             raise NotFoundError("Target not found", data={"id": target_id})
@@ -451,21 +466,29 @@ class GroupQuestionService:
         }
         return question_ids, page
 
-    async def add_question(self, *, group_id: int, question_id: int, user_id: int) -> dict:
+    async def add_question(
+        self, *, group_id: int, question_id: int, user_id: int
+    ) -> dict:
         group = await self._group_repo.get_by_id(group_id)
         if group is None:
             raise NotFoundError("Group not found", data={"id": group_id})
         role = await self._membership_repo.get_member_role(group_id, user_id)
         if role not in ("OWNER", "ADMIN"):
             raise ForbiddenError("Only owners and admins can add questions")
-        await self._question_repo.add_question(group_id=group_id, question_id=question_id)
+        await self._question_repo.add_question(
+            group_id=group_id, question_id=question_id
+        )
         return {"questionId": question_id}
 
-    async def remove_question(self, *, group_id: int, question_id: int, user_id: int) -> None:
+    async def remove_question(
+        self, *, group_id: int, question_id: int, user_id: int
+    ) -> None:
         group = await self._group_repo.get_by_id(group_id)
         if group is None:
             raise NotFoundError("Group not found", data={"id": group_id})
         role = await self._membership_repo.get_member_role(group_id, user_id)
         if role not in ("OWNER", "ADMIN"):
             raise ForbiddenError("Only owners and admins can remove questions")
-        await self._question_repo.remove_question(group_id=group_id, question_id=question_id)
+        await self._question_repo.remove_question(
+            group_id=group_id, question_id=question_id
+        )

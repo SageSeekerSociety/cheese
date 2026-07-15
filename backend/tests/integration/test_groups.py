@@ -965,7 +965,9 @@ class TestGroupTargetsIntegration:
         )
         target_id = create_resp.json()["data"]["id"]
 
-        response = self.client.get(f"/groups/{group_id}/targets/{target_id}", headers=self.headers)
+        response = self.client.get(
+            f"/groups/{group_id}/targets/{target_id}", headers=self.headers
+        )
         assert response.status_code == 200
         target = response.json()["data"]["target"]
         assert target["name"] == "Get Target Test"
@@ -1016,5 +1018,7 @@ class TestGroupTargetsIntegration:
         )
         assert response.status_code in (200, 204)
 
-        response = self.client.get(f"/groups/{group_id}/targets/{target_id}", headers=self.headers)
+        response = self.client.get(
+            f"/groups/{group_id}/targets/{target_id}", headers=self.headers
+        )
         assert response.status_code == 404

@@ -8,7 +8,9 @@ class TestKnowledgeIntegration:
     @pytest.fixture
     def setup_knowledge(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
-        creator.token = user_client.login(api_client, creator.username, creator.password)
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
         suffix = unique_int(10000000, 99999999)
         team_resp = api_client.post(
             "/teams",
@@ -45,7 +47,9 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 201, (
+            f"Expected 201, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["knowledge"]
         assert data["name"] == knowledge_name
         assert data["teamId"] == team_id
@@ -73,20 +77,28 @@ class TestKnowledgeIntegration:
             f"/knowledge/{knowledge_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["knowledge"]
         assert data["id"] == knowledge_id
         assert data["teamId"] == team_id
 
-    def test_get_knowledge_not_found(self, setup_knowledge: dict, api_client: TestClient):
+    def test_get_knowledge_not_found(
+        self, setup_knowledge: dict, api_client: TestClient
+    ):
         creator = setup_knowledge["creator"]
         resp = api_client.get(
             "/knowledge/99999999",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
+        )
 
-    def test_list_knowledge_by_team(self, setup_knowledge: dict, api_client: TestClient):
+    def test_list_knowledge_by_team(
+        self, setup_knowledge: dict, api_client: TestClient
+    ):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
         api_client.post(
@@ -106,12 +118,16 @@ class TestKnowledgeIntegration:
             params={"teamId": team_id, "page": 0, "pageSize": 10},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "knowledges" in data
         assert isinstance(data["knowledges"], list)
 
-    def test_update_knowledge_success(self, setup_knowledge: dict, api_client: TestClient):
+    def test_update_knowledge_success(
+        self, setup_knowledge: dict, api_client: TestClient
+    ):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
         create_resp = api_client.post(
@@ -141,7 +157,9 @@ class TestKnowledgeIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["knowledge"]
         assert data["id"] == knowledge_id
         assert data["name"] == updated_name
@@ -149,7 +167,9 @@ class TestKnowledgeIntegration:
         assert data["content"] == updated_content
         assert data["teamId"] == team_id
 
-    def test_delete_knowledge_success(self, setup_knowledge: dict, api_client: TestClient):
+    def test_delete_knowledge_success(
+        self, setup_knowledge: dict, api_client: TestClient
+    ):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
         create_resp = api_client.post(
@@ -171,15 +191,21 @@ class TestKnowledgeIntegration:
             f"/knowledge/{knowledge_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
 
         get_resp = api_client.get(
             f"/knowledge/{knowledge_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert get_resp.status_code == 404, f"Expected 404 after delete, got {get_resp.status_code}"
+        assert get_resp.status_code == 404, (
+            f"Expected 404 after delete, got {get_resp.status_code}"
+        )
 
-    def test_list_knowledge_with_labels(self, setup_knowledge: dict, api_client: TestClient):
+    def test_list_knowledge_with_labels(
+        self, setup_knowledge: dict, api_client: TestClient
+    ):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
 
@@ -201,11 +227,15 @@ class TestKnowledgeIntegration:
             params={"teamId": team_id, "label": "specific-label"},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]
         assert "knowledges" in data
 
-    def test_update_knowledge_labels(self, setup_knowledge: dict, api_client: TestClient):
+    def test_update_knowledge_labels(
+        self, setup_knowledge: dict, api_client: TestClient
+    ):
         creator = setup_knowledge["creator"]
         team_id = setup_knowledge["team_id"]
 
@@ -229,7 +259,9 @@ class TestKnowledgeIntegration:
             json={"labels": ["new-label-1", "new-label-2"]},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text}"
+        )
         data = resp.json()["data"]["knowledge"]
         assert "new-label-1" in data["labels"]
         assert "new-label-2" in data["labels"]

@@ -1,164 +1,228 @@
-from fastapi import FastAPI
-from fastapi.exceptions import RequestValidationError
+"""CheeseX backend — FastAPI application.
+
+Phase 0 goal (spec §13): in one topic you can talk with 芝士, and 芝士 answers
+with memory. Subsequent phases (collaboration, docs, topic tree, institution
+layer) build on the same data model.
+
+Routers are auto-discovered from ``app/api/routes/`` — every module that defines
+a top-level ``router`` is included. This lets domains be added without editing
+this file.
+"""
+
+import importlib
+import pkgutil
+import re
+
+# (logging is configured right after imports — see basicConfig below.)
+from collections.abc import Callable
+from contextlib import asynccontextmanager
+
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import JSONResponse
 
-from app.api.routes import (
-    ai,
-    answers,
-    attachments,
-    avatars,
-    comments,
-    discussions,
-    groups,
-    health,
-    knowledge,
-    materialbundles,
-    materials,
-    notifications,
-    projects,
-    questions,
-    recruitment,
-    spaces,
-    tasks,
-    teams,
-    topics_legacy,
-    users,
-)
-from app.auth.domains import (
-    register_knowledge_permissions,
-    register_question_permissions,
-    register_space_permissions,
-    register_task_permissions,
-    register_team_permissions,
-)
-from app.core import errors as core_errors
+import app.api.routes as routes_pkg
 from app.core.config import settings
-from app.core.logging import setup_logging
-from app.db.session import AsyncSessionLocal
-from app.domain.notification.scheduler import NotificationAggregationFinalizer
-from app.middleware.tracing import TracingMiddleware
+from app.core.errors import register_exception_handlers
+from app.core.obs import bind_context, clear_context, configure_logging, get_logger
+from app.core.sandbox_auth import is_valid_cheese_token
+from app.core.turn_context import current_turn_id, parse_turn_id
 
-setup_logging()
+# Observable (可观测性军规): structlog + contextvars — every line timestamped,
+# every request/turn correlated. See app/core/obs.py.
+configure_logging()
 
 
-def create_app() -> FastAPI:
-    # Expose API docs / OpenAPI schema only in development & test. In other
-    # environments openapi_url=None also disables /docs and /redoc (both depend
-    # on the schema), avoiding leaking the API surface in production.
-    docs_enabled = settings.environment in ("development", "test")
-    app = FastAPI(
-        title="Cheese Backend (Python)",
-        version="0.1.0",
-        docs_url="/docs" if docs_enabled else None,
-        redoc_url="/redoc" if docs_enabled else None,
-        openapi_url="/openapi.json" if docs_enabled else None,
-    )
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Schema is managed by Alembic migrations. Start the deterministic scheduler
+    # loop (定期巡检 / lifecycle, spec §9.1) — no-op unless the interval is set.
+    # Per-topic sandbox containers are long-lived and REUSED across backend
+    # restarts: their mounts are stable host paths (worktree + session dirs), so
+    # a redeploy must NOT reap them — that killed in-flight work and raced the
+    # first turns after a restart. The claude-sbx shim validates each container
+    # against the project's current image and recreates it only when the image
+    # changed. (reap_sandbox_containers stays available as an ops tool.)
+    # Orphan sweep: resume turns the previous process died with (see
+    # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
+    from app.api.deps import get_chat_service, get_turn_runner
+    from app.domain.scheduler.service import SchedulerRunner, SchedulerService
 
-    # Middleware
-    app.add_middleware(TracingMiddleware)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
-        allow_credentials=settings.cors_credentials,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Authorization", "Content-Disposition"],
-        max_age=3600,
-    )
+    # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
+    # its platform agent-binding. Idempotent — the migration seeds it too; this is
+    # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
+    try:
+        from app.core.db import async_session_factory
+        from app.domain.identity.services import IdentityService
 
-    # Global error handlers（对齐 Kotlin BaseError / GlobalErrorHandler 结构）
-    app.add_exception_handler(core_errors.BaseError, core_errors.base_error_handler)  # type: ignore[arg-type]
-    app.add_exception_handler(StarletteHTTPException, core_errors.http_exception_handler)  # type: ignore[arg-type]
-    app.add_exception_handler(RequestValidationError, core_errors.validation_exception_handler)  # type: ignore[arg-type]
+        async with async_session_factory() as session:
+            await IdentityService(session).ensure_agent_user()
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — a missing table (pre-migration) must not crash boot
+        get_logger("cheesex.runtime").warning(
+            "agent-user seed skipped", reason=str(exc)[:120]
+        )
 
-    # Register domain permissions
-    register_team_permissions()
-    register_task_permissions()
-    register_space_permissions()
-    register_knowledge_permissions()
-    register_question_permissions()
+    try:
+        n = await get_turn_runner().resume_orphans(get_chat_service())
+        if n:
+            get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)
+    except Exception:  # noqa: BLE001 — never block startup
+        get_logger("cheesex.runtime").exception("orphan sweep failed")
 
-    # Routers
-    app.include_router(health.router)
-    app.include_router(notifications.router)
-    app.include_router(teams.router)
-    app.include_router(tasks.router)
-    app.include_router(users.router)
-    # 微人大 OAuth 的回调在其平台登记为 .../api/legacy/users/auth/oauth/callback/ruc。
-    # 上游 API 网关只剥掉 /api/ 前缀，后端因此收到 /legacy/users/auth/oauth/callback/ruc，
-    # 与常规路由 /users/auth/oauth/callback/ruc 不匹配。复用同一处理函数在该 legacy
-    # 前缀路径上再注册一次，让回调无需改网关或微人大白名单即可到达后端。
-    app.add_api_route(
-        "/legacy/users/auth/oauth/callback/{providerId}",
-        users.handle_oauth_callback,
-        methods=["GET"],
-        include_in_schema=False,
-    )
-    app.include_router(projects.router)
-    app.include_router(spaces.router)
-    app.include_router(questions.router)
-    app.include_router(discussions.router)
-    app.include_router(ai.router)
-    app.include_router(attachments.router)
-    app.include_router(avatars.router)
-    app.include_router(materials.router)
-    app.include_router(comments.router)
-    app.include_router(groups.router)
-    app.include_router(materialbundles.router)
-    app.include_router(topics_legacy.router)
-    app.include_router(answers.router)
-    app.include_router(knowledge.router)
-    app.include_router(recruitment.router)
-    app.include_router(recruitment.team_recruitment_router)
+    scheduler = SchedulerService(chat_service=get_chat_service())
+    runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
+    runner.start()
+    try:
+        yield
+    finally:
+        await runner.stop()
 
-    # Mount uploads directory for serving images and other static files
-    import os
 
-    uploads_path = os.path.abspath(settings.storage_local_path)
-    if not os.path.isdir(uploads_path):
-        os.makedirs(uploads_path, exist_ok=True)
-    app.mount("/uploads", StaticFiles(directory=uploads_path), name="uploads")
-
-    finalizer = NotificationAggregationFinalizer(
-        session_factory=AsyncSessionLocal,
-        interval_seconds=settings.notification_aggregation_finalize_interval_seconds,
-    )
-
-    @app.on_event("startup")
-    async def _check_security_config() -> None:
-        if settings.environment not in ("development", "test"):
-            if settings.jwt_secret == "dev-secret":
-                raise RuntimeError("FATAL: JWT_SECRET must be changed from default in production")
-            if not settings.realname_encryption_key:
-                raise RuntimeError("FATAL: REALNAME_ENCRYPTION_KEY must be set in production")
-
-    @app.on_event("startup")
-    async def _start_notification_jobs() -> None:
-        await finalizer.start()
-
-    @app.on_event("startup")
-    async def _setup_search_indices() -> None:
-        from app.domain.search.meilisearch_service import setup_indices
-
+def _discover_routers(application: FastAPI) -> list[str]:
+    """Include every ``APIRouter`` defined at module level in any route module.
+    Resilient: a module that fails to import is skipped rather than breaking the
+    whole app. A module may export more than one router."""
+    loaded: list[str] = []
+    seen: set[int] = set()
+    for module_info in pkgutil.iter_modules(routes_pkg.__path__):
+        name = f"{routes_pkg.__name__}.{module_info.name}"
         try:
-            await setup_indices()
-        except Exception:
-            import logging
+            module = importlib.import_module(name)
+        except Exception:  # pragma: no cover - guards parallel/dev breakage
+            continue
+        for attr, value in vars(module).items():
+            if isinstance(value, APIRouter) and id(value) not in seen:
+                application.include_router(value)
+                seen.add(id(value))
+                loaded.append(f"{module_info.name}.{attr}")
+    return loaded
 
-            logging.getLogger(__name__).warning(
-                "Meilisearch index setup failed — search will use PG FTS fallback",
-                exc_info=True,
+
+app = FastAPI(title="CheeseX", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+register_exception_handlers(app)
+
+# Wire the domain permission configs + role providers into the shared checker.
+# Without this every require_permission()-gated endpoint 403s (the providers
+# would otherwise be empty). Idempotent-enough for a single process start.
+from app.auth.domains import register_all_permissions  # noqa: E402
+
+register_all_permissions()
+
+
+# The `cheese` CLI (running inside the sandbox container) reaches the backend
+# over the network, so its write-surface must not be open like the browser API.
+# These paths are cheese-only writes (the frontend only reads them); the gate
+# verifies a per-turn token scoped to the URL's project/topic (review R5).
+# doc/split are dual-use (the doc panel saves, the sidebar splits) so they stay
+# open like the rest of the app — closing those needs browser user-auth first.
+# Each pattern captures the scoping id as group "topic" or "project".
+_CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/decision$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/title$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/return-conclusion$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/accept-card$")),
+    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),
+    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/notifications$")),
+    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/milestones$")),
+]
+
+
+_http_log = get_logger("http")
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next: Callable):  # type: ignore[type-arg]
+    """Correlation + timing for every request: bind request_id (respecting an
+    incoming X-Request-ID) to the async context, echo it back, log the duration.
+    contextvars are task-local, so concurrent requests never bleed ids."""
+    import time
+    import uuid as _uuid
+
+    rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
+    bind_context(req=rid)
+    t0 = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        _http_log.exception(
+            "request failed", method=request.method, path=request.url.path
+        )
+        raise
+    finally:
+        clear_context("req")
+    ms = round((time.perf_counter() - t0) * 1000, 1)
+    # WS upgrades and health probes are logged by their own layers; skip noise.
+    if request.url.path != "/health":
+        _http_log.info(
+            "req",
+            method=request.method,
+            path=request.url.path,
+            status=response.status_code,
+            ms=ms,
+            req=rid,
+        )
+    response.headers["X-Request-ID"] = rid
+    return response
+
+
+@app.middleware("http")
+async def cheese_token_gate(request: Request, call_next: Callable):  # type: ignore[type-arg]
+    method, path = request.method, request.url.path
+    for m, rx in _CHEESE_WRITE_PATHS:
+        if method != m:
+            continue
+        match = rx.match(path)
+        if match is None:
+            continue
+        ids = match.groupdict()
+        token = request.headers.get("x-cheese-token") or ""
+        if not is_valid_cheese_token(
+            token, project_id=ids.get("project"), topic_id=ids.get("topic")
+        ):
+            return JSONResponse(
+                {"code": 401, "message": "invalid sandbox token", "data": None},
+                status_code=401,
             )
+        break
+    # Stash the cheese turn id so blocks written by this request inherit it (R4).
+    ctx = current_turn_id.set(parse_turn_id(request.headers.get("x-cheese-turn")))
+    try:
+        return await call_next(request)
+    finally:
+        current_turn_id.reset(ctx)
 
-    @app.on_event("shutdown")
-    async def _stop_notification_jobs() -> None:
-        await finalizer.stop()
 
-    app.state.notification_aggregation_finalizer = finalizer
-
-    return app
+loaded_routers = _discover_routers(app)
 
 
-app = create_app()
+@app.get("/debug/turns")
+async def debug_turns() -> dict:
+    """可 debug: the last ~100 turns' lifecycle summaries (status, timings,
+    tool counts, failure reasons) — read the state of the world without
+    grepping logs."""
+    from app.api.deps import get_turn_runner
+
+    return {"code": 200, "message": "ok", "data": get_turn_runner().recent_turns()}
+
+
+@app.get("/health")
+async def health() -> dict:
+    from app.api.deps import get_turn_runner
+
+    # active_turns lets a redeploy drain: wait until no agent turn is in flight
+    # before restarting, so a deploy never kills 芝士 mid-work.
+    return {
+        "code": 200,
+        "message": "ok",
+        "data": {"status": "healthy", "active_turns": get_turn_runner().active_turns()},
+    }

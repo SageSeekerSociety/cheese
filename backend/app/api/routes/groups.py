@@ -13,7 +13,11 @@ from app.domain.groups.repositories import (
     GroupRepository,
     GroupTargetRepository,
 )
-from app.domain.groups.services import GroupQuestionService, GroupsService, GroupTargetService
+from app.domain.groups.services import (
+    GroupQuestionService,
+    GroupsService,
+    GroupTargetService,
+)
 from app.domain.user.repositories import UserProfileRepository
 
 router = APIRouter(prefix="/groups", tags=["Groups"])
@@ -287,7 +291,9 @@ async def update_group_target(
     ended_at = payload.get("endedAt")
     attendance_frequency = payload.get("attendanceFrequency")
 
-    started_at_dt = datetime.fromtimestamp(started_at / 1000, tz=UTC) if started_at else None
+    started_at_dt = (
+        datetime.fromtimestamp(started_at / 1000, tz=UTC) if started_at else None
+    )
     ended_at_dt = datetime.fromtimestamp(ended_at / 1000, tz=UTC) if ended_at else None
 
     target = await service.update_target(
@@ -314,7 +320,9 @@ async def delete_group_target(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> None:
-    await service.delete_target(group_id=group_id, target_id=target_id, user_id=auth_user.user_id)
+    await service.delete_target(
+        group_id=group_id, target_id=target_id, user_id=auth_user.user_id
+    )
 
 
 @router.get(
@@ -332,7 +340,11 @@ async def list_group_questions(
         page_start=page_start,
         page_size=page_size,
     )
-    return {"code": 200, "message": "OK", "data": {"questionIds": question_ids, "page": page}}
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"questionIds": question_ids, "page": page},
+    }
 
 
 @router.post(

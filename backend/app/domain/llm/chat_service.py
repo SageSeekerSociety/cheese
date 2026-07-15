@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import openai
 import tiktoken
+from openai.types.chat import ChatCompletionMessageParam
 
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError
@@ -191,7 +192,10 @@ class AIChatService:
         )
 
         history = await self._message_repo.list_by_conversation(conversation_id)
-        messages_for_api = [{"role": m.role, "content": m.content} for m in history]
+        messages_for_api: list[ChatCompletionMessageParam] = [
+            {"role": m.role, "content": m.content}  # type: ignore[misc]  # role is a plain str column
+            for m in history
+        ]
 
         model = model_id or settings.openai_default_model
 
@@ -212,7 +216,9 @@ class AIChatService:
             tokens_used=tokens_used,
         )
 
-        quota_info = await self._quota_service.consume_tokens(user_id=user_id, tokens=tokens_used)
+        quota_info = await self._quota_service.consume_tokens(
+            user_id=user_id, tokens=tokens_used
+        )
 
         return {
             "conversationId": conversation_id,

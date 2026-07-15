@@ -2,6 +2,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 
+import { avatarColor, avatarInitial } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { AIApi } from '@/network/api/ai'
@@ -22,6 +23,13 @@ export function useUserMenu() {
   const avatar = computed(() => getAvatarUrl(AccountService._user.value?.avatarId))
   const nickname = computed(() => AccountService._user.value?.nickname ?? '')
   const intro = computed(() => AccountService._user.value?.intro ?? '')
+
+  // Default-avatar fallback: colored initial derived from the user's identity.
+  // Seed on nickname, falling back to the user id so the color is still stable
+  // when the nickname is empty.
+  const avatarSeed = computed(() => nickname.value || String(AccountService._user.value?.id ?? ''))
+  const avatarInitialRef = computed(() => avatarInitial(avatarSeed.value))
+  const avatarColorRef = computed(() => avatarColor(avatarSeed.value))
 
   // AI 配额状态
   const aiQuota = ref<QuotaInfo | null>(null)
@@ -62,6 +70,8 @@ export function useUserMenu() {
     loggedIn,
     currentUser,
     avatar,
+    avatarInitial: avatarInitialRef,
+    avatarColor: avatarColorRef,
     nickname,
     intro,
     aiQuota,

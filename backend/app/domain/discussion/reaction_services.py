@@ -28,7 +28,9 @@ class DiscussionReactionService:
         await self.ensure_default_reaction_types()
         reaction_type = await self._reaction_type_repo.get_by_id(reaction_type_id)
         if reaction_type is None:
-            raise NotFoundError("reaction type not found", data={"id": reaction_type_id})
+            raise NotFoundError(
+                "reaction type not found", data={"id": reaction_type_id}
+            )
         await self._reaction_repo.toggle(
             discussion_id=discussion_id,
             user_id=user_id,
@@ -56,7 +58,9 @@ class DiscussionReactionService:
         await self.ensure_default_reaction_types()
         reaction_type = await self._reaction_type_repo.get_by_id(reaction_type_id)
         if reaction_type is None:
-            raise NotFoundError("reaction type not found", data={"id": reaction_type_id})
+            raise NotFoundError(
+                "reaction type not found", data={"id": reaction_type_id}
+            )
         await self._reaction_repo.remove(
             discussion_id=discussion_id,
             user_id=user_id,

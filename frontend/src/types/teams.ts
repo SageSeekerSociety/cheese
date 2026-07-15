@@ -12,6 +12,9 @@ export interface Team {
   intro: string
   name: string
   avatarId: number
+  // v4 个人 = 单人真团队: true for the user's auto-provisioned personal team.
+  // It sorts first in my-teams and backs personal projects + personal compute.
+  personal?: boolean
   owner: User
   admins: {
     total: number

@@ -6,7 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.discussion.models import DiscussableModelType
 from app.domain.discussion.reaction_services import DiscussionReactionService
-from app.domain.discussion.repositories import DiscussionRepository, _content_str_to_json
+from app.domain.discussion.repositories import (
+    DiscussionRepository,
+    _content_str_to_json,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import publish_notification_event
 from app.domain.user.repositories import UserProfileRepository
@@ -48,13 +51,16 @@ class DiscussionService:
             sender_id=user_id,
             content=content.strip(),
             parent_id=parent_id,
-            mentioned_user_ids=list({uid for uid in (mentioned_user_ids or []) if uid > 0}),
+            mentioned_user_ids=list(
+                {uid for uid in (mentioned_user_ids or []) if uid > 0}
+            ),
         )
 
-        if entity.mentioned_user_ids:
+        # mentioned_user_ids is a transient attr set by the repo, not a mapped column
+        if entity.mentioned_user_ids:  # type: ignore[attr-defined]
             await publish_notification_event(
                 self._session,
-                recipient_ids=set(entity.mentioned_user_ids),
+                recipient_ids=set(entity.mentioned_user_ids),  # type: ignore[attr-defined]
                 type_=NotificationType.MENTION,
                 payload={
                     "discussion": {"type": "discussion", "id": str(entity.id)},
@@ -66,7 +72,9 @@ class DiscussionService:
 
         return await self._build_discussion_dto(entity, current_user_id=user_id)
 
-    async def get_discussion(self, discussion_id: int, current_user_id: int | None) -> dict:
+    async def get_discussion(
+        self, discussion_id: int, current_user_id: int | None
+    ) -> dict:
         entity = await self._repo.get_by_id(discussion_id)
         if entity is None:
             raise NotFoundError(
@@ -119,7 +127,9 @@ class DiscussionService:
         }
         return dtos, page
 
-    async def update_discussion(self, discussion_id: int, *, content: str, user_id: int) -> dict:
+    async def update_discussion(
+        self, discussion_id: int, *, content: str, user_id: int
+    ) -> dict:
         entity = await self._repo.get_by_id(discussion_id)
         if entity is None:
             raise NotFoundError(
@@ -142,7 +152,9 @@ class DiscussionService:
                 data={"type": "discussion", "id": discussion_id},
             )
 
-    async def get_reaction_summary(self, discussion_id: int, user_id: int | None) -> list[dict]:
+    async def get_reaction_summary(
+        self, discussion_id: int, user_id: int | None
+    ) -> list[dict]:
         return await self._reaction_service.get_reaction_summary(
             discussion_id=discussion_id,
             current_user_id=user_id,
@@ -220,10 +232,14 @@ class DiscussionService:
             )
         sender = user_map.get(entity.sender_id)
         mentioned = [
-            user_map.get(uid) for uid in entity.mentioned_user_ids or [] if user_map.get(uid)
+            user_map.get(uid)
+            for uid in entity.mentioned_user_ids or []
+            if user_map.get(uid)
         ]
         summary = (
-            await self.get_reaction_summary(entity.id, current_user_id) if with_reactions else []
+            await self.get_reaction_summary(entity.id, current_user_id)
+            if with_reactions
+            else []
         )
 
         sub_info = None
@@ -251,7 +267,9 @@ class DiscussionService:
 
         content_value = entity.content
         if isinstance(content_value, (dict, list)):
-            content_value = json.dumps(content_value, ensure_ascii=False, separators=(",", ":"))
+            content_value = json.dumps(
+                content_value, ensure_ascii=False, separators=(",", ":")
+            )
         elif content_value is None:
             content_value = ""
         else:

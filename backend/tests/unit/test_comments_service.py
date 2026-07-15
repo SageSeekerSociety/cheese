@@ -311,7 +311,9 @@ class TestVoteComment:
         result = await svc.vote_comment(comment_id=10, user_id=5, vote_type="POSITIVE")
 
         assert result == {"upvotes": 3, "downvotes": 1, "userVote": "POSITIVE"}
-        repo.vote.assert_awaited_once_with(comment_id=10, user_id=5, vote_type="POSITIVE")
+        repo.vote.assert_awaited_once_with(
+            comment_id=10, user_id=5, vote_type="POSITIVE"
+        )
 
     @pytest.mark.anyio
     async def test_negative_vote_returns_counts(self):

@@ -38,7 +38,7 @@ const body = computed(() => {
 const routerLink = computed(() => {
   if (team.value) {
     return {
-      name: 'TeamsDetail',
+      name: 'TeamsDetailDefault',
       params: { teamId: team.value.id },
     }
   }

@@ -22,7 +22,9 @@ def _content_str_to_json(content: str) -> dict:
         return parsed
     return {
         "type": "doc",
-        "content": [{"type": "paragraph", "content": [{"type": "text", "text": content}]}],
+        "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": content}]}
+        ],
     }
 
 
@@ -61,7 +63,8 @@ class DiscussionRepository:
         if mentioned_user_ids:
             await self._session.flush()
 
-        entity.mentioned_user_ids = mentioned_user_ids
+        # transient attr; not a mapped column (loaded from join table)
+        entity.mentioned_user_ids = mentioned_user_ids  # type: ignore[attr-defined]
         return entity
 
     async def get_by_id(self, discussion_id: int) -> Discussion | None:
@@ -72,7 +75,9 @@ class DiscussionRepository:
         result = await self._session.execute(stmt)
         entity = result.scalar_one_or_none()
         if entity is not None:
-            entity.mentioned_user_ids = await self._load_mentioned_user_ids(entity.id)
+            # transient attr; not a mapped column (loaded from join table)
+            ids = await self._load_mentioned_user_ids(entity.id)
+            entity.mentioned_user_ids = ids  # type: ignore[attr-defined]
         return entity
 
     async def _load_mentioned_user_ids(self, discussion_id: int) -> list[int]:
@@ -93,7 +98,9 @@ class DiscussionRepository:
         sort_by: str,
         sort_order: str,
     ) -> tuple[list[Discussion], int]:
-        stmt: Select[tuple[Discussion]] = select(Discussion).where(Discussion.deleted_at.is_(None))
+        stmt: Select[tuple[Discussion]] = select(Discussion).where(
+            Discussion.deleted_at.is_(None)
+        )
         if model_type is not None:
             stmt = stmt.where(Discussion.model_type == model_type)
         if model_id is not None:
@@ -103,7 +110,9 @@ class DiscussionRepository:
         else:
             stmt = stmt.where(Discussion.parent_id == parent_id)
 
-        order_column = Discussion.created_at if sort_by == "createdAt" else Discussion.updated_at
+        order_column = (
+            Discussion.created_at if sort_by == "createdAt" else Discussion.updated_at
+        )
         if sort_order.lower() == "asc":
             stmt = stmt.order_by(order_column.asc())
         else:
@@ -114,9 +123,13 @@ class DiscussionRepository:
         rows = list(result.scalars().all())
 
         for row in rows:
-            row.mentioned_user_ids = await self._load_mentioned_user_ids(row.id)
+            # transient attr; not a mapped column (loaded from join table)
+            ids = await self._load_mentioned_user_ids(row.id)
+            row.mentioned_user_ids = ids  # type: ignore[attr-defined]
 
-        count_stmt = select(func.count(Discussion.id)).where(Discussion.deleted_at.is_(None))
+        count_stmt = select(func.count(Discussion.id)).where(
+            Discussion.deleted_at.is_(None)
+        )
         if model_type is not None:
             count_stmt = count_stmt.where(Discussion.model_type == model_type)
         if model_id is not None:
@@ -130,7 +143,9 @@ class DiscussionRepository:
         total = int(count_result.scalar_one() or 0)
         return rows, total
 
-    async def update_content(self, discussion_id: int, content_json: dict) -> Discussion | None:
+    async def update_content(
+        self, discussion_id: int, content_json: dict
+    ) -> Discussion | None:
         entity = await self.get_by_id(discussion_id)
         if entity is None:
             return None

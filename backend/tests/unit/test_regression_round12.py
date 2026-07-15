@@ -1,8 +1,9 @@
 """Tests for Round 12 bug fixes.
 
-Covers: notification scheduler, deadline scheduler, AIConversation creation,
-route ordering, material upload, migration chain, groups search count,
-datetime timezone, identity patch, and histogram defaults.
+Covers: deadline scheduler, AIConversation creation, route ordering, material
+upload, migration chain, groups search count, datetime timezone, identity
+patch, and histogram defaults. (The in-process notification finalizer this
+file once covered was superseded by the taskiq cron and removed.)
 """
 
 from datetime import UTC, datetime
@@ -10,38 +11,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Notification scheduler: _tick must commit after finalize
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-async def test_notification_finalizer_tick_commits_session():
-    from app.domain.notification.scheduler import NotificationAggregationFinalizer
-
-    mock_session = AsyncMock()
-    mock_handler = AsyncMock()
-    mock_handler.finalize_expired.return_value = []
-
-    mock_factory = MagicMock()
-    mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
-
-    finalizer = NotificationAggregationFinalizer(
-        session_factory=mock_factory,
-        interval_seconds=60,
-    )
-
-    with patch(
-        "app.domain.notification.scheduler.build_notification_event_handler",
-        return_value=mock_handler,
-    ):
-        await finalizer._tick()
-
-    mock_handler.finalize_expired.assert_awaited_once()
-    mock_session.commit.assert_awaited_once()
-
 
 # ---------------------------------------------------------------------------
 # Deadline scheduler: must process all batches without skipping
@@ -138,7 +107,7 @@ def test_questions_followed_route_before_question_id():
     assert followed_idx is not None, f"/followed route not found in {paths}"
     assert param_idx is not None, f"/{{question_id}} route not found in {paths}"
     assert followed_idx < param_idx, (
-        f"/followed (index {followed_idx}) must come before /{'{question_id}'} (index {param_idx})"
+        f"/followed (index {followed_idx}) must come before /{'{question_id}'} (index {param_idx})"  # noqa: E501
     )
 
 
@@ -155,9 +124,12 @@ async def test_upload_material_stores_file():
     mock_storage.upload.return_value = "https://storage.example.com/materials/file.png"
 
     with (
-        patch("app.api.routes.materials.get_storage_backend", return_value=mock_storage),
         patch(
-            "app.api.routes.materials.generate_storage_key", return_value="materials/image/abc.png"
+            "app.api.routes.materials.get_storage_backend", return_value=mock_storage
+        ),
+        patch(
+            "app.api.routes.materials.generate_storage_key",
+            return_value="materials/image/abc.png",
         ),
     ):
         from io import BytesIO
@@ -169,7 +141,9 @@ async def test_upload_material_stores_file():
         fake_file = UploadFile(
             filename="test.png",
             file=BytesIO(b"\x89PNG fake content"),
-            headers=MagicMock(get=lambda k, d=None: "image/png" if k == "content-type" else d),
+            headers=MagicMock(
+                get=lambda k, d=None: "image/png" if k == "content-type" else d
+            ),
         )
 
         mock_service = AsyncMock()
@@ -261,7 +235,9 @@ def test_migration_chain_single_head():
         if len(heads) > 1:
             unresolved_forks[down_key] = child_list
 
-    assert not unresolved_forks, f"Migration chain has unresolved forks: {unresolved_forks}"
+    assert not unresolved_forks, (
+        f"Migration chain has unresolved forks: {unresolved_forks}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +254,9 @@ async def test_groups_search_count_with_joined_filter():
 
     # Simulate: 3 groups total, but user joined only 1
     filtered_rows = [
-        SimpleNamespace(id=1, name="My Group", deleted_at=None, created_at=datetime.now(UTC))
+        SimpleNamespace(
+            id=1, name="My Group", deleted_at=None, created_at=datetime.now(UTC)
+        )
     ]
 
     call_count = 0
@@ -334,7 +312,13 @@ def test_groups_datetime_fromtimestamp_utc():
 
 def test_patch_identity_empty_string_clears_field():
     """payload with "" should clear the field, not keep the old value."""
-    base = {"realName": "Alice", "studentId": "S001", "grade": "3", "major": "CS", "className": "A"}
+    base = {
+        "realName": "Alice",
+        "studentId": "S001",
+        "grade": "3",
+        "major": "CS",
+        "className": "A",
+    }
 
     # Simulate the _merge pattern used in the route
     payload_clear = {"realName": "", "studentId": None, "grade": "4"}

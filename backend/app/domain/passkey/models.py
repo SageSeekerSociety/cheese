@@ -17,5 +17,9 @@ class PasskeyCredential(Base):
     device_type: Mapped[str] = mapped_column(Text, nullable=False)
     backed_up: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     transports: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )

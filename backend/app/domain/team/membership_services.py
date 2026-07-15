@@ -3,7 +3,12 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from app.core.errors import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import publish_notification_event
 from app.domain.team.models import (
@@ -12,7 +17,10 @@ from app.domain.team.models import (
     TeamMemberRole,
     TeamMembershipApplication,
 )
-from app.domain.team.repositories import TeamMembershipApplicationRepository, TeamRepository
+from app.domain.team.repositories import (
+    TeamMembershipApplicationRepository,
+    TeamRepository,
+)
 
 
 class TeamMembershipService:
@@ -27,7 +35,9 @@ class TeamMembershipService:
         self._app_repo = application_repo
         self._default_page_size = 20
 
-    async def _validate_user_can_apply_or_be_invited(self, user_id: int, team_id: int) -> None:
+    async def _validate_user_can_apply_or_be_invited(
+        self, user_id: int, team_id: int
+    ) -> None:
         from sqlalchemy import select
 
         from app.domain.user.models import User
@@ -64,7 +74,9 @@ class TeamMembershipService:
     ) -> TeamMembershipApplication:
         team = await self._team_repo.get_by_id(team_id)
         if team is None:
-            raise NotFoundError("Resource team not found", data={"type": "team", "id": team_id})
+            raise NotFoundError(
+                "Resource team not found", data={"type": "team", "id": team_id}
+            )
 
         await self._validate_user_can_apply_or_be_invited(user_id, team_id)
 
@@ -130,7 +142,7 @@ class TeamMembershipService:
     ) -> TeamMembershipApplication:
         if not await self._team_repo.is_team_at_least_admin(team_id, initiator_user_id):
             raise ForbiddenError(
-                f"User {initiator_user_id} is not authorized to invite members to team {team_id}."
+                f"User {initiator_user_id} is not authorized to invite members to team {team_id}."  # noqa: E501
             )
 
         await self._validate_user_can_apply_or_be_invited(user_id_to_invite, team_id)
@@ -226,7 +238,9 @@ class TeamMembershipService:
             actor_id=user_id,
         )
 
-    async def decline_team_invitation(self, *, user_id: int, invitation_id: int) -> None:
+    async def decline_team_invitation(
+        self, *, user_id: int, invitation_id: int
+    ) -> None:
         app = await self._app_repo.find_pending_by_id_and_user_and_type(
             application_id=invitation_id,
             user_id=user_id,
@@ -271,7 +285,7 @@ class TeamMembershipService:
 
         if not await self._team_repo.is_team_at_least_admin(team_id, approver_user_id):
             raise ForbiddenError(
-                f"User {approver_user_id} is not authorized to approve requests for team {team_id}."
+                f"User {approver_user_id} is not authorized to approve requests for team {team_id}."  # noqa: E501
             )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
@@ -291,7 +305,9 @@ class TeamMembershipService:
         if await self._team_repo.is_team_member(team_id, requester_id):
             raise BadRequestError("Cannot approve request, user is already a member.")
 
-        await self._update_status(app, ApplicationStatus.APPROVED, processor_id=approver_user_id)
+        await self._update_status(
+            app, ApplicationStatus.APPROVED, processor_id=approver_user_id
+        )
         await self._team_repo.add_member(team_id, requester_id, TeamMemberRole.MEMBER)
 
         payload: dict[str, Any] = {
@@ -320,7 +336,7 @@ class TeamMembershipService:
     ) -> None:
         if not await self._team_repo.is_team_at_least_admin(team_id, rejector_user_id):
             raise ForbiddenError(
-                f"User {rejector_user_id} is not authorized to reject requests for team {team_id}."
+                f"User {rejector_user_id} is not authorized to reject requests for team {team_id}."  # noqa: E501
             )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
@@ -335,7 +351,9 @@ class TeamMembershipService:
             )
 
         requester_id = app.user_id
-        await self._update_status(app, ApplicationStatus.REJECTED, processor_id=rejector_user_id)
+        await self._update_status(
+            app, ApplicationStatus.REJECTED, processor_id=rejector_user_id
+        )
 
         payload: dict[str, Any] = {
             "rejector": {"type": "user", "id": str(rejector_user_id)},
@@ -363,7 +381,7 @@ class TeamMembershipService:
     ) -> None:
         if not await self._team_repo.is_team_at_least_admin(team_id, canceler_user_id):
             raise ForbiddenError(
-                f"User {canceler_user_id} is not authorized to cancel invitations for team {team_id}."
+                f"User {canceler_user_id} is not authorized to cancel invitations for team {team_id}."  # noqa: E501
             )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
@@ -378,7 +396,9 @@ class TeamMembershipService:
             )
 
         invited_user_id = app.user_id
-        await self._update_status(app, ApplicationStatus.CANCELED, processor_id=canceler_user_id)
+        await self._update_status(
+            app, ApplicationStatus.CANCELED, processor_id=canceler_user_id
+        )
 
         payload: dict[str, Any] = {
             "canceler": {"type": "user", "id": str(canceler_user_id)},
@@ -464,9 +484,11 @@ class TeamMembershipService:
         page_start: int | None,
         page_size: int | None,
     ) -> tuple[list[TeamMembershipApplication], dict]:
-        if not await self._team_repo.is_team_at_least_admin(team_id, requesting_user_id):
+        if not await self._team_repo.is_team_at_least_admin(
+            team_id, requesting_user_id
+        ):
             raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view requests for team {team_id}."
+                f"User {requesting_user_id} is not authorized to view requests for team {team_id}."  # noqa: E501
             )
         limit = page_size or self._default_page_size
         offset = page_start or 0
@@ -498,9 +520,11 @@ class TeamMembershipService:
         page_start: int | None,
         page_size: int | None,
     ) -> tuple[list[TeamMembershipApplication], dict]:
-        if not await self._team_repo.is_team_at_least_admin(team_id, requesting_user_id):
+        if not await self._team_repo.is_team_at_least_admin(
+            team_id, requesting_user_id
+        ):
             raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view invitations for team {team_id}."
+                f"User {requesting_user_id} is not authorized to view invitations for team {team_id}."  # noqa: E501
             )
         limit = page_size or self._default_page_size
         offset = page_start or 0

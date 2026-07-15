@@ -19,6 +19,9 @@ services:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@cheese_py_postgres:5432/cheese
       - REDIS_URL=redis://cheese_py_valkey:6379/0
       - JWT_SECRET=dev-secret
+      # This flow serves the backend on :8081 (the scripts/dev flow uses :8799,
+      # which is also the app default) — absolute avatar URLs must match it.
+      - AVATAR_BASE_URL=http://localhost:8081
     volumes:
       - ./backend:/app
       - /app/.venv

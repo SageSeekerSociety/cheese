@@ -48,7 +48,9 @@ class Task(Base):
     participant_limit: Mapped[int | None] = mapped_column(
         "participant_limit", Integer, nullable=True
     )
-    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deadline: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     registration_start_at: Mapped[datetime | None] = mapped_column(
         "registration_start_at", DateTime(timezone=True), nullable=True
     )
@@ -59,9 +61,15 @@ class Task(Base):
     require_real_name: Mapped[bool] = mapped_column(
         "require_real_name", Boolean, nullable=False, default=False
     )
-    min_team_size: Mapped[int | None] = mapped_column("min_team_size", Integer, nullable=True)
-    max_team_size: Mapped[int | None] = mapped_column("max_team_size", Integer, nullable=True)
-    reject_reason: Mapped[str] = mapped_column("reject_reason", String, nullable=False, default="")
+    min_team_size: Mapped[int | None] = mapped_column(
+        "min_team_size", Integer, nullable=True
+    )
+    max_team_size: Mapped[int | None] = mapped_column(
+        "max_team_size", Integer, nullable=True
+    )
+    reject_reason: Mapped[str] = mapped_column(
+        "reject_reason", String, nullable=False, default=""
+    )
     video_url: Mapped[str | None] = mapped_column("video_url", String, nullable=True)
     team_locking_policy: Mapped[str] = mapped_column(
         "team_locking_policy", String(50), nullable=False, default="NO_LOCK"
@@ -77,35 +85,55 @@ class Task(Base):
         "ended_at", DateTime(timezone=True), nullable=True
     )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TaskAccessDomain(Base):
     __tablename__ = "task_access_domain"
 
-    id: Mapped[int] = mapped_column(BigInteger, task_access_domain_seq, primary_key=True)
-    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("task.id"), nullable=False)
+    id: Mapped[int] = mapped_column(
+        BigInteger, task_access_domain_seq, primary_key=True
+    )
+    task_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("task.id"), nullable=False
+    )
     domain: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TaskMembership(Base):
     __tablename__ = "task_membership"
 
     id: Mapped[int] = mapped_column(BigInteger, task_membership_seq, primary_key=True)
-    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("task.id"), nullable=False)
+    task_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("task.id"), nullable=False
+    )
     member_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     participant_uuid: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False, default=uuid.uuid4
     )
 
     approved: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    is_team: Mapped[bool] = mapped_column("is_team", Boolean, nullable=False, default=False)
+    is_team: Mapped[bool] = mapped_column(
+        "is_team", Boolean, nullable=False, default=False
+    )
 
     email: Mapped[str] = mapped_column(String, nullable=False, default="")
     phone: Mapped[str] = mapped_column(String, nullable=False, default="")
@@ -114,14 +142,22 @@ class TaskMembership(Base):
         "completion_status", String(50), nullable=False, default="NOT_SUBMITTED"
     )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deadline: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TaskSubmissionSchemaEntry(Base):
-    """Minimal mapping for task_submission_schema table (ElementCollection in Kotlin)."""
+    """Minimal mapping for task_submission_schema table (ElementCollection in Kotlin)."""  # noqa: E501
 
     __tablename__ = "task_submission_schema"
 
@@ -138,13 +174,23 @@ class TaskTopicsRelation(Base):
 
     __tablename__ = "task_topics_relation"
 
-    id: Mapped[int] = mapped_column(BigInteger, task_topics_relation_seq, primary_key=True)
-    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("task.id"), nullable=False)
+    id: Mapped[int] = mapped_column(
+        BigInteger, task_topics_relation_seq, primary_key=True
+    )
+    task_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("task.id"), nullable=False
+    )
     topic_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TaskSubmission(Base):
@@ -161,9 +207,15 @@ class TaskSubmission(Base):
         "submitter_id", Integer, nullable=False
     )  # references user.id
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TaskSubmissionEntry(Base):
@@ -171,12 +223,16 @@ class TaskSubmissionEntry(Base):
 
     __tablename__ = "task_submission_entry"
 
-    id: Mapped[int] = mapped_column(BigInteger, task_submission_entry_seq, primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger, task_submission_entry_seq, primary_key=True
+    )
     task_submission_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("task_submission.id"), nullable=False
     )
     index: Mapped[int] = mapped_column(Integer, nullable=False)
-    content_text: Mapped[str | None] = mapped_column("content_text", Text, nullable=True)
+    content_text: Mapped[str | None] = mapped_column(
+        "content_text", Text, nullable=True
+    )
     content_attachment_id: Mapped[int | None] = mapped_column(
         "content_attachment_id",
         Integer,
@@ -184,9 +240,15 @@ class TaskSubmissionEntry(Base):
         comment="References attachment.id; kept nullable for pure-text entries.",
     )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TaskSubmissionReview(Base):
@@ -194,7 +256,9 @@ class TaskSubmissionReview(Base):
 
     __tablename__ = "task_submission_review"
 
-    id: Mapped[int] = mapped_column(BigInteger, task_submission_review_seq, primary_key=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger, task_submission_review_seq, primary_key=True
+    )
     submission_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("task_submission.id"), nullable=False
     )
@@ -202,16 +266,24 @@ class TaskSubmissionReview(Base):
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str] = mapped_column(String, nullable=False, default="")
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TaskAIAdvice(Base):
     __tablename__ = "task_ai_advice"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("task.id"), nullable=False)
+    task_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("task.id"), nullable=False
+    )
     model_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=TaskAIAdviceStatus.PENDING.value
@@ -237,8 +309,12 @@ class TaskAIAdvice(Base):
 class TaskAIAdviceContext(Base):
     __tablename__ = "task_ai_advice_context"
 
-    id: Mapped[int] = mapped_column(BigInteger, task_ai_advice_context_seq, primary_key=True)
-    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("task.id"), nullable=False)
+    id: Mapped[int] = mapped_column(
+        BigInteger, task_ai_advice_context_seq, primary_key=True
+    )
+    task_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("task.id"), nullable=False
+    )
     section: Mapped[str | None] = mapped_column(String(64), nullable=True)
     section_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -250,4 +326,6 @@ class TaskAIAdviceContext(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

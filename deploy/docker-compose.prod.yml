@@ -43,38 +43,27 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  elasticsearch:
-    image: elasticsearch:8.18.1
-    container_name: cheese_prod_elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-    deploy:
-      resources:
-        limits:
-          memory: 2g
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
-    ports:
-      - "127.0.0.1:9200:9200"
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   backend:
-    image: ghcr.io/sageseekersociety/cheese-backend-py:${IMAGE_TAG:-main}
+    image: ghcr.io/sageseekersociety/cheese-backend-py/backend:${IMAGE_TAG:-main}
     container_name: cheese_prod_backend
     ports:
       - "127.0.0.1:8081:8081"
     env_file:
       - .env.prod
+    environment:
+      # Agent sandbox turns run as SIBLING containers on the host dockerd
+      # (docker.sock below): `docker run -v` resolves paths HOST-side, so the
+      # workspace root must be the same absolute path inside this container
+      # and on the host — hence the twin bind mount.
+      - WORKSPACE_ROOT=/opt/cheese-data/workspaces
+      - SANDBOX_IMAGE=ghcr.io/sageseekersociety/cheese-backend-py/sandbox:${IMAGE_TAG:-main}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/cheese-data/workspaces:/opt/cheese-data/workspaces
+    # Host docker group's gid so the non-root app user may use docker.sock:
+    #   getent group docker | cut -d: -f3   → set DOCKER_GID in .env.prod
+    group_add:
+      - "${DOCKER_GID:-999}"
     depends_on:
       postgres:
         condition: service_healthy

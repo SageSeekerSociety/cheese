@@ -2,12 +2,12 @@ name: Backend Test
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - 'backend/**'
       - '.github/workflows/test.yml'
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - 'backend/**'
       - '.github/workflows/test.yml'
@@ -64,6 +64,18 @@ jobs:
       - name: Run type checking
         run: uv run pyright
 
+      # The cheesex workspace/gate/upstream tests version project repos with
+      # Jujutsu (jj colocate). Install the same binary the app shells out to.
+      - name: Install Jujutsu (jj)
+        run: |
+          JJ_VERSION=v0.43.0
+          # Extract into a fresh runner-owned dir, not /tmp (whose sticky bit
+          # makes tar fail to set perms on the archive's '.' entry).
+          mkdir -p "$RUNNER_TEMP/jj-dl"
+          curl -sSL "https://github.com/jj-vcs/jj/releases/download/${JJ_VERSION}/jj-${JJ_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C "$RUNNER_TEMP/jj-dl"
+          sudo mv "$RUNNER_TEMP/jj-dl/jj" /usr/local/bin/jj
+          jj --version
+
       - name: Run database migrations
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
@@ -72,10 +84,20 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
+          # Per-worker test DBs are provisioned over the network from this server
+          # root (the conftest no longer shells out to `docker exec`).
+          TEST_PG_BASE: postgresql+asyncpg://postgres:postgres@localhost:5432
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: test-secret
           ENVIRONMENT: test
-        run: uv run pytest tests/ -n auto --tb=short --ignore=tests/contract -k "not kotlin"
+          # LLM tests mock the completions; the client just needs to construct
+          # (the openai SDK errors without any credentials). Dummy key.
+          OPENAI_API_KEY: test-key
+          # The default AI pool is "available" only when its gateway credential is
+          # present (AgentProfile.available = bool(auth_token)); the market test
+          # asserts availability. Dummy token — no real calls are made.
+          ANTHROPIC_AUTH_TOKEN: test-token
+        run: uv run pytest tests/ -n auto --tb=short -k "not kotlin"
 
   lint:
     runs-on: ubuntu-latest

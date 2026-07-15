@@ -294,7 +294,9 @@ class TestBuildRow:
 
     def test_not_approved_cannot_submit(self):
         svc = self._svc()
-        m = _membership(id=1, task_id=10, member_id=100, is_team=False, approved=2)  # NONE
+        m = _membership(
+            id=1, task_id=10, member_id=100, is_team=False, approved=2
+        )  # NONE
         t = _task(id=10)
         ctx = _context(
             tasks_by_id={10: t},
@@ -309,7 +311,9 @@ class TestBuildRow:
 
     def test_with_submission_and_review(self):
         svc = self._svc()
-        m = _membership(id=1, task_id=10, member_id=100, approved=0, completion_status="SUCCESS")
+        m = _membership(
+            id=1, task_id=10, member_id=100, approved=0, completion_status="SUCCESS"
+        )
         t = _task(id=10)
         sub = SimpleNamespace(id=100, membership_id=1, created_at=NOW)
         review = SimpleNamespace(id=200, submission_id=100, accepted=True, score=95)
@@ -401,7 +405,9 @@ class TestGetParticipations:
         svc = SpaceMemberParticipatingService(session)
 
         with pytest.raises(BadRequestError):
-            await svc.get_participations(space_id=1, user_id=100, completion_status="INVALID")
+            await svc.get_participations(
+                space_id=1, user_id=100, completion_status="INVALID"
+            )
 
     @pytest.mark.anyio
     async def test_invalid_identity_type_filter(self):
@@ -411,7 +417,9 @@ class TestGetParticipations:
         svc = SpaceMemberParticipatingService(session)
 
         with pytest.raises(BadRequestError):
-            await svc.get_participations(space_id=1, user_id=100, identity_type="INVALID")
+            await svc.get_participations(
+                space_id=1, user_id=100, identity_type="INVALID"
+            )
 
     @pytest.mark.anyio
     async def test_invalid_sort_by(self):

@@ -98,7 +98,9 @@ class TestUserAuthService:
         return UserAuthService(**mock_repos)
 
     @pytest.mark.anyio
-    async def test_authenticate_valid_credentials(self, auth_service, mock_repos) -> None:
+    async def test_authenticate_valid_credentials(
+        self, auth_service, mock_repos
+    ) -> None:
         import bcrypt
 
         from app.domain.user.models import User, UserProfile
@@ -125,7 +127,9 @@ class TestUserAuthService:
         assert profile.nickname == "Test User"
 
     @pytest.mark.anyio
-    async def test_authenticate_invalid_password(self, auth_service, mock_repos) -> None:
+    async def test_authenticate_invalid_password(
+        self, auth_service, mock_repos
+    ) -> None:
         import bcrypt
 
         from app.domain.user.models import User
@@ -168,7 +172,9 @@ class TestUserAuthService:
         assert profile.user_id == 1
 
     @pytest.mark.anyio
-    async def test_get_user_with_profile_not_found(self, auth_service, mock_repos) -> None:
+    async def test_get_user_with_profile_not_found(
+        self, auth_service, mock_repos
+    ) -> None:
         mock_repos["user_repo"].get_by_id.return_value = None
 
         with pytest.raises(ValueError, match="User not found"):
