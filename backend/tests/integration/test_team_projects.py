@@ -53,6 +53,25 @@ class TestTeamProjectsIntegration:
         assert resp.status_code == 200, resp.text
         return resp.json()["data"]["project"]
 
+    def test_create_out_of_range_date_is_400_not_500(self):
+        # An epoch-ms outside datetime's range (e.g. a bad date-picker value)
+        # once crashed _from_ms with an unhandled ValueError -> 500. It must be
+        # a clean 400. 10**17 ms -> ~year 3170843, the value seen in prod.
+        resp = self.client.post(
+            "/projects",
+            json={
+                "name": "BadDate",
+                "description": "d",
+                "colorCode": "#ff6b35",
+                "startDate": 1750000000000,
+                "endDate": 10**17,
+                "teamId": self.team_id,
+                "leaderId": self.user.user_id,
+            },
+            headers=self.headers,
+        )
+        assert resp.status_code == 400, resp.text
+
     def test_create_returns_reference_shape(self):
         project = self._create_project(name="Shape")
         assert project["name"] == "Shape"
