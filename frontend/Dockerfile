@@ -16,6 +16,9 @@ ENV VITE_API_BASE_URL=__VITE_API_BASE_URL__
 ENV VITE_NEW_API_BASE_URL=__VITE_NEW_API_BASE_URL__
 ENV VITE_AI_API_BASE_URL=__VITE_AI_API_BASE_URL__
 ENV VITE_CONNECTOR_WS_BASE=__VITE_CONNECTOR_WS_BASE__
+# The fusion bundle outgrew Node's default ~2 GB heap — `vite build` OOM-killed
+# the CI runner (exit 134, "Reached heap limit"). Raise the old-space cap.
+ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN pnpm build
 
 FROM nginx:1.25.4 as prod
