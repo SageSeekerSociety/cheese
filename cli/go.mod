@@ -1,4 +1,4 @@
-module github.com/SageSeekerSociety/cheese-backend-py/cli
+module github.com/SageSeekerSociety/cheese/cli
 
 go 1.26.0
 

@@ -11,8 +11,8 @@ import (
 
 	"github.com/rest-sh/restish/cli"
 
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/apicli"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/daemoncmd"
+	"github.com/SageSeekerSociety/cheese/cli/internal/apicli"
+	"github.com/SageSeekerSociety/cheese/cli/internal/daemoncmd"
 )
 
 // version is overridable at link time:

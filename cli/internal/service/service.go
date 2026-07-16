@@ -14,7 +14,7 @@ import (
 
 	ksvc "github.com/kardianos/service"
 
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/host"
+	"github.com/SageSeekerSociety/cheese/cli/internal/host"
 )
 
 const (

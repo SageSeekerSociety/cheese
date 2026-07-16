@@ -23,12 +23,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/config"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/link"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/runtime"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/state"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/terminal"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/update"
+	"github.com/SageSeekerSociety/cheese/cli/internal/config"
+	"github.com/SageSeekerSociety/cheese/cli/internal/link"
+	"github.com/SageSeekerSociety/cheese/cli/internal/runtime"
+	"github.com/SageSeekerSociety/cheese/cli/internal/state"
+	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
+	"github.com/SageSeekerSociety/cheese/cli/internal/update"
 )
 
 // LoadConfig reads this machine's config from path.
