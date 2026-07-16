@@ -34,6 +34,8 @@ permissions:
   contents: read
   checks: read
   actions: read
+  # manual-approval opens an issue and waits for an approver to comment
+  issues: write
 
 concurrency:
   group: deploy-production
@@ -71,6 +73,20 @@ jobs:
     environment: production
 
     steps:
+      # Approval gate: GitHub's native environment required-reviewers isn't
+      # available on this plan (private repo), so gate the prod deploy on a human
+      # approving via an auto-opened issue. Skipped for dry-run (it changes
+      # nothing). Approver comments "approve"/"yes"/"lgtm" to proceed.
+      - name: Require manual approval
+        if: ${{ !inputs.dry_run }}
+        uses: trstringer/manual-approval@v1.13.1
+        with:
+          secret: ${{ github.token }}
+          approvers: andylizf
+          minimum-approvals: 1
+          issue-title: "Approve production deploy${{ github.event.release.tag_name && format(' of {0}', github.event.release.tag_name) || '' }}"
+          issue-body: "Deploying to the etrip production box. Comment `approve` to proceed or `deny` to cancel."
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name || inputs.ref }}
