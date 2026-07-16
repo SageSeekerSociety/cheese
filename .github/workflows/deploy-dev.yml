@@ -3,8 +3,9 @@ name: Deploy (dev/test box)
 # Continuous deployment to the cheese dev/test box (cheese-dev-env1-app,
 # 192.168.16.5). The box is on ghg's private network with no public inbound, so
 # GitHub-hosted runners can't reach it — a self-hosted runner (label
-# `cheese-dev`) lives ON the box and pulls jobs outbound. It runs the bare-metal
-# blue-green deploy in deploy/deploy-dev.sh (see DEPLOY.md).
+# `cheese-dev`) lives ON the box and pulls jobs outbound. It runs the shared
+# bare-metal blue-green deploy in deploy/deploy-blue-green.sh (prod uses the same
+# script via deploy-prod.yml, gated). See DEPLOY.md.
 
 on:
   workflow_dispatch: {}
@@ -28,4 +29,4 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Blue-green deploy this commit
-        run: bash deploy/deploy-dev.sh "${{ github.sha }}"
+        run: bash deploy/deploy-blue-green.sh "${{ github.sha }}"

@@ -1,0 +1,103 @@
+name: Deploy (prod RUC box)
+
+# Gated deployment to the prod (RUC) box (cheese-prod-app, 192.168.16.8 →
+# cheese.ruc.edu.cn). Like the dev box it's on ghg's private network with no
+# public inbound, so a self-hosted runner (label `cheese-prod`) lives ON the box
+# and pulls jobs outbound; it runs the SAME bare-metal blue-green script as dev
+# (deploy/deploy-blue-green.sh). The only difference from dev is the gate: prod
+# never auto-deploys — it fires on a published GitHub Release (or a manual
+# dispatch of a specific ref) and requires a human approval before anything runs.
+#
+# Deploys resolve a git ref (a release tag or commit); the script builds that
+# commit from source on the box. This is source-based, unlike etrip which pulls
+# prebuilt images — different runtimes, so prod and etrip keep separate workflows.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag, branch, or commit SHA to deploy"
+        required: true
+        default: main
+      dry_run:
+        description: "Show what would deploy; do not deploy"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  checks: read
+  actions: read
+  # manual-approval opens an issue and waits for an approver to comment
+  issues: write
+
+concurrency:
+  group: deploy-prod-ruc
+  cancel-in-progress: false
+
+jobs:
+  # Gate on a GitHub-hosted runner so a long approval wait never ties up the
+  # box's self-hosted runner. Waits for the release commit's CI (release events
+  # only; a manual dispatch trusts the operator's ref) and then a human approval.
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Docker image build
+        if: github.event_name == 'release'
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'build-backend'
+          wait-interval: 15
+
+      - name: Wait for backend tests
+        if: github.event_name == 'release'
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'test'
+          wait-interval: 15
+
+      # GitHub's native environment required-reviewers isn't available on this
+      # plan (private repo), so gate on a human approving via an auto-opened
+      # issue — the same mechanism the etrip deploy uses. Skipped for dry-run.
+      - name: Require manual approval
+        if: ${{ !inputs.dry_run }}
+        uses: trstringer/manual-approval@v1.13.1
+        with:
+          secret: ${{ github.token }}
+          approvers: andylizf
+          minimum-approvals: 1
+          issue-title: "Approve prod (RUC) deploy${{ github.event.release.tag_name && format(' of {0}', github.event.release.tag_name) || '' }}"
+          issue-body: "Deploying to cheese.ruc.edu.cn (prod RUC box). Comment `approve` to proceed or `deny` to cancel."
+
+  deploy:
+    needs: gate
+    if: ${{ needs.gate.result == 'success' }}
+    runs-on: [self-hosted, cheese-prod]
+    timeout-minutes: 30
+    steps:
+      - name: Check out the deploy script
+        uses: actions/checkout@v4
+
+      - name: Resolve ref to deploy
+        id: ref
+        run: echo "ref=${{ github.event.release.tag_name || inputs.ref }}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy (or dry-run)
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY RUN — would blue-green deploy ref '$REF'. Current state:"
+            ls -l /home/nictheboy/cheese-backend-py
+            readlink -f /home/nictheboy/cheese-backend-py
+            curl -s -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:8081/healthz || true
+          else
+            bash deploy/deploy-blue-green.sh "$REF"
+          fi

@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Automated blue-green deploy for the cheese dev/test box (cheese-dev-env1-app).
+# Automated blue-green deploy for the cheese bare-metal boxes — the dev/test box
+# (cheese-dev-env1-app, auto on merge) and prod (RUC) (cheese-prod-app, gated by
+# a release + human approval). Both boxes share identical paths, service name and
+# health port, so the same script drives both; only the CI trigger differs.
 #
-# Invoked by the self-hosted GitHub Actions runner (user nictheboy) — see
-# .github/workflows/deploy-dev.yml — or by hand. Automates the manual runbook in
-# DEPLOY.md: fresh release dir -> deps -> frontend build -> migrate (backup
+# Invoked by a self-hosted GitHub Actions runner (user nictheboy) — see
+# .github/workflows/deploy-dev.yml and deploy-prod.yml — or by hand. Automates the
+# manual runbook: fresh release dir -> deps -> frontend build -> migrate (backup
 # first) -> atomic symlink swap -> restart -> health check -> auto-rollback.
 #
-# Usage: deploy-dev.sh <ref-or-sha>   (default: main)
+# Requires a permanent swapfile on the box (scripts/ops/setup-permanent-swap.sh)
+# so the vite build has headroom; provisioned once, not per deploy.
+#
+# Usage: deploy-blue-green.sh <ref-or-sha>   (default: main)
 set -euo pipefail
 
 REF="${1:-main}"
@@ -53,19 +59,11 @@ cp "$LINK/backend/.env" "$NEW/backend/.env"
 log "uv sync --frozen"
 ( cd "$NEW/backend" && uv sync --frozen --no-dev )
 
-# --- 4. frontend build (temp swap: 7.8G RAM box OOM-kills vite without it) ---
-ADDED_SWAP=0
-SWAP=/swapfile.deploy
-if [ "$(free -m | awk '/Swap/{print $2}')" -lt 2000 ]; then
-  log "adding 4G temp swap for the frontend build"
-  sudo fallocate -l 4G "$SWAP" && sudo chmod 600 "$SWAP"
-  sudo mkswap "$SWAP" >/dev/null && sudo swapon "$SWAP" && ADDED_SWAP=1
-fi
+# --- 4. frontend build (relies on the box's permanent swap for vite headroom) ---
 log "pnpm install + build"
 ( cd "$NEW/frontend" \
     && pnpm install --frozen-lockfile \
     && NODE_OPTIONS="--max-old-space-size=6144" pnpm build )
-if [ "$ADDED_SWAP" = 1 ]; then sudo swapoff "$SWAP"; sudo rm -f "$SWAP"; log "removed temp swap"; fi
 [ -f "$NEW/frontend/dist/index.html" ] || fail "frontend build produced no dist/index.html"
 
 # --- 5. migrate (back up the DB first, only if migrations are pending) ---
