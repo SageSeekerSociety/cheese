@@ -1,5 +1,14 @@
 name: Claude Code Review
 
+# Two ways Claude engages with a PR:
+#  - auto-review: on every PR open/update, Claude reviews the diff automatically.
+#    This needs a `prompt` — without one, claude-code-action on a pull_request
+#    event just waits for an "@claude" mention that never comes and exits doing
+#    nothing (a green check that never actually reviewed).
+#  - interactive: commenting "@claude ..." on a PR invokes Claude with that ask.
+#    This path must NOT carry a prompt, or it would ignore what the human wrote.
+# They're split into two jobs so each is unambiguous.
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -7,24 +16,45 @@ on:
     types: [created]
 
 jobs:
-  claude-review:
-    if: >
-      (github.event_name == 'pull_request') ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       contains(github.event.comment.body, '@claude'))
+  auto-review:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       issues: write
       id-token: write
-
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: "true"
+          prompt: |
+            Review this pull request. Focus on real runtime bugs — crashes, data
+            corruption, security holes, incorrect behavior — not style nits or
+            theoretical concerns. Follow the repo's conventions in CLAUDE.md and
+            the checklist in .claude/skills/cheese-py-code-review.md. Leave concise,
+            actionable inline comments on specific lines; if you find nothing
+            substantive, say so in one line rather than inventing feedback.
 
+  interactive:
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '@claude')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
