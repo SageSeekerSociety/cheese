@@ -35,9 +35,16 @@ WORKDIR /app
 FROM base AS deps
 WORKDIR /app
 
-# Copy dependency files and srp_rs source (needed for build)
-COPY pyproject.toml uv.lock README.md ./
+# Copy dependency files and srp_rs source (needed for build). `.python-version`
+# is REQUIRED here: pyproject requires-python is ">=3.13", so without the pin uv
+# fetches the newest satisfying interpreter — now Python 3.14, which pyo3 0.24
+# (srp_rs) refuses to build against. The pin keeps uv on 3.13.
+COPY pyproject.toml uv.lock README.md .python-version ./
 COPY srp_rs/ ./srp_rs/
+
+# Belt-and-braces: even if .python-version is ever dropped, hold uv on 3.13 so
+# the srp_rs / pyo3 native build can't silently break on a newer interpreter.
+ENV UV_PYTHON=3.13
 
 # Install dependencies using uv (includes building srp_rs from source)
 # 如果有额外下载慢的依赖，也可以给 uv 加镜像源：--index-url 或配置 .netrc
