@@ -2,9 +2,12 @@
 Description=Run the cheese DB backup every 6 hours
 
 [Timer]
-OnCalendar=*-*-* 00,06,12,18:00:00
+# Hourly: the DB is ~19 MB and a dump takes ~1s, so this is the pragmatic RPO
+# floor (max ~1h data loss) achievable client-side. True second-level PITR needs
+# WAL archiving on the PG host itself (see deploy/README-backup.md).
+OnCalendar=*-*-* *:00:00
 # Spread load off the exact hour; still runs if the box was down at the mark.
-RandomizedDelaySec=300
+RandomizedDelaySec=120
 Persistent=true
 
 [Install]

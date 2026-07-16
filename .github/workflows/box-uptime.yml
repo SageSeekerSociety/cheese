@@ -1,0 +1,31 @@
+name: Dev box uptime check
+
+# External "is the dev box alive?" monitor. The box is on a private network with
+# no public inbound, so we can't probe it directly — but its self-hosted runner
+# polls GitHub outbound every few seconds, so the runner's own online/offline
+# status IS a heartbeat. This job runs on a GitHub-HOSTED runner (so it still
+# works when the box is down), checks the runner status via the API, and fails
+# (-> GitHub emails repo admins) if the box's runner has gone offline.
+
+on:
+  schedule:
+    - cron: '0 * * * *' # hourly (private repo — keep Actions minutes modest)
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Alert if the cheese-dev runner is offline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status="$(gh api "/repos/${{ github.repository }}/actions/runners" \
+            --jq '.runners[] | select(.name=="cheese-dev-env1") | .status')"
+          echo "cheese-dev-env1 runner status: ${status:-<not found>}"
+          if [ "$status" != "online" ]; then
+            echo "::error::dev box runner is '${status:-missing}' — the box may be down (or its runner service stopped)"
+            exit 1
+          fi
+          echo "dev box is up (runner online)"
