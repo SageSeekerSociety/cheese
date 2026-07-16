@@ -1,11 +1,12 @@
-name: Dev box uptime check
+name: Box uptime check
 
-# External "is the dev box alive?" monitor. The box is on a private network with
-# no public inbound, so we can't probe it directly — but its self-hosted runner
-# polls GitHub outbound every few seconds, so the runner's own online/offline
-# status IS a heartbeat. This job runs on a GitHub-HOSTED runner (so it still
-# works when the box is down), checks the runner status via the API, and fails
-# (-> GitHub emails repo admins) if the box's runner has gone offline.
+# External "are the bare-metal boxes alive?" monitor. The dev and prod (RUC)
+# boxes are on a private network with no public inbound, so we can't probe them
+# directly — but each runs a self-hosted runner that polls GitHub outbound every
+# few seconds, so a runner's online/offline status IS that box's heartbeat. This
+# job runs on a GitHub-HOSTED runner (so it still works when a box is down),
+# checks each runner via the API, and fails (-> GitHub emails repo admins) if any
+# box's runner has gone offline.
 
 on:
   schedule:
@@ -17,15 +18,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Alert if the cheese-dev runner is offline
+      - name: Alert if any box runner is offline
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          status="$(gh api "/repos/${{ github.repository }}/actions/runners" \
-            --jq '.runners[] | select(.name=="cheese-dev-env1") | .status')"
-          echo "cheese-dev-env1 runner status: ${status:-<not found>}"
-          if [ "$status" != "online" ]; then
-            echo "::error::dev box runner is '${status:-missing}' — the box may be down (or its runner service stopped)"
-            exit 1
-          fi
-          echo "dev box is up (runner online)"
+          # runner name -> box it heartbeats for
+          declare -A BOXES=(
+            [cheese-dev-env1]="dev/test box (192.168.16.5)"
+            [cheese-prod-app]="prod RUC box (192.168.16.8, cheese.ruc.edu.cn)"
+          )
+          runners="$(gh api "/repos/${{ github.repository }}/actions/runners")"
+          fail=0
+          for name in "${!BOXES[@]}"; do
+            status="$(echo "$runners" | jq -r --arg n "$name" '.runners[] | select(.name==$n) | .status')"
+            echo "$name (${BOXES[$name]}): ${status:-<not found>}"
+            if [ "$status" != "online" ]; then
+              echo "::error::${BOXES[$name]} runner '$name' is '${status:-missing}' — box may be down or its runner service stopped"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] && echo "all boxes up (runners online)"
+          exit "$fail"

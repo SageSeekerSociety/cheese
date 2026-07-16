@@ -13,7 +13,7 @@ separate data — don't conflate them.
 | Env | Public | App host | DB | Stack | Deploys via |
 |---|---|---|---|---|---|
 | **dev / test** | xiaoyuer's test domain | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | bare-metal (systemd + local `.venv`) | **auto on merge to `main`** |
-| **prod (RUC)** | `cheese.ruc.edu.cn` | `cheese-prod-app` (192.168.16.8, ghg private net) | `cheese-prod-postgresql` (192.168.16.10) | bare-metal (systemd + local `.venv`) | manual today (see gaps) |
+| **prod (RUC)** | `cheese.ruc.edu.cn` | `cheese-prod-app` (192.168.16.8, ghg private net) | `cheese-prod-postgresql` (192.168.16.10) | bare-metal (systemd + local `.venv`) | **published GitHub Release → approval** |
 | **etrip** | `etrip.cn` | `etrip` (8.217.1.152, Aliyun HK) | in-container `cheese_prod_postgres` (paradedb) + `cheesex-pg` | Docker Compose (`/opt/cheese-deploy`) | **published GitHub Release → approval** |
 
 Notes:
@@ -37,9 +37,21 @@ private on GHCR; boxes pull with their existing GHCR auth.
 ### dev — continuous deploy
 
 Merge to `main` → `deploy-dev.yml` runs on the **self-hosted runner on the dev
-box** (label `cheese-dev`) → `deploy/deploy-dev.sh` does a blue-green bare-metal
-deploy (fresh release dir, build, migrate-with-backup, atomic symlink swap,
-health check, auto-rollback). No human step.
+box** (label `cheese-dev`) → `deploy/deploy-blue-green.sh` does a blue-green
+bare-metal deploy (fresh release dir, build, migrate-with-backup, atomic symlink
+swap, health check, auto-rollback). No human step.
+
+### prod (RUC) — release-gated, same script as dev
+
+Publishing a GitHub Release (or a manual `workflow_dispatch`) → `deploy-prod.yml`:
+gate on the release commit's CI, then **a human approval** (auto-opened issue,
+same mechanism as etrip), then the **self-hosted runner on the prod box** (label
+`cheese-prod`) runs the *same* `deploy/deploy-blue-green.sh` as dev. prod never
+auto-deploys. Uploaded files (赛题 PDFs) live in a shared dir
+(`/home/nictheboy/shared/uploads`) outside the release tree so symlink swaps
+never touch them; `STORAGE_LOCAL_PATH` in prod's `.env` is the absolute path to
+it (see `deploy/.env.prod.example`). `workflow_dispatch` has a `dry_run` input
+that prints state without deploying.
 
 ### etrip — release-gated
 
@@ -98,8 +110,6 @@ keep the old name **on purpose** because changing them breaks or loses data:
 
 ## Known gaps / follow-ups
 
-- **prod (RUC) has no CD** — it's deployed by hand. Wiring it into the same
-  release-gated flow is pending.
 - **PITR** (second-level RPO) needs OS access to the PG hosts — blocked.
 - **Off-site immutability**: R2 has no object-lock/versioning, and the box's
   token can delete objects, so a compromised box could wipe the off-site copies.
