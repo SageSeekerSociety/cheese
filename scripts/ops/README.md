@@ -101,6 +101,6 @@ ssh etrip 'cd /opt/cheesex/backend/sandbox && docker build -t cheesex-agent-sand
 - **apt 源**: 原内网源 mirrors.cloud.aliyuncs.com 失效，已切 mirrors.aliyun.com
   （原文件备份 /etc/apt/sources.list.bak-cheesex）。
 - **老栈** (只读侦察结论): `/opt/cheese-deploy/{deploy.sh,docker-compose.prod.yml}`，
-  镜像 ghcr.io/sageseekersociety/cheese-backend-py/{backend,frontend}:main，
+  镜像 ghcr.io/sageseekersociety/cheese/{backend,frontend}:main，
   restart=unless-stopped。另有 7 周前退出的 cheese_py_* / staging_* 容器（未清理）。
 - 本手册与 ops 脚本双份维护: 服务器 `/opt/cheesex/ops/` ↔ 仓库 `scripts/ops/`。

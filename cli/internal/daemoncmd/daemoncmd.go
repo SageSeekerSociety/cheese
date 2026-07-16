@@ -25,12 +25,12 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/auth"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/config"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/service"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/state"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/ui"
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/update"
+	"github.com/SageSeekerSociety/cheese/cli/internal/auth"
+	"github.com/SageSeekerSociety/cheese/cli/internal/config"
+	"github.com/SageSeekerSociety/cheese/cli/internal/service"
+	"github.com/SageSeekerSociety/cheese/cli/internal/state"
+	"github.com/SageSeekerSociety/cheese/cli/internal/ui"
+	"github.com/SageSeekerSociety/cheese/cli/internal/update"
 )
 
 // Commands returns every lifecycle command to add to the `cheese` root.

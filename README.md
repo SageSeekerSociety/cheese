@@ -16,8 +16,8 @@ Monorepo for the Cheese community platform — Python/FastAPI backend + Vue 3 fr
 
 ```bash
 # 1. Clone
-git clone https://github.com/SageSeekerSociety/cheese-backend-py.git
-cd cheese-backend-py
+git clone https://github.com/SageSeekerSociety/cheese.git
+cd cheese
 
 # 2. Configure environment
 cp backend/.env.example backend/.env    # edit if needed
@@ -34,7 +34,7 @@ Open http://localhost:3000 in your browser.
 ## Project Structure
 
 ```
-cheese-backend-py/
+cheese/
 ├── backend/                 # Python/FastAPI backend
 │   ├── app/                 # source code (routes → services → repositories → models)
 │   ├── tests/               # unit + integration + contract tests

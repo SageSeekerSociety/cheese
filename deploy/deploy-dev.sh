@@ -13,7 +13,7 @@ REF="${1:-main}"
 BASE="/home/nictheboy"
 RELEASES="$BASE/releases"
 LINK="$BASE/cheese-backend-py"
-REPO="https://github.com/SageSeekerSociety/cheese-backend-py.git"
+REPO="https://github.com/SageSeekerSociety/cheese.git"
 HEALTH_URL="http://127.0.0.1:8081/healthz"
 SERVICE="cheese-backend-py.service"
 

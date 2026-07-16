@@ -33,7 +33,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
-	"github.com/SageSeekerSociety/cheese-backend-py/cli/internal/config"
+	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 )
 
 const apiName = "cheese"
