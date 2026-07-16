@@ -14,9 +14,7 @@ description: >
 Review changed code against cheese-backend-py project standards.
 
 项目基础规范：@CLAUDE.md
-前置检查清单（pull 后必读）：@reference/post-pull-checks.md
-并行审查流程：@reference/parallel-review.md
-同步规则（每次改前必读！）：@reference/sync-rule.md
+(git pull 后的检查见 `post-pull` skill;CLAUDE.md ↔ .claude 同步规则见 CLAUDE.md 的 Workflow Preferences。)
 
 ## Review Workflow
 
@@ -40,6 +38,22 @@ Review changed code against cheese-backend-py project standards.
    - When the agent reports back: if any step FAIL, report "Tests failed — commit blocked".
      If PASS, note "All checks passed" in the review summary.
 5. Report findings grouped by severity. If step 4 failed, only report Critical: "Tests failed — commit blocked".
+
+### 串行模式（无后台能力的 AI:Copilot / Cursor / Windsurf 等）
+
+没有后台 agent 时,直接跑脚本(输出只有 ~10 行,不浪费 token),边等边读 diff:
+
+```bash
+bash .claude/scripts/check.sh   # 或 task check —— 输出 3 行 PASS/FAIL 结果
+```
+
+1. 先跑 `task check`(~30 秒起),等结果的同时读 `git diff` 看改动范围。
+2. 收到结果后只 review 改动文件 + 对照规范。
+
+**关键原则(两种模式通用):**
+- 不要在测试跑完前下结论。
+- 测试 FAIL 时,审查结论必须含 "Tests failed — commit blocked"。
+- 代码质量 > 速度,但两者都要。
 
 ## Review Checklist
 

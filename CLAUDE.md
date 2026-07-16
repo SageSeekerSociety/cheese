@@ -7,19 +7,21 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright
 ```
 .claude/
 ├── agents/
-│   └── check-runner.md              # Background test runner (parallel to review)
-├── skills/
-│   └── cheese-py-code-review.md     # Code review checklist and workflow
+│   └── check-runner.md                   # Background test runner (parallel to review)
+├── skills/                               # on-demand skills (dir form: <name>/SKILL.md)
+│   ├── cheese-py-code-review/SKILL.md    # Code review checklist + workflow (parallel & serial)
+│   ├── post-pull/SKILL.md                # Post-git-pull checks (migrations, deps, health)
+│   └── fusion-dev/SKILL.md               # Run/reset/verify the fusion demo harness
 ├── scripts/
-│   ├── check.sh                     # ruff + pyright + pytest, one command
-│   ├── post-pull.sh                 # Post-git-pull checks (migrations, deps, health)
-│   └── pre-commit                   # Copy to .git/hooks/ to block commits on check failure
-├── reference/
-│   ├── post-pull-checks.md          # Detailed post-pull checklist
-│   ├── parallel-review.md           # Review workflow (parallel + serial modes)
-│   └── sync-rule.md                 # CLAUDE.md ↔ .claude/ sync rules (highest priority)
-└── settings.json                    # Permissions allowlist for common commands
+│   ├── check.sh                          # ruff + pyright + pytest, one command
+│   ├── post-pull.sh                      # Post-git-pull checks (migrations, deps, health)
+│   └── pre-commit                        # Copy to .git/hooks/ to block commits on check failure
+└── settings.json                         # Permissions allowlist for common commands
 ```
+
+Procedural guidance lives in **skills** (loaded on demand), not always-on prose:
+review → `cheese-py-code-review`, post-pull → `post-pull`. This file holds the
+always-relevant project conventions below.
 
 ## Development Commands
 
@@ -103,5 +105,9 @@ The root-level `reference/` directory (gitignored) contains original implementat
 - Commit messages in English, concise, focused on "why".
 - After making changes, always run `task check` to verify.
 - After `git pull`, run `bash .claude/scripts/post-pull.sh`.
-- **CLAUDE.md ↔ .claude/**: these are peer project specifications. When updating one, sync the other. See `.claude/reference/sync-rule.md`.
 - **All commits go through PR**: never commit directly to main.
+- **CLAUDE.md ↔ .claude/ stay in sync** (peer project specs — the highest-priority rule): any change to one must be mirrored in the other, in the same change.
+  - New/changed `.claude/skills|agents|scripts` → update the Directory Structure tree above.
+  - Changed a convention here (Python/API/testing/datetime/security) → update the matching checklist in `cheese-py-code-review` skill.
+  - Changed a check item in a skill → update the matching CLAUDE.md section.
+  - Self-check after editing: does the tree list every subdir/file? Are the conventions identical on both sides?
