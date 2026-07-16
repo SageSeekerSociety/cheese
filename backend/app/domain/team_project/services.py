@@ -27,7 +27,14 @@ def _ms(dt: datetime) -> int:
 
 
 def _from_ms(ms: int) -> datetime:
-    return datetime.fromtimestamp(ms / 1000, UTC)
+    # A caller-supplied epoch-ms outside datetime's representable range (e.g. a
+    # bad date-picker value) must be a clean 400, not an unhandled ValueError
+    # that surfaces as a 500. datetime.fromtimestamp raises ValueError
+    # ("year N is out of range") / OverflowError / OSError on extreme inputs.
+    try:
+        return datetime.fromtimestamp(ms / 1000, UTC)
+    except (ValueError, OverflowError, OSError) as exc:
+        raise BadRequestError(f"Timestamp out of range: {ms}") from exc
 
 
 class TeamProjectService:
