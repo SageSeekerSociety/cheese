@@ -38,6 +38,26 @@ size="$(du -h "$OUT" | cut -f1)"
 log "OK: $OUT ($size, ~$tables tables) verified"
 date +%s > "$BACKUP_DIR/.last-success"
 
+# Off-site copy (3-2-1): push the verified dump to Cloudflare R2 if configured.
+# Credentials live in ~/ops/r2.env (chmod 600, NOT in git). Absent -> skip
+# quietly; the local dump on a separate host already counts as a success, so a
+# missing/failed off-site leg must not fail the whole backup.
+R2_ENV="${CHEESE_R2_ENV:-/home/nictheboy/ops/r2.env}"
+R2_UPLOAD="${CHEESE_R2_UPLOAD:-/home/nictheboy/ops/r2-upload.py}"
+VENV_PY="${CHEESE_VENV_PY:-/home/nictheboy/cheese-backend-py/backend/.venv/bin/python}"
+if [ -f "$R2_ENV" ] && [ -f "$R2_UPLOAD" ] && [ -x "$VENV_PY" ]; then
+  # shellcheck disable=SC1090
+  set -a; . "$R2_ENV"; set +a
+  if "$VENV_PY" "$R2_UPLOAD" "$OUT" >>"$LOG" 2>&1; then
+    log "OK: off-site R2 upload done"
+    date +%s > "$BACKUP_DIR/.last-offsite-success"
+  else
+    log "WARN: off-site R2 upload FAILED (local backup still OK)"
+  fi
+else
+  log "note: R2 off-site not configured ($R2_ENV / $R2_UPLOAD missing) — skipping"
+fi
+
 # Retention: drop dumps older than RETENTION_DAYS (19MB DB -> pennies of disk).
 find "$BACKUP_DIR" -maxdepth 1 -name 'cheese-*.dump' -type f -mtime "+$RETENTION_DAYS" \
   -print -delete | while read -r f; do log "pruned old backup $f"; done
