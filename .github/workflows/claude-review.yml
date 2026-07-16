@@ -36,7 +36,7 @@ jobs:
             Review this pull request. Focus on real runtime bugs — crashes, data
             corruption, security holes, incorrect behavior — not style nits or
             theoretical concerns. Follow the repo's conventions in CLAUDE.md and
-            the checklist in .claude/skills/cheese-py-code-review.md. Leave concise,
+            the checklist in .claude/skills/cheese-py-code-review/SKILL.md. Leave concise,
             actionable inline comments on specific lines; if you find nothing
             substantive, say so in one line rather than inventing feedback.
 
