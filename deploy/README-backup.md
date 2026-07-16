@@ -1,17 +1,55 @@
-# Backup & disaster recovery — cheese dev/test box
+# Backup & disaster recovery — cheese boxes
+
+The same scripts run on every environment; only `~/ops/r2.env` (the R2 prefix)
+and which host they run on differ. Both the dev/test box and the production box
+share this setup.
+
+| Box | App host | DB host | R2 prefixes |
+|---|---|---|---|
+| dev/test | `cheese-dev-env1-app` (192.168.16.5) | `cheese-dev-env1-postgresql` (192.168.16.7) | `db/` |
+| **production** (`cheese.ruc.edu.cn`) | `cheese-prod-app` (192.168.16.8) | `cheese-prod-postgresql` (192.168.16.10) | `prod-db/`, `prod-uploads/` |
 
 ## What runs
 
 | Piece | Where | Cadence |
 |---|---|---|
-| `db-backup.sh` (pg_dump -Fc + verify + prune + off-site) | on the box, `~/ops/db-backup.sh` | hourly (`cheese-db-backup.timer`) |
-| `r2-upload.py` (off-site copy to Cloudflare R2) | on the box, `~/ops/r2-upload.py` | each backup, right after local verify |
+| `db-backup.sh` (pg_dump -Fc + verify + prune + off-site) | on the box, `~/ops/db-backup.sh` (`cheese-db-backup.timer`) | hourly, :00 |
+| `r2-upload.py` (off-site DB dump copy to R2) | on the box, `~/ops/r2-upload.py` | each DB backup, right after local verify |
+| `r2-sync-uploads.py` (incremental mirror of `uploads/` to R2) | on the box, `~/ops/r2-sync-uploads.py` (`cheese-uploads-mirror.timer`) | hourly, :30 |
 | Backup freshness alert | `.github/workflows/backup-freshness.yml`, on-box runner | daily; fails if last backup > 26h |
 | Box-down alert | `.github/workflows/box-uptime.yml`, GitHub-hosted | hourly; fails if the box's runner is offline |
 
 Backups: `~/backups/cheese-<ts>.dump` (compressed custom format), 30-day retention.
-The DB (`cheese-dev-env1-postgresql`, 192.168.16.7) is a **separate host**, so these
-dumps already survive a DB-host loss.
+Each DB is on a **separate host** from its app box, so the DB dumps already
+survive a DB-host loss; the off-site R2 copy survives loss of the app box too.
+
+### uploads/ (STORAGE_TYPE=local user files, e.g. PDF 赛题)
+
+Production stores uploaded files on the app box's disk (`backend/uploads/`, not
+in object storage). `r2-sync-uploads.py` mirrors them to R2 `prod-uploads/`
+**additively** — only new/changed files upload each run, and nothing is deleted
+remotely, so a file removed locally stays backed up. First run mirrors
+everything; subsequent runs upload only newly-added files (new 赛题 land off-site
+within the hour).
+
+Restore uploads (run on the box, needs `~/ops/r2.env`):
+
+```bash
+set -a; . ~/ops/r2.env; set +a
+~/cheese-backend-py/backend/.venv/bin/python - <<'PY'
+import os, boto3
+s3 = boto3.client("s3", endpoint_url=os.environ["R2_ENDPOINT"],
+    aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"], region_name="auto")
+dst = os.path.expanduser("~/cheese-backend-py/backend/uploads")
+for page in s3.get_paginator("list_objects_v2").paginate(Bucket=os.environ["R2_BUCKET"], Prefix="prod-uploads/"):
+    for o in page.get("Contents", []):
+        rel = o["Key"].split("/", 1)[1]
+        p = os.path.join(dst, rel); os.makedirs(os.path.dirname(p), exist_ok=True)
+        s3.download_file(os.environ["R2_BUCKET"], o["Key"], p)
+        print("restored", rel)
+PY
+```
 
 ### Off-site (3-2-1)
 
