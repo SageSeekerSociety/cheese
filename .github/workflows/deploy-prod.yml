@@ -83,14 +83,21 @@ jobs:
     runs-on: [self-hosted, cheese-prod]
     timeout-minutes: 30
     steps:
-      - name: Check out the release/ref to deploy (for its sha + deploy scripts)
+      # Deploy TOOLING (deploy-docker.sh + compose) always comes from the DEFAULT
+      # branch — release branches/tags don't carry it (checking out the release
+      # ref made the job fail with "deploy/deploy-docker.sh: No such file").
+      - name: Check out deploy tooling (default branch)
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.release.tag_name || inputs.ref }}
 
-      - name: Resolve image tag (monorepo commit sha — built for both images)
+      # The deployed REF only determines WHICH image sha to run. Fetch it and
+      # peel to the commit (annotated tags point at a tag object, not the commit).
+      - name: Resolve image tag from the release/ref (monorepo commit sha)
         id: img
-        run: echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          REF: ${{ github.event.release.tag_name || inputs.ref }}
+        run: |
+          git fetch --depth=1 origin "$REF"
+          echo "sha=$(git rev-parse --short=7 'FETCH_HEAD^{commit}')" >> "$GITHUB_OUTPUT"
 
       - name: Deploy (or dry-run)
         env:
