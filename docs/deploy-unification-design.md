@@ -38,14 +38,34 @@ release-gated with human approval.
 - **No user-visible downtime**; every step must be rollback-able, and bare-metal
   stays as an instant fallback until the Docker model is proven.
 
+## The template is etrip's compose (not a generic best-practice stack)
+
+etrip already runs these images under Compose (`deploy/docker-compose.prod.yml`),
+so it — not a blog's reference stack — is the template. What it shows:
+
+- **`frontend` image bundles its own nginx** and publishes `:80`: it serves the
+  SPA and reverse-proxies `/api` + `/uploads` to `backend` (which is only bound to
+  `127.0.0.1:8081`, never public — proof the frontend container does the routing).
+  → **No separate nginx service, and no host nginx, is needed.**
+- **Agent runs as on-demand SIBLING containers** via the host `docker.sock` +
+  `SANDBOX_IMAGE` env, not a long-running "sandbox" service. → the `backend`
+  service carries the `docker.sock` mount + `SANDBOX_IMAGE`, and agent activity is
+  gated per box by `.env`.
+- etrip's compose also contains `postgres` + `valkey` services. **dev/prod use the
+  same compose MINUS those two** — their PG/Redis are external ghg hosts, reached
+  via `DATABASE_URL` / redis URL (the DB-external decision above).
+
 ## Target architecture (per box)
 
 ```
 docker compose  →  pull ghcr.io/.../cheese/{backend,frontend,sandbox}:<sha>
-                   backend (uvicorn)  ── DATABASE_URL ──▶ external managed PG
-                   frontend (static)  ◀── host nginx (keeps cert/domain/OAuth)
-                   sandbox (agent, where enabled)
-                   uploads: named volume  →  backend STORAGE_LOCAL_PATH
+   edge (rucfd/ghg APISIX, public TLS)  ──▶  frontend :80  (nginx in the image)
+                                              ├── /        SPA static
+                                              ├── /api      ─▶ backend :8081
+                                              └── /uploads  ─▶ backend :8081
+   backend  ── DATABASE_URL ─▶ external ghg PG ;  ── redis URL ─▶ external ghg Redis
+            ── docker.sock + SANDBOX_IMAGE ─▶ on-demand sandbox containers (if agent on)
+   uploads: named volume (or bind to ~/shared/uploads) → backend STORAGE_LOCAL_PATH
 ```
 
 - **Deploy = `docker compose pull <sha> && up -d && migrate`.** Rollback = point
@@ -53,10 +73,11 @@ docker compose  →  pull ghcr.io/.../cheese/{backend,frontend,sandbox}:<sha>
 - **CPU limiting (if any) uses `cpus:` (CFS quota), NOT `cpuset`** — the spike
   showed `cpuset` triggers the (benign) ONNX affinity errors while `cpus:` quota
   is clean.
-- **nginx stays on the host** (recommended): RUC's TLS cert, domain, and OAuth
-  callback config already live in the host nginx; keep it and point it at the
-  backend container's published port. Less churn, no cert migration. (Revisit
-  containerizing nginx later if we want it uniform.)
+- **Public TLS is unchanged** — it terminates at the RUC/ghg edge (rucfd →
+  APISIX), never on the box. The box only ever spoke plain HTTP behind the edge;
+  containerizing changes nothing here, so there is **no certificate to migrate**.
+  The edge just points at the frontend container's published port instead of the
+  old host nginx.
 
 ## What's reused (not thrown away)
 
@@ -136,15 +157,33 @@ repoint `DATABASE_URL`), a distinct risk that must not ride along with app
 containerization. Plan: **unify the app tier first; externalize etrip's DB as a
 separate later step.** Tracked as tech debt, not a blocker for this design.
 
-## Open questions (answer before building)
+## Decisions (were open questions — now resolved)
 
-1. ~~**GHCR pull from ghg boxes**~~ — **VERIFIED** (see Migration plan step 0):
-   dev box pulls `cheese/backend:main` fine (6GB/144s, no mirror needed).
-2. **nginx** — keep on host (recommended) or containerize for uniformity?
-3. **sandbox/agent container** — needed on dev/prod? (dev has the agent disabled
-   today.)
-4. **Decommission timeline** — how many green Docker deploys before we remove the
-   bare-metal service + `deploy-blue-green.sh`?
+1. **GHCR pull from ghg boxes** — **VERIFIED** (Migration plan step 0): dev box
+   pulls `cheese/backend:main` fine (6GB/144s, no mirror needed).
+2. **nginx** — **DECIDED: no separate/host nginx.** The `frontend` image already
+   bundles nginx and does the `/api`+`/uploads` reverse-proxy (etrip proves it);
+   public TLS stays at the edge. The host nginx on dev/prod is retired; the edge
+   points at the frontend container's port. (Generic best practice says
+   "containerize nginx + certbot", but that's for boxes that terminate their own
+   Let's Encrypt TLS — ours don't; the edge does. Right-sized to our reality.)
+3. **sandbox/agent** — **DECIDED: no standalone service.** `backend` gets the
+   `docker.sock` mount + `SANDBOX_IMAGE` env (etrip's pattern); the agent spawns
+   sandbox containers on demand only when a box's `.env` enables it. Mirrors today
+   (dev off, prod/etrip per config) — no behavior change.
+4. **Decommission timeline** — **DECIDED: per box, keep bare-metal until the
+   Docker model has ≥5 real green deploys AND ≥2 weeks clean on that box, then
+   remove the systemd service + (once all boxes are cut over) `deploy-blue-green.sh`.**
+   This is a runtime-MODEL migration (higher risk than a routine version bump), so
+   the soak is longer than the usual 30min–1-day blue-green bake; dev goes first
+   and earns the confidence before prod/etrip.
+
+## Remaining input needed from the user
+
+- **Approve the direction** (full-Docker unification on the etrip template) and the
+  4 decisions above.
+- **etrip DB externalization** — agreed as deferred tech debt (separate data
+  migration, after app unification). Confirm that sequencing is acceptable.
 
 ## Rollback posture
 
