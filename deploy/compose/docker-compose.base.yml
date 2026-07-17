@@ -1,0 +1,56 @@
+# Unified app-tier stack — backend + frontend, deploy-by-sha.
+#
+# This is the SHARED core for every environment. On its own it is the dev/prod
+# (RUC) shape: the stateless app tier only, connecting to an EXTERNAL Postgres
+# and Redis via the box's own backend/.env (DATABASE_URL / REDIS_URL) — the
+# standard "hybrid" pattern (containerize the app, keep the stateful DB external).
+#
+# etrip layers docker-compose.etrip.yml on top to ADD its in-container postgres +
+# valkey and the agent sandbox wiring. See deploy/deploy-docker.sh.
+#
+# Images are pinned by commit sha via IMAGE_TAG (build.yml builds one set per
+# commit). The frontend image bundles nginx and reverse-proxies /api + /uploads
+# to `backend` (compose service name), so no separate/host nginx is needed.
+services:
+  backend:
+    image: ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    environment:
+      # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
+      # so deploys never touch them (the 赛题 PDFs on prod).
+      - STORAGE_LOCAL_PATH=/data/uploads
+    volumes:
+      - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/healthz"]
+      interval: 15s
+      timeout: 8s
+      start_period: 40s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    image: ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:80"]
+      interval: 15s
+      timeout: 8s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
