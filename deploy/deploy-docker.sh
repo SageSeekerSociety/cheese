@@ -17,6 +17,13 @@
 #   PROJECT            compose project name              (default cheese)
 set -euo pipefail
 
+# Box-local deploy overrides (chmod-600, NOT in git — same pattern as ~/ops/r2.env):
+# e.g. prod (RUC) pins its release images (BACKEND_IMAGE/FRONTEND_IMAGE, old
+# pre-rename path for v0.16.4) and its WS-edge override (VITE_CONNECTOR_WS_BASE).
+if [ -f "$HOME/ops/deploy.env" ]; then
+  set -a; . "$HOME/ops/deploy.env"; set +a
+fi
+
 SHA="${1:?usage: deploy-docker.sh <image-sha> [compose-file]}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE="${2:-$HERE/compose/docker-compose.base.yml}"
