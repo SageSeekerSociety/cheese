@@ -28,7 +28,10 @@ release-gated with human approval.
 
 - **The database is never containerized.** RUC's DB is a separate managed host
   (`192.168.16.10`), dev's is `192.168.16.7`. App containers connect over
-  `DATABASE_URL`. (etrip runs its own in-container PG today — see open question.)
+  `DATABASE_URL`. This is the **industry-standard "hybrid" pattern** (containerize
+  the stateless app tier; keep the stateful DB external) — see "Database stays
+  external" below; it's not a local quirk. (etrip runs its own in-container PG
+  today — the anti-pattern this avoids; see the DB section.)
 - **Uploads (赛题 PDFs) must survive every deploy** — they move to a named volume
   (or bind-mount to the existing `/home/nictheboy/shared/uploads`), never inside
   an image or a release dir.
@@ -109,14 +112,38 @@ logs, limit CPU with `cpus:` not `cpuset`. No app-code change required.
    rollback = restart the systemd service (kept until confident).
 3. **etrip.** Already Docker; align its compose to the unified template.
 
+## Database stays external (settled — the standard pattern, not a local quirk)
+
+Running a production database in a container is broadly advised **against**:
+containers are built for stateless, disposable workloads, while a DB is stateful
+and interruption-sensitive. The recommended production shape is the **"hybrid
+pattern": containerize the stateless app tier, keep the DB external** (managed
+service or a dedicated host) — dominant in regulated/compliance contexts
+precisely because it sidesteps stateful-in-orchestration complexity. Sources:
+[vsupalov](https://vsupalov.com/database-in-docker/),
+[Docker's own PostgreSQL guide](https://docs.docker.com/guides/postgresql/),
+[Baeldung](https://www.baeldung.com/ops/docker-databases).
+
+So dev + prod (RUC) are already correct — their PG lives on separate hosts and
+the app connects via `DATABASE_URL`. **etrip's in-container PG is the anti-pattern
+this avoids, not a second valid option.** Ideal end state: externalize etrip's PG
+too (Aliyun RDS, or Postgres directly on the host).
+
+**But that is deferred and decoupled from this work.** etrip's in-container PG is
+live, holds data, and is already backed up (the etrip-backup job covers it).
+Externalizing it is a **stateful data migration** (dump → external instance →
+repoint `DATABASE_URL`), a distinct risk that must not ride along with app
+containerization. Plan: **unify the app tier first; externalize etrip's DB as a
+separate later step.** Tracked as tech debt, not a blocker for this design.
+
 ## Open questions (answer before building)
 
-1. **GHCR pull from ghg boxes** — can dev/prod pull the private images? (verify)
+1. ~~**GHCR pull from ghg boxes**~~ — **VERIFIED** (see Migration plan step 0):
+   dev box pulls `cheese/backend:main` fine (6GB/144s, no mirror needed).
 2. **nginx** — keep on host (recommended) or containerize for uniformity?
-3. **etrip's in-container PG** — leave as-is, or also externalize for uniformity?
-4. **sandbox/agent container** — needed on dev/prod? (dev has the agent disabled
+3. **sandbox/agent container** — needed on dev/prod? (dev has the agent disabled
    today.)
-5. **Decommission timeline** — how many green Docker deploys before we remove the
+4. **Decommission timeline** — how many green Docker deploys before we remove the
    bare-metal service + `deploy-blue-green.sh`?
 
 ## Rollback posture
