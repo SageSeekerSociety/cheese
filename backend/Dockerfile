@@ -46,6 +46,14 @@ COPY srp_rs/ ./srp_rs/
 # the srp_rs / pyo3 native build can't silently break on a newer interpreter.
 ENV UV_PYTHON=3.13
 
+# uv downloads a managed CPython and the venv's bin/python SYMLINKS to it. The
+# production stage is `FROM base` (system python 3.11 only) and copies just the
+# venv, so that symlink would dangle -> `exec .../uvicorn: no such file or
+# directory` at startup. Install the managed interpreter to a fixed, copyable
+# path so production can COPY it too. (UV_LINK_MODE=copy does NOT fix this — it
+# only affects package files, not the interpreter symlink.)
+ENV UV_PYTHON_INSTALL_DIR=/opt/python
+
 # Install dependencies using uv (includes building srp_rs from source)
 # 如果有额外下载慢的依赖，也可以给 uv 加镜像源：--index-url 或配置 .netrc
 RUN uv sync --frozen --no-dev
@@ -70,7 +78,10 @@ FROM base AS production
 
 WORKDIR /app
 
-# Copy dependencies from deps stage
+# Copy dependencies from deps stage — both the venv AND the managed interpreter
+# it symlinks to (see UV_PYTHON_INSTALL_DIR in the deps stage), or the venv's
+# python is a dangling symlink and uvicorn can't start.
+COPY --from=deps /opt/python /opt/python
 COPY --from=deps /app/.venv /app/.venv
 
 # Copy application code (fusion unified the migration chain under alembic/)
