@@ -34,24 +34,36 @@ floating tag like `:main` (which let backend and frontend drift to different
 commits) and never a version tag (frontend has no semver tags). Images are
 private on GHCR; boxes pull with their existing GHCR auth.
 
+### The runtime: Docker (deploy by sha)
+
+dev and prod (RUC) run the app as **Docker containers** (`deploy/deploy-docker.sh`
++ `deploy/compose/docker-compose.base.yml`): pull the per-commit `backend` +
+`frontend` images, migrate, `up`, health-check, auto-rollback. The frontend image
+bundles nginx (SPA + `/api` reverse-proxy), so there's **no host nginx** — the ghg
+edge (APISIX) proxies to the box on **:8080** (frontend) + **:8081** (backend),
+bound `0.0.0.0` (private net, safe). DB/Redis are **external** ghg hosts (the app
+only holds `DATABASE_URL`/`REDIS_URL`); uploads bind-mount a host dir outside the
+containers (`/home/nictheboy/shared/uploads` on prod — the 赛题 PDFs). Each box
+was cut over from bare-metal once (`deploy/{dev,prod}-docker-cutover.sh`); the old
+systemd service is kept **installed-but-disabled** as an instant rollback.
+
 ### dev — continuous deploy
 
 Merge to `main` → `deploy-dev.yml` runs on the **self-hosted runner on the dev
-box** (label `cheese-dev`) → `deploy/deploy-blue-green.sh` does a blue-green
-bare-metal deploy (fresh release dir, build, migrate-with-backup, atomic symlink
-swap, health check, auto-rollback). No human step.
+box** (label `cheese-dev`), gated on `build.yml`'s images, then
+`deploy/deploy-docker.sh`. No human step.
 
-### prod (RUC) — release-gated, same script as dev
+### prod (RUC) — release-gated
 
 Publishing a GitHub Release (or a manual `workflow_dispatch`) → `deploy-prod.yml`:
 gate on the release commit's CI, then **a human approval** (auto-opened issue,
 same mechanism as etrip), then the **self-hosted runner on the prod box** (label
-`cheese-prod`) runs the *same* `deploy/deploy-blue-green.sh` as dev. prod never
-auto-deploys. Uploaded files (赛题 PDFs) live in a shared dir
-(`/home/nictheboy/shared/uploads`) outside the release tree so symlink swaps
-never touch them; `STORAGE_LOCAL_PATH` in prod's `.env` is the absolute path to
-it (see `deploy/.env.prod.example`). `workflow_dispatch` has a `dry_run` input
-that prints state without deploying.
+`cheese-prod`) runs `deploy/deploy-docker.sh`. prod never auto-deploys, and it
+deploys **releases, not main commits** — its current release is **v0.16.4** (whose
+images are under the pre-rename `cheese-backend-py/*` path, set via the compose's
+`BACKEND_IMAGE`/`FRONTEND_IMAGE` overrides; future releases build under `cheese/*`
+and need no override). main is fusion — a different line — so main commits
+correctly do not reach prod. `workflow_dispatch` has a `dry_run` input.
 
 ### etrip — release-gated
 
