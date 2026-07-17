@@ -18,8 +18,9 @@ SVC="cheese-backend-py.service"
 log()  { echo "[cutover $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[cutover $(date '+%H:%M:%S')] ERROR: $*" >&2; }
 
-dc() { IMAGE_TAG="$SHA" FRONTEND_PORT=80 BACKEND_PORT=8081 \
-       docker compose -f "$COMPOSE" -p "$PROJECT" "$@"; }
+# Compose already defaults to the edge-facing binding (0.0.0.0 :8080+:80 frontend,
+# 0.0.0.0:8081 backend) — don't override the ports, or the extra publish collides.
+dc() { IMAGE_TAG="$SHA" docker compose -f "$COMPOSE" -p "$PROJECT" "$@"; }
 
 rollback() {
   fail "rolling back to bare-metal"
