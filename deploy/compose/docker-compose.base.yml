@@ -22,8 +22,13 @@ services:
       - STORAGE_LOCAL_PATH=/data/uploads
     volumes:
       - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
+    # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
+    # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
+    # and the frontend on :8080 — a localhost-only bind would be unreachable from
+    # it. Safe here because dev/prod are on the private ghg net with no public
+    # inbound. (etrip is public and uses its OWN compose, not this one.)
     ports:
-      - "127.0.0.1:${BACKEND_PORT:-8081}:8081"
+      - "0.0.0.0:${BACKEND_PORT:-8081}:8081"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8081/healthz"]
       interval: 15s
@@ -39,8 +44,11 @@ services:
     image: ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}
     env_file:
       - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    # The ghg edge proxies the SPA to the box on :8080; also publish :80 so direct
+    # in-net access and any :80 probe keep working (bare-metal exposed both).
     ports:
-      - "127.0.0.1:${FRONTEND_PORT:-80}:80"
+      - "0.0.0.0:${FRONTEND_PORT:-8080}:80"
+      - "0.0.0.0:80:80"
     depends_on:
       backend:
         condition: service_healthy
