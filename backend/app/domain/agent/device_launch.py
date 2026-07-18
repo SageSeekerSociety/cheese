@@ -67,9 +67,12 @@ def build_launch_script() -> str:
 # server cannot know the device user's home). Substitute the REAL home first —
 # treating it as a relative path only worked by accident from a writable cwd
 # (a fresh service cwd of / made mkdir die with "cannot create '$HOME'").
+# POSIX-only from here: the connector's tmux joins argv with spaces and
+# re-parses through /bin/sh (dash on Debian/Ubuntu) — bashisms die silently.
 REAL_HOME="$HOME"
 CH="${{CHEESE_HOME:-$REAL_HOME}}"; CW="${{CHEESE_WORK:-$REAL_HOME}}"
-CH="${{CH/#\$HOME/$REAL_HOME}}"; CW="${{CW/#\$HOME/$REAL_HOME}}"
+case "$CH" in "\$HOME"*) CH="$REAL_HOME${{CH#\$HOME}}";; esac
+case "$CW" in "\$HOME"*) CW="$REAL_HOME${{CW#\$HOME}}";; esac
 export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
 # Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
