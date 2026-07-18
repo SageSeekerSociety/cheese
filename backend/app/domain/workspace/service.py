@@ -147,7 +147,26 @@ def _ensure_worktree(project_id: uuid.UUID, branch: str) -> Path:
     # Export a git branch (= jj bookmark) for this topic so merge/diff use git.
     _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
     _jj(wt, "git", "export")
+    _make_world_writable(wt)
     return wt
+
+
+def _make_world_writable(root: Path) -> None:
+    """The sandbox's non-root user must be able to edit a worktree the backend
+    (possibly root) materialized — found live when 芝士 hit Permission denied on
+    a freshly seeded repo. Adds rw bits while PRESERVING exec bits: git tracks
+    the user-exec bit, so a blind 666 would dirty every executable's mode."""
+    for dirpath, _dirnames, filenames in os.walk(root):
+        try:
+            os.chmod(dirpath, os.stat(dirpath).st_mode | 0o777)
+        except OSError:
+            continue
+        for name in filenames:
+            p = os.path.join(dirpath, name)
+            try:
+                os.chmod(p, os.stat(p).st_mode | 0o666)
+            except OSError:
+                pass
 
 
 def _tree(project_id: uuid.UUID, topic_id: uuid.UUID | None) -> Path:
@@ -470,20 +489,27 @@ def prepare_conflict_resolution(
 
 def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     """采纳即上线 (dogfooding last mile): after an accept-merge, push the
-    project's base branch to the upstream repo as dogfood/<topic>, and — when
-    that repo declares scripts/on-dogfood-push.sh — run the hook DETACHED (it
-    merges, checks, and redeploys; it may restart the very backend that spawned
-    it). Only local-path upstreams: pushing needs filesystem access, and
-    executing a repo's hook is an operator-trust decision we don't extend to
-    arbitrary remote URLs."""
+    project's base branch to the upstream repo as dogfood/<topic>.
+
+    - **Remote upstream (https/ssh, e.g. GitHub)**: push only — the remote side's
+      own CI takes over (e.g. a dogfood/** workflow that PRs + merges to main and
+      lets CD deploy). Auth comes from the HOST's git credentials (credential
+      store on the box), never from the DB.
+    - **Local-path upstream**: additionally run its scripts/on-dogfood-push.sh
+      DETACHED (merge/check/redeploy). Executing a repo's hook is an
+      operator-trust decision we extend ONLY to local paths."""
     repo = ensure_repo(project_id)
     url = get_upstream(project_id)
-    if not url or not url.startswith("/"):
-        return {"pushed": False, "reason": "无本地上游，跳过回推"}
+    if not url:
+        return {"pushed": False, "reason": "无上游，跳过回推"}
     base = _base_branch(repo)
     branch = f"dogfood/{topic_id.hex[:8]}"
     # -f: re-accepting (after revoke / a follow-up round) moves the same branch.
-    _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=60)
+    # 120s: the first remote push negotiates the full history (the remote
+    # already has upstream's objects, so the delta stays small — but be safe).
+    _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
+    if not url.startswith("/"):
+        return {"pushed": True, "branch": branch, "hook": False}
     hook = Path(url) / "scripts" / "on-dogfood-push.sh"
     hook_started = False
     if hook.is_file() and os.access(hook, os.X_OK):
@@ -534,6 +560,20 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
         for f in files:
             os.chmod(os.path.join(root, f), 0o666)
     return d
+
+
+def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
+    """Host path of the topic's hook-event spool (WAL). The tmux container writes
+    here via CHEESE_HOOK_SPOOL=/home/node/.claude/cheese-spool (the session dir
+    mounts to /home/node/.claude), and the backend reconciles from it. Mirrors
+    session_dir's base so both sides agree on ONE location."""
+    return (
+        Path(settings.workspace_root)
+        / ".sessions"
+        / str(project_id)
+        / topic_id.hex[:8]
+        / "cheese-spool"
+    ).resolve()
 
 
 def snapshot_worktree(
@@ -635,20 +675,61 @@ def app_preview_url(topic_id: uuid.UUID) -> str | None:
 
 
 def container_name(topic_id: uuid.UUID) -> str:
-    """Deterministic name of a topic's long-lived sandbox container."""
+    """Deterministic name of a topic's long-lived SDK sandbox container."""
     return f"cheesex-sbx-{topic_id.hex[:12]}"
 
 
+def tmux_container_name(topic_id: uuid.UUID) -> str:
+    """Deterministic name of a topic's long-lived tmux-backend container — distinct
+    from the SDK one so the two backends never collide. Lives here (the shared
+    workspace layer) so the accept/archive reaper can free it WITHOUT importing the
+    provider; TmuxHooksProvider references this as its single source of truth."""
+    return f"cheesex-tmux-{topic_id.hex[:12]}"
+
+
 def stop_topic_container(topic_id: uuid.UUID) -> None:
-    """Remove a topic's sandbox container (e.g. when the topic is merged/archived
-    or its worktree is recreated). Best-effort: a missing container is fine."""
+    """Remove a topic's long-lived sandbox container(s) — BOTH the SDK and tmux
+    backends' boxes — e.g. when the topic is merged/archived or its worktree is
+    recreated. Best-effort: a missing container is fine. Freeing BOTH matters
+    because a topic may have run on either backend and each leaves its own box;
+    reaping only the SDK one (the old behavior) leaked every tmux container forever."""
     if not sandbox_available():
         return
-    subprocess.run(
-        ["docker", "rm", "-f", container_name(topic_id)],
+    for name in (container_name(topic_id), tmux_container_name(topic_id)):
+        subprocess.run(
+            ["docker", "rm", "-f", name],
+            capture_output=True,
+            text=True,
+        )
+
+
+def list_sandbox_containers() -> list[str]:
+    """Names of all live cheesex sandbox containers (both backends' labels)."""
+    if not sandbox_available():
+        return []
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            "label=cheesex-sandbox=1",
+            "--format",
+            "{{.Names}}",
+        ],
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def remove_container(name: str) -> None:
+    """Remove ONE container by exact name (the idle reaper's primitive).
+    Best-effort; a missing container is fine."""
+    if not sandbox_available():
+        return
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
 
 
 GATE_TAIL_CHARS = 4000

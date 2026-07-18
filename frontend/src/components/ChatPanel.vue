@@ -342,7 +342,35 @@ function restoreScroll(topicId: string) {
   })
 }
 
+// Auto-reconnect (协作软件语义): a backend deploy/restart must be a blip, not a
+// frozen pane needing a manual refresh. An UNEXPECTED close schedules a
+// reconnect with backoff; every deliberate teardown funnels through
+// closeSocket(), which cancels it. The reconnect re-runs loadTopic so history
+// gaps from the outage are refetched (pushBlock dedups the overlap).
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+let retryDelayMs = 1000
+
+function cancelRetry() {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+}
+
+function scheduleReconnect(topicId: string) {
+  if (retryTimer) return
+  const delay = retryDelayMs
+  retryDelayMs = Math.min(retryDelayMs * 2, 15000)
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    // Only if the user is still on this topic (switching cancels via closeSocket,
+    // but double-check against races).
+    if (props.topic?.id === topicId) void loadTopic(props.topic)
+  }, delay)
+}
+
 function closeSocket() {
+  cancelRetry()
   if (socket) {
     socket.onopen = null
     socket.onmessage = null
@@ -363,12 +391,18 @@ function openSocket(topicId: string) {
 
   ws.onopen = () => {
     connected.value = true
+    retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
+    errorMsg.value = null
   }
   ws.onclose = () => {
-    if (socket === ws) connected.value = false
+    if (socket === ws) {
+      connected.value = false
+      scheduleReconnect(topicId)
+    }
   }
   ws.onerror = () => {
-    errorMsg.value = 'WebSocket 连接出错'
+    // The close handler owns retry; the banner just explains the grey dot.
+    errorMsg.value = '连接断开，正在自动重连…'
   }
   ws.onmessage = (ev: MessageEvent) => {
     // Guard against frames from a stale socket after topic switch.

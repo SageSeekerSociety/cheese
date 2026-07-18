@@ -51,6 +51,9 @@ class AgentMessage:
     (Slack-style discrete messages instead of one growing streamed bubble)."""
 
     text: str
+    # Stable per-event id on the hooks path (see AgentToolUse.eid) so the spool
+    # reconcile can dedup a backfilled message against its live delivery.
+    eid: str | None = None
 
 
 @dataclass
@@ -59,6 +62,10 @@ class AgentToolUse:
 
     name: str
     input: dict[str, Any]
+    # Stable per-event id (the hook forwarder's X-Cheese-Event-Id / spool filename).
+    # Lets the durable-spool reconcile dedup a backfilled 现场 event against the one
+    # the live hook path already persisted. None off the hooks path (sdk backend).
+    eid: str | None = None
 
 
 @dataclass
@@ -112,9 +119,9 @@ def event_to_dict(event: AgentEvent) -> dict:
     if isinstance(event, AgentDelta):
         return {"t": "delta", "text": event.text}
     if isinstance(event, AgentMessage):
-        return {"t": "message", "text": event.text}
+        return {"t": "message", "text": event.text, "eid": event.eid}
     if isinstance(event, AgentToolUse):
-        return {"t": "tool", "name": event.name, "input": event.input}
+        return {"t": "tool", "name": event.name, "input": event.input, "eid": event.eid}
     if isinstance(event, AgentSessionInfo):
         return {"t": "session", "session_id": event.session_id}
     usage = event.usage
@@ -143,9 +150,11 @@ def event_from_dict(d: dict) -> AgentEvent:
     if kind == "delta":
         return AgentDelta(text=d.get("text", ""))
     if kind == "message":
-        return AgentMessage(text=d.get("text", ""))
+        return AgentMessage(text=d.get("text", ""), eid=d.get("eid"))
     if kind == "tool":
-        return AgentToolUse(name=d.get("name", ""), input=d.get("input") or {})
+        return AgentToolUse(
+            name=d.get("name", ""), input=d.get("input") or {}, eid=d.get("eid")
+        )
     if kind == "session":
         return AgentSessionInfo(session_id=d.get("session_id", ""))
     u = d.get("usage")

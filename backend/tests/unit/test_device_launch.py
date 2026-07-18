@@ -26,10 +26,17 @@ def test_build_screen_launch_shapes_command_and_env():
     )
     assert command[0] == "bash" and command[1] == "-lc"
     script = command[2]
-    # Self-contained launcher: writes settings + forwarder, then execs claude.
+    # Self-contained launcher: writes settings + forwarder, spools+drains hooks, then
+    # hosts claude in a persistent tmux session (direct exec if tmux is absent).
     assert 'cat > "$HOME/.claude/settings.json"' in script
     assert "cheese-hook" in script
-    assert "exec claude --dangerously-skip-permissions" in script
+    assert "claude --dangerously-skip-permissions" in script
+    assert "tmux new-session -d -s cheese" in script
+    assert "CHEESE_HOOK_SPOOL" in script
+    # The drainer deletes only on DURABLE acceptance (code:200 = live delivery or
+    # server-side parking), with a 24h age cap for an unreachable backend.
+    assert '"code":200' in script
+    assert "-mmin +1440" in script
     # Env carries the hook wiring, home/work, model, and the gateway var.
     assert env["CHEESE_HOOK_URL"] == "http://h/sandbox/hooks/T"
     assert env["CHEESE_TOKEN"] == "scoped-tok"

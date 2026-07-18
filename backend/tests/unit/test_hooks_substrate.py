@@ -30,11 +30,16 @@ def test_hooks_settings_wire_every_perception_hook_to_the_forwarder():
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
 
 
-def test_forwarder_posts_hook_json_with_scoped_token():
+def test_forwarder_spools_then_posts_hook_json_with_scoped_token():
     assert "X-Cheese-Token: $CHEESE_TOKEN" in CHEESE_HOOK_SCRIPT
+    assert "X-Cheese-Event-Id: $eid" in CHEESE_HOOK_SCRIPT
     assert "--data-binary @-" in CHEESE_HOOK_SCRIPT
-    # No hook URL → no-op exit (never blocks a tool when unwired).
-    assert '[ -n "$CHEESE_HOOK_URL" ] || exit 0' in CHEESE_HOOK_SCRIPT
+    # Durable-first: every hook is spooled (WAL) before the best-effort curl.
+    assert "CHEESE_HOOK_SPOOL" in CHEESE_HOOK_SCRIPT
+    # The inline curl is gated: unwired (no URL) or spool-only (device) → skip it, so
+    # it never blocks a tool and the drainer / backend reconcile handle delivery.
+    guard = '[ -z "$CHEESE_HOOK_SPOOL_ONLY" ] && [ -n "$CHEESE_HOOK_URL" ]'
+    assert guard in CHEESE_HOOK_SCRIPT
 
 
 def test_session_token_ttl_is_session_length():

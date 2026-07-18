@@ -65,9 +65,11 @@ def translate_hook(hook: dict) -> AgentEvent | None:
 
     if event == "PreToolUse":
         tool_input = hook.get("tool_input")
+        eid = hook.get("_eid")
         return AgentToolUse(
             name=str(hook.get("tool_name") or ""),
             input=tool_input if isinstance(tool_input, dict) else {},
+            eid=eid if isinstance(eid, str) else None,
         )
 
     if event == "MessageDisplay":
@@ -75,7 +77,8 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         # MessageDisplay = one chat message block (spike mapping).
         text = hook.get("delta")
         if isinstance(text, str) and text.strip():
-            return AgentMessage(text=text)
+            eid = hook.get("_eid")
+            return AgentMessage(text=text, eid=eid if isinstance(eid, str) else None)
         return None
 
     if event == "Stop":

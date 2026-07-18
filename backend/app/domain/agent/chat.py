@@ -23,7 +23,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.text import markdown_preview
+from app.domain.agent import event_spool
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.gateway import LlmGateway, drain_new_usage
+from app.domain.agent.hook_events import translate_hook
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
@@ -32,6 +35,7 @@ from app.domain.agent.service import (
     AgentService,
     AgentSessionInfo,
     AgentToolUse,
+    AgentUsage,
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_skills
 from app.domain.block.models import AuthorType, BlockKind
@@ -47,8 +51,9 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
-from app.domain.usage.credits import tokens_to_credits
+from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["conversation-style", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "conversation-style"]
@@ -450,6 +455,7 @@ class ChatService:
         sandbox_enabled: bool = False,
         profiles: ProfileRegistry | None = None,
         compute: ComputePool | None = None,
+        gateway: LlmGateway | None = None,
     ):
         self._sessions = session_factory
         self._base_prompt = base_system_prompt
@@ -465,6 +471,11 @@ class ChatService:
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
+        # LiteLLM gateway ADMIN client (docs/llm-gateway.md L1/L2). None = off.
+        # The lock serializes key-mint and usage-drain read-modify-writes on
+        # project.settings (single-process reality, like the topic locks).
+        self._gateway = gateway
+        self._gateway_lock = asyncio.Lock()
         # Load the conversation skills once (spec §8.3 product "soul").
         self._skills = load_skills(DEFAULT_CHAT_SKILLS)
         # Per-topic serial queue (spec §9.1): one agent turn per topic at a
@@ -745,16 +756,25 @@ class ChatService:
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
         text: str,
-        turn_id: uuid.UUID,
+        turn_id: uuid.UUID | None,
         reply_to: uuid.UUID | None,
         roster: list[dict],
         topic_refs: list[dict],
+        eid: str | None = None,
+        backfilled: bool = False,
     ) -> dict:
         """Persist ONE discrete 芝士 message (Slack-style): committed the moment
         the SDK reports the AssistantMessage complete, so a turn lands as
         several complete messages instead of one growing streamed bubble.
-        Handles the same mention canonicalization / notify / refs as before."""
+        Handles the same mention canonicalization / notify / refs as before.
+        ``eid`` (hooks path) is stamped into meta so the spool reconcile can
+        dedup a backfilled copy against this live one."""
         text = _expand_mention_names(text, roster, topic_refs)
+        meta: dict | None = None
+        if eid:
+            meta = {"eid": eid}
+        if backfilled:
+            meta = {**(meta or {}), "backfilled": True}
         async with self._sessions() as session:
             blocks = BlockRepository(session)
             block = await blocks.add(
@@ -766,6 +786,7 @@ class ChatService:
                 kind=BlockKind.message,
                 reply_to=reply_to,
                 turn_id=turn_id,
+                meta=meta,
             )
             topic = await TopicRepository(session).get(topic_id)
             # <@handle> mentions in 芝士's message → strong notify (the token is
@@ -792,18 +813,133 @@ class ChatService:
             await session.commit()
         return payload
 
-    async def _model_kwargs(self, project_id: uuid.UUID) -> dict:
+    async def _persist_tool_event(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        name: str,
+        tool_input: dict,
+        platform: bool,
+        turn_id: uuid.UUID | None,
+        eid: str | None = None,
+        backfilled: bool = False,
+    ) -> None:
+        """Persist ONE 施工现场 event the moment it streams in, not batched to the
+        turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
+        a mid-turn restart/crash never loses the 现场 timeline already produced.
+        ``eid`` (the hook forwarder's event id) is stamped into meta so the durable
+        spool reconcile can dedup a backfilled copy against this live one."""
+        meta = _tool_event_meta(name, tool_input, platform=platform)
+        if eid:
+            meta = {**meta, "eid": eid}
+        if backfilled:
+            meta = {**meta, "backfilled": True}
+        async with self._sessions() as session:
+            await BlockRepository(session).add(
+                project_id=project_id,
+                topic_id=topic_id,
+                author=CHEESE_AUTHOR,
+                author_type=AuthorType.ai,
+                content=_format_tool_event(name, tool_input),
+                kind=BlockKind.event,
+                turn_id=turn_id,
+                meta=meta,
+            )
+            await session.commit()
+
+    async def _reconcile_spool(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
+    ) -> None:
+        """Backfill 现场 events the live hook path missed (backend down / no listener
+        during a prior turn) from the durable spool WAL — idempotent by event-id.
+        No-op for the sdk backend (no spool dir) and an empty spool. Best-effort: a
+        reconcile failure never blocks the turn.
+
+        Scope: 现场 tool events AND 芝士 chat messages (MessageDisplay) — both are
+        idempotent by event-id, so a copy the live path already persisted is
+        skipped. Backfilled messages skip mention-notify (the moment passed)."""
+        try:
+            entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
+            if not entries:
+                return
+            # Dedup against everything the live path already persisted (this +
+            # prior turns): event-ids stamped on this topic's blocks (any kind).
+            async with self._sessions() as session:
+                blocks = await BlockRepository(session).list_for_topic(topic_id)
+            seen = {
+                b.meta["eid"]
+                for b in blocks
+                if isinstance(b.meta, dict) and isinstance(b.meta.get("eid"), str)
+            }
+            recovered = 0
+            for _path, eid, payload in entries:
+                if payload is None or eid in seen:
+                    continue
+                payload["_eid"] = eid
+                event = translate_hook(payload)
+                if isinstance(event, AgentMessage):
+                    # A chat message whose live delivery was lost — land it as
+                    # history (no reply threading, no notify: the moment passed).
+                    await self._persist_assistant_message(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        text=event.text,
+                        turn_id=turn_id,
+                        reply_to=None,
+                        roster=[],
+                        topic_refs=[],
+                        eid=eid,
+                        backfilled=True,
+                    )
+                    seen.add(eid)
+                    recovered += 1
+                    continue
+                if not isinstance(event, AgentToolUse):
+                    continue  # SessionStart/Stop have no historical counterpart
+                name = event.name.replace("mcp__cheese__", "")
+                if name in _TASK_TOOLS:
+                    continue  # task todos are process state, not persisted 现场
+                args = event.input or {}
+                await self._persist_tool_event(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    name=name,
+                    tool_input=args,
+                    platform=_is_platform_tool(event.name, args),
+                    turn_id=turn_id,
+                    eid=eid,
+                    backfilled=True,
+                )
+                seen.add(eid)
+                recovered += 1
+            event_spool.remove(path for path, _eid, _payload in entries)
+            if recovered:
+                logger.info(
+                    "reconciled %d spooled 现场 event(s) for topic %s",
+                    recovered,
+                    topic_id,
+                )
+        except Exception:  # noqa: BLE001 — reconcile is best-effort, never fail a turn
+            logger.exception("spool reconcile failed for topic %s", topic_id)
+
+    async def _model_kwargs(self, project_id: uuid.UUID) -> tuple[dict, bool]:
         """Per-turn overrides for the agent call, resolved from project.settings:
         the ExecutionProfile → model+env (design §2), and the sandbox image (spec
         §9.1 environment — a project can run on cheesex-dev for dogfooding). model
         is skipped when no registry is configured (the agent uses its default); the
-        image is resolved regardless (it's independent of the AI profile)."""
+        image is resolved regardless (it's independent of the AI profile).
+
+        Also returns whether the turn is GATEWAY-ROUTED (pool profile through the
+        LiteLLM gateway): those turns are metered by the gateway spend log — the
+        caller must NOT also bill provider-reported usage (double count)."""
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
         kwargs: dict = {}
         image = (project.settings or {}).get("sandbox_image") if project else None
         if image:
             kwargs["sandbox_image"] = image
+        pool_route = True
         if self._profiles is not None:
             profile = self._profiles.resolve(
                 project.settings if project else None,
@@ -811,7 +947,147 @@ class ChatService:
             )
             kwargs["model"] = profile.model
             kwargs["env"] = profile.full_env()
-        return kwargs
+            # Only the pool profile routes through the gateway; the testing
+            # (native Claude) profiles pin their own base_url + credentials.
+            pool_route = profile.base_url == settings.anthropic_base_url
+        routed = pool_route and self._gateway is not None
+        if routed:
+            # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
+            # the master key (containment), attributable + budget-capped.
+            override = await self._gateway_project_env(project_id)
+            if override:
+                kwargs["env"] = {**kwargs.get("env", {}), **override}
+        return kwargs, routed
+
+    _GW_KEY = "llm_gateway_key"
+    _GW_CKPT = "llm_gateway_usage_ckpt"
+    _GW_BUDGET = "llm_gateway_budget_usd"
+
+    async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
+        """Env override for a gateway-routed turn: mint (once) and return the
+        project's virtual key, and keep its L2 max_budget in step with the
+        project's grants. Best-effort — returns None (turn runs on the default
+        pool credentials) on any gateway/admin failure."""
+        try:
+            async with self._gateway_lock:
+                async with self._sessions() as session:
+                    project = await ProjectRepository(session).get(project_id)
+                    if project is None or self._gateway is None:
+                        return None
+                    s = dict(project.settings or {})
+                    key = s.get(self._GW_KEY)
+                    if not isinstance(key, str) or not key:
+                        key = await self._gateway.mint_project_key(project_id)
+                        if not key:
+                            return None
+                        s[self._GW_KEY] = key
+                    # L2: budget = total granted credits, in USD. Only when the
+                    # price knob is set AND the project is metered at all.
+                    if settings.llm_gateway_credit_usd:
+                        summary = await ComputeGrantRepository(session).summary(
+                            project_id
+                        )
+                        if not summary["unlimited"]:
+                            budget = round(
+                                summary["credits_total"]
+                                * settings.llm_gateway_credit_usd,
+                                6,
+                            )
+                            if s.get(self._GW_BUDGET) != budget and (
+                                await self._gateway.set_key_budget(key, budget)
+                            ):
+                                s[self._GW_BUDGET] = budget
+                    if s != (project.settings or {}):
+                        project.settings = s
+                        await session.commit()
+            return {"ANTHROPIC_AUTH_TOKEN": key}
+        except Exception:  # noqa: BLE001 — never fail a turn on admin plumbing
+            logger.exception("gateway project-env failed for %s", project_id)
+            return None
+
+    def _schedule_deferred_drain(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> None:
+        """Late-landing spend rows: drain again in the background and land the
+        usage row + credit deduction when they show up. Strong-ref'd like the
+        memory tasks so the pending commit can't be GC'd."""
+
+        async def _later() -> None:
+            await asyncio.sleep(20.0)
+            usage = await self._drain_gateway_usage(project_id)
+            if usage is None:
+                return  # still nothing — the next turn's drain picks it up
+            async with self._sessions() as session:
+                await UsageRepository(session).add(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    model=usage.model,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cost_usd=usage.cost_usd,
+                )
+                await ComputeGrantRepository(session).consume(
+                    project_id, usage_to_credits(usage, spend_priced=True)
+                )
+                await session.commit()
+            logger.info(
+                "deferred usage drain landed for turn %s (%d+%d tokens)",
+                turn_id,
+                usage.input_tokens,
+                usage.output_tokens,
+            )
+
+        task = asyncio.create_task(_later())
+        self._memory_tasks.add(task)
+        task.add_done_callback(self._memory_tasks.discard)
+
+    async def _drain_gateway_usage(self, project_id: uuid.UUID) -> AgentUsage | None:
+        """L1: real usage for gateway-routed turns. The hooks backends can't see
+        token usage locally (interactive Claude Code reports none → usage=0), so
+        read the project's NEW spend from the gateway's log instead — an
+        exactly-once daily cumulative delta (see gateway.drain_new_usage), so
+        late-logged rows surface in a later drain instead of being lost."""
+        if self._gateway is None:
+            return None
+        try:
+            async with self._gateway_lock:
+                async with self._sessions() as session:
+                    project = await ProjectRepository(session).get(project_id)
+                    if project is None:
+                        return None
+                    s = dict(project.settings or {})
+                    key = s.get(self._GW_KEY)
+                    if not isinstance(key, str) or not key:
+                        return None  # nothing ever routed → nothing to meter
+                    ckpt = s.get(self._GW_CKPT)
+                    ckpt = ckpt if isinstance(ckpt, dict) else None
+                    prompt, completion, usd, next_ckpt = await drain_new_usage(
+                        self._gateway, key, ckpt
+                    )
+                    if prompt + completion <= 0:
+                        # LiteLLM writes spend logs asynchronously — at turn end
+                        # the rows often lag by a few seconds (verified live).
+                        # One bounded settle-retry keeps per-turn attribution;
+                        # anything still missing lands in the NEXT drain
+                        # (cumulative deltas are exactly-once either way).
+                        await asyncio.sleep(3.0)
+                        prompt, completion, usd, next_ckpt = await drain_new_usage(
+                            self._gateway, key, ckpt
+                        )
+                    s[self._GW_CKPT] = next_ckpt
+                    project.settings = s
+                    await session.commit()
+            if prompt + completion <= 0:
+                return None
+            return AgentUsage(
+                model=settings.agent_model,
+                input_tokens=prompt,
+                output_tokens=completion,
+                cost_usd=usd,
+            )
+        except Exception:  # noqa: BLE001 — metering must never fail a turn
+            logger.exception("gateway usage drain failed for %s", project_id)
+            return None
 
     async def _stream_with_retry(self, provider, **kwargs):
         """Run a streaming turn via the compute provider, retrying transient
@@ -998,10 +1274,15 @@ class ChatService:
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         provider = self._compute.select(provider_id=compute_id)
-        model_kwargs = await self._model_kwargs(project_id)
+        model_kwargs, gateway_routed = await self._model_kwargs(project_id)
 
-        tool_events: list[tuple[str, dict, bool]] = []  # (name, args, platform)
+        # Backfill any 现场 events the live hook path missed (backend down / no
+        # listener during a prior turn) from the durable spool WAL — idempotent by
+        # event-id. No-op for the sdk backend and an empty spool.
+        await self._reconcile_spool(project_id, topic_id, turn_id)
+
         todo: list[dict] = []
+        seen_eids: set[str] = set()  # dedup device-drainer re-deliveries this turn
         actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None
         assistant_count = 0  # discrete 芝士 messages landed this turn
@@ -1039,6 +1320,7 @@ class ChatService:
                         reply_to=user_block_id if assistant_count == 0 else None,
                         roster=roster,
                         topic_refs=topic_refs,
+                        eid=event.eid,
                     )
                     last_assistant_block_id = (
                         payload.get("block", {}).get("id")
@@ -1048,6 +1330,12 @@ class ChatService:
                     assistant_count += 1
                     yield {"type": "assistant_block", "block": payload}
                 elif isinstance(event, AgentToolUse):
+                    # Skip a duplicate delivery (the device drainer re-sends after a
+                    # lost ack) — idempotent by the forwarder's event-id, per turn.
+                    if event.eid and event.eid in seen_eids:
+                        continue
+                    if event.eid:
+                        seen_eids.add(event.eid)
                     name = event.name.replace("mcp__cheese__", "")
                     args = event.input or {}
                     # Task tools → live working-log todo (process, not 现场).
@@ -1061,7 +1349,18 @@ class ChatService:
                     # Platform vs plain work, decided on the RAW name (prefix
                     # rule) + full command string — before any truncation.
                     platform = _is_platform_tool(event.name, args)
-                    tool_events.append((name, args, platform))
+                    # Persist each 施工现场 event the MOMENT it streams in (not
+                    # batched to turn-end tx2) so a mid-turn restart/crash never
+                    # loses the timeline already produced (durability).
+                    await self._persist_tool_event(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        name=name,
+                        tool_input=args,
+                        platform=platform,
+                        turn_id=turn_id,
+                        eid=event.eid,
+                    )
                     yield {"type": "tool", "name": event.name, "input": args}
                     # cheese <sub> ran as Bash → tell the UI which panel changed,
                     # so it refreshes mid-turn (doc/decisions/...), quietly.
@@ -1088,6 +1387,20 @@ class ChatService:
                     self._save_session_pointer(topic_id, new_session_id)
                 )
             raise
+
+        # L1 (docs/llm-gateway.md): for gateway-routed turns the gateway spend
+        # log is the SOLE metering source — hooks backends report no usage at
+        # all, and provider-reported numbers for the same tokens would double-
+        # bill on the next drain (daily cumulative deltas are exactly-once).
+        # Non-routed turns (native-Claude testing profiles) keep SDK usage.
+        if self._gateway is not None and gateway_routed:
+            usage = await self._drain_gateway_usage(project_id)
+            if usage is None:
+                # LiteLLM batch-writes spend logs (~10s); the settle retry can
+                # still miss. Don't hold the turn hostage — a deferred drain
+                # lands the usage row shortly after; if even that misses, the
+                # next turn's cumulative drain includes it (exactly-once).
+                self._schedule_deferred_drain(project_id, topic_id, turn_id)
 
         if result_error:
             # Provider/infra failure surfaced as the run's result. NEVER
@@ -1155,17 +1468,8 @@ class ChatService:
                 )
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
-                for name, tool_input, platform in tool_events:
-                    await blocks.add(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        author=CHEESE_AUTHOR,
-                        author_type=AuthorType.ai,
-                        content=_format_tool_event(name, tool_input),
-                        kind=BlockKind.event,
-                        turn_id=turn_id,
-                        meta=_tool_event_meta(name, tool_input, platform=platform),
-                    )
+                # 施工现场 events were persisted inline as they streamed
+                # (durability) — this tx only records usage + the fail card.
                 if usage is not None:
                     await UsageRepository(session).add(
                         project_id=project_id,
@@ -1179,7 +1483,7 @@ class ChatService:
                     # and deduct from the project's grants (spec §9.1).
                     await ComputeGrantRepository(session).consume(
                         project_id,
-                        tokens_to_credits(usage.input_tokens + usage.output_tokens),
+                        usage_to_credits(usage, spend_priced=gateway_routed),
                     )
                 fail_block = await blocks.add(
                     project_id=project_id,
@@ -1212,17 +1516,8 @@ class ChatService:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
 
-            for name, tool_input, platform in tool_events:
-                await blocks.add(
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    author=CHEESE_AUTHOR,
-                    author_type=AuthorType.ai,
-                    content=_format_tool_event(name, tool_input),
-                    kind=BlockKind.event,
-                    turn_id=turn_id,
-                    meta=_tool_event_meta(name, tool_input, platform=platform),
-                )
+            # 施工现场 events were persisted inline as they streamed (durability);
+            # tx2 now only records usage, action cards, and the session pointer.
             if usage is not None:
                 await UsageRepository(session).add(
                     project_id=project_id,
@@ -1237,7 +1532,7 @@ class ChatService:
                 # no grants (自治项目) deducts nothing — unlimited.
                 await ComputeGrantRepository(session).consume(
                     project_id,
-                    tokens_to_credits(usage.input_tokens + usage.output_tokens),
+                    usage_to_credits(usage, spend_priced=gateway_routed),
                 )
 
             topic = await topics.get(topic_id)
@@ -1419,7 +1714,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id)),
+            **(await self._model_kwargs(project_id))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -1527,7 +1822,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id)),
+            **(await self._model_kwargs(project_id))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -1605,7 +1900,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id)),
+            **(await self._model_kwargs(project_id))[0],
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text
