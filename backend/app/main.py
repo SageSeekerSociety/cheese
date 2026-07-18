@@ -10,6 +10,7 @@ this file.
 """
 
 # dogfood loop: accepted on cheesex, deployed to dev (2026-07-18)
+# self-update on dev: written via the platform ON this very box (2026-07-19)
 
 import importlib
 import pkgutil
