@@ -43,7 +43,11 @@ function tryType() {
   if (sent || pending === null) return
   if (!ready()) return
   cheese.term.write(PASTE_START + String(pending) + PASTE_END)
-  cheese.term.write(ENTER)
+  // The Enter must NOT ride the same instant as the paste: while the TUI is
+  // still ingesting the bracketed paste it swallows the submit, leaving the
+  // prompt sitting in the composer forever (observed live on the dev box).
+  // A short beat lets the paste settle before the separate submit.
+  setTimeout(() => cheese.term.write(ENTER), 400)
   sent = true
   pending = null
   cheese.log('claude_min: prompt typed')
