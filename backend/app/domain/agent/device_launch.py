@@ -126,12 +126,15 @@ cd "$CHEESE_WORK"
 CLAUDE="claude --dangerously-skip-permissions"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 if command -v tmux >/dev/null 2>&1; then
-  # The screen itself may already live inside the connector's own tmux — clear
-  # $TMUX so the nested attach is allowed, and start the session in the work
-  # dir explicitly (a fresh tmux server would not inherit our cwd).
+  # The screen runs inside the connector's own tmux, so $TMUX points at ITS
+  # socket — inherited, new-session would land the claude session there (dying
+  # with the connector) while attach looks at the default socket ("no
+  # sessions", dead pane). unset TMUX for the WHOLE block: every command
+  # targets the user's default server, decoupled from the connector.
+  unset TMUX
   tmux has-session -t cheese 2>/dev/null || \\
     tmux new-session -d -s cheese -c "$CHEESE_WORK" "$CLAUDE"
-  TMUX= exec tmux attach -t cheese
+  exec tmux attach -t cheese
 else
   exec $CLAUDE
 fi
