@@ -63,13 +63,17 @@ def build_launch_script() -> str:
     # key (per-project trust) — a quoted heredoc can't do that. Reading the base from an
     # env var avoids any nested-quoting between the shell, node, and the JSON.
     return f"""set -e
-export HOME="${{CHEESE_HOME:-$HOME}}"
-export CHEESE_WORK="${{CHEESE_WORK:-$HOME}}"
+# CHEESE_HOME/CHEESE_WORK arrive with a LITERAL "$HOME/..." placeholder (the
+# server cannot know the device user's home). Substitute the REAL home first —
+# treating it as a relative path only worked by accident from a writable cwd
+# (a fresh service cwd of / made mkdir die with "cannot create '$HOME'").
+REAL_HOME="$HOME"
+CH="${{CHEESE_HOME:-$REAL_HOME}}"; CW="${{CHEESE_WORK:-$REAL_HOME}}"
+CH="${{CH/#\$HOME/$REAL_HOME}}"; CW="${{CW/#\$HOME/$REAL_HOME}}"
+export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
-# Canonicalize BOTH paths to absolutes (resolve symlinks; and the server sends
-# CHEESE_HOME/CHEESE_WORK containing a LITERAL "$HOME/..." — as relative paths
-# they only work from the launcher's cwd; anything that changes cwd, like the
-# tmux-hosted claude below, would resolve them wrong).
+# Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
+# the tmux-hosted claude below runs from a fresh server with its own cwd.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
 mkdir -p "$HOME/.claude"
