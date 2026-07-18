@@ -64,8 +64,9 @@ def pane_ready(capture: str) -> bool:
 
 
 def _tmux_container_name(topic_id: uuid.UUID) -> str:
-    """Distinct from the SDK container so the two backends never collide."""
-    return f"cheesex-tmux-{topic_id.hex[:12]}"
+    """Distinct from the SDK container so the two backends never collide. Source of
+    truth is ws.tmux_container_name, so the accept/archive reaper frees the same box."""
+    return ws.tmux_container_name(topic_id)
 
 
 def ttyd_endpoint(topic_id: uuid.UUID) -> str | None:
@@ -313,6 +314,11 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
                 "CHEESE_TOKEN": token,
                 # Where the baked cheese-hook script forwards hook payloads.
                 "CHEESE_HOOK_URL": f"{_hook_base()}/sandbox/hooks/{topic_id}",
+                # Durable event WAL the forwarder appends to BEFORE its curl, so
+                # 现场 events survive a backend restart mid-turn; the backend
+                # reconciles it via ws.spool_dir. Inside the ~/.claude session mount
+                # (→ host session_dir/cheese-spool), so the backend can read it.
+                "CHEESE_HOOK_SPOOL": "/home/node/.claude/cheese-spool",
             }
         )
         if memory_scope:

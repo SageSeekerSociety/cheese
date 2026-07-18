@@ -72,6 +72,26 @@ def verify_scoped_token(
     return True
 
 
+def scoped_token_claims(token: str) -> dict | None:
+    """The {p, t, exp} claims of a VALID scoped token, else None. Lets a route
+    resolve the token's project without a DB lookup (signature + expiry are
+    verified; resource matching stays the caller's job)."""
+    try:
+        body, sig = token.split(".", 1)
+    except ValueError:
+        return None
+    if not hmac.compare_digest(sig, _sign(body)):
+        return None
+    try:
+        padded = body + "=" * (-len(body) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("exp", 0) < time.time():
+        return None
+    return payload
+
+
 def is_valid_cheese_token(
     token: str, *, project_id: str | None = None, topic_id: str | None = None
 ) -> bool:

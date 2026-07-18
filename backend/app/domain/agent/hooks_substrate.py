@@ -63,18 +63,35 @@ def hooks_settings() -> dict:
     }
 
 
-# The forwarder: reads a Claude Code hook's JSON on stdin and POSTs it to the
-# backend with the screen's token. Exit 0 + empty stdout = "no decision" → the
-# tool proceeds. The device backend writes this via its launcher; the local
-# (tmux) image bakes the same script (kept identical so sensing can't drift).
+# The forwarder: reads a Claude Code hook's JSON on stdin, durably spools it (when
+# CHEESE_HOOK_SPOOL is set — the local/tmux backend only) so the event survives a
+# backend outage, then best-effort POSTs it with the screen's token + a stable
+# per-event id (X-Cheese-Event-Id, used to dedup the spool backfill against the live
+# delivery). Exit 0 + empty stdout = "no decision" → the tool proceeds. The device
+# backend writes this via its launcher; the local (tmux) image bakes the same script
+# (kept identical so sensing can't drift); the spool block no-ops without the env.
 # NOTE: the device launcher embeds this in a <<'SH' heredoc — never add a line
 # consisting of just `SH` here or the heredoc would silently truncate.
 CHEESE_HOOK_SCRIPT = """#!/bin/sh
-[ -n "$CHEESE_HOOK_URL" ] || exit 0
-curl -s -m 10 -X POST \\
-  -H 'Content-Type: application/json' \\
-  -H "X-Cheese-Token: $CHEESE_TOKEN" \\
-  --data-binary @- "$CHEESE_HOOK_URL" >/dev/null 2>&1 || true
+body="$(cat)"
+eid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$$-$(date +%s%N)")"
+if [ -n "$CHEESE_HOOK_SPOOL" ]; then
+  mkdir -p "$CHEESE_HOOK_SPOOL" 2>/dev/null || true
+  _tmp="$CHEESE_HOOK_SPOOL/.tmp.$eid"
+  _dst="$CHEESE_HOOK_SPOOL/$(date +%s%N 2>/dev/null).$eid"
+  if printf '%s' "$body" > "$_tmp" 2>/dev/null; then
+    mv "$_tmp" "$_dst" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
+  fi
+fi
+# On the device a background drainer is the sole sender (CHEESE_HOOK_SPOOL_ONLY set);
+# locally we curl inline for low latency (the backend reconciles the spool for gaps).
+if [ -z "$CHEESE_HOOK_SPOOL_ONLY" ] && [ -n "$CHEESE_HOOK_URL" ]; then
+  printf '%s' "$body" | curl -s -m 10 -X POST \\
+    -H 'Content-Type: application/json' \\
+    -H "X-Cheese-Token: $CHEESE_TOKEN" \\
+    -H "X-Cheese-Event-Id: $eid" \\
+    --data-binary @- "$CHEESE_HOOK_URL" >/dev/null 2>&1 || true
+fi
 exit 0
 """
 

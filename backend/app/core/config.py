@@ -54,6 +54,22 @@ class Settings(BaseSettings):
     agent_haiku_model: str | None = "glm-4.5-air"
     agent_sonnet_model: str | None = "glm-5.2"
     agent_opus_model: str | None = "glm-5.2"
+    # --- LLM gateway admin (docs/llm-gateway.md L1/L2) ---
+    # When the pool routes through the self-hosted LiteLLM gateway, the backend can
+    # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
+    # into the sandbox instead of the master key, so a sandbox never holds admin
+    # credentials and spend is attributable per project — and read back REAL token
+    # usage from /spend/logs (fixes the tmux backend's usage=0), and (L2) set a
+    # per-key max_budget from the project's compute grants so the gateway refuses
+    # further calls when the budget is exhausted (the mid-turn brake).
+    # Unset (default) =整层关闭: env injection, usage, credits all behave as before.
+    llm_gateway_admin_base: str | None = None  # e.g. http://127.0.0.1:4000
+    llm_gateway_admin_key: str | None = None  # the LiteLLM master key
+    # USD per compute credit — converts grant credits into a gateway max_budget.
+    # Requires per-token pricing configured on the gateway models to accrue spend;
+    # unset = budgets are not set (L1 metering still works, token-based).
+    llm_gateway_credit_usd: float | None = None
+
     # ExecutionProfile "claude-opus" (tier=testing): native Claude for the team's
     # own dogfooding. Only selectable when claude_auth_token is set (an Anthropic
     # API key). base_url unset → Anthropic's default endpoint. Not the multi-user

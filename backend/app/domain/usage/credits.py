@@ -21,3 +21,17 @@ def tokens_to_credits(total_tokens: int) -> float:
     """Fold a turn's token usage into compute credits."""
     rate = max(1, settings.compute_credit_tokens)
     return total_tokens / rate
+
+
+def usage_to_credits(usage, *, spend_priced: bool) -> float:
+    """Credits a turn actually burns.
+
+    ``spend_priced`` (gateway-routed turn + ``llm_gateway_credit_usd`` set):
+    convert the REAL cost (the gateway's spend, cache discounts included) at the
+    configured price-per-credit — cached input burns proportionally less, and
+    the app-layer credit gate lines up exactly with the gateway's budget brake
+    (both are ``credits × price``). Otherwise: the flat token rate."""
+    price = settings.llm_gateway_credit_usd
+    if spend_priced and price and usage.cost_usd > 0:
+        return usage.cost_usd / price
+    return tokens_to_credits(usage.input_tokens + usage.output_tokens)

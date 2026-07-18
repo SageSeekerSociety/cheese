@@ -9,11 +9,25 @@ heartbeat (该催谁/该拆什么/风险). Per-topic serialization lives in Chat
 import asyncio
 import contextlib
 import logging
+import time
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import func, select
 
 from app.domain.agent.chat import ChatService
+from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
+from app.domain.topic.models import Topic
+from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.scheduler")
+
+# Idle-container reaper: a topic nobody has touched for this long gets its
+# long-lived sandbox container(s) removed. The worktree + ~/.claude session live
+# on host volumes, so the next turn simply recreates the box — nothing is lost.
+# Covers topics that are never 采纳'd (the accept path already reaps its own).
+IDLE_REAP_DAYS = 3
+IDLE_REAP_EVERY_S = 24 * 3600  # at most one reap sweep per day
 
 
 class SchedulerService:
@@ -21,6 +35,7 @@ class SchedulerService:
         self._chat = chat_service
         # Same DB binding as the chat service (real PG, or the test factory).
         self._sessions = chat_service.session_factory
+        self._last_reap_mono = 0.0
 
     async def tick(self) -> dict:
         """One inspection round: run 定期巡检 on every project with a root topic."""
@@ -37,7 +52,47 @@ class SchedulerService:
                 inspected += 1
             except Exception as exc:  # one project's failure mustn't stop others
                 errors.append(f"{project.id}: {exc}")
+
+        # Daily-throttled container reap rides the existing tick loop.
+        if time.monotonic() - self._last_reap_mono >= IDLE_REAP_EVERY_S:
+            self._last_reap_mono = time.monotonic()
+            try:
+                reaped = await self.reap_idle_containers()
+                if reaped:
+                    logger.info("idle reap: removed %d container(s)", reaped)
+            except Exception:  # noqa: BLE001 — reaping must never break the tick
+                logger.exception("idle container reap failed")
         return {"projects_inspected": inspected, "errors": errors}
+
+    async def reap_idle_containers(self, idle_days: int = IDLE_REAP_DAYS) -> int:
+        """Remove sandbox containers whose topic has had NO block activity for
+        ``idle_days`` (or whose topic no longer exists). Safe by construction: an
+        active turn has just-persisted blocks, so its topic can never look idle."""
+        names = ws.list_sandbox_containers()
+        if not names:
+            return 0
+        cutoff = datetime.now(UTC) - timedelta(days=idle_days)
+        reaped = 0
+        async with self._sessions() as session:
+            ids = (await session.execute(select(Topic.id))).scalars().all()
+            by_hex = {t.hex[:12]: t for t in ids}
+            for name in names:
+                topic_id = by_hex.get(name.rsplit("-", 1)[-1])
+                if topic_id is not None:
+                    last = (
+                        await session.execute(
+                            select(func.max(Block.created_at)).where(
+                                Block.topic_id == topic_id
+                            )
+                        )
+                    ).scalar()
+                    if last is not None and last.tzinfo is None:
+                        last = last.replace(tzinfo=UTC)
+                    if last is not None and last >= cutoff:
+                        continue  # recently active — keep the box warm
+                ws.remove_container(name)
+                reaped += 1
+        return reaped
 
 
 class SchedulerRunner:

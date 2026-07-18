@@ -86,8 +86,40 @@ cat > "$HOME/.claude/cheese-hook" <<'SH'
 {_CHEESE_HOOK_SCRIPT}SH
 chmod +x "$HOME/.claude/cheese-hook"
 export PATH="$HOME/.claude:$PATH"
+# Durable event delivery on the device: cheese-hook spools every hook and (via
+# CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so this ONE background drainer is
+# the sole sender — it retries each spooled event until the backend DURABLY accepts
+# it (code:200 = pushed to the live turn OR parked in the topic's server-side spool
+# for the next reconcile), so a link/backend outage never drops an event. A 24h age
+# cap stops an unreachable backend from accumulating retries forever. The backend
+# dedups re-deliveries by event-id.
+export CHEESE_HOOK_SPOOL="$HOME/.claude/cheese-spool"
+export CHEESE_HOOK_SPOOL_ONLY=1
+mkdir -p "$CHEESE_HOOK_SPOOL"
+( while true; do
+    for f in "$CHEESE_HOOK_SPOOL"/[0-9]*; do
+      [ -e "$f" ] || continue
+      resp="$(curl -s -m 10 -X POST -H 'Content-Type: application/json' \\
+        -H "X-Cheese-Token: $CHEESE_TOKEN" -H "X-Cheese-Event-Id: ${{f##*.}}" \\
+        --data-binary @"$f" "$CHEESE_HOOK_URL" 2>/dev/null)"
+      case "$resp" in *'"code":200'*) rm -f "$f";; esac
+    done
+    find "$CHEESE_HOOK_SPOOL" -type f -mmin +1440 -delete 2>/dev/null
+    sleep 1
+  done ) &
 cd "$CHEESE_WORK"
-exec claude --dangerously-skip-permissions ${{CLAUDE_MODEL:+--model "$CLAUDE_MODEL"}}
+# Host claude in a PERSISTENT tmux session so it survives a link/screen drop: the
+# session keeps running on the device and re-opening the screen re-attaches to it
+# (same hosting as the local tmux backend; the PTY mirrors the pane for the human
+# viewer and the cheeselet types into it). Direct exec if tmux isn't installed.
+CLAUDE="claude --dangerously-skip-permissions"
+[ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
+if command -v tmux >/dev/null 2>&1; then
+  tmux has-session -t cheese 2>/dev/null || tmux new-session -d -s cheese "$CLAUDE"
+  exec tmux attach -t cheese
+else
+  exec $CLAUDE
+fi
 """
 
 
