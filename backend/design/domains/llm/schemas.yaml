@@ -1,0 +1,112 @@
+# LLM/AI Domain Schemas
+
+AiQuota:
+  type: object
+  properties:
+    user_id:
+      type: integer
+      format: int64
+    total_seu:
+      type: number
+      format: float
+      description: Total Standard Execution Units
+    used_seu:
+      type: number
+      format: float
+      description: Used Standard Execution Units
+    remaining_seu:
+      type: number
+      format: float
+      description: Remaining Standard Execution Units
+    reset_at:
+      type: integer
+      format: int64
+      description: Next quota reset timestamp
+
+AiModel:
+  type: object
+  properties:
+    id:
+      type: string
+    name:
+      type: string
+    provider:
+      type: string
+    seu_cost:
+      type: number
+      format: float
+      description: SEU cost per request
+    max_tokens:
+      type: integer
+    is_available:
+      type: boolean
+
+AiConversation:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    user_id:
+      type: integer
+      format: int64
+    title:
+      type: string
+    model_id:
+      type: string
+    created_at:
+      type: integer
+      format: int64
+    updated_at:
+      type: integer
+      format: int64
+    message_count:
+      type: integer
+
+AiMessage:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    conversation_id:
+      type: integer
+      format: int64
+    role:
+      type: string
+      enum: [user, assistant, system]
+    content:
+      type: string
+    tokens_used:
+      type: integer
+    created_at:
+      type: integer
+      format: int64
+
+ChatRequest:
+  type: object
+  properties:
+    conversationId:
+      type: integer
+      format: int64
+      nullable: true
+    message:
+      type: string
+    modelId:
+      type: string
+  required:
+    - message
+
+ChatResponse:
+  type: object
+  properties:
+    conversationId:
+      type: integer
+      format: int64
+    message:
+      $ref: '#/AiMessage'
+    tokens_used:
+      type: integer
+    seu_consumed:
+      type: number
+      format: float

@@ -1,0 +1,122 @@
+name: Backend Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/test.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/test.yml'
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: paradedb/paradedb:v0.18.8-pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cheese_test
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: valkey/valkey:8.0.2
+        options: >-
+          --health-cmd="valkey-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run linting
+        run: uv run ruff check .
+
+      - name: Run type checking
+        run: uv run pyright
+
+      # The cheesex workspace/gate/upstream tests version project repos with
+      # Jujutsu (jj colocate). Install the same binary the app shells out to.
+      - name: Install Jujutsu (jj)
+        run: |
+          JJ_VERSION=v0.43.0
+          # Extract into a fresh runner-owned dir, not /tmp (whose sticky bit
+          # makes tar fail to set perms on the archive's '.' entry).
+          mkdir -p "$RUNNER_TEMP/jj-dl"
+          curl -sSL "https://github.com/jj-vcs/jj/releases/download/${JJ_VERSION}/jj-${JJ_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C "$RUNNER_TEMP/jj-dl"
+          sudo mv "$RUNNER_TEMP/jj-dl/jj" /usr/local/bin/jj
+          jj --version
+
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
+        run: uv run alembic upgrade head
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
+          # Per-worker test DBs are provisioned over the network from this server
+          # root (the conftest no longer shells out to `docker exec`).
+          TEST_PG_BASE: postgresql+asyncpg://postgres:postgres@localhost:5432
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: test-secret
+          ENVIRONMENT: test
+          # LLM tests mock the completions; the client just needs to construct
+          # (the openai SDK errors without any credentials). Dummy key.
+          OPENAI_API_KEY: test-key
+          # The default AI pool is "available" only when its gateway credential is
+          # present (AgentProfile.available = bool(auth_token)); the market test
+          # asserts availability. Dummy token — no real calls are made.
+          ANTHROPIC_AUTH_TOKEN: test-token
+        run: uv run pytest tests/ -n auto --tb=short -k "not kotlin"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run ruff format check
+        run: uv run ruff format --check .
+
+      - name: Run ruff lint
+        run: uv run ruff check .

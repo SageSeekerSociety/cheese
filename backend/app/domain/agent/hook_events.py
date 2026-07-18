@@ -1,0 +1,129 @@
+"""Claude Code hooks → AgentEvent (tmux backend).
+
+The interactive `claude` running in a tmux session emits structured events via
+Claude Code hooks. (Command hooks, not HTTP: Claude Code blocks HTTP hooks to
+non-loopback targets, so a baked `cheese-hook` script reads the hook JSON on
+stdin and POSTs it to /sandbox/hooks/{topic}.) This module is the pure,
+docker-free core of the tmux backend:
+
+- ``translate_hook`` maps ONE hook payload to an AgentEvent (spec §9.1: the
+  platform observes 芝士 through structured events, never by parsing prose).
+- ``HookRouter`` fans hook POSTs (from the /sandbox/hooks endpoint) to the
+  asyncio.Queue of the turn currently running for that topic. Turns are
+  serialized per topic (topic lock), so at most one queue is active per topic.
+
+Event mapping (verified in the spike, docs/tmux-backend-spike.md):
+  SessionStart{session_id}                → AgentSessionInfo
+  PreToolUse{tool_name, tool_input}       → AgentToolUse
+  MessageDisplay{delta} (non-empty)       → AgentMessage (discrete message)
+  PostToolUse{...}                        → (ignored — no matching AgentEvent)
+  Stop{last_assistant_message, ...}       → AgentResult (ends the turn stream)
+"""
+
+import asyncio
+
+from app.domain.agent.service import (
+    AgentEvent,
+    AgentMessage,
+    AgentResult,
+    AgentSessionInfo,
+    AgentToolUse,
+    AgentUsage,
+)
+
+
+def _hook_event_name(hook: dict) -> str:
+    """The hook's event name. Claude Code sends `hook_event_name`; accept the
+    camelCase alias too so a payload-shape change doesn't silently break us."""
+    return str(hook.get("hook_event_name") or hook.get("hookEventName") or "")
+
+
+def _usage_from_hook(hook: dict) -> AgentUsage:
+    """Best-effort token accounting from a Stop payload. Interactive hooks don't
+    reliably carry usage, so this is zero unless a `usage` dict is present — the
+    turn is never blocked on missing usage (design note: 拿不到就置 0)."""
+    usage = hook.get("usage")
+    if not isinstance(usage, dict):
+        return AgentUsage()
+    return AgentUsage(
+        model=str(usage.get("model") or ""),
+        input_tokens=int(usage.get("input_tokens") or 0),
+        output_tokens=int(usage.get("output_tokens") or 0),
+        cost_usd=float(usage.get("cost_usd") or 0.0),
+    )
+
+
+def translate_hook(hook: dict) -> AgentEvent | None:
+    """One hook payload → one AgentEvent, or None when the hook has no
+    platform-visible counterpart (e.g. PostToolUse). A returned AgentResult
+    signals the end of the turn (the Stop hook)."""
+    event = _hook_event_name(hook)
+
+    if event == "SessionStart":
+        sid = hook.get("session_id")
+        return AgentSessionInfo(session_id=str(sid)) if sid else None
+
+    if event == "PreToolUse":
+        tool_input = hook.get("tool_input")
+        return AgentToolUse(
+            name=str(hook.get("tool_name") or ""),
+            input=tool_input if isinstance(tool_input, dict) else {},
+        )
+
+    if event == "MessageDisplay":
+        # A discrete 芝士 message (Slack-style), not a token delta: one
+        # MessageDisplay = one chat message block (spike mapping).
+        text = hook.get("delta")
+        if isinstance(text, str) and text.strip():
+            return AgentMessage(text=text)
+        return None
+
+    if event == "Stop":
+        sid = hook.get("session_id")
+        return AgentResult(
+            text=str(hook.get("last_assistant_message") or ""),
+            session_id=str(sid) if sid else None,
+            usage=_usage_from_hook(hook),
+        )
+
+    # PostToolUse and any unmapped event: nothing to surface.
+    return None
+
+
+class HookRouter:
+    """Process-global router from topic id → the active turn's event queue.
+
+    The /sandbox/hooks endpoint calls ``push``; TmuxHooksProvider.run_turn holds
+    the matching queue via ``register`` for the duration of the turn. Both run on
+    the same asyncio loop (uvicorn worker), so put_nowait is safe and lock-free.
+    Turns are serialized per topic, so one queue per topic is sufficient."""
+
+    def __init__(self) -> None:
+        self._queues: dict[str, asyncio.Queue[dict]] = {}
+
+    def register(self, topic_id: str) -> asyncio.Queue[dict]:
+        """Claim the topic's slot for this turn and return its fresh queue. A new
+        queue REPLACES any stale one (a previous turn that failed to clean up)."""
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+        self._queues[topic_id] = queue
+        return queue
+
+    def unregister(self, topic_id: str, queue: asyncio.Queue[dict]) -> None:
+        """Release the topic's slot — but only if it still holds OUR queue, so a
+        late cleanup never evicts the next turn's already-registered queue."""
+        if self._queues.get(topic_id) is queue:
+            self._queues.pop(topic_id, None)
+
+    def push(self, topic_id: str, hook: dict) -> bool:
+        """Enqueue a hook payload for the topic's active turn. Returns False when
+        no turn is listening (hook arrived outside a run_turn window) so the
+        endpoint can report it instead of silently dropping."""
+        queue = self._queues.get(topic_id)
+        if queue is None:
+            return False
+        queue.put_nowait(hook)
+        return True
+
+
+# Shared singleton: the endpoint and the provider import this same instance.
+hook_router = HookRouter()

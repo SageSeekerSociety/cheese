@@ -1,0 +1,69 @@
+name: Deploy (dev/test box)
+
+# Continuous deployment to the cheese dev/test box (cheese-dev-env1-app,
+# 192.168.16.5). The box is on ghg's private network with no public inbound, so
+# GitHub-hosted runners can't reach it — a self-hosted runner (label
+# `cheese-dev`) lives ON the box and pulls jobs outbound.
+#
+# dev runs the unified DOCKER deploy (deploy/deploy-docker.sh): pull the
+# per-commit images, migrate, up, health-check. The box was cut over from
+# bare-metal to containers by deploy/dev-docker-cutover.sh (host nginx dropped —
+# the frontend image bundles its own; the ghg edge terminates TLS and hits :80).
+# The bare-metal service is kept installed-but-disabled as an instant fallback.
+# (prod still uses deploy-blue-green.sh via deploy-prod.yml until it cuts over.)
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+# The Docker deploy PULLS the per-commit images, which build.yml builds in
+# parallel on the same push — so the deploy must WAIT for those images to exist
+# before pulling. checks:read lets the gate poll the build check-runs.
+permissions:
+  contents: read
+  checks: read
+
+# Never run two deploys at once; let an in-flight one finish.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  # Gate on the image build (GitHub-hosted, so it doesn't tie up the box's runner
+  # while build.yml runs). Skipped for a manual dispatch, which trusts the ref.
+  wait-for-build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for backend image
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'build-backend'
+          wait-interval: 15
+      - name: Wait for frontend image
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'build-frontend'
+          wait-interval: 15
+
+  deploy:
+    needs: wait-for-build
+    # wait-for-build is skipped on manual dispatch, which would otherwise skip
+    # this job too — allow dispatch through, and require build success on push.
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.wait-for-build.result == 'success')
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 30
+    steps:
+      - name: Check out the triggering commit (for the deploy scripts + compose)
+        uses: actions/checkout@v4
+
+      - name: Docker deploy this commit
+        run: bash deploy/deploy-docker.sh "$(git rev-parse --short=7 HEAD)"

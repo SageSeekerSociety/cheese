@@ -1,0 +1,83 @@
+# Unified app-tier stack — backend + frontend, deploy-by-sha.
+#
+# This is the SHARED core for every environment. On its own it is the dev/prod
+# (RUC) shape: the stateless app tier only, connecting to an EXTERNAL Postgres
+# and Redis via the box's own backend/.env (DATABASE_URL / REDIS_URL) — the
+# standard "hybrid" pattern (containerize the app, keep the stateful DB external).
+#
+# etrip layers docker-compose.etrip.yml on top to ADD its in-container postgres +
+# valkey and the agent sandbox wiring. See deploy/deploy-docker.sh.
+#
+# Images are pinned by commit sha via IMAGE_TAG (build.yml builds one set per
+# commit). The frontend image bundles nginx and reverse-proxies /api + /uploads
+# to `backend` (compose service name), so no separate/host nginx is needed.
+services:
+  backend:
+    # Default is the current-path image by sha. Override BACKEND_IMAGE for an env
+    # pinned to a different release/path — e.g. prod (RUC) runs the v0.16.4 release,
+    # whose image is under the pre-rename path `cheese-backend-py/*`. prod deploys
+    # RELEASES (not main commits), so it stays on its release image until the next.
+    image: ${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    environment:
+      # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
+      # so deploys never touch them (the 赛题 PDFs on prod).
+      - STORAGE_LOCAL_PATH=/data/uploads
+    volumes:
+      - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
+    # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
+    # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
+    # and the frontend on :8080 — a localhost-only bind would be unreachable from
+    # it. Safe here because dev/prod are on the private ghg net with no public
+    # inbound. (etrip is public and uses its OWN compose, not this one.)
+    ports:
+      - "0.0.0.0:${BACKEND_PORT:-8081}:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/healthz"]
+      interval: 15s
+      timeout: 8s
+      start_period: 40s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}}
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    # CRITICAL: the frontend image bakes __VITE_*__ placeholders that its
+    # entrypoint substitutes from THESE env vars at container start. If unset,
+    # the API base becomes an EMPTY string and the SPA posts to /users/... at
+    # the site root instead of /api/... — every API call 405s at the static
+    # server and the whole app breaks in real browsers (while curl probes that
+    # hand-add /api still pass). This exact failure took prod down on 2026-07-17.
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-/api}
+      - VITE_NEW_API_BASE_URL=${VITE_NEW_API_BASE_URL:-/api}
+      - VITE_AI_API_BASE_URL=${VITE_AI_API_BASE_URL:-/api}
+      # prod (RUC) needs its WS-edge override (https://119pve.ghg.org.cn) because
+      # the cheese.ruc.edu.cn edge strips WebSocket Upgrade; set per box.
+      - VITE_CONNECTOR_WS_BASE=${VITE_CONNECTOR_WS_BASE:-}
+    # The ghg edge proxies the SPA to the box on :8080; also publish :80 so direct
+    # in-net access and any :80 probe keep working (bare-metal exposed both). Both
+    # are overridable so a parallel validation run can use alt ports without
+    # colliding with a still-running bare-metal nginx on :80.
+    ports:
+      - "0.0.0.0:${FRONTEND_PORT:-8080}:80"
+      - "${FRONTEND_PORT_DIRECT:-0.0.0.0:80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:80"]
+      interval: 15s
+      timeout: 8s
+      start_period: 10s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
