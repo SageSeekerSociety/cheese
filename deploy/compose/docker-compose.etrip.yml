@@ -1,0 +1,114 @@
+# etrip (ruc-etrip.cn, 8.217.1.152 Aliyun HK) — the reconciled, git-tracked truth
+# for what was a hand-drifted /opt/cheese-deploy/docker-compose.prod.yml.
+#
+# etrip differs structurally from dev/prod (RUC), so it has its OWN compose, not
+# the shared base: its Postgres + Valkey run IN-compose (externalizing the DB is
+# tracked tech debt), uploads live in a docker VOLUME (not a host bind), and the
+# frontend container IS the public entry on :80 (no edge in front; plain HTTP).
+#
+# Deliberate changes vs the previously-deployed file:
+#  - elasticsearch DROPPED: vestigial from cheese 1.0 (the backend has zero
+#    ES/search config — it uses PG FTS), was burning a 2g memory limit.
+#  - backend bound to 127.0.0.1:8081 (was PUBLIC 0.0.0.0:8081 on an internet
+#    box); the frontend's bundled nginx proxies /api to it over the compose net.
+#  - uploads volume = external "uploads" — the volume the running backend
+#    actually mounts (the older cheese-backend-py_uploads volume was stale;
+#    its files were additively merged into "uploads" on 2026-07-17).
+#
+# Volume names are load-bearing — NEVER rename (empty volume = data loss).
+# Box-side this file is installed at /opt/cheese-deploy/docker-compose.prod.yml
+# (the name deploy.sh expects); /opt/cheese-deploy/.env pins the release images
+# (e.g. v0.16.4 lives under the pre-rename cheese-backend-py/* GHCR path).
+services:
+  postgres:
+    image: paradedb/paradedb:v0.18.8-pg16
+    command: ["-c", "shared_preload_libraries=pg_cron,pg_search"]
+    container_name: cheese_prod_postgres
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=cheese
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  valkey:
+    image: valkey/valkey:8.0.2
+    container_name: cheese_prod_valkey
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}
+    container_name: cheese_prod_backend
+    ports:
+      - "127.0.0.1:8081:8081"
+    env_file:
+      - .env.prod
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}}
+    container_name: cheese_prod_frontend
+    env_file:
+      - .env.prod
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  postgres_data:
+    external: true
+    name: cheese-backend-py_postgres_data
+  uploads:
+    external: true
+    name: uploads

@@ -1,0 +1,174 @@
+# Common Parameters
+# Shared path and query parameters used across multiple domains
+
+PageStart:
+  name: page_start
+  in: query
+  description: ID of the first item on the page, leave empty to start from beginning
+  schema:
+    type: integer
+    format: int64
+
+PageSize:
+  name: page_size
+  in: query
+  description: Number of items per page
+  schema:
+    type: integer
+    format: int64
+    default: 20
+    minimum: 1
+    maximum: 100
+
+UserId:
+  name: userId
+  in: path
+  description: User ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+QuestionId:
+  name: questionId
+  in: path
+  description: Question ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+AnswerId:
+  name: answerId
+  in: path
+  description: Answer ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+CommentId:
+  name: commentId
+  in: path
+  description: Comment ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+TeamId:
+  name: teamId
+  in: path
+  description: Team ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+ProjectId:
+  name: projectId
+  in: path
+  description: Project ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+SpaceId:
+  name: spaceId
+  in: path
+  description: Space ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+TaskId:
+  name: taskId
+  in: path
+  description: Task ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+KnowledgeId:
+  name: knowledgeId
+  in: path
+  description: Knowledge ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+MaterialId:
+  name: materialId
+  in: path
+  description: Material ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+MaterialBundleId:
+  name: materialBundleId
+  in: path
+  description: Material Bundle ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+AttachmentId:
+  name: attachmentId
+  in: path
+  description: Attachment ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+NotificationId:
+  name: notificationId
+  in: path
+  description: Notification ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+DiscussionId:
+  name: discussionId
+  in: path
+  description: Discussion ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+TopicId:
+  name: topicId
+  in: path
+  description: Topic ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+GroupId:
+  name: groupId
+  in: path
+  description: Group ID
+  required: true
+  schema:
+    type: integer
+    format: int64
+
+AvatarId:
+  name: avatarId
+  in: path
+  description: Avatar ID
+  required: true
+  schema:
+    type: integer
+    format: int64
