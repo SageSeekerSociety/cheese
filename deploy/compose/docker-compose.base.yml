@@ -29,6 +29,10 @@ services:
       - GIT_CONFIG_COUNT=1
       - GIT_CONFIG_KEY_0=credential.helper
       - GIT_CONFIG_VALUE_0=store --file /data/git-credentials
+      # The image's app user has HOME=/nonexistent; jj (repo trust records) and
+      # git need a writable, PERSISTENT home. Backed by a host path so jj's
+      # per-repo secure-config survives redeploys.
+      - HOME=/data/apphome
     volumes:
       - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
       # Platform workspaces (project git repos / jj worktrees / claude sessions)
@@ -40,6 +44,7 @@ services:
       # private GitHub repos: a host-side store file (chmod 600, NOT in git).
       # Default /dev/null = feature off (git prompts fail cleanly).
       - ${GIT_CREDENTIALS_FILE:-/dev/null}:/data/git-credentials:ro
+      - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
     # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
     # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
     # and the frontend on :8080 — a localhost-only bind would be unreachable from
