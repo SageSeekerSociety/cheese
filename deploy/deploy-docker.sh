@@ -73,3 +73,11 @@ fi
 
 echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
 log "DEPLOY OK: sha=$SHA healthy"
+
+# Reclaim disk from superseded per-commit images: every deploy pulls a fresh
+# 6-7GB image set and nothing ever pruned them — the dev box filled its disk to
+# 100% (2026-07-18) and CD wedged for a day. Keep anything younger than 72h
+# (covers the rollback-to-previous-sha path); best-effort, never fails a deploy.
+log "pruning docker images older than 72h…"
+docker image prune -af --filter "until=72h" >/dev/null 2>&1 || true
+docker builder prune -af --filter "until=72h" >/dev/null 2>&1 || true
