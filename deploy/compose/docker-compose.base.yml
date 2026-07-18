@@ -24,8 +24,22 @@ services:
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads
+      # Wire git (inside the container) to the mounted credential store — env
+      # config needs no image change and applies to every git the backend runs.
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=credential.helper
+      - GIT_CONFIG_VALUE_0=store --file /data/git-credentials
     volumes:
       - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
+      # Platform workspaces (project git repos / jj worktrees / claude sessions)
+      # must OUTLIVE container recreations — without this bind every deploy
+      # erased them (they lived in the container FS). Required for the fused
+      # platform features (topics/芝士) and the self-hosting dogfood loop.
+      - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:/app/.workspaces
+      # Git credentials for the platform's upstream-sync / push_back against
+      # private GitHub repos: a host-side store file (chmod 600, NOT in git).
+      # Default /dev/null = feature off (git prompts fail cleanly).
+      - ${GIT_CREDENTIALS_FILE:-/dev/null}:/data/git-credentials:ro
     # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
     # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
     # and the frontend on :8080 — a localhost-only bind would be unreachable from
