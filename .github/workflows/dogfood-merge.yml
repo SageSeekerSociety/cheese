@@ -108,6 +108,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Push over SSH with a repo deploy key, NOT github.token: GITHUB_TOKEN
+      # pushes never trigger workflows (recursion guard), so the squash landed
+      # on main without build/deploy ever running — the loop silently stopped
+      # at the merge. Deploy-key pushes DO trigger them.
+      - name: Use the dogfood push key
+        env:
+          KEY: ${{ secrets.DOGFOOD_PUSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/dogfood_push && chmod 600 ~/.ssh/dogfood_push
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git config core.sshCommand "ssh -i ~/.ssh/dogfood_push -o IdentitiesOnly=yes"
+          git remote set-url origin git@github.com:${{ github.repository }}.git
+
       # Direct squash merge, NOT a PR: the org disables Actions-created PRs
       # ("GitHub Actions is not permitted to create or approve pull requests"),
       # and we deliberately do not loosen that org-wide setting. The real code
