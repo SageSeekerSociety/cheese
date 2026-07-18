@@ -708,8 +708,14 @@ def list_sandbox_containers() -> list[str]:
     if not sandbox_available():
         return []
     result = subprocess.run(
-        ["docker", "ps", "--filter", "label=cheesex-sandbox=1",
-         "--format", "{{.Names}}"],
+        [
+            "docker",
+            "ps",
+            "--filter",
+            "label=cheesex-sandbox=1",
+            "--format",
+            "{{.Names}}",
+        ],
         capture_output=True,
         text=True,
     )

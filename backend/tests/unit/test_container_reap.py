@@ -17,9 +17,7 @@ def test_sdk_and_tmux_container_names_are_distinct():
 def test_stop_topic_container_reaps_both_backends(monkeypatch):
     calls: list[list[str]] = []
     monkeypatch.setattr(ws, "sandbox_available", lambda: True)
-    monkeypatch.setattr(
-        ws.subprocess, "run", lambda argv, **kw: calls.append(argv)
-    )
+    monkeypatch.setattr(ws.subprocess, "run", lambda argv, **kw: calls.append(argv))
 
     tid = uuid.uuid4()
     ws.stop_topic_container(tid)
@@ -32,8 +30,6 @@ def test_stop_topic_container_reaps_both_backends(monkeypatch):
 def test_stop_topic_container_noop_without_docker(monkeypatch):
     calls: list[list[str]] = []
     monkeypatch.setattr(ws, "sandbox_available", lambda: False)
-    monkeypatch.setattr(
-        ws.subprocess, "run", lambda argv, **kw: calls.append(argv)
-    )
+    monkeypatch.setattr(ws.subprocess, "run", lambda argv, **kw: calls.append(argv))
     ws.stop_topic_container(uuid.uuid4())
     assert calls == []  # no docker → never shells out

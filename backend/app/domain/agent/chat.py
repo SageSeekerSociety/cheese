@@ -1032,7 +1032,9 @@ class ChatService:
                 await session.commit()
             logger.info(
                 "deferred usage drain landed for turn %s (%d+%d tokens)",
-                turn_id, usage.input_tokens, usage.output_tokens,
+                turn_id,
+                usage.input_tokens,
+                usage.output_tokens,
             )
 
         task = asyncio.create_task(_later())

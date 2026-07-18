@@ -27,8 +27,15 @@ class QuietAgent(AgentService):
         super().__init__(model="stub")
 
     async def stream_reply(
-        self, *, prompt, system_prompt, cwd, resume_session_id,
-        sandbox=None, allowed_tools=None, **_,
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
     ):
         yield AgentResult(text="ok", session_id="s1", usage=None)
 
@@ -181,8 +188,15 @@ class _DupToolAgent(AgentService):
         super().__init__(model="stub")
 
     async def stream_reply(
-        self, *, prompt, system_prompt, cwd, resume_session_id,
-        sandbox=None, allowed_tools=None, **_,
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
     ):
         tool = AgentToolUse(name="Bash", input={"command": "echo hi"}, eid="dup-1")
         yield tool

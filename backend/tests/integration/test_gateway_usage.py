@@ -22,8 +22,15 @@ class QuietAgent(AgentService):
         super().__init__(model="stub")
 
     async def stream_reply(
-        self, *, prompt, system_prompt, cwd, resume_session_id,
-        sandbox=None, allowed_tools=None, **_,
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
     ):
         yield AgentResult(text="ok", session_id="s1", usage=None)
 
@@ -101,9 +108,7 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
     async def _no_sleep(_s):
         return None
 
-    monkeypatch.setattr(
-        "app.domain.agent.chat.asyncio.sleep", _no_sleep
-    )
+    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", _no_sleep)
     fake = FakeGateway()
     fake.days[gw.utc_today()] = (120, 30, 0.02)
     # Simulate LiteLLM's async log lag: the first drain sees nothing — the

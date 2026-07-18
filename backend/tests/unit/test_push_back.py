@@ -14,9 +14,7 @@ def repo_stub(monkeypatch, tmp_path):
     calls: list[tuple] = []
     monkeypatch.setattr(ws, "ensure_repo", lambda pid: tmp_path)
     monkeypatch.setattr(ws, "_base_branch", lambda repo: "main")
-    monkeypatch.setattr(
-        ws, "_git", lambda repo, *args, **kw: calls.append(args) or ""
-    )
+    monkeypatch.setattr(ws, "_git", lambda repo, *args, **kw: calls.append(args) or "")
     return calls
 
 

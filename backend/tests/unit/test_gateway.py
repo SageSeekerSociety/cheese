@@ -32,6 +32,7 @@ async def test_mint_set_budget_and_daily_spend_roundtrip():
             return httpx.Response(200, json={})
         if request.url.path == "/spend/logs":
             import hashlib
+
             expected = hashlib.sha256(b"sk-virtual").hexdigest()
             assert request.url.params["api_key"] == expected
             return httpx.Response(
