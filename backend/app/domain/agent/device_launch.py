@@ -65,10 +65,14 @@ def build_launch_script() -> str:
     return f"""set -e
 export HOME="${{CHEESE_HOME:-$HOME}}"
 export CHEESE_WORK="${{CHEESE_WORK:-$HOME}}"
-mkdir -p "$HOME/.claude" "$CHEESE_WORK"
-# Canonicalize the work dir (resolve symlinks, e.g. macOS /tmp → /private/tmp) so the
-# per-project trust key matches the path Claude Code actually canonicalizes cwd to.
+mkdir -p "$HOME" "$CHEESE_WORK"
+# Canonicalize BOTH paths to absolutes (resolve symlinks; and the server sends
+# CHEESE_HOME/CHEESE_WORK containing a LITERAL "$HOME/..." — as relative paths
+# they only work from the launcher's cwd; anything that changes cwd, like the
+# tmux-hosted claude below, would resolve them wrong).
+export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
+mkdir -p "$HOME/.claude"
 cat > "$HOME/.claude/.mktrust.js" <<'JS'
 const fs = require("fs");
 const base = JSON.parse(process.env.CHEESE_CLAUDE_GATES);
@@ -115,8 +119,12 @@ cd "$CHEESE_WORK"
 CLAUDE="claude --dangerously-skip-permissions"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 if command -v tmux >/dev/null 2>&1; then
-  tmux has-session -t cheese 2>/dev/null || tmux new-session -d -s cheese "$CLAUDE"
-  exec tmux attach -t cheese
+  # The screen itself may already live inside the connector's own tmux — clear
+  # $TMUX so the nested attach is allowed, and start the session in the work
+  # dir explicitly (a fresh tmux server would not inherit our cwd).
+  tmux has-session -t cheese 2>/dev/null || \\
+    tmux new-session -d -s cheese -c "$CHEESE_WORK" "$CLAUDE"
+  TMUX= exec tmux attach -t cheese
 else
   exec $CLAUDE
 fi
