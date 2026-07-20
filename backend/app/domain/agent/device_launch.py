@@ -96,6 +96,15 @@ JSON
 cat > "$HOME/.claude/cheese-hook" <<'SH'
 {_CHEESE_HOOK_SCRIPT}SH
 chmod +x "$HOME/.claude/cheese-hook"
+# The `cheese` platform-action CLI (accept cards / docs / decisions / memory): the
+# local sandbox bakes it into the image; a device fetches it from the backend, gated
+# by the same scoped token. Best-effort — a device without it (or without python3)
+# can still do code work, just not platform actions. On PATH via $HOME/.claude below.
+if [ -n "$CHEESE_CLI_URL" ]; then
+  curl -s -m 10 -H "X-Cheese-Token: $CHEESE_TOKEN" "$CHEESE_CLI_URL" \\
+    > "$HOME/.claude/cheese" 2>/dev/null && [ -s "$HOME/.claude/cheese" ] \\
+    && chmod +x "$HOME/.claude/cheese" || rm -f "$HOME/.claude/cheese"
+fi
 export PATH="$HOME/.claude:$PATH"
 # Durable event delivery on the device: cheese-hook spools every hook and (via
 # CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so this ONE background drainer is
@@ -149,12 +158,20 @@ def build_screen_launch(
     work_dir: str,
     model: str | None = None,
     extra_env: dict[str, str] | None = None,
+    api_base: str | None = None,
+    cli_url: str | None = None,
+    project_id: str | None = None,
+    topic_id: str | None = None,
+    author: str | None = None,
 ) -> tuple[list[str], dict[str, str], str]:
     """Assemble ``(command, env, cheeselet_source)`` for ``DeviceHub.open_screen``.
 
     ``command`` is a self-contained ``bash -lc`` launcher; ``env`` carries the hook
     wiring + home/work dirs + model + any provider (gateway) vars; ``cheeselet_source``
-    is the minimal prompt-typing driver."""
+    is the minimal prompt-typing driver. When ``cli_url``/``api_base`` and the
+    ``project_id``/``topic_id`` context are given, the launcher also fetches the
+    ``cheese`` platform-action CLI (accept cards / docs / decisions / memory) and wires
+    its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
     script = build_launch_script()
     command = ["bash", "-lc", script]
     env: dict[str, str] = {
@@ -168,6 +185,18 @@ def build_screen_launch(
     }
     if model:
         env["CLAUDE_MODEL"] = model
+    # Platform-action CLI wiring: the `cheese` script reads these (X-Cheese-Token =
+    # CHEESE_TOKEN, the SAME scoped token the hook forwarder uses).
+    if cli_url:
+        env["CHEESE_CLI_URL"] = cli_url
+    if api_base:
+        env["CHEESE_API"] = api_base
+    if project_id:
+        env["CHEESE_PROJECT"] = project_id
+    if topic_id:
+        env["CHEESE_TOPIC"] = topic_id
+    if author:
+        env["CHEESE_AUTHOR"] = author
     if extra_env:
         env.update(extra_env)
     return command, env, cheeselet_source()

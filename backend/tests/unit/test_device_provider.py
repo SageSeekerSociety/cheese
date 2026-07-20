@@ -146,3 +146,39 @@ async def test_no_online_device_is_a_clean_error():
     ]
     assert len(events) == 1 and isinstance(events[0], AgentResult)
     assert events[0].is_error
+
+
+def test_work_dir_colocated_translates_to_host_worktree(monkeypatch, tmp_path):
+    """A co-located device (device_shared_workspace_host_root set) gets the topic's
+    REAL worktree, its container path translated to the host root the device sees —
+    not an empty scratch dir."""
+    from app.core.config import settings
+    from app.domain.agent import device_provider as dp
+
+    pid = uuid.uuid4()
+    tid = uuid.uuid4()
+    container_root = tmp_path / "app" / ".workspaces"
+    wt = container_root / ".worktrees" / str(pid) / "topic-abc"
+    wt.mkdir(parents=True)
+
+    monkeypatch.setattr(settings, "workspace_root", str(container_root))
+    monkeypatch.setattr(
+        settings, "device_shared_workspace_host_root", "/home/dev/cheese-workspaces"
+    )
+    monkeypatch.setattr(dp.ws, "topic_worktree", lambda p, t: wt)
+
+    prov = DeviceProvider(hub=FakeHub())
+    got = prov._work_dir(pid, tid)
+    assert got == f"/home/dev/cheese-workspaces/.worktrees/{pid}/topic-abc"
+
+
+def test_work_dir_remote_uses_scratch(monkeypatch):
+    """With no shared host root (remote device), the work dir stays a per-topic
+    scratch the launcher creates — the co-located path is opt-in."""
+    from app.core.config import settings
+
+    pid = uuid.uuid4()
+    tid = uuid.uuid4()
+    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")
+    prov = DeviceProvider(hub=FakeHub())
+    assert prov._work_dir(pid, tid) == f"$HOME/.cheese/work/{pid}/{tid}"

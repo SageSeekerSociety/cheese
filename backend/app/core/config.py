@@ -130,6 +130,13 @@ class Settings(BaseSettings):
     # link is built from it. For a NAT'd device this must be publicly reachable
     # (outbound-only for the link WS; the hook POST is a normal outbound request).
     connector_public_base: str = "http://localhost:8099"
+    # Single-box self-hosting (fusion §5): the host path where enrolled devices see
+    # this backend's `workspace_root`. When set, a device screen runs directly in the
+    # topic's REAL worktree (the container worktree path translated to this host root)
+    # instead of an empty scratch dir — so device edits flow through the normal
+    # snapshot/accept path, no clone/sync and no out-of-band writes. Leave empty when
+    # devices are remote (they own their own tree; a clone/sync path is separate).
+    device_shared_workspace_host_root: str = ""
     # Optional per-install-origin override for the device's persistent control
     # channel, keyed by the origin install.sh was fetched from and mapping to a
     # plain http(s) origin that CAN carry WebSockets, e.g.
