@@ -11,9 +11,10 @@ It lives OUTSIDE /api on purpose: the cheese_token_gate middleware only guards
 
 import logging
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.core.sandbox_auth import is_valid_cheese_token, scoped_token_claims
 from app.domain.agent import event_spool
@@ -23,6 +24,28 @@ from app.domain.workspace import service as ws
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
+
+# The `cheese` platform-action CLI source, shipped to enrolled devices (the local
+# sandbox bakes it into the image instead). backend/sandbox/cheese, read once.
+_CHEESE_CLI_SRC = (
+    Path(__file__).resolve().parents[3] / "sandbox" / "cheese"
+).read_text(encoding="utf-8")
+
+
+@router.get("/cli/cheese", response_model=None)
+async def get_cheese_cli(
+    x_cheese_token: str = Header(default=""),
+) -> PlainTextResponse | JSONResponse:
+    """Serve the `cheese` platform-action CLI to an enrolled device's screen launcher
+    (a co-located/remote device has no baked-in image). Gated by any valid scoped
+    token — it carries no data, just the script; the token still authorizes the
+    ACTIONS the CLI performs."""
+    if not scoped_token_claims(x_cheese_token):
+        return JSONResponse(
+            {"code": 401, "message": "invalid sandbox token", "data": None},
+            status_code=401,
+        )
+    return PlainTextResponse(_CHEESE_CLI_SRC, media_type="text/x-python")
 
 
 @router.post("/hooks/{topic_id}", response_model=None)
