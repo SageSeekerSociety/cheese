@@ -1208,8 +1208,23 @@ async def create_task_participant(
     if task is None:
         raise NotFoundError("Task not found")
 
-    if member != auth_user.user_id and task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can add other participants")
+    # 权限校验：
+    # - 个人任务(submitter_type==0)：member 是用户 ID，普通用户只能给自己报名；
+    #   任务创建者可代他人报名。
+    # - 团队任务(submitter_type==1)：member 是团队 ID，此时不能用 member==user_id
+    #   来判断，否则任何队长/队员都会被误判为"给他人报名"。应校验调用者是该团队的
+    #   OWNER/ADMIN（与资格判定 list_teams_user_can_use_to_join_task 一致）；
+    #   任务创建者亦可代为报名。
+    is_team = task.submitter_type == 1
+    if task.creator_id != auth_user.user_id:
+        if is_team:
+            team_repo = TeamRepository(session=db)
+            if not await team_repo.is_team_at_least_admin(member, auth_user.user_id):
+                raise ForbiddenError(
+                    "Only the team owner/admin can register this team for the task"
+                )
+        elif member != auth_user.user_id:
+            raise ForbiddenError("Only task owner can add other participants")
 
     if task.approved != 0 and task.creator_id != auth_user.user_id:
         raise BadRequestError("Cannot join a task that is not approved")
@@ -1248,7 +1263,6 @@ async def create_task_participant(
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
-    is_team = task.submitter_type == 1
     # 新建报名默认审批状态：与 Kotlin 一致使用 ApproveType.NONE
     approved = 2
 
