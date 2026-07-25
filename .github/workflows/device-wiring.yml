@@ -1,0 +1,79 @@
+name: Device wiring check (no model spend)
+
+# The cheap half of device verification: proves the box-side PLUMBING is intact
+# without driving an agent turn (no tokens, no credits). Complements
+# device-smoke.yml, which spends real budget to prove end-to-end behavior.
+#
+# It exists because a silent regression once removed the whole sandbox router
+# (a module-level file read failing at import, swallowed by route discovery):
+# every agent hook 404'd for a full deploy cycle and only a live turn revealed
+# it. These probes catch that class in seconds, so run them after any deploy.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  wiring:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 10
+    steps:
+      - name: Probe the sandbox routes the device depends on
+        run: |
+          set -uo pipefail
+          fail=0
+
+          # A scoped token, minted the same way a turn does.
+          TOK="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 python -c "
+          from app.core.sandbox_auth import mint_scoped_token
+          print(mint_scoped_token(project_id='00000000-0000-0000-0000-000000000001',
+                                  topic_id='00000000-0000-0000-0000-000000000002'))" | tr -d '\r')"
+          [ -n "$TOK" ] && echo "PASS  scoped token minted" || { echo "FAIL  could not mint a scoped token"; fail=1; }
+
+          # 1) The hooks route must EXIST (401 without a token, never 404 — a 404
+          #    means the router is unmounted and every agent event is being lost).
+          code="$(docker exec cheese-backend-1 python -c "
+          import urllib.request, urllib.error, json
+          req = urllib.request.Request('http://localhost:8081/sandbox/hooks/00000000-0000-0000-0000-000000000002',
+                                       data=json.dumps({}).encode(), method='POST',
+                                       headers={'Content-Type': 'application/json'})
+          try:
+              with urllib.request.urlopen(req, timeout=20) as r: print(r.status)
+          except urllib.error.HTTPError as e: print(e.code)")"
+          if [ "$code" = "401" ]; then
+            echo "PASS  /sandbox/hooks route mounted (401 without a token)"
+          else
+            echo "FAIL  /sandbox/hooks returned $code — expected 401; 404 means the router is unmounted"; fail=1
+          fi
+
+          # 2) The CLI endpoint must serve the REAL script, not an error body: a
+          #    short 200/404 body is what silently shipped a 100-byte 'cheese' to
+          #    the device and made every platform action unavailable to the agent.
+          body="$(docker exec cheese-backend-1 python -c "
+          import urllib.request, urllib.error
+          req = urllib.request.Request('http://localhost:8081/sandbox/cli/cheese', headers={'X-Cheese-Token': '$TOK'})
+          try:
+              with urllib.request.urlopen(req, timeout=20) as r: print(r.read().decode('utf-8', 'replace'))
+          except urllib.error.HTTPError as e: print('HTTP', e.code, e.read()[:200].decode('utf-8', 'replace'))")"
+          size=$(printf '%s' "$body" | wc -c | tr -d ' ')
+          if printf '%s' "$body" | grep -q "accept-request" && [ "$size" -gt 1000 ]; then
+            echo "PASS  /sandbox/cli/cheese serves the real CLI (${size} bytes)"
+          else
+            echo "FAIL  /sandbox/cli/cheese returned ${size} bytes: $(printf '%s' "$body" | head -c 200)"; fail=1
+          fi
+
+          # 3) The co-located worktree setting must be live, or device screens run
+          #    in a scratch dir and their edits never reach the topic branch.
+          root="$(docker exec cheese-backend-1 printenv DEVICE_SHARED_WORKSPACE_HOST_ROOT || true)"
+          if [ -n "$root" ] && [ -d "$root" ]; then
+            echo "PASS  co-located workspace root live: $root"
+          else
+            echo "FAIL  DEVICE_SHARED_WORKSPACE_HOST_ROOT unset or missing on the box"; fail=1
+          fi
+
+          # 4) The device must still be enrolled and online, else turns can't run.
+          online="$(docker exec cheese-backend-1 python -c "
+          from app.domain.agent.device_hub import device_hub
+          print(len(device_hub.online_device_ids()))" 2>/dev/null || echo 0)"
+          [ "${online:-0}" -gt 0 ] && echo "PASS  $online device(s) online" || echo "WARN  no device online (turns would queue)"
+
+          exit $fail
