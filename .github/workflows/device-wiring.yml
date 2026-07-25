@@ -93,6 +93,15 @@ jobs:
             echo "PASS  $online device(s) online"
           else
             echo "FAIL  no device online after a connector restart — turns would queue forever"
+            echo "--- connector service ---"
+            systemctl is-active cheese.service || true
+            systemctl show cheese.service -p ExecStart -p Result -p NRestarts 2>/dev/null || true
+            echo "--- connector journal ---"
+            journalctl -u cheese.service -n 30 --no-pager 2>/dev/null || true
+            echo "--- link status (as the enrolled user) ---"
+            cheesehost link status 2>&1 | head -10 || true
+            echo "--- can the box reach its own backend? ---"
+            curl -s -o /dev/null -w 'backend /healthz -> %{http_code}\n' http://192.168.16.5:8081/healthz || true
             fail=1
           fi
 
