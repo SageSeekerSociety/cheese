@@ -1,0 +1,47 @@
+name: Device self-hosting smoke
+
+# Drives ONE real device-backed turn on the dev box and asserts the three
+# properties self-hosting depends on (#94 real worktree, #95 the agent files its
+# own accept card, #96 the chat WS relays frames).
+#
+# It runs on the dev box's OWN runner and talks to the backend over localhost, so
+# it needs no VPN and no operator on the private network — the box verifies
+# itself. Manual: this drives a live agent turn (spends model budget), so it is
+# not on a schedule.
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: "Device-backed project to drive a turn in"
+        default: "cheese 自建"
+      user_handle:
+        description: "Actor whose token drives the turn (must exist on dev)"
+        default: "andy"
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the smoke test inside the backend container
+        env:
+          PROJECT_NAME: ${{ inputs.project_name }}
+          USER_HANDLE: ${{ inputs.user_handle }}
+        run: |
+          set -o pipefail
+          docker cp backend/scripts/device_selfhost_smoke.py \
+            cheese-backend-1:/tmp/device_selfhost_smoke.py
+          docker exec \
+            -e PROJECT_NAME="$PROJECT_NAME" \
+            -e USER_HANDLE="$USER_HANDLE" \
+            cheese-backend-1 python /tmp/device_selfhost_smoke.py
+
+      - name: Device screen state (on failure — what the box's claude was doing)
+        if: failure()
+        run: |
+          tmux ls 2>/dev/null || echo "no user tmux sessions"
+          tmux capture-pane -p -t cheese 2>/dev/null | tail -20 || true
+          systemctl is-active cheese.service || true
