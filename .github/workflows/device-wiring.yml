@@ -70,36 +70,38 @@ jobs:
             echo "FAIL  DEVICE_SHARED_WORKSPACE_HOST_ROOT unset or missing on the box"; fail=1
           fi
 
-          # 4) The device must be enrolled AND online, else every turn queues. The
-          #    connector's link does not always survive a backend restart, so this
-          #    self-heals once (nothing is lost: with no link there is no live
-          #    screen to preserve) rather than just reporting the outage.
-          count_online() {
-            docker exec cheese-backend-1 python -c "
-          from app.domain.agent.device_hub import device_hub
-          print(len(device_hub.online_device_ids()))" 2>/dev/null || echo 0
-          }
-          online="$(count_online)"
-          if [ "${online:-0}" -eq 0 ]; then
-            echo "no device online — restarting the connector once"
-            sudo systemctl restart cheese.service || systemctl --user restart cheese.service || true
-            for _ in 1 2 3 4 5 6; do
-              sleep 5
-              online="$(count_online)"
-              [ "${online:-0}" -gt 0 ] && break
-            done
-          fi
+          # 4) The device must be enrolled AND online. Ask the RUNNING server over
+          #    its API: device_hub is an in-process registry, so importing it in a
+          #    fresh `docker exec python` sees an empty hub and always reports zero
+          #    (that false alarm is what this replaced).
+          online="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 python -c "
+          import asyncio, json, urllib.request
+          from sqlalchemy import select
+          from app.core.db import async_session_factory
+          from app.core.tokens import mint_session_token
+          from app.domain.user.models import User
+
+          async def main():
+              async with async_session_factory() as s:
+                  u = (await s.execute(select(User).where(User.username == 'andy'))).scalar_one_or_none()
+                  if u is None:
+                      print(0); return
+                  tok = mint_session_token(handle=u.username, user_id=u.id)
+              req = urllib.request.Request('http://localhost:8081/connector/my/devices',
+                                           headers={'Authorization': 'Bearer ' + tok})
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  devices = json.loads(r.read()).get('devices', [])
+              print(sum(1 for d in devices if d.get('online')))
+
+          asyncio.run(main())" 2>/dev/null | tail -1)"
           if [ "${online:-0}" -gt 0 ]; then
             echo "PASS  $online device(s) online"
           else
-            echo "FAIL  no device online after a connector restart — turns would queue forever"
+            echo "FAIL  no device online — turns would queue forever"
             echo "--- connector service ---"
             systemctl is-active cheese.service || true
-            systemctl show cheese.service -p ExecStart -p Result -p NRestarts 2>/dev/null || true
-            echo "--- connector journal ---"
-            journalctl -u cheese.service -n 30 --no-pager 2>/dev/null || true
-            echo "--- link status (as the enrolled user) ---"
-            cheesehost link status 2>&1 | head -10 || true
+            echo "--- connector journal (tail) ---"
+            journalctl -u cheese.service -n 15 --no-pager 2>/dev/null | tail -8 || true
             echo "--- can the box reach its own backend? ---"
             curl -s -o /dev/null -w 'backend /healthz -> %{http_code}\n' http://192.168.16.5:8081/healthz || true
             fail=1
