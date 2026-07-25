@@ -94,3 +94,65 @@ jobs:
           fi
 
           exit $fail
+
+      # The two DEVICE CAPABILITIES self-hosting depends on, exercised from the
+      # device side with zero model spend: the agent's model provider is not
+      # involved in either (the CLI talks to the platform API, and the worktree
+      # is a filesystem the device can reach). A paid device-smoke run proves the
+      # agent CHOOSES to use them; these prove the box CAN.
+      - name: Device capabilities (real worktree + shipped CLI) — no model spend
+        run: |
+          set -uo pipefail
+          fail=0
+          docker cp backend/scripts/device_capability_setup.py cheese-backend-1:/tmp/ >/dev/null
+          docker cp backend/scripts/device_capability_verify.py cheese-backend-1:/tmp/ >/dev/null
+
+          setup="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/device_capability_setup.py 2>/dev/null || true)"
+          eval "$(printf '%s\n' "$setup" | grep -E '^(PROJECT|TOPIC|TOKEN|WORKTREE|HOSTTREE)=')"
+          if [ -z "${TOPIC:-}" ] || [ -z "${TOKEN:-}" ]; then
+            echo "FAIL  could not prepare a scratch topic:"; printf '%s\n' "$setup" | head -5; exit 1
+          fi
+          echo "topic=$TOPIC worktree(host)=${HOSTTREE:-<unset>}"
+
+          # #94 — the topic's REAL worktree must exist where the DEVICE sees it and
+          # be writable by the device user; write a probe file exactly as a screen
+          # would, then confirm the BACKEND reads it back through the topic.
+          MARKER="cap-$(date +%s)-$RANDOM"
+          if [ -n "${HOSTTREE:-}" ] && [ -d "$HOSTTREE" ]; then
+            if printf 'device probe %s\n' "$MARKER" > "$HOSTTREE/DEVICE_PROBE.txt" 2>/dev/null; then
+              echo "PASS  device can write the topic's real worktree ($HOSTTREE)"
+            else
+              echo "FAIL  worktree not writable by the device user: $HOSTTREE"; fail=1
+            fi
+          else
+            echo "FAIL  topic worktree missing on the device side: ${HOSTTREE:-<unset>}"; fail=1
+          fi
+
+          # #95 — fetch the CLI the way the screen launcher does, then FILE A CARD
+          # with it using the screen's scoped token. This is the whole platform-
+          # action path, end to end, on the device.
+          rm -f /tmp/cheese_cli_probe
+          curl -s -m 15 -H "X-Cheese-Token: $TOKEN" \
+            "http://192.168.16.5:8081/sandbox/cli/cheese" -o /tmp/cheese_cli_probe || true
+          chmod +x /tmp/cheese_cli_probe 2>/dev/null || true
+          out="$(CHEESE_API=http://192.168.16.5:8081/api CHEESE_PROJECT="$PROJECT" \
+                 CHEESE_TOPIC="$TOPIC" CHEESE_TOKEN="$TOKEN" CHEESE_AUTHOR=cheese \
+                 python3 /tmp/cheese_cli_probe accept-request andy "设备能力检查" 2>&1 || true)"
+          echo "cli said: $(printf '%s' "$out" | head -c 200)"
+
+          verify="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/device_capability_verify.py "$TOPIC" "$MARKER" 2>/dev/null || true)"
+          eval "$(printf '%s\n' "$verify" | grep -E '^(CARDS|MARKER)=')"
+          if [ "${CARDS:-0}" -gt 0 ] 2>/dev/null; then
+            echo "PASS  the shipped cheese CLI filed an accept card from the device (${CARDS})"
+          else
+            echo "FAIL  the CLI could not file a card from the device"; fail=1
+          fi
+          if [ "$(printf '%s\n' "$verify" | grep '^MARKER=' | cut -d= -f2)" = "1" ]; then
+            echo "PASS  the backend reads the device's write back through the topic worktree"
+          else
+            echo "FAIL  the device's write is NOT visible in the topic's worktree"; fail=1
+          fi
+
+          exit $fail
