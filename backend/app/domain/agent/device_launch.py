@@ -71,8 +71,8 @@ def build_launch_script() -> str:
 # re-parses through /bin/sh (dash on Debian/Ubuntu) — bashisms die silently.
 REAL_HOME="$HOME"
 CH="${{CHEESE_HOME:-$REAL_HOME}}"; CW="${{CHEESE_WORK:-$REAL_HOME}}"
-case "$CH" in "\$HOME"*) CH="$REAL_HOME${{CH#\$HOME}}";; esac
-case "$CW" in "\$HOME"*) CW="$REAL_HOME${{CW#\$HOME}}";; esac
+case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
+case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
 export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
 # Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
