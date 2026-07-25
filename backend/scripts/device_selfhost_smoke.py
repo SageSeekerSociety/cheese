@@ -14,7 +14,8 @@ Usage (from the box, via the dev runner or by hand):
     docker cp backend/scripts/device_selfhost_smoke.py cheese-backend-1:/tmp/
     docker exec cheese-backend-1 python /tmp/device_selfhost_smoke.py
 
-Env: PROJECT_NAME (default "cheese 自建"), USER_HANDLE (default "andy"),
+Env: PROJECT_ID (explicit, wins), PROJECT_NAME (default "cheese 自建"),
+USER_HANDLE (default "andy"),
 BASE (default http://localhost:8081), TURN_TIMEOUT_S (default 600).
 Exit code 0 only when every check passes; the summary lists PASS/FAIL per check.
 """
@@ -30,6 +31,8 @@ import uuid
 BASE = os.environ.get("BASE", "http://localhost:8081").rstrip("/")
 PROJECT_NAME = os.environ.get("PROJECT_NAME", "cheese 自建")
 USER_HANDLE = os.environ.get("USER_HANDLE", "andy")
+# Explicit id wins over the name lookup (unambiguous when a box has retry dupes).
+PROJECT_ID = os.environ.get("PROJECT_ID", "").strip()
 TURN_TIMEOUT_S = float(os.environ.get("TURN_TIMEOUT_S", "600"))
 MARKER = f"device-smoke {uuid.uuid4().hex[:8]}"
 
@@ -62,6 +65,7 @@ async def main() -> int:
 
     from app.core.db import async_session_factory
     from app.core.tokens import mint_session_token
+    from app.domain.device.models import DeviceProjectRow
     from app.domain.project.models import Project
     from app.domain.user.models import User
     from app.domain.workspace import service as ws
@@ -75,14 +79,43 @@ async def main() -> int:
         if user is None:
             print(f"FAIL setup: no user {USER_HANDLE!r} on this deployment")
             return 2
-        project = (
-            await session.execute(select(Project).where(Project.name == PROJECT_NAME))
-        ).scalar_one_or_none()
-        if project is None:
-            print(f"FAIL setup: no project {PROJECT_NAME!r} on this deployment")
-            return 2
+        if PROJECT_ID:
+            project_id = uuid.UUID(PROJECT_ID)
+        else:
+            # A name can match more than one project (dev boxes accumulate retries),
+            # so prefer one with a device actually bound to it — that is the project
+            # this test is about — and fall back to the newest match.
+            candidates = list(
+                (
+                    await session.execute(
+                        select(Project)
+                        .where(Project.name == PROJECT_NAME)
+                        .order_by(Project.created_at.desc())
+                    )
+                ).scalars()
+            )
+            if not candidates:
+                print(f"FAIL setup: no project {PROJECT_NAME!r} on this deployment")
+                return 2
+            bound = set(
+                (
+                    await session.execute(
+                        select(DeviceProjectRow.project_id).where(
+                            DeviceProjectRow.project_id.in_([p.id for p in candidates])
+                        )
+                    )
+                ).scalars()
+            )
+            chosen = next((p for p in candidates if p.id in bound), candidates[0])
+            if len(candidates) > 1:
+                why = "device-bound" if chosen.id in bound else "newest"
+                print(
+                    f"note: {len(candidates)} projects named {PROJECT_NAME!r}; "
+                    f"picked {chosen.id} ({why})",
+                    flush=True,
+                )
+            project_id = chosen.id
         token = mint_session_token(handle=user.username, user_id=user.id)
-        project_id = project.id
 
     print(f"project={project_id} actor={USER_HANDLE} marker={MARKER}", flush=True)
 
