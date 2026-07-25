@@ -31,7 +31,10 @@ def test_build_screen_launch_shapes_command_and_env():
     assert 'cat > "$HOME/.claude/settings.json"' in script
     assert "cheese-hook" in script
     assert "claude --dangerously-skip-permissions" in script
-    assert "tmux new-session -d -s cheese" in script
+    # Session name is derived from the work dir (per-topic isolation; a stale
+    # session can't serve a different topic's tree).
+    assert 'SESSION="cheese_$(printf' in script
+    assert 'tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK"' in script
     assert "CHEESE_HOOK_SPOOL" in script
     # The drainer deletes only on DURABLE acceptance (code:200 = live delivery or
     # server-side parking), with a 24h age cap for an unreachable backend.

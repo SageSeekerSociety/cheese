@@ -141,9 +141,16 @@ if command -v tmux >/dev/null 2>&1; then
   # sessions", dead pane). unset TMUX for the WHOLE block: every command
   # targets the user's default server, decoupled from the connector.
   unset TMUX
-  tmux has-session -t cheese 2>/dev/null || \\
-    tmux new-session -d -s cheese -c "$CHEESE_WORK" "$CLAUDE"
-  exec tmux attach -t cheese
+  # The session name is derived from the WORK DIR, never a fixed "cheese": one
+  # shared session made every topic on a device attach to whatever cwd the FIRST
+  # topic had, so later topics edited the wrong tree and never saw new launcher
+  # env (observed live: a 7-day-old session still serving new topics). Keying on
+  # the work dir gives per-topic isolation AND retires a stale session whenever
+  # the resolved work dir changes.
+  SESSION="cheese_$(printf '%s' "$CHEESE_WORK" | cksum | cut -d' ' -f1)"
+  tmux has-session -t "$SESSION" 2>/dev/null || \\
+    tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" "$CLAUDE"
+  exec tmux attach -t "$SESSION"
 else
   exec $CLAUDE
 fi
