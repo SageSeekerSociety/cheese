@@ -34,7 +34,11 @@ jobs:
           set -o pipefail
           docker cp backend/scripts/device_selfhost_smoke.py \
             cheese-backend-1:/tmp/device_selfhost_smoke.py
+          # -w / PYTHONPATH: the script is copied to /tmp but imports the app
+          # package, which is only importable from the container's /app root.
           docker exec \
+            -w /app \
+            -e PYTHONPATH=/app \
             -e PROJECT_NAME="$PROJECT_NAME" \
             -e USER_HANDLE="$USER_HANDLE" \
             cheese-backend-1 python /tmp/device_selfhost_smoke.py
