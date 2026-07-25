@@ -142,7 +142,11 @@ async def main() -> int:
         )
         loop = asyncio.get_event_loop()
         deadline = loop.time() + TURN_TIMEOUT_S
-        idle_after_output = 45.0
+        # Only AGENT output starts the idle clock: a device turn echoes
+        # user_block/turn_active instantly and then thinks silently for a minute
+        # or two, so counting those would cut the turn off before it works.
+        idle_after_output = 90.0
+        agent_frames = 0
         last = loop.time()
         while loop.time() < deadline:
             try:
@@ -152,11 +156,14 @@ async def main() -> int:
                     )
                 )
             except TimeoutError:
-                if frames and (loop.time() - last) > idle_after_output:
+                if agent_frames and (loop.time() - last) > idle_after_output:
                     break
                 continue
             frames.append(frame)
-            last = loop.time()
+            kind_now = frame.get("type")
+            if kind_now in ("assistant_block", "event_block", "block_updated"):
+                agent_frames += 1
+                last = loop.time()
             kind = frame.get("type")
             block = frame.get("block") or {}
             text = (block.get("content") or "")[:90].replace("\n", " ")
@@ -169,9 +176,21 @@ async def main() -> int:
         (
             "#96 chat WS relays frames",
             bool(frames),
-            f"{len(frames)} frames received",
+            f"{len(frames)} frames ({agent_frames} from the agent)",
         )
     )
+
+    # The worktree snapshot and the card land as the turn finishes; give them a
+    # short grace window rather than reading the instant the stream goes quiet.
+    for _ in range(20):
+        cards_now = api("GET", f"/api/topics/{topic_id}/accept-card", token)["data"]
+        wt_now = ws.topic_worktree(project_id, topic_id) / "README.md"
+        seen = wt_now.exists() and MARKER in wt_now.read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        if seen and int(cards_now.get("total") or 0) > 0:
+            break
+        await asyncio.sleep(6)
 
     worktree = ws.topic_worktree(project_id, topic_id)
     readme = worktree / "README.md"
