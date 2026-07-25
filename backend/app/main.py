@@ -13,6 +13,7 @@ this file.
 # self-update on dev: written via the platform ON this very box (2026-07-19)
 
 import importlib
+import logging
 import pkgutil
 import re
 
@@ -93,6 +94,12 @@ def _discover_routers(application: FastAPI) -> list[str]:
         try:
             module = importlib.import_module(name)
         except Exception:  # pragma: no cover - guards parallel/dev breakage
+            # LOUD on purpose: a silently skipped module drops its whole router,
+            # which once removed /sandbox/hooks (every agent event 404'd) because
+            # an unrelated module-level file read failed in the image.
+            logging.getLogger("app.startup").exception(
+                "route module %s failed to import — its routes are NOT mounted", name
+            )
             continue
         for attr, value in vars(module).items():
             if isinstance(value, APIRouter) and id(value) not in seen:

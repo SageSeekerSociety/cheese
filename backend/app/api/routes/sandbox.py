@@ -26,10 +26,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
 # The `cheese` platform-action CLI source, shipped to enrolled devices (the local
-# sandbox bakes it into the image instead). backend/sandbox/cheese, read once.
-_CHEESE_CLI_SRC = (
-    Path(__file__).resolve().parents[3] / "sandbox" / "cheese"
-).read_text(encoding="utf-8")
+# sandbox bakes it into its own image instead). Loaded LAZILY and defensively:
+# this module is imported by route auto-discovery, which SWALLOWS import errors —
+# a module-level read of a file the image may not carry silently unmounted the
+# whole sandbox router (hooks included) on dev. Import must never depend on it.
+_CLI_PATH = Path(__file__).resolve().parents[3] / "sandbox" / "cheese"
+
+
+def _cheese_cli_source() -> str | None:
+    try:
+        return _CLI_PATH.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("cheese CLI source unavailable at %s", _CLI_PATH)
+        return None
 
 
 @router.get("/cli/cheese", response_model=None)
@@ -45,7 +54,17 @@ async def get_cheese_cli(
             {"code": 401, "message": "invalid sandbox token", "data": None},
             status_code=401,
         )
-    return PlainTextResponse(_CHEESE_CLI_SRC, media_type="text/x-python")
+    src = _cheese_cli_source()
+    if src is None:
+        return JSONResponse(
+            {
+                "code": 503,
+                "message": "cheese CLI not shipped in this image",
+                "data": None,
+            },
+            status_code=503,
+        )
+    return PlainTextResponse(src, media_type="text/x-python")
 
 
 @router.post("/hooks/{topic_id}", response_model=None)
