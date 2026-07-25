@@ -70,10 +70,30 @@ jobs:
             echo "FAIL  DEVICE_SHARED_WORKSPACE_HOST_ROOT unset or missing on the box"; fail=1
           fi
 
-          # 4) The device must still be enrolled and online, else turns can't run.
-          online="$(docker exec cheese-backend-1 python -c "
+          # 4) The device must be enrolled AND online, else every turn queues. The
+          #    connector's link does not always survive a backend restart, so this
+          #    self-heals once (nothing is lost: with no link there is no live
+          #    screen to preserve) rather than just reporting the outage.
+          count_online() {
+            docker exec cheese-backend-1 python -c "
           from app.domain.agent.device_hub import device_hub
-          print(len(device_hub.online_device_ids()))" 2>/dev/null || echo 0)"
-          [ "${online:-0}" -gt 0 ] && echo "PASS  $online device(s) online" || echo "WARN  no device online (turns would queue)"
+          print(len(device_hub.online_device_ids()))" 2>/dev/null || echo 0
+          }
+          online="$(count_online)"
+          if [ "${online:-0}" -eq 0 ]; then
+            echo "no device online — restarting the connector once"
+            sudo systemctl restart cheese.service || systemctl --user restart cheese.service || true
+            for _ in 1 2 3 4 5 6; do
+              sleep 5
+              online="$(count_online)"
+              [ "${online:-0}" -gt 0 ] && break
+            done
+          fi
+          if [ "${online:-0}" -gt 0 ]; then
+            echo "PASS  $online device(s) online"
+          else
+            echo "FAIL  no device online after a connector restart — turns would queue forever"
+            fail=1
+          fi
 
           exit $fail
