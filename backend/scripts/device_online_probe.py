@@ -23,8 +23,8 @@ USER_HANDLE = os.environ.get("USER_HANDLE", "andy")
 async def count_online() -> int:
     from sqlalchemy import select
 
+    from app.common.auth import create_access_token
     from app.core.db import async_session_factory
-    from app.core.tokens import mint_session_token
     from app.domain.user.models import User
 
     async with async_session_factory() as session:
@@ -34,7 +34,9 @@ async def count_online() -> int:
         if user is None:
             print(f"no user {USER_HANDLE!r}", file=sys.stderr)
             return 0
-        token = mint_session_token(handle=user.username, user_id=user.id)
+        # The product's own minter: /connector/* authenticates the fused user
+        # token, and a platform session token is rejected there (401).
+        token = create_access_token(user.id, handle=user.username)
 
     req = urllib.request.Request(
         f"{BASE}/connector/my/devices", headers={"Authorization": f"Bearer {token}"}

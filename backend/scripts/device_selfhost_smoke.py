@@ -63,8 +63,8 @@ def api(method: str, path: str, token: str, body: dict | None = None) -> dict:
 async def main() -> int:
     from sqlalchemy import select
 
+    from app.common.auth import create_access_token
     from app.core.db import async_session_factory
-    from app.core.tokens import mint_session_token
     from app.domain.device.models import DeviceProjectRow
     from app.domain.project.models import Project
     from app.domain.user.models import User
@@ -115,7 +115,9 @@ async def main() -> int:
                     flush=True,
                 )
             project_id = chosen.id
-        token = mint_session_token(handle=user.username, user_id=user.id)
+        # Mint what the product mints at login, so every endpoint the browser
+        # can reach (including /connector/*) accepts this token too.
+        token = create_access_token(user.id, handle=user.username)
 
     print(f"project={project_id} actor={USER_HANDLE} marker={MARKER}", flush=True)
 
