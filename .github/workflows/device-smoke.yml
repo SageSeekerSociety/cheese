@@ -12,6 +12,9 @@ name: Device self-hosting smoke
 on:
   workflow_dispatch:
     inputs:
+      project_id:
+        description: "Project uuid (wins over the name; use when a name is ambiguous)"
+        default: ""
       project_name:
         description: "Device-backed project to drive a turn in"
         default: "cheese 自建"
@@ -28,6 +31,7 @@ jobs:
 
       - name: Run the smoke test inside the backend container
         env:
+          PROJECT_ID: ${{ inputs.project_id }}
           PROJECT_NAME: ${{ inputs.project_name }}
           USER_HANDLE: ${{ inputs.user_handle }}
         run: |
@@ -39,6 +43,7 @@ jobs:
           docker exec \
             -w /app \
             -e PYTHONPATH=/app \
+            -e PROJECT_ID="$PROJECT_ID" \
             -e PROJECT_NAME="$PROJECT_NAME" \
             -e USER_HANDLE="$USER_HANDLE" \
             cheese-backend-1 python /tmp/device_selfhost_smoke.py
