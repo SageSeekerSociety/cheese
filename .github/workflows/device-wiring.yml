@@ -17,6 +17,8 @@ jobs:
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+
       - name: Probe the sandbox routes the device depends on
         run: |
           set -uo pipefail
@@ -70,39 +72,23 @@ jobs:
             echo "FAIL  DEVICE_SHARED_WORKSPACE_HOST_ROOT unset or missing on the box"; fail=1
           fi
 
-          # 4) The device must be enrolled AND online. Ask the RUNNING server over
-          #    its API: device_hub is an in-process registry, so importing it in a
-          #    fresh `docker exec python` sees an empty hub and always reports zero
-          #    (that false alarm is what this replaced).
-          online="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 python -c "
-          import asyncio, json, urllib.request
-          from sqlalchemy import select
-          from app.core.db import async_session_factory
-          from app.core.tokens import mint_session_token
-          from app.domain.user.models import User
-
-          async def main():
-              async with async_session_factory() as s:
-                  u = (await s.execute(select(User).where(User.username == 'andy'))).scalar_one_or_none()
-                  if u is None:
-                      print(0); return
-                  tok = mint_session_token(handle=u.username, user_id=u.id)
-              req = urllib.request.Request('http://localhost:8081/connector/my/devices',
-                                           headers={'Authorization': 'Bearer ' + tok})
-              with urllib.request.urlopen(req, timeout=20) as r:
-                  devices = json.loads(r.read()).get('devices', [])
-              print(sum(1 for d in devices if d.get('online')))
-
-          asyncio.run(main())" 2>/dev/null | tail -1)"
-          if [ "${online:-0}" -gt 0 ]; then
+          # 4) The device must be enrolled AND online, or every turn queues. The
+          #    probe runs as a FILE (inline python through YAML + bash -e was too
+          #    fragile: one non-zero exit aborted the whole step before it could
+          #    report) and always prints a number, so `|| echo 0` can never mask
+          #    a crash into a silent pass.
+          docker cp backend/scripts/device_online_probe.py cheese-backend-1:/tmp/ >/dev/null
+          online="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/device_online_probe.py 2>/tmp/probe.err | tail -1 || echo 0)"
+          echo "device detail: $(cat /tmp/probe.err 2>/dev/null | head -3)"
+          if [ "${online:-0}" -gt 0 ] 2>/dev/null; then
             echo "PASS  $online device(s) online"
           else
             echo "FAIL  no device online — turns would queue forever"
             echo "--- connector service ---"
             systemctl is-active cheese.service || true
             echo "--- connector journal (tail) ---"
-            journalctl -u cheese.service -n 15 --no-pager 2>/dev/null | tail -8 || true
-            echo "--- can the box reach its own backend? ---"
+            journalctl -u cheese.service -n 12 --no-pager 2>/dev/null | tail -6 || true
             curl -s -o /dev/null -w 'backend /healthz -> %{http_code}\n' http://192.168.16.5:8081/healthz || true
             fail=1
           fi
