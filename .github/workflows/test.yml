@@ -1,5 +1,12 @@
 name: Backend Test
 
+# Runs on the dev box's own runner, not a GitHub-hosted one: hosted minutes are
+# billed for this private repo and ran out mid-2026-07-26, which stopped ALL CI
+# ("the job was not started because recent account payments have failed or your
+# spending limit needs to be increased"). The box is Linux/x64 with Docker, so it
+# satisfies everything these jobs need — service containers and native amd64
+# builds — with no emulation. Move back to ubuntu-latest once billing is sorted
+# if you prefer hosted isolation; nothing else in these files depends on it.
 on:
   push:
     branches: [main]
@@ -16,9 +23,15 @@ defaults:
   run:
     working-directory: backend
 
+# A single self-hosted runner serves this repo, so superseded runs must not
+# queue behind each other (deploys share the same runner).
+concurrency:
+  group: ci-test-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-dev]
 
     services:
       postgres:
@@ -100,7 +113,7 @@ jobs:
         run: uv run pytest tests/ -n auto --tb=short -k "not kotlin"
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-dev]
     steps:
       - uses: actions/checkout@v4
 
