@@ -21,6 +21,13 @@ on:
       user_handle:
         description: "Actor whose token drives the turn (must exist on dev)"
         default: "andy"
+      prompt:
+        description: "Override the turn's prompt (empty = the built-in marker+card check)"
+        default: ""
+      accept:
+        description: "Accept the resulting card afterwards — lands the work on the upstream trunk"
+        type: boolean
+        default: false
 
 jobs:
   smoke:
@@ -30,7 +37,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run the smoke test inside the backend container
+        id: turn
         env:
+          PROMPT: ${{ inputs.prompt }}
           PROJECT_ID: ${{ inputs.project_id }}
           PROJECT_NAME: ${{ inputs.project_name }}
           USER_HANDLE: ${{ inputs.user_handle }}
@@ -46,12 +55,29 @@ jobs:
             -e PROJECT_ID="$PROJECT_ID" \
             -e PROJECT_NAME="$PROJECT_NAME" \
             -e USER_HANDLE="$USER_HANDLE" \
-            cheese-backend-1 python /tmp/device_selfhost_smoke.py
+            -e PROMPT="$PROMPT" \
+            cheese-backend-1 python /tmp/device_selfhost_smoke.py | tee /tmp/smoke.out
+          grep -oE '^topic=[0-9a-f-]+' /tmp/smoke.out | cut -d= -f2 \
+            > /tmp/smoke_topic || true
+          echo "topic=$(cat /tmp/smoke_topic 2>/dev/null)" >> "$GITHUB_OUTPUT"
 
       # Sessions are named per work dir now, so a hardcoded `-t cheese` dumps the
       # WRONG (legacy) pane — walk every session instead, plus the bits that
       # explain a silent turn: did the CLI land, is the work dir writable by the
       # device user, is the connector up.
+      # 采纳 IS the merge: this is the last leg of the loop — the accepted work
+      # fast-forwards the UPSTREAM's own trunk, with no cheese-specific workflow
+      # in that repo. The recorded note says exactly where it landed.
+      - name: Accept the card (lands the work upstream)
+        if: ${{ inputs.accept && success() }}
+        run: |
+          set -uo pipefail
+          TOPIC="$(cat /tmp/smoke_topic)"
+          [ -n "$TOPIC" ] || { echo "no topic recorded"; exit 1; }
+          docker cp backend/scripts/accept_topic_card.py cheese-backend-1:/tmp/ >/dev/null
+          docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/accept_topic_card.py "$TOPIC"
+
       - name: Device screen state (on failure — what the box's claude was doing)
         if: failure()
         run: |

@@ -37,7 +37,9 @@ TURN_TIMEOUT_S = float(os.environ.get("TURN_TIMEOUT_S", "600"))
 MARKER = f"device-smoke {uuid.uuid4().hex[:8]}"
 
 _CARD_CMD = f'cheese accept-request {USER_HANDLE} "设备自托管冒烟 {MARKER}"'
-PROMPT = (
+# An override lets CI drive a REAL dogfood round (any task), not just the marker
+# check; the built-in prompt stays the default so the assertions still apply.
+PROMPT = os.environ.get("PROMPT", "").strip() or (
     "请做两件小事,不要做别的、不要跑测试:\n"
     f"1. 在 README.md 末尾追加一行:`<!-- {MARKER} -->`\n"
     f"2. 然后执行 `{_CARD_CMD}` 递验收卡。\n"
