@@ -272,13 +272,30 @@ class AcceptService:
         card.status = AcceptStatus.accepted
         card.decided_by = decided_by
         card.decided_at = now
-        try:
-            if merged.get("merged"):
-                # 采纳即上线 (dogfooding): push the accepted work back to a
-                # local upstream and fire its check/deploy hook. Best effort.
-                ws.push_back(topic.project_id, topic.id)
-        except Exception:  # noqa: BLE001 — the push is a side channel
-            pass
+        # 采纳即上线: propagate the merge to the upstream repo. The outcome is
+        # RECORDED on the card — a push that only landed a side branch (or failed
+        # outright) used to be swallowed here, so the accept looked complete while
+        # nothing reached the upstream and no one could tell why.
+        if merged.get("merged"):
+            try:
+                pushed = ws.push_back(topic.project_id, topic.id)
+            except Exception as exc:  # noqa: BLE001 — never fail the accept itself
+                card.note = f"上游回推失败：{exc}"[:2000]
+            else:
+                mode = pushed.get("mode")
+                if mode == "upstream":
+                    card.note = f"已合并并推送到上游 {pushed.get('target')}"
+                elif mode == "branch":
+                    why = (pushed.get("reason") or "").strip()
+                    card.note = (
+                        f"上游 {pushed.get('target')} 未能直接推送，"
+                        f"已推分支 {pushed.get('branch')} 待合并"
+                        + (f"（{why[-200:]}）" if why else "")
+                    )[:2000]
+                elif mode == "blocked":
+                    card.note = str(pushed.get("reason") or "")[:2000]
+                elif mode == "none":
+                    card.note = str(pushed.get("reason") or "")[:2000]
 
         # Topic is done → free its long-lived sandbox container (it would be
         # recreated on demand if the archived topic is ever resumed).

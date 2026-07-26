@@ -15,12 +15,14 @@ Per turn (``run_turn``):
   4. drain the hook queue, translating each hook to an ``AgentEvent`` (reused verbatim),
   5. on the ``Stop`` hook (→ ``AgentResult``) end the turn stream.
 
-``checkpoint`` is a no-op here: the device owns its own working tree (a future
-extension can ``exec`` a git snapshot on the device over the link).
+``checkpoint`` snapshots the topic worktree when the device is CO-LOCATED (it edited
+the backend's real tree); for a remote device it is a no-op (the device owns its own
+tree — a future extension can ``exec`` a git snapshot on the device over the link).
 """
 
 import uuid
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -33,6 +35,7 @@ from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.identity.services import CHEESE_HANDLE
 from app.domain.user.repositories import UserRepository
+from app.domain.workspace import service as ws
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
 # agent_handle). Takes both ids because the device is chosen with topic affinity, not
@@ -158,6 +161,26 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 return screen
         return None
 
+    def _work_dir(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
+        """The screen's cwd. For a CO-LOCATED device (one sharing this backend's
+        filesystem, ``device_shared_workspace_host_root`` set) this is the topic's
+        REAL worktree, translated from the container path to the host root the device
+        sees — so device edits land in the topic branch and checkpoint/accept work
+        with no clone/sync. Otherwise a per-topic scratch dir the launcher creates."""
+        host_root = settings.device_shared_workspace_host_root.strip()
+        if host_root:
+            wt = ws.topic_worktree(
+                project_id, topic_id
+            ).resolve()  # materializes + chmods
+            container_root = Path(settings.workspace_root).resolve()
+            try:
+                return str(Path(host_root) / wt.relative_to(container_root))
+            except ValueError:
+                # worktree outside workspace_root (shouldn't happen) — fall through
+                # to a scratch dir rather than hand the device an unrelated host path.
+                pass
+        return f"$HOME/.cheese/work/{project_id}/{topic_id}"
+
     def _hook_url(self, topic_id: uuid.UUID) -> str:
         # Reuse the existing sandbox hook endpoint (scoped-token auth + shared
         # hook_router), so the device path adds no second hook surface.
@@ -184,7 +207,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         home_dir = f"$HOME/.cheese/home/{project_id}"
-        work_dir = f"$HOME/.cheese/work/{project_id}/{topic_id}"
+        work_dir = self._work_dir(project_id, topic_id)
         gateway_env = {**settings.agent_env(), **(env or {})}
         command, screen_env, cheeselet = build_screen_launch(
             hook_url=self._hook_url(topic_id),
@@ -193,6 +216,11 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             work_dir=work_dir,
             model=model,
             extra_env=gateway_env,
+            api_base=f"{self._public_base}/api",
+            cli_url=f"{self._public_base}/sandbox/cli/cheese",
+            project_id=str(project_id),
+            topic_id=str(topic_id),
+            author=agent_handle,
         )
         return await self._hub.open_screen(
             device_id,
@@ -266,5 +294,10 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         except Exception as exc:  # noqa: BLE001 — a failed prompt ends the turn
             raise ScreenSetupError(f"device 后端启动失败：{exc}") from exc
 
-    # checkpoint: inherited no-op — the device owns its working tree. A future
-    # extension can exec a git snapshot on the device over the link.
+    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        """A CO-LOCATED device edited the backend's REAL worktree this turn, so
+        snapshot it into version history exactly like the local path (else 采纳/diff
+        wouldn't see the edits). A REMOTE device owns its own tree → still a no-op
+        (a future extension can exec a snapshot on the device over the link)."""
+        if settings.device_shared_workspace_host_root.strip():
+            ws.snapshot_worktree(project_id, topic_id)

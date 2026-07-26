@@ -88,6 +88,10 @@ COPY --from=deps /app/.venv /app/.venv
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
+# The agent-side assets the BACKEND serves at runtime: the `cheese` platform CLI
+# (fetched by enrolled devices via /sandbox/cli/cheese) and the skills seeded
+# into a topic's ~/.claude. Without these the device path has no CLI.
+COPY sandbox ./sandbox
 
 # Agent workspace toolchain: worktrees are managed with jj (colocated git) by
 # the backend process itself, and sandboxed turns spawn SIBLING containers

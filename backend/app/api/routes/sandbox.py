@@ -11,9 +11,10 @@ It lives OUTSIDE /api on purpose: the cheese_token_gate middleware only guards
 
 import logging
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.core.sandbox_auth import is_valid_cheese_token, scoped_token_claims
 from app.domain.agent import event_spool
@@ -23,6 +24,47 @@ from app.domain.workspace import service as ws
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
+
+# The `cheese` platform-action CLI source, shipped to enrolled devices (the local
+# sandbox bakes it into its own image instead). Loaded LAZILY and defensively:
+# this module is imported by route auto-discovery, which SWALLOWS import errors —
+# a module-level read of a file the image may not carry silently unmounted the
+# whole sandbox router (hooks included) on dev. Import must never depend on it.
+_CLI_PATH = Path(__file__).resolve().parents[3] / "sandbox" / "cheese"
+
+
+def _cheese_cli_source() -> str | None:
+    try:
+        return _CLI_PATH.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("cheese CLI source unavailable at %s", _CLI_PATH)
+        return None
+
+
+@router.get("/cli/cheese", response_model=None)
+async def get_cheese_cli(
+    x_cheese_token: str = Header(default=""),
+) -> PlainTextResponse | JSONResponse:
+    """Serve the `cheese` platform-action CLI to an enrolled device's screen launcher
+    (a co-located/remote device has no baked-in image). Gated by any valid scoped
+    token — it carries no data, just the script; the token still authorizes the
+    ACTIONS the CLI performs."""
+    if not scoped_token_claims(x_cheese_token):
+        return JSONResponse(
+            {"code": 401, "message": "invalid sandbox token", "data": None},
+            status_code=401,
+        )
+    src = _cheese_cli_source()
+    if src is None:
+        return JSONResponse(
+            {
+                "code": 503,
+                "message": "cheese CLI not shipped in this image",
+                "data": None,
+            },
+            status_code=503,
+        )
+    return PlainTextResponse(src, media_type="text/x-python")
 
 
 @router.post("/hooks/{topic_id}", response_model=None)

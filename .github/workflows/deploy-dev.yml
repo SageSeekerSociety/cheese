@@ -12,20 +12,22 @@ name: Deploy (dev/test box)
 # The bare-metal service is kept installed-but-disabled as an instant fallback.
 # (prod still uses deploy-blue-green.sh via deploy-prod.yml until it cuts over.)
 
+# Triggered BY the image build finishing, not by the push. The deploy pulls
+# per-commit images, so it must not start before they exist — that used to be a
+# separate gate job polling check-runs from a GitHub-hosted runner. Once builds
+# moved onto the box's single runner (hosted minutes ran out 2026-07-26), a gate
+# job there would DEADLOCK: it would hold the only runner while waiting for a
+# build that needs that same runner. An event has no such problem.
 on:
   workflow_dispatch: {}
-  push:
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types: [completed]
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
 
-# The Docker deploy PULLS the per-commit images, which build.yml builds in
-# parallel on the same push — so the deploy must WAIT for those images to exist
-# before pulling. checks:read lets the gate poll the build check-runs.
 permissions:
   contents: read
-  checks: read
+  packages: read
 
 # Never run two deploys at once; let an in-flight one finish.
 concurrency:
@@ -33,37 +35,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Gate on the image build (GitHub-hosted, so it doesn't tie up the box's runner
-  # while build.yml runs). Skipped for a manual dispatch, which trusts the ref.
-  wait-for-build:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Wait for backend image
-        uses: lewagon/wait-on-check-action@v1.3.4
-        with:
-          ref: ${{ github.sha }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: 'build-backend'
-          wait-interval: 15
-      - name: Wait for frontend image
-        uses: lewagon/wait-on-check-action@v1.3.4
-        with:
-          ref: ${{ github.sha }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: 'build-frontend'
-          wait-interval: 15
-
   deploy:
-    needs: wait-for-build
-    # wait-for-build is skipped on manual dispatch, which would otherwise skip
-    # this job too — allow dispatch through, and require build success on push.
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.wait-for-build.result == 'success')
+    # A manual dispatch trusts the operator's ref; an automatic run requires the
+    # build that triggered it to have SUCCEEDED (a red build has no images).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 30
     steps:
-      - name: Check out the triggering commit (for the deploy scripts + compose)
+      - name: Check out the built commit (for the deploy scripts + compose)
         uses: actions/checkout@v4
+        with:
+          # workflow_run checks out the DEFAULT branch unless told otherwise, so
+          # pin the exact commit whose images were just built.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+
+      # `push` used to carry paths-ignore for docs; a workflow_run event cannot,
+      # so keep the intent here — a docs-only commit must not restart a backend
+      # people are talking to, even though its images were rebuilt.
+      - name: Skip docs-only commits
+        id: scope
+        run: |
+          files="$(git diff --name-only HEAD^ HEAD 2>/dev/null || echo '')"
+          echo "$files" | sed 's/^/  changed: /'
+          if [ -n "$files" ] && ! echo "$files" | grep -qvE '(\.md$|^docs/)'; then
+            echo "docs-only commit — not restarting the deployment"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Authenticate for the pull rather than trusting the box's stored login:
+      # the images are private, and a deploy must not fail because some other
+      # job's cleanup removed a credential.
+      - name: Log in to ghcr
+        if: steps.scope.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          logout: false
 
       - name: Docker deploy this commit
+        if: steps.scope.outputs.skip != 'true'
         run: bash deploy/deploy-docker.sh "$(git rev-parse --short=7 HEAD)"

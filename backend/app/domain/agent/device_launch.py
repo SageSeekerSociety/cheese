@@ -63,12 +63,23 @@ def build_launch_script() -> str:
     # key (per-project trust) — a quoted heredoc can't do that. Reading the base from an
     # env var avoids any nested-quoting between the shell, node, and the JSON.
     return f"""set -e
-export HOME="${{CHEESE_HOME:-$HOME}}"
-export CHEESE_WORK="${{CHEESE_WORK:-$HOME}}"
-mkdir -p "$HOME/.claude" "$CHEESE_WORK"
-# Canonicalize the work dir (resolve symlinks, e.g. macOS /tmp → /private/tmp) so the
-# per-project trust key matches the path Claude Code actually canonicalizes cwd to.
+# CHEESE_HOME/CHEESE_WORK arrive with a LITERAL "$HOME/..." placeholder (the
+# server cannot know the device user's home). Substitute the REAL home first —
+# treating it as a relative path only worked by accident from a writable cwd
+# (a fresh service cwd of / made mkdir die with "cannot create '$HOME'").
+# POSIX-only from here: the connector's tmux joins argv with spaces and
+# re-parses through /bin/sh (dash on Debian/Ubuntu) — bashisms die silently.
+REAL_HOME="$HOME"
+CH="${{CHEESE_HOME:-$REAL_HOME}}"; CW="${{CHEESE_WORK:-$REAL_HOME}}"
+case "$CH" in "\\$HOME"*) CH="$REAL_HOME${{CH#\\$HOME}}";; esac
+case "$CW" in "\\$HOME"*) CW="$REAL_HOME${{CW#\\$HOME}}";; esac
+export HOME="$CH" CHEESE_WORK="$CW"
+mkdir -p "$HOME" "$CHEESE_WORK"
+# Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —
+# the tmux-hosted claude below runs from a fresh server with its own cwd.
+export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
+mkdir -p "$HOME/.claude"
 cat > "$HOME/.claude/.mktrust.js" <<'JS'
 const fs = require("fs");
 const base = JSON.parse(process.env.CHEESE_CLAUDE_GATES);
@@ -85,6 +96,15 @@ JSON
 cat > "$HOME/.claude/cheese-hook" <<'SH'
 {_CHEESE_HOOK_SCRIPT}SH
 chmod +x "$HOME/.claude/cheese-hook"
+# The `cheese` platform-action CLI (accept cards / docs / decisions / memory): the
+# local sandbox bakes it into the image; a device fetches it from the backend, gated
+# by the same scoped token. Best-effort — a device without it (or without python3)
+# can still do code work, just not platform actions. On PATH via $HOME/.claude below.
+if [ -n "$CHEESE_CLI_URL" ]; then
+  curl -s -m 10 -H "X-Cheese-Token: $CHEESE_TOKEN" "$CHEESE_CLI_URL" \\
+    > "$HOME/.claude/cheese" 2>/dev/null && [ -s "$HOME/.claude/cheese" ] \\
+    && chmod +x "$HOME/.claude/cheese" || rm -f "$HOME/.claude/cheese"
+fi
 export PATH="$HOME/.claude:$PATH"
 # Durable event delivery on the device: cheese-hook spools every hook and (via
 # CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so this ONE background drainer is
@@ -115,8 +135,22 @@ cd "$CHEESE_WORK"
 CLAUDE="claude --dangerously-skip-permissions"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 if command -v tmux >/dev/null 2>&1; then
-  tmux has-session -t cheese 2>/dev/null || tmux new-session -d -s cheese "$CLAUDE"
-  exec tmux attach -t cheese
+  # The screen runs inside the connector's own tmux, so $TMUX points at ITS
+  # socket — inherited, new-session would land the claude session there (dying
+  # with the connector) while attach looks at the default socket ("no
+  # sessions", dead pane). unset TMUX for the WHOLE block: every command
+  # targets the user's default server, decoupled from the connector.
+  unset TMUX
+  # The session name is derived from the WORK DIR, never a fixed "cheese": one
+  # shared session made every topic on a device attach to whatever cwd the FIRST
+  # topic had, so later topics edited the wrong tree and never saw new launcher
+  # env (observed live: a 7-day-old session still serving new topics). Keying on
+  # the work dir gives per-topic isolation AND retires a stale session whenever
+  # the resolved work dir changes.
+  SESSION="cheese_$(printf '%s' "$CHEESE_WORK" | cksum | cut -d' ' -f1)"
+  tmux has-session -t "$SESSION" 2>/dev/null || \\
+    tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" "$CLAUDE"
+  exec tmux attach -t "$SESSION"
 else
   exec $CLAUDE
 fi
@@ -131,12 +165,20 @@ def build_screen_launch(
     work_dir: str,
     model: str | None = None,
     extra_env: dict[str, str] | None = None,
+    api_base: str | None = None,
+    cli_url: str | None = None,
+    project_id: str | None = None,
+    topic_id: str | None = None,
+    author: str | None = None,
 ) -> tuple[list[str], dict[str, str], str]:
     """Assemble ``(command, env, cheeselet_source)`` for ``DeviceHub.open_screen``.
 
     ``command`` is a self-contained ``bash -lc`` launcher; ``env`` carries the hook
     wiring + home/work dirs + model + any provider (gateway) vars; ``cheeselet_source``
-    is the minimal prompt-typing driver."""
+    is the minimal prompt-typing driver. When ``cli_url``/``api_base`` and the
+    ``project_id``/``topic_id`` context are given, the launcher also fetches the
+    ``cheese`` platform-action CLI (accept cards / docs / decisions / memory) and wires
+    its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
     script = build_launch_script()
     command = ["bash", "-lc", script]
     env: dict[str, str] = {
@@ -150,6 +192,18 @@ def build_screen_launch(
     }
     if model:
         env["CLAUDE_MODEL"] = model
+    # Platform-action CLI wiring: the `cheese` script reads these (X-Cheese-Token =
+    # CHEESE_TOKEN, the SAME scoped token the hook forwarder uses).
+    if cli_url:
+        env["CHEESE_CLI_URL"] = cli_url
+    if api_base:
+        env["CHEESE_API"] = api_base
+    if project_id:
+        env["CHEESE_PROJECT"] = project_id
+    if topic_id:
+        env["CHEESE_TOPIC"] = topic_id
+    if author:
+        env["CHEESE_AUTHOR"] = author
     if extra_env:
         env.update(extra_env)
     return command, env, cheeselet_source()

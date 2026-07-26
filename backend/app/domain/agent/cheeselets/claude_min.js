@@ -24,7 +24,8 @@ const PASTE_START = ESC + '[200~'
 const PASTE_END = ESC + '[201~'
 
 let pending = null // the prompt text waiting to be typed
-let sent = false // becomes true once we have typed the pending prompt
+let sent = false // becomes true once we have SUBMITTED the pending prompt
+let pasted = false // the body is in the composer; Enter goes on a LATER tick
 
 function ready() {
   // The `❯` input box means Claude Code is at the prompt and will accept a paste.
@@ -39,14 +40,32 @@ function ready() {
   return true
 }
 
+// Paste and submit are split across TWO terminal ticks. The Enter must not ride
+// the same instant as the paste — while the TUI is still ingesting the bracketed
+// body it swallows the submit, and the prompt sits in the composer forever
+// (observed live on the dev box). The runtime has NO timers (setTimeout is not
+// defined — using one threw here every tick, which both skipped the Enter AND
+// left the guards unset, so every tick re-pasted the prompt), so the terminal's
+// own change/heartbeat cadence is the clock: paste on one tick, submit on the next.
 function tryType() {
   if (sent || pending === null) return
+  if (pasted) {
+    // A tick has passed since the paste, so the TUI has ingested it — submit.
+    // Deliberately NOT re-checking ready(): the composer now holds our text, and
+    // a transient non-ready frame must not strand an already-pasted prompt.
+    cheese.term.write(ENTER)
+    sent = true
+    pending = null
+    pasted = false
+    cheese.log('claude_min: prompt submitted')
+    return
+  }
   if (!ready()) return
+  // Set the guard BEFORE the write: if the write throws, the next tick must not
+  // paste a second copy (that pile-up is exactly what the setTimeout bug caused).
+  pasted = true
   cheese.term.write(PASTE_START + String(pending) + PASTE_END)
-  cheese.term.write(ENTER)
-  sent = true
-  pending = null
-  cheese.log('claude_min: prompt typed')
+  cheese.log('claude_min: prompt pasted')
 }
 
 // Type when the screen reaches the input box (or right away if already there).
@@ -58,6 +77,7 @@ cheese.term.onChange(tryType)
 cheese.expose('prompt', (text) => {
   pending = String(text)
   sent = false
+  pasted = false
   tryType()
   return { ok: true, ready: ready() }
 })

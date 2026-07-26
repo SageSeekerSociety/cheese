@@ -1,5 +1,12 @@
 name: Build and Push Docker Image
 
+# Runs on the dev box's own runner, not a GitHub-hosted one: hosted minutes are
+# billed for this private repo and ran out mid-2026-07-26, which stopped ALL CI
+# ("the job was not started because recent account payments have failed or your
+# spending limit needs to be increased"). The box is Linux/x64 with Docker, so it
+# satisfies everything these jobs need — service containers and native amd64
+# builds — with no emulation. Move back to ubuntu-latest once billing is sorted
+# if you prefer hosted isolation; nothing else in these files depends on it.
 on:
   push:
     branches: [main]
@@ -10,9 +17,15 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+# A single self-hosted runner serves this repo, so superseded runs must not
+# queue behind each other (deploys share the same runner).
+concurrency:
+  group: ci-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-backend:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-dev]
     permissions:
       contents: read
       packages: write
@@ -22,13 +35,24 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # A stable builder name: the default is per-run, which would throw away
+          # the box's layer cache between builds — the very cache that replaces
+          # the removed type=gha export.
+          name: cheese-box-builder
+
+      # Retry: the box reaches ghcr through ghg's egress, which resets
+      # connections often enough to have failed a build on the login step alone
+      # ("read: connection reset by peer"). A hosted runner never saw this.
+      - name: Log in to Container Registry
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
 
       - name: Extract metadata
         id: meta
@@ -51,14 +75,21 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   # Agent sandbox: the image 芝士 turns run inside (spawned as sibling
   # containers by the backend through the host docker.sock). Built here so
   # deploy.sh can `docker pull` it — production has no repo checkout.
+
+      # Building on the box that also SERVES dev means build layers land on the
+      # same 63GB disk the deployment lives on — it hit 100% twice on 2026-07-25.
+      # Reclaim build cache after each image (in-use images are never touched).
+      - name: Reclaim build cache
+        if: always()
+        run: |
+          docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
+          df -h / | tail -1
   build-sandbox:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-dev]
     permissions:
       contents: read
       packages: write
@@ -68,13 +99,24 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # A stable builder name: the default is per-run, which would throw away
+          # the box's layer cache between builds — the very cache that replaces
+          # the removed type=gha export.
+          name: cheese-box-builder
+
+      # Retry: the box reaches ghcr through ghg's egress, which resets
+      # connections often enough to have failed a build on the login step alone
+      # ("read: connection reset by peer"). A hosted runner never saw this.
+      - name: Log in to Container Registry
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
 
       - name: Extract metadata
         id: meta
@@ -96,11 +138,17 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
+      # Building on the box that also SERVES dev means build layers land on the
+      # same 63GB disk the deployment lives on — it hit 100% twice on 2026-07-25.
+      # Reclaim build cache after each image (in-use images are never touched).
+      - name: Reclaim build cache
+        if: always()
+        run: |
+          docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
+          df -h / | tail -1
   build-frontend:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-dev]
     permissions:
       contents: read
       packages: write
@@ -110,13 +158,24 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # A stable builder name: the default is per-run, which would throw away
+          # the box's layer cache between builds — the very cache that replaces
+          # the removed type=gha export.
+          name: cheese-box-builder
+
+      # Retry: the box reaches ghcr through ghg's egress, which resets
+      # connections often enough to have failed a build on the login step alone
+      # ("read: connection reset by peer"). A hosted runner never saw this.
+      - name: Log in to Container Registry
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
 
       - name: Extract metadata
         id: meta
@@ -139,5 +198,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+
+      # Building on the box that also SERVES dev means build layers land on the
+      # same 63GB disk the deployment lives on — it hit 100% twice on 2026-07-25.
+      # Reclaim build cache after each image (in-use images are never touched).
+      - name: Reclaim build cache
+        if: always()
+        run: |
+          docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
+          df -h / | tail -1

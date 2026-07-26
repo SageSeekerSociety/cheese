@@ -1,0 +1,179 @@
+name: Device wiring check (no model spend)
+
+# The cheap half of device verification: proves the box-side PLUMBING is intact
+# without driving an agent turn (no tokens, no credits). Complements
+# device-smoke.yml, which spends real budget to prove end-to-end behavior.
+#
+# It exists because a silent regression once removed the whole sandbox router
+# (a module-level file read failing at import, swallowed by route discovery):
+# every agent hook 404'd for a full deploy cycle and only a live turn revealed
+# it. These probes catch that class in seconds, so run them after any deploy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      accept:
+        description: "Also accept the card this check files — exercises landing on the upstream (no model spend)"
+        type: boolean
+        default: false
+
+jobs:
+  wiring:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe the sandbox routes the device depends on
+        run: |
+          set -uo pipefail
+          fail=0
+
+          # A scoped token, minted the same way a turn does.
+          TOK="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 python -c "
+          from app.core.sandbox_auth import mint_scoped_token
+          print(mint_scoped_token(project_id='00000000-0000-0000-0000-000000000001',
+                                  topic_id='00000000-0000-0000-0000-000000000002'))" | tr -d '\r')"
+          [ -n "$TOK" ] && echo "PASS  scoped token minted" || { echo "FAIL  could not mint a scoped token"; fail=1; }
+
+          # 1) The hooks route must EXIST (401 without a token, never 404 — a 404
+          #    means the router is unmounted and every agent event is being lost).
+          code="$(docker exec cheese-backend-1 python -c "
+          import urllib.request, urllib.error, json
+          req = urllib.request.Request('http://localhost:8081/sandbox/hooks/00000000-0000-0000-0000-000000000002',
+                                       data=json.dumps({}).encode(), method='POST',
+                                       headers={'Content-Type': 'application/json'})
+          try:
+              with urllib.request.urlopen(req, timeout=20) as r: print(r.status)
+          except urllib.error.HTTPError as e: print(e.code)")"
+          if [ "$code" = "401" ]; then
+            echo "PASS  /sandbox/hooks route mounted (401 without a token)"
+          else
+            echo "FAIL  /sandbox/hooks returned $code — expected 401; 404 means the router is unmounted"; fail=1
+          fi
+
+          # 2) The CLI endpoint must serve the REAL script, not an error body: a
+          #    short 200/404 body is what silently shipped a 100-byte 'cheese' to
+          #    the device and made every platform action unavailable to the agent.
+          body="$(docker exec cheese-backend-1 python -c "
+          import urllib.request, urllib.error
+          req = urllib.request.Request('http://localhost:8081/sandbox/cli/cheese', headers={'X-Cheese-Token': '$TOK'})
+          try:
+              with urllib.request.urlopen(req, timeout=20) as r: print(r.read().decode('utf-8', 'replace'))
+          except urllib.error.HTTPError as e: print('HTTP', e.code, e.read()[:200].decode('utf-8', 'replace'))")"
+          size=$(printf '%s' "$body" | wc -c | tr -d ' ')
+          if printf '%s' "$body" | grep -q "accept-request" && [ "$size" -gt 1000 ]; then
+            echo "PASS  /sandbox/cli/cheese serves the real CLI (${size} bytes)"
+          else
+            echo "FAIL  /sandbox/cli/cheese returned ${size} bytes: $(printf '%s' "$body" | head -c 200)"; fail=1
+          fi
+
+          # 3) The co-located worktree setting must be live, or device screens run
+          #    in a scratch dir and their edits never reach the topic branch.
+          root="$(docker exec cheese-backend-1 printenv DEVICE_SHARED_WORKSPACE_HOST_ROOT || true)"
+          if [ -n "$root" ] && [ -d "$root" ]; then
+            echo "PASS  co-located workspace root live: $root"
+          else
+            echo "FAIL  DEVICE_SHARED_WORKSPACE_HOST_ROOT unset or missing on the box"; fail=1
+          fi
+
+          # 4) The device must be enrolled AND online, or every turn queues. The
+          #    probe runs as a FILE (inline python through YAML + bash -e was too
+          #    fragile: one non-zero exit aborted the whole step before it could
+          #    report) and always prints a number, so `|| echo 0` can never mask
+          #    a crash into a silent pass.
+          docker cp backend/scripts/device_online_probe.py cheese-backend-1:/tmp/ >/dev/null
+          online="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/device_online_probe.py 2>/tmp/probe.err | tail -1 || echo 0)"
+          echo "device detail: $(cat /tmp/probe.err 2>/dev/null | head -3)"
+          if [ "${online:-0}" -gt 0 ] 2>/dev/null; then
+            echo "PASS  $online device(s) online"
+          else
+            echo "FAIL  no device online — turns would queue forever"
+            echo "--- connector service ---"
+            systemctl is-active cheese.service || true
+            echo "--- connector journal (tail) ---"
+            journalctl -u cheese.service -n 12 --no-pager 2>/dev/null | tail -6 || true
+            curl -s -o /dev/null -w 'backend /healthz -> %{http_code}\n' http://192.168.16.5:8081/healthz || true
+            fail=1
+          fi
+
+          exit $fail
+
+      # The two DEVICE CAPABILITIES self-hosting depends on, exercised from the
+      # device side with zero model spend: the agent's model provider is not
+      # involved in either (the CLI talks to the platform API, and the worktree
+      # is a filesystem the device can reach). A paid device-smoke run proves the
+      # agent CHOOSES to use them; these prove the box CAN.
+      - name: Device capabilities (real worktree + shipped CLI) — no model spend
+        run: |
+          set -uo pipefail
+          fail=0
+          docker cp backend/scripts/device_capability_setup.py cheese-backend-1:/tmp/ >/dev/null
+          docker cp backend/scripts/device_capability_verify.py cheese-backend-1:/tmp/ >/dev/null
+
+          setup="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/device_capability_setup.py 2>/dev/null || true)"
+          eval "$(printf '%s\n' "$setup" | grep -E '^(PROJECT|TOPIC|TOKEN|WORKTREE|HOSTTREE)=')"
+          if [ -z "${TOPIC:-}" ] || [ -z "${TOKEN:-}" ]; then
+            echo "FAIL  could not prepare a scratch topic:"; printf '%s\n' "$setup" | head -5; exit 1
+          fi
+          echo "topic=$TOPIC worktree(host)=${HOSTTREE:-<unset>}"
+          printf '%s' "$TOPIC" > /tmp/cap_topic
+
+          # #94 — the topic's REAL worktree must exist where the DEVICE sees it and
+          # be writable by the device user; write a probe file exactly as a screen
+          # would, then confirm the BACKEND reads it back through the topic.
+          MARKER="cap-$(date +%s)-$RANDOM"
+          if [ -n "${HOSTTREE:-}" ] && [ -d "$HOSTTREE" ]; then
+            if printf 'device probe %s\n' "$MARKER" > "$HOSTTREE/DEVICE_PROBE.txt" 2>/dev/null; then
+              echo "PASS  device can write the topic's real worktree ($HOSTTREE)"
+            else
+              echo "FAIL  worktree not writable by the device user: $HOSTTREE"; fail=1
+            fi
+          else
+            echo "FAIL  topic worktree missing on the device side: ${HOSTTREE:-<unset>}"; fail=1
+          fi
+
+          # #95 — fetch the CLI the way the screen launcher does, then FILE A CARD
+          # with it using the screen's scoped token. This is the whole platform-
+          # action path, end to end, on the device.
+          rm -f /tmp/cheese_cli_probe
+          curl -s -m 15 -H "X-Cheese-Token: $TOKEN" \
+            "http://192.168.16.5:8081/sandbox/cli/cheese" -o /tmp/cheese_cli_probe || true
+          chmod +x /tmp/cheese_cli_probe 2>/dev/null || true
+          out="$(CHEESE_API=http://192.168.16.5:8081/api CHEESE_PROJECT="$PROJECT" \
+                 CHEESE_TOPIC="$TOPIC" CHEESE_TOKEN="$TOKEN" CHEESE_AUTHOR=cheese \
+                 python3 /tmp/cheese_cli_probe accept-request andy "设备能力检查" 2>&1 || true)"
+          echo "cli said: $(printf '%s' "$out" | head -c 200)"
+
+          verify="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/device_capability_verify.py "$TOPIC" "$MARKER" 2>/dev/null || true)"
+          eval "$(printf '%s\n' "$verify" | grep -E '^(CARDS|MARKER)=')"
+          if [ "${CARDS:-0}" -gt 0 ] 2>/dev/null; then
+            echo "PASS  the shipped cheese CLI filed an accept card from the device (${CARDS})"
+          else
+            echo "FAIL  the CLI could not file a card from the device"; fail=1
+          fi
+          if [ "$(printf '%s\n' "$verify" | grep '^MARKER=' | cut -d= -f2)" = "1" ]; then
+            echo "PASS  the backend reads the device's write back through the topic worktree"
+          else
+            echo "FAIL  the device's write is NOT visible in the topic's worktree"; fail=1
+          fi
+
+          exit $fail
+
+      # The LANDING half, still without a model: the card this check just filed is
+      # accepted exactly as the UI button would, so 采纳 → merge → sync upstream →
+      # fast-forward runs for real. The topic itself carries no commits (the probe
+      # write is never committed), so what lands is whatever the project's base
+      # already holds — which is the point: it proves the path, not the payload.
+      - name: Accept the filed card (lands on the upstream)
+        if: ${{ inputs.accept }}
+        run: |
+          set -uo pipefail
+          TOPIC="$(cat /tmp/cap_topic 2>/dev/null || true)"
+          [ -n "$TOPIC" ] || { echo "no topic recorded by the capability step"; exit 1; }
+          docker cp backend/scripts/accept_topic_card.py cheese-backend-1:/tmp/ >/dev/null
+          docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/accept_topic_card.py "$TOPIC"
