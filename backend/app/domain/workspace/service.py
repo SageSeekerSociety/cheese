@@ -487,29 +487,66 @@ def prepare_conflict_resolution(
     return files
 
 
-def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
-    """采纳即上线 (dogfooding last mile): after an accept-merge, push the
-    project's base branch to the upstream repo as dogfood/<topic>.
+def upstream_default_branch(repo: Path) -> str | None:
+    """The upstream's own default branch (what its HEAD points at), so a push
+    lands where that repo actually keeps its trunk instead of a guessed name."""
+    try:
+        out = _git(repo, "ls-remote", "--symref", UPSTREAM_REMOTE, "HEAD", timeout=60)
+    except ValidationError:
+        return None
+    for line in out.splitlines():
+        if line.startswith("ref:"):
+            ref = line.split()[1]
+            return ref.rsplit("/", 1)[-1]
+    return None
 
-    - **Remote upstream (https/ssh, e.g. GitHub)**: push only — the remote side's
-      own CI takes over (e.g. a dogfood/** workflow that PRs + merges to main and
-      lets CD deploy). Auth comes from the HOST's git credentials (credential
-      store on the box), never from the DB.
-    - **Local-path upstream**: additionally run its scripts/on-dogfood-push.sh
-      DETACHED (merge/check/redeploy). Executing a repo's hook is an
-      operator-trust decision we extend ONLY to local paths."""
+
+def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
+    """采纳即上线: propagate an accepted merge to the upstream repo.
+
+    采纳 IS the merge — the topic branch is already merged into the project's
+    base by the time we get here — so the upstream should receive THAT merge,
+    fast-forward, not a side branch waiting for someone to decide again. Landing
+    it must never need cheese-specific setup in the target repo (the whole point
+    of "import a repo and it just works").
+
+    Order:
+      1. fast-forward the upstream's own default branch (never forced — a
+         rejected push means the upstream moved or protects the branch, which is
+         information, not something to overwrite);
+      2. if that is refused, fall back to pushing ``dogfood/<topic>`` so the work
+         is never stuck on our side, and say so — the caller surfaces it instead
+         of leaving the user to wonder why nothing shipped.
+
+    Auth comes from the HOST's git credentials, never from the DB. A local-path
+    upstream additionally runs its ``scripts/on-dogfood-push.sh`` DETACHED
+    (operator-trusted only for local paths)."""
     repo = ensure_repo(project_id)
     url = get_upstream(project_id)
     if not url:
-        return {"pushed": False, "reason": "无上游，跳过回推"}
+        return {"pushed": False, "mode": "none", "reason": "无上游，跳过回推"}
     base = _base_branch(repo)
     branch = f"dogfood/{topic_id.hex[:8]}"
-    # -f: re-accepting (after revoke / a follow-up round) moves the same branch.
-    # 120s: the first remote push negotiates the full history (the remote
-    # already has upstream's objects, so the delta stays small — but be safe).
-    _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
+    target = upstream_default_branch(repo) or base
     if not url.startswith("/"):
-        return {"pushed": True, "branch": branch, "hook": False}
+        # 120s: the first remote push negotiates history (the remote already has
+        # upstream's objects, so the delta stays small — but be safe).
+        try:
+            _git(repo, "push", UPSTREAM_REMOTE, f"{base}:{target}", timeout=120)
+            return {"pushed": True, "mode": "upstream", "target": target}
+        except ValidationError as exc:
+            reason = str(exc)[-400:]
+            _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
+            return {
+                "pushed": True,
+                "mode": "branch",
+                "branch": branch,
+                "target": target,
+                "reason": reason,
+            }
+    # Local-path upstream: keep the branch + hook flow (the hook merges/deploys).
+    # -f: re-accepting (after revoke / a follow-up round) moves the same branch.
+    _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
     hook = Path(url) / "scripts" / "on-dogfood-push.sh"
     hook_started = False
     if hook.is_file() and os.access(hook, os.X_OK):
@@ -524,7 +561,7 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
                 start_new_session=True,  # survives our own redeploy
             )
         hook_started = True
-    return {"pushed": True, "branch": branch, "hook": hook_started}
+    return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
 
 
 def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
