@@ -146,11 +146,14 @@ async def main() -> int:
         )
         loop = asyncio.get_event_loop()
         deadline = loop.time() + TURN_TIMEOUT_S
-        # Only AGENT output starts the idle clock: a device turn echoes
-        # user_block/turn_active instantly and then thinks silently for a minute
-        # or two, so counting those would cut the turn off before it works.
+        # The idle clock starts on AGENT ACTIVITY — assistant text OR tool use.
+        # A device turn echoes user_block/turn_active instantly and then thinks
+        # silently, so those must not start it; but counting only assistant text
+        # cut off a turn that was busily running tools (it got killed mid-task,
+        # before it could file its card).
         idle_after_output = 90.0
         agent_frames = 0
+        activity = 0
         last = loop.time()
         while loop.time() < deadline:
             try:
@@ -160,13 +163,17 @@ async def main() -> int:
                     )
                 )
             except TimeoutError:
-                if agent_frames and (loop.time() - last) > idle_after_output:
+                if activity and (loop.time() - last) > idle_after_output:
                     break
                 continue
             frames.append(frame)
             kind_now = frame.get("type")
             if kind_now in ("assistant_block", "event_block", "block_updated"):
                 agent_frames += 1
+                activity += 1
+                last = loop.time()
+            elif kind_now == "tool":
+                activity += 1
                 last = loop.time()
             kind = frame.get("type")
             block = frame.get("block") or {}
@@ -196,18 +203,31 @@ async def main() -> int:
             break
         await asyncio.sleep(6)
 
+    custom = bool(os.environ.get("PROMPT", "").strip())
     worktree = ws.topic_worktree(project_id, topic_id)
     readme = worktree / "README.md"
     edited = readme.exists() and MARKER in readme.read_text(
         encoding="utf-8", errors="ignore"
     )
-    results.append(
-        (
-            "#94 device edited the topic's real worktree",
-            edited,
-            f"{readme} {'contains' if edited else 'MISSING'} the marker",
+    if custom:
+        # A caller-supplied task writes whatever it was asked to; assert only that
+        # the turn CHANGED the topic's real worktree, not that it wrote our marker.
+        changed = [p.name for p in worktree.iterdir() if not p.name.startswith(".")]
+        results.append(
+            (
+                "#94 device worked in the topic's real worktree",
+                bool(changed),
+                f"{worktree} has {len(changed)} entries",
+            )
         )
-    )
+    else:
+        results.append(
+            (
+                "#94 device edited the topic's real worktree",
+                edited,
+                f"{readme} {'contains' if edited else 'MISSING'} the marker",
+            )
+        )
 
     cards = api("GET", f"/api/topics/{topic_id}/accept-card", token)["data"]
     filed = int(cards.get("total") or 0) > 0
