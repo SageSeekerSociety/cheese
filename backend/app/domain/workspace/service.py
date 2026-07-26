@@ -529,6 +529,20 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     branch = f"dogfood/{topic_id.hex[:8]}"
     target = upstream_default_branch(repo) or base
     if not url.startswith("/"):
+        # Take the upstream's new commits FIRST. A fast-forward push is refused
+        # whenever the upstream moved since the project was imported — i.e. on any
+        # repo with other contributors — and every accept would silently degrade
+        # to a side branch (observed live: "remote contains work that you do not
+        # have locally"). Syncing here makes landing the normal outcome and keeps
+        # the merge semantics identical to 同步上游 (conflicts abort cleanly).
+        synced = sync_upstream(project_id)
+        if not synced.get("synced"):
+            return {
+                "pushed": False,
+                "mode": "blocked",
+                "target": target,
+                "reason": f"上游同步失败，未回推：{synced.get('reason', '')}",
+            }
         # 120s: the first remote push negotiates history (the remote already has
         # upstream's objects, so the delta stays small — but be safe).
         try:

@@ -292,6 +292,8 @@ class AcceptService:
                         f"已推分支 {pushed.get('branch')} 待合并"
                         + (f"（{why[-200:]}）" if why else "")
                     )[:2000]
+                elif mode == "blocked":
+                    card.note = str(pushed.get("reason") or "")[:2000]
                 elif mode == "none":
                     card.note = str(pushed.get("reason") or "")[:2000]
 
