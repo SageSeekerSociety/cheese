@@ -10,7 +10,12 @@ name: Device wiring check (no model spend)
 # it. These probes catch that class in seconds, so run them after any deploy.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      accept:
+        description: "Also accept the card this check files — exercises landing on the upstream (no model spend)"
+        type: boolean
+        default: false
 
 jobs:
   wiring:
@@ -114,6 +119,7 @@ jobs:
             echo "FAIL  could not prepare a scratch topic:"; printf '%s\n' "$setup" | head -5; exit 1
           fi
           echo "topic=$TOPIC worktree(host)=${HOSTTREE:-<unset>}"
+          printf '%s' "$TOPIC" > /tmp/cap_topic
 
           # #94 — the topic's REAL worktree must exist where the DEVICE sees it and
           # be writable by the device user; write a probe file exactly as a screen
@@ -156,3 +162,18 @@ jobs:
           fi
 
           exit $fail
+
+      # The LANDING half, still without a model: the card this check just filed is
+      # accepted exactly as the UI button would, so 采纳 → merge → sync upstream →
+      # fast-forward runs for real. The topic itself carries no commits (the probe
+      # write is never committed), so what lands is whatever the project's base
+      # already holds — which is the point: it proves the path, not the payload.
+      - name: Accept the filed card (lands on the upstream)
+        if: ${{ inputs.accept }}
+        run: |
+          set -uo pipefail
+          TOPIC="$(cat /tmp/cap_topic 2>/dev/null || true)"
+          [ -n "$TOPIC" ] || { echo "no topic recorded by the capability step"; exit 1; }
+          docker cp backend/scripts/accept_topic_card.py cheese-backend-1:/tmp/ >/dev/null
+          docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/accept_topic_card.py "$TOPIC"
