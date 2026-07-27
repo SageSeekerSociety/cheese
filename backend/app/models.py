@@ -19,6 +19,7 @@ from app.domain.groups import models as groups  # noqa: F401
 from app.domain.identity import models as identity  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.llm import models as llm  # noqa: F401
+from app.domain.machine import models as machine  # noqa: F401
 from app.domain.materials import models as materials  # noqa: F401
 from app.domain.memory import models as memory  # noqa: F401
 from app.domain.milestone import models as milestone  # noqa: F401
