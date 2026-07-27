@@ -51,16 +51,6 @@ jobs:
           esac
           python3 scripts/microcloud_smoke.py $ARGS
 
-      # Disambiguates "the machine cannot reach cheese" from "that origin was
-      # never serving": this runner IS the cheese dev box.
-      - name: Sanity — is that cheese origin actually up, from the dev box itself?
-        if: always()
-        run: |
-          for u in http://127.0.0.1:8080/healthz http://192.168.16.5:8080/healthz \
-                   http://127.0.0.1:8081/healthz https://cheese.ruc.edu.cn/api/healthz; do
-            printf '%-46s %s\n' "$u" "$(curl -s -o /dev/null -w '%{http_code}' -m 8 "$u")"
-          done
-
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4

@@ -293,7 +293,7 @@ def ssh_probe(ip: str, login_user: str, cheese_base: str) -> str:
     host = cheese_base.split("//", 1)[-1].split(":")[0].split("/")[0]
     script = (
         f'echo CHEESE=$(curl -s -o /dev/null -w %{{http_code}} -m 8 {cheese_base}/healthz);'
-        f' echo CHEESE_INSTALLER=$(curl -s -o /dev/null -w %{{http_code}} -m 8 {cheese_base}/connector/install.sh);'
+        f' echo CHEESE_INSTALLER=$(curl -s -o /dev/null -w %{{http_code}} -m 8 {cheese_base}/api/connector/install.sh);'
         ' echo INTERNET=$(curl -s -o /dev/null -w %{http_code} -m 8 https://api.github.com);'
         ' echo PROD=$(curl -s -o /dev/null -w %{http_code} -m 8 https://cheese.ruc.edu.cn/api/healthz);'
         ' echo NPM=$(command -v npm || echo none);'
@@ -336,8 +336,13 @@ def main() -> int:
                         help="reachability + catalog only; create nothing")
     parser.add_argument("--probe", action="store_true",
                         help="ssh the checkpointed machine and report what it can reach")
-    parser.add_argument("--cheese-base", default="http://192.168.16.5:8080",
-                        help="the cheese origin the machine must reach to enroll")
+    # The gateway origin, NOT the box IP: a provisioned machine reaches the
+    # former and not the latter, which once read as "machines can't reach cheese".
+    parser.add_argument(
+        "--cheese-base",
+        default="https://cheese-dev-env1-gateway.119net.ghg.org.cn",
+        help="the cheese origin the machine must reach to enroll",
+    )
     args = parser.parse_args()
 
     setup_logging()
