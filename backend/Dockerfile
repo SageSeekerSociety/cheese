@@ -73,6 +73,30 @@ EXPOSE 8081
 # Default command for development
 CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
 
+# ---- Connector ----
+# The `cheesehost` binaries the backend serves at /connector/latest/<target>, so
+# a machine joins with one line (`curl .../connector/install.sh | sh`). Without
+# them that endpoint 404s and the whole self-hosting path is dead on arrival.
+#
+# Their source is the repo-root `cli/`, which sits OUTSIDE this image's build
+# context (./backend) — hence the named `cli` context, passed by build.yml. Only
+# the production target needs it; `target: development` never builds this stage,
+# so the dev compose flow is unaffected. To build production by hand:
+#   docker build --build-context cli=./cli -f backend/Dockerfile \
+#     --target production ./backend
+FROM golang:1.26-bookworm AS connector
+WORKDIR /src
+COPY --from=cli . .
+# Same targets and ldflags as backend/scripts/build-connector.sh, which stays
+# the way to produce these for a local (non-Docker) backend.
+RUN set -eu; for target in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do \
+      os="${target%-*}"; arch="${target#*-}"; \
+      GOFLAGS=-mod=mod GOOS="$os" GOARCH="$arch" \
+        go build -buildvcs=false -ldflags "-s -w -X main.version=cheesex-connector" \
+        -o "/out/$target/cheesehost" . ; \
+      echo "built $target/cheesehost"; \
+    done
+
 # ---- Production ----
 FROM base AS production
 
@@ -92,6 +116,8 @@ COPY alembic.ini ./
 # (fetched by enrolled devices via /sandbox/cli/cheese) and the skills seeded
 # into a topic's ~/.claude. Without these the device path has no CLI.
 COPY sandbox ./sandbox
+# Served at /connector/latest/<os>-<arch>/cheesehost (see the connector stage).
+COPY --from=connector /out ./connector-dist
 
 # Agent workspace toolchain: worktrees are managed with jj (colocated git) by
 # the backend process itself, and sandboxed turns spawn SIBLING containers
