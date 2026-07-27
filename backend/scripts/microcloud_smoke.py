@@ -200,6 +200,9 @@ def ensure_machine(
     hostname: str,
     login_user: str,
     pubkey: str,
+    cores: int,
+    memory_mb: int,
+    disk_gb: int,
 ) -> dict[str, Any]:
     if state.get("machine_id"):
         try:
@@ -212,15 +215,19 @@ def ensure_machine(
             log.info("checkpointed machine is gone; provisioning a new one")
             state.pop("machine_id", None)
 
-    # Smallest spec the offering allows — a smoke test should be cheap.
+    # Clamp the requested spec into what this offering's machine type allows —
+    # the API rejects anything outside the range, and the range is per-offering.
+    def clamp(value: int, lo: str, hi: str) -> int:
+        return max(int(offering[lo]), min(int(offering[hi]), value))
+
     body = {
         "customerId": customer_id,
         "accountId": account_id,
         "hostname": hostname,
         "offeringId": offering["id"],
-        "cores": offering["coresMin"],
-        "memoryMb": offering["memoryMbMin"],
-        "diskGb": offering["diskGbMin"],
+        "cores": clamp(cores, "coresMin", "coresMax"),
+        "memoryMb": clamp(memory_mb, "memoryMbMin", "memoryMbMax"),
+        "diskGb": clamp(disk_gb, "diskGbMin", "diskGbMax"),
         "user": login_user,
         "sshPubkey": pubkey,
     }
@@ -286,6 +293,9 @@ def main() -> int:
     parser.add_argument("--external-ref", default="cheese-smoke",
                         help="the tenant's own user id for this customer")
     parser.add_argument("--funds", type=float, default=1000.0)
+    parser.add_argument("--cores", type=int, default=2)
+    parser.add_argument("--memory-mb", type=int, default=4096)
+    parser.add_argument("--disk-gb", type=int, default=20)
     parser.add_argument("--offering", default=None,
                         help="offering id or template name; default = first active")
     parser.add_argument("--provision-timeout", type=int, default=900)
@@ -348,6 +358,7 @@ def main() -> int:
         mc, state,
         customer_id=customer_id, account_id=account_id, offering=offering,
         hostname=args.hostname, login_user=args.user, pubkey=pubkey,
+        cores=args.cores, memory_mb=args.memory_mb, disk_gb=args.disk_gb,
     )
     machine = wait_for_machine(mc, int(machine["id"]), args.provision_timeout)
     if machine["status"] != "running":

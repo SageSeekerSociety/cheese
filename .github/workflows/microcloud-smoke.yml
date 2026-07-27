@@ -32,7 +32,9 @@ jobs:
         env:
           MICROCLOUD_BASE: ${{ vars.MICROCLOUD_BASE }}
           MICROCLOUD_TENANT_SECRET: ${{ secrets.MICROCLOUD_TENANT_SECRET }}
-          MODE: ${{ github.event.inputs.mode || 'plan' }}
+          # Push runs default to the read-only plan; flipping the repo variable
+          # (not a commit) is what escalates a re-run to provision/destroy.
+          MODE: ${{ github.event.inputs.mode || vars.MICROCLOUD_SMOKE_MODE || 'plan' }}
           HOSTNAME_ARG: ${{ github.event.inputs.hostname || 'cheese-smoke-1' }}
           # Survives the checkout clean, so a re-run reuses the machine it made
           # instead of stranding one per run.
