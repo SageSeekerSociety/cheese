@@ -11,7 +11,7 @@ on:
       mode:
         description: "plan (read-only) | provision | destroy"
         type: choice
-        options: [plan, provision, destroy]
+        options: [plan, provision, probe, destroy]
         default: plan
       hostname:
         description: "hostname for the provisioned machine"
@@ -45,6 +45,7 @@ jobs:
           case "$MODE" in
             plan)      ARGS="--plan-only" ;;
             provision) ARGS="--hostname $HOSTNAME_ARG" ;;
+            probe)     ARGS="--probe" ;;
             destroy)   ARGS="--destroy" ;;
             *) echo "unknown mode $MODE" >&2; exit 2 ;;
           esac

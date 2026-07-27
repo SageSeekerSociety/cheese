@@ -286,6 +286,30 @@ def ssh_check(ip: str, login_user: str, timeout_s: int) -> str:
     raise RuntimeError(f"ssh to {login_user}@{ip} never succeeded within {timeout_s}s")
 
 
+def ssh_probe(ip: str, login_user: str, cheese_base: str) -> str:
+    """What can this machine reach? The integration hinges on two answers:
+    can it call cheese back (to enroll as a device), and can it reach the
+    internet (to download the connector / an agent CLI)."""
+    script = (
+        f'echo CHEESE=$(curl -s -o /dev/null -w %{{http_code}} -m 8 {cheese_base}/healthz);'
+        f' echo CHEESE_INSTALLER=$(curl -s -o /dev/null -w %{{http_code}} -m 8 {cheese_base}/connector/install.sh);'
+        ' echo INTERNET=$(curl -s -o /dev/null -w %{http_code} -m 8 https://api.github.com);'
+        ' echo NPM=$(command -v npm || echo none);'
+        ' echo ARCH=$(uname -m)'
+    )
+    cmd = [
+        "ssh", "-i", str(KEY_PATH),
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "ConnectTimeout=8", "-o", "BatchMode=yes",
+        f"{login_user}@{ip}", script,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"probe ssh failed: {result.stderr.strip()[:300]}")
+    return result.stdout.strip()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hostname", default="cheese-smoke-1")
@@ -304,6 +328,10 @@ def main() -> int:
                         help="delete the checkpointed machine and exit")
     parser.add_argument("--plan-only", action="store_true",
                         help="reachability + catalog only; create nothing")
+    parser.add_argument("--probe", action="store_true",
+                        help="ssh the checkpointed machine and report what it can reach")
+    parser.add_argument("--cheese-base", default="http://192.168.16.5:8080",
+                        help="the cheese origin the machine must reach to enroll")
     args = parser.parse_args()
 
     setup_logging()
@@ -329,6 +357,15 @@ def main() -> int:
         return 0
 
     log.info("ping: %s", mc.get("/ping"))
+
+    if args.probe:
+        last = state.get("last_ok") or {}
+        if not last.get("ip"):
+            log.error("no checkpointed machine to probe — provision one first")
+            return 2
+        out = ssh_probe(last["ip"], last["user"], args.cheese_base)
+        log.info("reachability from %s:\n%s", last["ip"], out)
+        return 0
 
     if args.plan_only:
         # Pre-flight: prove reachability + auth + a usable catalog before we
