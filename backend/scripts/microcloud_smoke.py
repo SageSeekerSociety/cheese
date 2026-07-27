@@ -290,12 +290,18 @@ def ssh_probe(ip: str, login_user: str, cheese_base: str) -> str:
     """What can this machine reach? The integration hinges on two answers:
     can it call cheese back (to enroll as a device), and can it reach the
     internet (to download the connector / an agent CLI)."""
+    host = cheese_base.split("//", 1)[-1].split(":")[0].split("/")[0]
     script = (
         f'echo CHEESE=$(curl -s -o /dev/null -w %{{http_code}} -m 8 {cheese_base}/healthz);'
         f' echo CHEESE_INSTALLER=$(curl -s -o /dev/null -w %{{http_code}} -m 8 {cheese_base}/connector/install.sh);'
         ' echo INTERNET=$(curl -s -o /dev/null -w %{http_code} -m 8 https://api.github.com);'
+        ' echo PROD=$(curl -s -o /dev/null -w %{http_code} -m 8 https://cheese.ruc.edu.cn/api/healthz);'
         ' echo NPM=$(command -v npm || echo none);'
-        ' echo ARCH=$(uname -m)'
+        ' echo ARCH=$(uname -m);'
+        ' echo ROUTES="$(ip -4 route | tr \'\\n\' \'|\')";'
+        f' echo PING_TARGET=$(ping -c1 -W2 {host} >/dev/null 2>&1 && echo ok || echo fail);'
+        ' echo PING_GW=$(ping -c1 -W2 $(ip -4 route show default | awk \'{print $3}\') >/dev/null 2>&1 && echo ok || echo fail);'
+        ' echo FIREWALL=$(sudo -n ufw status 2>/dev/null | head -1 || echo unknown)'
     )
     cmd = [
         "ssh", "-i", str(KEY_PATH),
