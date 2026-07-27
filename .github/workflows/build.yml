@@ -68,13 +68,34 @@ jobs:
 
       - name: Build and push backend image
         uses: docker/build-push-action@v5
+        id: backend_build
         with:
           context: ./backend
           file: ./backend/Dockerfile
           target: production
           push: true
+          # The connector sources live at the repo root, outside the backend
+          # context; without this the image ships no cheesehost binaries and
+          # one-line device enrollment 404s.
+          build-contexts: |
+            cli=./cli
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # The image having built is not evidence the asset is IN it — a missing
+      # COPY silently produced a backend whose /connector endpoints all 404'd.
+      - name: Verify the image actually carries the connector binaries
+        run: |
+          set -eu
+          tag="$(echo '${{ steps.meta.outputs.tags }}' | head -n1)"
+          echo "checking $tag"
+          docker run --rm --entrypoint sh "$tag" -c '
+            set -eu
+            for t in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+              f="/app/connector-dist/$t/cheesehost"
+              [ -s "$f" ] || { echo "MISSING $f"; exit 1; }
+              echo "ok $t ($(wc -c < "$f") bytes)"
+            done'
 
   # Agent sandbox: the image 芝士 turns run inside (spawned as sibling
   # containers by the backend through the host docker.sock). Built here so
