@@ -125,7 +125,15 @@ def ensure_key() -> str:
 
 def ensure_customer(mc: MicroCloud, state: dict[str, Any], external_ref: str) -> int:
     if state.get("customer_id"):
-        return int(state["customer_id"])
+        try:
+            mc.get(f"/customer/{state['customer_id']}")
+            return int(state["customer_id"])
+        except RuntimeError as exc:
+            if "404" not in str(exc):
+                raise
+            log.info("checkpointed customer %s is gone; re-creating", state["customer_id"])
+            state.pop("customer_id", None)
+            state.pop("account_id", None)
     existing = mc.get("/customer?page_size=100")
     for item in existing.get("items", []):
         if item["externalRef"] == external_ref:
@@ -144,6 +152,14 @@ def ensure_account(
     mc: MicroCloud, state: dict[str, Any], customer_id: int, name: str, funds: float
 ) -> int:
     account_id = state.get("account_id")
+    if account_id:
+        try:
+            mc.get(f"/account/{account_id}")
+        except RuntimeError as exc:
+            if "404" not in str(exc):
+                raise
+            log.info("checkpointed account %s is gone; re-creating", account_id)
+            account_id = None
     if not account_id:
         existing = mc.get(f"/account?customer_id={customer_id}&page_size=100")
         for item in existing.get("items", []):
@@ -387,8 +403,13 @@ def main() -> int:
         if not machine_id:
             log.info("no checkpointed machine to destroy")
             return 0
-        mc.delete(f"/machine/{machine_id}")
-        log.info("delete requested for machine %s", machine_id)
+        try:
+            mc.delete(f"/machine/{machine_id}")
+            log.info("delete requested for machine %s", machine_id)
+        except RuntimeError as exc:
+            if "404" not in str(exc):
+                raise
+            log.info("machine %s was already gone", machine_id)
         state.pop("machine_id", None)
         save_state(state)
         return 0
