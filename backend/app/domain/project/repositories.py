@@ -26,6 +26,7 @@ class ProjectRepository:
         ai_mode: AiMode = AiMode.collaborative,
         expert_role: str | None = None,
         team_id: int | None = None,
+        external_task_id: int | None = None,
     ) -> Project:
         project = Project(
             name=name,
@@ -33,6 +34,7 @@ class ProjectRepository:
             ai_mode=ai_mode,
             expert_role=expert_role,
             team_id=team_id,
+            external_task_id=external_task_id,
         )
         self._session.add(project)
         await self._session.flush()
@@ -139,3 +141,12 @@ class ProjectRepository:
     async def list_projects_for_task(self, task_id: uuid.UUID) -> list[ProjectTaskLink]:
         stmt = select(ProjectTaskLink).where(ProjectTaskLink.task_id == task_id)
         return list((await self._session.scalars(stmt)).all())
+
+    async def list_for_external_task(self, task_id: int) -> list[Project]:
+        """Every project created from this 赛题 — the way back the link exists for."""
+        result = await self._session.execute(
+            select(Project)
+            .where(Project.external_task_id == task_id)
+            .order_by(Project.created_at)
+        )
+        return list(result.scalars())
