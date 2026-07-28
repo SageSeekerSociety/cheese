@@ -16,7 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
-from app.domain.machine.models import TRANSITIONAL, MachineStatus, ProjectMachine
+from app.domain.machine.models import (
+    AI_TRANSITIONAL,
+    TRANSITIONAL,
+    AiStatus,
+    MachineStatus,
+    ProjectMachine,
+)
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.project.repositories import ProjectRepository
 
@@ -139,6 +145,11 @@ class MachineService:
         body = {
             "customerId": customer_id,
             "accountId": account_id,
+            # MicroCloud defaults both to accountId. Naming them is what makes
+            # it possible to split compute spend from AI spend later without
+            # re-provisioning every machine.
+            "newapiAccountId": account_id,
+            "ccproxyAccountId": account_id,
             "hostname": hostname,
             "offeringId": int(offering["id"]),
             "user": user,
@@ -162,6 +173,8 @@ class MachineService:
             status=_as_status(created.get("status")),
             ip=created.get("ip"),
             requested_by=requested_by,
+            ai_mode=str(created.get("aiMode") or "none"),
+            ai_status=_as_ai_status(created.get("aiStatus")),
         )
 
     async def refresh(self, machine: ProjectMachine) -> ProjectMachine:
@@ -171,25 +184,27 @@ class MachineService:
             remote = await self._client.get_machine(machine.machine_id)
         except MicroCloudError:
             return await self._repo.set_state(
-                machine, status=MachineStatus.unknown, ip=None
+                machine,
+                status=MachineStatus.unknown,
+                ip=None,
+                ai_status=AiStatus.unknown,
             )
         if remote is None:
             return await self._repo.set_state(
                 machine, status=MachineStatus.deleted, ip=None
             )
         return await self._repo.set_state(
-            machine, status=_as_status(remote.get("status")), ip=remote.get("ip")
+            machine,
+            status=_as_status(remote.get("status")),
+            ip=remote.get("ip"),
+            ai_mode=str(remote.get("aiMode") or machine.ai_mode),
+            ai_status=_as_ai_status(remote.get("aiStatus")),
         )
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         machines = await self._repo.list_for_project(project_id)
         for machine in machines:
-            # Only chase the ones that can still move; a settled machine costs
-            # a round trip for nothing.
-            if (
-                machine.status in TRANSITIONAL
-                or machine.status == MachineStatus.unknown
-            ):
+            if _still_moving(machine):
                 await self.refresh(machine)
         return machines
 
@@ -210,6 +225,22 @@ class MachineService:
         await self._repo.delete(machine)
 
 
+def _still_moving(machine: ProjectMachine) -> bool:
+    """Whether either lifecycle can still change on its own.
+
+    Both must be considered. A machine reaches `running` while MicroCloud is
+    still wiring its Claude Code, so polling on the machine status alone would
+    stop the moment it settles and freeze `ai_status` at `provisioning` forever
+    — reporting a machine that can't run a turn as if it were finished.
+    """
+    return (
+        machine.status in TRANSITIONAL
+        or machine.status == MachineStatus.unknown
+        or machine.ai_status in AI_TRANSITIONAL
+        or machine.ai_status == AiStatus.unknown
+    )
+
+
 def _as_status(value: object) -> MachineStatus:
     """MicroCloud is the source of truth for status, but an unrecognised value
     must not blow up a read — a newer provider status maps to `unknown`."""
@@ -217,3 +248,14 @@ def _as_status(value: object) -> MachineStatus:
         return MachineStatus(str(value))
     except ValueError:
         return MachineStatus.unknown
+
+
+def _as_ai_status(value: object) -> AiStatus:
+    """Same tolerance as _as_status: MicroCloud may gain an AI state we don't
+    know yet, and that must not break reading a machine."""
+    if value is None:
+        return AiStatus.unknown
+    try:
+        return AiStatus(str(value))
+    except ValueError:
+        return AiStatus.unknown

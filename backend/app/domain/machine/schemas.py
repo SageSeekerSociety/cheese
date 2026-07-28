@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.machine.models import MachineStatus
+from app.domain.machine.models import AiStatus, MachineStatus
 
 
 class MachineCreate(BaseModel):
@@ -34,5 +34,9 @@ class MachineOut(BaseModel):
     disk_gb: int
     status: MachineStatus
     ip: str | None
+    # Reported separately because they settle separately: a machine can be
+    # `running` with its agent access still `provisioning`.
+    ai_mode: str
+    ai_status: AiStatus
     requested_by: str | None
     created_at: datetime

@@ -12,7 +12,7 @@ import pytest
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.machine.microcloud import MicroCloudError
-from app.domain.machine.models import MachineStatus
+from app.domain.machine.models import AiStatus, MachineStatus
 from app.domain.machine.services import MachineService, customer_ref, derive_hostname
 
 pytestmark = pytest.mark.anyio
@@ -82,6 +82,8 @@ class FakeMicroCloud:
             "id": self._next_id,
             "status": "provisioning",
             "ip": None,
+            "aiMode": "newapi",
+            "aiStatus": "provisioning",
             **body,
         }
         self.machines[self._next_id] = machine
@@ -112,10 +114,14 @@ class FakeRepo:
     async def list_for_project(self, project_id):
         return [r for r in self.rows if r.project_id == project_id]
 
-    async def set_state(self, machine, *, status, ip):
+    async def set_state(self, machine, *, status, ip, ai_mode=None, ai_status=None):
         machine.status = status
         if ip:
             machine.ip = ip
+        if ai_mode is not None:
+            machine.ai_mode = ai_mode
+        if ai_status is not None:
+            machine.ai_status = ai_status
         return machine
 
     async def delete(self, machine):
@@ -249,35 +255,20 @@ async def test_ssh_key_is_only_sent_when_given():
     assert client.created[1]["sshPubkey"] == "ssh-ed25519 AAAA"
 
 
-async def test_listing_only_polls_machines_that_can_still_move():
-    class Counting(FakeMicroCloud):
-        def __init__(self):
-            super().__init__()
-            self.reads = 0
-
-        async def get_machine(self, machine_id):
-            self.reads += 1
-            return super_get(self, machine_id)
-
-    def super_get(self, machine_id):
-        return self.machines.get(machine_id)
-
-    client = Counting()
+async def test_reading_a_project_picks_up_progress_made_while_nobody_looked():
+    client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
     machine = await service.provision(project_id=project_id, requested_by="andy")
 
-    client.machines[machine.machine_id]["status"] = "running"
-    client.machines[machine.machine_id]["ip"] = "10.0.0.5"
+    client.machines[machine.machine_id].update(
+        status="running", ip="10.0.0.5", aiStatus="ready"
+    )
     await service.list_for_project(project_id)
+
     assert machine.status == MachineStatus.running
     assert machine.ip == "10.0.0.5"
-
-    reads_after_settling = client.reads
-    await service.list_for_project(project_id)
-    assert client.reads == reads_after_settling, (
-        "a settled machine must not cost a provider round trip on every read"
-    )
+    assert machine.ai_status == AiStatus.ready
 
 
 async def test_a_known_ip_is_never_blanked_by_a_later_read():
@@ -305,3 +296,86 @@ def test_hostname_is_dns_safe_and_identifies_the_project():
 
 def test_hostname_survives_a_name_with_nothing_usable_in_it():
     assert derive_hostname("自建", uuid.UUID(int=0), 2).startswith("project-")
+
+
+async def test_a_running_machine_with_ai_still_provisioning_keeps_being_polled():
+    """The regression this second lifecycle introduces.
+
+    MicroCloud reports `running` while it is still wiring the machine's Claude
+    Code. Polling on the machine status alone stops right there, freezing
+    ai_status at `provisioning` forever — a machine that cannot run a turn would
+    read as finished.
+    """
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(project_id=project_id, requested_by="andy")
+
+    client.machines[machine.machine_id].update(status="running", ip="10.0.0.5")
+    await service.list_for_project(project_id)
+    assert machine.status == MachineStatus.running
+    assert machine.ai_status == AiStatus.provisioning
+
+    client.machines[machine.machine_id]["aiStatus"] = "ready"
+    await service.list_for_project(project_id)
+    assert machine.ai_status == AiStatus.ready
+
+
+async def test_polling_stops_once_both_lifecycles_settle():
+    class Counting(FakeMicroCloud):
+        def __init__(self):
+            super().__init__()
+            self.reads = 0
+
+        async def get_machine(self, machine_id):
+            self.reads += 1
+            return self.machines.get(machine_id)
+
+    client = Counting()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(project_id=project_id, requested_by="andy")
+
+    client.machines[machine.machine_id].update(
+        status="running", ip="10.0.0.5", aiStatus="ready"
+    )
+    await service.list_for_project(project_id)
+    settled = client.reads
+    await service.list_for_project(project_id)
+    assert client.reads == settled
+
+
+async def test_ai_accounts_are_named_rather_than_left_to_the_default():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+
+    body = client.created[0]
+    # MicroCloud would default both to accountId; naming them is what lets a
+    # deployment split compute spend from AI spend later.
+    assert body["newapiAccountId"] == body["accountId"]
+    assert body["ccproxyAccountId"] == body["accountId"]
+
+
+async def test_an_ai_state_we_do_not_know_yet_reads_as_unknown():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+
+    client.machines[machine.machine_id]["aiStatus"] = "some-future-state"
+    await service.refresh(machine)
+    assert machine.ai_status == AiStatus.unknown
+
+
+async def test_an_unreachable_provider_does_not_claim_the_agent_is_ready():
+    class Down(FakeMicroCloud):
+        async def get_machine(self, machine_id):
+            raise MicroCloudError("boom")
+
+    client = Down()
+    service = build_service(client)
+    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+    machine.ai_status = AiStatus.ready
+
+    await service.refresh(machine)
+    assert machine.ai_status == AiStatus.unknown

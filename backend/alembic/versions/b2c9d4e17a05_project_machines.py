@@ -1,9 +1,9 @@
 """project_machines: a project's compute, provisioned from MicroCloud
 
 MicroCloud owns the machine; this table only records which machine belongs to
-which project plus the tenant-side ids needed to talk about it again. Status and
-IP are cached here but re-read from MicroCloud, so the table is never the
-authority. Additive only.
+which project plus the tenant-side ids needed to talk about it again. Status,
+IP and the AI-setup state are cached here but re-read from MicroCloud, so the
+table is never the authority. Additive only.
 """
 
 from collections.abc import Sequence
@@ -35,6 +35,10 @@ def upgrade() -> None:
         sa.Column("disk_gb", sa.BigInteger(), nullable=False),
         sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("ip", sa.String(length=45), nullable=True),
+        sa.Column(
+            "ai_mode", sa.String(length=16), server_default="none", nullable=False
+        ),
+        sa.Column("ai_status", sa.String(length=16), nullable=False),
         sa.Column("requested_by", sa.String(length=64), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
