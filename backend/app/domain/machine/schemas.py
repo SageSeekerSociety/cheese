@@ -38,5 +38,10 @@ class MachineOut(BaseModel):
     # `running` with its agent access still `provisioning`.
     ai_mode: str
     ai_status: AiStatus
+    # Enrollment: the cheese device this machine became, once it has. Until
+    # then, why the last attempt didn't take.
+    device_id: str | None
+    enrolled_at: datetime | None
+    enroll_error: str | None
     requested_by: str | None
     created_at: datetime

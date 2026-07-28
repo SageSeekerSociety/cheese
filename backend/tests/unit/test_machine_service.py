@@ -242,17 +242,35 @@ async def test_a_machine_that_vanished_upstream_reads_as_deleted():
     assert refreshed.status == MachineStatus.deleted
 
 
-async def test_ssh_key_is_only_sent_when_given():
+async def test_the_platform_key_never_displaces_the_humans():
+    """Enrolling a machine must not cost the person their way into it.
+
+    MicroCloud takes a single sshPubkey field, so the platform's bootstrap key
+    and the human's key go in together — authorized_keys is one key per line.
+    """
+    client = FakeMicroCloud()
+    service = build_service(client)
+
+    await service.provision(
+        project_id=uuid.uuid4(),
+        requested_by="andy",
+        ssh_pubkey="  ssh-ed25519 HUMANKEY andy@laptop  ",
+    )
+
+    authorized = client.created[0]["sshPubkey"].splitlines()
+    assert "ssh-ed25519 HUMANKEY andy@laptop" in authorized
+    assert any("cheese-bootstrap" in line for line in authorized)
+    assert len(authorized) == 2
+
+
+async def test_a_machine_asked_for_without_a_key_still_gets_the_platforms():
+    # Otherwise the platform could never enroll it, and the machine would be
+    # provisioned compute nobody — human or agent — can reach.
     client = FakeMicroCloud()
     service = build_service(client)
 
     await service.provision(project_id=uuid.uuid4(), requested_by="andy")
-    assert "sshPubkey" not in client.created[0]
-
-    await service.provision(
-        project_id=uuid.uuid4(), requested_by="andy", ssh_pubkey="  ssh-ed25519 AAAA  "
-    )
-    assert client.created[1]["sshPubkey"] == "ssh-ed25519 AAAA"
+    assert "cheese-bootstrap" in client.created[0]["sshPubkey"]
 
 
 async def test_reading_a_project_picks_up_progress_made_while_nobody_looked():

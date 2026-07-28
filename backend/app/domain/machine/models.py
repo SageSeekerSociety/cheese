@@ -9,8 +9,9 @@ shows a stale machine.
 
 import enum
 import uuid
+from datetime import datetime
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, String
+from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -59,6 +60,10 @@ class AiStatus(enum.StrEnum):
 # The AI lifecycle can still move on its own here.
 AI_TRANSITIONAL = {AiStatus.provisioning}
 
+# Enrollment retries, then stops. A machine that cannot be enrolled is a real
+# problem to look at, not something to keep SSHing at forever.
+MAX_ENROLL_ATTEMPTS = 5
+
 
 class ProjectMachine(UuidPk, Timestamps, Base):
     __tablename__ = "project_machines"
@@ -98,3 +103,21 @@ class ProjectMachine(UuidPk, Timestamps, Base):
 
     # Who asked for it (a user handle), for the audit trail on a shared project.
     requested_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The user id the enrolled device is owned by — the requester. Kept because
+    # enrollment happens later, in a sweep, long after the request returned.
+    owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    # --- enrollment: becoming an agent host cheese can run turns on ---
+    # The cheese device this machine was enrolled as; None until it has been.
+    device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    enrolled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Why the last attempt failed. Kept so a stuck machine explains itself
+    # instead of silently never appearing as compute.
+    enroll_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enroll_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # A throwaway private key, authorised on the machine alongside the human's,
+    # solely so the platform can perform the one-time bootstrap. Erased the
+    # moment enrollment succeeds — it is a means, not an access path we keep.
+    bootstrap_key: Mapped[str | None] = mapped_column(Text, nullable=True)

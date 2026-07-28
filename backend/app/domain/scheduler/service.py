@@ -53,6 +53,16 @@ class SchedulerService:
             except Exception as exc:  # one project's failure mustn't stop others
                 errors.append(f"{project.id}: {exc}")
 
+        # A machine provisioned from MicroCloud becomes usable only once it is
+        # enrolled as a device, and that means SSHing into it — far too slow to
+        # hang a request on, and it has to keep happening for a machine that came
+        # up while nobody was looking.
+        enrolled = 0
+        try:
+            enrolled = await self._enroll_ready_machines()
+        except Exception:  # noqa: BLE001 — enrollment must never break the tick
+            logger.exception("machine enrollment sweep failed")
+
         # Daily-throttled container reap rides the existing tick loop.
         if time.monotonic() - self._last_reap_mono >= IDLE_REAP_EVERY_S:
             self._last_reap_mono = time.monotonic()
@@ -62,7 +72,23 @@ class SchedulerService:
                     logger.info("idle reap: removed %d container(s)", reaped)
             except Exception:  # noqa: BLE001 — reaping must never break the tick
                 logger.exception("idle container reap failed")
-        return {"projects_inspected": inspected, "errors": errors}
+        return {
+            "projects_inspected": inspected,
+            "machines_enrolled": enrolled,
+            "errors": errors,
+        }
+
+    async def _enroll_ready_machines(self) -> int:
+        """Enroll machines that are up and wired but not yet cheese devices."""
+        from app.domain.machine.services import MachineService
+
+        async with self._sessions() as session:
+            service = MachineService(session)
+            if not service.available:
+                return 0
+            result = await service.enroll_pending()
+            await session.commit()
+        return result["enrolled"]
 
     async def reap_idle_containers(self, idle_days: int = IDLE_REAP_DAYS) -> int:
         """Remove sandbox containers whose topic has had NO block activity for

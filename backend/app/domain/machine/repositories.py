@@ -1,11 +1,17 @@
 """Project machine data access."""
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.machine.models import AiStatus, MachineStatus, ProjectMachine
+from app.domain.machine.models import (
+    MAX_ENROLL_ATTEMPTS,
+    AiStatus,
+    MachineStatus,
+    ProjectMachine,
+)
 
 
 class ProjectMachineRepository:
@@ -30,6 +36,8 @@ class ProjectMachineRepository:
         requested_by: str | None,
         ai_mode: str = "none",
         ai_status: AiStatus = AiStatus.unknown,
+        owner_user_id: int | None = None,
+        bootstrap_key: str | None = None,
     ) -> ProjectMachine:
         machine = ProjectMachine(
             project_id=project_id,
@@ -47,6 +55,8 @@ class ProjectMachineRepository:
             requested_by=requested_by,
             ai_mode=ai_mode,
             ai_status=ai_status,
+            owner_user_id=owner_user_id,
+            bootstrap_key=bootstrap_key,
         )
         self._session.add(machine)
         await self._session.flush()
@@ -99,3 +109,41 @@ class ProjectMachineRepository:
     async def delete(self, machine: ProjectMachine) -> None:
         await self._session.delete(machine)
         await self._session.flush()
+
+    async def mark_enrolled(
+        self, machine: ProjectMachine, *, device_id: str, when: datetime
+    ) -> ProjectMachine:
+        machine.device_id = device_id
+        machine.enrolled_at = when
+        machine.enroll_error = None
+        # The bootstrap key existed for this one setup; keeping it would leave a
+        # standing way into the machine that nobody asked for.
+        machine.bootstrap_key = None
+        await self._session.flush()
+        return machine
+
+    async def mark_enroll_failed(
+        self, machine: ProjectMachine, *, error: str
+    ) -> ProjectMachine:
+        machine.enroll_error = error[:1000]
+        machine.enroll_attempts = (machine.enroll_attempts or 0) + 1
+        await self._session.flush()
+        return machine
+
+    async def list_awaiting_enrollment(self, limit: int) -> list[ProjectMachine]:
+        """Machines that are up, have their agent access wired, and are not yet
+        enrolled — and that we have not already given up on."""
+        result = await self._session.execute(
+            select(ProjectMachine)
+            .where(
+                ProjectMachine.device_id.is_(None),
+                ProjectMachine.status == MachineStatus.running,
+                ProjectMachine.ai_status == AiStatus.ready,
+                ProjectMachine.bootstrap_key.is_not(None),
+                ProjectMachine.ip.is_not(None),
+                ProjectMachine.enroll_attempts < MAX_ENROLL_ATTEMPTS,
+            )
+            .order_by(ProjectMachine.created_at)
+            .limit(limit)
+        )
+        return list(result.scalars())

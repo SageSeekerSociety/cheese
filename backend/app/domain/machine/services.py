@@ -8,13 +8,18 @@ read, which also means a machine that finished (or failed) while nobody was
 looking is correct the next time anyone asks.
 """
 
+import logging
 import re
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.device.service import DeviceService
+from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
@@ -32,6 +37,8 @@ from app.domain.project.repositories import ProjectRepository
 CUSTOMER_REF_PREFIX = "cheese-project:"
 
 _HOSTNAME_SAFE = re.compile(r"[^a-z0-9-]+")
+
+logger = logging.getLogger("cheese.machine")
 
 
 def customer_ref(project_id: uuid.UUID) -> str:
@@ -53,6 +60,7 @@ class MachineService:
         self._repo = ProjectMachineRepository(session)
         self._projects = ProjectRepository(session)
         self._client = client or MicroCloudClient()
+        self._devices = DeviceService(SqlDeviceRepository(session))
 
     @property
     def available(self) -> bool:
@@ -99,6 +107,7 @@ class MachineService:
         project_id: uuid.UUID,
         requested_by: str | None,
         ssh_pubkey: str | None = None,
+        owner_user_id: int | None = None,
         login_user: str | None = None,
         cores: int | None = None,
         memory_mb: int | None = None,
@@ -155,8 +164,13 @@ class MachineService:
             "user": user,
             **spec,
         }
-        if ssh_pubkey:
-            body["sshPubkey"] = ssh_pubkey.strip()
+        # The platform needs its own way in to enroll the machine later, and the
+        # human must not lose theirs by us taking the single key slot: both are
+        # authorised, one per line, which is what authorized_keys is.
+        bootstrap_private, bootstrap_public = await enrollment.generate_keypair()
+        authorized = enrollment.combine_authorized_keys(bootstrap_public, ssh_pubkey)
+        if authorized:
+            body["sshPubkey"] = authorized
 
         created = await self._client.create_machine(body)
         return await self._repo.add(
@@ -175,6 +189,8 @@ class MachineService:
             requested_by=requested_by,
             ai_mode=str(created.get("aiMode") or "none"),
             ai_status=_as_ai_status(created.get("aiStatus")),
+            owner_user_id=owner_user_id,
+            bootstrap_key=bootstrap_private,
         )
 
     async def refresh(self, machine: ProjectMachine) -> ProjectMachine:
@@ -219,6 +235,89 @@ class MachineService:
         return await self._repo.set_state(
             machine, status=MachineStatus.deleting, ip=None
         )
+
+    # --- enrollment: making the machine an agent host -------------------
+
+    async def enroll(self, machine: ProjectMachine) -> ProjectMachine:
+        """Make this machine a cheese device, with nobody at a keyboard.
+
+        The device flow exists for a human with a browser. Here the platform is
+        the one that asked for the machine, so it mints the credential itself and
+        writes it where `auth login` would have — then `link connect` finds the
+        machine already logged in and just installs the service.
+        """
+        if machine.device_id:
+            return machine
+        if not machine.ip or not machine.bootstrap_key:
+            raise ValidationError("machine is not ready to be enrolled")
+        if machine.owner_user_id is None:
+            raise ValidationError(
+                "machine has no owner to enroll it for — it predates enrollment"
+            )
+
+        origin = settings.connector_public_base.rstrip("/")
+        if not origin or "localhost" in origin or "127.0.0.1" in origin:
+            # The machine has to reach this origin from its own network; a
+            # localhost default would enroll a device that can never call home.
+            raise ValidationError(
+                "connector_public_base must be an origin the machine can reach"
+            )
+
+        code = await self._devices.start(f"{machine.hostname} (MicroCloud)")
+        device = await self._devices.approve(
+            code, owner_user_id=machine.owner_user_id, name=machine.hostname
+        )
+        await self._devices.assign_to_project(
+            device.device_id, machine.project_id, actor_user_id=machine.owner_user_id
+        )
+
+        script = enrollment.bootstrap_script(
+            origin=origin, token=device.token, device_id=device.device_id
+        )
+        try:
+            output = await enrollment.run_bootstrap(
+                ip=machine.ip,
+                login_user=machine.login_user,
+                private_key=machine.bootstrap_key,
+                script=script,
+            )
+        except enrollment.EnrollmentError as exc:
+            # Never let the token reach a log line or an API error body.
+            reason = enrollment.redact(str(exc), device.token)
+            logger.warning("enrolling machine %s failed: %s", machine.hostname, reason)
+            return await self._repo.mark_enroll_failed(machine, error=reason)
+
+        logger.info(
+            "enrolled machine %s as device %s: %s",
+            machine.hostname,
+            device.device_id,
+            enrollment.redact(output, device.token)[-200:],
+        )
+        return await self._repo.mark_enrolled(
+            machine, device_id=device.device_id, when=datetime.now(UTC)
+        )
+
+    async def enroll_pending(self, limit: int = 5) -> dict[str, int]:
+        """Enroll every machine that is up and wired but not yet a device.
+
+        Runs on the scheduler rather than in a request: it SSHes into a machine,
+        which is far too slow to hang a read on, and it must keep happening for a
+        machine that became ready while nobody was looking.
+        """
+        machines = await self._repo.list_awaiting_enrollment(limit)
+        enrolled = failed = 0
+        for machine in machines:
+            try:
+                result = await self.enroll(machine)
+            except Exception:  # one machine's failure must not stop the rest
+                logger.exception("enrolling machine %s raised", machine.hostname)
+                failed += 1
+                continue
+            if result.device_id:
+                enrolled += 1
+            else:
+                failed += 1
+        return {"enrolled": enrolled, "failed": failed}
 
     async def forget(self, machine: ProjectMachine) -> None:
         """Drop the row once MicroCloud no longer has the machine."""

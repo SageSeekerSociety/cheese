@@ -15,6 +15,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         git \
         postgresql-client \
         build-essential \
+        # The backend SSHes into machines it provisions to enroll them as agent
+        # hosts; without a client that whole path is dead in the image.
+        openssh-client \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

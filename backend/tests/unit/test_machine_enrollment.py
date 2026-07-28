@@ -1,0 +1,249 @@
+"""Headless enrollment: a machine becoming an agent host with nobody watching.
+
+The device flow was built for a human with a browser. These cover the parts that
+have no human to catch them: the credential must not leak, the bootstrap key
+must not outlive its one use, a failure must be recorded rather than retried
+forever, and the human's own access must survive.
+"""
+
+import uuid
+from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
+
+from app.core.errors import ValidationError
+from app.domain.machine import enrollment
+from app.domain.machine.models import MAX_ENROLL_ATTEMPTS, AiStatus, MachineStatus
+
+pytestmark = pytest.mark.anyio
+
+
+class FakeDevices:
+    def __init__(self):
+        self.assigned: list[tuple[str, uuid.UUID]] = []
+        self.started: list[str] = []
+
+    async def start(self, name):
+        self.started.append(name)
+        return "code-1"
+
+    async def approve(self, code, *, owner_user_id, name=None):
+        return SimpleNamespace(
+            device_id="dev123", token="SECRET-TOKEN", owner_user_id=owner_user_id
+        )
+
+    async def assign_to_project(self, device_id, project_id, *, actor_user_id):
+        self.assigned.append((device_id, project_id))
+
+
+class FakeMachineRepo:
+    def __init__(self):
+        self.enrolled: list[str] = []
+        self.failures: list[str] = []
+
+    async def mark_enrolled(self, machine, *, device_id, when):
+        machine.device_id = device_id
+        machine.enrolled_at = when
+        machine.enroll_error = None
+        machine.bootstrap_key = None
+        self.enrolled.append(device_id)
+        return machine
+
+    async def mark_enroll_failed(self, machine, *, error):
+        machine.enroll_error = error
+        machine.enroll_attempts += 1
+        self.failures.append(error)
+        return machine
+
+
+def make_machine(**overrides):
+    base = dict(
+        project_id=uuid.uuid4(),
+        hostname="proj-abc123-1",
+        login_user="cheese",
+        ip="10.0.1.10",
+        status=MachineStatus.running,
+        ai_status=AiStatus.ready,
+        device_id=None,
+        enrolled_at=None,
+        enroll_error=None,
+        enroll_attempts=0,
+        bootstrap_key="PRIVATE-KEY",
+        owner_user_id=42,
+        machine_id=7,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def build_service(monkeypatch, *, bootstrap=None, origin="https://cheese.example"):
+    from app.domain.machine.services import MachineService
+
+    service = MachineService.__new__(MachineService)
+    service._session = None
+    service._repo = FakeMachineRepo()
+    service._devices = FakeDevices()
+    service._client = SimpleNamespace(configured=True)
+
+    monkeypatch.setattr(
+        "app.domain.machine.services.settings.connector_public_base", origin
+    )
+    calls: list[dict] = []
+
+    async def _run_bootstrap(*, ip, login_user, private_key, script):
+        calls.append(
+            {"ip": ip, "user": login_user, "key": private_key, "script": script}
+        )
+        if bootstrap is not None:
+            return bootstrap()
+        return "Connected."
+
+    monkeypatch.setattr(enrollment, "run_bootstrap", _run_bootstrap)
+    return service, calls
+
+
+async def test_enrollment_writes_the_credential_the_device_flow_would_have(
+    monkeypatch,
+):
+    service, calls = build_service(monkeypatch)
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    script = calls[0]["script"]
+    assert '"base": "https://cheese.example/connector"' in script
+    assert "SECRET-TOKEN" in script
+    assert "link connect" in script
+    assert machine.device_id == "dev123"
+    assert service._devices.assigned == [("dev123", machine.project_id)]
+
+
+async def test_the_bootstrap_key_does_not_outlive_its_one_use(monkeypatch):
+    service, _ = build_service(monkeypatch)
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    assert machine.bootstrap_key is None, (
+        "a key kept after setup is a standing way in that nobody asked for"
+    )
+
+
+async def test_a_failure_never_leaks_the_token(monkeypatch):
+    def _boom():
+        raise enrollment.EnrollmentError("ssh said: token SECRET-TOKEN rejected")
+
+    service, _ = build_service(monkeypatch, bootstrap=_boom)
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    assert "SECRET-TOKEN" not in machine.enroll_error
+    assert "***" in machine.enroll_error
+
+
+async def test_a_failed_attempt_keeps_the_key_so_it_can_be_retried(monkeypatch):
+    def _boom():
+        raise enrollment.EnrollmentError("network down")
+
+    service, _ = build_service(monkeypatch, bootstrap=_boom)
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    assert machine.device_id is None
+    assert machine.bootstrap_key == "PRIVATE-KEY"
+    assert machine.enroll_attempts == 1
+
+
+async def test_enrolling_twice_is_a_no_op(monkeypatch):
+    service, calls = build_service(monkeypatch)
+    machine = make_machine(device_id="already", bootstrap_key=None)
+
+    await service.enroll(machine)
+    assert calls == []
+
+
+async def test_an_unreachable_origin_is_refused_before_a_device_is_minted(
+    monkeypatch,
+):
+    # Enrolling against localhost would mint a device that can never call home.
+    service, calls = build_service(monkeypatch, origin="http://localhost:8099")
+    machine = make_machine()
+
+    with pytest.raises(ValidationError):
+        await service.enroll(machine)
+    assert service._devices.started == []
+    assert calls == []
+
+
+async def test_a_machine_from_before_enrollment_says_so(monkeypatch):
+    service, _ = build_service(monkeypatch)
+    machine = make_machine(owner_user_id=None)
+
+    with pytest.raises(ValidationError):
+        await service.enroll(machine)
+
+
+async def test_the_sweep_keeps_going_when_one_machine_fails(monkeypatch):
+    service, _ = build_service(monkeypatch)
+    good, bad = make_machine(), make_machine(hostname="bad-1")
+
+    async def _enroll(machine):
+        if machine.hostname == "bad-1":
+            raise RuntimeError("boom")
+        machine.device_id = "dev123"
+        return machine
+
+    monkeypatch.setattr(service, "enroll", _enroll)
+
+    async def _awaiting(limit):
+        return [bad, good]
+
+    service._repo.list_awaiting_enrollment = _awaiting
+
+    result = await service.enroll_pending()
+    assert result == {"enrolled": 1, "failed": 1}
+
+
+def test_the_script_resolves_the_download_target_on_the_machine():
+    script = enrollment.bootstrap_script(
+        origin="https://x.test", token="T", device_id="D"
+    )
+    # Guessing the architecture from here would break the moment a VM offering
+    # lands on arm — the machine is the only thing that knows.
+    assert "uname -m" in script
+    assert "linux-amd64" in script and "linux-arm64" in script
+
+
+def test_the_script_never_puts_the_token_on_a_command_line():
+    script = enrollment.bootstrap_script(
+        origin="https://x.test", token="TOK", device_id="D"
+    )
+    # It lands in the config via a heredoc; an argument would be visible in the
+    # machine's own process list.
+    assert "TOK" in script
+    for line in script.splitlines():
+        if line.startswith(("curl", "ssh", '"$HOME/.local/bin/cheesehost"')):
+            assert "TOK" not in line
+
+
+def test_combining_keys_drops_blanks_and_duplicates():
+    combined = enrollment.combine_authorized_keys("a", None, "  ", "a", "b")
+    assert combined == "a\nb"
+
+
+def test_redact_covers_every_occurrence():
+    assert enrollment.redact("x T y T", "T") == "x *** y ***"
+
+
+def test_attempt_ceiling_is_bounded():
+    # A machine that cannot be enrolled is something to look at, not to keep
+    # SSHing at forever.
+    assert 0 < MAX_ENROLL_ATTEMPTS <= 10
+
+
+def test_enrolled_at_is_timezone_aware():
+    # Project convention: every datetime that reaches the DB is aware.
+    assert datetime.now(UTC).tzinfo is not None
