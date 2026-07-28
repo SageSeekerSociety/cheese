@@ -4,12 +4,17 @@ name: Build tmux agent image
 # that workflow's conclusion, and no deployment consumes this image yet. A
 # failure here must not stop the app images from shipping — it did once, and a
 # deploy of three unrelated fixes sat behind an image nobody was pulling.
+# Manual only. Splitting this out of the build workflow stopped it GATING the
+# deploy, but the box has ONE runner, so building on every push still queued the
+# deploy behind an image no deployment pulls yet. Not blocking is not the same as
+# not competing. Dispatch it when the image is actually wanted — or wire it back
+# to `workflow_run` once something consumes it.
 on:
-  workflow_run:
-    workflows: ["Build and Push Docker Image"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      base_run_id:
+        description: "run id of the build whose sandbox image to build FROM (blank = this run)"
+        default: ""
 
 env:
   REGISTRY: ghcr.io
@@ -25,10 +30,6 @@ jobs:
   # (fusion-design §8.6), and until now nothing built it — so AGENT_BACKEND=tmux
   # could not be selected on any deployment, whatever the code allowed.
   build-tmux-sandbox:
-    # A red build published no base to build FROM.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, cheese-dev]
     permissions:
       contents: read
@@ -75,7 +76,7 @@ jobs:
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id || github.run_id }}
+          RUN_ID: ${{ inputs.base_run_id || github.run_id }}
 
       - name: Build and push tmux sandbox image
         uses: docker/build-push-action@v5
