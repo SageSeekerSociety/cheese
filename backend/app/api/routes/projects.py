@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_profile_registry, project_device_online
 from app.api.response import ok, page
 from app.core.config import settings
@@ -38,10 +39,16 @@ Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
 @router.post("")
-async def create_project(body: ProjectCreate, db: DbSession) -> dict:
+async def create_project(
+    body: ProjectCreate, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    # Whoever creates a project owns it unless they say otherwise. Without this
+    # the listing — now scoped to the caller — would hide a project from the very
+    # person who just made it.
+    who = await resolver.resolve(fallback_handle=body.owner_handle)
     project = await ProjectService(db).create(
         name=body.name,
-        owner_handle=body.owner_handle,
+        owner_handle=body.owner_handle or (who.handle if who.handle else None),
         ai_mode=body.ai_mode,
         expert_role=body.expert_role,
         team_id=body.team_id,
@@ -51,15 +58,36 @@ async def create_project(body: ProjectCreate, db: DbSession) -> dict:
 
 
 @router.get("")
-async def list_projects(db: DbSession, team_id: int | None = None) -> dict:
-    """All projects, or — with ``team_id`` — one team's 项目 page (a personal
-    team also folds in its owner's legacy team-less projects)."""
+async def list_projects(
+    db: DbSession, resolver: ActorResolverDep, team_id: int | None = None
+) -> dict:
+    """One team's 项目 page with ``team_id`` (a personal team also folds in its
+    owner's legacy team-less projects); otherwise the caller's OWN projects.
+
+    Without ``team_id`` this used to return every project to everyone. That is
+    survivable while five exist and wrong as soon as a class does — a student
+    would find every other team's work in their sidebar.
+    """
     service = ProjectService(db)
     if team_id is not None:
         projects = await service.list_for_team(team_id)
         total = len(projects)
     else:
-        projects, total = await service.list_all()
+        who = await resolver.resolve(fallback_handle=None)
+        if who.authenticated:
+            projects = await ProjectRepository(db).list_visible_to(
+                handle=who.handle, user_id=who.user_id
+            )
+            total = len(projects)
+        else:
+            # The unauthenticated surface is left exactly as it was. Every 2.0
+            # route on this deployment is reachable without a credential
+            # (handle-fallback, Phase 0), so making THIS one the exception would
+            # not protect anything — a caller could simply not authenticate.
+            # Tightening that surface is a decision about all of them, not a
+            # side effect of scoping a sidebar. Real users are logged in, and
+            # they are who this scoping is for.
+            projects, total = await service.list_all()
     items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
     return ok(page(items, total))
 
