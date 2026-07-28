@@ -45,6 +45,9 @@ KEY_PATH = STATE_DIR / "microcloud-smoke-key"
 
 # Terminal states of the async machine lifecycle (contract: MachineStatus).
 TERMINAL = {"running", "stopped", "error", "deleted"}
+# The AI setup lifecycle runs alongside it and settles separately. `None` covers
+# a MicroCloud old enough not to report it at all.
+AI_TERMINAL = {"disabled", "ready", "error", None}
 
 log = logging.getLogger("microcloud-smoke")
 
@@ -230,6 +233,10 @@ def ensure_machine(
         "diskGb": clamp(disk_gb, "diskGbMin", "diskGbMax"),
         "user": login_user,
         "sshPubkey": pubkey,
+        # Named explicitly: the API would default both to accountId, but then a
+        # deployment could never separate compute spend from AI spend later.
+        "newapiAccountId": account_id,
+        "ccproxyAccountId": account_id,
     }
     log.info("creating machine %s from offering %s (%s cores / %s MiB / %s GB)",
              hostname, offering["id"], body["cores"], body["memoryMb"], body["diskGb"])
@@ -241,15 +248,28 @@ def ensure_machine(
 
 
 def wait_for_machine(mc: MicroCloud, machine_id: int, timeout_s: int) -> dict[str, Any]:
+    """Wait for BOTH lifecycles to settle.
+
+    `aiStatus` is independent of `status`: a machine reports `running` while its
+    Claude Code is still being wired up, so waiting on `status` alone declares
+    success before the machine can do the one job it exists for.
+    """
     deadline = time.monotonic() + timeout_s
     last = None
     while time.monotonic() < deadline:
         machine = mc.get(f"/machine/{machine_id}")
-        if machine["status"] != last:
-            log.info("machine %s: status=%s ip=%s", machine_id,
-                     machine["status"], machine.get("ip"))
-            last = machine["status"]
-        if machine["status"] in TERMINAL:
+        seen = (machine["status"], machine.get("aiStatus"))
+        if seen != last:
+            log.info(
+                "machine %s: status=%s ai=%s/%s ip=%s",
+                machine_id, machine["status"], machine.get("aiMode"),
+                machine.get("aiStatus"), machine.get("ip"),
+            )
+            last = seen
+        settled = machine["status"] in TERMINAL and (
+            machine.get("aiStatus") in AI_TERMINAL
+        )
+        if settled:
             return machine
         time.sleep(5)
     raise RuntimeError(f"machine {machine_id} still {last} after {timeout_s}s")
@@ -262,6 +282,7 @@ def ssh_check(ip: str, login_user: str, timeout_s: int) -> str:
         "echo OS=$(. /etc/os-release && echo $PRETTY_NAME); "
         "echo DOCKER=$(docker --version 2>/dev/null || echo none); "
         "echo CLAUDE=$(claude --version 2>/dev/null || echo none); "
+        "echo CLAUDE_ENV=$(printenv ANTHROPIC_BASE_URL 2>/dev/null || echo unset); "
         "echo SUDO=$(sudo -n true 2>/dev/null && echo yes || echo no)"
     )
     cmd = [
@@ -391,8 +412,14 @@ def main() -> int:
         log.info("tenant currently has %s customer(s): %s", len(customers),
                  [c["externalRef"] for c in customers][:10])
         machines = mc.get("/machine?page_size=100").get("items", [])
-        log.info("tenant currently has %s machine(s): %s", len(machines),
-                 [(m["hostname"], m["status"], m.get("ip")) for m in machines][:10])
+        log.info(
+            "tenant currently has %s machine(s): %s",
+            len(machines),
+            [
+                (m["hostname"], m["status"], m.get("aiStatus"), m.get("ip"))
+                for m in machines
+            ][:10],
+        )
         return 0
 
     pubkey = ensure_key()
