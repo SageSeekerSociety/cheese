@@ -161,4 +161,18 @@ async def receive_pack(
 ) -> Response:
     """Push — the direction that was missing."""
     repo = _repo_for(project_id, x_cheese_token)
-    return await _cgi(repo, f"/{_RECEIVE}", request, await request.body())
+    response = await _cgi(repo, f"/{_RECEIVE}", request, await request.body())
+    # Unconditionally, not only on success: jj is colocated here and does not see
+    # a push on its own, and a push that only partly applied has still moved refs.
+    # The divergence is dangerous rather than untidy — snapshot_worktree moves the
+    # topic bookmark with --allow-backwards, so a jj view still pointing at the
+    # old commit could drag the branch back over what was just pushed. The import
+    # is idempotent and cheap, so there is nothing to gain by guessing.
+    subprocess.run(
+        ["jj", "git", "import"],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    return response

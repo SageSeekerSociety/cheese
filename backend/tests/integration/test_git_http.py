@@ -61,3 +61,29 @@ def test_pushing_is_enabled_on_the_repo(client):
         text=True,
     ).stdout.strip()
     assert value == "true"
+
+
+def test_a_push_keeps_jj_and_git_from_diverging(client, monkeypatch):
+    """jj is colocated on these repos and does not see a push on its own.
+
+    That is not cosmetic: snapshot_worktree moves the topic bookmark with
+    --allow-backwards, so a jj view still pointing at the old commit could drag
+    the branch back over work the machine just pushed.
+    """
+    import app.api.routes.git_http as git_http
+
+    calls: list[list[str]] = []
+    real = git_http.subprocess.run
+
+    def spy(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return real(cmd, *a, **kw)
+
+    monkeypatch.setattr(git_http.subprocess, "run", spy)
+    pid = _project(client)
+    client.post(
+        f"/api/projects/{pid}/git/git-receive-pack",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+        content=b"0000",
+    )
+    assert any(c[:3] == ["jj", "git", "import"] for c in calls)

@@ -17,7 +17,7 @@ Per turn (``run_turn``):
 
 ``checkpoint`` snapshots the topic worktree when the device is CO-LOCATED (it edited
 the backend's real tree); for a remote device it is a no-op (the device owns its own
-tree — a future extension can ``exec`` a git snapshot on the device over the link).
+tree and pushes it back over git smart-HTTP instead).
 """
 
 import uuid
@@ -105,6 +105,9 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # resolver is used lazily (keeps this module importable without a DB).
         self._device_resolver = device_resolver
         self._public_base = (public_base or settings.connector_public_base).rstrip("/")
+        # (project, topic) → was that turn's device co-located? Written when a
+        # turn resolves its device, read by checkpoint() afterwards.
+        self._co_located_at: dict[tuple[uuid.UUID, uuid.UUID], bool] = {}
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
@@ -234,9 +237,12 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         home_dir = f"$HOME/.cheese/home/{project_id}"
-        work_dir = self._work_dir(
-            project_id, topic_id, co_located=await self._is_co_located(device_id)
-        )
+        co_located = await self._is_co_located(device_id)
+        # checkpoint() runs after the turn, from a caller that has no device in
+        # hand — remember what this device is, or the snapshot decision falls back
+        # to the deployment-wide switch and is wrong for every remote machine.
+        self._co_located_at[(project_id, topic_id)] = co_located
+        work_dir = self._work_dir(project_id, topic_id, co_located=co_located)
         gateway_env = {**settings.agent_env(), **(env or {})}
         command, screen_env, cheeselet = build_screen_launch(
             hook_url=self._hook_url(topic_id),
@@ -327,6 +333,6 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         """A CO-LOCATED device edited the backend's REAL worktree this turn, so
         snapshot it into version history exactly like the local path (else 采纳/diff
         wouldn't see the edits). A REMOTE device owns its own tree → still a no-op
-        (a future extension can exec a snapshot on the device over the link)."""
-        if settings.device_shared_workspace_host_root.strip():
+        (it pushes its own work back over git instead)."""
+        if self._co_located_at.get((project_id, topic_id)):
             ws.snapshot_worktree(project_id, topic_id)

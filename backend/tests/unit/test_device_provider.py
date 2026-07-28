@@ -246,3 +246,52 @@ def test_a_remote_device_gets_a_scratch_dir_not_the_boxs_path(monkeypatch):
     remote = provider._work_dir(project, topic, co_located=False)
     assert remote.startswith("$HOME/.cheese/work/")
     assert "/home/box/" not in remote
+
+
+@pytest.mark.anyio
+async def test_checkpoint_does_not_snapshot_for_a_remote_machine(monkeypatch):
+    """The snapshot decision must follow the DEVICE, not the deployment switch.
+
+    On a box that also hosts local containers the switch is on, so a remote
+    machine's turn used to snapshot the backend's untouched worktree — recording
+    an empty commit as if it were the agent's work, while the real edits sat on
+    the machine. Silent and wrong in the direction that loses work.
+    """
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.settings.device_shared_workspace_host_root",
+        "/home/box/cheese-workspaces",
+    )
+    snapshots: list[tuple] = []
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.ws.snapshot_worktree",
+        lambda p, t: snapshots.append((p, t)),
+    )
+    provider = DeviceProvider(hub=FakeHub())
+    project, topic = uuid.uuid4(), uuid.uuid4()
+
+    provider._co_located_at[(project, topic)] = False
+    provider.checkpoint(project, topic)
+    assert snapshots == []
+
+    provider._co_located_at[(project, topic)] = True
+    provider.checkpoint(project, topic)
+    assert snapshots == [(project, topic)]
+
+
+def test_only_a_machine_that_owns_its_tree_gets_the_push_hook():
+    """cheese-sync hands work back over git; the local container edits the real
+    worktree and must not also try to push it."""
+    from app.domain.agent.hooks_substrate import hooks_settings
+
+    def stop_commands(settings_obj) -> list[str]:
+        return [
+            hook["command"]
+            for entry in settings_obj["hooks"]["Stop"]
+            for hook in entry["hooks"]
+        ]
+
+    assert stop_commands(hooks_settings()) == ["cheese-hook"]
+    assert stop_commands(hooks_settings(["cheese-sync"])) == [
+        "cheese-hook",
+        "cheese-sync",
+    ]
