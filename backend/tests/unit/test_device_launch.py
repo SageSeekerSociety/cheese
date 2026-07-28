@@ -1,6 +1,5 @@
 """Device screen launcher: hooks settings + self-contained launch command."""
 
-import json
 
 from app.domain.agent import device_launch
 
@@ -46,9 +45,9 @@ def test_build_screen_launch_shapes_command_and_env():
     assert env["CHEESE_HOME"] == "/dev/home" and env["CHEESE_WORK"] == "/dev/work"
     assert env["CLAUDE_MODEL"] == "glm-5.2"
     assert env["ANTHROPIC_BASE_URL"] == "http://gw"
-    # The base gates are valid JSON the launcher's node parses.
-    gates = json.loads(env["CHEESE_CLAUDE_GATES"])
-    assert gates["hasCompletedOnboarding"] is True
+    # The gates are written by the launch script itself; nothing is passed for a
+    # separate interpreter to read back.
+    assert "CHEESE_CLAUDE_GATES" not in env
     # The minimal cheeselet only drives input (no state inference).
     assert "cheese.expose('prompt'" in cheeselet
 
@@ -59,4 +58,41 @@ def test_forwarder_posts_hook_json_with_token():
     assert "--data-binary @-" in script
     # Per-project trust is pre-accepted for the RESOLVED work dir (canonicalized).
     assert "pwd -P" in script
-    assert "hasTrustDialogAccepted: true" in script
+    assert '"hasTrustDialogAccepted":true' in script
+
+
+def test_the_launch_needs_no_interpreter_the_machine_may_not_have():
+    """A machine whose `claude` is the native binary has no node.
+
+    MicroCloud's Debian image is exactly that, and the script runs under `set -e`
+    — so building the first-launch gates with node aborted the whole launch. The
+    screen opened, claude never started, and the turn hung with nothing anywhere
+    saying why.
+    """
+    script = device_launch.build_launch_script()
+    # Only executable lines matter — the comment above the replacement explains
+    # why node is gone and would match a naive substring check.
+    commands = [
+        line.strip()
+        for line in script.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert not any(c.startswith("node ") for c in commands)
+    assert "mktrust" not in script
+    # The gates still land, with the work dir the shell resolved.
+    assert 'cat > "$HOME/.claude.json"' in script
+    assert '"bypassPermissionsModeAccepted":true' in script
+    assert '"$CHEESE_WORK"' in script
+
+
+def test_the_gates_written_are_valid_json():
+    """The file claude reads must parse — a heredoc makes that easy to get wrong."""
+    import json as _json
+    import re
+
+    script = device_launch.build_launch_script()
+    body = re.search(r'cat > "\$HOME/\.claude\.json" <<JSON\n(.*?)\nJSON', script, re.S)
+    assert body, "the gates heredoc is not where the launcher writes it"
+    parsed = _json.loads(body.group(1).replace("$CHEESE_WORK", "/w"))
+    assert parsed["bypassPermissionsModeAccepted"] is True
+    assert parsed["projects"]["/w"]["hasTrustDialogAccepted"] is True

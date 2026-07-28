@@ -27,10 +27,11 @@ from pathlib import Path
 # this module's launcher and its callers build on it.
 from app.domain.agent.hooks_substrate import CHEESE_HOOK_SCRIPT, hooks_settings
 
-# Top-level first-launch gates (Claude Code 2.1.x) for $HOME/.claude.json. The
-# PER-PROJECT trust gate (projects[workdir].hasTrustDialogAccepted) is added by the
-# launcher for the resolved work dir — without it a "do you trust this folder?" dialog
-# appears and eats the first prompt (its menu even renders a `❯`, fooling readiness).
+# First-launch gates (Claude Code 2.1.x) for $HOME/.claude.json, kept here as the
+# readable statement of what the launch script writes inline. Without the
+# per-project trust gate a "do you trust this folder?" dialog appears and eats the
+# first prompt (its menu even renders a `❯`, fooling readiness); without
+# bypassPermissionsModeAccepted the permissions gate does the same.
 _CLAUDE_JSON_GATES = {
     "hasCompletedOnboarding": True,
     "autoUpdates": False,
@@ -58,10 +59,8 @@ def build_launch_script() -> str:
     and ``CLAUDE_MODEL`` (optional)."""
     settings_json = json.dumps(hooks_settings(), ensure_ascii=False)
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
-    # never expands them. ~/.claude.json is built by node (from the base gates in the
-    # $CHEESE_CLAUDE_GATES env var) because it needs the RESOLVED work dir as a dynamic
-    # key (per-project trust) — a quoted heredoc can't do that. Reading the base from an
-    # env var avoids any nested-quoting between the shell, node, and the JSON.
+    # never expands them. ~/.claude.json is written by the shell (see below) so a
+    # machine without node can still launch.
     return f"""set -e
 # CHEESE_HOME/CHEESE_WORK arrive with a LITERAL "$HOME/..." placeholder (the
 # server cannot know the device user's home). Substitute the REAL home first —
@@ -80,16 +79,15 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
 mkdir -p "$HOME/.claude"
-cat > "$HOME/.claude/.mktrust.js" <<'JS'
-const fs = require("fs");
-const base = JSON.parse(process.env.CHEESE_CLAUDE_GATES);
-const w = process.env.CHEESE_WORK;
-base.projects = {{
-  [w]: {{ hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true }},
-}};
-fs.writeFileSync(process.env.HOME + "/.claude.json", JSON.stringify(base));
-JS
-node "$HOME/.claude/.mktrust.js"
+# Written by the shell, not node: a machine whose `claude` is the native binary
+# has no node at all (MicroCloud's Debian image is exactly that), and under
+# `set -e` a missing node aborted the whole launch — the screen opened, claude
+# never started, and the turn hung with nothing anywhere saying why. The only
+# dynamic value here is a work dir this platform generates, so an unquoted
+# heredoc is enough and depends on nothing.
+cat > "$HOME/.claude.json" <<JSON
+{{"hasCompletedOnboarding":true,"autoUpdates":false,"bypassPermissionsModeAccepted":true,"projects":{{"$CHEESE_WORK":{{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}}}}
+JSON
 cat > "$HOME/.claude/settings.json" <<'JSON'
 {settings_json}
 JSON
@@ -188,7 +186,6 @@ def build_screen_launch(
         "CHEESE_WORK": work_dir,
         # Base first-launch gates the launcher's node reads to build ~/.claude.json
         # (it adds the per-project trust entry for the resolved work dir).
-        "CHEESE_CLAUDE_GATES": json.dumps(_CLAUDE_JSON_GATES, ensure_ascii=False),
     }
     if model:
         env["CLAUDE_MODEL"] = model
