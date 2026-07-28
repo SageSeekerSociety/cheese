@@ -18,7 +18,13 @@ on:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: GitHub-hosted runners are unavailable to this org (the
+    # job is refused before any step runs — "recent account payments have failed
+    # or your spending limit needs to be increased"), so this gate has been dead
+    # rather than passing. Every self-hosted job in this repo is green. Move it
+    # back once billing is sorted; the dev box's 5432/6379 are free, so the
+    # service containers below bind the same ports they did.
+    runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 15
 
     services:
