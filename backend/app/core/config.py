@@ -175,6 +175,10 @@ class Settings(BaseSettings):
     # A ceiling per project: provisioning is one API call, and nothing else here
     # stops a loop from filling a Proxmox node.
     microcloud_max_machines_per_project: int = 2
+    # How often to sweep for machines that came up and still need enrolling as
+    # devices. Its own switch, NOT the project scheduler's: that one spends model
+    # budget on 定期巡检 and ships off, and machines must not depend on it.
+    machine_enroll_interval_seconds: int = 60
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # When on, the interactive turn runs `claude` INSIDE a per-topic Docker

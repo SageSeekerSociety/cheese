@@ -76,9 +76,20 @@ async def lifespan(_: FastAPI):
     scheduler = SchedulerService(chat_service=get_chat_service())
     runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
     runner.start()
+
+    # Enrolling provisioned machines is platform plumbing, so it runs on its own
+    # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
+    from app.core.db import async_session_factory
+    from app.domain.machine.runner import MachineEnrollmentRunner
+
+    machines = MachineEnrollmentRunner(
+        async_session_factory, settings.machine_enroll_interval_seconds
+    )
+    machines.start()
     try:
         yield
     finally:
+        await machines.stop()
         await runner.stop()
 
 

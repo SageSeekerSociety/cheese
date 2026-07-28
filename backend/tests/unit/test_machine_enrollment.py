@@ -247,3 +247,43 @@ def test_attempt_ceiling_is_bounded():
 def test_enrolled_at_is_timezone_aware():
     # Project convention: every datetime that reaches the DB is aware.
     assert datetime.now(UTC).tzinfo is not None
+
+
+async def test_the_sweep_is_a_no_op_when_microcloud_is_not_configured(monkeypatch):
+    """A deployment with no MicroCloud must not have a loop erroring every minute.
+
+    Nothing can have been provisioned, so there is nothing to enroll — that is a
+    quiet no-op, not a failure.
+    """
+    from app.domain.machine.runner import MachineEnrollmentRunner
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def commit(self):
+            raise AssertionError("must not commit when there is nothing to do")
+
+    from app.domain.machine.services import MachineService
+
+    monkeypatch.setattr(MachineService, "available", property(lambda self: False))
+    runner = MachineEnrollmentRunner(Session, 60)
+    assert await runner.sweep() == {"enrolled": 0, "failed": 0}
+
+
+def test_enrollment_does_not_ride_the_ai_scheduler():
+    """Machines must not require 定期巡检 to be switched on.
+
+    The project scheduler spends model budget and ships disabled
+    (scheduler_interval_seconds = 0), which is exactly the state dev runs in — a
+    machine enrolled only from that tick would never be enrolled at all.
+    """
+    import inspect
+
+    from app.domain.scheduler.service import SchedulerService
+
+    source = inspect.getsource(SchedulerService)
+    assert "enroll" not in source
