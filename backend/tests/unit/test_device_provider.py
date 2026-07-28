@@ -3,6 +3,8 @@
 import asyncio
 import uuid
 
+import pytest
+
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceProvider
 from app.domain.agent.hook_events import HookRouter
@@ -168,7 +170,7 @@ def test_work_dir_colocated_translates_to_host_worktree(monkeypatch, tmp_path):
     monkeypatch.setattr(dp.ws, "topic_worktree", lambda p, t: wt)
 
     prov = DeviceProvider(hub=FakeHub())
-    got = prov._work_dir(pid, tid)
+    got = prov._work_dir(pid, tid, co_located=True)
     assert got == f"/home/dev/cheese-workspaces/.worktrees/{pid}/topic-abc"
 
 
@@ -181,4 +183,66 @@ def test_work_dir_remote_uses_scratch(monkeypatch):
     tid = uuid.uuid4()
     monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")
     prov = DeviceProvider(hub=FakeHub())
-    assert prov._work_dir(pid, tid) == f"$HOME/.cheese/work/{pid}/{tid}"
+    assert (
+        prov._work_dir(pid, tid, co_located=True) == f"$HOME/.cheese/work/{pid}/{tid}"
+    )
+
+
+@pytest.mark.anyio
+async def test_a_provisioned_machine_is_never_treated_as_co_located(monkeypatch):
+    """A MicroCloud machine is on its own host, whatever the deployment says.
+
+    Getting this wrong is silent, not loud: the launcher `mkdir -p`s whatever
+    path it is handed, so a turn would open in an EMPTY directory instead of the
+    topic's worktree — the agent would find no code and no one would see an error.
+    """
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.settings.device_shared_workspace_host_root",
+        "/home/box/cheese-workspaces",
+    )
+
+    class Repo:
+        def __init__(self, session):
+            self._provisioned = session
+
+        async def is_provisioned_device(self, device_id):
+            return device_id == "microcloud-machine"
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(
+        "app.domain.machine.repositories.ProjectMachineRepository", Repo
+    )
+    provider = DeviceProvider(session_factory=Session)
+
+    assert await provider._is_co_located("microcloud-machine") is False
+    assert await provider._is_co_located("the-box-itself") is True
+
+
+@pytest.mark.anyio
+async def test_co_location_is_off_when_the_deployment_shares_nothing(monkeypatch):
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.settings.device_shared_workspace_host_root",
+        "",
+    )
+    provider = DeviceProvider()
+    assert await provider._is_co_located("anything") is False
+
+
+def test_a_remote_device_gets_a_scratch_dir_not_the_boxs_path(monkeypatch):
+
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.settings.device_shared_workspace_host_root",
+        "/home/box/cheese-workspaces",
+    )
+    provider = DeviceProvider()
+    project, topic = uuid.uuid4(), uuid.uuid4()
+
+    remote = provider._work_dir(project, topic, co_located=False)
+    assert remote.startswith("$HOME/.cheese/work/")
+    assert "/home/box/" not in remote

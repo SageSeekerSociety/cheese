@@ -161,14 +161,41 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 return screen
         return None
 
-    def _work_dir(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
+    async def _is_co_located(self, device_id: str) -> bool:
+        """Whether this device shares the backend's filesystem.
+
+        ``device_shared_workspace_host_root`` is deployment-wide, but a deployment
+        can host BOTH kinds of device at once: the box cheese itself runs on, and
+        machines it provisioned from MicroCloud. A provisioned machine is on its
+        own host and shares nothing — and getting this wrong fails SILENTLY: the
+        launcher `mkdir -p`s whatever path it is given, so the agent would open a
+        turn in an empty directory instead of the topic's worktree.
+        """
+        if not settings.device_shared_workspace_host_root.strip():
+            return False
+        from app.domain.machine.repositories import ProjectMachineRepository
+
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        async with factory() as session:
+            provisioned = await ProjectMachineRepository(session).is_provisioned_device(
+                device_id
+            )
+        return not provisioned
+
+    def _work_dir(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, *, co_located: bool
+    ) -> str:
         """The screen's cwd. For a CO-LOCATED device (one sharing this backend's
         filesystem, ``device_shared_workspace_host_root`` set) this is the topic's
         REAL worktree, translated from the container path to the host root the device
         sees — so device edits land in the topic branch and checkpoint/accept work
         with no clone/sync. Otherwise a per-topic scratch dir the launcher creates."""
         host_root = settings.device_shared_workspace_host_root.strip()
-        if host_root:
+        if co_located and host_root:
             wt = ws.topic_worktree(
                 project_id, topic_id
             ).resolve()  # materializes + chmods
@@ -207,7 +234,9 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         home_dir = f"$HOME/.cheese/home/{project_id}"
-        work_dir = self._work_dir(project_id, topic_id)
+        work_dir = self._work_dir(
+            project_id, topic_id, co_located=await self._is_co_located(device_id)
+        )
         gateway_env = {**settings.agent_env(), **(env or {})}
         command, screen_env, cheeselet = build_screen_launch(
             hook_url=self._hook_url(topic_id),

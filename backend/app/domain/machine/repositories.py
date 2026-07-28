@@ -147,3 +147,15 @@ class ProjectMachineRepository:
             .limit(limit)
         )
         return list(result.scalars())
+
+    async def is_provisioned_device(self, device_id: str) -> bool:
+        """Whether this device is a machine cheese provisioned from MicroCloud.
+
+        Such a machine is on its OWN host by definition — it can never share this
+        backend's filesystem, whatever the deployment-wide co-location setting
+        says.
+        """
+        result = await self._session.execute(
+            select(ProjectMachine.id).where(ProjectMachine.device_id == device_id)
+        )
+        return result.first() is not None
