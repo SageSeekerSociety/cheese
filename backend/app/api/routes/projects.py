@@ -45,6 +45,7 @@ async def create_project(body: ProjectCreate, db: DbSession) -> dict:
         ai_mode=body.ai_mode,
         expert_role=body.expert_role,
         team_id=body.team_id,
+        external_task_id=body.external_task_id,
     )
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
@@ -61,6 +62,19 @@ async def list_projects(db: DbSession, team_id: int | None = None) -> dict:
         projects, total = await service.list_all()
     items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
     return ok(page(items, total))
+
+
+@router.get("/by-task/{task_id}")
+async def projects_for_task(task_id: int, db: DbSession) -> dict:
+    """The 2.0 projects created from this 赛题.
+
+    The 赛题 page uses it to show what already exists rather than offering to
+    create a second one blindly — a 赛题 with three teams on it should read as
+    three projects, not as a button that quietly makes a fourth.
+    """
+    projects = await ProjectRepository(db).list_for_external_task(task_id)
+    items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
+    return ok(page(items, len(items)))
 
 
 @router.get("/by-team/{team_id}")

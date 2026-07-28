@@ -12,6 +12,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Enum,
     ForeignKey,
@@ -56,6 +57,14 @@ class Project(UuidPk, Timestamps, Base):
             name="fk_projects_root_topic_id",
         ),
         nullable=True,
+    )
+    # The 赛题 this project was created from (main's int `task` table). The 1.0
+    # team-project already carries this idea as `external_task_id`; a 2.0 project
+    # needs it too, or "create a project from this 赛题" produces something with
+    # no way back to the 赛题 it came from. Nullable: a project made from the
+    # rail belongs to no 赛题.
+    external_task_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, index=True
     )
     # Active expert role name (spec §8.2).
     expert_role: Mapped[str | None] = mapped_column(String(64), nullable=True)

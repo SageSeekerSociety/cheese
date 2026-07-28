@@ -220,11 +220,29 @@ export function listProjects(teamId?: number): Promise<ListPayload<Project>> {
   return request<ListPayload<Project>>(`/projects${q}`)
 }
 
-export function createProject(name: string, ownerHandle?: string, teamId?: number): Promise<Project> {
+export function createProject(
+  name: string,
+  ownerHandle?: string,
+  teamId?: number,
+  externalTaskId?: number,
+): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
-    body: JSON.stringify({ name, owner_handle: ownerHandle, team_id: teamId }),
+    body: JSON.stringify({
+      name,
+      owner_handle: ownerHandle,
+      team_id: teamId,
+      // Set when the project is created FROM a 赛题, so the 赛题 can find it
+      // again. Absent for a project made from the rail.
+      external_task_id: externalTaskId,
+    }),
   })
+}
+
+// The 2.0 projects created from one 赛题 — what the 赛题 page shows instead of
+// blindly offering to create another.
+export function listProjectsForTask(taskId: number): Promise<ListPayload<Project>> {
+  return request<ListPayload<Project>>(`/projects/by-task/${taskId}`)
 }
 
 // Single project card (includes `summary`, the 一页纸总结).
