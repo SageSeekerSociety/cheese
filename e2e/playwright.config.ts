@@ -33,7 +33,9 @@ export default defineConfig({
       url: `http://localhost:${FRONTEND_PORT}`,
       env: { BACKEND_URL },
       reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      // Same 180s the backend gets: a cold vite start pre-bundles deps and runs
+      // the legacy plugin, on a runner that is also building and deploying.
+      timeout: 180_000,
     },
   ],
 });
