@@ -172,65 +172,6 @@ jobs:
         run: |
           docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
           df -h / | tail -1
-  # The tmux agent image: the sandbox base + tmux + ttyd + pre-accepted
-  # first-launch gates. It is the LOCAL transport of the hooks substrate
-  # (fusion-design §8.6), and until now nothing built it — so AGENT_BACKEND=tmux
-  # could not be selected on any deployment, whatever the code allowed.
-  build-tmux-sandbox:
-    needs: build-sandbox
-    runs-on: [self-hosted, cheese-dev]
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          name: cheese-box-builder
-
-      - name: Log in to Container Registry
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 3
-          max_attempts: 4
-          retry_wait_seconds: 15
-          command: >-
-            echo "${{ secrets.GITHUB_TOKEN }}" |
-            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox-tmux
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
-
-      - name: Build and push tmux sandbox image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./backend/sandbox
-          file: ./backend/sandbox/tmux.Dockerfile
-          push: true
-          # Built on the base this same run just pushed, so they cannot drift.
-          build-args: |
-            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox:run-${{ github.run_id }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-      - name: Reclaim build cache
-        if: always()
-        run: |
-          docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
-          df -h / | tail -1
-
   build-frontend:
     runs-on: [self-hosted, cheese-dev]
     permissions:
