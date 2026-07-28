@@ -96,9 +96,12 @@ jobs:
         working-directory: e2e
         run: pnpm exec playwright install --with-deps chromium
 
+      # The runner is the dev box, which already serves the deployment on 8081.
       - name: Run E2E tests
         working-directory: e2e
         env:
+          E2E_BACKEND_PORT: '8791'
+          E2E_FRONTEND_PORT: '3100'
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: test-secret
