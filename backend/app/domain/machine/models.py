@@ -60,6 +60,10 @@ class AiStatus(enum.StrEnum):
 # The AI lifecycle can still move on its own here.
 AI_TRANSITIONAL = {AiStatus.provisioning}
 
+# Machines that no longer exist as far as MicroCloud is concerned. They must not
+# occupy a project's slot, or deleting one and creating another is impossible.
+GONE = {MachineStatus.deleted}
+
 # Enrollment retries, then stops. A machine that cannot be enrolled is a real
 # problem to look at, not something to keep SSHing at forever.
 MAX_ENROLL_ATTEMPTS = 5

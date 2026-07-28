@@ -94,6 +94,16 @@ case "$arch" in
   aarch64|arm64) target=linux-arm64 ;;
   *) echo "unsupported arch: $arch" >&2; exit 1 ;;
 esac
+# The connector hosts every session in tmux and exits immediately without one.
+# MicroCloud's Debian template does not ship it, so a machine enrolled without
+# this check gets a service that dies on startup — while `link connect` still
+# reports success, because systemctl returns before the process falls over.
+if ! command -v tmux >/dev/null 2>&1; then
+  sudo -n apt-get install -y -q tmux >/dev/null 2>&1 \
+    || {{ sudo -n apt-get update -q >/dev/null 2>&1 \
+          && sudo -n apt-get install -y -q tmux >/dev/null 2>&1; }} \
+    || {{ echo "tmux is missing and could not be installed" >&2; exit 1; }}
+fi
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 curl -fsSL --retry 3 --retry-delay 2 -m 120 \\
   "{origin.rstrip("/")}/connector/latest/$target/cheesehost" \\
@@ -109,7 +119,19 @@ cat > "$HOME/.config/cheese/config.json" <<'CHEESE_CONFIG_EOF'
 CHEESE_CONFIG_EOF
 # Already logged in as far as the cli is concerned, so this only installs and
 # starts the background service (it elevates with sudo by itself).
-"$HOME/.local/bin/cheesehost" link connect
+# stdin is closed: this script arrives ON stdin, and sudo would otherwise eat
+# what is left of it — or block on a password prompt with nothing to read.
+"$HOME/.local/bin/cheesehost" link connect < /dev/null
+# `link connect` succeeds as soon as systemd accepts the start, which is BEFORE
+# the process can fail. Enrollment must not report success for a service that is
+# already dead, so ask systemd what actually happened.
+sleep 5
+if ! systemctl is-active --quiet cheese; then
+  echo "the connector service did not stay up:" >&2
+  sudo -n journalctl -u cheese --no-pager -n 20 >&2 2>/dev/null || true
+  exit 1
+fi
+echo "cheese.service active"
 """
 
 

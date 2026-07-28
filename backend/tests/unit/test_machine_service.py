@@ -397,3 +397,45 @@ async def test_an_unreachable_provider_does_not_claim_the_agent_is_ready():
 
     await service.refresh(machine)
     assert machine.ai_status == AiStatus.unknown
+
+
+async def test_a_destroyed_machine_stops_occupying_the_projects_slot():
+    """Delete-then-create must work.
+
+    Destroying a machine leaves the row behind until a later read confirms
+    MicroCloud has forgotten it. Counting those rows made the project's slots
+    unreclaimable: the delete returned 200 and the next create was refused for a
+    machine that no longer existed.
+    """
+    from app.core.config import settings
+
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+
+    made = []
+    for _ in range(settings.microcloud_max_machines_per_project):
+        made.append(await service.provision(project_id=project_id, requested_by="andy"))
+
+    with pytest.raises(ValidationError):
+        await service.provision(project_id=project_id, requested_by="andy")
+
+    # Destroy one for real: MicroCloud forgets it, and the next read notices.
+    await service.destroy(made[0])
+    await service.list_for_project(project_id)
+
+    replacement = await service.provision(project_id=project_id, requested_by="andy")
+    assert replacement is not None
+
+
+async def test_a_forgotten_machine_disappears_from_the_listing():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(project_id=project_id, requested_by="andy")
+
+    client.machines.clear()  # MicroCloud no longer knows it
+    remaining = await service.list_for_project(project_id)
+
+    assert remaining == [], "a tombstone is not a machine anyone can use"
+    assert machine not in await service._repo.list_for_project(project_id)

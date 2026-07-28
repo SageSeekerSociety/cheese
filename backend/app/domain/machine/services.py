@@ -23,6 +23,7 @@ from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
+    GONE,
     TRANSITIONAL,
     AiStatus,
     MachineStatus,
@@ -139,7 +140,15 @@ class MachineService:
             ),
         }
 
-        existing = await self._repo.list_for_project(project_id)
+        # Only machines that still exist count. A destroyed one lingers as a row
+        # until a later read confirms MicroCloud has forgotten it, and counting
+        # those would make a project's slots impossible to reclaim — delete then
+        # create would be refused for a machine that is already gone.
+        existing = [
+            m
+            for m in await self._repo.list_for_project(project_id)
+            if m.status not in GONE
+        ]
         if len(existing) >= settings.microcloud_max_machines_per_project:
             raise ValidationError(
                 "this project already has "
@@ -219,10 +228,18 @@ class MachineService:
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         machines = await self._repo.list_for_project(project_id)
+        alive: list[ProjectMachine] = []
         for machine in machines:
             if _still_moving(machine):
                 await self.refresh(machine)
-        return machines
+            if machine.status in GONE:
+                # MicroCloud has forgotten it, so there is nothing left to
+                # report or to bill — drop the row rather than keep a tombstone
+                # that still occupies a slot.
+                await self._repo.delete(machine)
+                continue
+            alive.append(machine)
+        return alive
 
     async def get_or_404(self, machine_row_id: uuid.UUID) -> ProjectMachine:
         machine = await self._repo.get(machine_row_id)
