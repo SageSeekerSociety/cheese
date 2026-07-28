@@ -24,6 +24,7 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -307,7 +308,8 @@ def ssh_check(ip: str, login_user: str, timeout_s: int) -> str:
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", "ConnectTimeout=8",
         "-o", "BatchMode=yes",
-        f"{login_user}@{ip}", probe,
+        # See ssh_probe: a login shell, or `claude` looks absent.
+        f"{login_user}@{ip}", f"bash -lc {shlex.quote(probe)}",
     ]
     deadline = time.monotonic() + timeout_s
     attempt = 0
@@ -345,7 +347,11 @@ def ssh_probe(ip: str, login_user: str, cheese_base: str) -> str:
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
         "-o", "ConnectTimeout=8", "-o", "BatchMode=yes",
-        f"{login_user}@{ip}", script,
+        # A LOGIN shell, deliberately: MicroCloud installs `claude` into
+        # ~/.local/bin and exports the newapi credentials from the profile, none
+        # of which a plain non-interactive ssh command sees. Probing without it
+        # reports a perfectly good machine as having no agent at all.
+        f"{login_user}@{ip}", f"bash -lc {shlex.quote(script)}",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if not result.stdout.strip():
