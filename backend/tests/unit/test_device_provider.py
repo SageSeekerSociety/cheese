@@ -246,3 +246,102 @@ def test_a_remote_device_gets_a_scratch_dir_not_the_boxs_path(monkeypatch):
     remote = provider._work_dir(project, topic, co_located=False)
     assert remote.startswith("$HOME/.cheese/work/")
     assert "/home/box/" not in remote
+
+
+@pytest.mark.anyio
+async def test_checkpoint_does_not_snapshot_for_a_remote_machine(monkeypatch):
+    """The snapshot decision must follow the DEVICE, not the deployment switch.
+
+    On a box that also hosts local containers the switch is on, so a remote
+    machine's turn used to snapshot the backend's untouched worktree — recording
+    an empty commit as if it were the agent's work, while the real edits sat on
+    the machine. Silent and wrong in the direction that loses work.
+    """
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.settings.device_shared_workspace_host_root",
+        "/home/box/cheese-workspaces",
+    )
+    snapshots: list[tuple] = []
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.ws.snapshot_worktree",
+        lambda p, t: snapshots.append((p, t)),
+    )
+    provider = DeviceProvider(hub=FakeHub())
+    project, topic = uuid.uuid4(), uuid.uuid4()
+
+    provider._co_located_at[(project, topic)] = False
+    provider.checkpoint(project, topic)
+    assert snapshots == []
+
+    provider._co_located_at[(project, topic)] = True
+    provider.checkpoint(project, topic)
+    assert snapshots == [(project, topic)]
+
+
+def test_only_a_machine_that_owns_its_tree_gets_the_push_hook():
+    """cheese-sync hands work back over git; the local container edits the real
+    worktree and must not also try to push it."""
+    from app.domain.agent.hooks_substrate import hooks_settings
+
+    def stop_commands(settings_obj) -> list[str]:
+        return [
+            hook["command"]
+            for entry in settings_obj["hooks"]["Stop"]
+            for hook in entry["hooks"]
+        ]
+
+    assert stop_commands(hooks_settings()) == ["cheese-hook"]
+    assert stop_commands(hooks_settings(["cheese-sync"])) == [
+        "cheese-hook",
+        "cheese-sync",
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_remote_machine_is_told_where_to_clone_from(monkeypatch):
+    """The launcher's clone/push block is inert without these two env vars, so the
+    wiring is the thing that has to be tested — the block itself can be perfect
+    and the machine still starts in an empty dir."""
+    from app.domain.workspace.service import branch_for_topic
+
+    class RecordingHub(FakeHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.env: dict = {}
+
+        async def open_screen(self, device_id, command, source, **kw):
+            self.env = kw.get("env") or {}
+            return await super().open_screen(device_id, command, source, **kw)
+
+    project, topic = uuid.uuid4(), uuid.uuid4()
+
+    async def ensure(co_located: bool) -> dict:
+        hub = RecordingHub()
+        provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+        monkeypatch.setattr(
+            provider, "_is_co_located", lambda _d: _async_value(co_located)
+        )
+        await provider._ensure_screen(
+            device_id="dev1",
+            agent_user_id=1,
+            agent_handle="cheese",
+            project_id=project,
+            topic_id=topic,
+            token="tok",
+            model=None,
+            env=None,
+        )
+        return hub.env
+
+    remote = await ensure(False)
+    assert remote["CHEESE_GIT_REMOTE"] == (
+        f"http://cheese.test/api/projects/{project}/git"
+    )
+    assert remote["CHEESE_GIT_BRANCH"] == branch_for_topic(topic)
+
+    # A co-located device edits the real worktree; cloning over it would be wrong.
+    assert "CHEESE_GIT_REMOTE" not in await ensure(True)
+
+
+async def _async_value(value):
+    return value
