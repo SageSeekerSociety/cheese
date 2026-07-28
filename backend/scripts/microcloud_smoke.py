@@ -116,9 +116,19 @@ def ensure_key() -> str:
     if not KEY_PATH.exists():
         KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            ["ssh-keygen", "-t", "ed25519", "-N", "", "-C", "microcloud-smoke",
-             "-f", str(KEY_PATH)],
-            check=True, capture_output=True,
+            [
+                "ssh-keygen",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                "microcloud-smoke",
+                "-f",
+                str(KEY_PATH),
+            ],
+            check=True,
+            capture_output=True,
         )
         log.info("generated smoke keypair at %s", KEY_PATH)
     return KEY_PATH.with_suffix(".pub").read_text().strip()
@@ -132,7 +142,9 @@ def ensure_customer(mc: MicroCloud, state: dict[str, Any], external_ref: str) ->
         except RuntimeError as exc:
             if "404" not in str(exc):
                 raise
-            log.info("checkpointed customer %s is gone; re-creating", state["customer_id"])
+            log.info(
+                "checkpointed customer %s is gone; re-creating", state["customer_id"]
+            )
             state.pop("customer_id", None)
             state.pop("account_id", None)
     existing = mc.get("/customer?page_size=100")
@@ -183,7 +195,9 @@ def ensure_account(
         )
         log.info("topped up account %s -> balance %s", account_id, topped["balance"])
     else:
-        log.info("account %s already funded (balance %s)", account_id, account["balance"])
+        log.info(
+            "account %s already funded (balance %s)", account_id, account["balance"]
+        )
     return int(account_id)
 
 
@@ -196,10 +210,19 @@ def pick_offering(mc: MicroCloud, wanted: str | None) -> dict[str, Any]:
         )
     for off in offerings:
         log.info(
-            "offering %s: type=%s cores=%s-%s mem=%s-%s disk=%s-%s zone=%s tpl=%s status=%s",
-            off["id"], off["machineTypeName"], off["coresMin"], off["coresMax"],
-            off["memoryMbMin"], off["memoryMbMax"], off["diskGbMin"], off["diskGbMax"],
-            off["zoneName"], off["templateName"], off["status"],
+            "offering %s: type=%s cores=%s-%s mem=%s-%s disk=%s-%s"
+            " zone=%s tpl=%s status=%s",
+            off["id"],
+            off["machineTypeName"],
+            off["coresMin"],
+            off["coresMax"],
+            off["memoryMbMin"],
+            off["memoryMbMax"],
+            off["diskGbMin"],
+            off["diskGbMax"],
+            off["zoneName"],
+            off["templateName"],
+            off["status"],
         )
     if wanted:
         for off in offerings:
@@ -255,8 +278,14 @@ def ensure_machine(
         "newapiAccountId": account_id,
         "ccproxyAccountId": account_id,
     }
-    log.info("creating machine %s from offering %s (%s cores / %s MiB / %s GB)",
-             hostname, offering["id"], body["cores"], body["memoryMb"], body["diskGb"])
+    log.info(
+        "creating machine %s from offering %s (%s cores / %s MiB / %s GB)",
+        hostname,
+        offering["id"],
+        body["cores"],
+        body["memoryMb"],
+        body["diskGb"],
+    )
     machine = mc.post("/machine", body)
     state["machine_id"] = machine["id"]
     save_state(state)
@@ -279,8 +308,11 @@ def wait_for_machine(mc: MicroCloud, machine_id: int, timeout_s: int) -> dict[st
         if seen != last:
             log.info(
                 "machine %s: status=%s ai=%s/%s ip=%s",
-                machine_id, machine["status"], machine.get("aiMode"),
-                machine.get("aiStatus"), machine.get("ip"),
+                machine_id,
+                machine["status"],
+                machine.get("aiMode"),
+                machine.get("aiStatus"),
+                machine.get("ip"),
             )
             last = seen
         settled = machine["status"] in TERMINAL and (
@@ -303,13 +335,20 @@ def ssh_check(ip: str, login_user: str, timeout_s: int) -> str:
         "echo SUDO=$(sudo -n true 2>/dev/null && echo yes || echo no)"
     )
     cmd = [
-        "ssh", "-i", str(KEY_PATH),
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=8",
-        "-o", "BatchMode=yes",
+        "ssh",
+        "-i",
+        str(KEY_PATH),
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=8",
+        "-o",
+        "BatchMode=yes",
         # See ssh_probe: a login shell, or `claude` looks absent.
-        f"{login_user}@{ip}", f"bash -lc {shlex.quote(probe)}",
+        f"{login_user}@{ip}",
+        f"bash -lc {shlex.quote(probe)}",
     ]
     deadline = time.monotonic() + timeout_s
     attempt = 0
@@ -319,8 +358,11 @@ def ssh_check(ip: str, login_user: str, timeout_s: int) -> str:
         if result.returncode == 0:
             log.info("ssh ok on attempt %s", attempt)
             return result.stdout.strip()
-        log.info("ssh attempt %s not ready: %s", attempt,
-                 result.stderr.strip().splitlines()[-1:] or ["(no stderr)"])
+        log.info(
+            "ssh attempt %s not ready: %s",
+            attempt,
+            result.stderr.strip().splitlines()[-1:] or ["(no stderr)"],
+        )
         time.sleep(10)
     raise RuntimeError(f"ssh to {login_user}@{ip} never succeeded within {timeout_s}s")
 
@@ -331,27 +373,40 @@ def ssh_probe(ip: str, login_user: str, cheese_base: str) -> str:
     internet (to download the connector / an agent CLI)."""
     host = cheese_base.split("//", 1)[-1].split(":")[0].split("/")[0]
     script = (
-        f'echo CHEESE=$(curl -s -o /dev/null -w %{{http_code}} -m 8 {cheese_base}/healthz);'
-        f' echo CHEESE_INSTALLER=$(curl -s -o /dev/null -w %{{http_code}} -m 8 {cheese_base}/api/connector/install.sh);'
-        ' echo INTERNET=$(curl -s -o /dev/null -w %{http_code} -m 8 https://api.github.com);'
-        ' echo PROD=$(curl -s -o /dev/null -w %{http_code} -m 8 https://cheese.ruc.edu.cn/api/healthz);'
-        ' echo NPM=$(command -v npm || echo none);'
-        ' echo ARCH=$(uname -m);'
-        ' echo ROUTES="$(ip -4 route | tr \'\\n\' \'|\')";'
-        f' echo PING_TARGET=$(ping -c1 -W2 {host} >/dev/null 2>&1 && echo ok || echo fail);'
-        ' echo PING_GW=$(ping -c1 -W2 $(ip -4 route show default | awk \'{print $3}\') >/dev/null 2>&1 && echo ok || echo fail);'
-        ' echo FIREWALL=$(sudo -n ufw status 2>/dev/null | head -1 || echo unknown)'
+        f"echo CHEESE=$(curl -s -o /dev/null -w %{{http_code}} -m 8"
+        f" {cheese_base}/healthz);"
+        f" echo CHEESE_INSTALLER=$(curl -s -o /dev/null -w %{{http_code}} -m 8"
+        f" {cheese_base}/api/connector/install.sh);"
+        " echo INTERNET=$(curl -s -o /dev/null -w %{http_code} -m 8 https://api.github.com);"
+        " echo PROD=$(curl -s -o /dev/null -w %{http_code} -m 8 https://cheese.ruc.edu.cn/api/healthz);"
+        " echo NPM=$(command -v npm || echo none);"
+        " echo ARCH=$(uname -m);"
+        " echo ROUTES=\"$(ip -4 route | tr '\\n' '|')\";"
+        f" echo PING_TARGET=$(ping -c1 -W2 {host} >/dev/null 2>&1"
+        " && echo ok || echo fail);"
+        " echo PING_GW=$(ping -c1 -W2"
+        " $(ip -4 route show default | awk '{print $3}') >/dev/null 2>&1"
+        " && echo ok || echo fail);"
+        " echo FIREWALL=$(sudo -n ufw status 2>/dev/null | head -1 || echo unknown)"
     )
     cmd = [
-        "ssh", "-i", str(KEY_PATH),
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=8", "-o", "BatchMode=yes",
+        "ssh",
+        "-i",
+        str(KEY_PATH),
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=8",
+        "-o",
+        "BatchMode=yes",
         # A LOGIN shell, deliberately: MicroCloud installs `claude` into
         # ~/.local/bin and exports the newapi credentials from the profile, none
         # of which a plain non-interactive ssh command sees. Probing without it
         # reports a perfectly good machine as having no agent at all.
-        f"{login_user}@{ip}", f"bash -lc {shlex.quote(script)}",
+        f"{login_user}@{ip}",
+        f"bash -lc {shlex.quote(script)}",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if not result.stdout.strip():
@@ -368,22 +423,37 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hostname", default="cheese-smoke-1")
     parser.add_argument("--user", default="cheese", help="non-root login user")
-    parser.add_argument("--external-ref", default="cheese-smoke",
-                        help="the tenant's own user id for this customer")
+    parser.add_argument(
+        "--external-ref",
+        default="cheese-smoke",
+        help="the tenant's own user id for this customer",
+    )
     parser.add_argument("--funds", type=float, default=1000.0)
     parser.add_argument("--cores", type=int, default=2)
     parser.add_argument("--memory-mb", type=int, default=4096)
     parser.add_argument("--disk-gb", type=int, default=20)
-    parser.add_argument("--offering", default=None,
-                        help="offering id or template name; default = first active")
+    parser.add_argument(
+        "--offering",
+        default=None,
+        help="offering id or template name; default = first active",
+    )
     parser.add_argument("--provision-timeout", type=int, default=900)
     parser.add_argument("--ssh-timeout", type=int, default=300)
-    parser.add_argument("--destroy", action="store_true",
-                        help="delete the checkpointed machine and exit")
-    parser.add_argument("--plan-only", action="store_true",
-                        help="reachability + catalog only; create nothing")
-    parser.add_argument("--probe", action="store_true",
-                        help="ssh the checkpointed machine and report what it can reach")
+    parser.add_argument(
+        "--destroy",
+        action="store_true",
+        help="delete the checkpointed machine and exit",
+    )
+    parser.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="reachability + catalog only; create nothing",
+    )
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="ssh the checkpointed machine and report what it can reach",
+    )
     # The gateway origin, NOT the box IP: a provisioned machine reaches the
     # former and not the latter, which once read as "machines can't reach cheese".
     parser.add_argument(
@@ -435,14 +505,23 @@ def main() -> int:
         # Pre-flight: prove reachability + auth + a usable catalog before we
         # provision anything real. Creates nothing.
         offering = pick_offering(mc, args.offering)
-        log.info("PLAN OK — would provision from offering %s (%s / %s / %s), "
-                 "%s cores / %s MiB / %s GB",
-                 offering["id"], offering["machineTypeName"], offering["zoneName"],
-                 offering["templateName"], offering["coresMin"],
-                 offering["memoryMbMin"], offering["diskGbMin"])
+        log.info(
+            "PLAN OK — would provision from offering %s (%s / %s / %s), "
+            "%s cores / %s MiB / %s GB",
+            offering["id"],
+            offering["machineTypeName"],
+            offering["zoneName"],
+            offering["templateName"],
+            offering["coresMin"],
+            offering["memoryMbMin"],
+            offering["diskGbMin"],
+        )
         customers = mc.get("/customer?page_size=100").get("items", [])
-        log.info("tenant currently has %s customer(s): %s", len(customers),
-                 [c["externalRef"] for c in customers][:10])
+        log.info(
+            "tenant currently has %s customer(s): %s",
+            len(customers),
+            [c["externalRef"] for c in customers][:10],
+        )
         machines = mc.get("/machine?page_size=100").get("items", [])
         log.info(
             "tenant currently has %s machine(s): %s",
@@ -458,14 +537,26 @@ def main() -> int:
     customer_id = ensure_customer(mc, state, args.external_ref)
     account_id = ensure_account(mc, state, customer_id, "compute", args.funds)
     offering = pick_offering(mc, args.offering)
-    log.info("using offering %s (%s / %s / %s)", offering["id"],
-             offering["machineTypeName"], offering["zoneName"], offering["templateName"])
+    log.info(
+        "using offering %s (%s / %s / %s)",
+        offering["id"],
+        offering["machineTypeName"],
+        offering["zoneName"],
+        offering["templateName"],
+    )
 
     machine = ensure_machine(
-        mc, state,
-        customer_id=customer_id, account_id=account_id, offering=offering,
-        hostname=args.hostname, login_user=args.user, pubkey=pubkey,
-        cores=args.cores, memory_mb=args.memory_mb, disk_gb=args.disk_gb,
+        mc,
+        state,
+        customer_id=customer_id,
+        account_id=account_id,
+        offering=offering,
+        hostname=args.hostname,
+        login_user=args.user,
+        pubkey=pubkey,
+        cores=args.cores,
+        memory_mb=args.memory_mb,
+        disk_gb=args.disk_gb,
     )
     machine = wait_for_machine(mc, int(machine["id"]), args.provision_timeout)
     if machine["status"] != "running":
@@ -480,8 +571,10 @@ def main() -> int:
     log.info("machine facts:\n%s", facts)
 
     state["last_ok"] = {
-        "machine_id": machine["id"], "ip": machine["ip"],
-        "hostname": args.hostname, "user": args.user,
+        "machine_id": machine["id"],
+        "ip": machine["ip"],
+        "hostname": args.hostname,
+        "user": args.user,
     }
     save_state(state)
     log.info("SMOKE OK — ssh -i %s %s@%s", KEY_PATH, args.user, machine["ip"])
