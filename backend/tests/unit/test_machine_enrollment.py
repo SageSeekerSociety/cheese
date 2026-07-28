@@ -298,8 +298,14 @@ def test_the_script_provides_tmux_the_connector_needs():
     script = enrollment.bootstrap_script(
         origin="https://x.test", token="T", device_id="D"
     )
-    assert "command -v tmux" in script
-    assert "apt-get install -y -q tmux" in script
+    assert "tmux" in script.split("for tool in")[1].split(";")[0]
+    # ...and before the connector is started, or the check buys nothing.
+    # Compare executable lines only: prose mentioning `link connect` would
+    # otherwise decide the order.
+    code = [line for line in script.splitlines() if not line.lstrip().startswith("#")]
+    ensures = next(i for i, ln in enumerate(code) if "for tool in" in ln)
+    connects = next(i for i, ln in enumerate(code) if "link connect" in ln)
+    assert ensures < connects
 
 
 def test_the_script_confirms_the_service_actually_stayed_up():
@@ -332,3 +338,33 @@ async def test_a_service_that_dies_is_recorded_as_a_failure(monkeypatch):
 
     assert machine.device_id is None, "a dead service is not an enrolled machine"
     assert "did not stay up" in machine.enroll_error
+
+
+def test_bootstrap_ensures_both_tools_the_image_may_not_have():
+    """A machine missing either tool enrolls "successfully" and then fails
+    silently — tmux makes the connector die while systemctl still returns 0, and
+    without git the agent's turn runs in an empty dir and its work is never seen.
+
+    Neither is guaranteed by the image: MicroCloud's LXC template lists git but
+    not tmux, and the VM template installs neither.
+    """
+    script = enrollment.bootstrap_script(
+        origin="http://cheese.test", token="tok", device_id="dev"
+    )
+    assert "for tool in tmux git; do" in script
+    # Missing tools must abort enrollment rather than produce a broken machine.
+    assert "exit 1" in script.split("for tool in")[1].split("done")[0]
+
+
+def test_bootstrap_is_valid_shell():
+    """The script is built from an f-string, so a mis-escaped brace turns into a
+    syntax error that would only surface on a real machine."""
+    import subprocess
+
+    script = enrollment.bootstrap_script(
+        origin="http://cheese.test", token="tok", device_id="dev"
+    )
+    checked = subprocess.run(
+        ["bash", "-n"], input=script, text=True, capture_output=True, timeout=30
+    )
+    assert checked.returncode == 0, checked.stderr
