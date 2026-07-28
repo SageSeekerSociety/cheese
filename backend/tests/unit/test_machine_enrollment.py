@@ -287,3 +287,48 @@ def test_enrollment_does_not_ride_the_ai_scheduler():
 
     source = inspect.getsource(SchedulerService)
     assert "enroll" not in source
+
+
+def test_the_script_provides_tmux_the_connector_needs():
+    """The connector hosts sessions in tmux and exits without one.
+
+    MicroCloud's Debian template ships no tmux, so a machine enrolled without
+    this got a service that died on startup — while enrollment recorded success.
+    """
+    script = enrollment.bootstrap_script(
+        origin="https://x.test", token="T", device_id="D"
+    )
+    assert "command -v tmux" in script
+    assert "apt-get install -y -q tmux" in script
+
+
+def test_the_script_confirms_the_service_actually_stayed_up():
+    """`link connect` returns as soon as systemd accepts the start, which is
+    before the process can fail — so its exit code alone is not evidence."""
+    script = enrollment.bootstrap_script(
+        origin="https://x.test", token="T", device_id="D"
+    )
+    assert "systemctl is-active --quiet cheese" in script
+    connect = next(
+        text
+        for text in script.splitlines()
+        if "link connect" in text and text.startswith('"')
+    )
+    # sudo inside `link connect` would otherwise consume the rest of this very
+    # script, which arrives on stdin.
+    assert connect.endswith("< /dev/null")
+
+
+async def test_a_service_that_dies_is_recorded_as_a_failure(monkeypatch):
+    def _boom():
+        raise enrollment.EnrollmentError(
+            "bootstrap failed (1): the connector service did not stay up: no tmux found"
+        )
+
+    service, _ = build_service(monkeypatch, bootstrap=_boom)
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    assert machine.device_id is None, "a dead service is not an enrolled machine"
+    assert "did not stay up" in machine.enroll_error
