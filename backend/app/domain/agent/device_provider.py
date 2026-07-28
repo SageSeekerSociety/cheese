@@ -256,6 +256,16 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             project_id=str(project_id),
             topic_id=str(topic_id),
             author=agent_handle,
+            # A machine on its own host has no worktree to edit, so it clones the
+            # project and pushes the topic branch back. Same origin + same scoped
+            # token the platform CLI already uses from this machine — one
+            # convention, so there is a single place to be wrong about the prefix.
+            git_remote=(
+                None
+                if co_located
+                else f"{self._public_base}/api/projects/{project_id}/git"
+            ),
+            git_branch=ws.branch_for_topic(topic_id),
         )
         return await self._hub.open_screen(
             device_id,
