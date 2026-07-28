@@ -58,14 +58,30 @@ def _repo_for(project_id: uuid.UUID, token: str | None) -> Path:
     repo = ws.ensure_repo(project_id)
     if not (repo / ".git").exists():
         raise NotFoundError("project has no repository")
-    # http-backend refuses to push unless the repo says pushing is allowed.
-    subprocess.run(
-        ["git", "config", "http.receivepack", "true"],
-        cwd=repo,
-        capture_output=True,
-        check=False,
-    )
+    _configure_for_push(repo)
     return repo
+
+
+def _configure_for_push(repo: Path) -> None:
+    """Make this repo accept a push from a machine.
+
+    ``http.receivepack``: http-backend refuses to serve receive-pack otherwise.
+
+    ``receive.denyCurrentBranch=updateInstead``: git rejects a push to a branch
+    that is checked out. Topics here are jj workspaces, which git does not count
+    as checked out, so today only the repo's own HEAD (the base branch) is
+    exposed to this — but the rejection message goes to a push that CANNOT report
+    it (a Stop hook must not take the turn down), so it would look exactly like
+    success. ``updateInstead`` also refuses when the target worktree has
+    uncommitted edits, so a human's unsaved work is never overwritten.
+    """
+    for key, value in (
+        ("http.receivepack", "true"),
+        ("receive.denyCurrentBranch", "updateInstead"),
+    ):
+        subprocess.run(
+            ["git", "config", key, value], cwd=repo, capture_output=True, check=False
+        )
 
 
 async def _cgi(
