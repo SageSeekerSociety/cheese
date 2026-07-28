@@ -151,6 +151,35 @@ class Settings(BaseSettings):
     # Per-turn wall-clock ceiling for a device turn (mirrors agent_turn_timeout_s).
     device_turn_timeout_s: float = 900.0
 
+    # --- MicroCloud: project machines (the team's IaaS control plane) ---
+    # MicroCloud provisions the Debian machines a project gets as compute. It is
+    # a separate service with its own tenants; cheese is one tenant and holds an
+    # opaque secret. Empty secret = the feature reports itself unavailable, which
+    # is the correct state for any deployment that isn't wired to it.
+    microcloud_base_url: str = ""
+    microcloud_tenant_secret: str = ""
+    microcloud_timeout_s: float = 30.0
+    # Pin a specific granted offering (machine type + zone + template); 0 = take
+    # the first active one, which is right while a tenant is granted exactly one.
+    microcloud_offering_id: int = 0
+    # Requested spec. Every value is clamped into the chosen offering's own
+    # range, so these are preferences, not guarantees.
+    microcloud_default_cores: int = 2
+    microcloud_default_memory_mb: int = 4096
+    microcloud_default_disk_gb: int = 20
+    microcloud_login_user: str = "cheese"
+    # The project's fund account, and the balance kept in it. MicroCloud bills
+    # compute against this; 0 disables top-ups (an operator funds it by hand).
+    microcloud_account_name: str = "compute"
+    microcloud_initial_funds: float = 1000.0
+    # A ceiling per project: provisioning is one API call, and nothing else here
+    # stops a loop from filling a Proxmox node.
+    microcloud_max_machines_per_project: int = 2
+    # How often to sweep for machines that came up and still need enrolling as
+    # devices. Its own switch, NOT the project scheduler's: that one spends model
+    # budget on 定期巡检 and ships off, and machines must not depend on it.
+    machine_enroll_interval_seconds: int = 60
+
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # When on, the interactive turn runs `claude` INSIDE a per-topic Docker
     # container (native Bash/Read/Write jailed there) via the cli_path shim, and
