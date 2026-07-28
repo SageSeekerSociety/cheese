@@ -39,10 +39,16 @@ Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
 @router.post("")
-async def create_project(body: ProjectCreate, db: DbSession) -> dict:
+async def create_project(
+    body: ProjectCreate, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    # Whoever creates a project owns it unless they say otherwise. Without this
+    # the listing — now scoped to the caller — would hide a project from the very
+    # person who just made it.
+    who = await resolver.resolve(fallback_handle=body.owner_handle)
     project = await ProjectService(db).create(
         name=body.name,
-        owner_handle=body.owner_handle,
+        owner_handle=body.owner_handle or (who.handle if who.handle else None),
         ai_mode=body.ai_mode,
         expert_role=body.expert_role,
         team_id=body.team_id,
@@ -68,11 +74,20 @@ async def list_projects(
         total = len(projects)
     else:
         who = await resolver.resolve(fallback_handle=None)
-        projects = await ProjectRepository(db).list_visible_to(
-            handle=who.handle if who.authenticated else None,
-            user_id=who.user_id if who.authenticated else None,
-        )
-        total = len(projects)
+        if who.authenticated:
+            projects = await ProjectRepository(db).list_visible_to(
+                handle=who.handle, user_id=who.user_id
+            )
+            total = len(projects)
+        else:
+            # The unauthenticated surface is left exactly as it was. Every 2.0
+            # route on this deployment is reachable without a credential
+            # (handle-fallback, Phase 0), so making THIS one the exception would
+            # not protect anything — a caller could simply not authenticate.
+            # Tightening that surface is a decision about all of them, not a
+            # side effect of scoping a sidebar. Real users are logged in, and
+            # they are who this scoping is for.
+            projects, total = await service.list_all()
     items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
     return ok(page(items, total))
 

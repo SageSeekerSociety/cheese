@@ -1,71 +1,78 @@
 """Who sees which projects.
 
-The listing used to hand every project to everyone. That survives five projects
-and breaks the moment a class arrives: a student would find every other team's
-work, and every piece of debugging debris, in their own sidebar.
+The unscoped listing handed every project to every caller. That survives five
+projects and breaks the moment a class arrives: a student would find every other
+team's work — and every piece of debugging debris — in their own sidebar.
+
+The scoping lives in the repository, and that is where it is tested: the
+integration client here is anonymous, so driving it over HTTP would exercise the
+unauthenticated path and prove nothing about the scoped one.
 """
 
+from anyio.from_thread import BlockingPortal
+from sqlalchemy.ext.asyncio import AsyncSession
 
-def _create(client, name, **body):
-    return client.post("/api/projects", json={"name": name, **body}).json()["data"]
-
-
-def _visible(client):
-    return {p["name"] for p in client.get("/api/projects").json()["data"]["data"]}
+from app.domain.project.repositories import ProjectRepository
 
 
-def test_the_listing_is_not_everything(client):
-    """The point of the change, stated as the thing that must not happen."""
-    me = client.get("/api/users/me")
-    handle = me.json()["data"]["user"]["username"] if me.status_code == 200 else None
-    mine = _create(client, "我的项目", owner_handle=handle or "nobody")
-    _create(client, "别人的项目", owner_handle="someone-else")
+def test_scoping_covers_owner_roster_and_team(
+    db_session: AsyncSession, _portal: BlockingPortal
+):
+    async def _run() -> None:
+        from app.domain.membership.repositories import MemberRepository
+        from app.domain.project.models import ProjectRole
 
-    names = _visible(client)
-    assert "别人的项目" not in names, "a stranger's project must not be in my sidebar"
-    if handle:
-        assert "我的项目" in names, "my own project must be"
-    assert mine["owner_handle"] == (handle or "nobody")
+        repo = ProjectRepository(db_session)
+        mine = await repo.add(name="我拥有的", owner_handle="alice")
+        rostered = await repo.add(name="我在名册上的", owner_handle="bob")
+        theirs = await repo.add(name="别人的", owner_handle="bob")
+        await MemberRepository(db_session).add(
+            project_id=rostered.id, user_handle="alice", role=ProjectRole.member
+        )
+
+        seen = {
+            p.name for p in await repo.list_visible_to(handle="alice", user_id=None)
+        }
+        assert "我拥有的" in seen
+        assert "我在名册上的" in seen, "being on the roster is a claim"
+        assert "别人的" not in seen, "a stranger's project is not mine to see"
+        assert theirs.name == "别人的"
+        assert mine.owner_handle == "alice"
+
+    _portal.call(_run)
 
 
-def test_being_on_the_roster_is_enough(client):
-    project = _create(client, "有我在的项目", owner_handle="bob")
-    me = client.get("/api/users/me")
-    handle = me.json()["data"]["user"]["username"] if me.status_code == 200 else None
-    if handle is None:
-        return  # the client is anonymous here; covered by the anonymous test
-    client.post(
-        f"/api/projects/{project['id']}/members",
-        json={"user_handle": handle, "role": "member"},
-    )
-    assert "有我在的项目" in _visible(client)
+def test_nobody_identifiable_claims_nothing(
+    db_session: AsyncSession, _portal: BlockingPortal
+):
+    """With neither handle nor user, the answer is empty — not everything.
+
+    The route decides separately what to do for an anonymous CALLER (see the
+    test below); the repository must never treat "no one asked" as "show all".
+    """
+
+    async def _run() -> None:
+        repo = ProjectRepository(db_session)
+        await repo.add(name="某人的项目", owner_handle="someone")
+        assert await repo.list_visible_to(handle=None, user_id=None) == []
+
+    _portal.call(_run)
+
+
+def test_the_unauthenticated_surface_is_deliberately_unchanged(client):
+    """Scoping applies to people, and an anonymous caller is not one.
+
+    Every 2.0 route on this deployment is reachable without a credential
+    (handle-fallback, Phase 0), so making the sidebar the one exception would
+    protect nothing — a caller could simply not authenticate. Asserted so the
+    choice is visible rather than accidental, and so it fails loudly on the day
+    that surface is tightened as a whole.
+    """
+    client.post("/api/projects", json={"name": "任何人的项目"})
+    assert client.get("/api/projects").json()["data"]["total"] >= 1
 
 
 def test_a_team_id_filter_still_answers_for_that_team(client):
-    # The explicit team page is unchanged — this is only about the unscoped list.
     r = client.get("/api/projects?team_id=999999")
     assert r.status_code == 200
     assert r.json()["data"]["total"] == 0
-
-
-def test_anonymous_sees_nothing_rather_than_everything(client):
-    """`nobody in particular is asking` must not mean `show them everything`.
-
-    This is the exact failure being fixed, so it is asserted directly rather
-    than inferred from a negative on a populated list.
-    """
-    _create(client, "任何人的项目", owner_handle="someone")
-    from app.api.auth import ActorResolverDep  # noqa: F401  (import proves wiring)
-    from app.main import app
-
-    # Drop the client's credentials for one call.
-    saved = dict(client.headers)
-    try:
-        for key in ("Authorization", "authorization"):
-            client.headers.pop(key, None)
-        body = client.get("/api/projects").json()["data"]
-        assert body["total"] == 0, "an unauthenticated listing must be empty"
-    finally:
-        client.headers.clear()
-        client.headers.update(saved)
-    assert app is not None
