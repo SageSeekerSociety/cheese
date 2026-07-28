@@ -332,8 +332,13 @@ def ssh_probe(ip: str, login_user: str, cheese_base: str) -> str:
         f"{login_user}@{ip}", script,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
+    if not result.stdout.strip():
+        raise RuntimeError(f"probe ssh produced nothing: {result.stderr.strip()[:300]}")
+    # A probe is a diagnosis, not an assertion: one failing sub-command (an
+    # absent `sudo`, a locked-down firewall query) makes ssh exit non-zero, and
+    # discarding everything it DID learn is exactly the wrong trade here.
     if result.returncode != 0:
-        raise RuntimeError(f"probe ssh failed: {result.stderr.strip()[:300]}")
+        log.info("probe exited %s; reporting what it got", result.returncode)
     return result.stdout.strip()
 
 
