@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.project.models import (
@@ -148,5 +148,46 @@ class ProjectRepository:
             select(Project)
             .where(Project.external_task_id == task_id)
             .order_by(Project.created_at)
+        )
+        return list(result.scalars())
+
+    async def list_visible_to(
+        self, *, handle: str | None, user_id: int | None
+    ) -> list[Project]:
+        """Projects this person has any claim on.
+
+        The listing used to return EVERY project to everyone, which is fine with
+        five of them and wrong the moment a class shows up: a student would see
+        every other team's work, and every piece of debugging debris, in their
+        own sidebar.
+
+        A claim is one of three things — you own it, you are on its roster, or it
+        belongs to a team you are in. Anything else is not yours to see here.
+        """
+        from app.domain.team.models import TeamUserRelation
+
+        claims = []
+        if handle:
+            claims.append(Project.owner_handle == handle)
+            claims.append(
+                Project.id.in_(
+                    select(ProjectMember.project_id).where(
+                        ProjectMember.user_handle == handle
+                    )
+                )
+            )
+        if user_id:
+            claims.append(
+                Project.team_id.in_(
+                    select(TeamUserRelation.team_id).where(
+                        TeamUserRelation.user_id == user_id
+                    )
+                )
+            )
+        if not claims:
+            # Nobody in particular is asking; that is not the same as everybody.
+            return []
+        result = await self._session.execute(
+            select(Project).where(or_(*claims)).order_by(Project.created_at)
         )
         return list(result.scalars())

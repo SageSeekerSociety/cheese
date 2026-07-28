@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_profile_registry, project_device_online
 from app.api.response import ok, page
 from app.core.config import settings
@@ -51,15 +52,27 @@ async def create_project(body: ProjectCreate, db: DbSession) -> dict:
 
 
 @router.get("")
-async def list_projects(db: DbSession, team_id: int | None = None) -> dict:
-    """All projects, or — with ``team_id`` — one team's 项目 page (a personal
-    team also folds in its owner's legacy team-less projects)."""
+async def list_projects(
+    db: DbSession, resolver: ActorResolverDep, team_id: int | None = None
+) -> dict:
+    """One team's 项目 page with ``team_id`` (a personal team also folds in its
+    owner's legacy team-less projects); otherwise the caller's OWN projects.
+
+    Without ``team_id`` this used to return every project to everyone. That is
+    survivable while five exist and wrong as soon as a class does — a student
+    would find every other team's work in their sidebar.
+    """
     service = ProjectService(db)
     if team_id is not None:
         projects = await service.list_for_team(team_id)
         total = len(projects)
     else:
-        projects, total = await service.list_all()
+        who = await resolver.resolve(fallback_handle=None)
+        projects = await ProjectRepository(db).list_visible_to(
+            handle=who.handle if who.authenticated else None,
+            user_id=who.user_id if who.authenticated else None,
+        )
+        total = len(projects)
     items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
     return ok(page(items, total))
 
