@@ -65,18 +65,6 @@ class ProjectService:
         # ProjectMember rows may not exist yet (added separately); seed_root is
         # idempotent, so the owner + 芝士 are seeded now and any members already
         # present are folded in.
-        # The owner belongs on the roster from the start: the project listing is
-        # scoped to owner / roster / team, and a project nobody is on is a
-        # project nobody can find.
-        if owner_handle:
-            from app.domain.membership.repositories import MemberRepository
-            from app.domain.project.models import ProjectRole
-
-            await MemberRepository(self._session).add(
-                project_id=project.id,
-                user_handle=owner_handle,
-                role=ProjectRole.lead,
-            )
         member_handles = [
             m["handle"] for m in await self._repo.list_members(project.id)
         ]
