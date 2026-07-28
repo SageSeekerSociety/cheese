@@ -1,6 +1,5 @@
 """Device screen launcher: hooks settings + self-contained launch command."""
 
-
 from app.domain.agent import device_launch
 
 
