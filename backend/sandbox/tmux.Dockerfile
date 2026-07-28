@@ -5,7 +5,11 @@
 #
 # BUILD (context = backend/sandbox so the base image is available):
 #   docker build -f backend/sandbox/tmux.Dockerfile -t cheesex-agent-tmux:latest backend/sandbox
-FROM cheesex-agent-sandbox:latest
+#
+# CI passes the base it just pushed as BASE_IMAGE, so the two images can never
+# drift apart; the default keeps the local build working unchanged.
+ARG BASE_IMAGE=cheesex-agent-sandbox:latest
+FROM ${BASE_IMAGE}
 
 # tmux (drive the interactive session) + ttyd (read-only web terminal mirror for
 # 施工现场). ttyd is a static binary — not packaged for debian.

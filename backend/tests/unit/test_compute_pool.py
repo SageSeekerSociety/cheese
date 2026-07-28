@@ -137,3 +137,36 @@ def test_resolve_compute_id_topic_wins_then_project_sticky():
     # Neither → None (pool default).
     assert _resolve_compute_id({}, None) is None
     assert _resolve_compute_id(None, None) is None
+
+
+def test_tmux_keeps_the_remote_transport_in_the_pool(monkeypatch):
+    """The convergence end state must be reachable.
+
+    fusion-design §8.6 settles on ONE turn flow with two thin transports — tmux
+    locally, device remotely, a topic choosing per turn. Returning a
+    single-provider pool for `tmux` dropped the remote one, so the only way to
+    have device compute at all was to run the pre-convergence SDK path locally.
+    """
+    from app.core.config import settings
+    from app.domain.agent.compute import build_compute_pool
+
+    monkeypatch.setattr(settings, "agent_backend", "tmux")
+    pool = build_compute_pool(_RecordingAgent())
+
+    assert pool.has("tmux-hooks")
+    assert pool.has("device"), "the remote transport must survive picking a local one"
+    assert not pool.has("local-docker"), "exactly one local transport, not both"
+    assert pool.default().name == "tmux-hooks"
+
+
+def test_device_backend_still_offers_a_local_transport(monkeypatch):
+    # Defaulting every turn to someone else's machine must not leave a topic
+    # unable to route back to a local one.
+    from app.core.config import settings
+    from app.domain.agent.compute import build_compute_pool
+
+    monkeypatch.setattr(settings, "agent_backend", "device")
+    pool = build_compute_pool(_RecordingAgent())
+
+    assert pool.default().name == "device"
+    assert pool.has("local-docker")
