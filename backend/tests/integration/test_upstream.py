@@ -6,8 +6,18 @@ import subprocess
 from pathlib import Path
 
 
+def _owner(client, handle: str = "alice") -> dict[str, str]:
+    """The file routes return the source, so they need a caller with a claim on
+    the project."""
+    from tests.integration.test_connector_viewer import _login
+
+    return {"Authorization": f"Bearer {_login(client, handle)}"}
+
+
 def _project(client) -> str:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post(
+        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+    ).json()["data"]["id"]
 
 
 def _make_upstream(tmp_path: Path, name: str = "up") -> Path:
@@ -51,7 +61,11 @@ def test_link_sync_and_resync(client, tmp_path):
     assert r.status_code == 200
     d = r.json()["data"]
     assert d["synced"] is True and d["commits"] >= 1
-    r = client.get(f"/api/projects/{pid}/file", params={"path": "hello.txt"})
+    r = client.get(
+        f"/api/projects/{pid}/file",
+        params={"path": "hello.txt"},
+        headers=_owner(client),
+    )
     assert r.status_code == 200
     assert "hi from upstream" in r.json()["data"]["content"]
 
@@ -67,7 +81,9 @@ def test_link_sync_and_resync(client, tmp_path):
     )
     d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
     assert d["synced"] is True and d["commits"] >= 1
-    r = client.get(f"/api/projects/{pid}/file", params={"path": "more.txt"})
+    r = client.get(
+        f"/api/projects/{pid}/file", params={"path": "more.txt"}, headers=_owner(client)
+    )
     assert r.status_code == 200
 
 
