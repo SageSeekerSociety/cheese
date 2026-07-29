@@ -380,6 +380,13 @@ def ssh_probe(ip: str, login_user: str, cheese_base: str) -> str:
         " echo INTERNET=$(curl -s -o /dev/null -w %{http_code} -m 8 https://api.github.com);"
         " echo PROD=$(curl -s -o /dev/null -w %{http_code} -m 8 https://cheese.ruc.edu.cn/api/healthz);"
         " echo NPM=$(command -v npm || echo none);"
+        # What the machine must already have for a turn to work: the connector
+        # hosts sessions in tmux, and the agent clones/pushes with git. Enrollment
+        # installs them if missing, so probing here is how we tell whether the
+        # TEMPLATE supplies them or every machine pays for an apt install.
+        " for t in git tmux jj; do"
+        " echo $t=$(command -v $t >/dev/null 2>&1 && $t --version 2>&1"
+        " | head -1 || echo MISSING); done;"
         " echo ARCH=$(uname -m);"
         " echo ROUTES=\"$(ip -4 route | tr '\\n' '|')\";"
         f" echo PING_TARGET=$(ping -c1 -W2 {host} >/dev/null 2>&1"
