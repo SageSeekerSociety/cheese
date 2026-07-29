@@ -39,8 +39,11 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.tokens import verify_session_token
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.tmux_provider import ttyd_endpoint
+from app.domain.membership.repositories import MemberRepository
+from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/api/topics", tags=["terminal"])
@@ -59,6 +62,36 @@ _DROP_HEADERS = {
     "trailer",
     "upgrade",
 }
+
+
+async def _may_view_topic(
+    session: AsyncSession, topic_id: uuid.UUID, token: str | None
+) -> bool:
+    """Whether this caller may open the topic's pane.
+
+    Both proxy routes took only a topic id, so an unauthenticated request with a
+    topic UUID was served the live terminal — the pane shows whatever the agent
+    echoes, so that is a read of the project's contents by anyone who learns an
+    id. A UUID is obscurity, not authorization.
+
+    Same shape as the device viewer's check (``_may_view_screen``): a logged-in
+    member or owner of the topic's project. The credential rides as ``?token=``
+    because a browser cannot set a header on an iframe or a WebSocket.
+    """
+    if not token:
+        return False
+    claims = verify_session_token(token)
+    if claims is None:
+        return False
+    handle = claims["handle"] or claims["sub"]
+    topic = await TopicService(session).get_or_404(topic_id)
+    project_id = topic.project_id
+    if project_id is None:
+        return False
+    if await MemberRepository(session).get(project_id=project_id, user_handle=handle):
+        return True
+    project = await ProjectRepository(session).get(project_id)
+    return project is not None and project.owner_handle == handle
 
 
 def _device_screen_id(topic_id: uuid.UUID) -> str | None:
@@ -118,10 +151,14 @@ async def terminal_status(topic_id: uuid.UUID, db: DbSession) -> dict:
 @router.api_route("/{topic_id}/terminal/live", methods=["GET"])
 @router.api_route("/{topic_id}/terminal/live/{path:path}", methods=["GET"])
 async def terminal_proxy_http(
-    topic_id: uuid.UUID, request: Request, path: str = ""
+    topic_id: uuid.UUID, request: Request, db: DbSession, path: str = ""
 ) -> Response:
     """Reverse-proxy a ttyd HTTP request (the xterm.js page, ``/token``, assets).
     Scoped to the topic's own container, so it can't reach another topic."""
+    # 404 rather than 403: an unauthorized caller learns nothing about whether
+    # the topic or its terminal exists.
+    if not await _may_view_topic(db, topic_id, request.query_params.get("token")):
+        return Response(status_code=404, content=b"terminal unavailable")
     endpoint = _live_endpoint(topic_id)
     if endpoint is None:
         return Response(status_code=404, content=b"terminal unavailable")
@@ -140,11 +177,16 @@ async def terminal_proxy_http(
 
 
 @router.websocket("/{topic_id}/terminal/live/ws")
-async def terminal_proxy_ws(websocket: WebSocket, topic_id: uuid.UUID) -> None:
+async def terminal_proxy_ws(
+    websocket: WebSocket, topic_id: uuid.UUID, db: DbSession
+) -> None:
     """Reverse-proxy the ttyd WebSocket. ttyd speaks the ``tty`` subprotocol; we
     negotiate it on both legs and pump frames transparently (binary pane output
     upstream→browser, control/resize JSON browser→upstream). Read-only pane, so
     browser input is inert, but we still forward it (harmless ttyd control)."""
+    if not await _may_view_topic(db, topic_id, websocket.query_params.get("token")):
+        await websocket.close(code=1008)
+        return
     endpoint = _live_endpoint(topic_id)
     if endpoint is None:
         # Reject the handshake (no accept) — the client sees a failed upgrade.
