@@ -13,7 +13,18 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/healthz", summary="Health check")
-async def health_check() -> dict[str, str]:
+async def health_check() -> dict[str, Any]:
+    """Healthy means every route module mounted, not merely that the process is up.
+
+    A module that fails to import is skipped in production so one bad file cannot
+    take the app down — but the app is then serving 404s for a whole group of
+    endpoints, and the only party that finds out is the caller. Reporting it here
+    is what turns that into something monitoring can see.
+    """
+    from app.main import FAILED_ROUTE_MODULES
+
+    if FAILED_ROUTE_MODULES:
+        return {"status": "degraded", "unmounted": list(FAILED_ROUTE_MODULES)}
     return {"status": "ok"}
 
 
