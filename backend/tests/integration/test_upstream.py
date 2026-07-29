@@ -3,6 +3,7 @@ existing git repo and pull its history in — the productized version of the
 one-off dogfooding seed."""
 
 import subprocess
+from pathlib import Path
 
 
 def _owner(client, handle: str = "alice") -> dict[str, str]:
@@ -11,9 +12,6 @@ def _owner(client, handle: str = "alice") -> dict[str, str]:
     from tests.integration.test_connector_viewer import _login
 
     return {"Authorization": f"Bearer {_login(client, handle)}"}
-
-
-from pathlib import Path
 
 
 def _project(client) -> str:
