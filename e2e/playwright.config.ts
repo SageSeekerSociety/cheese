@@ -29,7 +29,11 @@ export default defineConfig({
       timeout: 180_000,
     },
     {
-      command: `cd ../frontend && pnpm run dev -- --port ${FRONTEND_PORT} --strictPort`,
+      // `pnpm run dev -- --port N` forwards the separator itself, so vite is
+      // invoked as `vite -- --port N` and takes `--` as its POSITIONAL root
+      // directory. It then serves a directory that does not exist: no error, no
+      // banner, never reachable — which is exactly how it failed in CI.
+      command: `cd ../frontend && pnpm exec vite --port ${FRONTEND_PORT} --strictPort`,
       url: `http://localhost:${FRONTEND_PORT}`,
       env: { BACKEND_URL },
       reuseExistingServer: !process.env.CI,
