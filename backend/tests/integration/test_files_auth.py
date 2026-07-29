@@ -10,15 +10,6 @@ import uuid
 import pytest
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "no caller check on these routes. The fix is a route dependency, but it "
-        "must read the handle from the TOKEN CLAIMS the way _may_view_screen "
-        "does — AuthUserInfo carries user_id only, and the session tokens in use "
-        "are handle-only (user_id=None), so a user_id lookup 404s real callers."
-    ),
-)
 def test_listing_a_projects_files_needs_a_credential(client):
     project = client.post(
         "/api/projects", json={"name": "Secret", "owner_handle": "alice"}
@@ -31,7 +22,6 @@ def test_listing_a_projects_files_needs_a_credential(client):
     )
 
 
-@pytest.mark.xfail(strict=True, reason="same hole as the listing route")
 def test_reading_a_file_needs_a_credential(client):
     project = client.post(
         "/api/projects", json={"name": "Secret2", "owner_handle": "alice"}
