@@ -121,6 +121,11 @@ class MicroCloudClient:
 
     async def delete_machine(self, machine_id: int) -> None:
         try:
+            # Powering a machine down is NOT `/machine/{id}/stop`: that is a hard
+            # cut with no flush (MicroCloud 0.4.0), and this platform's agents keep
+            # uncommitted work on the machine between turns. `/shutdown` is the
+            # graceful one. Delete is used here because the machine is going away
+            # entirely, not being parked.
             await self._call("DELETE", f"/machine/{machine_id}")
         except MicroCloudError as exc:
             # Already gone is the outcome the caller wanted.
