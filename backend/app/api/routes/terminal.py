@@ -39,6 +39,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
+from app.domain.agent.device_hub import device_hub
 from app.domain.agent.tmux_provider import ttyd_endpoint
 from app.domain.topic.services import TopicService
 
@@ -60,6 +61,19 @@ _DROP_HEADERS = {
 }
 
 
+def _device_screen_id(topic_id: uuid.UUID) -> str | None:
+    """The live screen a device is running this topic in, if any.
+
+    A remote machine has no ttyd for us to proxy — it is behind NAT — so its pane
+    travels over the link the device already dialled out on. The terminal exists
+    either way; only the transport differs, and this endpoint is what tells the
+    frontend which one to open."""
+    for screen in device_hub.all_online_screens():
+        if screen.topic_id == topic_id:
+            return screen.sid
+    return None
+
+
 def _live_endpoint(topic_id: uuid.UUID) -> str | None:
     """`127.0.0.1:<port>` of the topic's ttyd, or None when the terminal isn't
     available (wrong backend, or the container is down / has no published port)."""
@@ -78,6 +92,16 @@ async def terminal_status(topic_id: uuid.UUID, db: DbSession) -> dict:
     ttyd derives ``/ws`` from the page path)."""
     await TopicService(db).get_or_404(topic_id)  # topic 访问校验
     backend = settings.agent_backend
+    sid = _device_screen_id(topic_id)
+    if sid is not None:
+        return ok(
+            {
+                "available": True,
+                "backend": backend,
+                "interactive": True,
+                "ws": f"/connector/session/{sid}/screen",
+            }
+        )
     endpoint = _live_endpoint(topic_id)
     if endpoint is None:
         return ok({"available": False, "backend": backend})
@@ -85,6 +109,7 @@ async def terminal_status(topic_id: uuid.UUID, db: DbSession) -> dict:
         {
             "available": True,
             "backend": backend,
+            "interactive": True,
             "url": f"/api/topics/{topic_id}/terminal/live/",
         }
     )
