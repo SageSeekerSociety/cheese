@@ -823,5 +823,9 @@ export function chatWsUrl(topicId: string): string {
   // per-message `author` the client sends).
   const token = authToken()
   const q = token ? `?token=${encodeURIComponent(token)}` : ''
-  return `${proto}://${window.location.host}/api/topics/${encodeURIComponent(topicId)}/chat${q}`
+  // BASE, not a hand-written '/api': the gateway strips exactly one '/api', so a
+  // single prefix arrived as '/topics/.../chat', matched no route, and the
+  // handshake was refused 403. The browser retried every 16s, which surfaced as
+  // 「连接断开，正在自动重连」 and read like a flaky network.
+  return `${proto}://${window.location.host}${BASE}/topics/${encodeURIComponent(topicId)}/chat${q}`
 }
