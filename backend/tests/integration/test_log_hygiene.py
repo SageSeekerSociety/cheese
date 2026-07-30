@@ -11,7 +11,38 @@ import logging
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from app.core.logging import RedactSecrets, _scrub
+from app.core.obs import RedactSecrets, _scrub, configure_logging
+
+
+def test_the_filter_is_actually_installed_by_the_real_setup():
+    """The wiring, not the mechanism.
+
+    The first version of this fix put a working filter on a `configure_logging`
+    that nothing called — the app uses a different module — and every test still
+    passed, because they exercised the class directly. Tokens kept being logged.
+    So: run the setup the app runs, then look at the handler it left behind, and
+    push a record through it the way uvicorn does.
+    """
+    configure_logging()
+    handlers = logging.getLogger().handlers
+    assert handlers, "configure_logging left no handler"
+    assert any(isinstance(f, RedactSecrets) for h in handlers for f in h.filters), (
+        "the redaction filter is not on the handler the app installs"
+    )
+
+    record = logging.LogRecord(
+        name="uvicorn.access",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg='%s - "WebSocket %s"',
+        args=("1.2.3.4:5", "/api/topics/x/chat?token=LIVE-SESSION-TOKEN"),
+        exc_info=None,
+    )
+    for h in handlers:
+        for f in h.filters:
+            f.filter(record)
+    assert "LIVE-SESSION-TOKEN" not in record.getMessage()
 
 
 def test_a_session_token_never_reaches_the_log():
