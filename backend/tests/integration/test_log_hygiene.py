@@ -9,6 +9,7 @@ refusal was an INFO line with no path — so the report that came back was 网�
 import logging
 
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
 from app.core.logging import RedactSecrets, _scrub
 
@@ -57,7 +58,10 @@ def test_the_filter_covers_records_from_other_libraries():
 def test_a_refused_handshake_names_the_path(client, caplog):
     """A path that matches no route must say so, with the path attached."""
     with caplog.at_level(logging.WARNING, logger="app.ws"):
-        with pytest.raises(Exception):
+        # A refused handshake surfaces to the test client as a disconnect —
+        # which is precisely what the browser sees, and why the UI could only
+        # report a dropped connection.
+        with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect("/topics/nope/chat"):
                 pass
 
