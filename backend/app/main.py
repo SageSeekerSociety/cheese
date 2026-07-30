@@ -30,6 +30,7 @@ from app.core.errors import register_exception_handlers
 from app.core.obs import bind_context, clear_context, configure_logging, get_logger
 from app.core.sandbox_auth import is_valid_cheese_token
 from app.core.turn_context import current_turn_id, parse_turn_id
+from app.core.ws_diagnostics import LogRefusedWebSockets
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
 # every request/turn correlated. See app/core/obs.py.
@@ -134,6 +135,8 @@ def _discover_routers(application: FastAPI) -> list[str]:
 
 
 app = FastAPI(title="CheeseX", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(LogRefusedWebSockets)
 
 app.add_middleware(
     CORSMiddleware,
