@@ -9,8 +9,11 @@ set -euo pipefail
 
 HOST="${CHEESE_DEV_HOST:-cheese-dev-mini}"
 
-main_sha="$(git rev-parse --short HEAD)"
-echo "main            : ${main_sha}"
+# origin/main, not HEAD: run from a feature branch, HEAD is a commit that was
+# never meant to be deployed, and every check would report a false drift.
+git fetch -q origin main 2>/dev/null || true
+main_sha="$(git rev-parse --short origin/main 2>/dev/null || git rev-parse --short main)"
+echo "origin/main     : ${main_sha}"
 
 live="$(ssh -o ConnectTimeout=20 -o BatchMode=yes "$HOST" \
   "docker ps --format '{{.Names}} {{.Image}}' | grep -E 'backend|frontend'" 2>/dev/null || true)"
