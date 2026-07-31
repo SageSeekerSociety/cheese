@@ -20,6 +20,7 @@ the backend's real tree); for a remote device it is a no-op (the device owns its
 tree and pushes it back over git smart-HTTP instead).
 """
 
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -40,6 +41,8 @@ from app.domain.workspace import service as ws
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
 # agent_handle). Takes both ids because the device is chosen with topic affinity, not
 # just per project (execution-architecture v4 §affinity).
+logger = logging.getLogger(__name__)
+
 DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
 ]
@@ -75,6 +78,26 @@ async def resolve_pinned_device(
             await service.bind_topic_device(topic_id, device.device_id)
             return device.device_id
     return None
+
+
+# Addresses that only mean something ON the box. Routing the box's own turns
+# through the local LLM gateway is what makes their spend visible — but the same
+# value handed to a machine somewhere else names nothing there, and the failure
+# is a turn that dies on a connection error with no hint why.
+_BOX_LOCAL_HOSTS = ("localhost", "127.0.0.1", "172.17.0.1", "172.18.0.1", "litellm")
+
+
+def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) -> None:
+    base = env.get("ANTHROPIC_BASE_URL", "")
+    if any(h in base for h in _BOX_LOCAL_HOSTS):
+        logger.error(
+            "device %s is remote but its ANTHROPIC_BASE_URL is %s, which only "
+            "resolves on the backend's own host — its turns will fail to reach a "
+            "model. Set a publicly reachable gateway URL, or point remote devices "
+            "back at the upstream.",
+            device_id,
+            base,
+        )
 
 
 class DeviceProvider(HooksTurnProvider[HubScreen]):
@@ -244,6 +267,8 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         self._co_located_at[(project_id, topic_id)] = co_located
         work_dir = self._work_dir(project_id, topic_id, co_located=co_located)
         gateway_env = {**settings.agent_env(), **(env or {})}
+        if not co_located:
+            _warn_if_model_endpoint_is_box_local(gateway_env, device_id)
         command, screen_env, cheeselet = build_screen_launch(
             hook_url=self._hook_url(topic_id),
             hook_token=token,
