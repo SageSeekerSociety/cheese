@@ -35,6 +35,14 @@ services:
     volumes:
       - ../gateway/config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      # The docker0 bridge address, NOT 0.0.0.0 and NOT loopback. Sandbox
+      # containers are created by the backend on the default bridge, so they
+      # cannot use the app network alias; loopback is unreachable from any
+      # container. Binding the bridge address reaches every container on the box
+      # while staying off the LAN, which matters because this port carries the
+      # upstream keys and the admin API.
+      - "172.17.0.1:4000:4000"
     networks:
       # Its own network for the database, plus the app's, so the backend reaches
       # it by name. No published port at all: a host binding is either on

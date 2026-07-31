@@ -345,3 +345,30 @@ async def test_a_remote_machine_is_told_where_to_clone_from(monkeypatch):
 
 async def _async_value(value):
     return value
+
+
+def test_a_remote_device_is_warned_about_a_box_local_model_endpoint(
+    monkeypatch, caplog
+):
+    """Routing the box's turns through the local gateway is what makes spend
+    visible — but the same URL means nothing on a machine elsewhere, and the
+    failure there is a connection error with no hint why."""
+    import logging
+
+    from app.domain.agent.device_provider import (
+        _warn_if_model_endpoint_is_box_local,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
+        _warn_if_model_endpoint_is_box_local(
+            {"ANTHROPIC_BASE_URL": "http://172.17.0.1:4000"}, "machine-1"
+        )
+    assert any("only resolves on the backend" in r.getMessage() for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
+        _warn_if_model_endpoint_is_box_local(
+            {"ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic"},
+            "machine-1",
+        )
+    assert not caplog.records, "a reachable endpoint must not be flagged"

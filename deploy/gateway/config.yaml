@@ -8,8 +8,13 @@ model_list:
   # protocol, so both arrive on /v1/messages and are metered by the same rows.
   - model_name: glm-4.6
     litellm_params:
-      model: openai/glm-4.6
-      api_base: https://open.bigmodel.cn/api/paas/v4
+      # anthropic/, not openai/: the callers speak the Anthropic protocol, and
+      # routing that through an openai-prefixed model made LiteLLM translate it
+      # into the OpenAI *Responses* API — a path Zhipu does not serve (404 on
+      # /v4/responses). Zhipu publishes a native Anthropic endpoint; use it and
+      # nothing has to be translated at all.
+      model: anthropic/glm-4.6
+      api_base: https://open.bigmodel.cn/api/anthropic
       api_key: os.environ/ZHIPU_API_KEY
       # Without a price LiteLLM records tokens at spend=0, and max_budget — the
       # whole brake — never trips. Better an approximate number than none.
@@ -25,8 +30,8 @@ model_list:
 
   - model_name: glm-4.5
     litellm_params:
-      model: openai/glm-4.5
-      api_base: https://open.bigmodel.cn/api/paas/v4
+      model: anthropic/glm-4.5
+      api_base: https://open.bigmodel.cn/api/anthropic
       api_key: os.environ/ZHIPU_API_KEY
       # 4.5 is the one with a published官方 figure: ¥0.8/M in, ¥2/M out.
       # ÷ 7.1 ¥/$ → $0.1127/M and $0.2817/M.
