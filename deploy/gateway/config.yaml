@@ -1,0 +1,52 @@
+# What the gateway will route, and how it accounts for it.
+#
+# Every model here is one this deployment already uses directly today; pointing
+# the callers at the gateway instead is what makes their spend visible. Nothing
+# new is introduced — the upstreams and keys are the same.
+model_list:
+  # 芝士's own turns and the agents' Claude Code both speak the Anthropic
+  # protocol, so both arrive on /v1/messages and are metered by the same rows.
+  - model_name: glm-4.6
+    litellm_params:
+      model: openai/glm-4.6
+      api_base: https://open.bigmodel.cn/api/paas/v4
+      api_key: os.environ/ZHIPU_API_KEY
+      # Without a price LiteLLM records tokens at spend=0, and max_budget — the
+      # whole brake — never trips. Better an approximate number than none.
+      #
+      # PROVENANCE: 4.6 has no官方 figure we could read (the pricing page is
+      # client-rendered); third-party sources say ~¥5/M tokens. Applied to BOTH
+      # directions, which over-states input — deliberately, since for a brake
+      # the safe error is to stop early. Confirm against the real invoice in the
+      # Zhipu console and correct this; it is an estimate, not a fact.
+      # ¥5/M ÷ 7.1 ¥/$ = $0.704/M = 7.04e-7 per token.
+      input_cost_per_token: 0.000000704
+      output_cost_per_token: 0.000000704
+
+  - model_name: glm-4.5
+    litellm_params:
+      model: openai/glm-4.5
+      api_base: https://open.bigmodel.cn/api/paas/v4
+      api_key: os.environ/ZHIPU_API_KEY
+      # 4.5 is the one with a published官方 figure: ¥0.8/M in, ¥2/M out.
+      # ÷ 7.1 ¥/$ → $0.1127/M and $0.2817/M.
+      input_cost_per_token: 0.0000001127
+      output_cost_per_token: 0.0000002817
+
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+
+litellm_settings:
+  # The whole point: a row per call, which is what /spend/logs reads back and
+  # what the backend drains into resource_usage. Without this the gateway would
+  # route traffic and still tell us nothing.
+  success_callback: ["postgres"]
+  failure_callback: ["postgres"]
+  # Keep a failed upstream from looking like a gateway bug in the logs.
+  drop_params: true
