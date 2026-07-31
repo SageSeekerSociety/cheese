@@ -97,3 +97,8 @@ tasks:
     desc: Show running infrastructure containers
     cmds:
       - docker compose ps
+
+  live:
+    desc: "What is actually running on dev, next to what main says"
+    cmds:
+      - bash scripts/whats-live.sh
