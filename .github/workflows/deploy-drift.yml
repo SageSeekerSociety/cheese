@@ -1,0 +1,72 @@
+# Is what we merged actually running?
+#
+# The image build happens AFTER a merge, so a failed build leaves main ahead of
+# the box with nothing red on the PR to show it. That has happened twice, both
+# times from the same cause — the box's egress proxy resetting a connection to
+# ghcr — and both times it was found by hand, days later, while the fix everyone
+# believed was live was not.
+#
+# Deliberately on the SELF-HOSTED runner: GitHub-hosted jobs in this repo are
+# refused while the org's Actions billing is unpaid, so a watcher there would be
+# a watcher that never runs. This one also has to reach the box, which only the
+# self-hosted runner can.
+#
+# When it fails, GitHub emails the repo's watchers. That is the notification
+# channel — no webhook to configure, and one that works today.
+name: Deploy drift and gateway health
+
+on:
+  schedule:
+    - cron: '40 * * * *'  # hourly, offset away from the other hourly jobs
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-drift
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare main with what is running
+        run: |
+          set -euo pipefail
+          main_sha="$(git rev-parse --short origin/main 2>/dev/null || git rev-parse --short HEAD)"
+          # The runner IS the box, so ask docker directly rather than over ssh.
+          live="$(docker ps --format '{{.Names}} {{.Image}}' | grep -E 'cheese-(backend|frontend)-1' || true)"
+          echo "main: ${main_sha}"
+          echo "${live}"
+          if [ -z "$live" ]; then
+            echo "::error::no cheese backend/frontend container is running on this box"
+            exit 1
+          fi
+          if echo "$live" | grep -q ":${main_sha}\b"; then
+            echo "live matches main"
+            exit 0
+          fi
+          echo "::error::main is ${main_sha} but the box is running something else — \
+          a build or deploy failed silently. Check: gh run list --workflow=build.yml"
+          exit 1
+
+      # The gateway became a hard dependency of every turn the moment traffic was
+      # pointed at it, and it is a hand-started stack outside the deploy — so
+      # nothing else would notice it stopping. A dead gateway is not "metering is
+      # off", it is "no turn can reach a model".
+      - name: Gateway is answering
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o /dev/null -w '%{http_code}' -m 8 \
+            http://172.17.0.1:4000/health/liveliness || true)"
+          if [ "$code" != "200" ]; then
+            echo "::error::LLM gateway is not answering (got '${code}'). Every turn \
+            routes through it, so turns are failing. Restart: docker compose -f \
+            ~/gateway/compose/docker-compose.gateway.yml -p cheese-gateway up -d"
+            exit 1
+          fi
+          echo "gateway ok"
