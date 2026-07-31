@@ -1499,6 +1499,19 @@ class ChatService:
                 blocks = BlockRepository(session)
                 # 施工现场 events were persisted inline as they streamed
                 # (durability) — this tx only records usage + the fail card.
+                # Record the turn even when its tokens are unknowable (the hooks
+                # backends run interactive Claude Code, which reports none). Skipping
+                # it left the table empty while real credit drained.
+                if usage is None:
+                    await UsageRepository(session).add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        model=settings.agent_model,
+                        input_tokens=0,
+                        output_tokens=0,
+                        cost_usd=0.0,
+                        metered=False,
+                    )
                 if usage is not None:
                     await UsageRepository(session).add(
                         project_id=project_id,
@@ -1547,6 +1560,19 @@ class ChatService:
 
             # 施工现场 events were persisted inline as they streamed (durability);
             # tx2 now only records usage, action cards, and the session pointer.
+            # Record the turn even when its tokens are unknowable (the hooks
+            # backends run interactive Claude Code, which reports none). Skipping
+            # it left the table empty while real credit drained.
+            if usage is None:
+                await UsageRepository(session).add(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    model=settings.agent_model,
+                    input_tokens=0,
+                    output_tokens=0,
+                    cost_usd=0.0,
+                    metered=False,
+                )
             if usage is not None:
                 await UsageRepository(session).add(
                     project_id=project_id,
