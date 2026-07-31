@@ -10,8 +10,53 @@
 """
 
 import logging
+import re
+from typing import Any
 
 import structlog
+
+# Query-string parameters whose value is a credential. `token` is the one that
+# actually leaked: browsers cannot set an Authorization header on a WebSocket, so
+# every WS carries `?token=<jwt>` — and uvicorn's access log prints the full URL,
+# which put live session tokens in plaintext in `docker logs`. Anyone who could
+# read the logs could impersonate the user.
+_SECRET_PARAMS = (
+    "token",
+    "access_token",
+    "refresh_token",
+    "secret",
+    "password",
+    "api_key",
+    "apikey",
+    "code",
+)
+_SECRET_RE = re.compile(
+    r"\b(" + "|".join(_SECRET_PARAMS) + r")=([^&\s\"']+)", re.IGNORECASE
+)
+
+
+def _scrub(value: Any) -> Any:
+    if isinstance(value, str) and "=" in value:
+        return _SECRET_RE.sub(r"\1=***", value)
+    return value
+
+
+class RedactSecrets(logging.Filter):
+    """Strip credentials out of every log record, whoever emitted it.
+
+    Applied to the root handler rather than to our own call sites: the leak came
+    from uvicorn's access logger, i.e. code we do not call. Anything that reaches
+    a handler goes through here.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = _scrub(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {k: _scrub(v) for k, v in record.args.items()}
+            else:
+                record.args = tuple(_scrub(a) for a in record.args)
+        return True
 
 
 def configure_logging() -> None:
@@ -46,6 +91,10 @@ def configure_logging() -> None:
     )
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
+    # On the handler, not on our own call sites: the token leak came from
+    # uvicorn's access logger — code we never call — and everything reaches a
+    # handler.
+    handler.addFilter(RedactSecrets())
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)

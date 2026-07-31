@@ -444,6 +444,26 @@ def _prompt_line(b) -> str:
     return f"[{b.author}]: {b.content}"
 
 
+# What an exhausted relay balance looks like coming back from newapi. It arrives
+# as HTTP 429, the same status as a rate limit, but the two need opposite advice:
+# a rate limit clears on its own, a spent balance never does.
+_OUT_OF_CREDIT_MARKERS = (
+    "余额不足",
+    "请充值",
+    "insufficient balance",
+    "insufficient_quota",
+    "quota exceeded",
+    "billing",
+)
+
+
+def _is_out_of_credit(detail: str | None) -> bool:
+    if not detail:
+        return False
+    lowered = detail.lower()
+    return any(m.lower() in lowered for m in _OUT_OF_CREDIT_MARKERS)
+
+
 class ChatService:
     def __init__(
         self,
@@ -1455,6 +1475,15 @@ class ChatService:
                     # Resume ~2min after the window opens (clock skew buffer).
                     wait_s = rate_limit["resets_at"] - datetime.now(UTC).timestamp()
                     resume_after_s = max(60.0, wait_s + 120.0)
+            elif _is_out_of_credit(detail):
+                # A spent balance is not a wait — no amount of retrying refills
+                # it, and telling someone to try again later sends them into a
+                # loop that cannot succeed. Say what actually has to happen.
+                fail_text = (
+                    "⚠️ 芝士这轮没能完成——AI 中继的余额用尽了。"
+                    "这不是等一等就能好的，需要有人充值或把机器切到其他 AI 供给；"
+                    f"重试无效。{quoted}"
+                )
             elif api_error_status:
                 fail_text = (
                     f"⚠️ 芝士这轮没能完成——AI 接口错误（HTTP {api_error_status}）。"
