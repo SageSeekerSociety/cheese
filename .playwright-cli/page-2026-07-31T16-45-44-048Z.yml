@@ -1,0 +1,68 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - link "ZHIPU·AI" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img "ZHIPU·AI" [ref=e6]
+    - generic [ref=e8]:
+      - generic [ref=e9]:
+        - heading "完成登录/注册，开启开发之旅" [level=1] [ref=e10]
+        - generic [ref=e11]: 新用户免费赠送专享 20.00million tokens体验包！
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e16]:
+            - tablist [ref=e20]:
+              - tab "手机号登录" [selected] [ref=e22]
+              - tab "账号登录" [ref=e23]
+            - generic [ref=e24]:
+              - tabpanel "手机号登录" [ref=e25]:
+                - generic [ref=e26]:
+                  - generic [ref=e29]:
+                    - generic [ref=e30]:
+                      - generic [ref=e32]:
+                        - textbox [ref=e33] [cursor=pointer]
+                        - generic [ref=e35]: "+86"
+                        - generic [ref=e37] [cursor=pointer]: 
+                      - textbox "请输入手机号" [ref=e39]
+                    - text: 
+                  - generic [ref=e43]:
+                    - textbox "请输入验证码" [ref=e44]
+                    - button "获取验证码" [ref=e46] [cursor=pointer]
+                  - button "登录 / 注册" [ref=e49] [cursor=pointer]
+                  - generic [ref=e52] [cursor=pointer]:
+                    - generic [ref=e53]:
+                      - checkbox "我已阅读并同意 《用户协议》 和 《隐私政策》 ，未注册的手机号将自动创建账号"
+                    - generic [ref=e55]:
+                      - text: 我已阅读并同意
+                      - link "《用户协议》" [ref=e56]:
+                        - /url: //docs.bigmodel.cn/cn/terms/user-agreement
+                      - text: 和
+                      - link "《隐私政策》" [ref=e57]:
+                        - /url: //docs.bigmodel.cn/cn/terms/privacy-policy
+                      - text: ，未注册的手机号将自动创建账号
+              - text: 
+          - generic [ref=e58]:
+            - heading "微信扫码登录" [level=3] [ref=e59]
+            - iframe [ref=e64]:
+              - generic [ref=f5e6]:
+                - generic [ref=f5e7]: 微信登录
+                - generic [ref=f5e8]:
+                  - img [ref=f5e10]
+                  - generic [ref=f5e12]:
+                    - paragraph [ref=f5e13]: 使用微信扫一扫登录
+                    - paragraph [ref=f5e14]: “BigModel”
+        - button "ZHIPU·AI CCF会员授权登录" [ref=e65] [cursor=pointer]:
+          - generic [ref=e66]:
+            - img "ZHIPU·AI" [ref=e67]
+            - generic [ref=e68]: CCF会员授权登录
+        - text: 
+    - generic [ref=e69]:
+      - generic [ref=e70]: 京公网安备33010602009975号
+      - generic [ref=e71]: 京ICP备20011824号-14
+      - generic [ref=e72]: Copyright © 2026 北京智谱华章科技股份有限公司
+  - generic [ref=e73]:
+    - tooltip "遇到问题了？说说看"
+    - button "Open customer service" [ref=e74] [cursor=pointer]:
+      - generic:
+        - generic:
+          - img "Agent IP"
+  - text: 
