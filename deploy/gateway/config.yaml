@@ -53,6 +53,35 @@ model_list:
       model: deepseek/deepseek-chat
       api_key: os.environ/DEEPSEEK_API_KEY
 
+# Where a model name goes is decided HERE, not in the platform's env. The
+# backend and every machine point at this gateway once and never move; adding a
+# provider, or draining one, is a change to this file alone.
+#
+# Add a subscription-backed upstream as another deployment of the SAME
+# model_name and it joins the rotation. ccproxy fronts an official subscription
+# (credentials stay on the proxy, never on a machine), so it belongs here as
+# soon as we have its base URL:
+#
+#   - model_name: agent-default
+#     litellm_params:
+#       model: anthropic/claude-sonnet-4-5
+#       api_base: https://<ccproxy>/...
+#       api_key: os.environ/CCPROXY_KEY
+#
+router_settings:
+  # No cross-model fallbacks. Callers name a model on purpose, and quietly
+  # serving a different one changes behaviour while every log still says the
+  # request succeeded — worse than the failure it hides.
+  #
+  # Redundancy belongs at the UPSTREAM level instead: give one model_name more
+  # than one deployment (the same model reached through a different provider)
+  # and LiteLLM rotates between them. The caller still gets exactly the model it
+  # asked for. That is where ccproxy goes once we have its base URL — as another
+  # deployment, not as a substitute model.
+  allowed_fails: 2
+  cooldown_time: 60
+  num_retries: 1
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
