@@ -28,6 +28,8 @@ SHA="${1:?usage: deploy-docker.sh <image-sha> [compose-file]}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE="${2:-$HERE/compose/docker-compose.base.yml}"
 PROJECT="${PROJECT:-cheese}"
+HEALTH_ATTEMPTS="${DEPLOY_HEALTH_ATTEMPTS:-15}"
+HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-3}"
 export IMAGE_TAG="$SHA"
 
 dc() { docker compose -f "$COMPOSE" -p "$PROJECT" "$@"; }
@@ -57,13 +59,23 @@ dc up -d backend frontend || fail "compose up failed"
 
 log "waiting for health…"
 code=""
-for _ in $(seq 1 15); do
-  sleep 3
-  if dc exec -T backend curl -sf http://localhost:8081/healthz >/dev/null 2>&1; then code=ok; break; fi
+app_tier=""
+for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
+  sleep "$HEALTH_INTERVAL_SECONDS"
+  app_tier="$(docker ps -a \
+    --filter "label=com.docker.compose.project=$PROJECT" \
+    --format '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
+    2>/dev/null || true)"
+  if printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" \
+    >/dev/null 2>&1; then
+    code=ok
+    break
+  fi
 done
 
 if [ "$code" != ok ]; then
   log "HEALTH CHECK FAILED"
+  printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" || true
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
     log "rolling back to $PREV_SHA…"
     IMAGE_TAG="$PREV_SHA" dc up -d backend frontend || true
