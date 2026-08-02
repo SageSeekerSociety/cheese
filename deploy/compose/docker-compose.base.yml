@@ -65,8 +65,16 @@ services:
 
   frontend:
     image: ${FRONTEND_IMAGE:-ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}}
-    env_file:
-      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    # No env_file. It used to load the BACKEND's, which handed this container the
+    # database password, the JWT secret, the model provider key and the MicroCloud
+    # tenant secret — 18 secrets in total, into the one container that publishes a
+    # port to the world. It supplied nothing in return: the box's env file defines
+    # no VITE_* at all (checked on dev), and every value this image needs is
+    # declared below.
+    #
+    # If a box overrides VITE_CONNECTOR_WS_BASE, it belongs in the deploy shell
+    # env (ops/deploy.env), which is where compose interpolation reads it — NOT in
+    # backend/.env.
     # CRITICAL: the frontend image bakes __VITE_*__ placeholders that its
     # entrypoint substitutes from THESE env vars at container start. If unset,
     # the API base becomes an EMPTY string and the SPA posts to /users/... at
