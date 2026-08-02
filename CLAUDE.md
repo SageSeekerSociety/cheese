@@ -11,7 +11,7 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright
 ├── skills/                               # on-demand skills (dir form: <name>/SKILL.md)
 │   ├── cheese-py-code-review/SKILL.md    # Code review checklist + workflow (parallel & serial)
 │   ├── post-pull/SKILL.md                # Post-git-pull checks (migrations, deps, health)
-│   └── fusion-dev/SKILL.md               # Run/reset/verify the fusion demo harness
+│   └── lark-{doc,drive,markdown,shared,wiki}  # → .agents/skills/… (vendored, see skills-lock.json)
 ├── scripts/
 │   ├── check.sh                          # ruff + pyright + pytest, one command
 │   ├── post-pull.sh                      # Post-git-pull checks (migrations, deps, health)
