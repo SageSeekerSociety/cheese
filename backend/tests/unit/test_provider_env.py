@@ -50,3 +50,29 @@ def test_an_unconfigured_subscription_falls_back_rather_than_half_applying():
         env = choose(prefer_subscription=True, **{**_ARGS, **missing}).env
         assert env["ANTHROPIC_BASE_URL"] == "http://gw:4000", missing
         assert "HTTPS_PROXY" not in env, missing
+
+
+def test_the_container_sees_the_ca_at_the_same_absolute_path():
+    """The subscription's settings bake the HOST's absolute CA path into
+    NODE_EXTRA_CA_CERTS, so a container that mounts it anywhere else gets a
+    Claude that cannot verify the proxy — and it fails as a TLS error far from
+    the cause. The mount is built from one variable so the two sides cannot
+    drift apart."""
+    from app.domain.agent.provider_env import container_subscription
+
+    c = container_subscription("/home/nictheboy/.claude")
+    src, dst = c.mount.split(":")
+
+    assert src == dst == "/home/nictheboy/.claude"
+    assert c.home == "/home/nictheboy", "HOME must contain that .claude"
+
+
+def test_a_trailing_slash_does_not_produce_a_different_path():
+    """Two spellings of the same directory would mount to two places, which is
+    the exact failure this prevents."""
+    from app.domain.agent.provider_env import container_subscription
+
+    assert (
+        container_subscription("/home/x/.claude/").mount
+        == container_subscription("/home/x/.claude").mount
+    )

@@ -80,3 +80,48 @@ def choose(
     if prefer_subscription and proxy_url and ca_path:
         return subscription_provider(proxy_url, ca_path)
     return api_key_provider(gateway_base, gateway_key, model)
+
+
+@dataclass(frozen=True)
+class ContainerSubscription:
+    """What a CONTAINERISED agent needs before the subscription works inside it.
+
+    The local backend runs Claude Code in a container, and the subscription's
+    settings bake the HOST's absolute CA path into NODE_EXTRA_CA_CERTS. So the
+    container cannot simply be handed the file — it has to see it at the SAME
+    absolute path, which means mounting the host's `.claude` there and giving
+    the container the same HOME. Copying to a different path silently produces a
+    Claude that cannot verify the proxy, which fails as a TLS error far from its
+    cause.
+
+    Host and container then share one ccproxy identity, so the engine bills and
+    switches them as a single machine — which is the desired behaviour, not an
+    accident to be worked around.
+
+    Switching is NOT hot: env is read once at process start, so a channel change
+    on the host only reaches a container after its Claude process is restarted.
+    Same as on the host; the difference is that nothing in a container reminds
+    you.
+    """
+
+    host_claude_dir: str
+    mount: str  # "src:dst" — identical by construction, see below
+    home: str
+
+
+def container_subscription(host_claude_dir: str) -> ContainerSubscription:
+    """Bind mount + HOME for a container that must use the host's subscription."""
+    d = host_claude_dir.rstrip("/")
+    return ContainerSubscription(
+        host_claude_dir=d,
+        # Same path on both sides. Expressed as one variable rather than two so
+        # the invariant cannot drift: a mount whose destination differs from its
+        # source is the failure this whole type exists to prevent.
+        mount=f"{d}:{d}",
+        home=str(pathlib_parent(d)),
+    )
+
+
+def pathlib_parent(path: str) -> str:
+    """The HOME that contains a `.claude` directory."""
+    return path.rsplit("/", 1)[0] or "/"
