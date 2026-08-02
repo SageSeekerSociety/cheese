@@ -81,6 +81,26 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             return AgentMessage(text=text, eid=eid if isinstance(eid, str) else None)
         return None
 
+    if event == "CheeseSync":
+        # A machine that owns its tree reports whether its push landed. Only the
+        # failure is surfaced: on success the work is already visible in the
+        # branch, and a message per turn saying so would be noise that trains
+        # people to skip it.
+        #
+        # This has to reach the human. A turn that ends with its work still on
+        # the machine looks identical to one that succeeded — that is what let a
+        # rejected push read as a completed turn until the machine was deleted
+        # and the work went with it.
+        if str(hook.get("status")) == "failed":
+            branch = hook.get("branch") or "the topic branch"
+            return AgentMessage(
+                text=(
+                    f"⚠️ 这轮的改动没能推回 {branch}——它还留在那台机器上，"
+                    "采纳和 diff 现在看不到它。请重试本轮；若机器被回收，改动会丢失。"
+                )
+            )
+        return None
+
     if event == "Stop":
         sid = hook.get("session_id")
         return AgentResult(
