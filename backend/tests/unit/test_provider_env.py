@@ -24,7 +24,12 @@ def test_the_subscription_leaves_the_endpoint_and_model_alone():
     env = choose(prefer_subscription=True, **_ARGS).env
 
     assert "ANTHROPIC_BASE_URL" not in env
-    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    # Blanked rather than absent: the CLI inherits the backend's os.environ, so
+    # an ANTHROPIC_AUTH_TOKEN left over from the gateway path would put it in
+    # API-key mode — billing another account and bypassing the meter entirely.
+    # "" reads as unset to the CLI but MASKS the inherited value (same rule the
+    # ExecutionProfile env in profiles.py follows).
+    assert env["ANTHROPIC_AUTH_TOKEN"] == ""
     assert not [k for k in env if "MODEL" in k], env
     assert env["HTTPS_PROXY"] == "http://ccproxy:3128"
     assert env["NODE_EXTRA_CA_CERTS"] == "/ca.crt"

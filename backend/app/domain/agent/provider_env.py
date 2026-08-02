@@ -58,23 +58,55 @@ def api_key_provider(gateway_base: str, key: str, model: str) -> ProviderChoice:
     )
 
 
-def subscription_provider(proxy_url: str, ca_path: str) -> ProviderChoice:
+def subscription_provider(
+    proxy_url: str,
+    ca_path: str,
+    *,
+    project_id: str | None = None,
+    topic_id: str | None = None,
+    base_url: str | None = None,
+) -> ProviderChoice:
     """The subscription, reached through a transparent proxy.
 
-    BASE_URL and the model names are deliberately ABSENT: overriding either
-    would make Claude Code ask the official API for a model it does not serve,
-    and would mark the traffic as something other than an ordinary session.
+    The model names are deliberately ABSENT: overriding them would make Claude
+    Code ask the official API for a model it does not serve.
+
+    ``HTTPS_PROXY`` alone does NOT capture the turn. Measured on this
+    deployment: with the proxy set, the meter saw `oauth/profile`,
+    `mcp_servers` and `eval/sdk` — and never a single `/v1/messages`, while
+    every turn still answered. Claude Code issues the model call through Node's
+    built-in undici, which ignores the proxy env vars (`NODE_USE_ENV_PROXY` is
+    Node 24+; this runs on 20, and the CLI ships as a compiled binary). A meter
+    wired only to HTTPS_PROXY therefore bills nothing while reporting success —
+    the worst possible failure for an accounting path.
+
+    So the capture is done by NAME instead: the sandbox resolves
+    api.anthropic.com to our proxy (``--add-host``, see TmuxHooksProvider), which
+    catches undici too because it goes through DNS. ``base_url`` only carries the
+    port when the proxy cannot listen on 443; the host stays api.anthropic.com so
+    the request upstream is unchanged.
+
+    ``project_id``/``topic_id`` ride along as a custom header (verified to reach
+    the proxy) — without it the meter sees tokens it cannot attribute to anyone.
     """
-    return ProviderChoice(
-        name="subscription",
-        env={
-            "HTTPS_PROXY": proxy_url,
-            "HTTP_PROXY": proxy_url,
-            # Node's own trust store flag — the proxy terminates TLS, so its CA
-            # has to be trusted by the client that actually makes the call.
-            "NODE_EXTRA_CA_CERTS": ca_path,
-        },
-    )
+    env = {
+        # Kept for the OAuth/refresh traffic, which DOES honour it — and which
+        # only succeeds through a proxy (a direct refresh fails on this network).
+        "HTTPS_PROXY": proxy_url,
+        "HTTP_PROXY": proxy_url,
+        # Node's own trust store flag — the proxy terminates TLS, so its CA
+        # has to be trusted by the client that actually makes the call.
+        "NODE_EXTRA_CA_CERTS": ca_path,
+        # Blank, not absent: the CLI inherits the backend's environment, and a
+        # leaked API-key token would silently switch it out of subscription mode.
+        "ANTHROPIC_AUTH_TOKEN": "",
+    }
+    if base_url:
+        env["ANTHROPIC_BASE_URL"] = base_url
+    if project_id:
+        attr = f"{project_id}/{topic_id}" if topic_id else project_id
+        env["ANTHROPIC_CUSTOM_HEADERS"] = f"x-cheese-attr: {attr}"
+    return ProviderChoice(name="subscription", env=env)
 
 
 def choose(

@@ -99,6 +99,30 @@ def _hook_base() -> str:
     return base
 
 
+def _subscription_args() -> list[str]:
+    """Docker args that route this sandbox's model calls through the meter.
+
+    The capture is by NAME, not by proxy env: Claude Code issues the model call
+    through Node's built-in undici, which ignores HTTPS_PROXY (measured — the
+    proxy saw every auxiliary request and never a single /v1/messages, while the
+    turns kept answering). Resolving api.anthropic.com to the meter catches
+    undici too, because that path still goes through DNS.
+
+    The CA is mounted read-only; the credentials are NOT mounted here — they are
+    copied into the session dir per sandbox, because Claude Code rewrites that
+    file on every refresh and a shared one would be rewritten under a concurrent
+    sandbox's feet (and a failed refresh writes it back empty, which permanently
+    kills the subscription).
+    """
+    if not settings.subscription_enabled:
+        return []
+    args = ["--add-host", f"api.anthropic.com:{settings.subscription_proxy_host}"]
+    ca = settings.subscription_ca_host_path.strip()
+    if ca:
+        args += ["-v", f"{ca}:/etc/cheese/proxy-ca.pem:ro"]
+    return args
+
+
 async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str]:
     """Run a docker command off the event loop. Returns (rc, stdout, stderr)."""
     proc = await asyncio.create_subprocess_exec(
@@ -122,6 +146,8 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
     hooks. Transport = docker/tmux; the shared turn flow lives in the base
     (HooksTurnProvider) — this class implements only the transport seam. The
     screen ctx is the container name (str)."""
+
+    # (see _subscription_args below for how a subscription turn is captured)
 
     name = "tmux-hooks"
     _needs_topic_message = "tmux 后端需要 Docker 和话题上下文（缺一不可）"
@@ -178,6 +204,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             "host.docker.internal:host-gateway",
             "-v",
             f"{env['SBX_SESSION']}:/home/node/.claude",
+            *_subscription_args(),
             "-v",
             f"{env['SBX_WORKTREE']}:/work",
             "-w",
