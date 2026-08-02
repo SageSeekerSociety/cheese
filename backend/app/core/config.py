@@ -244,6 +244,11 @@ class Settings(BaseSettings):
     # A ceiling per project: provisioning is one API call, and nothing else here
     # stops a loop from filling a Proxmox node.
     microcloud_max_machines_per_project: int = 2
+    # How long a SETTLED machine may go without being re-checked against
+    # MicroCloud. Zero would put a provider round-trip on every read; never
+    # would let a machine destroyed upstream sit here as `running` forever
+    # (which happened, and also consumed the per-project limit).
+    microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
     # devices. Its own switch, NOT the project scheduler's: that one spends model
     # budget on 定期巡检 and ships off, and machines must not depend on it.
