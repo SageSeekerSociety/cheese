@@ -39,14 +39,13 @@ jobs:
           set -euo pipefail
           main_sha="$(git rev-parse --short origin/main 2>/dev/null || git rev-parse --short HEAD)"
           # The runner IS the box, so ask docker directly rather than over ssh.
-          live="$(docker ps --format '{{.Names}} {{.Image}}' | grep -E 'cheese-(backend|frontend)-1' || true)"
+          live="$(docker ps -a \
+            --filter 'label=com.docker.compose.project=cheese' \
+            --format '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
+            || true)"
           echo "main: ${main_sha}"
           echo "${live}"
-          if [ -z "$live" ]; then
-            echo "::error::no cheese backend/frontend container is running on this box"
-            exit 1
-          fi
-          if echo "$live" | grep -q ":${main_sha}\b"; then
+          if printf '%s\n' "$live" | bash deploy/check-app-tier.sh "$main_sha"; then
             echo "live matches main"
             exit 0
           fi
