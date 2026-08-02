@@ -52,13 +52,67 @@ def cheeselet_source() -> str:
     )
 
 
+# Reports what a turn cost. Claude Code writes a usage block per assistant
+# message into its transcript; nothing else on the machine knows those numbers,
+# and the transcript dies with the machine — which is why a week of spend could
+# not be attributed to a project, a topic, or even a prompt.
+#
+# Kept OUT of the launcher f-string on purpose: it is dense with braces, and
+# escaping them inside an f-string is a silent-corruption risk for no benefit.
+#
+# python3 rather than shell: the transcript is JSONL, there is no jq on a
+# machine, and a grep/sed parser works right up until a field moves.
+CHEESE_USAGE_READER = """import json, sys
+try:
+    hook = json.loads(sys.stdin.read())
+except Exception:
+    sys.exit(0)
+path = hook.get("transcript_path")
+if not path:
+    sys.exit(0)
+tot = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+model = ""
+try:
+    with open(path, errors="ignore") as fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            m = d.get("message") or {}
+            u = m.get("usage") or {}
+            if not u:
+                continue
+            model = m.get("model") or model
+            tot["input"] += u.get("input_tokens") or 0
+            tot["output"] += u.get("output_tokens") or 0
+            tot["cache_read"] += u.get("cache_read_input_tokens") or 0
+            tot["cache_write"] += u.get("cache_creation_input_tokens") or 0
+except OSError:
+    sys.exit(0)
+if any(tot.values()):
+    print(json.dumps({"hook_event_name": "CheeseUsage", "model": model, **tot}))
+"""
+
+# The reader has to be a FILE, not a heredoc: `python3 - <<PY` hands python the
+# heredoc as its stdin, so the hook payload we actually need to read would never
+# arrive. Verified by running it both ways.
+CHEESE_USAGE_SCRIPT = """#!/bin/sh
+python3 "$HOME/.claude/cheese-usage.py" | cheese-hook >/dev/null 2>&1 || true
+"""
+
+
 def build_launch_script(sync_on_stop: bool = False) -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
     screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
     ``CHEESE_WORK`` (cwd), plus the hook wiring (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``)
     and ``CLAUDE_MODEL`` (optional)."""
+    usage_script = CHEESE_USAGE_SCRIPT
+    usage_reader = CHEESE_USAGE_READER
     settings_json = json.dumps(
-        hooks_settings(["cheese-sync"] if sync_on_stop else None),
+        hooks_settings(
+            ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"]
+        ),
         ensure_ascii=False,
     )
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
@@ -137,6 +191,11 @@ printf '{{"hook_event_name":"CheeseSync","status":"%s","commit":"%s","branch":"%
   "$status" "$sha" "${{CHEESE_GIT_BRANCH:-main}}" | cheese-hook >/dev/null 2>&1 || true
 SYNC
 chmod +x "$HOME/.claude/cheese-sync"
+cat > "$HOME/.claude/cheese-usage.py" <<'USAGEPY'
+{usage_reader}USAGEPY
+cat > "$HOME/.claude/cheese-usage" <<'USAGE'
+{usage_script}USAGE
+chmod +x "$HOME/.claude/cheese-usage"
 cat > "$HOME/.claude/cheese-hook" <<'SH'
 {_CHEESE_HOOK_SCRIPT}SH
 chmod +x "$HOME/.claude/cheese-hook"
