@@ -352,10 +352,14 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         pass  # no workspace/jj state yet — nothing pending to fold
     branch = branch_for_topic(topic_id)
     if not _branch_exists(repo, branch):
-        return {"merged": False, "reason": "no topic branch"}
+        return {"merged": False, "noop": True, "reason": "no topic branch"}
     base = _base_branch(repo)
     if branch == base:
-        return {"merged": False, "reason": "topic is the base branch"}
+        return {
+            "merged": False,
+            "noop": True,
+            "reason": "topic is the base branch",
+        }
     _git(repo, "checkout", "-q", base)
     try:
         _git(
