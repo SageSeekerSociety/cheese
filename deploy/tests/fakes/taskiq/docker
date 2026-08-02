@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${FAKE_DOCKER_LOG:?FAKE_DOCKER_LOG is required}"
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+
+if [ "${1:-}" = "compose" ]; then
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -f|-p)
+        shift 2
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  case "${1:-}" in
+    ps)
+      # No previous deployment; running-service probes receive a stable ID.
+      if [ "${2:-}" = "-q" ]; then
+        exit 0
+      fi
+      if [ "${2:-}" = "--status" ]; then
+        if [ "${5:-}" = "taskiq-scheduler" ] \
+          && [ "${FAKE_TASKIQ_SCHEDULER:-running}" = "missing" ]; then
+          exit 0
+        fi
+        printf 'fake-container\n'
+      fi
+      ;;
+    images)
+      ;;
+    exec)
+      if [ "${3:-}" = "taskiq-worker" ] \
+        && [ "${FAKE_TASKIQ_HEALTH:-ok}" = "fail" ]; then
+        exit 1
+      fi
+      ;;
+    pull|run|up)
+      ;;
+  esac
+fi
+
+exit 0

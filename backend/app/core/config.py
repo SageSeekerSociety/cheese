@@ -353,6 +353,12 @@ class Settings(BaseSettings):
     notification_email_queue_key: str = Field(
         default="cheese:notifications:email", alias="NOTIFICATION_EMAIL_QUEUE_KEY"
     )
+    taskiq_heartbeat_key: str = Field(
+        default="cheese:taskiq:heartbeat", alias="TASKIQ_HEARTBEAT_KEY"
+    )
+    taskiq_heartbeat_max_age_seconds: int = Field(
+        default=180, alias="TASKIQ_HEARTBEAT_MAX_AGE_SECONDS"
+    )
 
     meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")
     meilisearch_api_key: str = Field(default="", alias="MEILISEARCH_API_KEY")

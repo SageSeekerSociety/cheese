@@ -28,6 +28,8 @@ SHA="${1:?usage: deploy-docker.sh <image-sha> [compose-file]}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE="${2:-$HERE/compose/docker-compose.base.yml}"
 PROJECT="${PROJECT:-cheese}"
+HEALTH_ATTEMPTS="${DEPLOY_HEALTH_ATTEMPTS:-15}"
+HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-3}"
 export IMAGE_TAG="$SHA"
 
 dc() { docker compose -f "$COMPOSE" -p "$PROJECT" "$@"; }
@@ -46,27 +48,35 @@ fi
 log "deploying sha=$SHA (previous=${PREV_SHA:-none}) via $COMPOSE"
 
 log "pulling images…"
-dc pull backend frontend || fail "image pull failed"
+dc pull backend frontend taskiq-worker taskiq-scheduler || fail "image pull failed"
 
 log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
 
-log "bringing up backend + frontend…"
-dc up -d backend frontend || fail "compose up failed"
+log "bringing up backend + frontend + Taskiq runtime…"
+dc up -d backend frontend taskiq-worker taskiq-scheduler || fail "compose up failed"
 
 log "waiting for health…"
 code=""
-for _ in $(seq 1 15); do
-  sleep 3
-  if dc exec -T backend curl -sf http://localhost:8081/healthz >/dev/null 2>&1; then code=ok; break; fi
+for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
+  sleep "$HEALTH_INTERVAL_SECONDS"
+  worker_id="$(dc ps --status running -q taskiq-worker 2>/dev/null || true)"
+  scheduler_id="$(dc ps --status running -q taskiq-scheduler 2>/dev/null || true)"
+  if dc exec -T backend curl -sf http://localhost:8081/healthz >/dev/null 2>&1 \
+    && [ -n "$worker_id" ] \
+    && [ -n "$scheduler_id" ] \
+    && dc exec -T taskiq-worker python -m app.core.taskiq_health >/dev/null 2>&1; then
+    code=ok
+    break
+  fi
 done
 
 if [ "$code" != ok ]; then
   log "HEALTH CHECK FAILED"
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
     log "rolling back to $PREV_SHA…"
-    IMAGE_TAG="$PREV_SHA" dc up -d backend frontend || true
+    IMAGE_TAG="$PREV_SHA" dc up -d backend frontend taskiq-worker taskiq-scheduler || true
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
 fi

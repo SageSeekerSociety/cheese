@@ -63,6 +63,42 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  taskiq-worker:
+    image: ${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    environment:
+      - CHEESE_TASKIQ_RELEASE=${IMAGE_TAG:-main}
+    command: ["taskiq", "worker", "worker:broker"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.core.taskiq_health"]
+      interval: 15s
+      timeout: 8s
+      start_period: 90s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  taskiq-scheduler:
+    image: ${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    environment:
+      - CHEESE_TASKIQ_RELEASE=${IMAGE_TAG:-main}
+    command: ["taskiq", "scheduler", "worker:scheduler"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.core.taskiq_health"]
+      interval: 15s
+      timeout: 8s
+      start_period: 90s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
   frontend:
     image: ${FRONTEND_IMAGE:-ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}}
     # No env_file. It used to load the BACKEND's, which handed this container the

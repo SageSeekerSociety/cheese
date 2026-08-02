@@ -1,8 +1,5 @@
 from taskiq import TaskiqScheduler
-from taskiq_redis import (  # type: ignore[import-not-found]  # optional redis broker dep, not installed in dev env
-    ListQueueBroker,
-    RedisAsyncResultBackend,
-)
+from taskiq_redis import ListQueueBroker, RedisAsyncResultBackend
 
 from app.core.config import settings
 

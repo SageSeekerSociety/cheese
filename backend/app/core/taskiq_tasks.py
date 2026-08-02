@@ -9,6 +9,17 @@ logger = logging.getLogger(__name__)
 
 
 @broker.task(
+    task_name="taskiq_runtime_heartbeat",
+    schedule=[{"cron": "* * * * *"}],
+)
+async def taskiq_runtime_heartbeat_task() -> dict[str, str]:
+    """Prove that the scheduler-to-broker-to-worker effect chain ran."""
+    from app.core.taskiq_health import publish_heartbeat
+
+    return await publish_heartbeat()
+
+
+@broker.task(
     task_name="notification_aggregation_finalize",
     schedule=[{"cron": "* * * * *"}],
 )

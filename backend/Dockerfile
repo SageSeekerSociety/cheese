@@ -113,6 +113,7 @@ COPY --from=deps /app/.venv /app/.venv
 
 # Copy application code (fusion unified the migration chain under alembic/)
 COPY app ./app
+COPY worker.py ./worker.py
 COPY alembic ./alembic
 COPY alembic.ini ./
 # The agent-side assets the BACKEND serves at runtime: the `cheese` platform CLI
