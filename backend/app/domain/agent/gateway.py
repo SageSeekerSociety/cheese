@@ -17,9 +17,10 @@ Cumulative sums are monotone, so a delta is
 consumed exactly once even when LiteLLM logs rows late (they simply enlarge a
 later drain). Day rollover finalizes yesterday once, then starts today.
 
-Everything here is best-effort: a gateway/admin failure logs and returns
-None/zero — it must never fail a turn. Pure HTTP + arithmetic; persistence of
-the minted key/checkpoint lives with the caller (project.settings).
+Everything here is best-effort: a gateway/admin failure logs and returns an
+explicit unknown result — it must never fail a turn, but it must not be mistaken
+for an authoritative zero either. Pure HTTP + arithmetic; persistence of the
+minted key/checkpoint lives with the caller (project.settings).
 """
 
 import hashlib
@@ -105,7 +106,7 @@ class LlmGateway:
             logger.warning("gateway set_key_budget failed", exc_info=True)
             return False
 
-    async def daily_spend(self, key: str, date: str) -> DailySpend:
+    async def daily_spend(self, key: str, date: str) -> DailySpend | None:
         """Cumulative tokens/spend for one virtual KEY on one UTC day, from
         ``/spend/logs`` rows (shape verified on the deployed gateway:
         prompt_tokens / completion_tokens / spend per row). Filtered by
@@ -129,15 +130,17 @@ class LlmGateway:
                 )
                 r.raise_for_status()
                 rows = r.json()
-                if isinstance(rows, list):
-                    for row in rows:
-                        if not isinstance(row, dict):
-                            continue
-                        prompt += int(row.get("prompt_tokens") or 0)
-                        completion += int(row.get("completion_tokens") or 0)
-                        usd += float(row.get("spend") or 0.0)
+                if not isinstance(rows, list):
+                    raise ValueError("gateway spend response is not a list")
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    prompt += int(row.get("prompt_tokens") or 0)
+                    completion += int(row.get("completion_tokens") or 0)
+                    usd += float(row.get("spend") or 0.0)
         except Exception:  # noqa: BLE001
             logger.warning("gateway daily_spend failed", exc_info=True)
+            return None
         return DailySpend(
             date=date, prompt_tokens=prompt, completion_tokens=completion, spend_usd=usd
         )
@@ -149,7 +152,7 @@ def utc_today() -> str:
 
 async def drain_new_usage(
     gateway: LlmGateway, key: str, ckpt: dict | None
-) -> tuple[int, int, float, dict]:
+) -> tuple[int, int, float, dict] | None:
     """Usage newly seen since ``ckpt`` (exactly-once via daily cumulative
     deltas). Returns ``(new_prompt, new_completion, new_spend_usd, next_ckpt)``;
     the caller persists ``next_ckpt`` (in project.settings). ``ckpt`` shape:
@@ -165,11 +168,25 @@ async def drain_new_usage(
     if prev_date != today:
         # Finalize the checkpoint day (catch rows logged after its last drain)…
         final = await gateway.daily_spend(key, prev_date)
+        if final is None:
+            return None
         new_p += max(0, final.prompt_tokens - prev_p)
         new_c += max(0, final.completion_tokens - prev_c)
         new_usd += max(0.0, final.spend_usd - prev_usd)
         prev_p, prev_c, prev_usd = 0, 0, 0.0  # …then start today from zero.
     cur = await gateway.daily_spend(key, today)
+    if cur is None:
+        return None
+    if prev_date == today and (
+        cur.prompt_tokens < prev_p
+        or cur.completion_tokens < prev_c
+        or cur.spend_usd < prev_usd
+    ):
+        logger.warning(
+            "gateway cumulative spend regressed; preserving checkpoint",
+            extra={"date": today},
+        )
+        return None
     new_p += max(0, cur.prompt_tokens - prev_p)
     new_c += max(0, cur.completion_tokens - prev_c)
     new_usd += max(0.0, cur.spend_usd - prev_usd)
