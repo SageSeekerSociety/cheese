@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.core.errors import NotFoundError
+from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
 from app.domain.agent import event_spool
 from app.domain.agent.compute import ComputePool
@@ -975,8 +975,12 @@ class ChatService:
             # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
             # the master key (containment), attributable + budget-capped.
             override = await self._gateway_project_env(project_id)
-            if override:
-                kwargs["env"] = {**kwargs.get("env", {}), **override}
+            if not override:
+                raise GatewayUnavailableError(
+                    "AI gateway could not provision a project-scoped key; "
+                    "no model call was made"
+                )
+            kwargs["env"] = {**kwargs.get("env", {}), **override}
         return kwargs, routed
 
     _GW_KEY = "llm_gateway_key"
@@ -986,8 +990,8 @@ class ChatService:
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn: mint (once) and return the
         project's virtual key, and keep its L2 max_budget in step with the
-        project's grants. Best-effort — returns None (turn runs on the default
-        pool credentials) on any gateway/admin failure."""
+        project's grants. Returns None on any gateway/admin failure; the caller
+        must refuse the turn rather than expose default pool credentials."""
         try:
             async with self._gateway_lock:
                 async with self._sessions() as session:

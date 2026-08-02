@@ -7,8 +7,15 @@ import uuid
 
 import pytest
 
+from app.core.errors import AppError
 from app.domain.agent import gateway as gw
 from app.domain.agent.chat import ChatService
+from app.domain.agent.profiles import (
+    TIER_BYO,
+    TIER_DEFAULT,
+    AgentProfile,
+    ProfileRegistry,
+)
 from app.domain.agent.service import AgentResult, AgentService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
@@ -65,12 +72,19 @@ class FakeGateway:
         )
 
 
-async def _mk_service(factory, tmp_path, fake):
+class FailingMintGateway(FakeGateway):
+    async def mint_project_key(self, project_id):
+        self.minted.append(project_id)
+        return None
+
+
+async def _mk_service(factory, tmp_path, fake, profiles=None):
     svc = ChatService(
         session_factory=factory,
         agent=QuietAgent(),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        profiles=profiles,
         gateway=fake,  # duck-typed LlmGateway
     )
     async with factory() as session:
@@ -99,6 +113,75 @@ async def test_virtual_key_minted_once_and_injected(client, tmp_path):
         project = await ProjectRepository(session).get(pid)
     assert project is not None
     assert (project.settings or {}).get("llm_gateway_key") == "sk-virt-1"
+
+
+@pytest.mark.anyio
+async def test_gateway_pool_refuses_turn_when_project_key_cannot_be_minted(
+    client, tmp_path
+):
+    fake = FailingMintGateway()
+    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+
+    with pytest.raises(AppError, match="project-scoped key"):
+        await svc._model_kwargs(pid)
+
+    assert fake.minted == [pid]
+
+
+@pytest.mark.anyio
+async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path):
+    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, None)
+
+    kwargs, routed = await svc._model_kwargs(pid)
+
+    assert routed is False
+    assert "env" not in kwargs
+
+
+@pytest.mark.anyio
+async def test_non_pool_profile_keeps_its_own_credentials(
+    client, tmp_path, monkeypatch
+):
+    from app.core.config import settings
+
+    pool_url = "http://pool.example"
+    monkeypatch.setattr(settings, "anthropic_base_url", pool_url)
+    profiles = ProfileRegistry(
+        [
+            AgentProfile(
+                "default",
+                "Pool",
+                TIER_DEFAULT,
+                "pool-model",
+                pool_url,
+                "shared-pool-key",
+            ),
+            AgentProfile(
+                "byo",
+                "BYO",
+                TIER_BYO,
+                "byo-model",
+                "https://byo.example",
+                "byo-key",
+            ),
+        ],
+        "default",
+    )
+    fake = FailingMintGateway()
+    svc, factory, pid, _tid = await _mk_service(
+        client.test_factory, tmp_path, fake, profiles=profiles
+    )
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None
+        project.settings = {"execution_profile": "byo"}
+        await session.commit()
+
+    kwargs, routed = await svc._model_kwargs(pid)
+
+    assert routed is False
+    assert kwargs["env"]["ANTHROPIC_AUTH_TOKEN"] == "byo-key"
+    assert fake.minted == []
 
 
 @pytest.mark.anyio
