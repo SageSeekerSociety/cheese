@@ -33,7 +33,19 @@ class ProviderChoice:
 
 
 def api_key_provider(gateway_base: str, key: str, model: str) -> ProviderChoice:
-    """Zhipu / DeepSeek and anything else reached with a key we hold."""
+    """Zhipu / DeepSeek and anything else reached with a key we hold.
+
+    ``key`` must be the machine's own scoped cheese token, never the upstream
+    provider key, and ``gateway_base`` the backend's /api/llm route rather than
+    the gateway itself. The backend swaps in the project's virtual key on the
+    way through.
+
+    A machine used to receive the raw provider key in its environment, in plain
+    sight of anyone on that host — it was visible in a tmux command line — and
+    its spend landed in the invoice under one undifferentiated key. Keeping the
+    credential on the box makes attribution structural rather than a promise the
+    machine has to keep.
+    """
     return ProviderChoice(
         name="gateway",
         env={

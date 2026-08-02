@@ -28,6 +28,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
+from app.domain.agent import provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import build_screen_launch
 from app.domain.agent.hook_events import HookRouter
@@ -266,7 +267,16 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # to the deployment-wide switch and is wrong for every remote machine.
         self._co_located_at[(project_id, topic_id)] = co_located
         work_dir = self._work_dir(project_id, topic_id, co_located=co_located)
-        gateway_env = {**settings.agent_env(), **(env or {})}
+        # A remote machine gets the backend's own model route and its scoped
+        # token — never the upstream provider key. The backend substitutes the
+        # project's virtual key, so the credential stays on the box and spend is
+        # attributed without having to trust the machine to report it.
+        provider = provider_env.api_key_provider(
+            gateway_base=f"{self._public_base}/api/llm",
+            key=token,
+            model=settings.agent_model,
+        )
+        gateway_env = {**provider.env, **(env or {})}
         if not co_located:
             _warn_if_model_endpoint_is_box_local(gateway_env, device_id)
         command, screen_env, cheeselet = build_screen_launch(
