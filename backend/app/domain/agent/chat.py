@@ -1081,19 +1081,18 @@ class ChatService:
                         return None  # nothing ever routed → nothing to meter
                     ckpt = s.get(self._GW_CKPT)
                     ckpt = ckpt if isinstance(ckpt, dict) else None
-                    prompt, completion, usd, next_ckpt = await drain_new_usage(
-                        self._gateway, key, ckpt
-                    )
-                    if prompt + completion <= 0:
+                    drained = await drain_new_usage(self._gateway, key, ckpt)
+                    if drained is None or drained[0] + drained[1] <= 0:
                         # LiteLLM writes spend logs asynchronously — at turn end
                         # the rows often lag by a few seconds (verified live).
                         # One bounded settle-retry keeps per-turn attribution;
                         # anything still missing lands in the NEXT drain
                         # (cumulative deltas are exactly-once either way).
                         await asyncio.sleep(3.0)
-                        prompt, completion, usd, next_ckpt = await drain_new_usage(
-                            self._gateway, key, ckpt
-                        )
+                        drained = await drain_new_usage(self._gateway, key, ckpt)
+                    if drained is None:
+                        return None
+                    prompt, completion, usd, next_ckpt = drained
                     s[self._GW_CKPT] = next_ckpt
                     project.settings = s
                     await session.commit()
