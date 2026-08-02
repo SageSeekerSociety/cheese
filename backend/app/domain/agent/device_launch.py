@@ -121,7 +121,20 @@ cd "$CHEESE_WORK" || exit 0
 git add -A >/dev/null 2>&1
 git diff --cached --quiet && exit 0
 git commit -q -m "芝士 edits" >/dev/null 2>&1 || exit 0
-git push -q origin "HEAD:${{CHEESE_GIT_BRANCH:-main}}" >/dev/null 2>&1 || true
+# Report the outcome through cheese-hook, which already has a durable spool and
+# retries until the backend acknowledges. Staying non-fatal was right — a Stop
+# hook that dies takes the turn with it — but silence was not: a rejected push
+# left the turn reporting done while the only copy of the agent's work sat on a
+# machine nobody would think to look at. Exit 0 either way; the difference is
+# that failure now leaves a trace instead of nothing.
+sha="$(git rev-parse HEAD 2>/dev/null)"
+if git push -q origin "HEAD:${{CHEESE_GIT_BRANCH:-main}}" >/dev/null 2>&1; then
+  status=ok
+else
+  status=failed
+fi
+printf '{{"hook_event_name":"CheeseSync","status":"%s","commit":"%s","branch":"%s"}}' \
+  "$status" "$sha" "${{CHEESE_GIT_BRANCH:-main}}" | cheese-hook >/dev/null 2>&1 || true
 SYNC
 chmod +x "$HOME/.claude/cheese-sync"
 cat > "$HOME/.claude/cheese-hook" <<'SH'
