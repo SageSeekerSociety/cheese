@@ -372,3 +372,50 @@ def test_a_remote_device_is_warned_about_a_box_local_model_endpoint(
             "machine-1",
         )
     assert not caplog.records, "a reachable endpoint must not be flagged"
+
+
+@pytest.mark.anyio
+async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
+    """The credential must stay on the box.
+
+    A machine used to be handed the raw provider key in its environment, in
+    plain sight of anyone on that host — it was readable straight out of a tmux
+    command line — and its spend landed in the invoice under one
+    undifferentiated key, which is why a week of it could not be attributed to
+    anything. It now gets the backend's own model route and its scoped token,
+    and the backend substitutes the project's virtual key on the way through.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "anthropic_auth_token", "UPSTREAM-PROVIDER-KEY")
+    monkeypatch.setattr(settings, "anthropic_base_url", "https://provider.example")
+
+    class RecordingHub(FakeHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.env: dict = {}
+
+        async def open_screen(self, device_id, command, source, **kw):
+            self.env = kw.get("env") or {}
+            return await super().open_screen(device_id, command, source, **kw)
+
+    hub = RecordingHub()
+    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+
+    await provider._ensure_screen(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        token="scoped-token-for-this-topic",
+        model=None,
+        env=None,
+    )
+
+    blob = repr(hub.env)
+    assert "UPSTREAM-PROVIDER-KEY" not in blob, "the provider key reached the machine"
+    assert "provider.example" not in blob, "the machine was pointed at the upstream"
+    assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/api/llm"
+    assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-token-for-this-topic"
