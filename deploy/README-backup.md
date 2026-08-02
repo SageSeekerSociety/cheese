@@ -94,7 +94,15 @@ pg_restore --list ~/backups/cheese-<ts>.dump | head
 pg_restore --clean --if-exists --no-owner -d "$DBURL" ~/backups/cheese-<ts>.dump
 ```
 
-Test-restore into a scratch DB periodically — an untested backup is not a backup.
+The weekly workflow runs `deploy/db-restore-test.sh` against the newest dump in
+a throwaway container. The drill fails on any `pg_restore` error, an incomplete
+schema, or zero rows across the critical `user`, `projects`, `topics`, and
+`blocks` tables. It retains the restore log under `tmp/restore-tests/` and
+prints the path and tail when the restore fails.
+
+A deliberately empty fresh installation can exercise the schema-only path with
+`CHEESE_RESTORE_ALLOW_EMPTY=1 bash deploy/db-restore-test.sh <dump>`. The script
+prints that override in its output; scheduled production drills must not set it.
 
 ## Gaps / follow-ups
 
