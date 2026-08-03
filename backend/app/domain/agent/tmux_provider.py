@@ -48,6 +48,24 @@ _READY_POLL_S = 0.4
 _CHEESE_CLI = Path(settings.sandbox_shim).resolve().parent / "cheese"
 
 
+def _cheese_cli_mount() -> list[str]:
+    """`-v <cheese>:/usr/local/bin/cheese:ro`, or nothing.
+
+    The mount OVERRIDES the copy the sandbox image already bakes with a fresher
+    one — an optimisation, not a requirement. When the backend itself runs in a
+    container it spawns the sandbox as a SIBLING, so the mount source has to be a
+    path the HOST daemon can see; the in-image path `/app/sandbox/cheese` is not
+    one, and mounting it aborts the container (`not a directory`). So use the
+    host dir when configured, and otherwise mount nothing and rely on the baked
+    copy (current, since the image is built from this same repo)."""
+    host_dir = settings.sandbox_shim_host_dir.strip()
+    if host_dir:
+        return ["-v", f"{host_dir.rstrip('/')}/cheese:/usr/local/bin/cheese:ro"]
+    if _CHEESE_CLI.is_file():
+        return ["-v", f"{_CHEESE_CLI}:/usr/local/bin/cheese:ro"]
+    return []
+
+
 def _resume_ready(session_dir: str, resume_session_id: str) -> bool:
     """True when a resumable transcript for ``resume_session_id`` is present in
     this topic's ~/.claude mount (i.e. a cloned/forked conversation was written
@@ -237,8 +255,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             "-w",
             "/work",
         ]
-        if _CHEESE_CLI.is_file():
-            args += ["-v", f"{_CHEESE_CLI}:/usr/local/bin/cheese:ro"]
+        args += _cheese_cli_mount()
         args += [
             "--network",
             "bridge",

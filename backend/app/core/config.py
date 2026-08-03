@@ -122,6 +122,13 @@ class Settings(BaseSettings):
     # Image the tmux backend uses (base image + tmux + ttyd + pre-accepted
     # first-launch gates). Independent of sandbox_image (the SDK path's image).
     tmux_sandbox_image: str = "cheesex-agent-tmux:latest"
+    # When the backend itself runs in a container, the sandbox it spawns is a
+    # SIBLING, so any -v source must be a path the HOST daemon can see. The
+    # `cheese` CLI is baked into the sandbox image; set this to a HOST directory
+    # holding a fresher `cheese` to override it, or leave empty to use the baked
+    # copy. (The in-image /app/sandbox path is not host-visible and aborts the
+    # container if mounted.)
+    sandbox_shim_host_dir: str = ""
 
     # --- Subscription compute through the metering proxy ---
     # A turn on the subscription does NOT go through the LLM gateway: there is no
