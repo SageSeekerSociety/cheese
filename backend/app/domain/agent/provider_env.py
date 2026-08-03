@@ -23,6 +23,16 @@ client we control, or a proxy the traffic passes through.
 
 from dataclasses import dataclass
 
+# The placeholder the container carries in CLAUDE_CODE_OAUTH_TOKEN. Shaped like a
+# real OAuth token but an obvious non-credential: interactive Claude Code accepts
+# an OAuth token from the env WITHOUT the local validation it applies to a
+# .credentials.json file (measured — the file path showed "Not logged in", the
+# env var showed the normal prompt), and the metering proxy rewrites it to the
+# real token on the way out. So the box never holds anything that authenticates.
+SUBSCRIPTION_PLACEHOLDER_TOKEN = (
+    "sk-ant-oat01-cheese-placeholder-not-a-real-credential-injected-at-proxy"
+)
+
 
 @dataclass(frozen=True)
 class ProviderChoice:
@@ -77,10 +87,15 @@ def subscription_provider(
         the backend's key and silently drops to API-key mode;
       - announce which project/topic to bill.
 
+    Login is established by CLAUDE_CODE_OAUTH_TOKEN (a placeholder): interactive
+    Claude Code takes an OAuth token from the env as "logged in" without the local
+    validation it applies to a .credentials.json file, which rejected the same
+    placeholder as "Not logged in". The proxy rewrites it to the real token.
+
     Crucially it sets NO ``ANTHROPIC_BASE_URL``. Setting one puts interactive
     Claude Code into "API Usage Billing" mode — it treats the endpoint as a
-    custom API needing a key, ignores the OAuth credential and shows "Not logged
-    in". Leaving it unset keeps it in SUBSCRIPTION mode against api.anthropic.com;
+    custom API needing a key, ignores the OAuth token and shows "Not logged in".
+    Leaving it unset keeps it in SUBSCRIPTION mode against api.anthropic.com;
     ``--add-host`` alone (to the proxy on 443) does the routing, so the request
     is byte-for-byte an ordinary session and capture still catches undici (DNS).
 
@@ -88,6 +103,11 @@ def subscription_provider(
     (claude-opus-5), and forcing a name it does not serve fails the turn.
     """
     env = {
+        # Establishes "logged in" AND is what the CLI sends as the Bearer — the
+        # proxy swaps it for the real token. A non-credential on its own.
+        "CLAUDE_CODE_OAUTH_TOKEN": SUBSCRIPTION_PLACEHOLDER_TOKEN,
+        # Blank, not absent: an inherited ANTHROPIC_AUTH_TOKEN would flip the CLI
+        # into API-key mode and bypass the OAuth path.
         "ANTHROPIC_AUTH_TOKEN": "",
         "NODE_EXTRA_CA_CERTS": ca_path,
     }

@@ -30,6 +30,16 @@ def test_subscription_never_carries_an_api_key():
     assert choice.env["ANTHROPIC_AUTH_TOKEN"] == ""
 
 
+def test_login_is_a_placeholder_oauth_token_not_a_real_one():
+    """Login is via CLAUDE_CODE_OAUTH_TOKEN — the env var the CLI accepts without
+    the local validation a .credentials.json gets. It must be an obvious
+    placeholder that authenticates nothing; the proxy swaps in the real token."""
+    env = provider_env.subscription_provider(ca_path="/ca.pem").env
+    tok = env["CLAUDE_CODE_OAUTH_TOKEN"]
+    assert "placeholder" in tok
+    assert tok == provider_env.SUBSCRIPTION_PLACEHOLDER_TOKEN
+
+
 def test_attribution_header_is_emitted_for_the_meter():
     choice = provider_env.subscription_provider(
         ca_path="/ca.pem", project_id="proj-1", topic_id="topic-2"
@@ -38,9 +48,7 @@ def test_attribution_header_is_emitted_for_the_meter():
 
 
 def test_attribution_degrades_to_project_only():
-    choice = provider_env.subscription_provider(
-        ca_path="/ca.pem", project_id="proj-1"
-    )
+    choice = provider_env.subscription_provider(ca_path="/ca.pem", project_id="proj-1")
     assert choice.env["ANTHROPIC_CUSTOM_HEADERS"] == "x-cheese-attr: proj-1"
 
 
@@ -88,52 +96,15 @@ def test_sandbox_capture_args_follow_the_switch(monkeypatch, enabled):
     assert "/host/ca.pem:/etc/cheese/proxy-ca.pem:ro" in args
 
 
-def test_the_container_credential_is_never_a_real_one():
-    """Hard requirement: a sandbox must not hold a valid credential. The shipped
-    `.credentials.json` must be an obvious placeholder that authenticates nothing
-    on its own — the proxy swaps it for the real token, which stays on the backend."""
-    from app.domain.agent.tmux_provider import _fake_subscription_credential
-
-    oauth = _fake_subscription_credential()["claudeAiOauth"]
-    # Shaped like a real OAuth token (prefix + length) so the interactive login
-    # check accepts it — but the body is an obvious placeholder that
-    # authenticates nothing; the proxy swaps in the real token.
-    assert "placeholder" in oauth["accessToken"]
-    assert "placeholder" in oauth["refreshToken"]
-    assert oauth["accessToken"].startswith("sk-ant-oat01-")
-    assert oauth["refreshToken"].startswith("sk-ant-ort01-")
-
-
-def test_fake_credential_never_triggers_a_self_refresh():
-    """Far-future expiry: if the container tried to refresh, it would hit the dead
-    placeholder refreshToken and the turn would fail. The backend owns refresh."""
-    import time
-
-    from app.domain.agent.tmux_provider import _fake_subscription_credential
-
-    oauth = _fake_subscription_credential()["claudeAiOauth"]
-    # Comfortably years ahead of now, so Claude Code's local-expiry check passes.
-    assert oauth["expiresAt"] > int(time.time() * 1000) + 5 * 365 * 24 * 3600 * 1000
-
-
-def test_subscription_settings_writes_fake_credential(monkeypatch, tmp_path):
-    """When subscription is on, the session dir gets the fake credential alongside
-    settings.json; when off, no credential file is planted."""
+def test_no_credential_file_is_ever_planted_in_the_box(monkeypatch, tmp_path):
+    """Hard requirement: a sandbox must not hold a valid credential. Login is via
+    the CLAUDE_CODE_OAUTH_TOKEN env placeholder, so NO .credentials.json is
+    written — not even a fake one (the file gets a local validation that rejected
+    the placeholder, and a real token there would be the very leak we forbid)."""
     from app.core.config import settings
     from app.domain.agent.tmux_provider import TmuxHooksProvider
 
     provider = TmuxHooksProvider(image="x", turn_timeout_s=1.0)
-
     monkeypatch.setattr(settings, "subscription_enabled", True)
     provider._write_session_settings(str(tmp_path))
-    cred = tmp_path / ".credentials.json"
-    assert cred.exists()
-    import json
-
-    assert "placeholder" in json.loads(cred.read_text())["claudeAiOauth"]["accessToken"]
-
-    other = tmp_path / "off"
-    other.mkdir()
-    monkeypatch.setattr(settings, "subscription_enabled", False)
-    provider._write_session_settings(str(other))
-    assert not (other / ".credentials.json").exists()
+    assert not (tmp_path / ".credentials.json").exists()

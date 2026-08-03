@@ -156,11 +156,11 @@ def _subscription_args() -> list[str]:
     undici too, because that path still goes through DNS.
 
     Only the CA is mounted. The real credential is NEVER placed in the container
-    (hard requirement: a machine must not hold a valid credential). The sandbox
-    ships a FAKE one (see _write_session_settings), and the metering proxy swaps
-    the Authorization header for the real token, which lives only on the backend.
-    That also makes refresh single-point — one daemon owns the real credential,
-    so no two sandboxes race a rotation and write it back empty.
+    (hard requirement: a machine must not hold a valid credential). Login is a
+    placeholder CLAUDE_CODE_OAUTH_TOKEN in the env (see subscription_provider),
+    and the metering proxy swaps the Authorization header for the real token,
+    which lives only on the backend. That also makes refresh single-point — one
+    daemon owns the real credential, so no sandbox ever touches it.
     """
     if not settings.subscription_enabled:
         return []
@@ -176,44 +176,6 @@ def _subscription_args() -> list[str]:
     if ca:
         args += ["-v", f"{ca}:/etc/cheese/proxy-ca.pem:ro"]
     return args
-
-
-def _fake_subscription_credential() -> dict:
-    """The placeholder `.credentials.json` a subscription sandbox ships with.
-
-    Structurally complete so Claude Code starts in subscription mode, far-future
-    expiry so it never tries to refresh (the backend owns the real token and its
-    refresh), and obvious non-credentials for the tokens. On its own it
-    authenticates nothing — every request is rewritten to the real token by the
-    proxy. If the proxy is bypassed, it 401s: a leaked container credential is
-    worth nothing, which is the requirement.
-    """
-    # A fixed far-future expiry (year ~2035). Not computed from the clock so the
-    # written file is deterministic and the reasoning ("never self-refreshes") is
-    # independent of when the container starts.
-    far_future_ms = 2_051_222_400_000
-    # Interactive Claude Code validates the token SHAPE locally before it will
-    # accept the session (headless -p does not — which is why the E2E passed with
-    # a bare placeholder but the real UI showed "Not logged in"). So the fake
-    # tokens keep the real prefix + length (sk-ant-oat01-/sk-ant-ort01- + 64) —
-    # still obvious placeholders, still authenticating nothing, but shaped so the
-    # login check passes and the proxy can then swap in the real token.
-    placeholder = "cheeseplaceholdernotarealcredential" + "0" * 29  # 64 chars
-    return {
-        "claudeAiOauth": {
-            "accessToken": f"sk-ant-oat01-{placeholder}",
-            "refreshToken": f"sk-ant-ort01-{placeholder}",
-            "expiresAt": far_future_ms,
-            "refreshTokenExpiresAt": far_future_ms,
-            "scopes": [
-                "user:inference",
-                "user:profile",
-                "user:sessions:claude_code",
-            ],
-            "subscriptionType": "max",
-            "rateLimitTier": "default",
-        }
-    }
 
 
 async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str]:
@@ -555,16 +517,10 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             json.dumps(hooks_settings(), ensure_ascii=False),
             mode=0o666,
         )
-        if settings.subscription_enabled:
-            # The FAKE credential (never a real one — the container must not hold
-            # a valid credential). It only lets Claude Code start in subscription
-            # mode; the metering proxy rewrites every request to the real token.
-            cred = Path(session_dir) / ".credentials.json"
-            _rewrite(
-                cred,
-                json.dumps(_fake_subscription_credential(), ensure_ascii=False),
-                mode=0o600,
-            )
+        # Login is via CLAUDE_CODE_OAUTH_TOKEN in the container env (see
+        # subscription_provider), NOT a .credentials.json — the file gets the
+        # local validation the env var skips, and rejected the placeholder as
+        # "Not logged in". So nothing credential-shaped is planted here.
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history
