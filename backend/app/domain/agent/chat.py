@@ -27,6 +27,7 @@ from app.domain.agent import event_spool
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
+from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
@@ -960,7 +961,18 @@ class ChatService:
         if image:
             kwargs["sandbox_image"] = image
         pool_route = True
-        if self._profiles is not None:
+        if settings.subscription_enabled:
+            # The subscription path doesn't route through the gateway or a
+            # profile: the tmux provider points Claude Code at the metering proxy
+            # and the model is the project's own pick (Sonnet 5 by default, Opus 5
+            # opt-in). Pass the --model alias ("" = default, no flag); the sandbox
+            # env is set by the provider, not a profile.
+            choice = (
+                (project.settings or {}).get("subscription_model") if project else None
+            )
+            kwargs["model"] = subscription_model_alias(choice)
+            pool_route = False
+        elif self._profiles is not None:
             profile = self._profiles.resolve(
                 project.settings if project else None,
                 project.owner_handle if project else None,

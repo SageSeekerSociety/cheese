@@ -316,9 +316,11 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             and _resume_ready(session_dir, resume_session_id)
         ):
             claude_cmd += f" --resume {resume_session_id}"
-        # No --model on the subscription: it serves its own (claude-opus-5), and
-        # pinning a gateway model name it does not serve would fail the turn.
-        if model and not settings.subscription_enabled:
+        # Pass --model when set. On the subscription this is the project's pick
+        # ("opus"; empty = the subscription's default Sonnet, so no flag). On the
+        # gateway it's the gateway model name. Either way, an empty model means
+        # "use the default" — never pin a name the provider does not serve.
+        if model:
             claude_cmd += f" --model {model}"
         rc, _, err = await _docker(
             "exec", name, "tmux", "new-session", "-d", "-s", _SESSION, claude_cmd

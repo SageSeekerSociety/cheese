@@ -14,7 +14,13 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.agent.market import compute_default_name, compute_selectable
+from app.domain.agent.market import (
+    compute_default_name,
+    compute_selectable,
+    subscription_model_default,
+    subscription_model_ids,
+    subscription_model_listings,
+)
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.block.models import BlockKind
@@ -306,6 +312,44 @@ async def set_compute_profile(project_id: uuid.UUID, body: dict, db: DbSession) 
     if name not in allowed:
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
     project.settings = {**(project.settings or {}), "compute_profile": name}
+    await db.flush()
+    return ok({"current": name})
+
+
+# --- Subscription model: which Claude model this project's subscription turns
+# use (parallel to the compute pool). Only relevant when the subscription path is
+# deployed; otherwise the listing is informational. -----------------------------
+
+
+@router.get("/{project_id}/model-profiles")
+async def list_model_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
+    """Claude models this project may select for subscription turns, plus the
+    current selection. Default = Sonnet 5 (balanced / saves the subscription's
+    quota)."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    current = (project.settings or {}).get(
+        "subscription_model"
+    ) or subscription_model_default()
+    return ok(
+        {
+            "current": current,
+            "profiles": [asdict(v) for v in subscription_model_listings()],
+        }
+    )
+
+
+@router.put("/{project_id}/model-profile")
+async def set_model_profile(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Set the project's subscription model. Only a known model id is accepted."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    name = (body.get("profile") or "").strip() or subscription_model_default()
+    if name not in subscription_model_ids():
+        raise ValidationError(f"模型 {name!r} 不可选")
+    project.settings = {**(project.settings or {}), "subscription_model": name}
     await db.flush()
     return ok({"current": name})
 

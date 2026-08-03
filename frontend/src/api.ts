@@ -413,6 +413,18 @@ export function setComputeProfile(projectId: string, profile: string): Promise<{
   })
 }
 
+// 订阅模型: the project's current Claude model + the ones it may select. Same
+// shape as compute pools; a project picks Sonnet 5 (default) or Opus 5.
+export function getModelProfiles(projectId: string): Promise<ComputeProfiles> {
+  return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/model-profiles`)
+}
+export function setModelProfile(projectId: string, profile: string): Promise<{ current: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/model-profile`, {
+    method: 'PUT',
+    body: JSON.stringify({ profile }),
+  })
+}
+
 // 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
