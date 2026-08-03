@@ -93,10 +93,13 @@ def test_the_container_credential_is_never_a_real_one():
     from app.domain.agent.tmux_provider import _fake_subscription_credential
 
     oauth = _fake_subscription_credential()["claudeAiOauth"]
-    # Not a real token shape (real ones are sk-ant-oat01-…); fails closed if leaked.
+    # Shaped like a real OAuth token (prefix + length) so the interactive login
+    # check accepts it — but the body is an obvious placeholder that
+    # authenticates nothing; the proxy swaps in the real token.
     assert "placeholder" in oauth["accessToken"]
     assert "placeholder" in oauth["refreshToken"]
-    assert not oauth["accessToken"].startswith("sk-ant-")
+    assert oauth["accessToken"].startswith("sk-ant-oat01-")
+    assert oauth["refreshToken"].startswith("sk-ant-ort01-")
 
 
 def test_fake_credential_never_triggers_a_self_refresh():

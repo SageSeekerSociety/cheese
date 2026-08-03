@@ -168,14 +168,26 @@ def _fake_subscription_credential() -> dict:
     # written file is deterministic and the reasoning ("never self-refreshes") is
     # independent of when the container starts.
     far_future_ms = 2_051_222_400_000
+    # Interactive Claude Code validates the token SHAPE locally before it will
+    # accept the session (headless -p does not — which is why the E2E passed with
+    # a bare placeholder but the real UI showed "Not logged in"). So the fake
+    # tokens keep the real prefix + length (sk-ant-oat01-/sk-ant-ort01- + 64) —
+    # still obvious placeholders, still authenticating nothing, but shaped so the
+    # login check passes and the proxy can then swap in the real token.
+    placeholder = "cheeseplaceholdernotarealcredential" + "0" * 29  # 64 chars
     return {
         "claudeAiOauth": {
-            "accessToken": "cheese-placeholder-not-a-real-credential",
-            "refreshToken": "cheese-placeholder-not-a-real-credential",
+            "accessToken": f"sk-ant-oat01-{placeholder}",
+            "refreshToken": f"sk-ant-ort01-{placeholder}",
             "expiresAt": far_future_ms,
             "refreshTokenExpiresAt": far_future_ms,
-            "scopes": ["user:inference", "user:profile"],
+            "scopes": [
+                "user:inference",
+                "user:profile",
+                "user:sessions:claude_code",
+            ],
             "subscriptionType": "max",
+            "rateLimitTier": "default",
         }
     }
 
