@@ -432,7 +432,21 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
                 project_id=str(project_id),
                 topic_id=str(topic_id),
             ).env
-            merged = {**(env or {}), **sub}
+            merged = {**(env or {})}
+            # The caller's env is the gateway provider (BASE_URL + model pins).
+            # Subscription mode must carry NONE of them: a BASE_URL flips the CLI
+            # into API-key mode, and a pinned model asks the subscription for one
+            # it doesn't serve. subscription_provider only ADDS keys, so these
+            # have to be explicitly dropped, not just overridden.
+            for k in (
+                "ANTHROPIC_BASE_URL",
+                "CLAUDE_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            ):
+                merged.pop(k, None)
+            merged.update(sub)
         else:
             merged = {**settings.agent_env(), **(env or {})}
         merged.update(
