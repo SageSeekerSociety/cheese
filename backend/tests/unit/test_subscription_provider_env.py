@@ -14,11 +14,11 @@ import pytest
 from app.domain.agent import provider_env
 
 
-def test_subscription_points_at_the_metering_proxy():
-    """Host stays api.anthropic.com (so the proxy's cert matches; --add-host does
-    the routing); only the port moves to the proxy."""
-    choice = provider_env.subscription_provider(ca_path="/ca.pem", proxy_port=8443)
-    assert choice.env["ANTHROPIC_BASE_URL"] == "https://api.anthropic.com:8443"
+def test_subscription_sets_no_base_url_so_it_stays_oauth():
+    """A BASE_URL flips interactive Claude Code into API-key mode and it ignores
+    the OAuth credential ("Not logged in"). --add-host on 443 does the routing."""
+    choice = provider_env.subscription_provider(ca_path="/ca.pem")
+    assert "ANTHROPIC_BASE_URL" not in choice.env
     assert choice.env["NODE_EXTRA_CA_CERTS"] == "/ca.pem"
 
 
@@ -26,42 +26,41 @@ def test_subscription_never_carries_an_api_key():
     """The CLI inherits the backend's env. A leaked ANTHROPIC_AUTH_TOKEN puts it
     in API-key mode, which bills a different account and bypasses the meter —
     so the key must be explicitly blanked, not merely absent."""
-    choice = provider_env.subscription_provider(ca_path="/ca.pem", proxy_port=8443)
+    choice = provider_env.subscription_provider(ca_path="/ca.pem")
     assert choice.env["ANTHROPIC_AUTH_TOKEN"] == ""
 
 
 def test_attribution_header_is_emitted_for_the_meter():
     choice = provider_env.subscription_provider(
-        ca_path="/ca.pem", proxy_port=8443, project_id="proj-1", topic_id="topic-2"
+        ca_path="/ca.pem", project_id="proj-1", topic_id="topic-2"
     )
     assert choice.env["ANTHROPIC_CUSTOM_HEADERS"] == "x-cheese-attr: proj-1/topic-2"
 
 
 def test_attribution_degrades_to_project_only():
     choice = provider_env.subscription_provider(
-        ca_path="/ca.pem", proxy_port=8443, project_id="proj-1"
+        ca_path="/ca.pem", project_id="proj-1"
     )
     assert choice.env["ANTHROPIC_CUSTOM_HEADERS"] == "x-cheese-attr: proj-1"
 
 
 def test_no_attribution_means_no_header_rather_than_a_broken_one():
-    choice = provider_env.subscription_provider(ca_path="/ca.pem", proxy_port=8443)
+    choice = provider_env.subscription_provider(ca_path="/ca.pem")
     assert "ANTHROPIC_CUSTOM_HEADERS" not in choice.env
 
 
-def test_base_url_host_stays_anthropic_so_the_cert_matches():
-    """--add-host routes the name to the proxy; the URL host must stay
-    api.anthropic.com or the proxy's cert for that name won't validate."""
-    env = provider_env.subscription_provider(ca_path="/ca.pem", proxy_port=9000).env
-    assert env["ANTHROPIC_BASE_URL"] == "https://api.anthropic.com:9000"
-    assert env["ANTHROPIC_BASE_URL"].startswith("https://api.anthropic.com:")
+def test_no_base_url_is_ever_set():
+    """The routing is DNS (--add-host), never a base_url — setting one drops the
+    CLI out of subscription mode."""
+    env = provider_env.subscription_provider(ca_path="/ca.pem").env
+    assert "ANTHROPIC_BASE_URL" not in env
 
 
 def test_model_names_are_never_pinned_on_the_subscription():
     """Overriding the model aliases makes the official API answer for a model it
     does not serve — the API-key path pins them, this one must not."""
     choice = provider_env.subscription_provider(
-        ca_path="/ca.pem", proxy_port=8443, project_id="p", topic_id="t"
+        ca_path="/ca.pem", project_id="p", topic_id="t"
     )
     assert not [k for k in choice.env if "MODEL" in k]
 

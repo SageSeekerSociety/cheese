@@ -61,7 +61,6 @@ def api_key_provider(gateway_base: str, key: str, model: str) -> ProviderChoice:
 def subscription_provider(
     *,
     ca_path: str,
-    proxy_port: int,
     project_id: str | None = None,
     topic_id: str | None = None,
 ) -> ProviderChoice:
@@ -69,26 +68,26 @@ def subscription_provider(
 
     The container holds NO real credential (hard requirement — a leaked machine
     credential is a leaked subscription). It ships a fake one, and every request
-    is redirected BY NAME to the metering proxy (``--add-host``, see
+    is redirected BY NAME to the metering proxy (``--add-host`` on 443, see
     TmuxHooksProvider), which rewrites the Authorization to the real token — that
     token lives only on the backend. So the container env only has to:
 
-      - point Claude Code at the proxy: BASE_URL keeps the host api.anthropic.com
-        (so the proxy's cert for that name matches) and only changes the port;
-        ``--add-host`` is what actually routes the name to the proxy. Capture is
-        by name, not HTTPS_PROXY: Claude Code's undici ignores the proxy env for
-        /v1/messages (measured — a proxy wired that way saw every auxiliary call
-        and never a single message), and DNS catches undici too;
-      - trust the proxy's CA (it terminates TLS);
+      - trust the proxy's CA (it terminates TLS for api.anthropic.com);
       - NOT carry a stale gateway key — blank, not absent, or the CLI inherits
         the backend's key and silently drops to API-key mode;
       - announce which project/topic to bill.
+
+    Crucially it sets NO ``ANTHROPIC_BASE_URL``. Setting one puts interactive
+    Claude Code into "API Usage Billing" mode — it treats the endpoint as a
+    custom API needing a key, ignores the OAuth credential and shows "Not logged
+    in". Leaving it unset keeps it in SUBSCRIPTION mode against api.anthropic.com;
+    ``--add-host`` alone (to the proxy on 443) does the routing, so the request
+    is byte-for-byte an ordinary session and capture still catches undici (DNS).
 
     The model is deliberately NOT pinned: the subscription serves its own
     (claude-opus-5), and forcing a name it does not serve fails the turn.
     """
     env = {
-        "ANTHROPIC_BASE_URL": f"https://api.anthropic.com:{proxy_port}",
         "ANTHROPIC_AUTH_TOKEN": "",
         "NODE_EXTRA_CA_CERTS": ca_path,
     }
@@ -104,14 +103,13 @@ def choose(
     gateway_base: str,
     gateway_key: str,
     model: str,
-    proxy_port: int,
     ca_path: str,
 ) -> ProviderChoice:
     """Pick one. Falling back from the subscription to a key-based provider is
     intentional and safe — the reverse never happens implicitly, because sending
     subscription traffic through our own client is the thing being avoided."""
-    if prefer_subscription and proxy_port and ca_path:
-        return subscription_provider(ca_path=ca_path, proxy_port=proxy_port)
+    if prefer_subscription and ca_path:
+        return subscription_provider(ca_path=ca_path)
     return api_key_provider(gateway_base, gateway_key, model)
 
 

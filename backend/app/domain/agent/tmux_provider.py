@@ -429,7 +429,6 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             # caller's other env is kept.
             sub = provider_env.subscription_provider(
                 ca_path="/etc/cheese/proxy-ca.pem",
-                proxy_port=settings.subscription_proxy_port,
                 project_id=str(project_id),
                 topic_id=str(topic_id),
             ).env
