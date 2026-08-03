@@ -3,8 +3,8 @@
 These lock in facts that were MEASURED on the dev box, each of which silently
 produces "works but bills nothing" if it regresses:
 
-  - HTTPS_PROXY alone never sees /v1/messages (undici ignores it), so the
-    capture has to be by hostname;
+  - capture is by hostname (BASE_URL host stays api.anthropic.com), because
+    Claude Code's undici ignores HTTPS_PROXY for /v1/messages;
   - a turn with no attribution header is tokens nobody can be charged for;
   - an inherited ANTHROPIC_AUTH_TOKEN switches the CLI out of subscription mode.
 """
@@ -14,12 +14,11 @@ import pytest
 from app.domain.agent import provider_env
 
 
-def test_subscription_keeps_proxy_for_the_oauth_traffic():
-    """OAuth/refresh DOES honour the proxy env — and on this network a direct
-    refresh fails outright, so dropping these would break login, not just billing."""
-    choice = provider_env.subscription_provider("http://proxy:3128", "/ca.pem")
-    assert choice.env["HTTPS_PROXY"] == "http://proxy:3128"
-    assert choice.env["HTTP_PROXY"] == "http://proxy:3128"
+def test_subscription_points_at_the_metering_proxy():
+    """Host stays api.anthropic.com (so the proxy's cert matches; --add-host does
+    the routing); only the port moves to the proxy."""
+    choice = provider_env.subscription_provider(ca_path="/ca.pem", proxy_port=8443)
+    assert choice.env["ANTHROPIC_BASE_URL"] == "https://api.anthropic.com:8443"
     assert choice.env["NODE_EXTRA_CA_CERTS"] == "/ca.pem"
 
 
@@ -27,47 +26,42 @@ def test_subscription_never_carries_an_api_key():
     """The CLI inherits the backend's env. A leaked ANTHROPIC_AUTH_TOKEN puts it
     in API-key mode, which bills a different account and bypasses the meter —
     so the key must be explicitly blanked, not merely absent."""
-    choice = provider_env.subscription_provider("http://proxy:3128", "/ca.pem")
+    choice = provider_env.subscription_provider(ca_path="/ca.pem", proxy_port=8443)
     assert choice.env["ANTHROPIC_AUTH_TOKEN"] == ""
 
 
 def test_attribution_header_is_emitted_for_the_meter():
     choice = provider_env.subscription_provider(
-        "http://proxy:3128", "/ca.pem", project_id="proj-1", topic_id="topic-2"
+        ca_path="/ca.pem", proxy_port=8443, project_id="proj-1", topic_id="topic-2"
     )
     assert choice.env["ANTHROPIC_CUSTOM_HEADERS"] == "x-cheese-attr: proj-1/topic-2"
 
 
 def test_attribution_degrades_to_project_only():
     choice = provider_env.subscription_provider(
-        "http://proxy:3128", "/ca.pem", project_id="proj-1"
+        ca_path="/ca.pem", proxy_port=8443, project_id="proj-1"
     )
     assert choice.env["ANTHROPIC_CUSTOM_HEADERS"] == "x-cheese-attr: proj-1"
 
 
 def test_no_attribution_means_no_header_rather_than_a_broken_one():
-    choice = provider_env.subscription_provider("http://proxy:3128", "/ca.pem")
+    choice = provider_env.subscription_provider(ca_path="/ca.pem", proxy_port=8443)
     assert "ANTHROPIC_CUSTOM_HEADERS" not in choice.env
 
 
-def test_base_url_is_only_set_when_the_meter_needs_a_port():
-    """The host must stay api.anthropic.com so what reaches upstream is
-    unchanged; base_url exists only to carry a non-443 port."""
-    plain = provider_env.subscription_provider("http://proxy:3128", "/ca.pem").env
-    assert "ANTHROPIC_BASE_URL" not in plain
-
-    ported = provider_env.subscription_provider(
-        "http://proxy:3128", "/ca.pem", base_url="https://api.anthropic.com:8443"
-    )
-    assert ported.env["ANTHROPIC_BASE_URL"] == "https://api.anthropic.com:8443"
-    assert "api.anthropic.com" in ported.env["ANTHROPIC_BASE_URL"]
+def test_base_url_host_stays_anthropic_so_the_cert_matches():
+    """--add-host routes the name to the proxy; the URL host must stay
+    api.anthropic.com or the proxy's cert for that name won't validate."""
+    env = provider_env.subscription_provider(ca_path="/ca.pem", proxy_port=9000).env
+    assert env["ANTHROPIC_BASE_URL"] == "https://api.anthropic.com:9000"
+    assert env["ANTHROPIC_BASE_URL"].startswith("https://api.anthropic.com:")
 
 
 def test_model_names_are_never_pinned_on_the_subscription():
     """Overriding the model aliases makes the official API answer for a model it
     does not serve — the API-key path pins them, this one must not."""
     choice = provider_env.subscription_provider(
-        "http://proxy:3128", "/ca.pem", project_id="p", topic_id="t"
+        ca_path="/ca.pem", proxy_port=8443, project_id="p", topic_id="t"
     )
     assert not [k for k in choice.env if "MODEL" in k]
 

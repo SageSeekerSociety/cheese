@@ -27,7 +27,7 @@ import uuid
 from pathlib import Path
 
 from app.core.config import settings
-from app.domain.agent import clone
+from app.domain.agent import clone, provider_env
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
     HooksTurnProvider,
@@ -289,7 +289,9 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             and _resume_ready(session_dir, resume_session_id)
         ):
             claude_cmd += f" --resume {resume_session_id}"
-        if model:
+        # No --model on the subscription: it serves its own (claude-opus-5), and
+        # pinning a gateway model name it does not serve would fail the turn.
+        if model and not settings.subscription_enabled:
             claude_cmd += f" --model {model}"
         rc, _, err = await _docker(
             "exec", name, "tmux", "new-session", "-d", "-s", _SESSION, claude_cmd
@@ -354,7 +356,21 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         """Container env: model gateway (ANTHROPIC_*) + cheese CLI wiring. Mirrors
         LocalDockerProvider._sandbox_config; SBX_WORKTREE/SBX_SESSION ride along as
         the /work and ~/.claude mount sources (stripped before -e)."""
-        merged = {**settings.agent_env(), **(env or {})}
+        if settings.subscription_enabled:
+            # Subscription: point Claude Code at the metering proxy, trust its CA
+            # (mounted by _subscription_args), attribute to this topic. No gateway
+            # key, no model pin — see subscription_provider. The container also
+            # ships a fake credential (see _write_session_settings); the real one
+            # never leaves the backend.
+            base = provider_env.subscription_provider(
+                ca_path="/etc/cheese/proxy-ca.pem",
+                proxy_port=settings.subscription_proxy_port,
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+            ).env
+        else:
+            base = settings.agent_env()
+        merged = {**base, **(env or {})}
         merged.update(
             {
                 "HOME": "/home/node",

@@ -59,57 +59,39 @@ def api_key_provider(gateway_base: str, key: str, model: str) -> ProviderChoice:
 
 
 def subscription_provider(
-    proxy_url: str,
-    ca_path: str,
     *,
+    ca_path: str,
+    proxy_port: int,
     project_id: str | None = None,
     topic_id: str | None = None,
-    base_url: str | None = None,
 ) -> ProviderChoice:
-    """The subscription, reached through a transparent proxy.
+    """The subscription, as the container env for a metered sandbox.
 
-    The model names are deliberately ABSENT: overriding them would make Claude
-    Code ask the official API for a model it does not serve.
+    The container holds NO real credential (hard requirement — a leaked machine
+    credential is a leaked subscription). It ships a fake one, and every request
+    is redirected BY NAME to the metering proxy (``--add-host``, see
+    TmuxHooksProvider), which rewrites the Authorization to the real token — that
+    token lives only on the backend. So the container env only has to:
 
-    ``HTTPS_PROXY`` alone does NOT capture the turn. Measured on this
-    deployment: with the proxy set, the meter saw `oauth/profile`,
-    `mcp_servers` and `eval/sdk` — and never a single `/v1/messages`, while
-    every turn still answered. Claude Code issues the model call through Node's
-    built-in undici, which ignores the proxy env vars (`NODE_USE_ENV_PROXY` is
-    Node 24+; this runs on 20, and the CLI ships as a compiled binary). A meter
-    wired only to HTTPS_PROXY therefore bills nothing while reporting success —
-    the worst possible failure for an accounting path.
+      - point Claude Code at the proxy: BASE_URL keeps the host api.anthropic.com
+        (so the proxy's cert for that name matches) and only changes the port;
+        ``--add-host`` is what actually routes the name to the proxy. Capture is
+        by name, not HTTPS_PROXY: Claude Code's undici ignores the proxy env for
+        /v1/messages (measured — a proxy wired that way saw every auxiliary call
+        and never a single message), and DNS catches undici too;
+      - trust the proxy's CA (it terminates TLS);
+      - NOT carry a stale gateway key — blank, not absent, or the CLI inherits
+        the backend's key and silently drops to API-key mode;
+      - announce which project/topic to bill.
 
-    So the capture is done by NAME instead: the sandbox resolves
-    api.anthropic.com to our proxy (``--add-host``, see TmuxHooksProvider), which
-    catches undici too because it goes through DNS. ``base_url`` only carries the
-    port when the proxy cannot listen on 443; the host stays api.anthropic.com so
-    the request upstream is unchanged.
-
-    ``project_id``/``topic_id`` ride along as a custom header (verified to reach
-    the proxy) — without it the meter sees tokens it cannot attribute to anyone.
-
-    The container carries NO real credential: it ships a fake one and the proxy
-    rewrites the Authorization to the real token, which lives only on the backend
-    (hard requirement — a machine must not hold a valid credential). ``proxy_url``
-    here is kept for the OAuth/refresh traffic; but refresh is actually done by a
-    single backend daemon, so on a running sandbox this mostly never fires.
+    The model is deliberately NOT pinned: the subscription serves its own
+    (claude-opus-5), and forcing a name it does not serve fails the turn.
     """
     env = {
-        # Kept for any OAuth/refresh traffic that honours it. The real refresh is
-        # single-point on the backend; the fake credential's far-future expiry
-        # means a sandbox should never trigger its own refresh anyway.
-        "HTTPS_PROXY": proxy_url,
-        "HTTP_PROXY": proxy_url,
-        # Node's own trust store flag — the proxy terminates TLS, so its CA
-        # has to be trusted by the client that actually makes the call.
-        "NODE_EXTRA_CA_CERTS": ca_path,
-        # Blank, not absent: the CLI inherits the backend's environment, and a
-        # leaked API-key token would silently switch it out of subscription mode.
+        "ANTHROPIC_BASE_URL": f"https://api.anthropic.com:{proxy_port}",
         "ANTHROPIC_AUTH_TOKEN": "",
+        "NODE_EXTRA_CA_CERTS": ca_path,
     }
-    if base_url:
-        env["ANTHROPIC_BASE_URL"] = base_url
     if project_id:
         attr = f"{project_id}/{topic_id}" if topic_id else project_id
         env["ANTHROPIC_CUSTOM_HEADERS"] = f"x-cheese-attr: {attr}"
@@ -122,14 +104,14 @@ def choose(
     gateway_base: str,
     gateway_key: str,
     model: str,
-    proxy_url: str,
+    proxy_port: int,
     ca_path: str,
 ) -> ProviderChoice:
     """Pick one. Falling back from the subscription to a key-based provider is
     intentional and safe — the reverse never happens implicitly, because sending
     subscription traffic through our own client is the thing being avoided."""
-    if prefer_subscription and proxy_url and ca_path:
-        return subscription_provider(proxy_url, ca_path)
+    if prefer_subscription and proxy_port and ca_path:
+        return subscription_provider(ca_path=ca_path, proxy_port=proxy_port)
     return api_key_provider(gateway_base, gateway_key, model)
 
 
