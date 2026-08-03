@@ -98,9 +98,10 @@ async def inspect() -> int:
         """
     )
     for t in topics:
+        has_session = "yes" if t["session_id"] else "no"
         _say(
             f"  {t['id']} [{t['project_name']}] {t['title']!r}"
-            f" profile={t['compute_profile']} session={'yes' if t['session_id'] else 'no'}"
+            f" profile={t['compute_profile']} session={has_session}"
             f" {t['created_at']}"
         )
 
@@ -127,11 +128,15 @@ async def send() -> int:
 
     async with async_session_factory() as session:
         row = (
-            await session.execute(
-                text('select id, username from "user" where username = :h'),
-                {"h": handle},
+            (
+                await session.execute(
+                    text('select id, username from "user" where username = :h'),
+                    {"h": handle},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
     if row is None:
         _say(f"no user with handle {handle!r}")
         return 2
@@ -149,9 +154,7 @@ async def send() -> int:
     token = mint_session_token(handle=handle, user_id=user_id)
     base = os.environ.get("WS_BASE", "ws://127.0.0.1:8000")
     url = f"{base}/api/topics/{topic_id}/chat?token={token}"
-    content = os.environ.get(
-        "CONTENT", "probe: 请回复 pong 并说明你运行在哪台机器上"
-    )
+    content = os.environ.get("CONTENT", "probe: 请回复 pong 并说明你运行在哪台机器上")
     summon = os.environ.get("SUMMON", "1") == "1"
     deadline = time.time() + float(os.environ.get("DEADLINE_S", "300"))
 

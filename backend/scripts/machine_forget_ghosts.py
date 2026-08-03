@@ -22,14 +22,14 @@ import sys
 from sqlalchemy import select
 
 from app.core.db import async_session_factory
+from app.domain.machine.microcloud import MicroCloudClient
+from app.domain.machine.models import ProjectMachine
+from app.domain.machine.repositories import ProjectMachineRepository
 
 # The ORM delete configures mappers, and ProjectMachine.project_id points at a
 # table declared elsewhere — without this import the delete fails on an
 # unresolvable foreign key while the read-only report works fine.
 from app.domain.project import models as _project_models  # noqa: F401
-from app.domain.machine.microcloud import MicroCloudClient
-from app.domain.machine.models import ProjectMachine
-from app.domain.machine.repositories import ProjectMachineRepository
 
 
 async def main() -> int:
