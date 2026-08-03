@@ -23,6 +23,16 @@ client we control, or a proxy the traffic passes through.
 
 from dataclasses import dataclass
 
+# The placeholder the container carries in CLAUDE_CODE_OAUTH_TOKEN. Shaped like a
+# real OAuth token but an obvious non-credential: interactive Claude Code accepts
+# an OAuth token from the env WITHOUT the local validation it applies to a
+# .credentials.json file (measured — the file path showed "Not logged in", the
+# env var showed the normal prompt), and the metering proxy rewrites it to the
+# real token on the way out. So the box never holds anything that authenticates.
+SUBSCRIPTION_PLACEHOLDER_TOKEN = (
+    "sk-ant-oat01-cheese-placeholder-not-a-real-credential-injected-at-proxy"
+)
+
 
 @dataclass(frozen=True)
 class ProviderChoice:
@@ -58,23 +68,53 @@ def api_key_provider(gateway_base: str, key: str, model: str) -> ProviderChoice:
     )
 
 
-def subscription_provider(proxy_url: str, ca_path: str) -> ProviderChoice:
-    """The subscription, reached through a transparent proxy.
+def subscription_provider(
+    *,
+    ca_path: str,
+    project_id: str | None = None,
+    topic_id: str | None = None,
+) -> ProviderChoice:
+    """The subscription, as the container env for a metered sandbox.
 
-    BASE_URL and the model names are deliberately ABSENT: overriding either
-    would make Claude Code ask the official API for a model it does not serve,
-    and would mark the traffic as something other than an ordinary session.
+    The container holds NO real credential (hard requirement — a leaked machine
+    credential is a leaked subscription). It ships a fake one, and every request
+    is redirected BY NAME to the metering proxy (``--add-host`` on 443, see
+    TmuxHooksProvider), which rewrites the Authorization to the real token — that
+    token lives only on the backend. So the container env only has to:
+
+      - trust the proxy's CA (it terminates TLS for api.anthropic.com);
+      - NOT carry a stale gateway key — blank, not absent, or the CLI inherits
+        the backend's key and silently drops to API-key mode;
+      - announce which project/topic to bill.
+
+    Login is established by CLAUDE_CODE_OAUTH_TOKEN (a placeholder): interactive
+    Claude Code takes an OAuth token from the env as "logged in" without the local
+    validation it applies to a .credentials.json file, which rejected the same
+    placeholder as "Not logged in". The proxy rewrites it to the real token.
+
+    Crucially it sets NO ``ANTHROPIC_BASE_URL``. Setting one puts interactive
+    Claude Code into "API Usage Billing" mode — it treats the endpoint as a
+    custom API needing a key, ignores the OAuth token and shows "Not logged in".
+    Leaving it unset keeps it in SUBSCRIPTION mode against api.anthropic.com;
+    ``--add-host`` alone (to the proxy on 443) does the routing, so the request
+    is byte-for-byte an ordinary session and capture still catches undici (DNS).
+
+    The model is deliberately NOT pinned: the subscription serves its own
+    (claude-opus-5), and forcing a name it does not serve fails the turn.
     """
-    return ProviderChoice(
-        name="subscription",
-        env={
-            "HTTPS_PROXY": proxy_url,
-            "HTTP_PROXY": proxy_url,
-            # Node's own trust store flag — the proxy terminates TLS, so its CA
-            # has to be trusted by the client that actually makes the call.
-            "NODE_EXTRA_CA_CERTS": ca_path,
-        },
-    )
+    env = {
+        # Establishes "logged in" AND is what the CLI sends as the Bearer — the
+        # proxy swaps it for the real token. A non-credential on its own.
+        "CLAUDE_CODE_OAUTH_TOKEN": SUBSCRIPTION_PLACEHOLDER_TOKEN,
+        # Blank, not absent: an inherited ANTHROPIC_AUTH_TOKEN would flip the CLI
+        # into API-key mode and bypass the OAuth path.
+        "ANTHROPIC_AUTH_TOKEN": "",
+        "NODE_EXTRA_CA_CERTS": ca_path,
+    }
+    if project_id:
+        attr = f"{project_id}/{topic_id}" if topic_id else project_id
+        env["ANTHROPIC_CUSTOM_HEADERS"] = f"x-cheese-attr: {attr}"
+    return ProviderChoice(name="subscription", env=env)
 
 
 def choose(
@@ -83,14 +123,13 @@ def choose(
     gateway_base: str,
     gateway_key: str,
     model: str,
-    proxy_url: str,
     ca_path: str,
 ) -> ProviderChoice:
     """Pick one. Falling back from the subscription to a key-based provider is
     intentional and safe — the reverse never happens implicitly, because sending
     subscription traffic through our own client is the thing being avoided."""
-    if prefer_subscription and proxy_url and ca_path:
-        return subscription_provider(proxy_url, ca_path)
+    if prefer_subscription and ca_path:
+        return subscription_provider(ca_path=ca_path)
     return api_key_provider(gateway_base, gateway_key, model)
 
 

@@ -13,20 +13,21 @@ _ARGS = dict(
     gateway_base="http://gw:4000",
     gateway_key="secret",
     model="glm-5.2",
-    proxy_url="http://ccproxy:3128",
     ca_path="/ca.crt",
 )
 
 
-def test_the_subscription_leaves_the_endpoint_and_model_alone():
-    """Overriding either would send the official API a model it does not serve,
-    and would mark the traffic as something other than an ordinary session."""
+def test_the_subscription_sets_no_base_url_and_pins_no_model():
+    """Setting a BASE_URL flips interactive Claude Code into API-key mode; the
+    subscription must stay OAuth, so it sets none. --add-host does the routing."""
     env = choose(prefer_subscription=True, **_ARGS).env
 
     assert "ANTHROPIC_BASE_URL" not in env
-    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    # Blanked rather than absent: the CLI inherits the backend's os.environ, so
+    # an ANTHROPIC_AUTH_TOKEN left over from the gateway path would put it in
+    # API-key mode — billing another account and bypassing the meter entirely.
+    assert env["ANTHROPIC_AUTH_TOKEN"] == ""
     assert not [k for k in env if "MODEL" in k], env
-    assert env["HTTPS_PROXY"] == "http://ccproxy:3128"
     assert env["NODE_EXTRA_CA_CERTS"] == "/ca.crt"
 
 
@@ -43,10 +44,10 @@ def test_a_key_provider_is_addressed_directly_and_never_proxied():
 
 
 def test_an_unconfigured_subscription_falls_back_rather_than_half_applying():
-    """A half-applied subscription is the dangerous state: proxy set with no CA,
-    or a CA with nowhere to send. Falling back to the key provider is safe; the
+    """A half-applied subscription is the dangerous state: a port with no CA, or
+    a CA with nowhere to send. Falling back to the key provider is safe; the
     reverse must never happen implicitly."""
-    for missing in ({"proxy_url": ""}, {"ca_path": ""}):
+    for missing in ({"ca_path": ""},):
         env = choose(prefer_subscription=True, **{**_ARGS, **missing}).env
         assert env["ANTHROPIC_BASE_URL"] == "http://gw:4000", missing
         assert "HTTPS_PROXY" not in env, missing

@@ -122,6 +122,42 @@ class Settings(BaseSettings):
     # Image the tmux backend uses (base image + tmux + ttyd + pre-accepted
     # first-launch gates). Independent of sandbox_image (the SDK path's image).
     tmux_sandbox_image: str = "cheesex-agent-tmux:latest"
+    # When the backend itself runs in a container, the sandbox it spawns is a
+    # SIBLING, so any -v source must be a path the HOST daemon can see. The
+    # `cheese` CLI is baked into the sandbox image; set this to a HOST directory
+    # holding a fresher `cheese` to override it, or leave empty to use the baked
+    # copy. (The in-image /app/sandbox path is not host-visible and aborts the
+    # container if mounted.)
+    sandbox_shim_host_dir: str = ""
+
+    # --- Subscription compute through the metering proxy ---
+    # A turn on the subscription does NOT go through the LLM gateway: there is no
+    # per-call API key to meter, and re-originating the request from our own HTTP
+    # client would change what the provider sees. The meter is instead a proxy the
+    # traffic passes through — same observability, different place.
+    #
+    # OFF by default: with no proxy configured a sandbox would resolve
+    # api.anthropic.com to nothing and every turn would fail. Turning this on is a
+    # deployment decision that needs the proxy actually running.
+    subscription_enabled: bool = False
+    # Address the SANDBOX reaches the metering proxy at. The docker bridge address
+    # (not loopback, which no container can reach; not 0.0.0.0, which would put the
+    # subscription on the LAN).
+    subscription_proxy_host: str = "172.17.0.1"
+    subscription_proxy_port: int = 8443
+    # Where the proxy's own CA and the ccproxy CA are mounted from. The sandbox
+    # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
+    # an opaque TLS error far from its cause.
+    subscription_ca_host_path: str = ""
+    # The `.credentials.json` that makes Claude Code run as a subscription client.
+    # ROTATES ON EVERY REFRESH and a failed refresh writes it back EMPTY, which
+    # permanently kills the subscription — so it is copied per sandbox and
+    # promoted back only after a run that kept it valid, never shared live.
+    subscription_credentials_host_path: str = ""
+    # Token ceiling over a rolling window, enforced at the proxy (0 = no cap).
+    # Enforced BEFORE forwarding: a cap that only reports the overspend is not a cap.
+    subscription_token_cap: int = 0
+    subscription_cap_window_s: int = 5 * 3600
 
     # --- Self-hosted / BYO device compute (P3, fusion-design §5) ---
     # Public base URL a device reaches the backend at (NO /api suffix): the enrolled

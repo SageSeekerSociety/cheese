@@ -651,11 +651,26 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
+    # Loosen perms so the sandbox container (a different uid) can read/write the
+    # mount. Best-effort per entry: the container's Claude Code runs as its own
+    # uid and creates files here across turns, which the backend (another uid)
+    # then cannot chmod — EPERM on ONE such file used to abort the whole turn
+    # ('Operation not permitted' on session-env/…). A file the container made is
+    # already accessible to the container, so skipping it is harmless.
     for root, _dirs, files in os.walk(d):
-        os.chmod(root, 0o777)
+        _loosen(root, 0o777)
         for f in files:
-            os.chmod(os.path.join(root, f), 0o666)
+            _loosen(os.path.join(root, f), 0o666)
     return d
+
+
+def _loosen(path: str, mode: int) -> None:
+    import os
+
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
 
 
 def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
