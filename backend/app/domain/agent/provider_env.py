@@ -88,10 +88,17 @@ def subscription_provider(
 
     ``project_id``/``topic_id`` ride along as a custom header (verified to reach
     the proxy) — without it the meter sees tokens it cannot attribute to anyone.
+
+    The container carries NO real credential: it ships a fake one and the proxy
+    rewrites the Authorization to the real token, which lives only on the backend
+    (hard requirement — a machine must not hold a valid credential). ``proxy_url``
+    here is kept for the OAuth/refresh traffic; but refresh is actually done by a
+    single backend daemon, so on a running sandbox this mostly never fires.
     """
     env = {
-        # Kept for the OAuth/refresh traffic, which DOES honour it — and which
-        # only succeeds through a proxy (a direct refresh fails on this network).
+        # Kept for any OAuth/refresh traffic that honours it. The real refresh is
+        # single-point on the backend; the fake credential's far-future expiry
+        # means a sandbox should never trigger its own refresh anyway.
         "HTTPS_PROXY": proxy_url,
         "HTTP_PROXY": proxy_url,
         # Node's own trust store flag — the proxy terminates TLS, so its CA

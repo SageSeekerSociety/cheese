@@ -108,11 +108,12 @@ def _subscription_args() -> list[str]:
     turns kept answering). Resolving api.anthropic.com to the meter catches
     undici too, because that path still goes through DNS.
 
-    The CA is mounted read-only; the credentials are NOT mounted here — they are
-    copied into the session dir per sandbox, because Claude Code rewrites that
-    file on every refresh and a shared one would be rewritten under a concurrent
-    sandbox's feet (and a failed refresh writes it back empty, which permanently
-    kills the subscription).
+    Only the CA is mounted. The real credential is NEVER placed in the container
+    (hard requirement: a machine must not hold a valid credential). The sandbox
+    ships a FAKE one (see _write_session_settings), and the metering proxy swaps
+    the Authorization header for the real token, which lives only on the backend.
+    That also makes refresh single-point — one daemon owns the real credential,
+    so no two sandboxes race a rotation and write it back empty.
     """
     if not settings.subscription_enabled:
         return []
@@ -121,6 +122,32 @@ def _subscription_args() -> list[str]:
     if ca:
         args += ["-v", f"{ca}:/etc/cheese/proxy-ca.pem:ro"]
     return args
+
+
+def _fake_subscription_credential() -> dict:
+    """The placeholder `.credentials.json` a subscription sandbox ships with.
+
+    Structurally complete so Claude Code starts in subscription mode, far-future
+    expiry so it never tries to refresh (the backend owns the real token and its
+    refresh), and obvious non-credentials for the tokens. On its own it
+    authenticates nothing — every request is rewritten to the real token by the
+    proxy. If the proxy is bypassed, it 401s: a leaked container credential is
+    worth nothing, which is the requirement.
+    """
+    # A fixed far-future expiry (year ~2035). Not computed from the clock so the
+    # written file is deterministic and the reasoning ("never self-refreshes") is
+    # independent of when the container starts.
+    far_future_ms = 2_051_222_400_000
+    return {
+        "claudeAiOauth": {
+            "accessToken": "cheese-placeholder-not-a-real-credential",
+            "refreshToken": "cheese-placeholder-not-a-real-credential",
+            "expiresAt": far_future_ms,
+            "refreshTokenExpiresAt": far_future_ms,
+            "scopes": ["user:inference", "user:profile"],
+            "subscriptionType": "max",
+        }
+    }
 
 
 async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str]:
@@ -427,6 +454,16 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             encoding="utf-8",
         )
         target.chmod(0o666)
+        if settings.subscription_enabled:
+            # The FAKE credential (never a real one — the container must not hold
+            # a valid credential). It only lets Claude Code start in subscription
+            # mode; the metering proxy rewrites every request to the real token.
+            cred = Path(session_dir) / ".credentials.json"
+            cred.write_text(
+                json.dumps(_fake_subscription_credential(), ensure_ascii=False),
+                encoding="utf-8",
+            )
+            cred.chmod(0o600)
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history
