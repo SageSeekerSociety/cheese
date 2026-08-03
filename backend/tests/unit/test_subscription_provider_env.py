@@ -81,7 +81,10 @@ def test_sandbox_capture_args_follow_the_switch(monkeypatch, enabled):
         assert args == []
         return
     assert "--add-host" in args
+    # Messages AND the login/refresh hosts all route to the meter.
     assert "api.anthropic.com:172.17.0.1" in args
+    assert "console.anthropic.com:172.17.0.1" in args
+    assert "platform.claude.com:172.17.0.1" in args
     assert "/host/ca.pem:/etc/cheese/proxy-ca.pem:ro" in args
 
 

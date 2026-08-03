@@ -164,7 +164,14 @@ def _subscription_args() -> list[str]:
     """
     if not settings.subscription_enabled:
         return []
-    args = ["--add-host", f"api.anthropic.com:{settings.subscription_proxy_host}"]
+    host = settings.subscription_proxy_host
+    # api.anthropic.com carries the messages (metered); console.anthropic.com and
+    # platform.claude.com carry interactive Claude Code's login/refresh. All go
+    # to the same proxy, which routes each to its real host by SNI and injects the
+    # real token — so the login check passes without a valid credential in the box.
+    args: list[str] = []
+    for h in ("api.anthropic.com", "console.anthropic.com", "platform.claude.com"):
+        args += ["--add-host", f"{h}:{host}"]
     ca = settings.subscription_ca_host_path.strip()
     if ca:
         args += ["-v", f"{ca}:/etc/cheese/proxy-ca.pem:ro"]
