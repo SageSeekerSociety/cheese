@@ -78,6 +78,23 @@ def _best_effort_chmod(path: Path, mode: int) -> None:
         pass
 
 
+def _rewrite(path: Path, content: str, *, mode: int) -> None:
+    """Replace a file the backend planted, even if the container's user (uid 1000
+    in the sandbox image) rewrote it last turn under a different owner.
+
+    The backend runs as one uid and the sandbox's Claude Code as another, both
+    writing the SAME host-path session dir. So the settings/credential files this
+    plants get re-owned by the container between turns, and a plain overwrite then
+    fails EPERM. Unlinking first only needs write on the parent dir (which the
+    backend owns), so the file is always recreated fresh under the backend."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    path.write_text(content, encoding="utf-8")
+    _best_effort_chmod(path, mode)
+
+
 def _resume_ready(session_dir: str, resume_session_id: str) -> bool:
     """True when a resumable transcript for ``resume_session_id`` is present in
     this topic's ~/.claude mount (i.e. a cloned/forked conversation was written
@@ -513,21 +530,21 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         per-topic URL + token live in the container env, not the file)."""
         target = Path(session_dir) / "settings.json"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
+        _rewrite(
+            target,
             json.dumps(hooks_settings(), ensure_ascii=False),
-            encoding="utf-8",
+            mode=0o666,
         )
-        _best_effort_chmod(target, 0o666)
         if settings.subscription_enabled:
             # The FAKE credential (never a real one — the container must not hold
             # a valid credential). It only lets Claude Code start in subscription
             # mode; the metering proxy rewrites every request to the real token.
             cred = Path(session_dir) / ".credentials.json"
-            cred.write_text(
+            _rewrite(
+                cred,
                 json.dumps(_fake_subscription_credential(), ensure_ascii=False),
-                encoding="utf-8",
+                mode=0o600,
             )
-            _best_effort_chmod(cred, 0o600)
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history
