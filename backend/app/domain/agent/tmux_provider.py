@@ -66,6 +66,18 @@ def _cheese_cli_mount() -> list[str]:
     return []
 
 
+def _best_effort_chmod(path: Path, mode: int) -> None:
+    """chmod that tolerates not owning the file. The session dir is shared with
+    other uids across runs (the mount is a host path), so a file a previous run
+    created under a different owner can't be chmod'd by this one — but the write
+    already succeeded and the mode is only a nicety. EPERM here must not abort a
+    turn (it did: 'Operation not permitted' on settings.json)."""
+    try:
+        path.chmod(mode)
+    except OSError:
+        pass
+
+
 def _resume_ready(session_dir: str, resume_session_id: str) -> bool:
     """True when a resumable transcript for ``resume_session_id`` is present in
     this topic's ~/.claude mount (i.e. a cloned/forked conversation was written
@@ -493,7 +505,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             json.dumps(hooks_settings(), ensure_ascii=False),
             encoding="utf-8",
         )
-        target.chmod(0o666)
+        _best_effort_chmod(target, 0o666)
         if settings.subscription_enabled:
             # The FAKE credential (never a real one — the container must not hold
             # a valid credential). It only lets Claude Code start in subscription
@@ -503,7 +515,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
                 json.dumps(_fake_subscription_credential(), ensure_ascii=False),
                 encoding="utf-8",
             )
-            cred.chmod(0o600)
+            _best_effort_chmod(cred, 0o600)
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history
