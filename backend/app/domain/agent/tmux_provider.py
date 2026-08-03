@@ -379,15 +379,22 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             # key, no model pin — see subscription_provider. The container also
             # ships a fake credential (see _write_session_settings); the real one
             # never leaves the backend.
-            base = provider_env.subscription_provider(
+            #
+            # The subscription env WINS over the caller's `env`: that env carries
+            # the gateway's ANTHROPIC_BASE_URL/token (the default provider), and
+            # letting it override would send the turn to the GLM gateway instead
+            # of the metering proxy — silently, on a path that otherwise looks
+            # correct. Only the ANTHROPIC_* routing keys are overridden; the
+            # caller's other env is kept.
+            sub = provider_env.subscription_provider(
                 ca_path="/etc/cheese/proxy-ca.pem",
                 proxy_port=settings.subscription_proxy_port,
                 project_id=str(project_id),
                 topic_id=str(topic_id),
             ).env
+            merged = {**(env or {}), **sub}
         else:
-            base = settings.agent_env()
-        merged = {**base, **(env or {})}
+            merged = {**settings.agent_env(), **(env or {})}
         merged.update(
             {
                 "HOME": "/home/node",
