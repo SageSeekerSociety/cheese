@@ -101,6 +101,86 @@ async def test_run_hooks_turn_times_out_with_message_on_silence():
     assert events[0].text == "轮次超时"
 
 
+async def test_stale_stop_from_abandoned_turn_never_ends_the_new_turn(
+    monkeypatch, tmp_path
+):
+    """register() claims the topic's queue BEFORE the screen is ready (so no
+    hook is missed) — but that means a straggler from a PREVIOUS, abandoned
+    turn (its own late Stop included, arriving only once its `claude` process
+    finally finishes) can land in the fresh queue before the new turn's prompt
+    is even sent. It must never be mistaken for the new turn's own result."""
+    import uuid as _uuid
+
+    from app.core.config import settings
+    from app.domain.agent import event_spool
+    from app.domain.workspace import service as ws
+
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeProvider(HooksTurnProvider[str]):
+        name = "fake"
+
+        async def _ensure_ready(self, **kwargs):
+            # While "waiting for the screen", the abandoned previous turn's
+            # `claude` process finally finishes and its late Stop arrives.
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "旧turn的过期结果",
+                    "session_id": "s-old",
+                    "_eid": "stale-stop-1",
+                },
+            )
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            # The new turn genuinely starts now — its own events follow.
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "MessageDisplay",
+                    "delta": "新turn的真实回复",
+                    "_eid": "real-msg-1",
+                },
+            )
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "新turn的真实回复",
+                    "session_id": "s-new",
+                    "_eid": "real-stop-1",
+                },
+            )
+
+    provider = _FakeProvider(router=router, turn_timeout_s=2)
+    events = [
+        e
+        async for e in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id="s-old",
+        )
+    ]
+    types = [type(e).__name__ for e in events]
+    assert types == ["AgentMessage", "AgentResult"]
+    result = events[-1]
+    assert isinstance(result, AgentResult)
+    assert result.text == "新turn的真实回复"  # NOT the stale turn's text
+
+    # The stale Stop was never dropped — it's parked for a later reconcile.
+    entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
+    eids = [eid for _path, eid, _payload in entries]
+    assert eids == ["stale-stop-1"]
+
+
 async def test_failed_precheck_never_touches_the_router():
     """A turn that can't run at all (no Docker / no online device) must yield a
     clean error WITHOUT claiming the topic's queue — otherwise it would evict a
