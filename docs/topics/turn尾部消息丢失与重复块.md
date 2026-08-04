@@ -125,3 +125,23 @@ pyright PASS（0 errors，输出很干净，这次没有版本提示信息混进
 三次踩坑的教训是一致的：**只要环境缺 Rust 工具链，就绝对不能让 uv 从头重建 venv**——
 任何"换个新 venv 从零装"的防御思路都会在这条线上翻车，凡是涉及 `.venv` 不可写的兜底，
 都应该优先"完全不碰、只读使用现成的"，而不是"换个能写的地方重装"。
+
+## 第四次：连 UV_NO_SYNC 环境变量也不够——闸门宿主基础设施问题，已由发起人拍板降级检查
+
+第三版用 `export UV_NO_SYNC=1`（环境变量）在闸门上仍然失败：继承的 `.venv` 还带着一个
+指向不存在解释器的坏符号链接（`Ignoring existing virtual environment linked to
+non-existent Python interpreter`），uv 判定这个 venv 无效后，不管 `UV_NO_SYNC` 环境变量
+是否设置，都会先尝试删除/重建它——一样撞上 `.venv/share` 权限拒绝。
+
+已跟发起人确认：这是闸门宿主本身的基础设施问题（git/jj 不匹配、venv 跨用户权限、
+`srp_rs` 原生扩展编译，一共三层），不是任何子话题代码或子话题工作区能修好的。处理方式：
+项目 `check_command` 直接改成 `bash .claude/scripts/check.sh --no-tests`。本工作区同步
+了最终版 `check.sh`：
+- 新增 `--no-tests`（或 `SKIP_TESTS=1`）：pytest 整段跳过，记 SKIP，不计入 PASS/FAIL，
+  分母也相应减少（闸门宿主本来就没有可用 Postgres，跑不跑得过测不出真假）。
+- ruff/pyright/pytest 全部改成 `uv run --no-sync`（CLI 参数，不是环境变量）——本地验证
+  过这条路径连"venv 无效需要重建"这条检测都能绕开，不再有任何删除/重建 `.venv` 的尝试。
+
+本地跑 `bash .claude/scripts/check.sh --no-tests`：`Result: 2/2 passed`，约 1 分钟内
+跑完（ruff PASS、pyright PASS、pytest SKIP）。三处 turn 消息丢失/重复的业务修复、3 个
+功能测试都没有变。
