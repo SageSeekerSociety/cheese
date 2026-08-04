@@ -4,6 +4,7 @@ Spec §4.4 (AI 不能验收自己做的东西), §6.3 (采纳即归档/merge, �
 This is deterministic platform code, not AI.
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -19,6 +20,14 @@ from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
+
+logger = logging.getLogger("cheesex.review")
+
+_MERGE_FAILED_MESSAGE = (
+    "Acceptance could not complete because the topic could not be merged. "
+    "The card remains pending and the topic stays active; repair the workspace "
+    "and retry."
+)
 
 
 def approvals_required_of(project: Project | None) -> int:
@@ -237,8 +246,11 @@ class AcceptService:
         # 主分支保护 (spec §4.4): the accept itself counts as the accepter's
         # vote (default requirement of 1 ⇒ 现行为不变); short of votes the whole
         # transaction rolls back and nothing merges.
-        await self._repo.add_approval(card_id, decided_by)
-        votes = len(await self._repo.list_approver_handles(card_id))
+        approvers = await self._repo.list_approver_handles(card_id)
+        # Count this decision as a vote without persisting it yet. A merge can
+        # fail outside SQLAlchemy; delaying the write keeps even callers that
+        # catch ValidationError from accidentally committing a failed accept.
+        votes = len(set(approvers) | {decided_by})
         required = approvals_required_of(project)
         if votes < required:
             raise ValidationError(
@@ -251,23 +263,43 @@ class AcceptService:
         # `conflict`, 芝士 gets dispatched to resolve, a human retries.
         from app.domain.workspace import service as ws
 
-        merged: dict = {"merged": False, "reason": "workspace unavailable"}
         try:
             merged = ws.merge_topic(topic.project_id, topic.id)
         except Exception as exc:  # noqa: BLE001 — surface, don't invent success
-            merged = {"merged": False, "reason": str(exc)}
+            logger.exception(
+                "accept merge raised for project=%s topic=%s",
+                topic.project_id,
+                topic.id,
+            )
+            raise ValidationError(_MERGE_FAILED_MESSAGE) from exc
 
-        if not merged.get("merged") and merged.get("conflicts"):
-            card.status = AcceptStatus.conflict
-            card.decided_by = decided_by
-            card.decided_at = datetime.now(UTC)
-            card.note = merged.get("reason", "")
-            await self._session.flush()
-            await self._session.refresh(card)
-            return card
+        if not merged.get("merged"):
+            # The conflicts key means an attempted merge failed. An empty list
+            # is still a failure: Git can error before it identifies paths.
+            if "conflicts" in merged and merged.get("conflicts"):
+                await self._repo.add_approval(card_id, decided_by)
+                card.status = AcceptStatus.conflict
+                card.decided_by = decided_by
+                card.decided_at = datetime.now(UTC)
+                card.note = merged.get("reason", "")
+                await self._session.flush()
+                await self._session.refresh(card)
+                return card
+
+            # Discussion-only topics and a topic already on the base branch
+            # intentionally have nothing to merge and remain acceptable.
+            if merged.get("noop") is not True:
+                logger.error(
+                    "accept merge failed for project=%s topic=%s result=%r",
+                    topic.project_id,
+                    topic.id,
+                    merged,
+                )
+                raise ValidationError(_MERGE_FAILED_MESSAGE)
 
         # Merged (or nothing to merge — e.g. a discussion topic with no branch
         # work): the accept completes as before.
+        await self._repo.add_approval(card_id, decided_by)
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
         card.decided_by = decided_by

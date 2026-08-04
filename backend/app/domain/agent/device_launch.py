@@ -27,10 +27,11 @@ from pathlib import Path
 # this module's launcher and its callers build on it.
 from app.domain.agent.hooks_substrate import CHEESE_HOOK_SCRIPT, hooks_settings
 
-# Top-level first-launch gates (Claude Code 2.1.x) for $HOME/.claude.json. The
-# PER-PROJECT trust gate (projects[workdir].hasTrustDialogAccepted) is added by the
-# launcher for the resolved work dir — without it a "do you trust this folder?" dialog
-# appears and eats the first prompt (its menu even renders a `❯`, fooling readiness).
+# First-launch gates (Claude Code 2.1.x) for $HOME/.claude.json, kept here as the
+# readable statement of what the launch script writes inline. Without the
+# per-project trust gate a "do you trust this folder?" dialog appears and eats the
+# first prompt (its menu even renders a `❯`, fooling readiness); without
+# bypassPermissionsModeAccepted the permissions gate does the same.
 _CLAUDE_JSON_GATES = {
     "hasCompletedOnboarding": True,
     "autoUpdates": False,
@@ -51,17 +52,72 @@ def cheeselet_source() -> str:
     )
 
 
-def build_launch_script() -> str:
+# Reports what a turn cost. Claude Code writes a usage block per assistant
+# message into its transcript; nothing else on the machine knows those numbers,
+# and the transcript dies with the machine — which is why a week of spend could
+# not be attributed to a project, a topic, or even a prompt.
+#
+# Kept OUT of the launcher f-string on purpose: it is dense with braces, and
+# escaping them inside an f-string is a silent-corruption risk for no benefit.
+#
+# python3 rather than shell: the transcript is JSONL, there is no jq on a
+# machine, and a grep/sed parser works right up until a field moves.
+CHEESE_USAGE_READER = """import json, sys
+try:
+    hook = json.loads(sys.stdin.read())
+except Exception:
+    sys.exit(0)
+path = hook.get("transcript_path")
+if not path:
+    sys.exit(0)
+tot = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+model = ""
+try:
+    with open(path, errors="ignore") as fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            m = d.get("message") or {}
+            u = m.get("usage") or {}
+            if not u:
+                continue
+            model = m.get("model") or model
+            tot["input"] += u.get("input_tokens") or 0
+            tot["output"] += u.get("output_tokens") or 0
+            tot["cache_read"] += u.get("cache_read_input_tokens") or 0
+            tot["cache_write"] += u.get("cache_creation_input_tokens") or 0
+except OSError:
+    sys.exit(0)
+if any(tot.values()):
+    print(json.dumps({"hook_event_name": "CheeseUsage", "model": model, **tot}))
+"""
+
+# The reader has to be a FILE, not a heredoc: `python3 - <<PY` hands python the
+# heredoc as its stdin, so the hook payload we actually need to read would never
+# arrive. Verified by running it both ways.
+CHEESE_USAGE_SCRIPT = """#!/bin/sh
+python3 "$HOME/.claude/cheese-usage.py" | cheese-hook >/dev/null 2>&1 || true
+"""
+
+
+def build_launch_script(sync_on_stop: bool = False) -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
     screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
     ``CHEESE_WORK`` (cwd), plus the hook wiring (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``)
     and ``CLAUDE_MODEL`` (optional)."""
-    settings_json = json.dumps(hooks_settings(), ensure_ascii=False)
+    usage_script = CHEESE_USAGE_SCRIPT
+    usage_reader = CHEESE_USAGE_READER
+    settings_json = json.dumps(
+        hooks_settings(
+            ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"]
+        ),
+        ensure_ascii=False,
+    )
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
-    # never expands them. ~/.claude.json is built by node (from the base gates in the
-    # $CHEESE_CLAUDE_GATES env var) because it needs the RESOLVED work dir as a dynamic
-    # key (per-project trust) — a quoted heredoc can't do that. Reading the base from an
-    # env var avoids any nested-quoting between the shell, node, and the JSON.
+    # never expands them. ~/.claude.json is written by the shell (see below) so a
+    # machine without node can still launch.
     return f"""set -e
 # CHEESE_HOME/CHEESE_WORK arrive with a LITERAL "$HOME/..." placeholder (the
 # server cannot know the device user's home). Substitute the REAL home first —
@@ -79,20 +135,67 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 # the tmux-hosted claude below runs from a fresh server with its own cwd.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
+# A machine on its own host starts with an EMPTY work dir, so whatever the agent
+# writes there is unreachable — the topic branch never moves and 采纳 has nothing
+# to take. Give it the branch itself: a real checkout it can push back from.
+# (Co-located devices get the real worktree instead and skip this entirely.)
+if [ -n "${{CHEESE_GIT_REMOTE:-}}" ] && [ ! -d "$CHEESE_WORK/.git" ]; then
+  git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" \
+      clone -q "$CHEESE_GIT_REMOTE" "$CHEESE_WORK" 2>/dev/null || true
+  if [ -d "$CHEESE_WORK/.git" ]; then
+    git -C "$CHEESE_WORK" config user.name "芝士"
+    git -C "$CHEESE_WORK" config user.email "cheese@zhishi.local"
+    git -C "$CHEESE_WORK" config http.extraHeader "X-Cheese-Token: $CHEESE_TOKEN"
+    git -C "$CHEESE_WORK" checkout -q -B "${{CHEESE_GIT_BRANCH:-main}}" \
+      "origin/${{CHEESE_GIT_BRANCH:-main}}" 2>/dev/null \
+      || git -C "$CHEESE_WORK" checkout -q -B "${{CHEESE_GIT_BRANCH:-main}}"
+  fi
+fi
 mkdir -p "$HOME/.claude"
-cat > "$HOME/.claude/.mktrust.js" <<'JS'
-const fs = require("fs");
-const base = JSON.parse(process.env.CHEESE_CLAUDE_GATES);
-const w = process.env.CHEESE_WORK;
-base.projects = {{
-  [w]: {{ hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true }},
-}};
-fs.writeFileSync(process.env.HOME + "/.claude.json", JSON.stringify(base));
-JS
-node "$HOME/.claude/.mktrust.js"
+# Written by the shell, not node: a machine whose `claude` is the native binary
+# has no node at all (MicroCloud's Debian image is exactly that), and under
+# `set -e` a missing node aborted the whole launch — the screen opened, claude
+# never started, and the turn hung with nothing anywhere saying why. The only
+# dynamic value here is a work dir this platform generates, so an unquoted
+# heredoc is enough and depends on nothing.
+cat > "$HOME/.claude.json" <<JSON
+{{"hasCompletedOnboarding":true,"autoUpdates":false,"bypassPermissionsModeAccepted":true,"projects":{{"$CHEESE_WORK":{{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}}}}
+JSON
 cat > "$HOME/.claude/settings.json" <<'JSON'
 {settings_json}
 JSON
+cat > "$HOME/.claude/cheese-sync" <<'SYNC'
+#!/bin/sh
+# Runs at the end of every turn on a machine that owns its own tree: commit what
+# the agent wrote and push the topic branch back, so 采纳 can see it. Silent by
+# design — a hook that fails must never take the turn down with it.
+[ -n "${{CHEESE_GIT_REMOTE:-}}" ] || exit 0
+[ -d "$CHEESE_WORK/.git" ] || exit 0
+cd "$CHEESE_WORK" || exit 0
+git add -A >/dev/null 2>&1
+git diff --cached --quiet && exit 0
+git commit -q -m "芝士 edits" >/dev/null 2>&1 || exit 0
+# Report the outcome through cheese-hook, which already has a durable spool and
+# retries until the backend acknowledges. Staying non-fatal was right — a Stop
+# hook that dies takes the turn with it — but silence was not: a rejected push
+# left the turn reporting done while the only copy of the agent's work sat on a
+# machine nobody would think to look at. Exit 0 either way; the difference is
+# that failure now leaves a trace instead of nothing.
+sha="$(git rev-parse HEAD 2>/dev/null)"
+if git push -q origin "HEAD:${{CHEESE_GIT_BRANCH:-main}}" >/dev/null 2>&1; then
+  status=ok
+else
+  status=failed
+fi
+printf '{{"hook_event_name":"CheeseSync","status":"%s","commit":"%s","branch":"%s"}}' \
+  "$status" "$sha" "${{CHEESE_GIT_BRANCH:-main}}" | cheese-hook >/dev/null 2>&1 || true
+SYNC
+chmod +x "$HOME/.claude/cheese-sync"
+cat > "$HOME/.claude/cheese-usage.py" <<'USAGEPY'
+{usage_reader}USAGEPY
+cat > "$HOME/.claude/cheese-usage" <<'USAGE'
+{usage_script}USAGE
+chmod +x "$HOME/.claude/cheese-usage"
 cat > "$HOME/.claude/cheese-hook" <<'SH'
 {_CHEESE_HOOK_SCRIPT}SH
 chmod +x "$HOME/.claude/cheese-hook"
@@ -170,6 +273,8 @@ def build_screen_launch(
     project_id: str | None = None,
     topic_id: str | None = None,
     author: str | None = None,
+    git_remote: str | None = None,
+    git_branch: str | None = None,
 ) -> tuple[list[str], dict[str, str], str]:
     """Assemble ``(command, env, cheeselet_source)`` for ``DeviceHub.open_screen``.
 
@@ -179,7 +284,7 @@ def build_screen_launch(
     ``project_id``/``topic_id`` context are given, the launcher also fetches the
     ``cheese`` platform-action CLI (accept cards / docs / decisions / memory) and wires
     its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
-    script = build_launch_script()
+    script = build_launch_script(sync_on_stop=bool(git_remote))
     command = ["bash", "-lc", script]
     env: dict[str, str] = {
         "CHEESE_HOOK_URL": hook_url,
@@ -188,7 +293,6 @@ def build_screen_launch(
         "CHEESE_WORK": work_dir,
         # Base first-launch gates the launcher's node reads to build ~/.claude.json
         # (it adds the per-project trust entry for the resolved work dir).
-        "CHEESE_CLAUDE_GATES": json.dumps(_CLAUDE_JSON_GATES, ensure_ascii=False),
     }
     if model:
         env["CLAUDE_MODEL"] = model
@@ -204,6 +308,11 @@ def build_screen_launch(
         env["CHEESE_TOPIC"] = topic_id
     if author:
         env["CHEESE_AUTHOR"] = author
+    if git_remote:
+        # Only a machine on its own host gets these; a co-located device edits
+        # the real worktree and must not clone over it.
+        env["CHEESE_GIT_REMOTE"] = git_remote
+        env["CHEESE_GIT_BRANCH"] = git_branch or "main"
     if extra_env:
         env.update(extra_env)
     return command, env, cheeselet_source()

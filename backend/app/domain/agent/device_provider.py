@@ -17,9 +17,10 @@ Per turn (``run_turn``):
 
 ``checkpoint`` snapshots the topic worktree when the device is CO-LOCATED (it edited
 the backend's real tree); for a remote device it is a no-op (the device owns its own
-tree — a future extension can ``exec`` a git snapshot on the device over the link).
+tree and pushes it back over git smart-HTTP instead).
 """
 
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -27,6 +28,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
+from app.domain.agent import provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import build_screen_launch
 from app.domain.agent.hook_events import HookRouter
@@ -40,6 +42,8 @@ from app.domain.workspace import service as ws
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
 # agent_handle). Takes both ids because the device is chosen with topic affinity, not
 # just per project (execution-architecture v4 §affinity).
+logger = logging.getLogger(__name__)
+
 DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
 ]
@@ -77,6 +81,26 @@ async def resolve_pinned_device(
     return None
 
 
+# Addresses that only mean something ON the box. Routing the box's own turns
+# through the local LLM gateway is what makes their spend visible — but the same
+# value handed to a machine somewhere else names nothing there, and the failure
+# is a turn that dies on a connection error with no hint why.
+_BOX_LOCAL_HOSTS = ("localhost", "127.0.0.1", "172.17.0.1", "172.18.0.1", "litellm")
+
+
+def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) -> None:
+    base = env.get("ANTHROPIC_BASE_URL", "")
+    if any(h in base for h in _BOX_LOCAL_HOSTS):
+        logger.error(
+            "device %s is remote but its ANTHROPIC_BASE_URL is %s, which only "
+            "resolves on the backend's own host — its turns will fail to reach a "
+            "model. Set a publicly reachable gateway URL, or point remote devices "
+            "back at the upstream.",
+            device_id,
+            base,
+        )
+
+
 class DeviceProvider(HooksTurnProvider[HubScreen]):
     """The REMOTE hooks backend: runs interactive `claude` on a user's enrolled
     machine over the frozen link.Msg channel (DeviceHub), streaming AgentEvents
@@ -105,6 +129,9 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # resolver is used lazily (keeps this module importable without a DB).
         self._device_resolver = device_resolver
         self._public_base = (public_base or settings.connector_public_base).rstrip("/")
+        # (project, topic) → was that turn's device co-located? Written when a
+        # turn resolves its device, read by checkpoint() afterwards.
+        self._co_located_at: dict[tuple[uuid.UUID, uuid.UUID], bool] = {}
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
@@ -161,14 +188,41 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 return screen
         return None
 
-    def _work_dir(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
+    async def _is_co_located(self, device_id: str) -> bool:
+        """Whether this device shares the backend's filesystem.
+
+        ``device_shared_workspace_host_root`` is deployment-wide, but a deployment
+        can host BOTH kinds of device at once: the box cheese itself runs on, and
+        machines it provisioned from MicroCloud. A provisioned machine is on its
+        own host and shares nothing — and getting this wrong fails SILENTLY: the
+        launcher `mkdir -p`s whatever path it is given, so the agent would open a
+        turn in an empty directory instead of the topic's worktree.
+        """
+        if not settings.device_shared_workspace_host_root.strip():
+            return False
+        from app.domain.machine.repositories import ProjectMachineRepository
+
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        async with factory() as session:
+            provisioned = await ProjectMachineRepository(session).is_provisioned_device(
+                device_id
+            )
+        return not provisioned
+
+    def _work_dir(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID, *, co_located: bool
+    ) -> str:
         """The screen's cwd. For a CO-LOCATED device (one sharing this backend's
         filesystem, ``device_shared_workspace_host_root`` set) this is the topic's
         REAL worktree, translated from the container path to the host root the device
         sees — so device edits land in the topic branch and checkpoint/accept work
         with no clone/sync. Otherwise a per-topic scratch dir the launcher creates."""
         host_root = settings.device_shared_workspace_host_root.strip()
-        if host_root:
+        if co_located and host_root:
             wt = ws.topic_worktree(
                 project_id, topic_id
             ).resolve()  # materializes + chmods
@@ -207,8 +261,24 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         home_dir = f"$HOME/.cheese/home/{project_id}"
-        work_dir = self._work_dir(project_id, topic_id)
-        gateway_env = {**settings.agent_env(), **(env or {})}
+        co_located = await self._is_co_located(device_id)
+        # checkpoint() runs after the turn, from a caller that has no device in
+        # hand — remember what this device is, or the snapshot decision falls back
+        # to the deployment-wide switch and is wrong for every remote machine.
+        self._co_located_at[(project_id, topic_id)] = co_located
+        work_dir = self._work_dir(project_id, topic_id, co_located=co_located)
+        # A remote machine gets the backend's own model route and its scoped
+        # token — never the upstream provider key. The backend substitutes the
+        # project's virtual key, so the credential stays on the box and spend is
+        # attributed without having to trust the machine to report it.
+        provider = provider_env.api_key_provider(
+            gateway_base=f"{self._public_base}/api/llm",
+            key=token,
+            model=settings.agent_model,
+        )
+        gateway_env = {**provider.env, **(env or {})}
+        if not co_located:
+            _warn_if_model_endpoint_is_box_local(gateway_env, device_id)
         command, screen_env, cheeselet = build_screen_launch(
             hook_url=self._hook_url(topic_id),
             hook_token=token,
@@ -221,6 +291,16 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             project_id=str(project_id),
             topic_id=str(topic_id),
             author=agent_handle,
+            # A machine on its own host has no worktree to edit, so it clones the
+            # project and pushes the topic branch back. Same origin + same scoped
+            # token the platform CLI already uses from this machine — one
+            # convention, so there is a single place to be wrong about the prefix.
+            git_remote=(
+                None
+                if co_located
+                else f"{self._public_base}/api/projects/{project_id}/git"
+            ),
+            git_branch=ws.branch_for_topic(topic_id),
         )
         return await self._hub.open_screen(
             device_id,
@@ -298,6 +378,6 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         """A CO-LOCATED device edited the backend's REAL worktree this turn, so
         snapshot it into version history exactly like the local path (else 采纳/diff
         wouldn't see the edits). A REMOTE device owns its own tree → still a no-op
-        (a future extension can exec a snapshot on the device over the link)."""
-        if settings.device_shared_workspace_host_root.strip():
+        (it pushes its own work back over git instead)."""
+        if self._co_located_at.get((project_id, topic_id)):
             ws.snapshot_worktree(project_id, topic_id)

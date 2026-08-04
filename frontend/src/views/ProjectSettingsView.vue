@@ -5,12 +5,14 @@ import {
   createRole,
   getComputeProfiles,
   getExecutionProfiles,
+  getModelProfiles,
   getProject,
   getSandboxImage,
   getUpstream,
   listRoles,
   setComputeProfile,
   setExecutionProfile,
+  setModelProfile,
   setProjectExpertRole,
   setSandboxImage,
   setUpstream,
@@ -35,6 +37,8 @@ const router = useRouter()
 const projectName = ref('')
 const ai = ref<ExecProfiles | null>(null)
 const compute = ref<ComputeProfiles | null>(null)
+const model = ref<ComputeProfiles | null>(null)
+const savingModel = ref<string | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const env = ref<SandboxImageInfo | null>(null)
@@ -124,10 +128,11 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, compP, envP, upP, rolesP] = await Promise.all([
+    const [proj, execP, compP, modelP, envP, upP, rolesP] = await Promise.all([
       getProject(props.projectId),
       getExecutionProfiles(props.projectId),
       getComputeProfiles(props.projectId),
+      getModelProfiles(props.projectId),
       getSandboxImage(props.projectId),
       getUpstream(props.projectId),
       listRoles(),
@@ -135,6 +140,7 @@ async function load() {
     projectName.value = proj.name
     ai.value = execP
     compute.value = compP
+    model.value = modelP
     env.value = envP
     upstreamSaved.value = upP.url
     upstreamUrl.value = upP.url ?? ''
@@ -170,6 +176,19 @@ async function pickCompute(id: string) {
     error.value = e instanceof Error ? e.message : '切换算力池失败'
   } finally {
     savingCompute.value = null
+  }
+}
+
+async function pickModel(id: string) {
+  if (!model.value || model.value.current === id) return
+  savingModel.value = id
+  try {
+    const r = await setModelProfile(props.projectId, id)
+    model.value = { ...model.value, current: r.current }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '切换模型失败'
+  } finally {
+    savingModel.value = null
   }
 }
 
@@ -397,6 +416,49 @@ watch(() => props.projectId, load)
               <a class="link" @click="router.push({ name: 'market' })">市场</a>
               申请接入。
             </p>
+          </div>
+        </section>
+
+        <!-- 模型 -->
+        <section v-if="(model?.profiles?.length ?? 0) > 0" class="ln-section">
+          <div class="ln-section-head">
+            <v-icon size="18" class="me-1 c-muted">mdi-brain</v-icon>
+            <span class="ln-section-title">模型</span>
+          </div>
+          <div class="ln-body">
+            <p class="t-body c-muted mb-2" style="font-size: 0.82rem">
+              芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省
+              订阅额度）；复杂项目可切 <strong>Opus 5</strong>（更强，但更快消耗额度）。
+            </p>
+            <button
+              v-for="p in model?.profiles ?? []"
+              :key="p.id"
+              type="button"
+              class="pool-row"
+              :class="{ 'pool-row--active': model?.current === p.id }"
+              :disabled="savingModel !== null"
+              @click="pickModel(p.id)"
+            >
+              <span
+                class="pool-radio"
+                :class="{ 'pool-radio--on': model?.current === p.id }"
+              />
+              <div class="pool-main">
+                <div class="pool-title">
+                  {{ p.label }}
+                  <span class="pool-tier">{{ p.price }}</span>
+                </div>
+                <div class="pool-sub c-muted">{{ p.description }}</div>
+              </div>
+              <v-progress-circular
+                v-if="savingModel === p.id"
+                indeterminate
+                size="16"
+                width="2"
+                color="primary"
+              />
+              <span v-else-if="model?.current === p.id" class="pool-current">使用中</span>
+            </button>
           </div>
         </section>
 

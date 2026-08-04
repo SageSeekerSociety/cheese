@@ -35,6 +35,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A failed build used to leave this workflow SKIPPED, which reads exactly like
+  # "nothing to do" — so main could sit ahead of the box with nothing red to
+  # show it, and a merged fix looked shipped when it was not. This job turns that
+  # case red instead. It runs nowhere near the box, so it costs nothing.
+  build-did-not-produce-images:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion != 'success'
+    runs-on: [self-hosted, cheese-dev]
+    steps:
+      - name: Say why nothing was deployed
+        run: |
+          echo "::error::Build ${{ github.event.workflow_run.conclusion }} for \
+          ${{ github.event.workflow_run.head_sha }} — no images were pushed, so \
+          dev is still running the previous commit. Re-run the build; a PyPI or \
+          registry reset is the usual cause."
+          exit 1
+
   deploy:
     # A manual dispatch trusts the operator's ref; an automatic run requires the
     # build that triggered it to have SUCCEEDED (a red build has no images).

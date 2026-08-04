@@ -16,5 +16,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Prove restore failures fail the drill
+        run: bash deploy/tests/test-db-restore-test.sh
       - name: Restore latest backup into a throwaway postgres
         run: bash deploy/db-restore-test.sh

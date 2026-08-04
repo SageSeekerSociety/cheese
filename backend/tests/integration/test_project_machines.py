@@ -1,0 +1,111 @@
+"""Project machines end to end against a real database.
+
+Covers what the unit tests can't: that the table the migration builds actually
+holds a row, and that a deployment with no MicroCloud credentials says so
+rather than failing somewhere inside a provider call.
+"""
+
+import uuid
+
+from anyio.from_thread import BlockingPortal
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.machine.models import MachineStatus
+from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.project.repositories import ProjectRepository
+
+
+def _project(client) -> str:
+    return client.post("/api/projects", json={"name": "机器项目"}).json()["data"]["id"]
+
+
+def test_reads_report_an_unconfigured_deployment(client):
+    # The test settings carry no MicroCloud credentials, so the feature must
+    # name that plainly instead of surfacing a provider stack trace.
+    pid = _project(client)
+    response = client.get(f"/api/projects/{pid}/machines")
+    assert response.status_code == 422
+    assert "not configured" in response.json()["message"]
+
+
+def test_provisioning_requires_a_real_credential(client):
+    # Provisioning spends money and leaves a machine running, so it must be
+    # refused before anything else is considered — including configuration.
+    pid = _project(client)
+    assert client.post(f"/api/projects/{pid}/machines", json={}).status_code == 401
+
+
+def test_row_round_trips_through_the_migrated_table(
+    db_session: AsyncSession, _portal: BlockingPortal
+):
+    async def _run() -> None:
+        project = await ProjectRepository(db_session).add(name="机器项目")
+        repo = ProjectMachineRepository(db_session)
+
+        machine = await repo.add(
+            project_id=project.id,
+            machine_id=101,
+            customer_id=7,
+            account_id=9,
+            offering_id=1,
+            hostname="jiqi-abc123-1",
+            login_user="cheese",
+            cores=2,
+            memory_mb=4096,
+            disk_gb=20,
+            status=MachineStatus.provisioning,
+            ip=None,
+            requested_by="andy",
+        )
+
+        listed = await repo.list_for_project(project.id)
+        assert [m.id for m in listed] == [machine.id]
+
+        await repo.set_state(machine, status=MachineStatus.running, ip="10.0.1.10")
+        reread = await repo.get(machine.id)
+        assert reread is not None
+        assert reread.status == MachineStatus.running
+        assert reread.ip == "10.0.1.10"
+
+        # A later read that omits the IP must not erase the way back in.
+        await repo.set_state(machine, status=MachineStatus.stopping, ip=None)
+        again = await repo.get(machine.id)
+        assert again is not None and again.ip == "10.0.1.10"
+
+        await repo.delete(machine)
+        assert await repo.list_for_project(project.id) == []
+
+    _portal.call(_run)
+
+
+def test_machines_are_scoped_to_their_project(
+    db_session: AsyncSession, _portal: BlockingPortal
+):
+    async def _run() -> None:
+        projects = ProjectRepository(db_session)
+        one = await projects.add(name="A")
+        two = await projects.add(name="B")
+        repo = ProjectMachineRepository(db_session)
+
+        await repo.add(
+            project_id=one.id,
+            machine_id=1,
+            customer_id=1,
+            account_id=1,
+            offering_id=1,
+            hostname="a-1",
+            login_user="cheese",
+            cores=1,
+            memory_mb=512,
+            disk_gb=10,
+            status=MachineStatus.running,
+            ip="10.0.0.1",
+            requested_by=None,
+        )
+
+        assert await repo.list_for_project(two.id) == []
+        assert await repo.find_by_hostname(two.id, "a-1") is None
+        assert await repo.find_by_hostname(one.id, "a-1") is not None
+        assert await repo.get(uuid.uuid4()) is None
+
+    _portal.call(_run)

@@ -81,6 +81,26 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             return AgentMessage(text=text, eid=eid if isinstance(eid, str) else None)
         return None
 
+    if event == "CheeseSync":
+        # A machine that owns its tree reports whether its push landed. Only the
+        # failure is surfaced: on success the work is already visible in the
+        # branch, and a message per turn saying so would be noise that trains
+        # people to skip it.
+        #
+        # This has to reach the human. A turn that ends with its work still on
+        # the machine looks identical to one that succeeded — that is what let a
+        # rejected push read as a completed turn until the machine was deleted
+        # and the work went with it.
+        if str(hook.get("status")) == "failed":
+            branch = hook.get("branch") or "the topic branch"
+            return AgentMessage(
+                text=(
+                    f"⚠️ 这轮的改动没能推回 {branch}——它还留在那台机器上，"
+                    "采纳和 diff 现在看不到它。请重试本轮；若机器被回收，改动会丢失。"
+                )
+            )
+        return None
+
     if event == "Stop":
         sid = hook.get("session_id")
         return AgentResult(
@@ -130,3 +150,36 @@ class HookRouter:
 
 # Shared singleton: the endpoint and the provider import this same instance.
 hook_router = HookRouter()
+
+
+def usage_from_hook(hook: dict) -> AgentUsage | None:
+    """A turn's real token counts, carried back from the machine.
+
+    Deliberately NOT part of ``translate_hook``: usage is not an event in the
+    turn's stream, it is a fact about the turn. Returning it from there made the
+    type checker object, and the objection was right — the caller records it,
+    the UI never shows it.
+    """
+    # The machine is the only place these numbers exist — Claude Code writes
+    # a usage block per assistant message and the transcript dies with the
+    # host. Carrying them back is what turns "300 RMB went somewhere" into a
+    # per-project, per-turn figure.
+    total = sum(
+        int(hook.get(k) or 0) for k in ("input", "output", "cache_read", "cache_write")
+    )
+    if total <= 0:
+        return None
+    return AgentUsage(
+        model=str(hook.get("model") or "unknown"),
+        # Cache reads are NOT free and they dominate: one document-writing
+        # task read 2.9M cached tokens against 141k of fresh input — 20x, and
+        # half its cost. AgentUsage has no cache field, so they are folded
+        # into the input count; leaving them out would under-report a turn by
+        # more than it reports.
+        input_tokens=(
+            int(hook.get("input") or 0)
+            + int(hook.get("cache_read") or 0)
+            + int(hook.get("cache_write") or 0)
+        ),
+        output_tokens=int(hook.get("output") or 0),
+    )

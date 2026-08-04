@@ -261,10 +261,22 @@ async def viewer_socket(
     db: DbSession,
     token: str | None = Query(default=None),
 ) -> None:
-    """Relay one browser terminal ← one device screen, byte-for-byte. Read-only: the
-    viewer receives raw ``screen.data`` (fanned out by the hub) and may only send
-    ``resize`` control frames (JSON text) — keystrokes are ignored. Unknown-screen and
-    not-authorized close identically (1008) so a screen id can't be enumerated."""
+    """Relay one browser terminal ↔ one device screen, byte-for-byte.
+
+    Frames split by type: TEXT is control (JSON ``resize``), BINARY is keystrokes
+    forwarded to the pane. Keeping input on the binary channel means a control
+    message can never be mistaken for typing, or the reverse.
+
+    Input is deliberate, not incidental: whoever can type here can run anything on
+    that machine as the agent's user. It is gated by the SAME check as watching —
+    a logged-in member/owner of the screen's project, or a member of its topic —
+    because that is already the trust boundary the agent itself runs inside, and a
+    member who wants a shell there can otherwise just ask the agent for one.
+    Nothing is forwarded before the viewer has attached, so keystrokes cannot
+    reach a pane that was never subscribed.
+
+    Unknown-screen and not-authorized close identically (1008) so a screen id
+    can't be enumerated."""
     screen = device_hub.screen(sid)
     if screen is None or not await _may_view_screen(db, screen, token):
         await websocket.close(code=1008, reason="cannot view this screen")
@@ -281,7 +293,12 @@ async def viewer_socket(
                 break
             text = message.get("text")
             if text is None:
-                continue  # read-only: ignore any keystroke bytes
+                data = message.get("bytes")
+                # Before the first resize there is no subscription on the device,
+                # so there is nothing to type into yet.
+                if data and attached:
+                    await device_hub.viewer_input(device_id, sid, data)
+                continue
             try:
                 ctrl = json.loads(text)
             except ValueError:
