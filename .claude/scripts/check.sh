@@ -44,7 +44,28 @@ fi
 
 # --- pytest ---
 echo "==> pytest"
-if uv run pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -3; then
+# Fail fast (not present, not hanging) when the test DB is unreachable. Without
+# this, every DB-touching test (the large majority) fails, and with
+# --reruns 2 --reruns-delay 3 each one pays a ~6s retry tax before giving up —
+# across ~3000 tests that blows well past any reasonable CI/gate timeout
+# instead of reporting a clear, fast "no DB" failure.
+if ! uv run python -c "
+import socket, sys
+from urllib.parse import urlparse
+from app.core.config import settings
+
+u = urlparse(settings.database_url.replace('+asyncpg', ''))
+s = socket.socket()
+s.settimeout(2)
+try:
+    s.connect((u.hostname, u.port))
+except OSError as e:
+    print(f'database unreachable at {u.hostname}:{u.port}: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1; then
+    echo "  FAIL: pytest (no DB — skipped the run instead of paying the rerun-delay tax across ~3000 tests)"
+    ((++FAIL))
+elif uv run pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -3; then
     echo "  PASS: pytest"
     ((++PASS))
 else
