@@ -229,3 +229,35 @@ venv（比如第一次跑）时兜底回退到 `uv run --no-sync`。本地用只
   pyright 在 scratch venv 里 PASS（约 1 分钟内完成，没有卡住），`Result: 2/2 passed`。
 
 三处 turn 消息丢失/重复的业务修复、3 个功能测试全程未改动。
+
+## 第八次：探测点选错了——.venv/bin/python3 能跑不代表 .venv/bin/pyright 能跑
+
+闸门这次日志：`.venv/bin/python3 --version` 探测过了（走了 `VENV_OK=1` 分支，用了
+`uv run --no-sync pyright`），但还是原样报 `.venv/bin/pyright: cannot execute:
+required file not found`。查下来是探测点本身选错了对象：
+
+- `.venv/bin/python3` 是符号链接，最终指向 `~/.local/share/uv/python/cpython-3.13.../
+  bin/python3.13`——这是 uv 按 `$HOME` 管理的一份解释器，只要闸门跑这个 check 的用户
+  和建这个 venv 时是同一个（应该都是镜像里的 `node` 用户），这条链路天然就是通的，跟
+  这个项目具体检出到哪个绝对路径完全无关。
+- 但 `.venv/bin/pyright`（`.venv/bin/pytest` 同理）是 uv/pip 生成的纯 Python 控制台
+  脚本，shebang 是**创建 venv 那一刻这个项目目录的绝对路径**（`#!/work/backend/
+  .venv/bin/python`），跟项目检出到哪儿绑死。闸门把这个 venv 复制到了另一个绝对路径
+  的 worktree 下，`.venv/bin/python3` 能跑，不代表 `.venv/bin/pyright` 这个 shebang
+  指向的具体那个路径存在。
+
+探测点改成直接测 `.venv/bin/pyright --version`（就测会失败的那个东西本身，不测一个
+"看起来相关但其实不受同一个坑影响"的替身）。本地这次用更贴近真实场景的方式复现：不
+去弄坏 `.venv/bin/python` 的符号链接，只把 `.venv/bin/pyright`/`.venv/bin/pytest`
+两个脚本自己的 shebang 头一行改写成闸门日志里那个不存在的绝对路径，验证：
+1. 改写前：确认 `.venv/bin/python3 --version` 能跑（旧探测点会给出 `VENV_OK=1` 的
+   误判）。
+2. 改写后：`.venv/bin/pyright --version` 直接复现出一模一样的
+   `cannot execute: required file not found`。
+3. 用这份精确复现跑 `bash check.sh --no-tests`：打印"console scripts don't execute"
+   提示后落到 scratch venv，ruff PASS、pyright 在 scratch venv 里 PASS，约 1 分钟内
+   跑完不卡住，`Result: 2/2 passed`。
+4. 复原 `.venv/bin/pyright`/`.venv/bin/pytest`，确认恢复正常（`pyright --version`
+   正常输出版本号），再跑一遍确认 `Result: 2/2 passed` 不受影响。
+
+三处 turn 消息丢失/重复的业务修复、3 个功能测试全程未改动。

@@ -37,21 +37,27 @@ PYTEST_ARGS="-n 4"
 [[ "$FULL" == "1" ]] && echo "Mode: FULL suite (parallel)" || echo "Mode: full suite (parallel)"
 
 # A gate/worktree environment can inherit a `.venv` seeded from a DIFFERENT
-# host/user (e.g. built under /home/node, then copied into a worktree under
-# /home/nictheboy/...) — its recorded interpreter (pyvenv.cfg) then points at
-# a path that doesn't exist here. Detect that up front with one cheap probe
-# rather than letting each tool fail into it separately:
-#   - interpreter still resolves  → `uv run --no-sync <tool>`, reusing the
-#     venv exactly as inherited (no sync, no rebuild, no risk of needing to
-#     recompile `srp_rs` — a local maturin/pyo3 Rust crate — from source).
-#   - interpreter is dead         → point uv at a scratch venv and let it
-#     sync fresh THERE instead of trying to repair the inherited one in place
-#     (which fails: uv can't remove/recreate `.venv/share`, owned by whoever
-#     built it).
-if .venv/bin/python3 --version >/dev/null 2>&1; then
+# absolute path (e.g. built at /work/backend, then copied into a worktree at
+# /home/nictheboy/.../backend). uv/pip console scripts (pyright, pytest — pure
+# Python wrappers) bake that ORIGINAL absolute path into their OWN shebang
+# line at creation time, so `.venv/bin/pyright` can be unexecutable ("cannot
+# execute: required file not found") even when `.venv/bin/python3` ITSELF
+# still resolves fine (its symlink chain usually bottoms out at a
+# uv-managed interpreter under $HOME, which — same user, same base image —
+# tends to exist regardless of the project's own path; probing THAT proves
+# nothing about the console scripts' baked path). So the probe must exercise
+# an actual console script, not just the interpreter:
+#   - `.venv/bin/pyright --version` runs → its shebang is still valid here →
+#     `uv run --no-sync <tool>`, reusing the venv exactly as inherited (no
+#     sync, no rebuild, no risk of needing to recompile `srp_rs` — a local
+#     maturin/pyo3 Rust crate — from source).
+#   - it doesn't → point uv at a scratch venv and sync fresh THERE instead of
+#     trying to repair the inherited one in place (which fails: uv can't
+#     remove/recreate `.venv/share`, owned by whoever built it).
+if .venv/bin/pyright --version >/dev/null 2>&1; then
     VENV_OK=1
 else
-    echo "note: inherited .venv's interpreter doesn't resolve on this host — syncing a scratch venv"
+    echo "note: inherited .venv's console scripts don't execute on this host (baked absolute shebang from a different path) — syncing a scratch venv"
     export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
     VENV_OK=0
 fi
