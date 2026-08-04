@@ -6,7 +6,9 @@
 # Output: concise pass/fail summary. Non-zero exit on failure.
 set -euo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+# Resolve by script location, not `git rev-parse` — this repo's VCS is jj and
+# the gate execution sandbox has no .git, so a git-based lookup fails at step 1.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
 PASS=0
