@@ -1,4 +1,4 @@
-## 状态：核心改动已验证通过；check.sh 改成"原地修不了就优雅降级到 scratch venv"，准备重新递卡（附了不确定性说明）
+## 状态：核心改动已验证通过；check.sh 换成"失败了才重试退到 scratch venv"策略，不再猜具体哪里坏，准备重新递卡
 
 ## 问题
 
@@ -113,6 +113,34 @@ ln: failed to create symbolic link '.venv/bin/python': Permission denied
 
 **说清楚这条我判断不了的部分**：本地能这么快装完，是因为复用了 uv 的全局构建缓存（这台机器之前构建过一次）。闸门那边执行用户的 HOME 是 `/data/apphome/...`，跟我本地、跟之前 `srp-rs` 编译失败时用的应该是同一个环境——如果那边的 uv 缓存是冷的、且真的没有 cargo，scratch venv 这条路径大概率还是会在 `srp-rs` 上失败（回到卡点 4 的错误）。这个我在自己沙箱里验证不了，只能试了再看这次报的是不是同一个错。
 
+## 卡点 7：`--no-sync` 那条分支自己又想删 `.venv/share`——检测式修法不可靠，换成"失败了才重试"
+
+递卡后又不一样了：这次没报"悬空符号链接"，走的是 `.venv/share` 不可写那条分支（打出了 `--no-sync` 的 note），但 `uv run --no-sync` 本身还是尝试删 `.venv/share` 并报 Permission denied，三步全 FAIL。跟卡点 5 本地验证过的"符号链接修好之后 + share 只读 + --no-sync = 能过"对不上——说明闸门那个 worktree 里 `.venv` 损坏的具体形状，每次递卡看到的都不完全一样（有时是符号链接悬空，有时不是，`--no-sync` 该生效的条件也没法从我这边稳定复现）。
+
+连续 3 轮（卡点 5/6/7）针对"具体哪里坏"做检测再对症下药，每次都猜错一部分——说明这条路本身就不可靠：我在本地永远只能模拟"我能想到的坏法"，猜不全闸门那边实际的状态。
+
+**换思路**：不再检测、不再猜"哪里坏"，而是"先按正常方式跑，真跑失败了、且是权限错误，才重试一次、退到 scratch venv"。改动：
+
+```
+run_uv() {
+    if out="$(uv run "$@" 2>&1)"; then ...; return 0; fi
+    if [ -z "${UV_PROJECT_ENVIRONMENT:-}" ] && echo "$out" | grep -qi "permission denied"; then
+        export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
+        export CARGO_TARGET_DIR="$(mktemp -d)/cargo-target"
+        if out="$(uv run "$@" 2>&1)"; then ...; return 0; fi
+    fi
+    ...; return 1
+}
+```
+
+三个检查步骤都套一层 `run_uv`。本地用"悬空符号链接 + `.venv/bin` 和 `.venv/share` 都不可写"（比之前任何一次模拟都更彻底）验证：
+
+- ruff 第一次跑失败（权限错误）→ 自动重试一次，退到 scratch venv+scratch cargo target dir → PASS。
+- pyright 复用同一个 scratch venv（`UV_PROJECT_ENVIRONMENT` 在 shell 里 export 过，后续步骤第一次就直接用 scratch venv，不再重试、不再重复建 venv）→ PASS，没有二次 "note"。
+- 全程不需要预判 `.venv` 具体是符号链接坏还是哪个子目录不可写——只要失败信息里有 "permission denied" 就统一处理。
+
+这个策略不管闸门那边 `.venv` 到底以哪种具体形式损坏，只要报的是权限错误就能兜住，不用再一轮一轮对症下药。
+
 ## 下一步
 
-准备重新递验收卡，附言里说清楚了如果这次还在 `srp-rs` 编译上失败，那就是闸门那边环境本身缺 cargo/缓存是冷的，需要有权限的人确认。
+准备重新递验收卡。如果这次还是在 `srp-rs` 编译（而不是 venv 权限）上失败，那就是闸门执行环境本身缺 cargo 工具链或 uv 缓存是冷的——那是需要有权限的人去确认的基础设施问题，不是脚本能绕开的。
