@@ -200,10 +200,32 @@ venv（比如第一次跑）时兜底回退到 `uv run --no-sync`。本地用只
      没有采用这条路。
 
    结论：pyright 这个"cannot execute"是跟前几轮 `.venv/share` 完全同源的问题（继承来
-   的 `.venv` 打包了创建时的绝对路径，换个 host/用户就失效），但**这次没能找到一条既
-   安全、又可靠的修法**——已经把能想到的选项都验证过一遍并排除了。ruff 的坑已经修好；
-   pyright 目前用回"直接调 `.venv/bin/pyright`，没有 venv 才回退 `uv run --no-sync`"
-   这个最保守的写法——如果闸门那边的 `.venv` 确实是从别的路径继承来的，这次大概率还是
-   会用同样的方式失败（干净、确定性地失败，不会卡死）。这一部分建议跟 pytest 一样，
-   由发起人在闸门/平台层面决定是否也放宽（比如闸门自己保证种进 worktree 的 `.venv`
-   跟 worktree 本身路径一致，而不是从别处直接复制过去）。
+   的 `.venv` 打包了创建时的绝对路径，换个 host/用户就失效）。
+
+## 第七次：改成 B 的做法——先探测解释器能不能用，能用就 uv run --no-sync，不能用才
+## 落到临时 venv 重新 sync，且给 pyright 套超时，卡住就当环境限制跳过，不再手工试第三种变通
+
+按提醒改成和 B 一致的写法，不再自己发明新招：
+1. 先用 `.venv/bin/python3 --version` 探测一次：这个继承来的 venv 解释器在当前 host
+   上到底能不能跑，一次判断，不用每个工具各自撞一次坑。
+2. 能跑（`VENV_OK=1`）：ruff/pyright/pytest 都走 `uv run --no-sync`——venv 本身有效，
+   直接复用，不用管前几轮 `.venv/share` 那些坑，也不会碰 `--no-sync` 跳不过的解释器
+   校验（因为解释器本来就是好的，校验直接通过）。
+3. 跑不了（`VENV_OK=0`）：把 `UV_PROJECT_ENVIRONMENT` 指到 `mktemp -d`，让 uv 在全新
+   位置重新 sync，不再尝试修复继承来的那个坏 venv。本地验证：这条路径下 `srp_rs`
+   命中了 uv 的全局构建缓存（跟具体某个 venv 无关，按源码内容哈希缓存），"Installed
+   196 packages in 3.64s"，没有触发从源码重新编译——但这依赖本机缓存是热的，闸门那
+   台机器缓存状态未知，不能保证一定这么顺利。
+4. 给 pyright（和 pytest，走同一套逻辑）套了 `timeout 120`：如果 scratch venv sync
+   完之后 pyright 首次运行要下载 Node 二进制、卡在没有网络或者缓存路径又是一个错位
+   的 `$HOME` 上，2 分钟拿不到结果就直接判 **SKIP**（跟 pytest 因为没有 Postgres 被
+   跳过是同一类"环境限制"caveat），不再继续手工找第四种变通烧 turn。
+
+本地验证：
+- 正常 venv：`bash check.sh --no-tests` → `Result: 2/2 passed`，ruff/pyright 都是
+  真正跑过、不是绕过。
+- 模拟 venv 整体不可用（解释器符号链接指向不存在的路径 + `.venv/share` 只读）：
+  `bash check.sh --no-tests` → 打印"syncing a scratch venv"提示后，ruff PASS、
+  pyright 在 scratch venv 里 PASS（约 1 分钟内完成，没有卡住），`Result: 2/2 passed`。
+
+三处 turn 消息丢失/重复的业务修复、3 个功能测试全程未改动。
