@@ -6,6 +6,19 @@ their approval — so unconfigured projects keep the old behavior exactly.
 AI cannot vote (collaborative mode, same rule as "AI 不能验收自己").
 """
 
+import pytest
+
+from app.core.tokens import mint_session_token
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_project_owner(client):
+    client.headers["Authorization"] = (
+        f"Bearer {mint_session_token(handle='alice', user_id=None)}"
+    )
+    yield
+    client.headers.pop("Authorization", None)
+
 
 def _make_project(client) -> str:
     r = client.post("/api/projects", json={"name": "P"})

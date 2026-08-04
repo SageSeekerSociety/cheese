@@ -50,7 +50,11 @@ async def lifespan(_: FastAPI):
     # Orphan sweep: resume turns the previous process died with (see
     # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
     from app.api.deps import get_chat_service, get_turn_runner
-    from app.domain.scheduler.service import SchedulerRunner, SchedulerService
+    from app.domain.scheduler.service import (
+        SandboxReaperRunner,
+        SchedulerRunner,
+        SchedulerService,
+    )
 
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
     # its platform agent-binding. Idempotent — the migration seeds it too; this is
@@ -77,6 +81,12 @@ async def lifespan(_: FastAPI):
     scheduler = SchedulerService(chat_service=get_chat_service())
     runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
     runner.start()
+    reaper = SandboxReaperRunner(
+        scheduler,
+        settings.sandbox_reap_interval_seconds,
+        settings.sandbox_idle_days,
+    )
+    reaper.start()
 
     # Enrolling provisioned machines is platform plumbing, so it runs on its own
     # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
@@ -91,6 +101,7 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         await machines.stop()
+        await reaper.stop()
         await runner.stop()
 
 
