@@ -18,17 +18,22 @@ cd "$REPO_ROOT/backend"
 # stale subtree in place (owning `.venv` lets us unlink it even if we don't own
 # every file inside, and the rest of the venv — including the already-built
 # `srp_rs` Rust extension — stays put, so uv only reinstalls the small bits of
-# `share/`). Only fall back to a fully scratch venv if even that's blocked: a
-# scratch venv forces uv to rebuild EVERY dependency from source, including
-# `srp_rs` (a local maturin/pyo3 crate) — that fails outright in an environment
-# without a Rust toolchain or a warm uv build cache (seen on the quality gate).
+# `share/`). If even that's blocked (the WHOLE `.venv` is inherited read-only,
+# not just `share/`), do NOT fall back to a scratch venv: that forces uv to
+# rebuild EVERY dependency from source, including `srp_rs` (a local
+# maturin/pyo3 crate) — which fails outright without a Rust toolchain (seen on
+# the quality gate). Instead, tell uv to skip syncing entirely and run against
+# the inherited venv exactly as-is: it already has everything built (including
+# srp_rs), so nothing needs to be writable for a read-only run.
 if [ -d .venv/share ] && ! [ -w .venv/share ]; then
     echo "note: .venv/share isn't writable (stale venv from another user)"
     if rm -rf .venv/share 2>/dev/null; then
         echo "note: removed the stale .venv/share in place; uv will recreate it"
     else
-        echo "note: couldn't remove it either — falling back to a scratch venv"
-        export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
+        echo "note: can't modify the inherited .venv at all — skipping uv's sync" \
+             "step (UV_NO_SYNC) and running against it read-only instead of" \
+             "rebuilding (a rebuild would need a Rust toolchain for srp_rs)"
+        export UV_NO_SYNC=1
     fi
 fi
 
