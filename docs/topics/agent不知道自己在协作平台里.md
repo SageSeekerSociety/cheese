@@ -1,4 +1,4 @@
-## 状态：核心改动已验证通过；check.sh 的 venv 修复换了思路（复用而非重建），准备重新递卡
+## 状态：核心改动已验证通过；check.sh 的 venv 修复补上了根因（悬空解释器符号链接），准备重新递卡
 
 ## 问题
 
@@ -76,6 +76,24 @@ hint: Build failures usually indicate a problem with the package or the build en
 3. 完整跑一遍 `check.sh`：`ruff`、`pyright` 都在 `.venv/share` 只读的情况下 PASS，没有任何编译/重建动作。pytest 卡在沙箱没有 Postgres（第 26-33 节说过的老问题，跟这次改动无关）。
 
 顺带把 ruff/pyright 两步过度截断的 `tail -1`/`tail -2` 放宽到 `tail -20`（pytest 那步原本就是 `tail -3`，也一并放宽），下次再出问题能看到真实报错而不是只剩 hint。
+
+## 卡点 5：`--no-sync` 没生效——它只跳过"装依赖"，跳不过"校验 venv 本身"
+
+递卡后闸门报了同样的错，且带着 `--no-sync` 的 note 已经打出来了：
+
+```
+warning: Ignoring existing virtual environment linked to non-existent Python interpreter: .venv/bin/python3 -> python
+error: failed to remove directory `.../backend/.venv/share`: Permission denied (os error 13)
+```
+
+判断错了一步：`--no-sync` 只跳过"把依赖同步进 venv"这一步，跳不过更早的"校验 venv 本身是否可用"——uv 发现 `.venv/bin/python3` 最终指向的解释器路径在这个容器里不存在，就无条件要整个删掉重建 `.venv`（含 `share`），这一步不受 `--no-sync` 影响。之前只在本地模拟了"`share` 只读"，没模拟"解释器符号链接真的悬空"，所以本地测出来是绿的，闸门上还是红。
+
+**这次用两个模拟叠加，精确复现了闸门的报错**（`.venv/bin/python` 指向 `/nonexistent/...` + `.venv/share` 只读），改成：
+
+1. 检测 `.venv/bin/python` 是不是悬空符号链接（`[ -L ... ] && ! [ -e ... ]`），是的话用 `uv python find` 解析出这台机器上实际可用的解释器，把符号链接重新指过去——uv 就会认为这个 venv 有效，不再触碰它，也就不会要求重新编译 `srp-rs`。
+2. `.venv/share` 不可写时仍然叠加 `--no-sync` 做第二层保险。
+
+两个模拟叠加后完整跑 `check.sh`：ruff、pyright 都 PASS，没有任何删除/重建/编译动作。
 
 ## 下一步
 

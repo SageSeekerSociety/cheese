@@ -11,13 +11,25 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
-# A stale .venv left behind by a different user in this worktree can't be
-# removed/rebuilt by uv (Permission denied on .venv/share) — reuse it as-is
-# via --no-sync instead of letting `uv run` try to recreate it. Rebuilding
-# from scratch would also require recompiling the local srp_rs Rust
+# A .venv built in a different container has a dangling bin/python symlink
+# (target interpreter no longer exists) — uv treats this as invalid and
+# unconditionally wipes + rebuilds the whole venv on EVERY `uv run`, even
+# with --no-sync. That rebuild would also recompile the local srp_rs Rust
 # extension (workspace member, not a PyPI wheel), which needs a cargo
-# toolchain that isn't guaranteed to be present here — reusing the already
-# -built venv sidesteps that entirely.
+# toolchain that isn't guaranteed to be present here. Repoint the symlink at
+# whatever interpreter uv resolves on this machine so it treats the existing
+# (already-built) venv as valid and leaves it alone.
+if [ -L .venv/bin/python ] && ! [ -e .venv/bin/python ]; then
+    VALID_PY="$(uv python find 2>/dev/null || true)"
+    if [ -n "$VALID_PY" ]; then
+        echo "note: .venv/bin/python is a dangling symlink (venv built in a different container) — repointing at $VALID_PY"
+        ln -sf "$VALID_PY" .venv/bin/python
+    fi
+fi
+
+# Belt and suspenders: if .venv/share is still owned by a different user and
+# not writable (independent of the symlink issue above), skip uv's sync step
+# entirely and reuse the venv's already-installed packages as-is.
 UV_RUN=(uv run)
 if [ -d .venv/share ] && ! [ -w .venv/share ]; then
     echo "note: .venv/share isnt writable (stale venv from another user) — reusing it as-is via --no-sync"
