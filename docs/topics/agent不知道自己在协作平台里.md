@@ -1,4 +1,4 @@
-## 状态：核心改动已验证通过；check.sh 采纳了协作者验证过的真正根因修法（$HOME 不一致），准备重新递卡
+## 状态：核心改动已验证通过；venv/构建/pyright 都过了，ruff 缓存权限已修，卡在 pytest 因沙箱缺 Postgres 超时（环境限制，已知）
 
 ## 问题
 
@@ -157,6 +157,15 @@ B 的修法（已经让 B 的验收卡真正过了闸门，变成 pending）：
 - 健康 venv：探测通过，直接走 `--no-sync` 快路径，没有多余 note。
 - 模拟"符号链接悬空 + `.venv/bin`、`.venv/share` 都不可写"（$HOME 不一致的效果）：探测失败，同步到临时目录，ruff/pyright 都 PASS。
 
+## 卡点 9：`$HOME` 修法验证成功——venv/构建都过了，卡在 `.ruff_cache` 权限 + pytest 真超时
+
+之前那张"run_uv 重试"版本的卡排队排到现在才出结果（不是新提交的）。这次进展明显：
+
+- venv 同步成功，**`srp-rs` 真的从源码构建过了**（"Building srp-rs ... Built srp-rs"），说明闸门容器里是有 cargo 的，之前一直没走到这一步纯粹是被 venv/权限问题挡住。
+- `pyright` **PASS 了**。
+- `ruff` 卡在一个新的权限点：`.ruff_cache/0.15.17/.tmpxxxxx` 建不了临时文件，Permission denied——`ruff` 默认把缓存写在项目目录下的 `.ruff_cache/`，跟之前 `.venv` 一个模式，也是被闸门 worktree 里遗留的旧属主挡住了。**这条我已经在上一轮改 `check.sh` 时顺手解决了**（探测到需要走 scratch 路径时会把 `RUFF_CACHE_DIR` 也钉到临时目录）——当前 `<&.claude/scripts/check.sh>` 已经带这个修复，这次报错的是排队中的旧版本，不是当前版本。
+- `pytest` 这次不是快速失败，是跑到 **600 秒硬超时被强制中止**——跟我在自己沙箱里验证的"connection refused 快速失败"不一样，说明闸门容器和我交互沙箱的网络拓扑也不同（闸门那边可能是 TCP 连接超时而不是立即拒绝）。根因还是同一个：这个话题的沙箱/闸门环境连不上 Postgres，不是新问题。
+
 ## 下一步
 
-准备重新递验收卡。
+用当前已经带 `RUFF_CACHE_DIR` 修复的 `check.sh` 重新递验收卡，附言说明 ruff 的权限问题已经修过、pyright 已经验证 PASS、pytest 超时是环境限制（沙箱缺 Postgres）不是代码问题。
