@@ -1,4 +1,4 @@
-## 状态：核心改动已验证通过；venv/构建/pyright 都过了，ruff 缓存权限已修，卡在 pytest 因沙箱缺 Postgres 超时（环境限制，已知）
+## 状态：核心改动 + ruff + pyright 全部通过；唯一卡点是 pytest 缺 Postgres（纯基础设施问题），已找 wangchangxin 拍板下一步
 
 ## 问题
 
@@ -166,6 +166,20 @@ B 的修法（已经让 B 的验收卡真正过了闸门，变成 pending）：
 - `ruff` 卡在一个新的权限点：`.ruff_cache/0.15.17/.tmpxxxxx` 建不了临时文件，Permission denied——`ruff` 默认把缓存写在项目目录下的 `.ruff_cache/`，跟之前 `.venv` 一个模式，也是被闸门 worktree 里遗留的旧属主挡住了。**这条我已经在上一轮改 `check.sh` 时顺手解决了**（探测到需要走 scratch 路径时会把 `RUFF_CACHE_DIR` 也钉到临时目录）——当前 `<&.claude/scripts/check.sh>` 已经带这个修复，这次报错的是排队中的旧版本，不是当前版本。
 - `pytest` 这次不是快速失败，是跑到 **600 秒硬超时被强制中止**——跟我在自己沙箱里验证的"connection refused 快速失败"不一样，说明闸门容器和我交互沙箱的网络拓扑也不同（闸门那边可能是 TCP 连接超时而不是立即拒绝）。根因还是同一个：这个话题的沙箱/闸门环境连不上 Postgres，不是新问题。
 
+## 卡点 10：ruff、pyright 全绿了，唯一卡点是 pytest 连不上 Postgres——这条脚本改不动，已经找 wangchangxin 拍板
+
+重新递卡后的结果：
+
+- `ruff`：**PASS**（`RUFF_CACHE_DIR` 修复生效，`.ruff_cache` 权限问题解决）。
+- `pyright`：**PASS**。
+- `pytest`：还是 600 秒硬超时被中止。
+
+到这一步，`check.sh` 里所有跟 `.venv`/构建/缓存权限相关的问题都已经解决——`ruff` 和 `pyright` 稳定通过。剩下唯一的卡点是这个话题的沙箱/闸门连不上 Postgres，这是纯粹的基础设施缺口，不是脚本逻辑能绕开的（没有真实数据库，集成测试没法通过，改脚本改不出一个能连接的 Postgres）。
+
+质量闸门是全自动的，"pytest 因环境限制超时"和"pytest 因代码 bug 超时"在闸门看来没有区别——都会拦下卡片，送不到验收人手上。之前沟通里 wangchangxin 说过接受"先递卡、可能因 pytest 超时而红"，但实际情况是闸门直接拦截，卡片根本到不了他手上，跟"递上去红了再决定"不是一回事。
+
+已经用 `cheese notify`（`decision_request`）直接找 wangchangxin 拍板，给了三个选项：给这个话题的沙箱接上能用的 Postgres / 手动覆盖批准这张卡不用等 pytest 变绿 / 放宽这条子话题的质量闸门要求（只要求 ruff+pyright）。
+
 ## 下一步
 
-用当前已经带 `RUFF_CACHE_DIR` 修复的 `check.sh` 重新递验收卡，附言说明 ruff 的权限问题已经修过、pyright 已经验证 PASS、pytest 超时是环境限制（沙箱缺 Postgres）不是代码问题。
+等 wangchangxin 拍板。核心改动（`conversation_style.md`）本身早就对话验证通过了，代码层面（ruff/pyright）也全绿——卡在的是一个纯基础设施问题，不需要我这边再改代码或脚本。
