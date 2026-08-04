@@ -1,4 +1,4 @@
-## 状态：核心改动已通过对话验证，已递验收卡（备注了沙箱环境限制）
+## 状态：核心改动已通过对话验证，验收卡被质量闸门拦下——闸门执行 worktree 里的 `.venv` 损坏，需要有权限的人清理
 
 ## 问题
 
@@ -32,6 +32,20 @@
 
 ruff（lint + format）、pyright 已经在本地手动跑过，全绿；pytest 因为沙箱没有 Postgres 无法跑完，是环境限制，不代表代码有问题。
 
+## 卡点 3：验收卡被质量闸门拦下，`.venv` 损坏在闸门 worktree 里，本话题工作区碰不到
+
+递卡后闸门在 `/home/nictheboy/cheese-workspaces/.worktrees/de808b13-.../topic_dcf968a1/backend/` 跑 check.sh，三步全 FAIL，报的都是同一个错：
+
+```
+error: failed to remove directory `.../backend/.venv/share`: Permission denied (os error 13)
+```
+
+pytest 那步还带了一句 `Ignoring existing virtual environment linked to non-existent Python interpreter`——说明那个 worktree 里已经有一个 `.venv`，指向的 Python 解释器路径失效了，`uv` 想删掉重建，但 `.venv/share` 权限不够删不掉。
+
+判断：这不是本话题改动引入的问题。`backend/.gitignore` 和根 `.gitignore` 都排除了 `.venv/`，我这次改动只碰了两个 markdown/shell 文件，跟 `.venv`毫无关系。那个损坏的 `.venv` 是闸门执行用的 worktree 自己积累下来的状态（大概率是之前某次运行在不同权限/容器下建的，符号链接指向的解释器后来失效了）。
+
+**这条我修不了**：损坏的目录在 `/home/nictheboy/...` 下，不在本话题的工作区里，我这边的沙箱也没挂载到那个路径——按操作限制我也不该去碰 `/home` 目录。需要能访问那台机器的人手动清掉那个 worktree 的 `backend/.venv`（或者整个重建 worktree），闸门才可能跑起来。
+
 ## 下一步
 
-已递验收卡给 @wangchangxin，备注了上述环境限制。等 PR 走通。
+已递验收卡给 @wangchangxin，备注了沙箱缺 Postgres 的限制；但闸门本身因为 worktree 里 `.venv` 损坏直接三连 FAIL，卡片没送到。需要 @wangchangxin（或有权限的人）清理 `/home/nictheboy/cheese-workspaces/.worktrees/de808b13-ffd2-4b8a-9d1d-fba7babe389f/topic_dcf968a1/backend/.venv`，之后我再重新递卡。
