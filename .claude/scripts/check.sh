@@ -6,7 +6,8 @@
 # Output: concise pass/fail summary. Non-zero exit on failure.
 set -euo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
 PASS=0
