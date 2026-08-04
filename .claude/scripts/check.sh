@@ -12,6 +12,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
+# A gate/worktree environment can inherit a `.venv` created by a different user
+# than the one running this check (stale from another topic's run) — uv can't
+# clean/rebuild `.venv/share` in that case and dies. Detect it and rebuild the
+# venv in a scratch dir instead of touching the unwritable one.
+if [ -d .venv/share ] && ! [ -w .venv/share ]; then
+    echo "note: .venv/share isnt writable (stale venv from another user) — using a scratch venv"
+    export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
+fi
+
 PASS=0
 FAIL=0
 
