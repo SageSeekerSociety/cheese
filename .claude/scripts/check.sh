@@ -22,6 +22,14 @@ PASS=0
 FAIL=0
 SKIP=0
 
+# Same cross-environment sharing problem as the .venv one below, but for tool
+# caches: a previous run's .ruff_cache/.pytest_cache under backend/ can be
+# owned by a different uid (interactive session vs. gate host) and become
+# unwritable here. Cache location doesn't affect correctness, so just keep it
+# private to this run instead of fighting over the shared one.
+export RUFF_CACHE_DIR="$(mktemp -d)/ruff-cache"
+PYTEST_CACHE_DIR="$(mktemp -d)/pytest-cache"
+
 # Always run the WHOLE suite under `-n 8` (parallel, ~60s, stable across runs).
 # testmon's incremental selection is unsafe here: these integration tests share
 # DB state (reference-data seeds, ordering) by design, so running a testmon-chosen
@@ -93,7 +101,7 @@ except OSError as e:
 " 2>&1; then
     echo "  FAIL: pytest (no DB — skipped the run instead of paying the rerun-delay tax across ~3000 tests)"
     ((++FAIL))
-elif "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -3; then
+elif "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q -o "cache_dir=$PYTEST_CACHE_DIR" 2>&1 | tail -3; then
     echo "  PASS: pytest"
     ((++PASS))
 else
