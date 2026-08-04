@@ -105,4 +105,23 @@ ruff PASS、pyright PASS（这次是通过真实脚本走完 uv 环境准备这�
 
 这个改法目前只在本工作区生效，值得同步回父话题/兄弟话题（B/C）：父话题那版"整个换临时
 venv"的防御在没有 Rust 工具链的闸门环境里会引入新的 build 失败，建议大家都换成"原地删
-share、删不掉才退化"这个更保守的版本。
+share、删不掉才退化"这个更保守的版本。已用 `cheese notify` 告知 n1ctheboy。
+
+## 第三次递卡再被拦：闸门上连 `.venv` 整体都不可写，rm -rf 也失败——已改用 UV_NO_SYNC
+
+闸门这次连"原地删除 `.venv/share`"都失败了（日志：`couldn't remove it either — falling
+back to a scratch venv`），说明闸门那边继承的不只是 `share/` 不可写，是**整个 `.venv`**
+都不可写——于是又掉进"整体换临时 venv → 强制从源码重建 srp_rs → 没有 Rust 工具链 →
+build failure"这条老路。
+
+改法：这种"整个 `.venv` 都动不了"的情况下，不再尝试重建任何东西——设置
+`UV_NO_SYNC=1`，让 `uv run` 完全跳过"把 venv 同步成 lockfile 状态"这一步，直接用继承
+下来、已经装好全部依赖（含编译好的 `srp_rs`）的那个 `.venv` 只读运行。本地验证过：
+`UV_NO_SYNC=1 uv run python -c "import srp_rs"` 能直接用现成的 `.venv` 成功导入，不
+触发任何重建；也模拟过"整个 `.venv` 只读"这条分支，确认会正确落到设置
+`UV_NO_SYNC=1`，而不是再去建临时 venv。真实 `bash check.sh` 重跑：ruff PASS，
+pyright PASS（0 errors，输出很干净，这次没有版本提示信息混进去）。
+
+三次踩坑的教训是一致的：**只要环境缺 Rust 工具链，就绝对不能让 uv 从头重建 venv**——
+任何"换个新 venv 从零装"的防御思路都会在这条线上翻车，凡是涉及 `.venv` 不可写的兜底，
+都应该优先"完全不碰、只读使用现成的"，而不是"换个能写的地方重装"。
