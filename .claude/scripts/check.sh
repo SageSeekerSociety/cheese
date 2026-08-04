@@ -36,19 +36,32 @@ TOTAL=0
 PYTEST_ARGS="-n 4"
 [[ "$FULL" == "1" ]] && echo "Mode: FULL suite (parallel)" || echo "Mode: full suite (parallel)"
 
-# `--no-sync`: never let a check step try to reconcile/rebuild `.venv` — a
-# gate/worktree environment can inherit one created by a different user (stale
-# from another topic's run, or with a python-interpreter symlink that no
-# longer resolves), and uv reacts to either by trying to rebuild it. That
-# rebuild needs to recompile `srp_rs` (a local maturin/pyo3 Rust crate) from
-# source, which fails outright without a Rust toolchain — exactly what broke
-# the quality gate. `--no-sync` runs against whatever's already installed
-# (srp_rs included) and never touches the venv, sidestepping all of that.
+# Call the already-installed console scripts DIRECTLY, bypassing `uv run`
+# entirely — a gate/worktree environment can inherit a `.venv` from a
+# different user (stale from another topic's run, or with a python-
+# interpreter reference that no longer resolves for the user running THIS
+# check), and `uv run` reacts to either by trying to reconcile/rebuild the
+# venv (removing and recreating `.venv/share`) EVEN with `--no-sync` — which
+# then needs to recompile `srp_rs` (a local maturin/pyo3 Rust crate) from
+# source, failing outright without a Rust toolchain (what broke the quality
+# gate, twice). The tools are already installed and working; running their
+# `.venv/bin/*` entry points needs no uv involvement at all, so there's
+# nothing for uv to validate or rebuild. Falls back to `uv run --no-sync`
+# when a script isn't there yet (first run / no venv).
+run_tool() {
+    local name="$1"
+    shift
+    if [ -x ".venv/bin/$name" ]; then
+        ".venv/bin/$name" "$@"
+    else
+        uv run --no-sync "$name" "$@"
+    fi
+}
 
 # --- ruff (lint + format, matching CI's test.yml lint job) ---
 echo "==> ruff check + format"
 ((++TOTAL))
-if uv run --no-sync ruff check . 2>&1 | tail -1 && uv run --no-sync ruff format --check . 2>&1 | tail -1; then
+if run_tool ruff check . 2>&1 | tail -20 && run_tool ruff format --check . 2>&1 | tail -20; then
     echo "  PASS: ruff"
     ((++PASS))
 else
@@ -59,7 +72,7 @@ fi
 # --- pyright ---
 echo "==> pyright"
 ((++TOTAL))
-if uv run --no-sync pyright 2>&1 | tail -2; then
+if run_tool pyright 2>&1 | tail -20; then
     echo "  PASS: pyright"
     ((++PASS))
 else
@@ -73,7 +86,7 @@ if [ "$SKIP_TESTS" = "1" ]; then
     echo "  SKIP: pytest (--no-tests / SKIP_TESTS=1 — no usable Postgres on this host)"
 else
     ((++TOTAL))
-    if uv run --no-sync pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -3; then
+    if run_tool pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -20; then
         echo "  PASS: pytest"
         ((++PASS))
     else

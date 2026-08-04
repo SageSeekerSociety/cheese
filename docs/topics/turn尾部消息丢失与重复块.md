@@ -145,3 +145,23 @@ non-existent Python interpreter`），uv 判定这个 venv 无效后，不管 `U
 本地跑 `bash .claude/scripts/check.sh --no-tests`：`Result: 2/2 passed`，约 1 分钟内
 跑完（ruff PASS、pyright PASS、pytest SKIP）。三处 turn 消息丢失/重复的业务修复、3 个
 功能测试都没有变。
+
+## 第五次：`uv run --no-sync` 在闸门上依然会删 `.venv/share`——改成直接调用 .venv/bin/*
+
+递卡后闸门输出跟第三次几乎一样：`uv run --no-sync ruff/pyright` 还是报
+`failed to remove directory .../.venv/share: Permission denied`。说明 `--no-sync`
+（不管是 CLI 参数还是环境变量）只跳过"装依赖"这一步，跳不过 uv 更早的一步——校验/落地
+这个 venv 对应的 Python 解释器是否可用；只要它判定这个继承来的 venv"无效"（大概率是
+`pyvenv.cfg` 里记的 base 解释器路径是另一个用户的 home 目录，这个 host 上不存在），就会
+不由分说地先删/建 venv 结构，`--no-sync` 完全管不到这一步。
+
+check.sh 之前把 ruff/pyright/pytest 的真实输出统统 `tail -1/2/3`，这也是这几轮一直靠猜
+的原因——真正的 `error:` 那行从来没被我看到过，只看到闸门贴出来的尾部提示。这次一并把
+tail 放宽到 20 行，以后再翻车至少能看见真正的报错，不用来回猜。
+
+真正的修复：既然依赖早就装好了（`srp_rs` 也编译好躺在 `lib/site-packages` 里），那就
+完全不经过 `uv run`——直接调用 `.venv/bin/ruff`、`.venv/bin/pyright`、`.venv/bin/pytest`
+这些已经装好的可执行文件，uv 完全不参与，没有环境可"校验"也没有东西可"重建"。没有
+venv（比如第一次跑）时兜底回退到 `uv run --no-sync`。本地用只读 `.venv/share` 模拟过
+（`chmod 555 .venv/share` 之后跑 `--no-tests`）：`Result: 2/2 passed`，确认这条路径完全
+不会碰 `.venv/share`。
