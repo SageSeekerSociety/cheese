@@ -14,11 +14,22 @@ cd "$REPO_ROOT/backend"
 
 # A gate/worktree environment can inherit a `.venv` created by a different user
 # than the one running this check (stale from another topic's run) — uv can't
-# clean/rebuild `.venv/share` in that case and dies. Detect it and rebuild the
-# venv in a scratch dir instead of touching the unwritable one.
+# clean/rebuild `.venv/share` in that case and dies. Prefer removing just that
+# stale subtree in place (owning `.venv` lets us unlink it even if we don't own
+# every file inside, and the rest of the venv — including the already-built
+# `srp_rs` Rust extension — stays put, so uv only reinstalls the small bits of
+# `share/`). Only fall back to a fully scratch venv if even that's blocked: a
+# scratch venv forces uv to rebuild EVERY dependency from source, including
+# `srp_rs` (a local maturin/pyo3 crate) — that fails outright in an environment
+# without a Rust toolchain or a warm uv build cache (seen on the quality gate).
 if [ -d .venv/share ] && ! [ -w .venv/share ]; then
-    echo "note: .venv/share isnt writable (stale venv from another user) — using a scratch venv"
-    export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
+    echo "note: .venv/share isn't writable (stale venv from another user)"
+    if rm -rf .venv/share 2>/dev/null; then
+        echo "note: removed the stale .venv/share in place; uv will recreate it"
+    else
+        echo "note: couldn't remove it either — falling back to a scratch venv"
+        export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
+    fi
 fi
 
 PASS=0

@@ -66,3 +66,43 @@ turn 内的 `run_hooks_turn` 消费，或（找不到监听队列时）落 serve
 别的服务，认证不通，不是可用的测试库），不是代码问题，不再往这个方向排查。按约定处理：
 验收卡里如实写清楚"测试代码已写好、ruff/pyright 过了，pytest 因沙箱缺 Postgres 没能
 本地跑绿，需要有 DB 的环境/CI 复核"，正常递验收卡，不等连上库。
+
+## 第一次递卡被质量闸门拦下（gate_failed）+ 已修复
+
+闸门报 `fatal: not a git repository`：`.claude/scripts/check.sh` 用
+`git rev-parse --show-toplevel` 定位仓库根目录，但这仓库的 VCS 是 jj，闸门执行环境里
+没有 `.git`，check.sh 一开头（`set -euo pipefail` 下）就整体崩溃，ruff/pyright/pytest
+都没机会跑——这是 check.sh 本身的 bug，不是这次业务改动引入的，其他话题的验收卡也会
+撞上同一个问题。已改成从脚本自身路径推导 `REPO_ROOT`，不再依赖 git。
+
+紧接着又追加了一处防御：闸门/worktree 环境可能继承别的用户建的 `.venv`（跨话题遗留），
+uv 想重建 `.venv/share` 时没权限会直接炸——加了一段检测，写不了就把
+`UV_PROJECT_ENVIRONMENT` 指到临时目录，让 uv 在那边建 venv。这两处都是和父话题/兄弟
+话题（B/C）对齐后在本工作区同步应用的。
+
+本地重跑 `bash .claude/scripts/check.sh` 确认：不再有 git 相关的 fatal 错误；
+ruff PASS；pyright PASS（0 errors）；pytest 仍然 FAIL——原因还是本沙箱没有
+Postgres（3158 个连接失败的 error，跟这次三处业务修复本身无关，是已经确认过的环境
+限制，不是新问题）。
+
+## 第二次递卡又被拦（gate_failed）：venv 防御本身引入了新的 build 失败 + 已修复
+
+闸门第二次输出：ruff/pyright/pytest 三个全 FAIL，`hint: srp-rs was included because
+cheesex-backend depends on srp-rs` + `Build failures usually indicate a problem with
+the package or the build environment`。原因：父话题给的 `.venv/share` 防御是"整个换成
+一个全新的临时 venv"（`UV_PROJECT_ENVIRONMENT=$(mktemp -d)/venv`）——这会让 uv 把**所有**
+依赖从零装一遍，包括本地 workspace member `srp_rs`（一个 maturin/pyo3 的 Rust 扩展）。
+闸门执行环境里没有 Rust 工具链（也没有一个能命中的 uv 构建缓存），从源码重建 `srp_rs`
+直接失败——`.venv/share` 权限问题被绕过了，但换来一个新的、更隐蔽的失败。
+
+改法：优先**原地删除**那个不可写的 `.venv/share`（我们对 `.venv` 这个父目录仍有写权限，
+删子目录不要求拥有子目录里每个文件），让 uv 只重装 `share/` 这一小部分（通常只是 man
+page 之类的数据文件），`lib/site-packages` 里已经装好的 `srp_rs` 扩展完全不受影响、不
+需要重建。只有在原地删除也失败时，才退回到"整个换成临时 venv"这条更贵、也更容易在缺
+Rust 工具链的环境里炸的路径。本地用一个模拟的只读 `.venv/share` 验证过这段新逻辑的两条
+分支都按预期走（能删则原地删，删不掉才退到临时 venv）；真实 `bash check.sh` 重跑一遍，
+ruff PASS、pyright PASS（这次是通过真实脚本走完 uv 环境准备这一步验证的，不是绕过）。
+
+这个改法目前只在本工作区生效，值得同步回父话题/兄弟话题（B/C）：父话题那版"整个换临时
+venv"的防御在没有 Rust 工具链的闸门环境里会引入新的 build 失败，建议大家都换成"原地删
+share、删不掉才退化"这个更保守的版本。
