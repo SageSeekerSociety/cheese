@@ -165,3 +165,45 @@ tail 放宽到 20 行，以后再翻车至少能看见真正的报错，不用�
 venv（比如第一次跑）时兜底回退到 `uv run --no-sync`。本地用只读 `.venv/share` 模拟过
 （`chmod 555 .venv/share` 之后跑 `--no-tests`）：`Result: 2/2 passed`，确认这条路径完全
 不会碰 `.venv/share`。
+
+## 第六次：直接调用 .venv/bin/pyright 在闸门上"能执行"了，但 ruff 撞见另一个权限坑；
+## pyright 那个坑本身没有安全的解法——已经排除了好几条路，如实报告
+
+闸门第六次输出两个新问题：
+1. **ruff**：`.venv/bin/ruff` 是纯 Rust 原生二进制（没有 shebang），直接调用确实不会
+   再撞见 `.venv/share` 那层坑了——但 ruff 自己的缓存目录 `.ruff_cache/<版本号>/...`
+   跟 `.venv/share` 是同一类问题：目录本身是上一个用户跑出来的，这个用户写不进去。
+   修法：给 ruff 加 `--cache-dir "$(mktemp -d)"`，每次用一个全新的临时目录，不用去猜
+   哪个继承来的缓存目录能不能写。（踩了一个小坑：`--cache-dir` 是子命令级参数，必须
+   跟在 `check`/`format` 后面，不能放在最前面，第一版位置写错了会直接报参数错误。）
+
+2. **pyright**：这次错误变成 `.venv/bin/pyright: cannot execute: required file not
+   found`——查了一下 `.venv/bin/pyright` 这个脚本本身：它的 shebang 是
+   `#!/work/backend/.venv/bin/python`，一个在创建 venv 时就写死的**绝对路径**（uv/pip
+   生成的纯 Python 控制台脚本都这样）。这个 venv 在本工作区创建于 `/work/backend`，
+   一旦被复制/继承到闸门那个完全不同的绝对路径（`/home/nictheboy/cheese-workspaces/
+   .worktrees/.../topic_e049f3cd/backend`），这个 shebang 就成了死路——ruff 是原生
+   二进制没有这个问题，但 pyright（和 pytest，同样是纯 Python 控制台脚本）都有。
+
+   为 pyright 试过的路子，全部验证过、全部否掉了：
+   - `uv run` / `uv run --no-sync`：会先校验这个 venv 记录的解释器是否可用，发现记录
+     的是 `/home/node/.local/share/uv/python/...`（另一个用户的 home，这个 host 上不
+     存在）后，判定 venv 无效，尝试原地删/建（碰 `.venv/share` 权限）——这正是前几轮
+     一直撞的坑，`--no-sync` 管不到这一步。
+   - `uv run --no-sync --python /usr/bin/python3`：这次不会去校验/重建了，但换来一个
+     新错误——项目要求 Python ≥3.13，系统的 `/usr/bin/python3` 是 3.11，版本不满足，
+     uv 直接拒绝。
+   - `python3 -m pyright`（系统 python3 + `PYTHONPATH` 指向 venv 的 site-packages，
+     完全不经过 uv、也不执行 `.venv` 里任何东西）：本地验证时前两次都正确跑出
+     "0 errors"，**但连续跑第三次直接原地挂起，2 分钟超时都没有任何输出**——不是失败，
+     是不可预测地卡死。质量闸门上出现一次不确定的挂起，比一次明确的失败更糟，所以
+     没有采用这条路。
+
+   结论：pyright 这个"cannot execute"是跟前几轮 `.venv/share` 完全同源的问题（继承来
+   的 `.venv` 打包了创建时的绝对路径，换个 host/用户就失效），但**这次没能找到一条既
+   安全、又可靠的修法**——已经把能想到的选项都验证过一遍并排除了。ruff 的坑已经修好；
+   pyright 目前用回"直接调 `.venv/bin/pyright`，没有 venv 才回退 `uv run --no-sync`"
+   这个最保守的写法——如果闸门那边的 `.venv` 确实是从别的路径继承来的，这次大概率还是
+   会用同样的方式失败（干净、确定性地失败，不会卡死）。这一部分建议跟 pytest 一样，
+   由发起人在闸门/平台层面决定是否也放宽（比如闸门自己保证种进 worktree 的 `.venv`
+   跟 worktree 本身路径一致，而不是从别处直接复制过去）。

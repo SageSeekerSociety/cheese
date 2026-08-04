@@ -36,18 +36,31 @@ TOTAL=0
 PYTEST_ARGS="-n 4"
 [[ "$FULL" == "1" ]] && echo "Mode: FULL suite (parallel)" || echo "Mode: full suite (parallel)"
 
-# Call the already-installed console scripts DIRECTLY, bypassing `uv run`
-# entirely — a gate/worktree environment can inherit a `.venv` from a
-# different user (stale from another topic's run, or with a python-
-# interpreter reference that no longer resolves for the user running THIS
-# check), and `uv run` reacts to either by trying to reconcile/rebuild the
-# venv (removing and recreating `.venv/share`) EVEN with `--no-sync` — which
-# then needs to recompile `srp_rs` (a local maturin/pyo3 Rust crate) from
-# source, failing outright without a Rust toolchain (what broke the quality
-# gate, twice). The tools are already installed and working; running their
-# `.venv/bin/*` entry points needs no uv involvement at all, so there's
-# nothing for uv to validate or rebuild. Falls back to `uv run --no-sync`
-# when a script isn't there yet (first run / no venv).
+# A gate/worktree environment can inherit a `.venv` seeded from a DIFFERENT
+# host/user (e.g. built under /home/node, then copied into a worktree under
+# /home/nictheboy/...): `uv`/pip console scripts bake an ABSOLUTE shebang path
+# to their own venv's interpreter at creation time, so `.venv/bin/pyright` /
+# `.venv/bin/pytest` (pure-Python wrapper scripts) can become unexecutable
+# once relocated ("cannot execute: required file not found"). `uv run` can't
+# help either: even with `--no-sync`, it still validates the venv's OWN
+# interpreter reference first and, finding it broken, tries to repair the
+# venv in place (removing/recreating `.venv/share`) before running anything —
+# which then needs to recompile `srp_rs` (a local maturin/pyo3 Rust crate)
+# from source, failing without a Rust toolchain (what broke the gate before).
+#
+# Tried and REJECTED: running these as `python3 -m <tool>` via the system
+# interpreter with PYTHONPATH pointed at the venv's site-packages sidesteps
+# the broken shebang/interpreter entirely and gave correct results twice in a
+# row locally — but a third identical invocation hung indefinitely (2+ min,
+# no output) instead of failing fast. An intermittent hang on the quality gate
+# is worse than a clean failure, so this script does NOT use that trick.
+#
+# What's actually applied: call the installed `.venv/bin/*` entry point
+# directly (works whenever the venv wasn't relocated — the common case, and
+# what's used for local dev) and fall back to `uv run --no-sync` only when
+# there's no venv yet at all (first run). If the venv WAS relocated, this
+# fails fast and deterministically (a plain exec error) — better than a hang,
+# and diagnosable from the (now untruncated) output.
 run_tool() {
     local name="$1"
     shift
@@ -58,10 +71,18 @@ run_tool() {
     fi
 }
 
+# ruff's on-disk cache dir can be the SAME kind of cross-user leftover as
+# `.venv/share` (`.ruff_cache/<version>/...` owned by whoever ran it last) —
+# point it at a fresh scratch dir instead of trying to detect/repair the
+# inherited one. `--cache-dir` is a per-subcommand flag (must follow
+# `check`/`format`, not precede it).
+RUFF_CACHE_DIR="$(mktemp -d)"
+
 # --- ruff (lint + format, matching CI's test.yml lint job) ---
 echo "==> ruff check + format"
 ((++TOTAL))
-if run_tool ruff check . 2>&1 | tail -20 && run_tool ruff format --check . 2>&1 | tail -20; then
+if run_tool ruff check --cache-dir "$RUFF_CACHE_DIR" . 2>&1 | tail -20 \
+    && run_tool ruff format --cache-dir "$RUFF_CACHE_DIR" --check . 2>&1 | tail -20; then
     echo "  PASS: ruff"
     ((++PASS))
 else
