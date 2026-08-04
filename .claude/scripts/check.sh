@@ -14,24 +14,32 @@ cd "$REPO_ROOT/backend"
 # A .venv built in a different container has a dangling bin/python symlink
 # (target interpreter no longer exists) — uv treats this as invalid and
 # unconditionally wipes + rebuilds the whole venv on EVERY `uv run`, even
-# with --no-sync. That rebuild would also recompile the local srp_rs Rust
-# extension (workspace member, not a PyPI wheel), which needs a cargo
-# toolchain that isn't guaranteed to be present here. Repoint the symlink at
-# whatever interpreter uv resolves on this machine so it treats the existing
-# (already-built) venv as valid and leaves it alone.
+# with --no-sync. Try to repoint the symlink at whatever interpreter uv
+# resolves on this machine so uv treats the existing (already-built) venv as
+# valid and leaves it alone — this avoids recompiling the local srp_rs Rust
+# extension (workspace member, not a PyPI wheel, needs a cargo toolchain
+# that isn't guaranteed to be present). If .venv itself isn't writable at
+# all (whole tree owned by whoever's user session built it, not just
+# .venv/share), the repoint fails too — fall back to a scratch venv instead
+# of letting that `ln` failure kill the script under `set -e`.
+NEEDS_SCRATCH=0
 if [ -L .venv/bin/python ] && ! [ -e .venv/bin/python ]; then
     VALID_PY="$(uv python find 2>/dev/null || true)"
-    if [ -n "$VALID_PY" ]; then
-        echo "note: .venv/bin/python is a dangling symlink (venv built in a different container) — repointing at $VALID_PY"
-        ln -sf "$VALID_PY" .venv/bin/python
+    if [ -n "$VALID_PY" ] && ln -sf "$VALID_PY" .venv/bin/python 2>/dev/null; then
+        echo "note: .venv/bin/python was a dangling symlink (venv built in a different container) — repointed at $VALID_PY"
+    else
+        echo "note: .venv/bin/python is a dangling symlink and .venv isn't writable to fix in place — falling back to a scratch venv (will rebuild srp-rs)"
+        NEEDS_SCRATCH=1
     fi
 fi
 
-# Belt and suspenders: if .venv/share is still owned by a different user and
-# not writable (independent of the symlink issue above), skip uv's sync step
-# entirely and reuse the venv's already-installed packages as-is.
 UV_RUN=(uv run)
-if [ -d .venv/share ] && ! [ -w .venv/share ]; then
+if [ "$NEEDS_SCRATCH" = 1 ]; then
+    export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
+elif [ -d .venv/share ] && ! [ -w .venv/share ]; then
+    # Belt and suspenders: .venv/share not writable independent of the
+    # symlink issue above — skip uv's sync step and reuse installed
+    # packages as-is instead of letting uv try to rebuild them.
     echo "note: .venv/share isnt writable (stale venv from another user) — reusing it as-is via --no-sync"
     UV_RUN=(uv run --no-sync)
 fi

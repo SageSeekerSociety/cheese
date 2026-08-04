@@ -1,4 +1,4 @@
-## 状态：核心改动已验证通过；check.sh 的 venv 修复补上了根因（悬空解释器符号链接），准备重新递卡
+## 状态：核心改动已验证通过；check.sh 改成"原地修不了就优雅降级到 scratch venv"，准备重新递卡（附了不确定性说明）
 
 ## 问题
 
@@ -95,6 +95,24 @@ error: failed to remove directory `.../backend/.venv/share`: Permission denied (
 
 两个模拟叠加后完整跑 `check.sh`：ruff、pyright 都 PASS，没有任何删除/重建/编译动作。
 
+## 卡点 6：`.venv/bin` 也不可写，`ln -sf` 直接把脚本崩了
+
+递卡后闸门这次报的是：
+
+```
+note: .venv/bin/python is a dangling symlink (venv built in a different container) — repointing at /data/apphome/.local/share/uv/python/cpython-3.13-linux-x86_64-gnu/bin/python3.13
+ln: failed to create symbolic link '.venv/bin/python': Permission denied
+```
+
+输出到这就断了，后面 ruff/pyright/pytest 一个都没跑。原因：`.venv/bin` 在闸门 worktree 里跟 `.venv/share` 一样不可写（不是只有 `share` 有问题，整棵 `.venv` 都不是当前执行用户能写的），而脚本里 `ln -sf` 失败时没做保护，`set -euo pipefail` 下直接把整个脚本杀死，连 "FAIL: ruff" 都没来得及打。
+
+结论：**原地修复这条路彻底走不通**——当前执行用户对 `.venv` 树完全没有写权限，不只是某个子目录。改成：
+
+1. `ln -sf` 加保护（`... 2>/dev/null` + 判断返回值），失败就不再假装能原地修，直接降级到 scratch venv（`UV_PROJECT_ENVIRONMENT` 指到 `mktemp -d` 新目录），而不是让脚本崩掉。
+2. 本地验证：用"悬空符号链接 + `.venv/bin` 也设成不可写"精确复现闸门场景，跑 `check.sh`，触发 scratch venv 分支后 `uv` 在 3 秒内装完 196 个包（含 `srp-rs`），ruff PASS——说明本地这台机器 `uv` 的全局缓存里已经有构建好的 `srp-rs` wheel，不需要临时调用 cargo。
+
+**说清楚这条我判断不了的部分**：本地能这么快装完，是因为复用了 uv 的全局构建缓存（这台机器之前构建过一次）。闸门那边执行用户的 HOME 是 `/data/apphome/...`，跟我本地、跟之前 `srp-rs` 编译失败时用的应该是同一个环境——如果那边的 uv 缓存是冷的、且真的没有 cargo，scratch venv 这条路径大概率还是会在 `srp-rs` 上失败（回到卡点 4 的错误）。这个我在自己沙箱里验证不了，只能试了再看这次报的是不是同一个错。
+
 ## 下一步
 
-准备重新递验收卡。
+准备重新递验收卡，附言里说清楚了如果这次还在 `srp-rs` 编译上失败，那就是闸门那边环境本身缺 cargo/缓存是冷的，需要有权限的人确认。
