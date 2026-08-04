@@ -11,6 +11,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
+# Shared workspace, not always the same uid across runs (interactive session vs.
+# gate). A stale .venv left by a different user can't be rebuilt/cleaned by uv
+# (Permission denied) — detect that and build the venv somewhere scratch instead.
+if [ -d .venv/share ] && ! [ -w .venv/share ]; then
+    echo "note: .venv/share isn't writable (stale venv from another user) — using a scratch venv"
+    export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
+fi
+
 PASS=0
 FAIL=0
 
