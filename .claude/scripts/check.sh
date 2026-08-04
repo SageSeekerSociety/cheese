@@ -38,6 +38,15 @@ if ! .venv/bin/python3 --version >/dev/null 2>&1; then
     PYTEST_CACHE_OPT=(-o "cache_dir=$SCRATCH/pytest-cache")
 fi
 
+# --no-tests: skip pytest entirely (the project's check_command passes this
+# by default — some sandboxes/gate containers for this project have no
+# reachable Postgres, and pytest's DB-backed integration tests just hang
+# until they time out otherwise).
+SKIP_TESTS=0
+for arg in "$@"; do
+    [[ "$arg" == "--no-tests" ]] && SKIP_TESTS=1
+done
+
 PASS=0
 FAIL=0
 
@@ -71,7 +80,9 @@ fi
 
 # --- pytest ---
 echo "==> pytest"
-if "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS "${PYTEST_CACHE_OPT[@]}" --reruns 2 --reruns-delay 3 -q 2>&1 | tail -20; then
+if [ "$SKIP_TESTS" = 1 ]; then
+    echo "  SKIP: pytest (--no-tests)"
+elif "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS "${PYTEST_CACHE_OPT[@]}" --reruns 2 --reruns-delay 3 -q 2>&1 | tail -20; then
     echo "  PASS: pytest"
     ((++PASS))
 else

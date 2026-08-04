@@ -1,4 +1,4 @@
-## 状态：核心改动 + ruff + pyright 全部通过；唯一卡点是 pytest 缺 Postgres（纯基础设施问题），已找 wangchangxin 拍板下一步
+## 状态：check.sh 补上了缺失的 `--no-tests` 支持（真正根因，不是基础设施问题），本地验证 2/2 通过，准备重新递卡
 
 ## 问题
 
@@ -180,6 +180,23 @@ B 的修法（已经让 B 的验收卡真正过了闸门，变成 pending）：
 
 已经用 `cheese notify`（`decision_request`）直接找 wangchangxin 拍板，给了三个选项：给这个话题的沙箱接上能用的 Postgres / 手动覆盖批准这张卡不用等 pytest 变绿 / 放宽这条子话题的质量闸门要求（只要求 ruff+pyright）。
 
+## 卡点 10 撤销：升级错了方向，真正问题是 check.sh 没实现 `--no-tests`
+
+判断错了：不是基础设施缺口，是我这边漏了一个参数。协作者指出项目级 `check_command` 早就配成了 `bash .claude/scripts/check.sh --no-tests`，A、B 用同一个命令 pytest 都被正确跳过、不会跑到 600s 超时——说明"闸门环境缺 Postgres 所以用 --no-tests 跳过集成测试"这个机制本身在项目层面是通的、也已经生效。问题是**我这个话题工作区里的 `check.sh` 从来没实现过 `--no-tests` 这个参数**——脚本只认 `--full`，`--no-tests` 传进去被当成"未知参数"直接忽略，pytest 照样全跑，才卡在 Postgres 超时上。
+
+不需要接 Postgres、不需要人工覆盖、也不需要给这条子话题单独放宽闸门——已撤回之前发的决策请求（notification 没有硬撤销接口，改用一条新通知说明作废）。
+
+修法：给 `<&.claude/scripts/check.sh>` 加了
+
+```
+SKIP_TESTS=0
+for arg in "$@"; do
+    [[ "$arg" == "--no-tests" ]] && SKIP_TESTS=1
+done
+```
+
+pytest 那一步改成 `if [ "$SKIP_TESTS" = 1 ]; then echo "  SKIP: pytest (--no-tests)"; elif ...`。本地验证：`bash .claude/scripts/check.sh --no-tests` 37 秒内跑完，`Result: 2/2 passed`，退出码 0，全程没碰 pytest/Postgres。
+
 ## 下一步
 
-等 wangchangxin 拍板。核心改动（`conversation_style.md`）本身早就对话验证通过了，代码层面（ruff/pyright）也全绿——卡在的是一个纯基础设施问题，不需要我这边再改代码或脚本。
+用带 `--no-tests` 支持的 `check.sh` 重新递验收卡。
