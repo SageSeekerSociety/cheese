@@ -1,4 +1,4 @@
-## 状态：核心改动已验证通过；卡在 check.sh 反复暴露闸门 worktree 的新损坏点，需要人帮忙看真实日志再继续猜
+## 状态：核心改动已验证通过；check.sh 的 venv 修复换了思路（复用而非重建），准备重新递卡
 
 ## 问题
 
@@ -65,6 +65,18 @@ hint: Build failures usually indicate a problem with the package or the build en
 2. `check.sh` 里 ruff/pyright 两步用的是 `tail -1`/`tail -2` 截断输出，真正的报错原因（究竟是 `srp_rs/target/` 目录权限问题——跟 `.venv/share` 一个模式，还是编译环境缺网络/缺系统库）被截没了，只剩 hint，看不出根因。
 3. 这个 `.venv` fallback 改的是所有子话题共用的 `<&.claude/scripts/check.sh>`，已经连续两轮靠"递卡→看报错尾巴→猜一个 patch"这个方式改，不想再在看不到真实报错的情况下继续堆猜测式修改。
 
+## 卡点 4 解决：换成 `--no-sync` 复用现有 venv，不再触发重建/编译
+
+采纳了协作者的思路：既然只是权限问题、venv 本身没坏，就不该换新 venv 强迫重建（那条路才是逼出 `srp-rs` 编译失败的原因），应该原地复用现有 venv、跳过 uv 的 sync/校验。
+
+`<&.claude/scripts/check.sh>` 改成：检测到 `.venv/share` 不可写时，给三个 `uv run` 调用统一加 `--no-sync`（`uv run --no-sync ...`），完全跳过 uv 的环境校验/重建逻辑，直接用已经装好的 venv 跑。本地验证：
+
+1. `chmod 500 .venv/share` 模拟只读场景。
+2. `uv run --no-sync python3 -c "import srp_rs, ruff"` —— 不触发任何删除/重建，`srp_rs` 直接可用。
+3. 完整跑一遍 `check.sh`：`ruff`、`pyright` 都在 `.venv/share` 只读的情况下 PASS，没有任何编译/重建动作。pytest 卡在沙箱没有 Postgres（第 26-33 节说过的老问题，跟这次改动无关）。
+
+顺带把 ruff/pyright 两步过度截断的 `tail -1`/`tail -2` 放宽到 `tail -20`（pytest 那步原本就是 `tail -3`，也一并放宽），下次再出问题能看到真实报错而不是只剩 hint。
+
 ## 下一步
 
-需要 @wangchangxin 帮忙看一下 `logs/gate-dcf968a1.log` 完整内容（不只是贴的尾巴），或者直接去那个 worktree 确认 `srp_rs/target/` 是不是跟 `.venv/share` 一样被之前某次运行留下了属主不一致、写不进去的情况。拿到真实报错再决定怎么改，比继续猜要快。
+准备重新递验收卡。

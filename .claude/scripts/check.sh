@@ -12,11 +12,16 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
 # A stale .venv left behind by a different user in this worktree can't be
-# removed/rebuilt by uv (Permission denied on .venv/share) — fall back to a
-# scratch venv instead of dying on the first uv invocation.
+# removed/rebuilt by uv (Permission denied on .venv/share) — reuse it as-is
+# via --no-sync instead of letting `uv run` try to recreate it. Rebuilding
+# from scratch would also require recompiling the local srp_rs Rust
+# extension (workspace member, not a PyPI wheel), which needs a cargo
+# toolchain that isn't guaranteed to be present here — reusing the already
+# -built venv sidesteps that entirely.
+UV_RUN=(uv run)
 if [ -d .venv/share ] && ! [ -w .venv/share ]; then
-    echo "note: .venv/share isnt writable (stale venv from another user) — using a scratch venv"
-    export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
+    echo "note: .venv/share isnt writable (stale venv from another user) — reusing it as-is via --no-sync"
+    UV_RUN=(uv run --no-sync)
 fi
 
 PASS=0
@@ -32,7 +37,7 @@ PYTEST_ARGS="-n 4"
 
 # --- ruff (lint + format, matching CI's test.yml lint job) ---
 echo "==> ruff check + format"
-if uv run ruff check . 2>&1 | tail -1 && uv run ruff format --check . 2>&1 | tail -1; then
+if "${UV_RUN[@]}" ruff check . 2>&1 | tail -20 && "${UV_RUN[@]}" ruff format --check . 2>&1 | tail -20; then
     echo "  PASS: ruff"
     ((++PASS))
 else
@@ -42,7 +47,7 @@ fi
 
 # --- pyright ---
 echo "==> pyright"
-if uv run pyright 2>&1 | tail -2; then
+if "${UV_RUN[@]}" pyright 2>&1 | tail -20; then
     echo "  PASS: pyright"
     ((++PASS))
 else
@@ -52,7 +57,7 @@ fi
 
 # --- pytest ---
 echo "==> pytest"
-if uv run pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -3; then
+if "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -20; then
     echo "  PASS: pytest"
     ((++PASS))
 else
