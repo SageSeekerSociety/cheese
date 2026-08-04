@@ -1,4 +1,4 @@
-## 状态：核心改动已通过对话验证，验收卡被质量闸门拦下——闸门执行 worktree 里的 `.venv` 损坏，需要有权限的人清理
+## 状态：核心改动已通过对话验证，check.sh 加了 .venv 权限 fallback，等重新递卡的结果
 
 ## 问题
 
@@ -44,8 +44,10 @@ pytest 那步还带了一句 `Ignoring existing virtual environment linked to no
 
 判断：这不是本话题改动引入的问题。`backend/.gitignore` 和根 `.gitignore` 都排除了 `.venv/`，我这次改动只碰了两个 markdown/shell 文件，跟 `.venv`毫无关系。那个损坏的 `.venv` 是闸门执行用的 worktree 自己积累下来的状态（大概率是之前某次运行在不同权限/容器下建的，符号链接指向的解释器后来失效了）。
 
-**这条我修不了**：损坏的目录在 `/home/nictheboy/...` 下，不在本话题的工作区里，我这边的沙箱也没挂载到那个路径——按操作限制我也不该去碰 `/home` 目录。需要能访问那台机器的人手动清掉那个 worktree 的 `backend/.venv`（或者整个重建 worktree），闸门才可能跑起来。
+**更新**：不用等人工清理了。根因确认是闸门运行环境的通病（另一条子话题 C 完全没碰数据库相关操作也独立撞上了一模一样的报错，排除了"是某个子话题装东西弄坏 `.venv`"这个猜测）——闸门执行 check_command 的用户跟 worktree 里遗留 `.venv` 的属主不一致，`uv` 想清理/重建 `.venv/share` 时没权限，直接炸。
+
+已在 `<&.claude/scripts/check.sh>` 里加了防御：`cd` 进 backend 之后，先测 `.venv/share` 存在且不可写，就把 `UV_PROJECT_ENVIRONMENT` 指到 `mktemp -d` 新建的临时目录，让 `uv` 在那边重建 venv，不碰旧目录。本地手动模拟过只读的 `.venv/share`（`chmod 500`），确认走 fallback 分支后 `uv run ruff --version` 能正常创建新 venv 并跑起来。
 
 ## 下一步
 
-已递验收卡给 @wangchangxin，备注了沙箱缺 Postgres 的限制；但闸门本身因为 worktree 里 `.venv` 损坏直接三连 FAIL，卡片没送到。需要 @wangchangxin（或有权限的人）清理 `/home/nictheboy/cheese-workspaces/.worktrees/de808b13-ffd2-4b8a-9d1d-fba7babe389f/topic_dcf968a1/backend/.venv`，之后我再重新递卡。
+`.venv` 权限 fallback 加完了，准备重新递验收卡（备注仍然带上沙箱缺 Postgres 那条环境限制）。
