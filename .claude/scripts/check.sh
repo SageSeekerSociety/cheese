@@ -6,8 +6,10 @@
 # Output: concise pass/fail summary. Non-zero exit on failure.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# Resolve the repo root from this script's own path, not `git rev-parse` — this
+# repo's VCS is jj, and the quality-gate execution environment has no .git, so a
+# git-based lookup fails fatally before any check even runs.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
 PASS=0
