@@ -11,31 +11,32 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
-# A .venv built in a different container/worktree can be stale in ways that
-# vary run to run (dangling interpreter symlink, unwritable share/, unwritable
-# bin/, ...) — trying to predict and pre-fix each shape has repeatedly guessed
-# wrong. Instead: try the normal (fast, reuses the existing .venv) path, and
-# only if uv actually fails trying to touch it, retry once against a fresh
-# scratch venv+cargo-target-dir we know we own. This reacts to whatever's
-# actually broken instead of guessing at it ahead of time.
-run_uv() {
-    local out
-    if out="$(uv run "$@" 2>&1)"; then
-        printf '%s\n' "$out" | tail -20
-        return 0
-    fi
-    if [ -z "${UV_PROJECT_ENVIRONMENT:-}" ] && printf '%s\n' "$out" | grep -qi "permission denied"; then
-        echo "note: existing .venv isn't writable in this worktree — retrying once in a scratch venv"
-        export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
-        export CARGO_TARGET_DIR="$(mktemp -d)/cargo-target"
-        if out="$(uv run "$@" 2>&1)"; then
-            printf '%s\n' "$out" | tail -20
-            return 0
-        fi
-    fi
-    printf '%s\n' "$out" | tail -20
-    return 1
-}
+# The interactive sandbox and the quality-gate run in separate containers
+# that share only /work — but $HOME differs between them (e.g. /home/node
+# vs /data/apphome). .venv/bin/python is a symlink generated relative to a
+# $HOME-specific uv-managed Python install, so under a different $HOME it
+# points at a path that simply doesn't exist there. That's the real source
+# of "non-existent Python interpreter" / Permission denied / build-failure
+# cascades seen here — not file ownership as such.
+#
+# Probe whether the existing venv's interpreter actually runs in THIS
+# environment. If so, reuse it as-is (fast path, --no-sync — this is what
+# normal dev loops and repeated gate runs on the same container hit). If
+# not, sync into a scratch venv instead: since packages are already
+# resolved/cached by uv, this copies pre-built wheels/artifacts into the
+# new location (~40s) — it does not recompile srp-rs from source. Pin
+# RUFF_CACHE_DIR and pytest's cache_dir alongside it too, so a cache
+# directory left behind by a different uid can't jam up either tool.
+UV_RUN=(uv run --no-sync)
+PYTEST_CACHE_OPT=()
+if ! .venv/bin/python3 --version >/dev/null 2>&1; then
+    echo "note: .venv's interpreter doesn't run in this environment (likely built under a different \$HOME) — syncing into a scratch venv"
+    SCRATCH="$(mktemp -d)"
+    export UV_PROJECT_ENVIRONMENT="$SCRATCH/venv"
+    export RUFF_CACHE_DIR="$SCRATCH/ruff-cache"
+    UV_RUN=(uv run)
+    PYTEST_CACHE_OPT=(-o "cache_dir=$SCRATCH/pytest-cache")
+fi
 
 PASS=0
 FAIL=0
@@ -50,7 +51,7 @@ PYTEST_ARGS="-n 4"
 
 # --- ruff (lint + format, matching CI's test.yml lint job) ---
 echo "==> ruff check + format"
-if run_uv ruff check . && run_uv ruff format --check .; then
+if "${UV_RUN[@]}" ruff check . 2>&1 | tail -20 && "${UV_RUN[@]}" ruff format --check . 2>&1 | tail -20; then
     echo "  PASS: ruff"
     ((++PASS))
 else
@@ -60,7 +61,7 @@ fi
 
 # --- pyright ---
 echo "==> pyright"
-if run_uv pyright; then
+if "${UV_RUN[@]}" pyright 2>&1 | tail -20; then
     echo "  PASS: pyright"
     ((++PASS))
 else
@@ -70,7 +71,7 @@ fi
 
 # --- pytest ---
 echo "==> pytest"
-if run_uv pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q; then
+if "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS "${PYTEST_CACHE_OPT[@]}" --reruns 2 --reruns-delay 3 -q 2>&1 | tail -20; then
     echo "  PASS: pytest"
     ((++PASS))
 else
