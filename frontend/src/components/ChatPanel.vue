@@ -1863,9 +1863,21 @@ onBeforeUnmount(() => {
 .md-content :deep(a) {
   color: var(--accent-ink);
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 .md-content :deep(a:hover) {
   text-decoration: underline;
+}
+.md-content :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.md-content :deep(table) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
 }
 .md-content :deep(code) {
   font-family: var(--font-mono);
