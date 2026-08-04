@@ -6,6 +6,8 @@
 # Output: concise pass/fail summary. Non-zero exit on failure.
 set -euo pipefail
 
+# VCS-agnostic on purpose: this repo's version control is jj, not git, and gate
+# execution environments have no .git — `git rev-parse --show-toplevel` fails there.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
