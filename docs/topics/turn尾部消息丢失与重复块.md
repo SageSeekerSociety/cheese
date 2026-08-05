@@ -230,6 +230,41 @@ venv（比如第一次跑）时兜底回退到 `uv run --no-sync`。本地用只
 
 三处 turn 消息丢失/重复的业务修复、3 个功能测试全程未改动。
 
+## 采纳时合并冲突（main 已并入工作区）——已语义化解决
+
+采纳时把主分支合了进来，两个文件出现 jj 冲突标记：
+
+- **`backend/app/domain/agent/hooks_substrate.py`**：不是真冲突，只是两处改动位置
+  相邻。我这边加了 `_park_stale_hook()` 辅助函数（迟到 Stop 修复用），主分支给
+  `hooks_settings()` 加了 `extra_stop` 参数（给远程设备在 turn 结束时"交作业"用的
+  额外 Stop hook）。两者互不影响，直接都保留：函数定义 + 新增参数签名都留下。
+
+- **`.claude/scripts/check.sh`**：真正的双方都改过同一个文件，需要逐条合并：
+  - 探测逻辑：保留**我这边**更准确的探测点（直接测 `.venv/bin/pyright --version`
+    这个会失效的东西本身，而不是主分支那版测 `.venv/bin/python` 的方式——这条已经
+    在前面几轮里用实测证明过后者测不出真正的坑）。
+  - `UV_RUN=(uv run [--no-sync])` 数组写法、`SKIP` 计数器、`Result: X/Y passed, Z
+    skipped` 的输出格式：采用**主分支**这版，风格更清楚，也是团队现在的统一约定。
+  - `PYTEST_CACHE_DIR` 单独给 pytest 一个临时缓存目录：**主分支**加的，我这边之前
+    漏掉了（只修了 ruff 的缓存目录），直接采纳。
+  - pytest 跑之前先探测数据库端口是否可达，不可达就快速判 FAIL（不再让 ~3000 个
+    测试各自付 `--reruns` 的重试税）：**主分支**加的，直接采纳，这条正是本轮亲身
+    踩过的坑（`3158 errors, 6316 rerun in 1:26:49`）。
+  - `timeout 120` 兜底、卡住就 SKIP 而不是 FAIL：**我这边**加的，主分支没有，两边
+    不冲突，直接保留（发起人明确要求过这条）。ruff 走原生二进制直接调用 + 独立
+    缓存目录，两边逻辑一致，合并没有分歧。
+
+验证：
+- 用 `bash .claude/scripts/check.sh --no-tests` 跑了正常场景（`Result: 2/2 passed,
+  1 skipped`）和精确模拟的"venv 整体从别处继承、shebang 失效"场景（同样
+  `Result: 2/2 passed, 1 skipped`，一分钟左右完成，没有卡住），两种都过。
+- `ruff check`/`ruff format --check`、`pyright`（全量 app，0 errors）都单独确认过。
+- `pytest` 仍然因为这个沙箱没有 Postgres 无法本地跑（`tests/conftest.py` 的
+  `_pg_schema` 是 session 级 autouse，任何测试跑之前都会先建库）——这是本话题反复
+  确认过的环境限制，不是这次合并引入的新问题，也不是这次合并能解决的。
+- 三处 turn 消息丢失/重复的业务修复代码本身、3 个功能测试文件，合并过程中都没有
+  被触碰。
+
 ## 第八次：探测点选错了——.venv/bin/python3 能跑不代表 .venv/bin/pyright 能跑
 
 闸门这次日志：`.venv/bin/python3 --version` 探测过了（走了 `VENV_OK=1` 分支，用了
