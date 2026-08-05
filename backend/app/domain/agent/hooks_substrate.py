@@ -52,7 +52,7 @@ def _park_stale_hook(
         logger.warning("stale hook park failed for topic %s", topic_id, exc_info=True)
 
 
-def hooks_settings() -> dict:
+def hooks_settings(extra_stop: list[str] | None = None) -> dict:
     """``~/.claude/settings.json`` for a hooks-driven session: pre-accept the
     bypass disclaimer AND forward every structured event to our hook endpoint via
     a COMMAND hook (``cheese-hook``).
@@ -68,6 +68,11 @@ def hooks_settings() -> dict:
     cmd = {"type": "command", "command": "cheese-hook"}
     tool_matched = [{"matcher": "*", "hooks": [cmd]}]
     plain = [{"hooks": [cmd]}]
+    # A remote machine also has to hand its work back at turn end; the local
+    # container edits the real worktree and has nothing to send.
+    stop_hooks = [cmd] + [
+        {"type": "command", "command": name} for name in (extra_stop or [])
+    ]
     return {
         "skipDangerousModePermissionPrompt": True,
         "hooks": {
@@ -75,7 +80,7 @@ def hooks_settings() -> dict:
             "PreToolUse": tool_matched,
             "PostToolUse": tool_matched,
             "MessageDisplay": plain,
-            "Stop": plain,
+            "Stop": [{"hooks": stop_hooks}],
         },
     }
 

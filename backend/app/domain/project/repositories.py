@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.project.models import (
@@ -26,6 +26,7 @@ class ProjectRepository:
         ai_mode: AiMode = AiMode.collaborative,
         expert_role: str | None = None,
         team_id: int | None = None,
+        external_task_id: int | None = None,
     ) -> Project:
         project = Project(
             name=name,
@@ -33,6 +34,7 @@ class ProjectRepository:
             ai_mode=ai_mode,
             expert_role=expert_role,
             team_id=team_id,
+            external_task_id=external_task_id,
         )
         self._session.add(project)
         await self._session.flush()
@@ -139,3 +141,53 @@ class ProjectRepository:
     async def list_projects_for_task(self, task_id: uuid.UUID) -> list[ProjectTaskLink]:
         stmt = select(ProjectTaskLink).where(ProjectTaskLink.task_id == task_id)
         return list((await self._session.scalars(stmt)).all())
+
+    async def list_for_external_task(self, task_id: int) -> list[Project]:
+        """Every project created from this 赛题 — the way back the link exists for."""
+        result = await self._session.execute(
+            select(Project)
+            .where(Project.external_task_id == task_id)
+            .order_by(Project.created_at)
+        )
+        return list(result.scalars())
+
+    async def list_visible_to(
+        self, *, handle: str | None, user_id: int | None
+    ) -> list[Project]:
+        """Projects this person has any claim on.
+
+        The listing used to return EVERY project to everyone, which is fine with
+        five of them and wrong the moment a class shows up: a student would see
+        every other team's work, and every piece of debugging debris, in their
+        own sidebar.
+
+        A claim is one of three things — you own it, you are on its roster, or it
+        belongs to a team you are in. Anything else is not yours to see here.
+        """
+        from app.domain.team.models import TeamUserRelation
+
+        claims = []
+        if handle:
+            claims.append(Project.owner_handle == handle)
+            claims.append(
+                Project.id.in_(
+                    select(ProjectMember.project_id).where(
+                        ProjectMember.user_handle == handle
+                    )
+                )
+            )
+        if user_id:
+            claims.append(
+                Project.team_id.in_(
+                    select(TeamUserRelation.team_id).where(
+                        TeamUserRelation.user_id == user_id
+                    )
+                )
+            )
+        if not claims:
+            # Nobody in particular is asking; that is not the same as everybody.
+            return []
+        result = await self._session.execute(
+            select(Project).where(or_(*claims)).order_by(Project.created_at)
+        )
+        return list(result.scalars())

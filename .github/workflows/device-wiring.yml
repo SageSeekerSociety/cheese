@@ -149,6 +149,10 @@ jobs:
 
           verify="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
             python /tmp/device_capability_verify.py "$TOPIC" "$MARKER" 2>/dev/null || true)"
+          # Remove the probe now that it has been read back. 采纳前快照 commits
+          # whatever sits in the worktree, so a leftover probe rides an accept all
+          # the way onto the upstream trunk (it did: DEVICE_PROBE.txt reached main).
+          rm -f "$HOSTTREE/DEVICE_PROBE.txt" 2>/dev/null || true
           eval "$(printf '%s\n' "$verify" | grep -E '^(CARDS|MARKER)=')"
           if [ "${CARDS:-0}" -gt 0 ] 2>/dev/null; then
             echo "PASS  the shipped cheese CLI filed an accept card from the device (${CARDS})"

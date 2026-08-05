@@ -27,7 +27,7 @@ import uuid
 from pathlib import Path
 
 from app.core.config import settings
-from app.domain.agent import clone
+from app.domain.agent import clone, provider_env
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
     HooksTurnProvider,
@@ -46,6 +46,53 @@ _READY_POLL_S = 0.4
 
 # The `cheese` CLI lives next to the shim; mounted read-only like the SDK path.
 _CHEESE_CLI = Path(settings.sandbox_shim).resolve().parent / "cheese"
+
+
+def _cheese_cli_mount() -> list[str]:
+    """`-v <cheese>:/usr/local/bin/cheese:ro`, or nothing.
+
+    The mount OVERRIDES the copy the sandbox image already bakes with a fresher
+    one — an optimisation, not a requirement. When the backend itself runs in a
+    container it spawns the sandbox as a SIBLING, so the mount source has to be a
+    path the HOST daemon can see; the in-image path `/app/sandbox/cheese` is not
+    one, and mounting it aborts the container (`not a directory`). So use the
+    host dir when configured, and otherwise mount nothing and rely on the baked
+    copy (current, since the image is built from this same repo)."""
+    host_dir = settings.sandbox_shim_host_dir.strip()
+    if host_dir:
+        return ["-v", f"{host_dir.rstrip('/')}/cheese:/usr/local/bin/cheese:ro"]
+    if _CHEESE_CLI.is_file():
+        return ["-v", f"{_CHEESE_CLI}:/usr/local/bin/cheese:ro"]
+    return []
+
+
+def _best_effort_chmod(path: Path, mode: int) -> None:
+    """chmod that tolerates not owning the file. The session dir is shared with
+    other uids across runs (the mount is a host path), so a file a previous run
+    created under a different owner can't be chmod'd by this one — but the write
+    already succeeded and the mode is only a nicety. EPERM here must not abort a
+    turn (it did: 'Operation not permitted' on settings.json)."""
+    try:
+        path.chmod(mode)
+    except OSError:
+        pass
+
+
+def _rewrite(path: Path, content: str, *, mode: int) -> None:
+    """Replace a file the backend planted, even if the container's user (uid 1000
+    in the sandbox image) rewrote it last turn under a different owner.
+
+    The backend runs as one uid and the sandbox's Claude Code as another, both
+    writing the SAME host-path session dir. So the settings/credential files this
+    plants get re-owned by the container between turns, and a plain overwrite then
+    fails EPERM. Unlinking first only needs write on the parent dir (which the
+    backend owns), so the file is always recreated fresh under the backend."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    path.write_text(content, encoding="utf-8")
+    _best_effort_chmod(path, mode)
 
 
 def _resume_ready(session_dir: str, resume_session_id: str) -> bool:
@@ -99,6 +146,38 @@ def _hook_base() -> str:
     return base
 
 
+def _subscription_args() -> list[str]:
+    """Docker args that route this sandbox's model calls through the meter.
+
+    The capture is by NAME, not by proxy env: Claude Code issues the model call
+    through Node's built-in undici, which ignores HTTPS_PROXY (measured — the
+    proxy saw every auxiliary request and never a single /v1/messages, while the
+    turns kept answering). Resolving api.anthropic.com to the meter catches
+    undici too, because that path still goes through DNS.
+
+    Only the CA is mounted. The real credential is NEVER placed in the container
+    (hard requirement: a machine must not hold a valid credential). Login is a
+    placeholder CLAUDE_CODE_OAUTH_TOKEN in the env (see subscription_provider),
+    and the metering proxy swaps the Authorization header for the real token,
+    which lives only on the backend. That also makes refresh single-point — one
+    daemon owns the real credential, so no sandbox ever touches it.
+    """
+    if not settings.subscription_enabled:
+        return []
+    host = settings.subscription_proxy_host
+    # api.anthropic.com carries the messages (metered); console.anthropic.com and
+    # platform.claude.com carry interactive Claude Code's login/refresh. All go
+    # to the same proxy, which routes each to its real host by SNI and injects the
+    # real token — so the login check passes without a valid credential in the box.
+    args: list[str] = []
+    for h in ("api.anthropic.com", "console.anthropic.com", "platform.claude.com"):
+        args += ["--add-host", f"{h}:{host}"]
+    ca = settings.subscription_ca_host_path.strip()
+    if ca:
+        args += ["-v", f"{ca}:/etc/cheese/proxy-ca.pem:ro"]
+    return args
+
+
 async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str]:
     """Run a docker command off the event loop. Returns (rc, stdout, stderr)."""
     proc = await asyncio.create_subprocess_exec(
@@ -122,6 +201,8 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
     hooks. Transport = docker/tmux; the shared turn flow lives in the base
     (HooksTurnProvider) — this class implements only the transport seam. The
     screen ctx is the container name (str)."""
+
+    # (see _subscription_args below for how a subscription turn is captured)
 
     name = "tmux-hooks"
     _needs_topic_message = "tmux 后端需要 Docker 和话题上下文（缺一不可）"
@@ -178,13 +259,13 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             "host.docker.internal:host-gateway",
             "-v",
             f"{env['SBX_SESSION']}:/home/node/.claude",
+            *_subscription_args(),
             "-v",
             f"{env['SBX_WORKTREE']}:/work",
             "-w",
             "/work",
         ]
-        if _CHEESE_CLI.is_file():
-            args += ["-v", f"{_CHEESE_CLI}:/usr/local/bin/cheese:ro"]
+        args += _cheese_cli_mount()
         args += [
             "--network",
             "bridge",
@@ -235,6 +316,10 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             and _resume_ready(session_dir, resume_session_id)
         ):
             claude_cmd += f" --resume {resume_session_id}"
+        # Pass --model when set. On the subscription this is the project's pick
+        # ("opus"; empty = the subscription's default Sonnet, so no flag). On the
+        # gateway it's the gateway model name. Either way, an empty model means
+        # "use the default" — never pin a name the provider does not serve.
         if model:
             claude_cmd += f" --model {model}"
         rc, _, err = await _docker(
@@ -300,7 +385,41 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         """Container env: model gateway (ANTHROPIC_*) + cheese CLI wiring. Mirrors
         LocalDockerProvider._sandbox_config; SBX_WORKTREE/SBX_SESSION ride along as
         the /work and ~/.claude mount sources (stripped before -e)."""
-        merged = {**settings.agent_env(), **(env or {})}
+        if settings.subscription_enabled:
+            # Subscription: point Claude Code at the metering proxy, trust its CA
+            # (mounted by _subscription_args), attribute to this topic. No gateway
+            # key, no model pin — see subscription_provider. The container also
+            # ships a fake credential (see _write_session_settings); the real one
+            # never leaves the backend.
+            #
+            # The subscription env WINS over the caller's `env`: that env carries
+            # the gateway's ANTHROPIC_BASE_URL/token (the default provider), and
+            # letting it override would send the turn to the GLM gateway instead
+            # of the metering proxy — silently, on a path that otherwise looks
+            # correct. Only the ANTHROPIC_* routing keys are overridden; the
+            # caller's other env is kept.
+            sub = provider_env.subscription_provider(
+                ca_path="/etc/cheese/proxy-ca.pem",
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+            ).env
+            merged = {**(env or {})}
+            # The caller's env is the gateway provider (BASE_URL + model pins).
+            # Subscription mode must carry NONE of them: a BASE_URL flips the CLI
+            # into API-key mode, and a pinned model asks the subscription for one
+            # it doesn't serve. subscription_provider only ADDS keys, so these
+            # have to be explicitly dropped, not just overridden.
+            for k in (
+                "ANTHROPIC_BASE_URL",
+                "CLAUDE_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            ):
+                merged.pop(k, None)
+            merged.update(sub)
+        else:
+            merged = {**settings.agent_env(), **(env or {})}
         merged.update(
             {
                 "HOME": "/home/node",
@@ -395,11 +514,15 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         per-topic URL + token live in the container env, not the file)."""
         target = Path(session_dir) / "settings.json"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
+        _rewrite(
+            target,
             json.dumps(hooks_settings(), ensure_ascii=False),
-            encoding="utf-8",
+            mode=0o666,
         )
-        target.chmod(0o666)
+        # Login is via CLAUDE_CODE_OAUTH_TOKEN in the container env (see
+        # subscription_provider), NOT a .credentials.json — the file gets the
+        # local validation the env var skips, and rejected the placeholder as
+        # "Not logged in". So nothing credential-shaped is planted here.
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history

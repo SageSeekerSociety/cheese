@@ -14,8 +14,18 @@ from app.domain.workspace import service as ws
 
 
 def _mkproject(client) -> uuid.UUID:
-    resp = client.post("/api/projects", json={"name": "P"}).json()
+    resp = client.post(
+        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+    ).json()
     return uuid.UUID(resp["data"]["id"])
+
+
+def _owner(client) -> dict[str, str]:
+    """These routes return the source, so they need a caller with a claim on the
+    project; the tests used to reach them with no credential at all."""
+    from tests.integration.test_connector_viewer import _login
+
+    return {"Authorization": f"Bearer {_login(client, 'alice')}"}
 
 
 def _native_edit(pid: uuid.UUID, topic_id: uuid.UUID, path: str, content: str) -> None:
@@ -53,9 +63,13 @@ def test_topic_branch_isolated_then_merged(client):
 
     assert ws.merge_topic(pid, tid)["merged"] is True
     # The base branch now contains the file (browsable via the API).
-    files = client.get(f"/api/projects/{pid}/files").json()["data"]["data"]
+    files = client.get(f"/api/projects/{pid}/files", headers=_owner(client)).json()[
+        "data"
+    ]["data"]
     assert any(f["path"] == "feat.txt" for f in files)
-    log = client.get(f"/api/projects/{pid}/git/log").json()["data"]["data"]
+    log = client.get(f"/api/projects/{pid}/git/log", headers=_owner(client)).json()[
+        "data"
+    ]["data"]
     assert len(log) >= 1
 
 
@@ -103,7 +117,11 @@ def test_exec_in_sandbox_runs_code_and_blocks_network(client):
 
 def test_git_diff_rejects_option_injection(client):
     pid = _mkproject(client)
-    r = client.get(f"/api/projects/{pid}/git/diff", params={"ref": "--help"})
+    r = client.get(
+        f"/api/projects/{pid}/git/diff",
+        params={"ref": "--help"},
+        headers=_owner(client),
+    )
     assert r.status_code == 422
 
 

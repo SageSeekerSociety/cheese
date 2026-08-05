@@ -22,7 +22,20 @@ class UsageRepository:
         output_tokens: int,
         cost_usd: float,
         kind: str = "chat",
+        metered: bool = True,
     ) -> ResourceUsage:
+        """Record a turn's spend.
+
+        ``metered=False`` records a turn whose token counts are NOT knowable —
+        the hooks backends run interactive Claude Code, which reports no usage
+        locally, and the gateway that would supply it is not configured
+        everywhere. Such a turn used to be skipped entirely, so the table showed
+        an empty month while real money drained: 300 RMB of relay credit went
+        without a single row naming what spent it. A row with zero tokens is
+        still worth writing — it says a turn happened, on which project, with
+        which model, which is the difference between "we do not know how much"
+        and "we do not know anything".
+        """
         row = ResourceUsage(
             project_id=project_id,
             topic_id=topic_id,
@@ -31,7 +44,7 @@ class UsageRepository:
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
             cost_usd=cost_usd,
-            kind=kind,
+            kind=kind if metered else f"{kind}:unmetered",
         )
         self._session.add(row)
         await self._session.flush()

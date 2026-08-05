@@ -357,6 +357,61 @@
             </div>
           </v-card-text>
         </v-card>
+        <!-- 项目：从这道赛题开出来的 2.0 项目（git 仓库 + 根话题 + 芝士）。
+             列出已有的，而不是直接给一个会默默再建一个的按钮。 -->
+        <v-card flat rounded="lg" class="task-info-card mt-4" border="sm">
+          <v-card-item>
+            <template #prepend>
+              <div class="me-3">
+                <v-avatar color="primary-lighten-5" size="48" class="elevation-0">
+                  <v-icon color="primary" size="28">mdi-source-branch</v-icon>
+                </v-avatar>
+              </div>
+            </template>
+            <v-card-title class="text-h5 ps-0">项目</v-card-title>
+          </v-card-item>
+
+          <v-divider class="mx-6"></v-divider>
+
+          <v-card-text class="px-6 py-4">
+            <div v-if="taskProjectsLoading" class="text-medium-emphasis">加载中…</div>
+            <div v-else-if="taskProjects.length" class="d-flex flex-column gap-2">
+              <a
+                v-for="p in taskProjects"
+                :key="p.id"
+                :href="`/project/${p.id}`"
+                class="d-flex align-center gap-2 text-decoration-none"
+              >
+                <v-icon size="18" color="primary">mdi-folder-outline</v-icon>
+                <span>{{ p.name }}</span>
+              </a>
+            </div>
+            <div v-else class="text-medium-emphasis">还没有人从这道赛题开始做。</div>
+
+            <v-alert
+              v-if="taskProjectError"
+              type="error"
+              density="compact"
+              variant="tonal"
+              class="mt-3"
+            >
+              {{ taskProjectError }}
+            </v-alert>
+
+            <v-btn
+              color="primary"
+              variant="tonal"
+              rounded="pill"
+              class="mt-4"
+              :loading="creatingTaskProject"
+              @click="createProjectFromTask"
+            >
+              <v-icon start>mdi-plus</v-icon>
+              从这道赛题创建项目
+            </v-btn>
+          </v-card-text>
+        </v-card>
+
         <v-card flat rounded="lg" class="gradient-card cursor-pointer mt-4" elevation="0" @click="goToAIAdvice">
           <v-card-text class="pa-6">
             <div class="d-flex align-center gap-4">
@@ -394,7 +449,7 @@
 <script setup lang="ts">
 import type { Task } from '@/types'
 
-import { computed, defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { VBtn } from 'vuetify/components'
 import dayjs from 'dayjs'
@@ -404,6 +459,10 @@ import { getAvatarUrl } from '@/utils/materials'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import { TaskParticipationInfo } from '@/network/api/tasks/types'
 import AccountService from '@/services/account'
+// The cheesex (2.0) client: a project here is a git repo + root topic + 芝士,
+// not the 1.0 team-project that shares the word.
+import { createProject as createCheesexProject, listProjectsForTask } from '@/api'
+import type { Project as CheesexProject } from '@/cx_types'
 
 /** Markdown 渲染器实例，用于将非 TipTap 格式的赛题描述渲染为 HTML */
 const markdownRenderer = new MarkdownRenderer()
@@ -417,6 +476,49 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+
+// 从赛题创建 2.0 项目（git 仓库 + 根话题 + 芝士）。1.0 的「团队项目」是另一种
+// 东西，同名不同物，这里要的是前者。
+const taskProjects = ref<CheesexProject[]>([])
+const taskProjectsLoading = ref(false)
+const taskProjectError = ref('')
+const creatingTaskProject = ref(false)
+
+async function loadTaskProjects() {
+  const id = props.taskData?.id
+  if (!id) return
+  taskProjectsLoading.value = true
+  try {
+    taskProjects.value = (await listProjectsForTask(id)).data
+  } catch {
+    // A 赛题 page must still render when this list cannot be fetched.
+    taskProjects.value = []
+  } finally {
+    taskProjectsLoading.value = false
+  }
+}
+
+async function createProjectFromTask() {
+  const id = props.taskData?.id
+  if (!id || creatingTaskProject.value) return
+  creatingTaskProject.value = true
+  taskProjectError.value = ''
+  try {
+    const project = await createCheesexProject(
+      props.taskData?.name || `赛题 ${id}`,
+      undefined,
+      undefined,
+      id,
+    )
+    window.location.href = `/project/${project.id}`
+  } catch (e) {
+    taskProjectError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    creatingTaskProject.value = false
+  }
+}
+
+watch(() => props.taskData?.id, loadTaskProjects, { immediate: true })
 
 const formatTaskDate = (date: number | string | Date | undefined) => {
   if (!date) return '未设置'

@@ -84,6 +84,28 @@ def test_accept_happy_path_archives_topic(client):
     assert cards[0]["status"] == "accepted"
 
 
+def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
+    from app.domain.workspace import service as ws
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+
+    def fail_merge(*_args):
+        raise RuntimeError("git object database unavailable")
+
+    monkeypatch.setattr(ws, "merge_topic", fail_merge)
+
+    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+
+    assert r.status_code == 422
+    assert "could not be merged" in r.json()["message"]
+    cards = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"]
+    assert cards[0]["status"] == "pending"
+    assert cards[0]["approvals"] == []
+    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+
+
 def test_ai_cannot_accept_own_work_collaborative(client):
     # Default project ai_mode is collaborative.
     pid = _make_project(client)

@@ -5,13 +5,15 @@ import uuid
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, page
+from app.auth.caller import may_access_project
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ValidationError
+from app.core.errors import NotFoundError, ValidationError
+from app.core.sandbox_auth import verify_scoped_token
 from app.domain.project.services import ProjectService
 from app.domain.workspace import service as ws
 
@@ -20,12 +22,41 @@ router = APIRouter(prefix="/api/projects", tags=["workspace"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
+async def require_project_access(
+    project_id: uuid.UUID,
+    request: Request,
+    db: DbSession,
+    x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
+) -> None:
+    """Reject a caller with no claim on this project.
+
+    These routes return the source itself and checked only that the project
+    EXISTS — not a check on the caller, so an unauthenticated request carrying a
+    project id was served the file list and file contents.
+
+    Both legitimate callers keep working: a human in the browser (member or
+    owner, resolved by HANDLE — see app.auth.caller for why user id is not
+    enough) and the agent on a machine (its project-scoped token). Anything else
+    gets NotFound, so the answer does not confirm the project exists.
+
+    A route dependency rather than a line in each handler: the per-handler shape
+    is exactly how six routes came to share one hole.
+    """
+    if x_cheese_token and verify_scoped_token(
+        x_cheese_token, project_id=str(project_id)
+    ):
+        return
+    if await may_access_project(request, db, project_id):
+        return
+    raise NotFoundError("project not found")
+
+
 def _remote() -> bool:
     """Files live on the cheesed node when compute runs remotely (R9 read-back)."""
     return settings.compute_provider == "remote"
 
 
-@router.get("/{project_id}/files")
+@router.get("/{project_id}/files", dependencies=[Depends(require_project_access)])
 async def list_files(
     project_id: uuid.UUID, db: DbSession, topic: uuid.UUID | None = None
 ) -> dict:
@@ -40,7 +71,7 @@ async def list_files(
     return ok(page(files, len(files)))
 
 
-@router.get("/{project_id}/file")
+@router.get("/{project_id}/file", dependencies=[Depends(require_project_access)])
 async def read_file(
     project_id: uuid.UUID, path: str, db: DbSession, topic: uuid.UUID | None = None
 ) -> dict:
@@ -54,7 +85,7 @@ async def read_file(
     return ok({"path": path, "content": content})
 
 
-@router.get("/{project_id}/file/raw")
+@router.get("/{project_id}/file/raw", dependencies=[Depends(require_project_access)])
 async def read_file_raw(
     project_id: uuid.UUID, path: str, db: DbSession, topic: uuid.UUID | None = None
 ) -> Response:
@@ -66,7 +97,7 @@ async def read_file_raw(
     return Response(content=data, media_type=mime)
 
 
-@router.put("/{project_id}/file")
+@router.put("/{project_id}/file", dependencies=[Depends(require_project_access)])
 async def write_file(
     project_id: uuid.UUID,
     body: dict,
@@ -89,7 +120,7 @@ async def write_file(
     return ok({"path": path})
 
 
-@router.get("/{project_id}/git/log")
+@router.get("/{project_id}/git/log", dependencies=[Depends(require_project_access)])
 async def git_log(
     project_id: uuid.UUID, db: DbSession, topic: uuid.UUID | None = None
 ) -> dict:
@@ -103,7 +134,7 @@ async def git_log(
     return ok(page(rows, len(rows)))
 
 
-@router.get("/{project_id}/git/diff")
+@router.get("/{project_id}/git/diff", dependencies=[Depends(require_project_access)])
 async def git_diff(
     project_id: uuid.UUID,
     db: DbSession,

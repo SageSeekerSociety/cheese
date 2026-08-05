@@ -1,0 +1,70 @@
+name: MicroCloud smoke
+
+# MicroCloud (the IaaS control plane we provision project machines from) only
+# answers inside ghg's private network, so this runs on the dev box's own
+# runner — which already sits in that network — rather than a hosted runner.
+on:
+  push:
+    branches: [spike/microcloud-smoke]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only) | provision | destroy"
+        type: choice
+        options: [plan, provision, probe, destroy]
+        default: plan
+      hostname:
+        description: "hostname for the provisioned machine"
+        default: cheese-smoke-1
+      offering:
+        description: "offering id (54=lxc, 55=vm); blank = first active"
+
+concurrency:
+  group: microcloud-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run
+        env:
+          MICROCLOUD_BASE: ${{ vars.MICROCLOUD_BASE }}
+          MICROCLOUD_TENANT_SECRET: ${{ secrets.MICROCLOUD_TENANT_SECRET }}
+          # Push runs default to the read-only plan; flipping the repo variable
+          # (not a commit) is what escalates a re-run to provision/destroy.
+          MODE: ${{ github.event.inputs.mode || vars.MICROCLOUD_SMOKE_MODE || 'plan' }}
+          HOSTNAME_ARG: ${{ github.event.inputs.hostname || 'cheese-smoke-1' }}
+          # Which offering to exercise. The script otherwise takes the first
+          # active one, so LXC vs VM could not be told apart from a run.
+          OFFERING_ARG: ${{ github.event.inputs.offering || vars.MICROCLOUD_SMOKE_OFFERING || '' }}
+          # Survives the checkout clean, so a re-run reuses the machine it made
+          # instead of stranding one per run.
+          MICROCLOUD_SMOKE_STATE_DIR: ${{ runner.temp }}/../microcloud-smoke
+        run: |
+          set -euo pipefail
+          cd backend
+          case "$MODE" in
+            plan)      ARGS="--plan-only" ;;
+            provision) ARGS="--hostname $HOSTNAME_ARG" ;;
+            probe)     ARGS="--probe" ;;
+            destroy)   ARGS="--destroy" ;;
+            *) echo "unknown mode $MODE" >&2; exit 2 ;;
+          esac
+          # An `[ -n ... ] && ...` one-liner would abort the whole step under
+          # `set -e` whenever the input is blank, which is the common case.
+          if [ -n "$OFFERING_ARG" ]; then
+            ARGS="$ARGS --offering $OFFERING_ARG"
+          fi
+          python3 scripts/microcloud_smoke.py $ARGS
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: microcloud-smoke-log
+          path: backend/logs/microcloud-smoke.log
+          if-no-files-found: warn

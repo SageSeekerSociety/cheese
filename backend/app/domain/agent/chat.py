@@ -21,12 +21,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.core.errors import NotFoundError
+from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
 from app.domain.agent import event_spool
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
+from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
@@ -442,6 +443,26 @@ def _prompt_line(b) -> str:
             f"它同时存在你工作目录的 {b.content}）"
         )
     return f"[{b.author}]: {b.content}"
+
+
+# What an exhausted relay balance looks like coming back from newapi. It arrives
+# as HTTP 429, the same status as a rate limit, but the two need opposite advice:
+# a rate limit clears on its own, a spent balance never does.
+_OUT_OF_CREDIT_MARKERS = (
+    "余额不足",
+    "请充值",
+    "insufficient balance",
+    "insufficient_quota",
+    "quota exceeded",
+    "billing",
+)
+
+
+def _is_out_of_credit(detail: str | None) -> bool:
+    if not detail:
+        return False
+    lowered = detail.lower()
+    return any(m.lower() in lowered for m in _OUT_OF_CREDIT_MARKERS)
 
 
 class ChatService:
@@ -950,7 +971,18 @@ class ChatService:
         if image:
             kwargs["sandbox_image"] = image
         pool_route = True
-        if self._profiles is not None:
+        if settings.subscription_enabled:
+            # The subscription path doesn't route through the gateway or a
+            # profile: the tmux provider points Claude Code at the metering proxy
+            # and the model is the project's own pick (Sonnet 5 by default, Opus 5
+            # opt-in). Pass the --model alias ("" = default, no flag); the sandbox
+            # env is set by the provider, not a profile.
+            choice = (
+                (project.settings or {}).get("subscription_model") if project else None
+            )
+            kwargs["model"] = subscription_model_alias(choice)
+            pool_route = False
+        elif self._profiles is not None:
             profile = self._profiles.resolve(
                 project.settings if project else None,
                 project.owner_handle if project else None,
@@ -965,8 +997,12 @@ class ChatService:
             # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
             # the master key (containment), attributable + budget-capped.
             override = await self._gateway_project_env(project_id)
-            if override:
-                kwargs["env"] = {**kwargs.get("env", {}), **override}
+            if not override:
+                raise GatewayUnavailableError(
+                    "AI gateway could not provision a project-scoped key; "
+                    "no model call was made"
+                )
+            kwargs["env"] = {**kwargs.get("env", {}), **override}
         return kwargs, routed
 
     _GW_KEY = "llm_gateway_key"
@@ -976,8 +1012,8 @@ class ChatService:
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn: mint (once) and return the
         project's virtual key, and keep its L2 max_budget in step with the
-        project's grants. Best-effort — returns None (turn runs on the default
-        pool credentials) on any gateway/admin failure."""
+        project's grants. Returns None on any gateway/admin failure; the caller
+        must refuse the turn rather than expose default pool credentials."""
         try:
             async with self._gateway_lock:
                 async with self._sessions() as session:
@@ -1071,19 +1107,18 @@ class ChatService:
                         return None  # nothing ever routed → nothing to meter
                     ckpt = s.get(self._GW_CKPT)
                     ckpt = ckpt if isinstance(ckpt, dict) else None
-                    prompt, completion, usd, next_ckpt = await drain_new_usage(
-                        self._gateway, key, ckpt
-                    )
-                    if prompt + completion <= 0:
+                    drained = await drain_new_usage(self._gateway, key, ckpt)
+                    if drained is None or drained[0] + drained[1] <= 0:
                         # LiteLLM writes spend logs asynchronously — at turn end
                         # the rows often lag by a few seconds (verified live).
                         # One bounded settle-retry keeps per-turn attribution;
                         # anything still missing lands in the NEXT drain
                         # (cumulative deltas are exactly-once either way).
                         await asyncio.sleep(3.0)
-                        prompt, completion, usd, next_ckpt = await drain_new_usage(
-                            self._gateway, key, ckpt
-                        )
+                        drained = await drain_new_usage(self._gateway, key, ckpt)
+                    if drained is None:
+                        return None
+                    prompt, completion, usd, next_ckpt = drained
                     s[self._GW_CKPT] = next_ckpt
                     project.settings = s
                     await session.commit()
@@ -1466,6 +1501,15 @@ class ChatService:
                     # Resume ~2min after the window opens (clock skew buffer).
                     wait_s = rate_limit["resets_at"] - datetime.now(UTC).timestamp()
                     resume_after_s = max(60.0, wait_s + 120.0)
+            elif _is_out_of_credit(detail):
+                # A spent balance is not a wait — no amount of retrying refills
+                # it, and telling someone to try again later sends them into a
+                # loop that cannot succeed. Say what actually has to happen.
+                fail_text = (
+                    "⚠️ 芝士这轮没能完成——AI 中继的余额用尽了。"
+                    "这不是等一等就能好的，需要有人充值或把机器切到其他 AI 供给；"
+                    f"重试无效。{quoted}"
+                )
             elif api_error_status:
                 fail_text = (
                     f"⚠️ 芝士这轮没能完成——AI 接口错误（HTTP {api_error_status}）。"
@@ -1481,6 +1525,19 @@ class ChatService:
                 blocks = BlockRepository(session)
                 # 施工现场 events were persisted inline as they streamed
                 # (durability) — this tx only records usage + the fail card.
+                # Record the turn even when its tokens are unknowable (the hooks
+                # backends run interactive Claude Code, which reports none). Skipping
+                # it left the table empty while real credit drained.
+                if usage is None:
+                    await UsageRepository(session).add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        model=settings.agent_model,
+                        input_tokens=0,
+                        output_tokens=0,
+                        cost_usd=0.0,
+                        metered=False,
+                    )
                 if usage is not None:
                     await UsageRepository(session).add(
                         project_id=project_id,
@@ -1529,6 +1586,19 @@ class ChatService:
 
             # 施工现场 events were persisted inline as they streamed (durability);
             # tx2 now only records usage, action cards, and the session pointer.
+            # Record the turn even when its tokens are unknowable (the hooks
+            # backends run interactive Claude Code, which reports none). Skipping
+            # it left the table empty while real credit drained.
+            if usage is None:
+                await UsageRepository(session).add(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    model=settings.agent_model,
+                    input_tokens=0,
+                    output_tokens=0,
+                    cost_usd=0.0,
+                    metered=False,
+                )
             if usage is not None:
                 await UsageRepository(session).add(
                     project_id=project_id,

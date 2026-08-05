@@ -229,3 +229,71 @@ def test_my_devices_requires_login(client):
     with contextlib.suppress(Exception):
         r = client.get("/connector/my/devices")
         assert r.status_code == 401
+
+
+def test_a_member_can_type_into_the_screen(client, monkeypatch):
+    """A terminal you cannot type into is a viewer, not a terminal.
+
+    The hub could already carry input to the device; nothing called it, so the
+    pane was a mirror. This pins the whole path: a binary frame from an
+    authorized viewer reaches the device as screen input.
+    """
+    sent: list[tuple[str, str, bytes]] = []
+
+    async def _capture(device_id, sid, data):
+        sent.append((device_id, sid, data))
+
+    monkeypatch.setattr(device_hub, "viewer_input", _capture)
+
+    project = client.post(
+        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+    ).json()["data"]
+    alice = _login(client, "alice")
+    screen = _register_screen(
+        project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-x"
+    )
+    try:
+        url = f"/connector/session/{screen.sid}/screen?token={alice}"
+        with client.websocket_connect(url) as ws:
+            ws.send_json({"type": "resize", "cols": 100, "rows": 30})
+            for _ in range(100):
+                if screen.viewers:
+                    break
+                time.sleep(0.02)
+            ws.send_bytes(b"ls\r")
+            for _ in range(100):
+                if sent:
+                    break
+                time.sleep(0.02)
+    finally:
+        _unregister(screen)
+
+    assert sent, "the keystroke never reached the device"
+    assert sent[0][1] == screen.sid and sent[0][2] == b"ls\r"
+
+
+def test_keystrokes_before_attaching_are_dropped(client, monkeypatch):
+    """Without a subscription there is no pane on the device to type into."""
+    sent: list = []
+
+    async def _capture(device_id, sid, data):
+        sent.append(data)
+
+    monkeypatch.setattr(device_hub, "viewer_input", _capture)
+
+    project = client.post(
+        "/api/projects", json={"name": "P2", "owner_handle": "alice"}
+    ).json()["data"]
+    alice = _login(client, "alice")
+    screen = _register_screen(
+        project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-y"
+    )
+    try:
+        url = f"/connector/session/{screen.sid}/screen?token={alice}"
+        with client.websocket_connect(url) as ws:
+            ws.send_bytes(b"rm -rf /\r")  # no resize yet → never attached
+            time.sleep(0.2)
+    finally:
+        _unregister(screen)
+
+    assert sent == []

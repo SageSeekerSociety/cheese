@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  fetch)
+    exit 0
+    ;;
+  rev-parse)
+    printf '%s\n' "${APP_TIER_MAIN_SHA:-testsha}"
+    exit 0
+    ;;
+esac
+
+exec /usr/bin/git "$@"

@@ -11,7 +11,7 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright
 ├── skills/                               # on-demand skills (dir form: <name>/SKILL.md)
 │   ├── cheese-py-code-review/SKILL.md    # Code review checklist + workflow (parallel & serial)
 │   ├── post-pull/SKILL.md                # Post-git-pull checks (migrations, deps, health)
-│   └── fusion-dev/SKILL.md               # Run/reset/verify the fusion demo harness
+│   └── lark-{doc,drive,markdown,shared,wiki}  # → .agents/skills/… (vendored, see skills-lock.json)
 ├── scripts/
 │   ├── check.sh                          # ruff + pyright + pytest, one command
 │   ├── post-pull.sh                      # Post-git-pull checks (migrations, deps, health)
@@ -111,3 +111,11 @@ The root-level `reference/` directory (gitignored) contains original implementat
   - Changed a convention here (Python/API/testing/datetime/security) → update the matching checklist in `cheese-py-code-review` skill.
   - Changed a check item in a skill → update the matching CLAUDE.md section.
   - Self-check after editing: does the tree list every subdir/file? Are the conventions identical on both sides?
+
+## Documentation Map
+
+Engineering docs live in `docs/` (git). **`docs/` is strictly for engineering documentation.** Non-engineering content (product proposals, marketing copy, operational plans, competition materials) must never be committed — stage in `tmp/` (gitignored) if Feishu is unavailable, then upload to the wiki when access is restored. Product-direction docs (vision, feedback) are canonical in the **team Feishu wiki** — no local copies are kept (staleness risk) — links in `docs/README.md`, fetch on demand via the lark skills. Real-name application materials live only in a restricted Feishu Drive folder, never in git.
+
+To find or edit Feishu content, use the lark skills (`.claude/skills/lark-*`) and search at need (`lark-cli docs +search --profile cheese`) — do not maintain a static doc inventory here.
+
+**lark-cli profile**: the team shares one Feishu org; all lark-cli Feishu operations must pass `--profile cheese` (app `cli_a97ca79454785bd5`, the only profile with drive/docs scopes). `no_token`/`403`/`no authority` almost always means a wrong profile, not a permission or cross-tenant problem. Setup, credential sync, and a troubleshooting table live in [`docs/feishu-lark.md`](docs/feishu-lark.md).

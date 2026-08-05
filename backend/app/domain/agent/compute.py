@@ -344,34 +344,44 @@ class ComputePool:
 
 
 def build_compute_pool(agent: AgentService) -> ComputePool:
-    """Build the ComputePool from settings (design v3): local Docker by default,
-    or a remote cheesed node when compute_provider='remote'."""
+    """Build the ComputePool from settings.
+
+    ``agent_backend`` picks the LOCAL transport — how a turn reaches a container
+    on this box — and nothing else. It used to pick the whole pool, which made
+    the convergence end state unreachable: fusion-design §8.6 settles on ONE turn
+    flow with two thin transports (tmux locally, device remotely, a topic
+    choosing per turn), and returning a single-provider pool for `tmux` dropped
+    the remote transport entirely. The only way to have device compute was to run
+    the pre-convergence SDK path locally — a configuration nobody chose.
+
+    So: exactly one local provider joins the pool (tmux or the SDK's
+    LocalDockerProvider), the device transport ALWAYS joins it, and a remote
+    cheesed node joins when wired.
+    """
+    local: ComputeProvider
     if settings.agent_backend == "tmux":
-        # Interactive tmux + HTTP hooks path — replaces the SDK stream-json path
-        # (LocalDockerProvider) while keeping the same run_turn/checkpoint contract.
-        return ComputePool.tmux(
+        # Interactive `claude` in a per-topic tmux session in a platform
+        # container, driven by docker exec + send-keys (fusion-design §8.6: the
+        # LOCAL transport of the hooks substrate).
+        from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+        local = TmuxHooksProvider(
             image=settings.tmux_sandbox_image,
             turn_timeout_s=settings.agent_turn_timeout_s,
         )
-    if settings.agent_backend == "device":
-        # Self-hosted / BYO compute (P3): relocate the turn to a user's own machine.
-        return ComputePool.device(turn_timeout_s=settings.device_turn_timeout_s)
-    # local/remote path: register EVERY deployed provider so a topic can pick
-    # between them per turn (v4 会话级选择). local-docker is always on; the remote
-    # cheesed node joins the pool whenever it's wired. The default preserves the
-    # pre-v4 behaviour — a turn that selects nothing runs exactly where it did
-    # before — so this is purely additive.
-    providers: list[ComputeProvider] = [
-        LocalDockerProvider(
+    else:
+        # The pre-convergence SDK stream-json path, retained as the orthogonal
+        # product form (§8.6 item 4) rather than the main line.
+        local = LocalDockerProvider(
             agent=agent,
             workspace_root=settings.workspace_root,
             sandbox_enabled=settings.agent_sandbox_enabled,
         )
-    ]
-    # The self-hosted device pool rides alongside local-docker: a topic can choose
-    # to run on the user's own enrolled machine (with topic affinity — the pin
-    # freezes on the first turn). Selectable only when a device is online (gated in
-    # the market listing), so this is opt-in and the default stays local-docker.
+    providers: list[ComputeProvider] = [local]
+    # The remote transport ALWAYS joins, whatever the local one is: a topic picks
+    # its compute per turn (with topic affinity — the pin freezes on the first
+    # turn), and it is only offered when a device is actually online (gated in the
+    # market listing), so this stays opt-in.
     from app.domain.agent.device_provider import DeviceProvider
 
     providers.append(DeviceProvider(turn_timeout_s=settings.device_turn_timeout_s))
@@ -382,9 +392,11 @@ def build_compute_pool(agent: AgentService) -> ComputePool:
                 cheese_api=settings.cheesed_cheese_api,
             )
         )
-    default_name = (
-        RemoteCheesedProvider.name
-        if settings.compute_provider == "remote" and settings.cheesed_url
-        else LocalDockerProvider.name
-    )
+    if settings.agent_backend == "device":
+        # Every turn on someone else's machine unless a topic says otherwise.
+        default_name = DeviceProvider.name
+    elif settings.compute_provider == "remote" and settings.cheesed_url:
+        default_name = RemoteCheesedProvider.name
+    else:
+        default_name = local.name
     return ComputePool(providers, default_name)

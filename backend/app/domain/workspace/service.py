@@ -174,7 +174,48 @@ def _tree(project_id: uuid.UUID, topic_id: uuid.UUID | None) -> Path:
     for project-level (no topic)."""
     if topic_id is None:
         return ensure_repo(project_id)
-    return _ensure_worktree(project_id, branch_for_topic(topic_id))
+    branch = branch_for_topic(topic_id)
+    wt = _ensure_worktree(project_id, branch)
+    _catch_up_with_branch(project_id, wt, branch)
+    return wt
+
+
+def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> None:
+    """Materialise commits that reached the branch without going through here.
+
+    A machine that owns its tree pushes straight to the ref. The workspace is the
+    thing we read files out of, and nothing moves it, so work that landed was
+    invisible in the file tree even though the branch had it — the push looked
+    like it had done nothing.
+
+    Only ever a fast-forward, and only when this workspace has nothing pending:
+    a human's uncommitted edit here must never be swept aside by a machine's
+    push. When both sides have moved, the workspace wins and stays put — its
+    changes are the ones a person is looking at.
+    """
+    repo = ensure_repo(project_id)
+    try:
+        tip = _git(repo, "rev-parse", branch).strip()
+    except ValidationError:
+        return  # branch not created yet — nothing to catch up to
+    if not tip:
+        return
+    if _jj(wt, "diff", "-s").strip():
+        return  # pending local edits: leave them alone
+    current = _jj(wt, "log", "-r", "@-", "--no-graph", "-T", "commit_id").strip()
+    if current == tip:
+        return
+    # Fast-forward only: move only when the workspace has nothing the branch lacks.
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", current, tip],
+        cwd=repo,
+        capture_output=True,
+        timeout=20,
+    )
+    if current and ancestor.returncode != 0:
+        return
+    _jj(wt, "git", "import")
+    _jj(wt, "new", branch)
 
 
 def _safe_path(repo: Path, rel: str) -> Path:
@@ -311,10 +352,14 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         pass  # no workspace/jj state yet — nothing pending to fold
     branch = branch_for_topic(topic_id)
     if not _branch_exists(repo, branch):
-        return {"merged": False, "reason": "no topic branch"}
+        return {"merged": False, "noop": True, "reason": "no topic branch"}
     base = _base_branch(repo)
     if branch == base:
-        return {"merged": False, "reason": "topic is the base branch"}
+        return {
+            "merged": False,
+            "noop": True,
+            "reason": "topic is the base branch",
+        }
     _git(repo, "checkout", "-q", base)
     try:
         _git(
@@ -606,11 +651,26 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
+    # Loosen perms so the sandbox container (a different uid) can read/write the
+    # mount. Best-effort per entry: the container's Claude Code runs as its own
+    # uid and creates files here across turns, which the backend (another uid)
+    # then cannot chmod — EPERM on ONE such file used to abort the whole turn
+    # ('Operation not permitted' on session-env/…). A file the container made is
+    # already accessible to the container, so skipping it is harmless.
     for root, _dirs, files in os.walk(d):
-        os.chmod(root, 0o777)
+        _loosen(root, 0o777)
         for f in files:
-            os.chmod(os.path.join(root, f), 0o666)
+            _loosen(os.path.join(root, f), 0o666)
     return d
+
+
+def _loosen(path: str, mode: int) -> None:
+    import os
+
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
 
 
 def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:

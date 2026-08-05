@@ -32,6 +32,7 @@ class ProjectService:
         ai_mode: AiMode = AiMode.collaborative,
         expert_role: str | None = None,
         team_id: int | None = None,
+        external_task_id: int | None = None,
     ) -> Project:
         """Create a project and its root topic (= 项目本身, spec §6).
 
@@ -50,6 +51,7 @@ class ProjectService:
             ai_mode=ai_mode,
             expert_role=expert_role,
             team_id=team_id,
+            external_task_id=external_task_id,
         )
         root = await self._topics.add(
             project_id=project.id,

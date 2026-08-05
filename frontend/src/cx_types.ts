@@ -11,6 +11,8 @@ export interface Project {
   // 专家角色 (spec §8.2): which persona 芝士 loads. Null = generic 芝士.
   expert_role?: string | null
   [key: string]: unknown
+  /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
+  external_task_id?: number | null
 }
 
 // 专家角色 (spec §8.2): one entry of the merged catalog — built-in roles come
