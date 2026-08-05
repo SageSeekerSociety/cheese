@@ -37,7 +37,7 @@ jobs:
       - name: Compare main with what is running
         run: |
           set -euo pipefail
-          main_sha="$(git rev-parse --short origin/main 2>/dev/null || git rev-parse --short HEAD)"
+          main_sha="$(git rev-parse --short=7 origin/main 2>/dev/null || git rev-parse --short=7 HEAD)"
           # The runner IS the box, so ask docker directly rather than over ssh.
           live="$(docker ps -a \
             --filter 'label=com.docker.compose.project=cheese' \
