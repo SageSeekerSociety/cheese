@@ -28,7 +28,104 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    runs-on: [self-hosted, cheese-dev]
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    outputs:
+      backend: ${{ steps.plan.outputs.backend }}
+      sandbox: ${{ steps.plan.outputs.sandbox }}
+      frontend: ${{ steps.plan.outputs.frontend }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Test image build planning
+        run: bash .github/scripts/test-plan-image-builds.sh
+
+      - name: Plan builds from the last successful image set
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base_sha=""
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = branch ]; then
+            if ! base_sha="$(gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&status=success&event=push&per_page=1" \
+                --jq '.workflow_runs[0].head_sha // empty')"; then
+              echo "::warning::Could not resolve the previous successful build; rebuilding every image"
+              base_sha=""
+            fi
+          fi
+          BASE_SHA="$base_sha" \
+          CURRENT_SHA="$GITHUB_SHA" \
+          EVENT_NAME="$GITHUB_EVENT_NAME" \
+          REF_TYPE="$GITHUB_REF_TYPE" \
+            bash .github/scripts/plan-image-builds.sh
+
+      - name: Log in to Container Registry for unchanged images
+        if: >-
+          steps.plan.outputs.backend == 'false' ||
+          steps.plan.outputs.sandbox == 'false' ||
+          steps.plan.outputs.frontend == 'false'
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+      - name: Give unchanged images this commit's immutable tag
+        if: >-
+          steps.plan.outputs.backend == 'false' ||
+          steps.plan.outputs.sandbox == 'false' ||
+          steps.plan.outputs.frontend == 'false'
+        env:
+          BUILD_BACKEND: ${{ steps.plan.outputs.backend }}
+          BUILD_SANDBOX: ${{ steps.plan.outputs.sandbox }}
+          BUILD_FRONTEND: ${{ steps.plan.outputs.frontend }}
+          BASE_TAG: ${{ steps.plan.outputs.base_tag }}
+          CURRENT_TAG: ${{ steps.plan.outputs.current_tag }}
+        run: |
+          set -eu
+          image_root="${REGISTRY}/${IMAGE_NAME,,}"
+          promote() {
+            image="$1"
+            attempt=1
+            while [ "$attempt" -le 4 ]; do
+              if docker buildx imagetools create \
+                --tag "$image_root/$image:$CURRENT_TAG" \
+                "$image_root/$image:$BASE_TAG"; then
+                docker buildx imagetools inspect "$image_root/$image:$CURRENT_TAG" >/dev/null
+                echo "promoted $image:$BASE_TAG -> $CURRENT_TAG"
+                return 0
+              fi
+              echo "promotion attempt $attempt failed for $image; retrying" >&2
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+            return 1
+          }
+          [ "$BUILD_BACKEND" = true ] || promote backend
+          if [ "$BUILD_SANDBOX" = false ]; then
+            promote sandbox
+            promote sandbox-tmux
+          fi
+          [ "$BUILD_FRONTEND" = true ] || promote frontend
+
+      - name: Remove registry credentials
+        if: always()
+        run: docker logout "$REGISTRY" >/dev/null 2>&1 || true
+
   build-backend:
+    needs: plan
+    if: needs.plan.outputs.backend == 'true'
     runs-on: [self-hosted, cheese-dev]
     permissions:
       contents: read
@@ -115,6 +212,8 @@ jobs:
             --max-used-space 6GB --min-free-space 10GB >/dev/null 2>&1 || true
           df -h / | tail -1
   build-sandbox:
+    needs: plan
+    if: needs.plan.outputs.sandbox == 'true'
     runs-on: [self-hosted, cheese-dev]
     permissions:
       contents: read
@@ -225,6 +324,8 @@ jobs:
             --max-used-space 6GB --min-free-space 10GB >/dev/null 2>&1 || true
           df -h / | tail -1
   build-frontend:
+    needs: plan
+    if: needs.plan.outputs.frontend == 'true'
     runs-on: [self-hosted, cheese-dev]
     permissions:
       contents: read
