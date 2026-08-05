@@ -164,6 +164,39 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # The deployed backend uses this derivative for every local tmux turn.
+      # Build it in the SAME gated workflow from the exact base above: otherwise
+      # app deploys can go green while the first real user message cannot start.
+      - name: Extract tmux sandbox metadata
+        id: tmux_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox-tmux
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+            type=raw,value=run-${{ github.run_id }}
+
+      - name: Resolve this run's sandbox base image
+        id: sandbox_base
+        run: |
+          name="${IMAGE_NAME,,}"
+          echo "ref=${REGISTRY}/${name}/sandbox:run-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push tmux sandbox image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/sandbox
+          file: ./backend/sandbox/tmux.Dockerfile
+          push: true
+          build-args: |
+            BASE_IMAGE=${{ steps.sandbox_base.outputs.ref }}
+          tags: ${{ steps.tmux_meta.outputs.tags }}
+          labels: ${{ steps.tmux_meta.outputs.labels }}
+
       # Building on the box that also SERVES dev means build layers land on the
       # same 63GB disk the deployment lives on — it hit 100% twice on 2026-07-25.
       # Reclaim build cache after each image (in-use images are never touched).

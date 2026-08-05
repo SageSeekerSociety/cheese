@@ -59,6 +59,23 @@ describe('platformErrorPresentation', () => {
     expect(out?.status).toBe('平台正在恢复 · 稍后可重试')
   })
 
+  it('gives a missing agent image a concrete recovery treatment', () => {
+    const out = platformErrorPresentation(
+      eventBlock(
+        {
+          event_type: 'platform_error',
+          code: 'runtime_image_missing',
+          title: 'Agent 运行组件暂时缺失',
+          retryable: true,
+        },
+        '平台正在重新准备 Agent 运行组件，本轮还没有开始执行。'
+      )
+    )
+
+    expect(out?.status).toBe('平台组件恢复中 · 稍后 @芝士重试')
+    expect(out?.icon).toBe('mdi-package-variant-closed-remove')
+  })
+
   it('does not turn ordinary system events into incident cards', () => {
     expect(platformErrorPresentation(eventBlock({ action: 'doc' }))).toBeNull()
     expect(platformErrorPresentation(eventBlock(null))).toBeNull()

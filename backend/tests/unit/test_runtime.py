@@ -226,7 +226,22 @@ async def test_turn_failure_lands_in_the_timeline():
 
 
 @pytest.mark.anyio
-async def test_storage_failure_is_coded_and_never_auto_resumes(monkeypatch):
+@pytest.mark.parametrize(
+    ("failure", "expected_code"),
+    [
+        (OSError(errno.ENOSPC, "No space left on device"), "storage_exhausted"),
+        (
+            RuntimeError(
+                "tmux container create failed: Unable to find image "
+                "'cheesex-agent-tmux:latest' locally: pull access denied"
+            ),
+            "runtime_image_missing",
+        ),
+    ],
+)
+async def test_platform_failure_is_coded_and_never_auto_resumes(
+    monkeypatch, failure, expected_code
+):
     broker = InProcessBroker()
     runner = TurnRunner(broker)
 
@@ -235,7 +250,7 @@ async def test_storage_failure_is_coded_and_never_auto_resumes(monkeypatch):
             self.meta: dict | None = None
 
         async def converse(self, **_):
-            raise OSError(errno.ENOSPC, "No space left on device")
+            raise failure
             yield  # pragma: no cover
 
         async def post_system_event(
@@ -250,7 +265,7 @@ async def test_storage_failure_is_coded_and_never_auto_resumes(monkeypatch):
             }
 
     def unexpected_resume(*_args, **_kwargs):
-        pytest.fail("storage pressure must wait for cleanup, not auto-resume")
+        pytest.fail("platform incidents must wait for recovery, not auto-resume")
 
     monkeypatch.setattr(runner, "_schedule_resume", unexpected_resume)
     svc = _Full()
@@ -261,10 +276,10 @@ async def test_storage_failure_is_coded_and_never_auto_resumes(monkeypatch):
         error = await asyncio.wait_for(q.get(), 1)
 
     assert event["type"] == "event_block"
-    assert event["block"]["meta"]["code"] == "storage_exhausted"
+    assert event["block"]["meta"]["code"] == expected_code
     assert error == {
         "type": "error",
-        "code": "storage_exhausted",
+        "code": expected_code,
         "message": event["block"]["content"],
         "persisted": True,
     }
