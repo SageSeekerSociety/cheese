@@ -78,23 +78,52 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+const RETRYABLE_GET_STATUSES = new Set([502, 503, 504])
+const GET_RETRY_DELAYS_MS = [250, 750]
+
+export function isRetryableGetFailure(method: string, status?: number, error?: unknown): boolean {
+  if (method.toUpperCase() !== 'GET') return false
+  if (status != null) return RETRYABLE_GET_STATUSES.has(status)
+  return !(error instanceof DOMException && error.name === 'AbortError')
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-      ...(init?.headers ?? {}),
-    },
-  })
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} for ${path}`)
+  const method = (init?.method ?? 'GET').toUpperCase()
+  for (let attempt = 0; ; attempt += 1) {
+    let res: Response
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+          ...(init?.headers ?? {}),
+        },
+      })
+    } catch (error) {
+      if (attempt >= GET_RETRY_DELAYS_MS.length || !isRetryableGetFailure(method, undefined, error)) {
+        throw error
+      }
+      await wait(GET_RETRY_DELAYS_MS[attempt])
+      continue
+    }
+    if (!res.ok) {
+      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
+        await wait(GET_RETRY_DELAYS_MS[attempt])
+        continue
+      }
+      throw new Error(`HTTP ${res.status} for ${path}`)
+    }
+    const envelope = (await res.json()) as ApiEnvelope<T>
+    if (envelope.code !== 200) {
+      throw new Error(envelope.message || `API error code ${envelope.code}`)
+    }
+    return envelope.data
   }
-  const envelope = (await res.json()) as ApiEnvelope<T>
-  if (envelope.code !== 200) {
-    throw new Error(envelope.message || `API error code ${envelope.code}`)
-  }
-  return envelope.data
 }
 
 // The connector lives at the origin root (`/connector/*`), not under `/api`, and its
@@ -224,7 +253,7 @@ export function createProject(
   name: string,
   ownerHandle?: string,
   teamId?: number,
-  externalTaskId?: number,
+  externalTaskId?: number
 ): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',

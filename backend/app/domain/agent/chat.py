@@ -28,6 +28,7 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
 from app.domain.agent.market import subscription_model_alias
+from app.domain.agent.platform_failures import classify_platform_failure
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
@@ -256,6 +257,9 @@ def _resolve_compute_id(
 
 
 def _transient_provider_error(result: AgentResult) -> bool:
+    if classify_platform_failure(result.text) is not None:
+        # Retrying cannot create disk space and can make pressure worse.
+        return False
     rl = result.rate_limit or {}
     if rl.get("status") == "rejected":
         return False  # seat limit — resets hours later, retrying just burns turns
@@ -608,7 +612,12 @@ class ChatService:
                 yield frame
 
     async def post_system_event(
-        self, topic_id: uuid.UUID, content: str, turn_id: uuid.UUID | None = None
+        self,
+        topic_id: uuid.UUID,
+        content: str,
+        turn_id: uuid.UUID | None = None,
+        *,
+        meta: dict | None = None,
     ) -> dict | None:
         """Persist a system event into the 现场 timeline (e.g. a turn failure):
         visible in the flow, scrolls with it, and survives a reload — unlike a
@@ -627,6 +636,7 @@ class ChatService:
                 content=content,
                 kind=BlockKind.event,
                 turn_id=turn_id,
+                meta=meta,
             )
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
@@ -1451,6 +1461,7 @@ class ChatService:
                 api_error_status,
             )
             detail = final_text.strip()
+            platform_failure = classify_platform_failure(detail)
             quoted = f"（服务原话：{detail}）" if detail else ""
             # The CLI sometimes emits the SAME error string as a final
             # AssistantMessage before the error result — the discrete-message
@@ -1473,7 +1484,13 @@ class ChatService:
                 except Exception:  # noqa: BLE001 — retraction is best-effort
                     logger.exception("error-echo retraction failed")
             resume_after_s: float | None = None
-            if (
+            fail_meta: dict | None = None
+            fail_code: str | None = None
+            if platform_failure is not None:
+                fail_text = platform_failure.content
+                fail_meta = platform_failure.meta
+                fail_code = platform_failure.code
+            elif (
                 rate_limit
                 and rate_limit.get("status") == "rejected"
                 and rate_limit.get("resets_at")
@@ -1550,6 +1567,7 @@ class ChatService:
                     content=fail_text,
                     kind=BlockKind.event,
                     turn_id=turn_id,
+                    meta=fail_meta,
                 )
                 fail_payload = _block_payload(BlockOut.model_validate(fail_block))
                 await session.commit()
@@ -1557,7 +1575,14 @@ class ChatService:
                 await self._save_session_pointer(topic_id, new_session_id)
             provider.checkpoint(project_id, topic_id)
             yield {"type": "event_block", "block": fail_payload}
-            yield {"type": "error", "message": fail_text, "persisted": True}
+            error_frame = {
+                "type": "error",
+                "message": fail_text,
+                "persisted": True,
+            }
+            if fail_code is not None:
+                error_frame["code"] = fail_code
+            yield error_frame
             if resume_after_s is not None:
                 # Internal frame: the runner schedules the auto-resume.
                 yield {

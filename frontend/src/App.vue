@@ -50,13 +50,7 @@
             :disabled="creatingProject"
             @keyup.enter="confirmNewProject"
           />
-          <v-alert
-            v-if="newProjectError"
-            type="error"
-            density="compact"
-            variant="tonal"
-            class="mt-3"
-          >
+          <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ newProjectError }}
           </v-alert>
         </v-card-text>
@@ -75,15 +69,20 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <v-snackbar v-model="showProjectListWarning" color="warning" :timeout="8000">
+      {{ projectListWarning }}
+      <template #actions>
+        <v-btn variant="text" @click="loadCxProjects">重试</v-btn>
+      </template>
+    </v-snackbar>
   </my-app>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-
-import { createProject, listProjects } from '@/api'
 import type { Project } from '@/cx_types'
-import { myHandle } from '@/me'
+
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 
@@ -95,8 +94,11 @@ import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { NavGenericItem } from './components/common/Navigation/types'
 import { usePageTitleStore } from './stores/title'
 
+import { createProject, listProjects } from '@/api'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
+import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
+import { myHandle } from '@/me'
 
 const currentRoute = useRoute()
 const router = useRouter()
@@ -124,13 +126,20 @@ const hideAppBar = computed(() => {
 // PLUS our projects — each project is a rail icon (Discord-style, replacing the
 // old 元思 assistant). Clicking a project opens OUR full workspace (topics/群聊/
 // doc/agent) for it. Projects come from our backend (/api/projects).
-const cxProjects = ref<Project[]>([])
+const cxProjects = ref<Project[]>(loadCachedProjects(myHandle()))
+const projectListWarning = ref('')
+const showProjectListWarning = ref(false)
 
 async function loadCxProjects() {
   try {
     cxProjects.value = (await listProjects()).data
+    saveCachedProjects(myHandle(), cxProjects.value)
+    showProjectListWarning.value = false
   } catch {
-    cxProjects.value = []
+    projectListWarning.value = cxProjects.value.length
+      ? '项目列表刷新失败，正在显示上次成功加载的内容'
+      : '项目列表暂时无法加载，请稍后重试'
+    showProjectListWarning.value = true
   }
 }
 onMounted(loadCxProjects)
@@ -155,9 +164,7 @@ const navItems = computed<NavGenericItem[]>(() => [
     visibleOnMobile: true,
     visibleOnPC: false,
   },
-  ...(cxProjects.value.length
-    ? [{ key: 'cx-divider', type: 'divider' as const }]
-    : []),
+  ...(cxProjects.value.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
   // Each project → our workspace (topics/群聊/doc/agent). Discord-style: a
   // squircle avatar (initial + color), not a cut-off title.
   ...cxProjects.value.map((p, i) => ({
@@ -238,11 +245,7 @@ function projectAvatar(name: string): string {
     `dominant-baseline="central" font-family="sans-serif" font-weight="700">${esc}</text></svg>`
   // Unicode-safe base64 (the initial may be CJK) — more robust in v-img than a
   // percent-encoded data URI.
-  const b64 = btoa(
-    encodeURIComponent(svg).replace(/%([0-9A-F]{2})/g, (_, h) =>
-      String.fromCharCode(parseInt(h, 16)),
-    ),
-  )
+  const b64 = btoa(encodeURIComponent(svg).replace(/%([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))))
   return `data:image/svg+xml;base64,${b64}`
 }
 </script>

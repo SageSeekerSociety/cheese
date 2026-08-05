@@ -26,6 +26,8 @@ from app.domain.agent.roles import resolve_role_description
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.membership.repositories import MemberRepository
+from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.schemas import (
     ProjectCreate,
@@ -42,6 +44,8 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
+
+QUALITY_GATE_COMMAND_MAX_CHARS = 4096
 
 
 @router.post("")
@@ -409,6 +413,31 @@ async def set_sandbox_image(project_id: uuid.UUID, body: dict, db: DbSession) ->
 # --- Quality gate (spec §4.4/§9, eval C2): 平台硬门 configuration -------------
 
 
+async def require_quality_gate_admin(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> None:
+    """Only a verified human project owner/lead may configure executable policy.
+
+    A sandbox-scoped agent token is deliberately not accepted here: allowing an
+    agent to choose the command that judges its own work is both a review bypass
+    and, before gate isolation, a host-command primitive.
+    """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    if not actor.authenticated or actor.via != "token" or actor.is_agent:
+        raise NotFoundError("Project not found")
+    handle = actor.handle
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    if project.owner_handle == handle:
+        return
+    member = await MemberRepository(db).get(project_id=project_id, user_handle=handle)
+    if member is not None and member.role == ProjectRole.lead:
+        return
+    # Conceal project existence from anonymous callers and outsiders.
+    raise NotFoundError("Project not found")
+
+
 @router.get("/{project_id}/quality-gate")
 async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
     """The project's 硬门 settings: `check_command` (run in the topic workspace
@@ -427,7 +456,10 @@ async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
     )
 
 
-@router.put("/{project_id}/quality-gate")
+@router.put(
+    "/{project_id}/quality-gate",
+    dependencies=[Depends(require_quality_gate_admin)],
+)
 async def set_quality_gate(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     """Update 硬门 settings. Only the keys present in the body change; an empty
     check_command removes the gate."""
@@ -439,6 +471,12 @@ async def set_quality_gate(project_id: uuid.UUID, body: dict, db: DbSession) -> 
     new_settings = {**(project.settings or {})}
     if "check_command" in body:
         command = str(body.get("check_command") or "").strip()
+        if "\x00" in command:
+            raise ValidationError("check_command 不能包含 NUL 字节")
+        if len(command) > QUALITY_GATE_COMMAND_MAX_CHARS:
+            raise ValidationError(
+                f"check_command 不能超过 {QUALITY_GATE_COMMAND_MAX_CHARS} 个字符"
+            )
         if command:
             new_settings["check_command"] = command
         else:

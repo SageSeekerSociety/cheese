@@ -54,6 +54,19 @@ export interface ReactionAgg {
   authors: string[]
 }
 
+export interface BlockMeta {
+  [key: string]: unknown
+  tool?: string
+  arg?: string
+  platform?: boolean
+  action?: string
+  event_type?: string
+  code?: string
+  severity?: string
+  title?: string
+  retryable?: boolean
+}
+
 export interface Block {
   id: string
   topic_id: string
@@ -74,7 +87,7 @@ export interface Block {
   refs?: string[]
   // Structured event payload (kind=event): {tool, arg, platform} — the UI
   // translates/classifies from this; content is the baked-text fallback.
-  meta?: { tool?: string; arg?: string; platform?: boolean } | null
+  meta?: BlockMeta | null
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   upgraded_to_topic_id?: string | null
@@ -115,7 +128,7 @@ export type WsServerFrame =
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
   // block; the client must not double-show it as a floating banner.
-  | { type: 'error'; message: string; persisted?: boolean }
+  | { type: 'error'; message: string; persisted?: boolean; code?: string }
   | { type: 'done' }
   // Sent once on WS connect when a turn is already mid-stream on this topic,
   // so a re-entering client rebuilds the 正在思考 indicator.
