@@ -175,7 +175,11 @@ fi
 # retainers use; rollback re-pulls superseded images from ghcr.
 log "pruning all unused docker images…"
 docker image prune -af >/dev/null 2>&1 || true
-docker builder prune -af >/dev/null 2>&1 || true
+# Keep a bounded hot cache on the persistent runner. Wiping it here made every
+# subsequent build re-download and rebuild all dependency layers; the build
+# workflow independently caps its named BuildKit cache at the same size.
+docker builder prune -af --max-used-space 6GB --min-free-space 10GB \
+  >/dev/null 2>&1 || true
 echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
 if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   log "DEPLOY OK: sha=$SHA healthy; agent runtime images verified and retained"

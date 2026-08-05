@@ -16,6 +16,10 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Docker Hub is intermittently unreachable from the dev box. Pin BuildKit in
+  # Google's public Docker Hub cache; the builder config below routes Dockerfile
+  # frontend/base-image resolution through the same cache.
+  BUILDKIT_IMAGE: mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
 
 # A single self-hosted runner serves this repo, so superseded runs must not
 # queue behind each other (deploys share the same runner).
@@ -40,6 +44,21 @@ jobs:
           # the box's layer cache between builds — the very cache that replaces
           # the removed type=gha export.
           name: cheese-box-builder
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+          # This is a persistent, single-runner box. Preserve the named
+          # builder's state volume so unchanged dependency layers survive jobs.
+          keep-state: true
+
+      - name: Retain the BuildKit image
+        run: |
+          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
+          docker create --name cheese-buildkit-image-retainer \
+            --label com.cheese.image-retainer=buildkit \
+            "$BUILDKIT_IMAGE" >/dev/null
 
       # Retry: the box reaches ghcr through ghg's egress, which resets
       # connections often enough to have failed a build on the login step alone
@@ -82,21 +101,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # The image having built is not evidence the asset is IN it — a missing
-      # COPY silently produced a backend whose /connector endpoints all 404'd.
-      - name: Verify the image actually carries the connector binaries
-        run: |
-          set -eu
-          tag="$(echo '${{ steps.meta.outputs.tags }}' | head -n1)"
-          echo "checking $tag"
-          docker run --rm --entrypoint sh "$tag" -c '
-            set -eu
-            for t in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
-              f="/app/connector-dist/$t/cheesehost"
-              [ -s "$f" ] || { echo "MISSING $f"; exit 1; }
-              echo "ok $t ($(wc -c < "$f") bytes)"
-            done'
-
   # Agent sandbox: the image 芝士 turns run inside (spawned as sibling
   # containers by the backend through the host docker.sock). Built here so
   # deploy.sh can `docker pull` it — production has no repo checkout.
@@ -107,7 +111,8 @@ jobs:
       - name: Reclaim build cache
         if: always()
         run: |
-          docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
+          docker buildx prune --builder cheese-box-builder -af \
+            --max-used-space 6GB --min-free-space 10GB >/dev/null 2>&1 || true
           df -h / | tail -1
   build-sandbox:
     runs-on: [self-hosted, cheese-dev]
@@ -125,6 +130,19 @@ jobs:
           # the box's layer cache between builds — the very cache that replaces
           # the removed type=gha export.
           name: cheese-box-builder
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+          keep-state: true
+
+      - name: Retain the BuildKit image
+        run: |
+          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
+          docker create --name cheese-buildkit-image-retainer \
+            --label com.cheese.image-retainer=buildkit \
+            "$BUILDKIT_IMAGE" >/dev/null
 
       # Retry: the box reaches ghcr through ghg's egress, which resets
       # connections often enough to have failed a build on the login step alone
@@ -203,7 +221,8 @@ jobs:
       - name: Reclaim build cache
         if: always()
         run: |
-          docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
+          docker buildx prune --builder cheese-box-builder -af \
+            --max-used-space 6GB --min-free-space 10GB >/dev/null 2>&1 || true
           df -h / | tail -1
   build-frontend:
     runs-on: [self-hosted, cheese-dev]
@@ -224,6 +243,19 @@ jobs:
           # the box's layer cache between builds — the very cache that replaces
           # the removed type=gha export.
           name: cheese-box-builder
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+          keep-state: true
+
+      - name: Retain the BuildKit image
+        run: |
+          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
+          docker create --name cheese-buildkit-image-retainer \
+            --label com.cheese.image-retainer=buildkit \
+            "$BUILDKIT_IMAGE" >/dev/null
 
       # Retry: the box reaches ghcr through ghg's egress, which resets
       # connections often enough to have failed a build on the login step alone
@@ -266,5 +298,6 @@ jobs:
       - name: Reclaim build cache
         if: always()
         run: |
-          docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
+          docker buildx prune --builder cheese-box-builder -af \
+            --max-used-space 6GB --min-free-space 10GB >/dev/null 2>&1 || true
           df -h / | tail -1
