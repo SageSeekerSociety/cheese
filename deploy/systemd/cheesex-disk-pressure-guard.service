@@ -1,0 +1,15 @@
+[Unit]
+Description=Reclaim reconstructible CheeseX runtime state under disk pressure
+Requires=docker.service
+After=docker.service
+ConditionPathExists=/usr/local/sbin/cheesex-disk-pressure-guard
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cheesex-disk-pressure-guard
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
