@@ -147,6 +147,30 @@ class HookRouter:
         queue.put_nowait(hook)
         return True
 
+    def drain(self, topic_id: str) -> list[dict]:
+        """Empty the topic's active queue and return whatever was pending.
+
+        register() claims the topic's slot BEFORE the screen is ready / the
+        prompt is sent (so no hook is missed) — but that means a straggler
+        from a PREVIOUS, abandoned turn (e.g. its own late Stop, arriving
+        after we gave up on it but before its underlying `claude` process
+        actually finished) can land in the fresh queue during that gap, ahead
+        of any event the new turn will ever produce. Since nothing has been
+        sent to `claude` yet at drain time, anything already queued here
+        CANNOT belong to the turn about to start — the caller must treat it
+        like a hook that arrived outside any window (park it), never as this
+        turn's own events (a stale Stop must never end the wrong turn)."""
+        queue = self._queues.get(topic_id)
+        if queue is None:
+            return []
+        drained: list[dict] = []
+        while True:
+            try:
+                drained.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return drained
+
 
 # Shared singleton: the endpoint and the provider import this same instance.
 hook_router = HookRouter()

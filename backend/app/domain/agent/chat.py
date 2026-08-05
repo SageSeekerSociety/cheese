@@ -845,19 +845,21 @@ class ChatService:
         turn_id: uuid.UUID | None,
         eid: str | None = None,
         backfilled: bool = False,
-    ) -> None:
+    ) -> dict:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
         a mid-turn restart/crash never loses the 现场 timeline already produced.
         ``eid`` (the hook forwarder's event id) is stamped into meta so the durable
-        spool reconcile can dedup a backfilled copy against this live one."""
+        spool reconcile can dedup a backfilled copy against this live one. Returns
+        the persisted block payload so a caller (live path or spool reconcile) can
+        broadcast it as a WS frame."""
         meta = _tool_event_meta(name, tool_input, platform=platform)
         if eid:
             meta = {**meta, "eid": eid}
         if backfilled:
             meta = {**meta, "backfilled": True}
         async with self._sessions() as session:
-            await BlockRepository(session).add(
+            block = await BlockRepository(session).add(
                 project_id=project_id,
                 topic_id=topic_id,
                 author=CHEESE_AUTHOR,
@@ -867,11 +869,13 @@ class ChatService:
                 turn_id=turn_id,
                 meta=meta,
             )
+            payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
+        return payload
 
     async def _reconcile_spool(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
-    ) -> None:
+    ) -> AsyncIterator[dict]:
         """Backfill 现场 events the live hook path missed (backend down / no listener
         during a prior turn) from the durable spool WAL — idempotent by event-id.
         No-op for the sdk backend (no spool dir) and an empty spool. Best-effort: a
@@ -879,7 +883,10 @@ class ChatService:
 
         Scope: 现场 tool events AND 芝士 chat messages (MessageDisplay) — both are
         idempotent by event-id, so a copy the live path already persisted is
-        skipped. Backfilled messages skip mention-notify (the moment passed)."""
+        skipped. Backfilled messages skip mention-notify (the moment passed), but
+        they DO yield a WS frame like the live path — a hook that missed its turn's
+        listening window must still reach the frontend, just without threading or
+        an @-notify (bug: it was landing as a silent DB row nobody saw)."""
         try:
             entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
             if not entries:
@@ -901,8 +908,9 @@ class ChatService:
                 event = translate_hook(payload)
                 if isinstance(event, AgentMessage):
                     # A chat message whose live delivery was lost — land it as
-                    # history (no reply threading, no notify: the moment passed).
-                    await self._persist_assistant_message(
+                    # history (no reply threading, no notify: the moment passed)
+                    # but still broadcast it, exactly like the live path does.
+                    block_payload = await self._persist_assistant_message(
                         project_id=project_id,
                         topic_id=topic_id,
                         text=event.text,
@@ -915,6 +923,7 @@ class ChatService:
                     )
                     seen.add(eid)
                     recovered += 1
+                    yield {"type": "assistant_block", "block": block_payload}
                     continue
                 if not isinstance(event, AgentToolUse):
                     continue  # SessionStart/Stop have no historical counterpart
@@ -922,7 +931,7 @@ class ChatService:
                 if name in _TASK_TOOLS:
                     continue  # task todos are process state, not persisted 现场
                 args = event.input or {}
-                await self._persist_tool_event(
+                block_payload = await self._persist_tool_event(
                     project_id=project_id,
                     topic_id=topic_id,
                     name=name,
@@ -934,6 +943,7 @@ class ChatService:
                 )
                 seen.add(eid)
                 recovered += 1
+                yield {"type": "event_block", "block": block_payload}
             event_spool.remove(path for path, _eid, _payload in entries)
             if recovered:
                 logger.info(
@@ -1314,7 +1324,8 @@ class ChatService:
         # Backfill any 现场 events the live hook path missed (backend down / no
         # listener during a prior turn) from the durable spool WAL — idempotent by
         # event-id. No-op for the sdk backend and an empty spool.
-        await self._reconcile_spool(project_id, topic_id, turn_id)
+        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+            yield frame
 
         todo: list[dict] = []
         seen_eids: set[str] = set()  # dedup device-drainer re-deliveries this turn
@@ -1630,12 +1641,34 @@ class ChatService:
                 await topics.set_session_id(topic, new_session_id)
             await session.commit()
 
+        # A hooks backend can reach here with assistant_count == 0 not because
+        # no message was ever shown, but because its MessageDisplay hook lost
+        # the race with the turn-ending Stop hook over the network and is only
+        # NOW landing in the spool (the container writes it to disk before the
+        # live POST even goes out — same root cause as the turn-boundary gap
+        # this whole reconcile mechanism exists for). Sweep the spool once more
+        # right now — with a real eid, broadcast like any other backfilled
+        # block — so the fallback below never re-persists that same text
+        # eid-less (which is exactly what left a duplicate: an eid-less block
+        # from here, and its eid+backfilled twin from a LATER turn's reconcile
+        # that couldn't recognize the two as the same event).
+        reconciled_texts: set[str] = set()
+        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+            if frame["type"] == "assistant_block":
+                reconciled_texts.add(frame["block"]["content"])
+            yield frame
+
         # Fallback single message: 芝士's messages normally landed one-by-one at
         # each AgentMessage boundary above. A provider that never announced a
         # boundary (plain non-SDK stub turn, an older remote cheesed node) still
-        # lands its reply from the final result text.
+        # lands its reply from the final result text — unless the sweep above
+        # just landed that exact text from the spool (with a proper eid).
         assistant_payload: dict | None = None
-        if assistant_count == 0 and final_text.strip():
+        if (
+            assistant_count == 0
+            and final_text.strip()
+            and final_text.strip() not in reconciled_texts
+        ):
             assistant_payload = await self._persist_assistant_message(
                 project_id=project_id,
                 topic_id=topic_id,

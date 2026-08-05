@@ -21,18 +21,35 @@ All pure / transport-free, so it is unit-testable without Docker or a device.
 """
 
 import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import event_spool
 from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
 from app.domain.agent.service import AgentEvent, AgentResult
+from app.domain.workspace import service as ws
+
+logger = logging.getLogger(__name__)
 
 # The interactive session's hook token outlives a single turn (the screen / tmux
 # session is reused across turns), so it needs a lifetime measured in the
 # session's life, not a turn's. Topic-scoped, so a stale one still can't reach
 # another topic. Shared by both backends.
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
+
+
+def _park_stale_hook(
+    project_id: uuid.UUID, topic_id: uuid.UUID, eid: str, payload: dict
+) -> None:
+    """Durably park a hook this turn refuses to trust (see ``HookRouter.drain``)
+    into the same spool a later reconcile drains — best-effort, mirrors the
+    /sandbox/hooks endpoint's own park-on-no-listener path."""
+    try:
+        event_spool.append(ws.spool_dir(project_id, topic_id), eid, payload)
+    except Exception:  # noqa: BLE001 — parking is best-effort
+        logger.warning("stale hook park failed for topic %s", topic_id, exc_info=True)
 
 
 def hooks_settings(extra_stop: list[str] | None = None) -> dict:
@@ -269,6 +286,17 @@ class HooksTurnProvider[ScreenT]:
                     resume_session_id=resume_session_id,
                     precheck=precheck,
                 )
+                # Nothing has been sent to `claude` yet, so anything already
+                # sitting in the queue at this point is a straggler from a
+                # PREVIOUS, abandoned turn (its own late Stop included) — never
+                # this turn's own event. Park it exactly like a hook that
+                # arrived with no turn listening at all (never dropped, never
+                # mistaken for this turn's result — review finding: a stale
+                # Stop must never end the wrong turn).
+                for stale in self._router.drain(topic_key):
+                    eid = stale.get("_eid")
+                    if isinstance(eid, str):
+                        _park_stale_hook(project_id, topic_id, eid, stale)
                 await self._send_prompt(screen, prompt)
             except ScreenSetupError as exc:
                 yield AgentResult(
