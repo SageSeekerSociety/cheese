@@ -31,6 +31,9 @@ PROJECT="${PROJECT:-cheese}"
 HEALTH_ATTEMPTS="${DEPLOY_HEALTH_ATTEMPTS:-15}"
 HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-3}"
 export IMAGE_TAG="$SHA"
+export SANDBOX_IMAGE="${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:$SHA}"
+export TMUX_SANDBOX_IMAGE="${TMUX_SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox-tmux:$SHA}"
+export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$TMUX_SANDBOX_IMAGE}"
 
 # Optional overlay compose files layered on top of the base (space-separated).
 # Bare names resolve against the committed compose dir; absolute paths pass
@@ -41,6 +44,17 @@ export IMAGE_TAG="$SHA"
 # heal hack needed to re-apply them after each CI redeploy.
 COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:-}"
 _overlay_args=()  # populated after fail() exists so a missing overlay aborts loudly
+
+# Only environments wired for sibling agent containers need the large runtime
+# images. Dev's subscription overlay is that signal; production app-only boxes
+# stay compatible with historical release SHAs that predate these image tags.
+AGENT_RUNTIME_IMAGES_REQUIRED="${AGENT_RUNTIME_IMAGES_REQUIRED:-auto}"
+if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = auto ]; then
+  case "$COMPOSE_OVERLAYS" in
+    *docker-compose.subscription.yml*) AGENT_RUNTIME_IMAGES_REQUIRED=true ;;
+    *) AGENT_RUNTIME_IMAGES_REQUIRED=false ;;
+  esac
+fi
 
 dc() {
   docker compose -f "$COMPOSE" ${_overlay_args[@]+"${_overlay_args[@]}"} \
@@ -75,6 +89,34 @@ log "deploying sha=$SHA (previous=${PREV_SHA:-none}) via $COMPOSE"
 log "pulling images…"
 dc pull backend frontend || fail "image pull failed"
 
+# Runtime images are launched on demand through docker.sock, so compose cannot
+# pull or retain them for us. Pull both execution paths and run the same minimum
+# binary check a real tmux turn needs BEFORE touching the live app.
+if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
+  log "pulling agent runtime images…"
+  docker pull "$SANDBOX_IMAGE" || fail "SDK sandbox image pull failed: $SANDBOX_IMAGE"
+  docker pull "$TMUX_SANDBOX_IMAGE" || fail "tmux sandbox image pull failed: $TMUX_SANDBOX_IMAGE"
+  docker run --rm --entrypoint sh "$TMUX_SANDBOX_IMAGE" -c \
+    'command -v tmux >/dev/null && command -v ttyd >/dev/null && command -v cheese >/dev/null' \
+    || fail "tmux sandbox smoke test failed: $TMUX_SANDBOX_IMAGE"
+
+  # `docker image prune -a` considers an on-demand image unused when no turn is
+  # active. Stopped zero-cost containers make the desired runtime images explicit
+  # roots, while still allowing superseded versions to be reclaimed each deploy.
+  prepare_image_retainer() {
+    local kind="$1"
+    local image="$2"
+    local next="${PROJECT}-${kind}-image-retainer-next"
+    docker rm -f "$next" >/dev/null 2>&1 || true
+    docker create --name "$next" \
+      --label "com.cheese.image-retainer=$kind" \
+      --entrypoint /bin/true "$image" >/dev/null \
+      || fail "could not retain $kind runtime image: $image"
+  }
+  prepare_image_retainer sandbox "$SANDBOX_IMAGE"
+  prepare_image_retainer tmux "$TMUX_SANDBOX_IMAGE"
+fi
+
 log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
@@ -108,8 +150,20 @@ if [ "$code" != ok ]; then
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
 fi
 
-echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
-log "DEPLOY OK: sha=$SHA healthy"
+promote_image_retainer() {
+  local kind="$1"
+  local current="${PROJECT}-${kind}-image-retainer"
+  local next="${current}-next"
+  # `next` already protects the new image, so removing the old retainer never
+  # leaves either deployment's image unreferenced during the handoff.
+  docker rm -f "$current" >/dev/null 2>&1 || true
+  docker rename "$next" "$current" \
+    || fail "could not promote $kind runtime image retainer"
+}
+if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
+  promote_image_retainer sandbox
+  promote_image_retainer tmux
+fi
 
 # Reclaim disk from superseded per-commit images: every deploy pulls a fresh
 # 6-7GB image set and nothing ever pruned them — the dev box filled its disk to
@@ -117,8 +171,14 @@ log "DEPLOY OK: sha=$SHA healthy"
 # (covers the rollback-to-previous-sha path); best-effort, never fails a deploy.
 # NOT time-filtered: under a busy merge day every image is "too new" to prune
 # and the disk fills anyway (happened twice on 2026-07-18/19 — 8 image sets in
-# an afternoon). Keep only what running containers use; rollback re-pulls from
-# ghcr (slower but always available).
+# an afternoon). Keep what running containers and the two explicit runtime-image
+# retainers use; rollback re-pulls superseded images from ghcr.
 log "pruning all unused docker images…"
 docker image prune -af >/dev/null 2>&1 || true
 docker builder prune -af >/dev/null 2>&1 || true
+echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
+if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
+  log "DEPLOY OK: sha=$SHA healthy; agent runtime images verified and retained"
+else
+  log "DEPLOY OK: sha=$SHA healthy"
+fi

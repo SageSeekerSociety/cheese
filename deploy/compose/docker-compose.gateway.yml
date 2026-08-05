@@ -52,7 +52,13 @@ services:
       - default
       - app
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4000/health/liveliness"]
+      # This image has Python at this exact path but no curl/wget. A probe whose
+      # executable is absent reports the live gateway as unhealthy forever.
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3).read()
       interval: 15s
       timeout: 5s
       retries: 10

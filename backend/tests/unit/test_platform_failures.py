@@ -1,6 +1,7 @@
 import errno
 
 from app.domain.agent.platform_failures import (
+    RUNTIME_IMAGE_MISSING_CODE,
     STORAGE_EXHAUSTED_CODE,
     classify_platform_failure,
     is_storage_exhausted,
@@ -45,3 +46,22 @@ def test_storage_failure_payload_is_stable_and_sanitized():
     }
     assert "项目文件和已完成的改动都还在" in failure.content
     assert "/home/private" not in failure.content
+
+
+def test_missing_runtime_image_is_a_sanitized_platform_event():
+    failure = classify_platform_failure(
+        "tmux container create failed: Unable to find image "
+        "'cheesex-agent-tmux:latest' locally: pull access denied"
+    )
+
+    assert failure is not None
+    assert failure.code == RUNTIME_IMAGE_MISSING_CODE
+    assert failure.meta == {
+        "event_type": "platform_error",
+        "code": "runtime_image_missing",
+        "severity": "error",
+        "title": "Agent 运行组件暂时缺失",
+        "retryable": True,
+    }
+    assert "本轮还没有开始执行" in failure.content
+    assert "pull access denied" not in failure.content

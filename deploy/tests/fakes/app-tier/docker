@@ -4,6 +4,10 @@ set -euo pipefail
 scenario="${APP_TIER_SCENARIO:-healthy}"
 tag="${APP_TIER_MAIN_SHA:-testsha}"
 
+if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$APP_TIER_DOCKER_LOG"
+fi
+
 emit_named_rows() {
   printf 'cheese-backend-1 repo/backend:%s\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then
