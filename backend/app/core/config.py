@@ -229,6 +229,13 @@ class Settings(BaseSettings):
     cheesed_url: str = "http://localhost:8100"
     cheesed_cheese_api: str = "http://host.docker.internal:8099/api"
     sandbox_image: str = "cheesex-agent-sandbox:latest"
+    # Machine quality gates use a disposable sibling container and never the
+    # backend process. Keep this explicit so operators can ship a test-toolchain
+    # image without granting the gate Docker socket or backend credentials.
+    quality_gate_image: str = "cheesex-agent-tmux:latest"
+    quality_gate_memory_mb: int = 2048
+    quality_gate_cpus: float = 2.0
+    quality_gate_pids_limit: int = 512
     sandbox_shim: str = "./sandbox/claude-sbx"
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
     sandbox_api_base: str = "http://host.docker.internal:8099/api"
@@ -266,6 +273,10 @@ class Settings(BaseSettings):
     # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
     # (manual heartbeat only; default off so dev/tests don't burn model calls).
     scheduler_interval_seconds: int = 0
+    # Container lifecycle is deterministic maintenance and must keep running
+    # even when model-consuming automatic heartbeats are disabled.
+    sandbox_reap_interval_seconds: int = 24 * 3600
+    sandbox_idle_days: int = 3
 
     # --- Memory backend (spec §8.4 / §15 Q9) ---
     # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).

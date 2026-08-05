@@ -182,6 +182,83 @@ async def test_error_result_never_becomes_cheeses_reply(client, tmp_path):
     assert ("system", "event") in authors
 
 
+class StorageFullAgent(AgentService):
+    """The exact provider-result shape produced when tmux skill staging hits
+    ENOSPC. It must surface once as a platform event, not be retried as an AI
+    service blip."""
+
+    def __init__(self) -> None:
+        super().__init__(model="stub")
+        self.calls = 0
+
+    async def stream_reply(
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
+    ):
+        self.calls += 1
+        yield AgentResult(
+            text=(
+                "tmux 后端启动失败：[Errno 28] No space left on device: "
+                "'/home/nictheboy/cheese-workspaces/private/SKILL.md'"
+            ),
+            session_id=resume_session_id,
+            usage=None,
+            is_error=True,
+        )
+
+
+@pytest.mark.anyio
+async def test_storage_exhaustion_is_a_persistent_platform_event(client, tmp_path):
+    factory = client.test_factory  # type: ignore[attr-defined]
+    agent = StorageFullAgent()
+    svc = ChatService(
+        session_factory=factory,
+        agent=agent,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    frames = [
+        frame
+        async for frame in svc.converse(
+            topic_id=topic_id, author="u", content="做点事", summon=True
+        )
+    ]
+
+    assert agent.calls == 1
+    event = next(frame for frame in frames if frame["type"] == "event_block")
+    assert event["block"]["meta"] == {
+        "event_type": "platform_error",
+        "code": "storage_exhausted",
+        "severity": "error",
+        "title": "运行环境存储空间不足",
+        "retryable": True,
+    }
+    assert "项目文件和已完成的改动都还在" in event["block"]["content"]
+    assert "/home/nictheboy" not in event["block"]["content"]
+    error = next(frame for frame in frames if frame["type"] == "error")
+    assert error == {
+        "type": "error",
+        "code": "storage_exhausted",
+        "message": event["block"]["content"],
+        "persisted": True,
+    }
+
+
 class FlakyAgent(AgentService):
     """First call: transient HTTP 529 error result. Second call: normal reply.
     The turn must auto-retry and the user only ever sees the good reply."""

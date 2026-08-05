@@ -23,6 +23,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
+from app.domain.agent.platform_failures import classify_platform_failure
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -614,31 +615,48 @@ class TurnRunner:
             await self._broker.publish(
                 channel, {"type": "error", "message": exc.message}
             )
-        except Exception:  # noqa: BLE001 — surface agent/runtime failures (spec H4)
+        except Exception as exc:  # noqa: BLE001 — surface runtime failures (spec H4)
             rec["status"] = "crashed"
             rec["duration_s"] = round(time.monotonic() - t0, 1)
             logger.exception("turn %s failed for topic %s", turn_id, topic_id)
             # The failure goes into the 现场 timeline as a persisted system event
             # (scrolls with the flow, survives reload) — not just a transient
             # banner. No invented cause: the log has the real traceback.
-            text = (
-                "⚠️ 芝士这轮中断了。已完成的改动都在；马上自动接着跑一次，"
-                "若再失败就需要你再 @ 它。"
-            )
+            platform_failure = classify_platform_failure(exc)
+            if platform_failure is not None:
+                text = platform_failure.content
+                event_meta = platform_failure.meta
+            else:
+                text = (
+                    "⚠️ 芝士这轮中断了。已完成的改动都在；马上自动接着跑一次，"
+                    "若再失败就需要你再 @ 它。"
+                )
+                event_meta = None
             block = None
             try:
-                block = await chat_service.post_system_event(topic_id, text, turn_id)
+                if event_meta is None:
+                    block = await chat_service.post_system_event(
+                        topic_id, text, turn_id
+                    )
+                else:
+                    block = await chat_service.post_system_event(
+                        topic_id, text, turn_id, meta=event_meta
+                    )
             except Exception:  # noqa: BLE001 — best effort, never mask the error
                 logger.exception("failed to persist turn-failure event")
             if block is not None:
                 await self._broker.publish(
                     channel, {"type": "event_block", "block": block}
                 )
-            await self._broker.publish(
-                channel,
-                {"type": "error", "message": text, "persisted": block is not None},
-            )
-            if not is_resume:
+            error_frame = {
+                "type": "error",
+                "message": text,
+                "persisted": block is not None,
+            }
+            if platform_failure is not None:
+                error_frame["code"] = platform_failure.code
+            await self._broker.publish(channel, error_frame)
+            if not is_resume and platform_failure is None:
                 resume_after = 5.0
         if resume_after is not None and not is_resume:
             rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"

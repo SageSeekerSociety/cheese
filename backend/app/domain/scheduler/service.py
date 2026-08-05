@@ -9,7 +9,6 @@ heartbeat (该催谁/该拆什么/风险). Per-topic serialization lives in Chat
 import asyncio
 import contextlib
 import logging
-import time
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
@@ -27,7 +26,6 @@ logger = logging.getLogger("cheesex.scheduler")
 # on host volumes, so the next turn simply recreates the box — nothing is lost.
 # Covers topics that are never 采纳'd (the accept path already reaps its own).
 IDLE_REAP_DAYS = 3
-IDLE_REAP_EVERY_S = 24 * 3600  # at most one reap sweep per day
 
 
 class SchedulerService:
@@ -35,7 +33,6 @@ class SchedulerService:
         self._chat = chat_service
         # Same DB binding as the chat service (real PG, or the test factory).
         self._sessions = chat_service.session_factory
-        self._last_reap_mono = 0.0
 
     async def tick(self) -> dict:
         """One inspection round: run 定期巡检 on every project with a root topic."""
@@ -53,15 +50,6 @@ class SchedulerService:
             except Exception as exc:  # one project's failure mustn't stop others
                 errors.append(f"{project.id}: {exc}")
 
-        # Daily-throttled container reap rides the existing tick loop.
-        if time.monotonic() - self._last_reap_mono >= IDLE_REAP_EVERY_S:
-            self._last_reap_mono = time.monotonic()
-            try:
-                reaped = await self.reap_idle_containers()
-                if reaped:
-                    logger.info("idle reap: removed %d container(s)", reaped)
-            except Exception:  # noqa: BLE001 — reaping must never break the tick
-                logger.exception("idle container reap failed")
         return {"projects_inspected": inspected, "errors": errors}
 
     async def reap_idle_containers(self, idle_days: int = IDLE_REAP_DAYS) -> int:
@@ -123,3 +111,44 @@ class SchedulerRunner:
                 logger.info("scheduler tick: %s", result)
             except Exception:  # never let the loop die
                 logger.exception("scheduler tick failed")
+
+
+class SandboxReaperRunner:
+    """Deterministic sandbox cleanup, independent from AI heartbeat scheduling."""
+
+    def __init__(
+        self,
+        scheduler: SchedulerService,
+        interval_seconds: int,
+        idle_days: int = IDLE_REAP_DAYS,
+    ):
+        self._scheduler = scheduler
+        self._interval = interval_seconds
+        self._idle_days = idle_days
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._loop())
+            logger.info(
+                "sandbox reaper started (every %ss, idle>%sd)",
+                self._interval,
+                self._idle_days,
+            )
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                reaped = await self._scheduler.reap_idle_containers(self._idle_days)
+                if reaped:
+                    logger.info("idle reap: removed %d container(s)", reaped)
+            except Exception:  # noqa: BLE001 -- maintenance loop must survive
+                logger.exception("idle container reap failed")

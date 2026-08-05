@@ -13,21 +13,6 @@ const BOTTOM_THRESHOLD = 80
 </script>
 
 <script setup lang="ts">
-import { myHandle } from '../me'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import {
-  answerOptions,
-  attachmentRawUrl,
-  chatWsUrl,
-  listBlocks,
-  toggleReaction as apiToggleReaction,
-} from '../api'
-import { blockCache } from '../lib/blockCache'
-import { usePendingAttachments } from '../lib/attachments'
-import {
-  renderMarkdown as renderMarkdownWith,
-  renderPlain as renderPlainWith,
-} from '../lib/renderMessage'
 import type {
   Block,
   ChatAttachment,
@@ -38,8 +23,27 @@ import type {
   WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
-import CheeseAvatar from './CheeseAvatar.vue'
+
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+
+import {
+  answerOptions,
+  attachmentRawUrl,
+  chatWsUrl,
+  listBlocks,
+  toggleReaction as apiToggleReaction,
+} from '../api'
+import { usePendingAttachments } from '../lib/attachments'
+import { blockCache } from '../lib/blockCache'
+import { platformErrorPresentation } from '../lib/platformEvents'
+import {
+  renderMarkdown as renderMarkdownWith,
+  renderPlain as renderPlainWith,
+} from '../lib/renderMessage'
+import { myHandle } from '../me'
 import { avatarColor } from '../utils/avatar'
+
+import CheeseAvatar from './CheeseAvatar.vue'
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
@@ -885,9 +889,36 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-for="(m, i) in visible" :key="m.id">
+          <!-- Infrastructure incidents are facts in the conversation, but they
+               are neither 芝士 messages nor faint activity lines. Structured
+               metadata selects this persistent, accessible recovery card. -->
+          <div
+            v-if="platformErrorPresentation(m)"
+            class="platform-incident"
+            role="alert"
+            :data-error-code="platformErrorPresentation(m)!.code"
+            data-testid="platform-error-card"
+          >
+            <div class="platform-incident__icon" aria-hidden="true">
+              <v-icon :icon="platformErrorPresentation(m)!.icon" size="20" />
+            </div>
+            <div class="platform-incident__content">
+              <div class="platform-incident__eyebrow">平台资源</div>
+              <div class="platform-incident__title">
+                {{ platformErrorPresentation(m)!.title }}
+              </div>
+              <div class="platform-incident__body">
+                {{ platformErrorPresentation(m)!.body }}
+              </div>
+              <div class="platform-incident__status">
+                <span class="platform-incident__pulse" aria-hidden="true" />
+                {{ platformErrorPresentation(m)!.status }}
+              </div>
+            </div>
+          </div>
           <!-- action row: 芝士's cheese action this turn — a quiet system line
                (amber dot = platform act) with an inline amber link, no box. -->
-          <div v-if="m.kind === 'event' && actionResource(m)" class="action-card">
+          <div v-else-if="m.kind === 'event' && actionResource(m)" class="action-card">
             <!-- actionText may carry a <@handle> actor token (编辑了文档): render
                  through the shared token→chip path so the actor is clickable. -->
             <span class="action-verb" v-html="renderPlain(actionText(m))" />
@@ -1805,6 +1836,100 @@ onBeforeUnmount(() => {
 }
 
 /* system / event line: centered, faint, small */
+.platform-incident {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 12px 16px;
+  padding: 13px 15px 13px 14px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, #c65a1e 28%, var(--line));
+  border-radius: 10px;
+  background:
+    linear-gradient(105deg, rgb(198 90 30 / 9%), transparent 38%),
+    var(--surface);
+  box-shadow:
+    inset 3px 0 0 #c65a1e,
+    0 6px 20px rgb(73 35 16 / 6%);
+}
+.platform-incident::after {
+  position: absolute;
+  top: -18px;
+  right: -12px;
+  width: 76px;
+  height: 76px;
+  border: 1px solid rgb(198 90 30 / 10%);
+  border-radius: 50%;
+  content: '';
+}
+.platform-incident__icon {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgb(198 90 30 / 22%);
+  border-radius: 9px;
+  color: #b64717;
+  background: rgb(198 90 30 / 10%);
+}
+.platform-incident__content {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+.platform-incident__eyebrow {
+  margin-bottom: 2px;
+  color: #a84417;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+.platform-incident__title {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+.platform-incident__body {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.platform-incident__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: #9a4a1f;
+  font-size: 11px;
+  font-weight: 600;
+}
+.platform-incident__pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d97706;
+  box-shadow: 0 0 0 3px rgb(217 119 6 / 14%);
+  animation: incident-pulse 1.8s ease-out infinite;
+}
+@keyframes incident-pulse {
+  50% {
+    box-shadow: 0 0 0 6px rgb(217 119 6 / 0%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .platform-incident__pulse {
+    animation: none;
+  }
+}
+
 .im-event {
   text-align: center;
   color: var(--faint);
