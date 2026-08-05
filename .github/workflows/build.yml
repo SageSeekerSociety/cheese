@@ -181,6 +181,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test frontend static-asset integrity guard
+        run: sh frontend/scripts/test-check-static-assets.sh
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:

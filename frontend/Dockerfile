@@ -24,8 +24,13 @@ RUN pnpm build
 FROM nginx:1.25.4 as prod
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+COPY scripts/check-static-assets.sh /usr/local/bin/check-static-assets
+RUN chmod +x /docker-entrypoint.sh /usr/local/bin/check-static-assets
 COPY --from=build /app/dist /usr/share/nginx/html
+RUN /usr/local/bin/check-static-assets /usr/share/nginx/html
+HEALTHCHECK --interval=15s --timeout=8s --start-period=10s --retries=5 \
+  CMD /usr/local/bin/check-static-assets /usr/share/nginx/html >/dev/null \
+    && curl -fsS http://127.0.0.1:80/ >/dev/null || exit 1
 EXPOSE 80
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
