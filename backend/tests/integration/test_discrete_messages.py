@@ -1,7 +1,8 @@
-"""Slack-style discrete messages (no token streaming): each completed SDK
-AssistantMessage boundary lands as its OWN message block — persisted and
-broadcast mid-turn — so a turn with tool calls shows as several complete
-messages instead of one bubble that keeps appending without line breaks."""
+"""Slack-style discrete messages (no token streaming).
+
+Tool calls are real message boundaries. The SDK adapter coalesces partial
+AssistantMessages before this provider-neutral orchestration layer sees them.
+"""
 
 import pytest
 

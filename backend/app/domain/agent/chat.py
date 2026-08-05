@@ -1360,11 +1360,11 @@ class ChatService:
                     # Announced early so even a failed turn persists it below.
                     new_session_id = event.session_id
                 elif isinstance(event, AgentMessage):
-                    # Slack-style discrete message: one completed SDK
-                    # AssistantMessage = one chat block, persisted + broadcast
-                    # NOW (mid-turn), not at turn end. A turn with tool calls
-                    # lands several of these. Token deltas are no longer
-                    # forwarded to the chat — the message IS the unit.
+                    # Slack-style discrete message: one completed provider
+                    # message = one chat block, persisted + broadcast NOW
+                    # (mid-turn), not at turn end. The Claude SDK adapter
+                    # coalesces its partial AssistantMessages before they reach
+                    # this provider-neutral boundary.
                     last_assistant_text = event.text
                     payload = await self._persist_assistant_message(
                         project_id=project_id,
