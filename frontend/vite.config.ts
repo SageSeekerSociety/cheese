@@ -1,7 +1,6 @@
 // Plugins
 import { fileURLToPath, URL } from 'node:url'
 
-import legacy from '@vitejs/plugin-legacy'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 import ViteFonts from 'unplugin-fonts/vite'
@@ -41,9 +40,6 @@ export default defineConfig({
       // 主题名
       theme: 'solarizedlight',
       css: true,
-    }),
-    legacy({
-      targets: ['defaults', 'not IE 11'],
     }),
     viteCompression(),
   ],
