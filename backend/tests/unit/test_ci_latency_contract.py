@@ -24,6 +24,8 @@ def test_squash_merge_does_not_repeat_pr_backend_and_e2e_suites():
         assert "run_heavy" in scope["outputs"]
         assert "commits/$GITHUB_SHA/pulls" in decision["run"]
         assert "actions/workflows/$WORKFLOW_FILE/runs" in decision["run"]
+        assert "| jq" not in decision["run"]
+        assert "--jq" in decision["run"]
         assert scope["permissions"]["actions"] == "read"
         assert heavy["needs"] == "scope"
         assert "needs.scope.outputs.run_heavy == 'true'" in heavy["if"]
