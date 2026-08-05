@@ -121,6 +121,14 @@ COPY alembic.ini ./
 COPY sandbox ./sandbox
 # Served at /connector/latest/<os>-<arch>/cheesehost (see the connector stage).
 COPY --from=connector /out ./connector-dist
+# Verify at the source layer rather than pulling/running the multi-GB image after
+# it was pushed. A missing COPY still fails the gated build, but without the
+# former three-minute registry round trip.
+RUN set -eu; for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do \
+      f="/app/connector-dist/$target/cheesehost"; \
+      test -s "$f"; \
+      echo "verified $target ($(wc -c < "$f") bytes)"; \
+    done
 
 # Agent workspace toolchain: worktrees are managed with jj (colocated git) by
 # the backend process itself, and sandboxed turns spawn SIBLING containers
