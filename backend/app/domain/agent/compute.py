@@ -130,9 +130,7 @@ class LocalDockerProvider:
         if result.returncode != 0 or result.stdout.strip() == resolved_image:
             return
         try:
-            asyncio.get_running_loop().create_task(
-                warn_image_switch_rebuild(topic_id)
-            )
+            asyncio.get_running_loop().create_task(warn_image_switch_rebuild(topic_id))
         except RuntimeError:
             pass  # no running loop — nothing to schedule onto
 
