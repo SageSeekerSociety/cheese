@@ -31,19 +31,45 @@ UV=""
 for candidate in "uv run --no-sync" "uv run --offline" "uv run"; do
     if $candidate python -c "" >/dev/null 2>&1; then UV="$candidate"; break; fi
 done
+
+# No uv environment (the 闸门 container has no network AND the workspace .venv is
+# not relocatable — its interpreter symlink points into the authoring container).
+# Fall back to invoking the tools directly: ruff is a standalone Rust binary and
+# needs no Python at all, so lint/format still runs. Dump what we found either
+# way — a gate run is an expensive round trip, so it must be self-diagnosing.
 if [ -z "$UV" ]; then
-    echo "  FAIL: no usable python environment (tried --no-sync, --offline, and a syncing uv)"
-    echo "  hint: the 闸门 container has no network; the workspace .venv must be usable as-is"
-    exit 1
+    echo "note: no usable uv environment — falling back to direct .venv binaries"
+    echo "--- environment probe (for diagnosing the gate container) ---"
+    echo "  pwd=$(pwd)"
+    echo "  uv: $(command -v uv || echo MISSING) $(uv --version 2>/dev/null || true)"
+    echo "  system python3: $(command -v python3 || echo MISSING) $(python3 -V 2>&1 || true)"
+    echo "  node: $(command -v node || echo MISSING) $(node -v 2>/dev/null || true)"
+    echo "  .venv/bin: $(ls .venv/bin 2>/dev/null | tr '\n' ' ' | cut -c1-200)"
+    echo "  pyvenv.cfg home: $(grep -m1 '^home' .venv/pyvenv.cfg 2>/dev/null || echo NONE)"
+    echo "  uv cache: $(ls -d "${UV_CACHE_DIR:-$HOME/.cache/uv}" 2>/dev/null || echo MISSING)"
+    echo "  dns: $(getent hosts pypi.org >/dev/null 2>&1 && echo ok || echo unavailable)"
+    echo "-------------------------------------------------------------"
 fi
-[[ "$UV" == "uv run --no-sync" ]] || echo "note: using \`$UV\` (the workspace .venv was not directly usable)"
+
+# Resolve one runner per tool: prefer uv, else the venv binary, else give up on
+# that tool alone (a missing pyright must not take ruff down with it).
+tool() {
+    local name="$1"
+    if [ -n "$UV" ]; then echo "$UV $name"
+    elif [ -x ".venv/bin/$name" ]; then echo ".venv/bin/$name"
+    else echo ""; fi
+}
+RUFF="$(tool ruff)"; PYRIGHT="$(tool pyright)"; PYTEST="$(tool pytest)"
+
+[[ -n "$UV" && "$UV" == "uv run --no-sync" ]] || echo "note: runner = ruff:[${RUFF:-none}] pyright:[${PYRIGHT:-none}] pytest:[${PYTEST:-none}]"
 
 [[ "$NO_TESTS" == 1 ]] && echo "Mode: lint + typecheck only (--no-tests)" \
                        || echo "Mode: full suite (parallel)"
 
 # --- ruff (lint + format, matching CI's test.yml lint job) ---
 echo "==> ruff check + format"
-if $UV ruff check . 2>&1 | tail -1 && $UV ruff format --check . 2>&1 | tail -1; then
+if [ -z "$RUFF" ]; then echo "  FAIL: ruff unavailable"; ((++FAIL));
+elif $RUFF check . 2>&1 | tail -1 && $RUFF format --check . 2>&1 | tail -1; then
     echo "  PASS: ruff"
     ((++PASS))
 else
@@ -53,7 +79,8 @@ fi
 
 # --- pyright ---
 echo "==> pyright"
-if $UV pyright 2>&1 | tail -2; then
+if [ -z "$PYRIGHT" ]; then echo "  FAIL: pyright unavailable"; ((++FAIL));
+elif $PYRIGHT 2>&1 | tail -2; then
     echo "  PASS: pyright"
     ((++PASS))
 else
@@ -66,7 +93,8 @@ if [[ "$NO_TESTS" == 1 ]]; then
     echo "==> pytest (skipped: --no-tests)"
 else
     echo "==> pytest"
-    if $UV pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -3; then
+    if [ -z "$PYTEST" ]; then echo "  FAIL: pytest unavailable"; ((++FAIL));
+    elif $PYTEST tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -3; then
         echo "  PASS: pytest"
         ((++PASS))
     else
