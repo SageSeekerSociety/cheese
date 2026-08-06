@@ -1,3 +1,7 @@
+import asyncio
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from app.core.errors import BadRequestError
@@ -112,3 +116,58 @@ async def test_generate_payload_from_text_rejects_invalid_llm_json() -> None:
             forced_submitter_type=None,
             user_id=2,
         )
+
+
+def test_validate_page_count_rejects_oversized_pdf() -> None:
+    service = TaskPdfDraftService(llm_client=_FakeLLMClient("{}"), max_pages=20)
+
+    with pytest.raises(BadRequestError, match="at most 20 pages"):
+        service._validate_page_count(21)
+
+
+@pytest.mark.anyio
+async def test_pdf_generation_bounds_concurrency_and_stops_at_max_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TaskPdfDraftService(
+        llm_client=_FakeLLMClient("{}"),
+        max_pages=20,
+        max_concurrency=3,
+    )
+    active = 0
+    max_active = 0
+    processed_pages = 0
+
+    temp_dir = tempfile.mkdtemp(prefix="pdf_test_")
+    pages = [(f"page-{index}", {}) for index in range(12)]
+
+    def fake_split(_pdf_bytes: bytes):
+        return pages, temp_dir
+
+    async def fake_generate(**kwargs):
+        nonlocal active, max_active, processed_pages
+        active += 1
+        max_active = max(max_active, active)
+        processed_pages += 1
+        await asyncio.sleep(0.01)
+        active -= 1
+        return ([{"name": kwargs["text"], "intro": "i", "description": "d"}], 100)
+
+    monkeypatch.setattr(service, "_split_pdf_to_pages", fake_split)
+    monkeypatch.setattr(service, "generate_task_payloads_from_text", fake_generate)
+
+    drafts, tokens = await service.generate_task_payloads_from_pdf(
+        pdf_bytes=b"pdf",
+        template={},
+        space_id=1,
+        category_id=None,
+        forced_submitter_type=None,
+        user_id=2,
+        max_tasks=5,
+    )
+
+    assert len(drafts) == 5
+    assert max_active == 3
+    assert processed_pages == 6
+    assert tokens == 600
+    assert not Path(temp_dir).exists()

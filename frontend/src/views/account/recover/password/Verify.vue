@@ -94,7 +94,7 @@ import { z } from 'zod'
 import { RULE_PASSWORD, vuetifyConfig } from '@/utils/form'
 
 import { UserApi } from '@/network/api/users'
-import { ServerError } from '@/network/types/error'
+import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const route = useRoute()
 const token = computed(() => route.query.token as string)
@@ -169,13 +169,9 @@ const submit = handleSubmit(async (value) => {
       },
     })
   } catch (e) {
-    if (e instanceof ServerError) {
-      myAlert.value = {
-        message: e.message,
-        type: 'error',
-      }
-    } else {
-      toast.error(e instanceof Error ? e.message : '重置失败')
+    myAlert.value = {
+      message: requestErrorMessage(e, '重置失败，请重试'),
+      type: 'error',
     }
   }
 })

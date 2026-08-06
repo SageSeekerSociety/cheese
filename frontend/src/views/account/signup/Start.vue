@@ -5,9 +5,7 @@
       <v-card>
         <v-card-item prepend-icon="mdi-email-alert" title="邮箱建议" class="bg-info-container" />
         <v-card-text class="pt-4">
-          <p class="text-body-1 mb-3">
-            建议使用<strong>企业邮箱</strong>或<strong>学校邮箱</strong>注册。
-          </p>
+          <p class="text-body-1 mb-3">建议使用<strong>企业邮箱</strong>或<strong>学校邮箱</strong>注册。</p>
           <p class="text-body-2 text-medium-emphasis">
             部分赛题可能仅对特定域名邮箱开放，使用个人邮箱可能影响您查看或参与这些内容。
           </p>
@@ -97,6 +95,16 @@
             class="mb-6"
           />
 
+          <v-text-field
+            v-if="requireInviteCode"
+            v-model="inviteCode"
+            label="邀请码"
+            variant="outlined"
+            :loading="isSubmitting"
+            v-bind="inviteCodeProps"
+            class="mb-6"
+          />
+
           <div class="d-flex justify-space-between align-center mb-6">
             <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
               <template #label>
@@ -117,6 +125,7 @@
             size="large"
             type="submit"
             :loading="isSubmitting"
+            :disabled="!registrationConfigReady"
             style="text-transform: none; font-weight: 500; height: 48px"
             class="mb-4"
           >
@@ -145,7 +154,6 @@
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import * as srp from 'secure-remote-password/client'
 import { useForm } from 'vee-validate'
@@ -153,10 +161,13 @@ import { z } from 'zod'
 
 import { REGEX_PASSWORD, vuetifyConfig } from '@/utils/form'
 
-import { ServerError } from '@/network/types/error'
+import { UserApi } from '@/network/api/users'
+import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useSignupStore } from '@/stores/signup'
 
 const error = ref('')
+const requireInviteCode = ref(false)
+const registrationConfigReady = ref(false)
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
   validationSchema: toTypedSchema(
@@ -185,14 +196,22 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
           message: '密码必须包含字母、数字、特殊字符',
         }),
         email: z.string().email(),
+        inviteCode: z.string().optional(),
         agree: z.boolean().refine((v) => v, { message: '请同意用户协议和隐私政策' }),
       })
-      .superRefine(({ password, confirmPassword }, ctx) => {
+      .superRefine(({ password, confirmPassword, inviteCode }, ctx) => {
         if (password !== confirmPassword) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['confirmPassword'],
             message: '两次输入的密码不一致',
+          })
+        }
+        if (requireInviteCode.value && !inviteCode?.trim()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['inviteCode'],
+            message: '请输入邀请码',
           })
         }
       })
@@ -204,6 +223,7 @@ const [nickname, nicknameProps] = defineField('nickname', vuetifyConfig)
 const [password, passwordProps] = defineField('password', vuetifyConfig)
 const [confirmPassword, confirmPasswordProps] = defineField('confirmPassword', vuetifyConfig)
 const [email, emailProps] = defineField('email', vuetifyConfig)
+const [inviteCode, inviteCodeProps] = defineField('inviteCode', vuetifyConfig)
 const [agree, agreeProps] = defineField('agree', vuetifyConfig)
 
 const signupStore = useSignupStore()
@@ -221,13 +241,21 @@ function onDomainWarningConfirm() {
   showDomainWarning.value = false
 }
 
-onMounted(() => {
+onMounted(async () => {
   try {
     if (localStorage.getItem(DOMAIN_WARNING_KEY) !== '1') {
       showDomainWarning.value = true
     }
   } catch {
     // localStorage unavailable, skip
+  }
+
+  try {
+    const { data } = await UserApi.getRegistrationConfig()
+    requireInviteCode.value = data.requireInviteCode
+    registrationConfigReady.value = true
+  } catch (e) {
+    error.value = requestErrorMessage(e, '暂时无法获取注册配置，请刷新页面重试')
   }
 })
 
@@ -241,17 +269,14 @@ const submit = handleSubmit(async (value) => {
     // 将 SRP 参数保存到 store 中，供后续注册使用
     await signupStore.startSignup({
       ...value,
+      inviteCode: requireInviteCode.value ? value.inviteCode?.trim() : undefined,
       srpSalt,
       srpVerifier,
     })
 
     router.push('/account/signup/verify-email')
   } catch (e) {
-    if (e instanceof ServerError) {
-      error.value = e.message
-    } else {
-      toast.error(e as string)
-    }
+    error.value = requestErrorMessage(e, '注册失败，请重试')
   }
 })
 </script>

@@ -31,9 +31,19 @@ class TaskPdfDraftService:
         *,
         llm_client: LLMClient | None = None,
         timeout_seconds: float | None = None,
+        max_pages: int | None = None,
+        max_concurrency: int | None = None,
     ) -> None:
         self._llm_client = llm_client or LLMClient()
         self._timeout_seconds = timeout_seconds or settings.openai_pdf_timeout_seconds
+        self._max_pages = (
+            max_pages if max_pages is not None else settings.pdf_import_max_pages
+        )
+        self._max_concurrency = (
+            max_concurrency
+            if max_concurrency is not None
+            else settings.pdf_import_max_concurrency
+        )
 
     @staticmethod
     def pick_template(
@@ -68,10 +78,17 @@ class TaskPdfDraftService:
             forced_submitter_type=forced_submitter_type,
             user_id=user_id,
             default_topic_ids=default_topic_ids,
+            max_tasks=1,
         )
         if not payloads:
             raise BadRequestError("No task payload extracted from PDF")
         return payloads[0], token_used
+
+    def _validate_page_count(self, page_count: int) -> None:
+        if page_count == 0:
+            raise BadRequestError("PDF has no pages")
+        if page_count > self._max_pages:
+            raise BadRequestError(f"PDF can contain at most {self._max_pages} pages")
 
     def _split_pdf_to_pages(
         self, pdf_bytes: bytes
@@ -82,8 +99,7 @@ class TaskPdfDraftService:
         page_count = doc.page_count
         doc.close()
 
-        if page_count == 0:
-            raise BadRequestError("PDF has no pages")
+        self._validate_page_count(page_count)
 
         temp_dir = tempfile.mkdtemp(prefix="pdf_extract_")
         try:
@@ -140,9 +156,12 @@ class TaskPdfDraftService:
         forced_submitter_type: str | None,
         user_id: int,
         default_topic_ids: list[int] | None = None,
+        max_tasks: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
         if not pdf_bytes:
             raise BadRequestError("Uploaded PDF is empty")
+        if max_tasks < 1:
+            raise BadRequestError("maxTasks must be at least 1")
 
         page_data, temp_dir = await asyncio.to_thread(
             self._split_pdf_to_pages, pdf_bytes
@@ -150,7 +169,7 @@ class TaskPdfDraftService:
         try:
 
             async def process_page(
-                page_num: int, markdown_text: str, image_map: dict[str, str]
+                markdown_text: str,
             ) -> tuple[list[dict[str, Any]], int]:
                 payloads, token_used = await self.generate_task_payloads_from_text(
                     text=markdown_text,
@@ -162,44 +181,69 @@ class TaskPdfDraftService:
                     default_topic_ids=default_topic_ids,
                 )
 
-                for payload in payloads:
-                    if payload.get("description") and image_map:
-                        payload["description"] = await self._upload_and_replace_images(
-                            markdown_text=payload["description"],
-                            image_map=image_map,
-                        )
-
                 return payloads, token_used
-
-            results = await asyncio.gather(
-                *[process_page(i, md, im) for i, (md, im) in enumerate(page_data)],
-                return_exceptions=True,
-            )
 
             all_payloads: list[dict[str, Any]] = []
             total_tokens = 0
             failed_pages: list[int] = []
-            for i, result in enumerate(results):
-                if isinstance(result, BaseException):
-                    failed_pages.append(i + 1)
-                    logger.warning(
-                        "PDF page %d LLM processing failed: %s", i + 1, result
-                    )
-                else:
+            attempted_pages = 0
+            for batch_start in range(0, len(page_data), self._max_concurrency):
+                batch = page_data[batch_start : batch_start + self._max_concurrency]
+                results = await asyncio.gather(
+                    *[process_page(markdown_text) for markdown_text, _ in batch],
+                    return_exceptions=True,
+                )
+                attempted_pages += len(batch)
+
+                for offset, result in enumerate(results):
+                    page_index = batch_start + offset
+                    if isinstance(result, BaseException):
+                        failed_pages.append(page_index + 1)
+                        logger.warning(
+                            "PDF page %d LLM processing failed: %s",
+                            page_index + 1,
+                            result,
+                        )
+                        continue
+
                     payloads, tokens = result
-                    all_payloads.extend(payloads)
                     total_tokens += tokens
+                    remaining = max_tasks - len(all_payloads)
+                    selected_payloads = payloads[:remaining]
+                    image_map = page_data[page_index][1]
+                    for payload in selected_payloads:
+                        if payload.get("description") and image_map:
+                            payload[
+                                "description"
+                            ] = await self._upload_and_replace_images(
+                                markdown_text=payload["description"],
+                                image_map=image_map,
+                            )
+                    all_payloads.extend(selected_payloads)
+
+                if len(all_payloads) >= max_tasks:
+                    break
 
             if not all_payloads:
-                raise BadRequestError(f"All {len(page_data)} page(s) failed to process")
+                raise BadRequestError(
+                    f"All {attempted_pages} attempted page(s) failed to process"
+                )
 
             if failed_pages:
                 logger.warning(
                     "PDF processing: %d/%d pages succeeded, failed pages: %s",
-                    len(page_data) - len(failed_pages),
-                    len(page_data),
+                    attempted_pages - len(failed_pages),
+                    attempted_pages,
                     failed_pages,
                 )
+
+            logger.info(
+                "PDF import completed: user_id=%d pages=%d drafts=%d tokens=%d",
+                user_id,
+                attempted_pages,
+                len(all_payloads),
+                total_tokens,
+            )
 
             return all_payloads, total_tokens
         finally:
