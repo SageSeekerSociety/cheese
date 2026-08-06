@@ -34,6 +34,7 @@ from app.domain.agent.hooks_substrate import (
     ScreenSetupError,
     hooks_settings,
 )
+from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
 from app.domain.workspace import service as ws
 
 _CHEESE_AUTHOR = "cheese"
@@ -230,11 +231,17 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         name = _tmux_container_name(topic_id)
         rc, cur_image, _ = await _docker("inspect", "-f", "{{.Config.Image}}", name)
         exists = rc == 0
-        if exists and cur_image.strip() != self._image:
+        image_switched = exists and cur_image.strip() != self._image
+        if image_switched:
             await _docker("rm", "-f", name)  # env image changed → rebuild box
             exists = False
         if not exists:
             await self._create_container(name, env)
+            if image_switched:
+                # The old box (and anything running in it — the interactive
+                # session, background processes) is gone with no other
+                # warning; tell the topic (best-effort, never blocks the turn).
+                await warn_image_switch_rebuild(topic_id)
             return name
         rc, running, _ = await _docker("inspect", "-f", "{{.State.Running}}", name)
         if running.strip() != "true":
