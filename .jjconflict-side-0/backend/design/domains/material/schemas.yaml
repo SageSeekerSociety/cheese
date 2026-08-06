@@ -1,0 +1,181 @@
+# Material Domain Schemas
+
+Material:
+  type: object
+  description: User uploaded material (image, video, audio, file)
+  properties:
+    id:
+      type: integer
+      format: int64
+      description: Material ID
+    type:
+      type: string
+      description: Material type
+      enum:
+        - image
+        - video
+        - audio
+        - file
+    uploader:
+      $ref: '../user/schemas.yaml#/User'
+    created_at:
+      type: integer
+      format: int64
+      description: Creation timestamp
+    expires:
+      type: integer
+      format: int64
+      nullable: true
+      description: Expiration timestamp, null if never expires
+    download_count:
+      type: integer
+      format: int64
+      description: Download count
+    url:
+      type: string
+      description: Material download URL
+    meta:
+      oneOf:
+        - $ref: '#/ImageMeta'
+        - $ref: '#/VideoMeta'
+        - $ref: '#/AudioMeta'
+        - $ref: '#/FileMeta'
+  required:
+    - id
+    - type
+    - uploader
+    - created_at
+    - download_count
+    - url
+    - meta
+
+MaterialBundle:
+  type: object
+  description: User shared material bundle
+  properties:
+    id:
+      type: integer
+      format: int64
+      description: Material bundle ID
+    title:
+      type: string
+      description: Bundle title
+    content:
+      type: string
+      description: Bundle description
+    creator:
+      $ref: '../user/schemas.yaml#/User'
+    created_at:
+      type: integer
+      format: int64
+    updated_at:
+      type: integer
+      format: int64
+    rating:
+      type: number
+      format: float
+      description: Average rating
+      minimum: 1
+      maximum: 5
+    rating_count:
+      type: integer
+      format: int64
+      description: Number of ratings
+    my_rating:
+      type: number
+      format: float
+      nullable: true
+      description: Current user's rating
+    comments_count:
+      type: integer
+      format: int64
+    materials:
+      type: array
+      items:
+        $ref: '#/Material'
+
+FileMeta:
+  type: object
+  description: File metadata
+  properties:
+    size:
+      type: integer
+      format: int64
+      description: File size in bytes
+    name:
+      type: string
+      description: File name
+    mime:
+      type: string
+      description: MIME type
+    hash:
+      type: string
+      description: File hash
+
+ImageMeta:
+  allOf:
+    - $ref: '#/FileMeta'
+    - type: object
+      properties:
+        height:
+          type: integer
+        width:
+          type: integer
+        thumbnail:
+          type: string
+          description: Thumbnail URL
+
+VideoMeta:
+  allOf:
+    - $ref: '#/FileMeta'
+    - type: object
+      properties:
+        duration:
+          type: integer
+          description: Duration in seconds
+        height:
+          type: integer
+        width:
+          type: integer
+        thumbnail:
+          type: string
+
+AudioMeta:
+  allOf:
+    - $ref: '#/FileMeta'
+    - type: object
+      properties:
+        duration:
+          type: integer
+          format: int64
+          description: Duration in seconds
+
+CreateMaterialBundleRequest:
+  type: object
+  properties:
+    title:
+      type: string
+    content:
+      type: string
+    materials:
+      type: array
+      items:
+        type: integer
+        format: int64
+  required:
+    - title
+    - content
+    - materials
+
+UpdateMaterialBundleRequest:
+  type: object
+  properties:
+    title:
+      type: string
+    content:
+      type: string
+    materials:
+      type: array
+      items:
+        type: integer
+        format: int64

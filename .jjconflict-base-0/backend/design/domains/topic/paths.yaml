@@ -1,0 +1,102 @@
+# Topic Domain Paths
+
+/topics:
+  get:
+    summary: List topics
+    operationId: listTopics
+    tags: [Topics]
+    parameters:
+      - name: q
+        in: query
+        description: Search keyword
+        schema:
+          type: string
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Topics list
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    topics:
+                      type: array
+                      items:
+                        $ref: './schemas.yaml#/Topic'
+                    page:
+                      $ref: '../../common/responses.yaml#/Page'
+  post:
+    summary: Create topic
+    operationId: createTopic
+    tags: [Topics]
+    security:
+      - BearerAuth: []
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/CreateTopicRequest'
+    responses:
+      '201':
+        description: Topic created
+
+/topics/{topicId}:
+  get:
+    summary: Get topic details
+    operationId: getTopic
+    tags: [Topics]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TopicId'
+    responses:
+      '200':
+        description: Topic details
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    topic:
+                      $ref: './schemas.yaml#/TopicDetail'
+  put:
+    summary: Update topic
+    operationId: updateTopic
+    tags: [Topics]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TopicId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/CreateTopicRequest'
+    responses:
+      '200':
+        description: Topic updated
+  delete:
+    summary: Delete topic
+    operationId: deleteTopic
+    tags: [Topics]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TopicId'
+    responses:
+      '204':
+        description: Topic deleted

@@ -1,0 +1,35 @@
+name: Box heartbeat
+
+# The PROBE half of box monitoring: an hourly no-op job ON each box's
+# self-hosted runner. A box that is up completes its job in seconds; a box that
+# is down leaves the job queued. box-uptime.yml (the CHECK half, on a
+# GitHub-hosted runner) alerts when the latest heartbeat is stale or red.
+#
+# Why this shape: GITHUB_TOKEN can NEVER read the runners API (administration
+# isn't a grantable workflow permission — the old runner-status check 403'd on
+# every run since birth), but it CAN read workflow runs. So the boxes prove
+# liveness by RUNNING something instead of being polled.
+
+on:
+  schedule:
+    - cron: '0 * * * *' # hourly on the hour
+  workflow_dispatch: {}
+
+# A new heartbeat replaces a stuck one (box down → queued job) so dead
+# heartbeats don't pile up in the queue.
+concurrency:
+  group: box-heartbeat
+  cancel-in-progress: true
+
+jobs:
+  dev-box:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 5
+    steps:
+      - run: echo "dev box (192.168.16.5) alive — $(hostname) $(date -Iseconds)"
+
+  prod-box:
+    runs-on: [self-hosted, cheese-prod]
+    timeout-minutes: 5
+    steps:
+      - run: echo "prod box (192.168.16.8) alive — $(hostname) $(date -Iseconds)"
