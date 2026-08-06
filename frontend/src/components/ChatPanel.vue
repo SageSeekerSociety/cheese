@@ -37,6 +37,7 @@ import { usePendingAttachments } from '../lib/attachments'
 import { blockCache } from '../lib/blockCache'
 import { platformErrorPresentation } from '../lib/platformEvents'
 import {
+  coalesceSplitFencedCodeBlocks,
   renderMarkdown as renderMarkdownWith,
   renderPlain as renderPlainWith,
 } from '../lib/renderMessage'
@@ -603,7 +604,10 @@ defineExpose({ send, connected })
 // tool/巡检 events belong in 现场 — neither belongs in the group chat (spec §7.1).
 const visible = computed<Block[]>(() => {
   const out: Block[] = []
-  for (const m of messages.value) {
+  // Historical SDK turns can contain one fenced Markdown block split across
+  // consecutive message rows. Repair those rows before hiding event blocks,
+  // because an event is a hard boundary and must prevent an accidental merge.
+  for (const m of coalesceSplitFencedCodeBlocks(messages.value)) {
     if (m.kind === 'message' || m.kind === 'attachment') {
       out.push(m)
     } else if (m.kind === 'event' && m.author_type === 'system') {

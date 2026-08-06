@@ -1,20 +1,14 @@
 name: Build tmux agent image
 
-# Separate from "Build and Push Docker Image" on purpose: the deploy gates on
-# that workflow's conclusion, and no deployment consumes this image yet. A
-# failure here must not stop the app images from shipping — it did once, and a
-# deploy of three unrelated fixes sat behind an image nobody was pulling.
-# Manual only. Splitting this out of the build workflow stopped it GATING the
-# deploy, but the box has ONE runner, so building on every push still queued the
-# deploy behind an image no deployment pulls yet. Not blocking is not the same as
-# not competing. Dispatch it when the image is actually wanted — or wire it back
-# to `workflow_run` once something consumes it.
+# Manual recovery path. Normal main builds now publish this image in build.yml
+# and deployment is gated on it, because every local tmux turn consumes it.
 on:
   workflow_dispatch:
     inputs:
-      base_run_id:
-        description: "run id of the build whose sandbox image to build FROM (blank = this run)"
-        default: ""
+      base_image:
+        description: "Exact sandbox image to build FROM"
+        required: true
+        default: "ghcr.io/sageseekersociety/cheese/sandbox:main"
 
 env:
   REGISTRY: ghcr.io
@@ -68,15 +62,12 @@ jobs:
       # github.repository carries the org's capitals and a registry
       # reference must be lowercase; metadata-action lowercases its own output,
       # a hand-written ref does not.
-      - name: Resolve the base image this run published
+      - name: Resolve the requested base image
         id: base
         run: |
-          name="${IMAGE_NAME,,}"
-          echo "ref=${REGISTRY}/${name}/sandbox:run-${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "ref=${BASE_IMAGE}" >> "$GITHUB_OUTPUT"
         env:
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_NAME: ${{ github.repository }}
-          RUN_ID: ${{ inputs.base_run_id || github.run_id }}
+          BASE_IMAGE: ${{ inputs.base_image }}
 
       - name: Build and push tmux sandbox image
         uses: docker/build-push-action@v5
@@ -95,4 +86,3 @@ jobs:
         run: |
           docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
           df -h / | tail -1
-

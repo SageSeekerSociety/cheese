@@ -33,6 +33,12 @@ services:
       # git need a writable, PERSISTENT home. Backed by a host path so jj's
       # per-repo secure-config survives redeploys.
       - HOME=/data/apphome
+      # Agent containers are siblings spawned through docker.sock, not compose
+      # services. Pin them to this deployment's sha so a floating/local alias
+      # cannot disappear or drift independently of the backend.
+      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}}
+      - TMUX_SANDBOX_IMAGE=${TMUX_SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox-tmux:${IMAGE_TAG:-main}}
+      - QUALITY_GATE_IMAGE=${QUALITY_GATE_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox-tmux:${IMAGE_TAG:-main}}
     volumes:
       - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
       # Platform workspaces (project git repos / jj worktrees / claude sessions)

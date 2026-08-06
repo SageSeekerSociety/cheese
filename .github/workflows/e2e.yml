@@ -17,7 +17,47 @@ on:
       - '.github/workflows/e2e.yml'
 
 jobs:
+  # See test.yml: merged squash commits contain the exact PR tree already gated.
+  # The cheap API decision preserves full CI for direct main pushes.
+  scope:
+    runs-on: [self-hosted, cheese-dev]
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      run_heavy: ${{ steps.decide.outputs.run_heavy }}
+    steps:
+      - name: Decide whether this commit already passed PR CI
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: e2e.yml
+        run: |
+          run_heavy=true
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            if pr_head="$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '.[] | select(.merged_at != null and .merge_commit_sha == env.GITHUB_SHA) | .head.sha')"; then
+              if [ -n "$pr_head" ] && passed="$(gh api --method GET \
+                "/repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW_FILE/runs" \
+                -f head_sha="$pr_head" -f event=pull_request -f status=success \
+                --jq '.workflow_runs | length')"; then
+                if [ "$passed" -gt 0 ]; then
+                  run_heavy=false
+                  echo "::notice::Exact squash-merge tree already passed this PR workflow; skipping duplicate main suite"
+                fi
+              fi
+            else
+              echo "::warning::Could not inspect associated PRs; running the suite (safe fallback)"
+            fi
+          fi
+          echo "run_heavy=$run_heavy" >> "$GITHUB_OUTPUT"
+
   e2e:
+    needs: scope
+    if: needs.scope.outputs.run_heavy == 'true'
     # Not ubuntu-latest: GitHub-hosted runners are unavailable to this org (the
     # job is refused before any step runs — "recent account payments have failed
     # or your spending limit needs to be increased"), so this gate has been dead
@@ -29,7 +69,7 @@ jobs:
 
     services:
       postgres:
-        image: paradedb/paradedb:v0.18.8-pg16
+        image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: cheese
@@ -42,7 +82,7 @@ jobs:
           - 5432:5432
 
       redis:
-        image: valkey/valkey:8.0.2
+        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
         options: >-
           --health-cmd="valkey-cli ping"
           --health-interval=10s

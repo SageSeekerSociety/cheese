@@ -382,6 +382,10 @@ class Settings(BaseSettings):
     openai_pdf_timeout_seconds: float = Field(
         default=300.0, alias="OPENAI_PDF_TIMEOUT_SECONDS"
     )
+    pdf_import_max_pages: int = Field(default=20, ge=1, alias="PDF_IMPORT_MAX_PAGES")
+    pdf_import_max_concurrency: int = Field(
+        default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
+    )
     ai_daily_quota: float = Field(default=10.0, alias="AI_DAILY_QUOTA")
 
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")

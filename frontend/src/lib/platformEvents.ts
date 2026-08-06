@@ -24,10 +24,17 @@ export function platformErrorPresentation(block: Block): PlatformErrorPresentati
     status:
       code === 'storage_exhausted'
         ? '自动清理中 · 稍后 @芝士重试'
-        : retryable
-          ? '平台正在恢复 · 稍后可重试'
-          : '需要管理员处理',
-    icon: code === 'storage_exhausted' ? 'mdi-harddisk-alert' : 'mdi-server-alert',
+        : code === 'runtime_image_missing'
+          ? '平台组件恢复中 · 稍后 @芝士重试'
+          : retryable
+            ? '平台正在恢复 · 稍后可重试'
+            : '需要管理员处理',
+    icon:
+      code === 'storage_exhausted'
+        ? 'mdi-harddisk-alert'
+        : code === 'runtime_image_missing'
+          ? 'mdi-package-variant-closed-remove'
+          : 'mdi-server-alert',
     retryable,
   }
 }

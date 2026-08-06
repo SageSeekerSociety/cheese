@@ -43,6 +43,10 @@ export namespace UserApi {
     user: User
   }
 
+  export type RegistrationConfigDataType = {
+    requireInviteCode: boolean
+  }
+
   export const register = (data: {
     username: string
     nickname: string
@@ -50,12 +54,19 @@ export namespace UserApi {
     srpVerifier: string
     email: string
     emailCode: string
+    inviteCode?: string
   }) =>
     ApiInstance.request<RegisterResponseDataType>({
       url: '/users',
       method: 'POST',
       data,
       withCredentials: true,
+    })
+
+  export const getRegistrationConfig = () =>
+    ApiInstance.request<RegistrationConfigDataType>({
+      url: '/users/registration-config',
+      method: 'GET',
     })
 
   export const login = (data: { username: string; password: string }) =>
@@ -66,11 +77,11 @@ export namespace UserApi {
       withCredentials: true,
     })
 
-  export const sendEmailCode = (email: string) =>
+  export const sendEmailCode = (email: string, inviteCode?: string) =>
     ApiInstance.request({
       url: '/users/verify/email',
       method: 'POST',
-      data: { email },
+      data: { email, ...(inviteCode ? { inviteCode } : {}) },
     })
 
   export const refreshAccessToken = () =>
