@@ -21,7 +21,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
@@ -346,9 +346,22 @@ class TopicService:
         # (owner_handle="cheese" is skipped by seed()), which is the bug this
         # whole path exists to close — see seed_split's docstring.
         parent_members, _ = await self._members.list_for_topic(parent.id)
+        parent_owner = next(
+            (m.member_handle for m in parent_members if m.role == TopicRole.owner),
+            None,
+        )
+        # A split requested BY a real human keeps them as the child's owner. But
+        # when the splitter is 芝士 itself (创建者="cheese", e.g. an autonomous
+        # 分身发起的拆分) or no human is identified at all, `created_by` alone
+        # would leave the child ownerless (seed() intentionally skips "cheese"
+        # as owner) — nobody could then manage its roster. Default to the
+        # parent's real human owner instead, so every sub-topic keeps one.
+        owner_handle = (
+            created_by if created_by and created_by != CHEESE_AUTHOR else parent_owner
+        )
         await self._members.seed_split(
             new_topic.id,
-            owner_handle=created_by,
+            owner_handle=owner_handle,
             member_handles=[m.member_handle for m in parent_members],
         )
         parent_doc = await self._blocks.doc_root(parent.id)

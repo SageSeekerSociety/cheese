@@ -75,12 +75,13 @@ def test_split_ignores_forged_created_by_in_body(client):
     assert "mallory-forged" not in handles
 
 
-def test_split_by_cheese_agent_still_inherits_parent_human_members(client):
+def test_split_by_cheese_agent_defaults_owner_to_parent_owner(client):
     """The bug users actually hit: a 分身-initiated split (no human token, the
     `cheese` agent as `created_by` — same shape `cheese split` sends) used to
-    seed the child roster from `owner_handle="cheese"` alone, which `seed()`
-    skips entirely, so the parent's human owner vanished from the new
-    sub-topic. It must now be carried over as a member."""
+    seed the child roster from `owner_handle="cheese"` alone. `seed()` skips
+    "cheese" as owner, so the child ended up with NO owner/admin at all —
+    nobody could manage its member list. It must now default to the parent's
+    real human owner, who becomes the child's owner too (not just a member)."""
     _, tid = _project_topic(client, owner="alice")
     r = client.post(
         f"/api/topics/{tid}/split",
@@ -89,8 +90,20 @@ def test_split_by_cheese_agent_still_inherits_parent_human_members(client):
     assert r.status_code == 200
     sub = r.json()["data"]
 
-    handles = {m["member_handle"] for m in _members(client, sub["id"])}
-    assert "alice" in handles
+    handles = {m["member_handle"]: m["role"] for m in _members(client, sub["id"])}
+    assert handles.get("alice") == "owner"
+
+
+def test_split_with_no_identified_human_still_gets_parent_owner(client):
+    """Even a bare Phase-0 call with no `created_by` at all (no token, no body
+    field) must not leave the child ownerless."""
+    _, tid = _project_topic(client, owner="alice")
+    r = client.post(f"/api/topics/{tid}/split", json={"title": "无发起人拆分"})
+    assert r.status_code == 200
+    sub = r.json()["data"]
+
+    handles = {m["member_handle"]: m["role"] for m in _members(client, sub["id"])}
+    assert handles.get("alice") == "owner"
 
 
 def test_project_member_can_split_even_if_not_on_topic_roster(client):
