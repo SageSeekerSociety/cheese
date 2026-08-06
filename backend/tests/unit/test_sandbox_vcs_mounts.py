@@ -82,16 +82,13 @@ def test_fix_makes_jj_work_inside_the_isolated_worktree(project, tmp_path):
     absolute container paths), restore jj/git/log/diff in the isolated tree."""
     branch = ws.branch_for_topic(uuid.uuid4())
     wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
-    main = ws._repo(project)  # noqa: SLF001
 
     container_root = tmp_path / "container-sim"
     isolated = container_root / "work"
     isolated.parent.mkdir(parents=True)
     shutil.copytree(wt, isolated)
 
-    mounts = ws.sandbox_vcs_mounts(
-        project, branch, container_workdir=str(isolated)
-    )
+    mounts = ws.sandbox_vcs_mounts(project, branch, container_workdir=str(isolated))
     # mounts is ["-v", "host:container", "-v", "host:container"]; container
     # sides were computed anchored at `isolated` itself (our fake /work), so
     # they land inside container_root — apply them as copies (a bind mount's
