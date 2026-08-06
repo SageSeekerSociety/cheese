@@ -3,6 +3,10 @@ body="$(cat)"
 eid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$$-$(date +%s%N)")"
 if [ -n "$CHEESE_HOOK_SPOOL" ]; then
   mkdir -p "$CHEESE_HOOK_SPOOL" 2>/dev/null || true
+  # Shared bind mount: node (sandbox uid 1000) writes while cheese (backend uid
+  # 1001) reconciles, parks, and removes events. Keep the directory shared even
+  # if it had to be recreated after session setup.
+  chmod 0777 "$CHEESE_HOOK_SPOOL" 2>/dev/null || true
   _tmp="$CHEESE_HOOK_SPOOL/.tmp.$eid"
   _dst="$CHEESE_HOOK_SPOOL/$(date +%s%N 2>/dev/null).$eid"
   if printf '%s' "$body" > "$_tmp" 2>/dev/null; then
