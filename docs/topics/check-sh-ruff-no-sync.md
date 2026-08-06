@@ -30,4 +30,6 @@
 
 ### 下一步
 
-改动已验证完毕，可以合回共享 main；无待决策事项。合并时按上面的提醒对一下另一份重复实现。
+wangchangxin 已拍板：本地跑不了 DB/Redis 依赖的验证属于环境限制，真正的验证交给 CI（`.github/workflows/test.yml`，PR/合并到 main 时用真实 Postgres/Valkey 跑全量 pytest），不必再等有 DB 的环境补跑；已直接递验收卡给他采纳合并。
+
+递交前核对过本次改动范围干净：跟共享 main 相比，工作区里只有 `.claude/scripts/check.sh:83` 一行实质改动（`uv run --no-sync ruff ...` → `"${UV_RUN[@]}" ruff ...`），没有夹带无关改动；另外把话题拆分时自动生成、放在仓库根目录的 `doc-topic.md` 清理掉了（内容已迁到规范位置 `docs/topics/check-sh-ruff-no-sync.md`，属于本话题文档整理，非任务范围外改动）。合并时仍需按上面的提醒对一下「沙箱切换杀进程」子话题是否有同一行的重复实现，去重后再应用。
