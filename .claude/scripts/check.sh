@@ -80,7 +80,7 @@ run_ruff() {
     if [ -x ".venv/bin/ruff" ]; then
         ".venv/bin/ruff" "$@" --cache-dir "$RUFF_CACHE_DIR"
     else
-        "${UV_RUN[@]}" ruff "$@" --cache-dir "$RUFF_CACHE_DIR"
+        uv run --no-sync ruff "$@" --cache-dir "$RUFF_CACHE_DIR"
     fi
 }
 
