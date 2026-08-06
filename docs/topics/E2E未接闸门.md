@@ -8,8 +8,19 @@
 ## 已落地的改动
 
 1. **`e2e/tests/`**：新增 `auth.spec.ts`（真实登录表单 + 错误凭据两个用例）、`topic-and-chat.spec.ts`（新建话题、发消息两个用例，走真实 UI + WS），改写 `smoke.spec.ts`（去掉两个空断言，只留健康检查，并修了端口 bug）。新增 `helpers.ts` 封装登录/进项目的公共步骤。用的是种子账号 `alice/demo12345`（`backend/alembic/versions/219831eb75a3_seed_demo_data.py`）。
-   - **未在本沙箱内实跑**：沙箱没有 pnpm/Playwright/Postgres，只能靠读源码核对选择器和路由。合入前需要在有完整环境（dev 盒子或 CI）跑一遍确认。
 2. **`deploy.yml` / `deploy-prod.yml`**：`wait-for-ci` 增加等待 `e2e` check 的步骤，和已有的 `build-backend`/`test` 并列。发布不会再在 e2e 红灯的情况下上线。这一步是纯粹的"部署前多等一个已存在的检查"，不影响任何人的 PR 流程，判断为低风险，已直接改。
+
+## 磁盘扩容后的复核（宿主机 64G→256G）
+
+之前因为磁盘写满卡住的操作，扩容后重新跑过，结论分两半：
+
+- **确认是磁盘问题、现在已解决**：`uv sync`（backend 依赖，196 个包）、`pnpm install`（frontend + e2e）现在都能完整跑完，过程中没有再出现 ENOSPC。`task check` 里 ruff/pyright 之前失败是磁盘写满时留下的半吊子 scratch venv 缓存导致 `ruff`/`pyright` 可执行文件缺失，重新 `uv sync` 之后 **ruff PASS、pyright PASS**（`0 errors, 0 warnings, 0 informations`）。
+- **和磁盘无关、这个沙箱本身就没有的能力**：
+  - 沙箱里没有 Docker（`docker` 命令不存在），只有 `psql` 客户端没有 server，起不了 Postgres/Valkey，所以 `pytest` 依然只能 SKIP（"no usable Postgres on this host"），跟磁盘大小无关，扩容前后都一样。
+  - 沙箱没有 root，`playwright install --with-deps` 装不了 chromium 依赖的系统库；`pnpm` 本身也不在 PATH（需要 `npx pnpm` 或手搓 shim 才能跑），这两个也是权限/环境问题，不是磁盘问题。
+  - 用上面的变通方法，实际把 `e2e/tests/smoke.spec.ts` 跑通了（`1 passed`，真实起了 backend + frontend + 打了 `/healthz`），证明 webServer 编排和这条用例本身没问题。`auth.spec.ts` / `topic-and-chat.spec.ts` 需要真实 Postgres 才能登录成功，在这个沙箱里没法端到端验证，**仍然需要在 dev 盒子或 CI 上跑一遍**才能确认选择器/流程写对了。
+
+结论：磁盘扩容解决了它该解决的问题（uv/pnpm 安装、ruff/pyright）；`pytest` 和新增的两条 e2e 用例没法在这个沙箱里验证到底，是环境能力问题，不是本轮阻塞项，合入前仍按原计划找有 Postgres 的环境跑一遍。
 
 ## 待拍板：e2e 要不要成为 PR 合并的强制闸门
 
