@@ -1,6 +1,11 @@
 """Task Template protocol enforcement on accept (spec §4.2/§4.4)."""
 
+from app.core.tokens import mint_session_token
 from tests.conftest import seed_space
+
+
+def _auth(handle: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"}
 
 
 def _setup_with_mentor_condition(client) -> tuple[str, str]:
@@ -31,24 +36,35 @@ def _setup_with_mentor_condition(client) -> tuple[str, str]:
     return pid, topic["id"]
 
 
-def _card(client, topic_id: str) -> str:
+def _card(client, topic_id: str, reviewer: str) -> str:
     return client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": "mentor-1"},
+        json={"reviewer_handle": reviewer},
     ).json()["data"]["id"]
 
 
 def test_non_mentor_cannot_accept_protocol_topic(client):
+    # Card routed to the non-mentor themself: still blocked by the mentor
+    # protocol, distinct from (and on top of) the "must be the routed
+    # reviewer" identity check.
     _, tid = _setup_with_mentor_condition(client)
-    card = _card(client, tid)
-    r = client.post(f"/api/accept-cards/{card}/accept", json={"decided_by": "user-1"})
+    card = _card(client, tid, "user-1")
+    r = client.post(
+        f"/api/accept-cards/{card}/accept",
+        json={"decided_by": "user-1"},
+        headers=_auth("user-1"),
+    )
     assert r.status_code == 422  # 须导师验收
 
 
 def test_mentor_can_accept(client):
     _, tid = _setup_with_mentor_condition(client)
-    card = _card(client, tid)
-    r = client.post(f"/api/accept-cards/{card}/accept", json={"decided_by": "mentor-1"})
+    card = _card(client, tid, "mentor-1")
+    r = client.post(
+        f"/api/accept-cards/{card}/accept",
+        json={"decided_by": "mentor-1"},
+        headers=_auth("mentor-1"),
+    )
     assert r.status_code == 200
     topic = client.get(f"/api/topics/{tid}").json()["data"]
     assert topic["status"] == "archived"

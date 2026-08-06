@@ -7,9 +7,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_turn_runner
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import TurnRunner
 from app.domain.review import gate
@@ -70,10 +72,15 @@ async def list_accept_cards(topic_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.post("/accept-cards/{card_id}/approve")
-async def approve_card(card_id: uuid.UUID, body: ApprovalCreate, db: DbSession) -> dict:
+async def approve_card(
+    card_id: uuid.UUID, body: ApprovalCreate, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """主分支保护 (spec §4.4): record one human approval toward the accept."""
+    actor = await resolver.resolve(fallback_handle=body.approver_handle)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能批准验收卡")
     svc = AcceptService(db)
-    card = await svc.approve(card_id=card_id, approver_handle=body.approver_handle)
+    card = await svc.approve(card_id=card_id, approver_handle=actor.handle)
     return ok(await svc.describe(card))
 
 
@@ -82,11 +89,15 @@ async def accept_card(
     card_id: uuid.UUID,
     body: AcceptDecision,
     db: DbSession,
+    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
 ) -> dict:
+    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能采纳验收卡")
     svc = AcceptService(db)
-    card = await svc.accept(card_id=card_id, decided_by=body.decided_by)
+    card = await svc.accept(card_id=card_id, decided_by=actor.handle)
     if card.status == AcceptStatus.conflict:
         # 冲突不采纳 (spec §6.3): 芝士 first. Materialize the conflicted merge in
         # the topic's workspace, then dispatch a resolve turn. The reviewer
@@ -118,9 +129,12 @@ async def accept_card(
 
 @router.post("/accept-cards/{card_id}/reassign")
 async def reassign_card(
-    card_id: uuid.UUID, body: AcceptCardCreate, db: DbSession
+    card_id: uuid.UUID, body: AcceptCardCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """改验收人 (spec §4.4)."""
+    actor = await resolver.resolve(fallback_handle=None)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能改验收人")
     svc = AcceptService(db)
     card = await svc.reassign(
         card_id=card_id,
@@ -131,14 +145,24 @@ async def reassign_card(
 
 
 @router.post("/accept-cards/{card_id}/reject")
-async def reject_card(card_id: uuid.UUID, body: RejectDecision, db: DbSession) -> dict:
+async def reject_card(
+    card_id: uuid.UUID, body: RejectDecision, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能驳回验收卡")
     svc = AcceptService(db)
-    card = await svc.reject(card_id=card_id, decided_by=body.decided_by, note=body.note)
+    card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
     return ok(await svc.describe(card))
 
 
 @router.post("/accept-cards/{card_id}/revoke")
-async def revoke_card(card_id: uuid.UUID, body: AcceptDecision, db: DbSession) -> dict:
+async def revoke_card(
+    card_id: uuid.UUID, body: AcceptDecision, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=body.decided_by)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能撤销采纳")
     svc = AcceptService(db)
-    card = await svc.revoke(card_id=card_id, decided_by=body.decided_by)
+    card = await svc.revoke(card_id=card_id, decided_by=actor.handle)
     return ok(await svc.describe(card))

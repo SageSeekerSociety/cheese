@@ -3,9 +3,20 @@
 Exercises the 验收 state machine through the FastAPI TestClient on an in-memory
 SQLite DB: create card -> accept (archives topic), the AI-can't-accept-own
 rule, double-accept, reject, and revoke (un-archives topic).
+
+The decision endpoints (accept/reject/revoke/reassign/approve) require a real
+authenticated actor (Authorization: Bearer <session token>) and, for
+accept/reject, that the actor IS the card's routed reviewer — see
+test_accept_authorization.py for the security-focused cases.
 """
 
 import uuid
+
+from app.core.tokens import mint_session_token
+
+
+def _auth(handle: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"}
 
 
 def _make_project(client) -> str:
@@ -49,7 +60,11 @@ def test_list_cards_newest_first(client):
     first = _make_card(client, tid, "alice")
     # One pending card per topic (not a broadcast): reject the first before a
     # second can be filed.
-    client.post(f"/api/accept-cards/{first}/reject", json={"decided_by": "alice"})
+    client.post(
+        f"/api/accept-cards/{first}/reject",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     second = _make_card(client, tid, "bob")
 
     r = client.get(f"/api/topics/{tid}/accept-card")
@@ -68,7 +83,11 @@ def test_accept_happy_path_archives_topic(client):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
 
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["status"] == "accepted"
@@ -96,7 +115,11 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
 
     monkeypatch.setattr(ws, "merge_topic", fail_merge)
 
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
 
     assert r.status_code == 422
     assert "could not be merged" in r.json()["message"]
@@ -107,12 +130,17 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
 
 
 def test_ai_cannot_accept_own_work_collaborative(client):
-    # Default project ai_mode is collaborative.
+    # Default project ai_mode is collaborative. Route the card TO the AI so the
+    # reviewer-identity check passes and `_forbid_ai` is what actually fires.
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
+    cid = _make_card(client, tid, "cheese")
 
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "cheese"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "cheese"},
+        headers=_auth("cheese"),
+    )
     assert r.status_code == 422
     assert "AI 不能验收自己做的东西" in r.json()["message"]
 
@@ -129,17 +157,25 @@ def test_double_accept_422(client):
 
     assert (
         client.post(
-            f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"}
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=_auth("alice"),
         ).status_code
         == 200
     )
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 422
 
 
 def test_accept_404_for_missing_card(client):
     r = client.post(
-        f"/api/accept-cards/{uuid.uuid4()}/accept", json={"decided_by": "alice"}
+        f"/api/accept-cards/{uuid.uuid4()}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
     )
     assert r.status_code == 404
 
@@ -147,11 +183,12 @@ def test_accept_404_for_missing_card(client):
 def test_reject_keeps_topic_active(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
+    cid = _make_card(client, tid, "bob")
 
     r = client.post(
         f"/api/accept-cards/{cid}/reject",
         json={"decided_by": "bob", "note": "数据不够"},
+        headers=_auth("bob"),
     )
     assert r.status_code == 200
     card = r.json()["data"]
@@ -167,8 +204,16 @@ def test_reject_then_accept_422(client):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
 
-    client.post(f"/api/accept-cards/{cid}/reject", json={"decided_by": "bob"})
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    client.post(
+        f"/api/accept-cards/{cid}/reject",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 422
 
 
@@ -177,10 +222,18 @@ def test_revoke_accepted_card_unarchives_topic(client):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
 
-    client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
 
-    r = client.post(f"/api/accept-cards/{cid}/revoke", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/revoke",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "revoked"
 
@@ -194,7 +247,11 @@ def test_revoke_non_accepted_card_422(client):
     cid = _make_card(client, tid)
 
     # Pending card cannot be revoked.
-    r = client.post(f"/api/accept-cards/{cid}/revoke", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/revoke",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 422
 
 
@@ -215,7 +272,11 @@ def test_no_new_card_on_archived_topic(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
-    client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     r = client.post(
         f"/api/topics/{tid}/accept-card",
         json={"reviewer_handle": "bob", "routing_reason": "x"},
@@ -228,19 +289,33 @@ def test_revoke_requires_authority(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
-    client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
 
-    r = client.post(f"/api/accept-cards/{cid}/revoke", json={"decided_by": "stranger"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/revoke",
+        json={"decided_by": "stranger"},
+        headers=_auth("stranger"),
+    )
     assert r.status_code == 422
     assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
 
-    r = client.post(f"/api/accept-cards/{cid}/revoke", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/revoke",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200
     assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_revoke_404_for_missing_card(client):
     r = client.post(
-        f"/api/accept-cards/{uuid.uuid4()}/revoke", json={"decided_by": "alice"}
+        f"/api/accept-cards/{uuid.uuid4()}/revoke",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
     )
     assert r.status_code == 404
