@@ -66,10 +66,10 @@ if (( second_active != 0 )); then
   exit 0
 fi
 
-sandbox_ids="$(docker ps -aq --filter label=cheesex-tmux=1)"
+sandbox_ids="$(docker ps -aq --filter label=cheesex-sandbox=1)"
 if test -n "$sandbox_ids"; then
   sandbox_count="$(printf '%s\n' "$sandbox_ids" | wc -l | tr -d ' ')"
-  log "root usage ${usage}%; removing ${sandbox_count} reconstructible tmux sandbox(es)"
+  log "root usage ${usage}%; removing ${sandbox_count} reconstructible sandbox(es)"
   # Docker IDs contain only hexadecimal characters, so deliberate word splitting
   # here cannot introduce an option or shell metacharacter.
   # shellcheck disable=SC2086
