@@ -51,15 +51,29 @@ if [ -z "$UV" ]; then
     echo "-------------------------------------------------------------"
 fi
 
-# Resolve one runner per tool: prefer uv, else the venv binary, else give up on
-# that tool alone (a missing pyright must not take ruff down with it).
+# Resolve one runner per tool. A venv script's exec bit says nothing about whether
+# it RUNS: .venv/bin/pyright is a Python wrapper whose shebang points at the
+# authoring container's interpreter, so it is -x yet "cannot execute". Probe each
+# candidate for real. A tool we cannot run must fail alone, never take down the
+# others.
 tool() {
     local name="$1"
-    if [ -n "$UV" ]; then echo "$UV $name"
-    elif [ -x ".venv/bin/$name" ]; then echo ".venv/bin/$name"
-    else echo ""; fi
+    if [ -n "$UV" ] && $UV "$name" --version >/dev/null 2>&1; then echo "$UV $name"; return; fi
+    if ".venv/bin/$name" --version >/dev/null 2>&1; then echo ".venv/bin/$name"; return; fi
+    echo ""
 }
 RUFF="$(tool ruff)"; PYRIGHT="$(tool pyright)"; PYTEST="$(tool pytest)"
+
+# pyright is a NODE program; the Python package only wraps it and ships the real
+# bundle inside site-packages. When no Python works but node does, run the bundle
+# directly — that is the genuine type check, not a skipped one.
+if [ -z "$PYRIGHT" ] && command -v node >/dev/null 2>&1; then
+    PJS="$(ls .venv/lib/python*/site-packages/pyright/dist/index.js 2>/dev/null | head -1)"
+    if [ -n "$PJS" ] && node "$PJS" --version >/dev/null 2>&1; then
+        PYRIGHT="node $PJS"
+        echo "note: pyright via bundled node entrypoint ($PJS)"
+    fi
+fi
 
 [[ -n "$UV" && "$UV" == "uv run --no-sync" ]] || echo "note: runner = ruff:[${RUFF:-none}] pyright:[${PYRIGHT:-none}] pytest:[${PYTEST:-none}]"
 
