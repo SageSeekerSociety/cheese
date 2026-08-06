@@ -6,7 +6,10 @@
 # Output: concise pass/fail summary. Non-zero exit on failure.
 set -euo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+# Locate the repo from THIS script's own path, not from git: a topic's工作区 is a
+# jj workspace with no `.git`, so `git rev-parse --show-toplevel` exits 128 and
+# `set -e` kills the run before a single check executes.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/backend"
 
 PASS=0
