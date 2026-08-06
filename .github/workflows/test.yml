@@ -112,6 +112,17 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: test-token
         run: uv run pytest tests/ -n auto --tb=short -k "not kotlin"
 
+      # Every run's postgres service container leaves a volume behind, and
+      # nothing ever removed them: 57 had accumulated to 19GB and filled the
+      # box's disk mid-run ("No space left on device" from asyncpg). Only
+      # volumes no container references are touched, so a live deployment's
+      # data is never in scope.
+      - name: Reclaim the service containers' volumes
+        if: always()
+        run: |
+          docker volume prune -f >/dev/null 2>&1 || true
+          df -h / | tail -1
+
   lint:
     runs-on: [self-hosted, cheese-dev]
     steps:

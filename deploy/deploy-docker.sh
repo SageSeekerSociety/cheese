@@ -28,13 +28,40 @@ SHA="${1:?usage: deploy-docker.sh <image-sha> [compose-file]}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE="${2:-$HERE/compose/docker-compose.base.yml}"
 PROJECT="${PROJECT:-cheese}"
+HEALTH_ATTEMPTS="${DEPLOY_HEALTH_ATTEMPTS:-15}"
+HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-3}"
 export IMAGE_TAG="$SHA"
 
-dc() { docker compose -f "$COMPOSE" -p "$PROJECT" "$@"; }
+# Optional overlay compose files layered on top of the base (space-separated).
+# Bare names resolve against the committed compose dir; absolute paths pass
+# through. Set in the box-local ops/deploy.env — e.g. dev adds the subscription
+# overlay (docker.sock + workspace path parity, so a turn can spawn the agent
+# sandbox); prod leaves it empty and is untouched. Committed overlays survive the
+# runner's per-run re-checkout, so the deploy carries them itself — no box-side
+# heal hack needed to re-apply them after each CI redeploy.
+COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:-}"
+_overlay_args=()  # populated after fail() exists so a missing overlay aborts loudly
+
+dc() {
+  docker compose -f "$COMPOSE" ${_overlay_args[@]+"${_overlay_args[@]}"} \
+    -p "$PROJECT" "$@"
+}
 log() { echo "[deploy-docker $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[deploy-docker $(date '+%H:%M:%S')] ERROR: $*" >&2; exit 1; }
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
+
+# Resolve overlays now that fail() is defined; abort if deploy.env names one that
+# was not checked out, rather than silently deploying without the wiring.
+for _f in $COMPOSE_OVERLAYS; do
+  case "$_f" in
+    /*) : ;;
+    *)  _f="$HERE/compose/$_f" ;;
+  esac
+  [ -f "$_f" ] || fail "overlay compose not found: $_f"
+  _overlay_args+=(-f "$_f")
+  log "overlay: $_f"
+done
 
 # Capture the currently-running sha so we can roll back to it on failure.
 PREV_SHA="$(dc ps -q backend 2>/dev/null | xargs -r docker inspect \
@@ -57,13 +84,23 @@ dc up -d backend frontend || fail "compose up failed"
 
 log "waiting for health…"
 code=""
-for _ in $(seq 1 15); do
-  sleep 3
-  if dc exec -T backend curl -sf http://localhost:8081/healthz >/dev/null 2>&1; then code=ok; break; fi
+app_tier=""
+for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
+  sleep "$HEALTH_INTERVAL_SECONDS"
+  app_tier="$(docker ps -a \
+    --filter "label=com.docker.compose.project=$PROJECT" \
+    --format '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
+    2>/dev/null || true)"
+  if printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" \
+    >/dev/null 2>&1; then
+    code=ok
+    break
+  fi
 done
 
 if [ "$code" != ok ]; then
   log "HEALTH CHECK FAILED"
+  printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" || true
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
     log "rolling back to $PREV_SHA…"
     IMAGE_TAG="$PREV_SHA" dc up -d backend frontend || true

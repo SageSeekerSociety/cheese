@@ -19,7 +19,7 @@ cd "$CLI_SRC"
 for target in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
   os=${target%-*}; arch=${target#*-}
   GOFLAGS=-mod=mod GOOS=$os GOARCH=$arch \
-    go build -buildvcs=false -ldflags "-X main.version=cheesex-connector" \
+    go build -buildvcs=false -ldflags "-s -w -X main.version=cheesex-connector" \
     -o "$DIST/$target/cheesehost" .
   echo "built $target/cheesehost"
 done

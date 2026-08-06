@@ -1,7 +1,7 @@
 import mimetypes
 from typing import Any, BinaryIO
 
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import ForbiddenError, InternalServerError, NotFoundError
 from app.core.storage import StorageBackend, compute_file_hash, generate_storage_key
 from app.domain.attachment.models import Attachment, AttachmentType
 from app.domain.attachment.repositories import AttachmentRepository
@@ -106,7 +106,19 @@ class AttachmentService:
             raise ForbiddenError("Only the uploader can delete the attachment")
 
         storage_key = attachment.meta.get("storageKey")
-        if storage_key:
-            await self._storage.delete(storage_key)
+        if storage_key and not await self._storage.delete(storage_key):
+            # The row is the only pointer to the object, so dropping it after a
+            # failed delete orphans the file for good: it keeps costing storage
+            # and stays fetchable by key, while the caller was told 204.
+            #
+            # A false return is not proof of failure though — the local backend
+            # returns it for a file that was already absent, which is the end
+            # state we wanted. Ask what is actually there; refusing a legitimate
+            # delete because the object had already gone would be its own bug.
+            if await self._storage.exists(storage_key):
+                raise InternalServerError(
+                    f"attachment {attachment_id} was not removed from storage; "
+                    "the record is kept so the object can still be found"
+                )
 
         await self._repo.delete(attachment_id)

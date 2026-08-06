@@ -62,8 +62,46 @@ async def test_admin_failures_never_raise():
     g = gw.LlmGateway("http://gw", "mk", transport=_transport(handler))
     assert await g.mint_project_key(PID) is None
     assert await g.set_key_budget("k", 1.0) is False
-    day = await g.daily_spend("sk-virtual", gw.utc_today())
-    assert day.prompt_tokens == 0 and day.spend_usd == 0.0
+    assert await g.daily_spend("sk-virtual", gw.utc_today()) is None
+
+
+@pytest.mark.anyio
+async def test_failed_read_cannot_reset_checkpoint_and_rebill_prior_spend():
+    """An unknown cumulative total must not be persisted as an observed zero."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(500, text="temporary gateway failure")
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "prompt_tokens": 150,
+                    "completion_tokens": 30,
+                    "spend": 0.015,
+                }
+            ],
+        )
+
+    gateway = gw.LlmGateway("http://gw", "mk", transport=_transport(handler))
+    checkpoint = {
+        "date": gw.utc_today(),
+        "prompt": 100,
+        "completion": 20,
+        "spend_usd": 0.010,
+    }
+
+    failed = await gw.drain_new_usage(gateway, "sk-virtual", checkpoint)
+    checkpoint_after_failure = checkpoint if failed is None else failed[3]
+    prompt, completion, spend, _ = await gw.drain_new_usage(
+        gateway, "sk-virtual", checkpoint_after_failure
+    )
+
+    assert (prompt, completion) == (50, 10)
+    assert spend == pytest.approx(0.005)
 
 
 class _StubGateway:

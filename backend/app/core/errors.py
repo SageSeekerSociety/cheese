@@ -234,6 +234,11 @@ class UnauthorizedError(AppError):
     message = "Unauthorized"
 
 
+class GatewayUnavailableError(AppError):
+    code = 503
+    message = "AI gateway unavailable"
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register BOTH error frameworks (fusion merge): main's BaseError family +
     HTTP/validation handlers, and cheesex's AppError handler. Called from our

@@ -1,6 +1,7 @@
 """TurnRunner + InProcessBroker: background turns, WS-as-subscriber (design §4)."""
 
 import asyncio
+import errno
 import uuid
 
 import pytest
@@ -222,6 +223,52 @@ async def test_turn_failure_lands_in_the_timeline():
     assert "中断" in first["block"]["content"]
     assert second["type"] == "error" and second["persisted"] is True
     assert svc.posted == first["block"]["content"]
+
+
+@pytest.mark.anyio
+async def test_storage_failure_is_coded_and_never_auto_resumes(monkeypatch):
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+
+    class _Full:
+        def __init__(self) -> None:
+            self.meta: dict | None = None
+
+        async def converse(self, **_):
+            raise OSError(errno.ENOSPC, "No space left on device")
+            yield  # pragma: no cover
+
+        async def post_system_event(
+            self, topic_id, content, turn_id=None, *, meta=None
+        ):
+            self.meta = meta
+            return {
+                "id": "storage-1",
+                "kind": "event",
+                "content": content,
+                "meta": meta,
+            }
+
+    def unexpected_resume(*_args, **_kwargs):
+        pytest.fail("storage pressure must wait for cleanup, not auto-resume")
+
+    monkeypatch.setattr(runner, "_schedule_resume", unexpected_resume)
+    svc = _Full()
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(svc, topic, author="u", content="hi", summon=True)
+        event = await asyncio.wait_for(q.get(), 1)
+        error = await asyncio.wait_for(q.get(), 1)
+
+    assert event["type"] == "event_block"
+    assert event["block"]["meta"]["code"] == "storage_exhausted"
+    assert error == {
+        "type": "error",
+        "code": "storage_exhausted",
+        "message": event["block"]["content"],
+        "persisted": True,
+    }
+    assert svc.meta == event["block"]["meta"]
 
 
 @pytest.mark.anyio

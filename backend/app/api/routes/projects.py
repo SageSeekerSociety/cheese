@@ -8,17 +8,26 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_profile_registry, project_device_online
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.agent.market import compute_default_name, compute_selectable
+from app.domain.agent.market import (
+    compute_default_name,
+    compute_selectable,
+    subscription_model_default,
+    subscription_model_ids,
+    subscription_model_listings,
+)
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.membership.repositories import MemberRepository
+from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.schemas import (
     ProjectCreate,
@@ -36,31 +45,74 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
+QUALITY_GATE_COMMAND_MAX_CHARS = 4096
+
 
 @router.post("")
-async def create_project(body: ProjectCreate, db: DbSession) -> dict:
+async def create_project(
+    body: ProjectCreate, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    # Whoever creates a project owns it unless they say otherwise. Without this
+    # the listing — now scoped to the caller — would hide a project from the very
+    # person who just made it.
+    who = await resolver.resolve(fallback_handle=body.owner_handle)
     project = await ProjectService(db).create(
         name=body.name,
-        owner_handle=body.owner_handle,
+        owner_handle=body.owner_handle or (who.handle if who.handle else None),
         ai_mode=body.ai_mode,
         expert_role=body.expert_role,
         team_id=body.team_id,
+        external_task_id=body.external_task_id,
     )
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
 @router.get("")
-async def list_projects(db: DbSession, team_id: int | None = None) -> dict:
-    """All projects, or — with ``team_id`` — one team's 项目 page (a personal
-    team also folds in its owner's legacy team-less projects)."""
+async def list_projects(
+    db: DbSession, resolver: ActorResolverDep, team_id: int | None = None
+) -> dict:
+    """One team's 项目 page with ``team_id`` (a personal team also folds in its
+    owner's legacy team-less projects); otherwise the caller's OWN projects.
+
+    Without ``team_id`` this used to return every project to everyone. That is
+    survivable while five exist and wrong as soon as a class does — a student
+    would find every other team's work in their sidebar.
+    """
     service = ProjectService(db)
     if team_id is not None:
         projects = await service.list_for_team(team_id)
         total = len(projects)
     else:
-        projects, total = await service.list_all()
+        who = await resolver.resolve(fallback_handle=None)
+        if who.authenticated:
+            projects = await ProjectRepository(db).list_visible_to(
+                handle=who.handle, user_id=who.user_id
+            )
+            total = len(projects)
+        else:
+            # The unauthenticated surface is left exactly as it was. Every 2.0
+            # route on this deployment is reachable without a credential
+            # (handle-fallback, Phase 0), so making THIS one the exception would
+            # not protect anything — a caller could simply not authenticate.
+            # Tightening that surface is a decision about all of them, not a
+            # side effect of scoping a sidebar. Real users are logged in, and
+            # they are who this scoping is for.
+            projects, total = await service.list_all()
     items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
     return ok(page(items, total))
+
+
+@router.get("/by-task/{task_id}")
+async def projects_for_task(task_id: int, db: DbSession) -> dict:
+    """The 2.0 projects created from this 赛题.
+
+    The 赛题 page uses it to show what already exists rather than offering to
+    create a second one blindly — a 赛题 with three teams on it should read as
+    three projects, not as a button that quietly makes a fourth.
+    """
+    projects = await ProjectRepository(db).list_for_external_task(task_id)
+    items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
+    return ok(page(items, len(items)))
 
 
 @router.get("/by-team/{team_id}")
@@ -268,6 +320,44 @@ async def set_compute_profile(project_id: uuid.UUID, body: dict, db: DbSession) 
     return ok({"current": name})
 
 
+# --- Subscription model: which Claude model this project's subscription turns
+# use (parallel to the compute pool). Only relevant when the subscription path is
+# deployed; otherwise the listing is informational. -----------------------------
+
+
+@router.get("/{project_id}/model-profiles")
+async def list_model_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
+    """Claude models this project may select for subscription turns, plus the
+    current selection. Default = Sonnet 5 (balanced / saves the subscription's
+    quota)."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    current = (project.settings or {}).get(
+        "subscription_model"
+    ) or subscription_model_default()
+    return ok(
+        {
+            "current": current,
+            "profiles": [asdict(v) for v in subscription_model_listings()],
+        }
+    )
+
+
+@router.put("/{project_id}/model-profile")
+async def set_model_profile(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+    """Set the project's subscription model. Only a known model id is accepted."""
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    name = (body.get("profile") or "").strip() or subscription_model_default()
+    if name not in subscription_model_ids():
+        raise ValidationError(f"模型 {name!r} 不可选")
+    project.settings = {**(project.settings or {}), "subscription_model": name}
+    await db.flush()
+    return ok({"current": name})
+
+
 # --- Environment (spec §9.1): which sandbox image runs this project's agent ---
 
 # A docker image reference, e.g. "cheesex-dev:v0". Kept strict so the value can't
@@ -323,6 +413,31 @@ async def set_sandbox_image(project_id: uuid.UUID, body: dict, db: DbSession) ->
 # --- Quality gate (spec §4.4/§9, eval C2): 平台硬门 configuration -------------
 
 
+async def require_quality_gate_admin(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> None:
+    """Only a verified human project owner/lead may configure executable policy.
+
+    A sandbox-scoped agent token is deliberately not accepted here: allowing an
+    agent to choose the command that judges its own work is both a review bypass
+    and, before gate isolation, a host-command primitive.
+    """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    if not actor.authenticated or actor.via != "token" or actor.is_agent:
+        raise NotFoundError("Project not found")
+    handle = actor.handle
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    if project.owner_handle == handle:
+        return
+    member = await MemberRepository(db).get(project_id=project_id, user_handle=handle)
+    if member is not None and member.role == ProjectRole.lead:
+        return
+    # Conceal project existence from anonymous callers and outsiders.
+    raise NotFoundError("Project not found")
+
+
 @router.get("/{project_id}/quality-gate")
 async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
     """The project's 硬门 settings: `check_command` (run in the topic workspace
@@ -341,7 +456,10 @@ async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
     )
 
 
-@router.put("/{project_id}/quality-gate")
+@router.put(
+    "/{project_id}/quality-gate",
+    dependencies=[Depends(require_quality_gate_admin)],
+)
 async def set_quality_gate(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     """Update 硬门 settings. Only the keys present in the body change; an empty
     check_command removes the gate."""
@@ -353,6 +471,12 @@ async def set_quality_gate(project_id: uuid.UUID, body: dict, db: DbSession) -> 
     new_settings = {**(project.settings or {})}
     if "check_command" in body:
         command = str(body.get("check_command") or "").strip()
+        if "\x00" in command:
+            raise ValidationError("check_command 不能包含 NUL 字节")
+        if len(command) > QUALITY_GATE_COMMAND_MAX_CHARS:
+            raise ValidationError(
+                f"check_command 不能超过 {QUALITY_GATE_COMMAND_MAX_CHARS} 个字符"
+            )
         if command:
             new_settings["check_command"] = command
         else:

@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -174,7 +175,48 @@ def _tree(project_id: uuid.UUID, topic_id: uuid.UUID | None) -> Path:
     for project-level (no topic)."""
     if topic_id is None:
         return ensure_repo(project_id)
-    return _ensure_worktree(project_id, branch_for_topic(topic_id))
+    branch = branch_for_topic(topic_id)
+    wt = _ensure_worktree(project_id, branch)
+    _catch_up_with_branch(project_id, wt, branch)
+    return wt
+
+
+def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> None:
+    """Materialise commits that reached the branch without going through here.
+
+    A machine that owns its tree pushes straight to the ref. The workspace is the
+    thing we read files out of, and nothing moves it, so work that landed was
+    invisible in the file tree even though the branch had it — the push looked
+    like it had done nothing.
+
+    Only ever a fast-forward, and only when this workspace has nothing pending:
+    a human's uncommitted edit here must never be swept aside by a machine's
+    push. When both sides have moved, the workspace wins and stays put — its
+    changes are the ones a person is looking at.
+    """
+    repo = ensure_repo(project_id)
+    try:
+        tip = _git(repo, "rev-parse", branch).strip()
+    except ValidationError:
+        return  # branch not created yet — nothing to catch up to
+    if not tip:
+        return
+    if _jj(wt, "diff", "-s").strip():
+        return  # pending local edits: leave them alone
+    current = _jj(wt, "log", "-r", "@-", "--no-graph", "-T", "commit_id").strip()
+    if current == tip:
+        return
+    # Fast-forward only: move only when the workspace has nothing the branch lacks.
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", current, tip],
+        cwd=repo,
+        capture_output=True,
+        timeout=20,
+    )
+    if current and ancestor.returncode != 0:
+        return
+    _jj(wt, "git", "import")
+    _jj(wt, "new", branch)
 
 
 def _safe_path(repo: Path, rel: str) -> Path:
@@ -311,10 +353,14 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         pass  # no workspace/jj state yet — nothing pending to fold
     branch = branch_for_topic(topic_id)
     if not _branch_exists(repo, branch):
-        return {"merged": False, "reason": "no topic branch"}
+        return {"merged": False, "noop": True, "reason": "no topic branch"}
     base = _base_branch(repo)
     if branch == base:
-        return {"merged": False, "reason": "topic is the base branch"}
+        return {
+            "merged": False,
+            "noop": True,
+            "reason": "topic is the base branch",
+        }
     _git(repo, "checkout", "-q", base)
     try:
         _git(
@@ -606,11 +652,26 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
+    # Loosen perms so the sandbox container (a different uid) can read/write the
+    # mount. Best-effort per entry: the container's Claude Code runs as its own
+    # uid and creates files here across turns, which the backend (another uid)
+    # then cannot chmod — EPERM on ONE such file used to abort the whole turn
+    # ('Operation not permitted' on session-env/…). A file the container made is
+    # already accessible to the container, so skipping it is harmless.
     for root, _dirs, files in os.walk(d):
-        os.chmod(root, 0o777)
+        _loosen(root, 0o777)
         for f in files:
-            os.chmod(os.path.join(root, f), 0o666)
+            _loosen(os.path.join(root, f), 0o666)
     return d
+
+
+def _loosen(path: str, mode: int) -> None:
+    import os
+
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
 
 
 def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
@@ -793,44 +854,112 @@ def run_check_command(
     timeout: int = 600,
     log_path: Path | None = None,
 ) -> dict:
-    """机器闸门 (spec §4.4/§9, eval C2): run the project's operator-configured
-    check command in the given worktree. Runs on the HOST — same trust model as
-    the on-dogfood-push hook: the command comes from Project.settings (set by
-    the project's people), never from AI output; and real check commands
-    (uv/pytest/npm) need the host toolchain + network, which exec_in_sandbox's
-    network-less slim image deliberately lacks.
+    """Run a machine gate in a disposable, resource-limited Docker container.
 
-    Full output goes to `log_path` (timestamped header + combined stdout/stderr);
-    the returned `tail` is a bounded summary for the card / nudge message."""
+    The command is *data* in Docker's argv; no host shell ever parses it. The
+    container receives only the topic worktree, no Docker socket, no backend
+    environment/secrets, and no network. Failure to start Docker fails the gate
+    closed -- there is intentionally no host-execution fallback.
+
+    Full output goes to ``log_path`` while the returned tail remains bounded.
+    """
     from datetime import UTC, datetime
 
+    resolved_cwd = cwd.resolve(strict=True)
+    container_name = f"cheesex-gate-{uuid.uuid4().hex[:12]}"
+    temporary_log = log_path is None
+    if temporary_log:
+        fd, raw_path = tempfile.mkstemp(prefix="cheesex-gate-", suffix=".log")
+        os.close(fd)
+        output_path = Path(raw_path)
+    else:
+        output_path = log_path
+        assert output_path is not None
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    docker_argv = [
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--name",
+        container_name,
+        "--label",
+        "cheesex-gate=1",
+        "--network",
+        "none",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        str(settings.quality_gate_pids_limit),
+        "--memory",
+        f"{settings.quality_gate_memory_mb}m",
+        "--cpus",
+        str(settings.quality_gate_cpus),
+        "--user",
+        "1000:1000",
+        "--tmpfs",
+        "/tmp:rw,exec,nosuid,nodev,size=512m",
+        "--env",
+        "HOME=/tmp/home",
+        "--env",
+        "TMPDIR=/tmp",
+        "--env",
+        "PYTHONDONTWRITEBYTECODE=1",
+        "--mount",
+        f"type=bind,source={resolved_cwd},target=/workspace",
+        "--workdir",
+        "/workspace",
+        settings.quality_gate_image,
+        "sh",
+        "-lc",
+        'exec sh -lc "$1"',
+        "cheesex-gate",
+        command,
+    ]
+
+    exit_code = -1
     try:
-        result = subprocess.run(  # noqa: S602 — operator-trusted project config
-            ["sh", "-lc", command],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            stdin=subprocess.DEVNULL,
-        )
-        exit_code = result.returncode
-        output = (result.stdout or "") + (result.stderr or "")
-    except subprocess.TimeoutExpired as exc:
-        exit_code = 124
-        raw = exc.stdout
-        partial = (
-            raw.decode("utf-8", errors="replace")
-            if isinstance(raw, bytes)
-            else (raw or "")
-        )
-        output = f"{partial}\n检查超时（>{timeout}s），已中止。"
-    if log_path is not None:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        header = (
-            f"[{datetime.now(UTC).isoformat()}] $ {command}\n"
-            f"(cwd: {cwd}, exit: {exit_code})\n"
-        )
-        log_path.write_text(header + output, encoding="utf-8")
+        with output_path.open("w", encoding="utf-8") as stream:
+            stream.write(f"[{datetime.now(UTC).isoformat()}] $ {command}\n")
+            stream.write(f"(workspace: {resolved_cwd}, container: {container_name})\n")
+            stream.flush()
+            process = subprocess.Popen(  # noqa: S603 -- fixed Docker argv boundary
+                docker_argv,
+                stdin=subprocess.DEVNULL,
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env={"PATH": os.environ.get("PATH", "")},
+            )
+            try:
+                exit_code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                # Killing the Docker client alone can leave the daemon-side
+                # container running. Remove only the exact random name.
+                subprocess.run(
+                    ["docker", "rm", "-f", container_name],
+                    stdin=subprocess.DEVNULL,
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=20,
+                    check=False,
+                    env={"PATH": os.environ.get("PATH", "")},
+                )
+                process.kill()
+                process.wait(timeout=5)
+                exit_code = 124
+                stream.write(f"\n检查超时（>{timeout}s），容器已强制移除。\n")
+            stream.write(f"\n(exit: {exit_code})\n")
+    finally:
+        try:
+            output = output_path.read_text(encoding="utf-8", errors="replace")
+        finally:
+            if temporary_log:
+                output_path.unlink(missing_ok=True)
     return {"exit_code": exit_code, "tail": output[-GATE_TAIL_CHARS:]}
 
 

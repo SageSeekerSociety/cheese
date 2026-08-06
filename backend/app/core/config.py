@@ -122,6 +122,42 @@ class Settings(BaseSettings):
     # Image the tmux backend uses (base image + tmux + ttyd + pre-accepted
     # first-launch gates). Independent of sandbox_image (the SDK path's image).
     tmux_sandbox_image: str = "cheesex-agent-tmux:latest"
+    # When the backend itself runs in a container, the sandbox it spawns is a
+    # SIBLING, so any -v source must be a path the HOST daemon can see. The
+    # `cheese` CLI is baked into the sandbox image; set this to a HOST directory
+    # holding a fresher `cheese` to override it, or leave empty to use the baked
+    # copy. (The in-image /app/sandbox path is not host-visible and aborts the
+    # container if mounted.)
+    sandbox_shim_host_dir: str = ""
+
+    # --- Subscription compute through the metering proxy ---
+    # A turn on the subscription does NOT go through the LLM gateway: there is no
+    # per-call API key to meter, and re-originating the request from our own HTTP
+    # client would change what the provider sees. The meter is instead a proxy the
+    # traffic passes through — same observability, different place.
+    #
+    # OFF by default: with no proxy configured a sandbox would resolve
+    # api.anthropic.com to nothing and every turn would fail. Turning this on is a
+    # deployment decision that needs the proxy actually running.
+    subscription_enabled: bool = False
+    # Address the SANDBOX reaches the metering proxy at. The docker bridge address
+    # (not loopback, which no container can reach; not 0.0.0.0, which would put the
+    # subscription on the LAN).
+    subscription_proxy_host: str = "172.17.0.1"
+    subscription_proxy_port: int = 8443
+    # Where the proxy's own CA and the ccproxy CA are mounted from. The sandbox
+    # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
+    # an opaque TLS error far from its cause.
+    subscription_ca_host_path: str = ""
+    # The `.credentials.json` that makes Claude Code run as a subscription client.
+    # ROTATES ON EVERY REFRESH and a failed refresh writes it back EMPTY, which
+    # permanently kills the subscription — so it is copied per sandbox and
+    # promoted back only after a run that kept it valid, never shared live.
+    subscription_credentials_host_path: str = ""
+    # Token ceiling over a rolling window, enforced at the proxy (0 = no cap).
+    # Enforced BEFORE forwarding: a cap that only reports the overspend is not a cap.
+    subscription_token_cap: int = 0
+    subscription_cap_window_s: int = 5 * 3600
 
     # --- Self-hosted / BYO device compute (P3, fusion-design §5) ---
     # Public base URL a device reaches the backend at (NO /api suffix): the enrolled
@@ -151,6 +187,35 @@ class Settings(BaseSettings):
     # Per-turn wall-clock ceiling for a device turn (mirrors agent_turn_timeout_s).
     device_turn_timeout_s: float = 900.0
 
+    # --- MicroCloud: project machines (the team's IaaS control plane) ---
+    # MicroCloud provisions the Debian machines a project gets as compute. It is
+    # a separate service with its own tenants; cheese is one tenant and holds an
+    # opaque secret. Empty secret = the feature reports itself unavailable, which
+    # is the correct state for any deployment that isn't wired to it.
+    microcloud_base_url: str = ""
+    microcloud_tenant_secret: str = ""
+    microcloud_timeout_s: float = 30.0
+    # Pin a specific granted offering (machine type + zone + template); 0 = take
+    # the first active one, which is right while a tenant is granted exactly one.
+    microcloud_offering_id: int = 0
+    # Requested spec. Every value is clamped into the chosen offering's own
+    # range, so these are preferences, not guarantees.
+    microcloud_default_cores: int = 2
+    microcloud_default_memory_mb: int = 4096
+    microcloud_default_disk_gb: int = 20
+    microcloud_login_user: str = "cheese"
+    # The project's fund account, and the balance kept in it. MicroCloud bills
+    # compute against this; 0 disables top-ups (an operator funds it by hand).
+    microcloud_account_name: str = "compute"
+    microcloud_initial_funds: float = 1000.0
+    # A ceiling per project: provisioning is one API call, and nothing else here
+    # stops a loop from filling a Proxmox node.
+    microcloud_max_machines_per_project: int = 2
+    # How often to sweep for machines that came up and still need enrolling as
+    # devices. Its own switch, NOT the project scheduler's: that one spends model
+    # budget on 定期巡检 and ships off, and machines must not depend on it.
+    machine_enroll_interval_seconds: int = 60
+
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # When on, the interactive turn runs `claude` INSIDE a per-topic Docker
     # container (native Bash/Read/Write jailed there) via the cli_path shim, and
@@ -164,6 +229,13 @@ class Settings(BaseSettings):
     cheesed_url: str = "http://localhost:8100"
     cheesed_cheese_api: str = "http://host.docker.internal:8099/api"
     sandbox_image: str = "cheesex-agent-sandbox:latest"
+    # Machine quality gates use a disposable sibling container and never the
+    # backend process. Keep this explicit so operators can ship a test-toolchain
+    # image without granting the gate Docker socket or backend credentials.
+    quality_gate_image: str = "cheesex-agent-tmux:latest"
+    quality_gate_memory_mb: int = 2048
+    quality_gate_cpus: float = 2.0
+    quality_gate_pids_limit: int = 512
     sandbox_shim: str = "./sandbox/claude-sbx"
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
     sandbox_api_base: str = "http://host.docker.internal:8099/api"
@@ -201,6 +273,10 @@ class Settings(BaseSettings):
     # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
     # (manual heartbeat only; default off so dev/tests don't burn model calls).
     scheduler_interval_seconds: int = 0
+    # Container lifecycle is deterministic maintenance and must keep running
+    # even when model-consuming automatic heartbeats are disabled.
+    sandbox_reap_interval_seconds: int = 24 * 3600
+    sandbox_idle_days: int = 3
 
     # --- Memory backend (spec §8.4 / §15 Q9) ---
     # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).

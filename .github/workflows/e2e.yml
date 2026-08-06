@@ -18,7 +18,13 @@ on:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: GitHub-hosted runners are unavailable to this org (the
+    # job is refused before any step runs — "recent account payments have failed
+    # or your spending limit needs to be increased"), so this gate has been dead
+    # rather than passing. Every self-hosted job in this repo is green. Move it
+    # back once billing is sorted; the dev box's 5432/6379 are free, so the
+    # service containers below bind the same ports they did.
+    runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 15
 
     services:
@@ -90,9 +96,12 @@ jobs:
         working-directory: e2e
         run: pnpm exec playwright install --with-deps chromium
 
+      # The runner is the dev box, which already serves the deployment on 8081.
       - name: Run E2E tests
         working-directory: e2e
         env:
+          E2E_BACKEND_PORT: '8791'
+          E2E_FRONTEND_PORT: '3100'
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: test-secret

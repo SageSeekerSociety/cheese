@@ -36,7 +36,23 @@ import type {
   WorkspaceFile,
 } from './cx_types'
 
-export const BASE = '/api'
+// The cheesex (2.0) API, as a BROWSER must address it — deliberately doubled.
+//
+// The two halves of the fused product carry different conventions: 1.0 routers
+// are bare (`/users`, `/spaces`), 2.0 routers carry `/api` (`/api/projects`,
+// `/api/topics`). The gateway's `location /api/ { proxy_pass …:8081/; }` strips
+// exactly one `/api`, which is what 1.0 needs — so a 2.0 route only survives
+// the strip if the browser sends the prefix twice.
+//
+// With a single `/api`, every 2.0 project call landed on the 1.0 TeamProjects
+// router instead: creating a project answered 400 ("HTTP 400 for /projects"),
+// the project list 400'd, members 400'd, topic-unread 404'd. Worse than an
+// error, some of them silently answered from the WRONG domain — `/api/topics`
+// reached 1.0's question TAGS and returned 200.
+//
+// The real fix is one namespace for the fused API; until that lands this is
+// where the seam is spelled, once, instead of in 22 call sites.
+export const BASE = '/api/api'
 
 // P1 真鉴权: read the signed session token straight from storage (avoids an
 // import cycle with me.ts). Sent as `Authorization: Bearer` so the backend
@@ -62,23 +78,52 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+const RETRYABLE_GET_STATUSES = new Set([502, 503, 504])
+const GET_RETRY_DELAYS_MS = [250, 750]
+
+export function isRetryableGetFailure(method: string, status?: number, error?: unknown): boolean {
+  if (method.toUpperCase() !== 'GET') return false
+  if (status != null) return RETRYABLE_GET_STATUSES.has(status)
+  return !(error instanceof DOMException && error.name === 'AbortError')
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-      ...(init?.headers ?? {}),
-    },
-  })
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} for ${path}`)
+  const method = (init?.method ?? 'GET').toUpperCase()
+  for (let attempt = 0; ; attempt += 1) {
+    let res: Response
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+          ...(init?.headers ?? {}),
+        },
+      })
+    } catch (error) {
+      if (attempt >= GET_RETRY_DELAYS_MS.length || !isRetryableGetFailure(method, undefined, error)) {
+        throw error
+      }
+      await wait(GET_RETRY_DELAYS_MS[attempt])
+      continue
+    }
+    if (!res.ok) {
+      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
+        await wait(GET_RETRY_DELAYS_MS[attempt])
+        continue
+      }
+      throw new Error(`HTTP ${res.status} for ${path}`)
+    }
+    const envelope = (await res.json()) as ApiEnvelope<T>
+    if (envelope.code !== 200) {
+      throw new Error(envelope.message || `API error code ${envelope.code}`)
+    }
+    return envelope.data
   }
-  const envelope = (await res.json()) as ApiEnvelope<T>
-  if (envelope.code !== 200) {
-    throw new Error(envelope.message || `API error code ${envelope.code}`)
-  }
-  return envelope.data
 }
 
 // The connector lives at the origin root (`/connector/*`), not under `/api`, and its
@@ -204,11 +249,29 @@ export function listProjects(teamId?: number): Promise<ListPayload<Project>> {
   return request<ListPayload<Project>>(`/projects${q}`)
 }
 
-export function createProject(name: string, ownerHandle?: string, teamId?: number): Promise<Project> {
+export function createProject(
+  name: string,
+  ownerHandle?: string,
+  teamId?: number,
+  externalTaskId?: number
+): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
-    body: JSON.stringify({ name, owner_handle: ownerHandle, team_id: teamId }),
+    body: JSON.stringify({
+      name,
+      owner_handle: ownerHandle,
+      team_id: teamId,
+      // Set when the project is created FROM a 赛题, so the 赛题 can find it
+      // again. Absent for a project made from the rail.
+      external_task_id: externalTaskId,
+    }),
   })
+}
+
+// The 2.0 projects created from one 赛题 — what the 赛题 page shows instead of
+// blindly offering to create another.
+export function listProjectsForTask(taskId: number): Promise<ListPayload<Project>> {
+  return request<ListPayload<Project>>(`/projects/by-task/${taskId}`)
 }
 
 // Single project card (includes `summary`, the 一页纸总结).
@@ -374,6 +437,18 @@ export function getComputeProfiles(projectId: string): Promise<ComputeProfiles> 
 }
 export function setComputeProfile(projectId: string, profile: string): Promise<{ current: string }> {
   return request(`/projects/${encodeURIComponent(projectId)}/compute-profile`, {
+    method: 'PUT',
+    body: JSON.stringify({ profile }),
+  })
+}
+
+// 订阅模型: the project's current Claude model + the ones it may select. Same
+// shape as compute pools; a project picks Sonnet 5 (default) or Opus 5.
+export function getModelProfiles(projectId: string): Promise<ComputeProfiles> {
+  return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/model-profiles`)
+}
+export function setModelProfile(projectId: string, profile: string): Promise<{ current: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/model-profile`, {
     method: 'PUT',
     body: JSON.stringify({ profile }),
   })
@@ -789,5 +864,9 @@ export function chatWsUrl(topicId: string): string {
   // per-message `author` the client sends).
   const token = authToken()
   const q = token ? `?token=${encodeURIComponent(token)}` : ''
-  return `${proto}://${window.location.host}/api/topics/${encodeURIComponent(topicId)}/chat${q}`
+  // BASE, not a hand-written '/api': the gateway strips exactly one '/api', so a
+  // single prefix arrived as '/topics/.../chat', matched no route, and the
+  // handshake was refused 403. The browser retried every 16s, which surfaced as
+  // 「连接断开，正在自动重连」 and read like a flaky network.
+  return `${proto}://${window.location.host}${BASE}/topics/${encodeURIComponent(topicId)}/chat${q}`
 }

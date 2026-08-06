@@ -10,7 +10,6 @@ this file.
 """
 
 # dogfood loop: accepted on cheesex, deployed to dev (2026-07-18)
-# self-update on dev: written via the platform ON this very box (2026-07-19)
 
 import importlib
 import logging
@@ -31,6 +30,7 @@ from app.core.errors import register_exception_handlers
 from app.core.obs import bind_context, clear_context, configure_logging, get_logger
 from app.core.sandbox_auth import is_valid_cheese_token
 from app.core.turn_context import current_turn_id, parse_turn_id
+from app.core.ws_diagnostics import LogRefusedWebSockets
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
 # every request/turn correlated. See app/core/obs.py.
@@ -50,7 +50,11 @@ async def lifespan(_: FastAPI):
     # Orphan sweep: resume turns the previous process died with (see
     # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
     from app.api.deps import get_chat_service, get_turn_runner
-    from app.domain.scheduler.service import SchedulerRunner, SchedulerService
+    from app.domain.scheduler.service import (
+        SandboxReaperRunner,
+        SchedulerRunner,
+        SchedulerService,
+    )
 
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
     # its platform agent-binding. Idempotent — the migration seeds it too; this is
@@ -77,10 +81,33 @@ async def lifespan(_: FastAPI):
     scheduler = SchedulerService(chat_service=get_chat_service())
     runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
     runner.start()
+    reaper = SandboxReaperRunner(
+        scheduler,
+        settings.sandbox_reap_interval_seconds,
+        settings.sandbox_idle_days,
+    )
+    reaper.start()
+
+    # Enrolling provisioned machines is platform plumbing, so it runs on its own
+    # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
+    from app.core.db import async_session_factory
+    from app.domain.machine.runner import MachineEnrollmentRunner
+
+    machines = MachineEnrollmentRunner(
+        async_session_factory, settings.machine_enroll_interval_seconds
+    )
+    machines.start()
     try:
         yield
     finally:
+        await machines.stop()
+        await reaper.stop()
         await runner.stop()
+
+
+# Route modules that failed to import this boot. Read by /healthz so a partially
+# mounted app cannot pass a health check quietly.
+FAILED_ROUTE_MODULES: list[str] = []
 
 
 def _discover_routers(application: FastAPI) -> list[str]:
@@ -89,6 +116,7 @@ def _discover_routers(application: FastAPI) -> list[str]:
     whole app. A module may export more than one router."""
     loaded: list[str] = []
     seen: set[int] = set()
+    FAILED_ROUTE_MODULES.clear()
     for module_info in pkgutil.iter_modules(routes_pkg.__path__):
         name = f"{routes_pkg.__name__}.{module_info.name}"
         try:
@@ -100,6 +128,14 @@ def _discover_routers(application: FastAPI) -> list[str]:
             logging.getLogger("app.startup").exception(
                 "route module %s failed to import — its routes are NOT mounted", name
             )
+            FAILED_ROUTE_MODULES.append(name)
+            # Outside production, refuse to start. A skipped module leaves the
+            # service reporting healthy while a whole group of endpoints answers
+            # 404, and the only symptom reaches the CALLER — so a typo can ship.
+            # Production keeps the resilience (one bad module must not take the
+            # whole app down) and surfaces the damage through /healthz instead.
+            if settings.environment != "production":
+                raise
             continue
         for attr, value in vars(module).items():
             if isinstance(value, APIRouter) and id(value) not in seen:
@@ -110,6 +146,8 @@ def _discover_routers(application: FastAPI) -> list[str]:
 
 
 app = FastAPI(title="CheeseX", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(LogRefusedWebSockets)
 
 app.add_middleware(
     CORSMiddleware,

@@ -21,12 +21,14 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.core.errors import NotFoundError
+from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
 from app.domain.agent import event_spool
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
+from app.domain.agent.market import subscription_model_alias
+from app.domain.agent.platform_failures import classify_platform_failure
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
@@ -255,6 +257,9 @@ def _resolve_compute_id(
 
 
 def _transient_provider_error(result: AgentResult) -> bool:
+    if classify_platform_failure(result.text) is not None:
+        # Retrying cannot create disk space and can make pressure worse.
+        return False
     rl = result.rate_limit or {}
     if rl.get("status") == "rejected":
         return False  # seat limit — resets hours later, retrying just burns turns
@@ -444,6 +449,26 @@ def _prompt_line(b) -> str:
     return f"[{b.author}]: {b.content}"
 
 
+# What an exhausted relay balance looks like coming back from newapi. It arrives
+# as HTTP 429, the same status as a rate limit, but the two need opposite advice:
+# a rate limit clears on its own, a spent balance never does.
+_OUT_OF_CREDIT_MARKERS = (
+    "余额不足",
+    "请充值",
+    "insufficient balance",
+    "insufficient_quota",
+    "quota exceeded",
+    "billing",
+)
+
+
+def _is_out_of_credit(detail: str | None) -> bool:
+    if not detail:
+        return False
+    lowered = detail.lower()
+    return any(m.lower() in lowered for m in _OUT_OF_CREDIT_MARKERS)
+
+
 class ChatService:
     def __init__(
         self,
@@ -587,7 +612,12 @@ class ChatService:
                 yield frame
 
     async def post_system_event(
-        self, topic_id: uuid.UUID, content: str, turn_id: uuid.UUID | None = None
+        self,
+        topic_id: uuid.UUID,
+        content: str,
+        turn_id: uuid.UUID | None = None,
+        *,
+        meta: dict | None = None,
     ) -> dict | None:
         """Persist a system event into the 现场 timeline (e.g. a turn failure):
         visible in the flow, scrolls with it, and survives a reload — unlike a
@@ -606,6 +636,7 @@ class ChatService:
                 content=content,
                 kind=BlockKind.event,
                 turn_id=turn_id,
+                meta=meta,
             )
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
@@ -824,19 +855,21 @@ class ChatService:
         turn_id: uuid.UUID | None,
         eid: str | None = None,
         backfilled: bool = False,
-    ) -> None:
+    ) -> dict:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
         a mid-turn restart/crash never loses the 现场 timeline already produced.
         ``eid`` (the hook forwarder's event id) is stamped into meta so the durable
-        spool reconcile can dedup a backfilled copy against this live one."""
+        spool reconcile can dedup a backfilled copy against this live one. Returns
+        the persisted block payload so a caller (live path or spool reconcile) can
+        broadcast it as a WS frame."""
         meta = _tool_event_meta(name, tool_input, platform=platform)
         if eid:
             meta = {**meta, "eid": eid}
         if backfilled:
             meta = {**meta, "backfilled": True}
         async with self._sessions() as session:
-            await BlockRepository(session).add(
+            block = await BlockRepository(session).add(
                 project_id=project_id,
                 topic_id=topic_id,
                 author=CHEESE_AUTHOR,
@@ -846,11 +879,13 @@ class ChatService:
                 turn_id=turn_id,
                 meta=meta,
             )
+            payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
+        return payload
 
     async def _reconcile_spool(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
-    ) -> None:
+    ) -> AsyncIterator[dict]:
         """Backfill 现场 events the live hook path missed (backend down / no listener
         during a prior turn) from the durable spool WAL — idempotent by event-id.
         No-op for the sdk backend (no spool dir) and an empty spool. Best-effort: a
@@ -858,7 +893,10 @@ class ChatService:
 
         Scope: 现场 tool events AND 芝士 chat messages (MessageDisplay) — both are
         idempotent by event-id, so a copy the live path already persisted is
-        skipped. Backfilled messages skip mention-notify (the moment passed)."""
+        skipped. Backfilled messages skip mention-notify (the moment passed), but
+        they DO yield a WS frame like the live path — a hook that missed its turn's
+        listening window must still reach the frontend, just without threading or
+        an @-notify (bug: it was landing as a silent DB row nobody saw)."""
         try:
             entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
             if not entries:
@@ -880,8 +918,9 @@ class ChatService:
                 event = translate_hook(payload)
                 if isinstance(event, AgentMessage):
                     # A chat message whose live delivery was lost — land it as
-                    # history (no reply threading, no notify: the moment passed).
-                    await self._persist_assistant_message(
+                    # history (no reply threading, no notify: the moment passed)
+                    # but still broadcast it, exactly like the live path does.
+                    block_payload = await self._persist_assistant_message(
                         project_id=project_id,
                         topic_id=topic_id,
                         text=event.text,
@@ -894,6 +933,7 @@ class ChatService:
                     )
                     seen.add(eid)
                     recovered += 1
+                    yield {"type": "assistant_block", "block": block_payload}
                     continue
                 if not isinstance(event, AgentToolUse):
                     continue  # SessionStart/Stop have no historical counterpart
@@ -901,7 +941,7 @@ class ChatService:
                 if name in _TASK_TOOLS:
                     continue  # task todos are process state, not persisted 现场
                 args = event.input or {}
-                await self._persist_tool_event(
+                block_payload = await self._persist_tool_event(
                     project_id=project_id,
                     topic_id=topic_id,
                     name=name,
@@ -913,6 +953,7 @@ class ChatService:
                 )
                 seen.add(eid)
                 recovered += 1
+                yield {"type": "event_block", "block": block_payload}
             event_spool.remove(path for path, _eid, _payload in entries)
             if recovered:
                 logger.info(
@@ -940,7 +981,18 @@ class ChatService:
         if image:
             kwargs["sandbox_image"] = image
         pool_route = True
-        if self._profiles is not None:
+        if settings.subscription_enabled:
+            # The subscription path doesn't route through the gateway or a
+            # profile: the tmux provider points Claude Code at the metering proxy
+            # and the model is the project's own pick (Sonnet 5 by default, Opus 5
+            # opt-in). Pass the --model alias ("" = default, no flag); the sandbox
+            # env is set by the provider, not a profile.
+            choice = (
+                (project.settings or {}).get("subscription_model") if project else None
+            )
+            kwargs["model"] = subscription_model_alias(choice)
+            pool_route = False
+        elif self._profiles is not None:
             profile = self._profiles.resolve(
                 project.settings if project else None,
                 project.owner_handle if project else None,
@@ -955,8 +1007,12 @@ class ChatService:
             # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
             # the master key (containment), attributable + budget-capped.
             override = await self._gateway_project_env(project_id)
-            if override:
-                kwargs["env"] = {**kwargs.get("env", {}), **override}
+            if not override:
+                raise GatewayUnavailableError(
+                    "AI gateway could not provision a project-scoped key; "
+                    "no model call was made"
+                )
+            kwargs["env"] = {**kwargs.get("env", {}), **override}
         return kwargs, routed
 
     _GW_KEY = "llm_gateway_key"
@@ -966,8 +1022,8 @@ class ChatService:
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn: mint (once) and return the
         project's virtual key, and keep its L2 max_budget in step with the
-        project's grants. Best-effort — returns None (turn runs on the default
-        pool credentials) on any gateway/admin failure."""
+        project's grants. Returns None on any gateway/admin failure; the caller
+        must refuse the turn rather than expose default pool credentials."""
         try:
             async with self._gateway_lock:
                 async with self._sessions() as session:
@@ -1061,19 +1117,18 @@ class ChatService:
                         return None  # nothing ever routed → nothing to meter
                     ckpt = s.get(self._GW_CKPT)
                     ckpt = ckpt if isinstance(ckpt, dict) else None
-                    prompt, completion, usd, next_ckpt = await drain_new_usage(
-                        self._gateway, key, ckpt
-                    )
-                    if prompt + completion <= 0:
+                    drained = await drain_new_usage(self._gateway, key, ckpt)
+                    if drained is None or drained[0] + drained[1] <= 0:
                         # LiteLLM writes spend logs asynchronously — at turn end
                         # the rows often lag by a few seconds (verified live).
                         # One bounded settle-retry keeps per-turn attribution;
                         # anything still missing lands in the NEXT drain
                         # (cumulative deltas are exactly-once either way).
                         await asyncio.sleep(3.0)
-                        prompt, completion, usd, next_ckpt = await drain_new_usage(
-                            self._gateway, key, ckpt
-                        )
+                        drained = await drain_new_usage(self._gateway, key, ckpt)
+                    if drained is None:
+                        return None
+                    prompt, completion, usd, next_ckpt = drained
                     s[self._GW_CKPT] = next_ckpt
                     project.settings = s
                     await session.commit()
@@ -1279,7 +1334,8 @@ class ChatService:
         # Backfill any 现场 events the live hook path missed (backend down / no
         # listener during a prior turn) from the durable spool WAL — idempotent by
         # event-id. No-op for the sdk backend and an empty spool.
-        await self._reconcile_spool(project_id, topic_id, turn_id)
+        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+            yield frame
 
         todo: list[dict] = []
         seen_eids: set[str] = set()  # dedup device-drainer re-deliveries this turn
@@ -1416,6 +1472,7 @@ class ChatService:
                 api_error_status,
             )
             detail = final_text.strip()
+            platform_failure = classify_platform_failure(detail)
             quoted = f"（服务原话：{detail}）" if detail else ""
             # The CLI sometimes emits the SAME error string as a final
             # AssistantMessage before the error result — the discrete-message
@@ -1438,7 +1495,13 @@ class ChatService:
                 except Exception:  # noqa: BLE001 — retraction is best-effort
                     logger.exception("error-echo retraction failed")
             resume_after_s: float | None = None
-            if (
+            fail_meta: dict | None = None
+            fail_code: str | None = None
+            if platform_failure is not None:
+                fail_text = platform_failure.content
+                fail_meta = platform_failure.meta
+                fail_code = platform_failure.code
+            elif (
                 rate_limit
                 and rate_limit.get("status") == "rejected"
                 and rate_limit.get("resets_at")
@@ -1455,6 +1518,15 @@ class ChatService:
                     # Resume ~2min after the window opens (clock skew buffer).
                     wait_s = rate_limit["resets_at"] - datetime.now(UTC).timestamp()
                     resume_after_s = max(60.0, wait_s + 120.0)
+            elif _is_out_of_credit(detail):
+                # A spent balance is not a wait — no amount of retrying refills
+                # it, and telling someone to try again later sends them into a
+                # loop that cannot succeed. Say what actually has to happen.
+                fail_text = (
+                    "⚠️ 芝士这轮没能完成——AI 中继的余额用尽了。"
+                    "这不是等一等就能好的，需要有人充值或把机器切到其他 AI 供给；"
+                    f"重试无效。{quoted}"
+                )
             elif api_error_status:
                 fail_text = (
                     f"⚠️ 芝士这轮没能完成——AI 接口错误（HTTP {api_error_status}）。"
@@ -1470,6 +1542,19 @@ class ChatService:
                 blocks = BlockRepository(session)
                 # 施工现场 events were persisted inline as they streamed
                 # (durability) — this tx only records usage + the fail card.
+                # Record the turn even when its tokens are unknowable (the hooks
+                # backends run interactive Claude Code, which reports none). Skipping
+                # it left the table empty while real credit drained.
+                if usage is None:
+                    await UsageRepository(session).add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        model=settings.agent_model,
+                        input_tokens=0,
+                        output_tokens=0,
+                        cost_usd=0.0,
+                        metered=False,
+                    )
                 if usage is not None:
                     await UsageRepository(session).add(
                         project_id=project_id,
@@ -1493,6 +1578,7 @@ class ChatService:
                     content=fail_text,
                     kind=BlockKind.event,
                     turn_id=turn_id,
+                    meta=fail_meta,
                 )
                 fail_payload = _block_payload(BlockOut.model_validate(fail_block))
                 await session.commit()
@@ -1500,7 +1586,14 @@ class ChatService:
                 await self._save_session_pointer(topic_id, new_session_id)
             provider.checkpoint(project_id, topic_id)
             yield {"type": "event_block", "block": fail_payload}
-            yield {"type": "error", "message": fail_text, "persisted": True}
+            error_frame = {
+                "type": "error",
+                "message": fail_text,
+                "persisted": True,
+            }
+            if fail_code is not None:
+                error_frame["code"] = fail_code
+            yield error_frame
             if resume_after_s is not None:
                 # Internal frame: the runner schedules the auto-resume.
                 yield {
@@ -1518,6 +1611,19 @@ class ChatService:
 
             # 施工现场 events were persisted inline as they streamed (durability);
             # tx2 now only records usage, action cards, and the session pointer.
+            # Record the turn even when its tokens are unknowable (the hooks
+            # backends run interactive Claude Code, which reports none). Skipping
+            # it left the table empty while real credit drained.
+            if usage is None:
+                await UsageRepository(session).add(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    model=settings.agent_model,
+                    input_tokens=0,
+                    output_tokens=0,
+                    cost_usd=0.0,
+                    metered=False,
+                )
             if usage is not None:
                 await UsageRepository(session).add(
                     project_id=project_id,
@@ -1560,12 +1666,34 @@ class ChatService:
                 await topics.set_session_id(topic, new_session_id)
             await session.commit()
 
+        # A hooks backend can reach here with assistant_count == 0 not because
+        # no message was ever shown, but because its MessageDisplay hook lost
+        # the race with the turn-ending Stop hook over the network and is only
+        # NOW landing in the spool (the container writes it to disk before the
+        # live POST even goes out — same root cause as the turn-boundary gap
+        # this whole reconcile mechanism exists for). Sweep the spool once more
+        # right now — with a real eid, broadcast like any other backfilled
+        # block — so the fallback below never re-persists that same text
+        # eid-less (which is exactly what left a duplicate: an eid-less block
+        # from here, and its eid+backfilled twin from a LATER turn's reconcile
+        # that couldn't recognize the two as the same event).
+        reconciled_texts: set[str] = set()
+        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+            if frame["type"] == "assistant_block":
+                reconciled_texts.add(frame["block"]["content"])
+            yield frame
+
         # Fallback single message: 芝士's messages normally landed one-by-one at
         # each AgentMessage boundary above. A provider that never announced a
         # boundary (plain non-SDK stub turn, an older remote cheesed node) still
-        # lands its reply from the final result text.
+        # lands its reply from the final result text — unless the sweep above
+        # just landed that exact text from the spool (with a proper eid).
         assistant_payload: dict | None = None
-        if assistant_count == 0 and final_text.strip():
+        if (
+            assistant_count == 0
+            and final_text.strip()
+            and final_text.strip() not in reconciled_texts
+        ):
             assistant_payload = await self._persist_assistant_message(
                 project_id=project_id,
                 topic_id=topic_id,
