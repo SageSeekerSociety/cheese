@@ -64,6 +64,18 @@ jobs:
           check-name: 'test'
           wait-interval: 15
 
+      # Previously missing: this gate only waited on build + pytest, so this
+      # box's releases could ship with a red (or never-run) e2e suite —
+      # "deploy only checks build success" was accurate for prod too.
+      - name: Wait for e2e tests
+        if: github.event_name == 'release'
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'e2e'
+          wait-interval: 15
+
       # GitHub's native environment required-reviewers isn't available on this
       # plan (private repo), so gate on a human approving via an auto-opened
       # issue — the same mechanism the etrip deploy uses. Skipped for dry-run.

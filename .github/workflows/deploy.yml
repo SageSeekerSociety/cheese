@@ -64,6 +64,17 @@ jobs:
           check-name: 'test'
           wait-interval: 15
 
+      # Previously missing: this job only waited on build + pytest, so a
+      # release could ship with a red (or never-run) e2e suite — "prod deploy
+      # only checks build success" was accurate. e2e.yml's job id is `e2e`.
+      - name: Wait for e2e tests
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'e2e'
+          wait-interval: 15
+
   deploy:
     needs: wait-for-ci
     # wait-for-ci is skipped on manual dispatch, which would otherwise skip this
