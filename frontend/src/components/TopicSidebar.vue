@@ -5,6 +5,7 @@ import { relTime } from '../lib/relTime'
 import type { Project, ProjectMemberRow, Topic } from '../cx_types'
 import CheeseAvatar from './CheeseAvatar.vue'
 import { avatarColor } from '../utils/avatar'
+import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 
 const props = defineProps<{
   projects: Project[]
@@ -38,6 +39,8 @@ const emit = defineEmits<{
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
+  // Rename a topic's title from the row's ⋯ actions.
+  (e: 'rename-topic', payload: { id: string; title: string }): void
   // Open the 1:1 private chat with 芝士 in the main area (飞书私聊 conversation).
   (e: 'select-private'): void
   // Open a person-to-person DM with the given member handle (飞书私聊 conversation).
@@ -222,6 +225,26 @@ const currentProjectName = computed<string>(
     '选择项目',
 )
 
+// Inline rename (pattern mirrors MyDevicesView's rename-in-place): a click on
+// the pencil swaps the title span for a text field; enter/blur commits.
+const renamingTopicId = ref<string | null>(null)
+const draftTitle = ref('')
+
+function startRename(t: Topic) {
+  renamingTopicId.value = t.id
+  draftTitle.value = t.title
+}
+
+function cancelRename() {
+  renamingTopicId.value = null
+}
+
+function saveRename(t: Topic) {
+  const title = normalizeTopicTitle(draftTitle.value, t.title)
+  renamingTopicId.value = null
+  if (title) emit('rename-topic', { id: t.id, title })
+}
+
 function onSplit(t: Topic) {
   // Never ask the human for a title (spec §rule 4, mirrors newTopic()). The
   // sub-topic is born untitled and opened; its title is derived from the first
@@ -346,17 +369,33 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                 />
               </template>
               <v-list-item-title class="d-flex align-center topic-title">
-                <span
-                  class="text-truncate"
-                  :class="{ 'title-unread': unreadOf(row.topic.id) > 0 }"
-                >{{ row.topic.title }}</span>
-                <span
-                  v-if="statusBadge(row.topic.status)"
-                  class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
-                >
-                  <span class="status-dot status-dot--warn" />
-                  {{ statusBadge(row.topic.status) }}
-                </span>
+                <v-text-field
+                  v-if="renamingTopicId === row.topic.id"
+                  v-model="draftTitle"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  autofocus
+                  :maxlength="TOPIC_TITLE_MAX_LENGTH"
+                  class="rename-field"
+                  @click.stop
+                  @keyup.enter="saveRename(row.topic)"
+                  @keyup.esc="cancelRename()"
+                  @blur="saveRename(row.topic)"
+                />
+                <template v-else>
+                  <span
+                    class="text-truncate"
+                    :class="{ 'title-unread': unreadOf(row.topic.id) > 0 }"
+                  >{{ row.topic.title }}</span>
+                  <span
+                    v-if="statusBadge(row.topic.status)"
+                    class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
+                  >
+                    <span class="status-dot status-dot--warn" />
+                    {{ statusBadge(row.topic.status) }}
+                  </span>
+                </template>
               </v-list-item-title>
               <template #append>
                 <span
@@ -369,6 +408,14 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                 }}</span>
                 <!-- hover 浮出的操作层：绝对定位覆盖行尾，不占布局宽度 -->
                 <div class="row-actions" @click.stop>
+                  <v-btn
+                    icon="mdi-pencil-outline"
+                    size="small"
+                    variant="text"
+                    density="comfortable"
+                    title="重命名"
+                    @click.stop="startRename(row.topic)"
+                  />
                   <v-btn
                     icon="mdi-archive-arrow-down-outline"
                     size="small"
@@ -675,6 +722,15 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 }
 .topic-title {
   color: var(--text);
+}
+.rename-field {
+  max-width: 220px;
+}
+.rename-field :deep(.v-field__input) {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  min-height: 28px;
+  font-size: 13.5px;
 }
 
 /* Active row: --fill bg + 2px --accent left bar + --ink text. NOT a tinted

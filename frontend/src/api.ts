@@ -35,6 +35,9 @@ import type {
   UserProfile,
   WorkspaceFile,
 } from './cx_types'
+import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
+
+export { TOPIC_TITLE_MAX_LENGTH }
 
 // The cheesex (2.0) API, as a BROWSER must address it — deliberately doubled.
 //
@@ -334,6 +337,13 @@ export function markTopicRead(topicId: string, handle: string): Promise<Record<s
   return request<Record<string, string>>(`/topics/${encodeURIComponent(topicId)}/read`, {
     method: 'POST',
     body: JSON.stringify({ handle }),
+  })
+}
+
+export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title`, {
+    method: 'POST',
+    body: JSON.stringify({ title }),
   })
 }
 
