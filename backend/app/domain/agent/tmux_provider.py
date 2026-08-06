@@ -244,6 +244,14 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
     async def _create_container(self, name: str, env: dict[str, str]) -> None:
         # SBX_WORKTREE / SBX_SESSION are mount sources, not container env vars.
         mounts = {"SBX_WORKTREE", "SBX_SESSION"}
+        # The worktree is a jj workspace pointing at the project's shared main
+        # repo store via a host-relative path (see ws.sandbox_vcs_mounts) —
+        # without also mounting the main repo's .jj/.git, that pointer walks
+        # off the container's shallow root and jj/git are unusable in here.
+        vcs_mounts = ws.sandbox_vcs_mounts(
+            uuid.UUID(env["CHEESE_PROJECT"]),
+            ws.branch_for_topic(uuid.UUID(env["CHEESE_TOPIC"])),
+        )
         args = [
             "run",
             "-d",
@@ -262,6 +270,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             *_subscription_args(),
             "-v",
             f"{env['SBX_WORKTREE']}:/work",
+            *vcs_mounts,
             "-w",
             "/work",
         ]
