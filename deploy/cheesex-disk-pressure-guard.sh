@@ -7,9 +7,72 @@ HEALTH_URL="${CHEESEX_DISK_GUARD_HEALTH_URL:-http://127.0.0.1:8081/health}"
 BACKEND_CONTAINER="${CHEESEX_DISK_GUARD_BACKEND_CONTAINER:-cheese-backend-1}"
 SETTLE_SECONDS="${CHEESEX_DISK_GUARD_SETTLE_SECONDS:-2}"
 
+# Early-warning tiers, strictly below THRESHOLD_PERCENT: visibility only, never
+# touch cleanup. WARN/HIGH give a heads-up long before the 85% cleanup trigger.
+WARN_PERCENT="${CHEESEX_DISK_GUARD_WARN_PERCENT:-70}"
+HIGH_PERCENT="${CHEESEX_DISK_GUARD_HIGH_PERCENT:-80}"
+TIER_STATE_FILE="${CHEESEX_DISK_GUARD_TIER_STATE_FILE:-/run/cheesex-disk-pressure-guard.tier}"
+
 log() {
-  logger -t cheesex-disk-pressure-guard -- "$*" || true
-  printf '%s\n' "$*"
+  local priority="${2:-notice}"
+  logger -t cheesex-disk-pressure-guard -p "daemon.${priority}" -- "$1" || true
+  printf '%s\n' "$1"
+}
+
+# Log once per tier transition (not every 5-minute run) so a long stretch spent
+# in one tier does not spam syslog. State lives in a file because this is a
+# oneshot script with no long-lived process to hold the previous tier in memory
+# — same idiom as cheesex-healthcheck.sh's /run/*.failures counter.
+tier_for_usage() {
+  local pct="$1"
+  if (( pct >= THRESHOLD_PERCENT )); then
+    echo critical
+  elif (( pct >= HIGH_PERCENT )); then
+    echo high
+  elif (( pct >= WARN_PERCENT )); then
+    echo warn
+  else
+    echo ok
+  fi
+}
+
+report_disk_tier() {
+  local usage="$1"
+  case "$WARN_PERCENT" in
+    ''|*[!0-9]*) log "invalid warn tier threshold: $WARN_PERCENT; skipping tiered disk alerts" warning; return 0 ;;
+  esac
+  case "$HIGH_PERCENT" in
+    ''|*[!0-9]*) log "invalid high tier threshold: $HIGH_PERCENT; skipping tiered disk alerts" warning; return 0 ;;
+  esac
+
+  local current_tier previous_tier
+  current_tier="$(tier_for_usage "$usage")"
+  previous_tier="ok"
+  if test -r "$TIER_STATE_FILE"; then
+    read -r previous_tier < "$TIER_STATE_FILE" || previous_tier="ok"
+  fi
+  case "$previous_tier" in
+    ok|warn|high|critical) ;;
+    *) previous_tier="ok" ;;
+  esac
+
+  if [[ "$current_tier" != "$previous_tier" ]]; then
+    case "$current_tier" in
+      warn)
+        log "root usage ${usage}% is in WARN tier (>= ${WARN_PERCENT}%; cleanup triggers at ${THRESHOLD_PERCENT}%)" warning
+        ;;
+      high)
+        log "root usage ${usage}% is in HIGH tier (>= ${HIGH_PERCENT}%; cleanup triggers at ${THRESHOLD_PERCENT}%)" err
+        ;;
+      critical)
+        : # the cleanup path below already logs usage with full context
+        ;;
+      ok)
+        log "root usage ${usage}% is back to OK tier (< ${WARN_PERCENT}%)" notice
+        ;;
+    esac
+  fi
+  printf '%s\n' "$current_tier" > "$TIER_STATE_FILE" 2>/dev/null || true
 }
 
 root_usage() {
@@ -42,6 +105,8 @@ case "$THRESHOLD_PERCENT" in
     exit 0
     ;;
 esac
+
+report_disk_tier "$usage"
 
 if (( usage < THRESHOLD_PERCENT )); then
   exit 0
