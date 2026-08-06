@@ -16,11 +16,12 @@
 
 ## 验证情况（如实记录，未打折扣）
 
-- `ruff check`：全绿。`pyright`：0 errors。都是用 `.claude/scripts/check.sh --no-tests` 跑的官方脚本，不是我自己拼的命令。
-- **pytest 没有跑**：这个沙箱没有可用的 Postgres/Redis（`localhost:5433` 无响应，没有 docker、没有本地 postgres/redis 二进制），跟父话题追踪表里第 9 项「沙箱宿主机磁盘写满 / 缺 DB-Redis 基础设施」是同一个已知的环境问题，不是这次代码改动引入的。磁盘也已经到 99%（715M 可用）。
-- 新写的 6 个测试用例**只做了人工代码走读**，没有实际执行验证：逐条核对了 `authorize_topic_access` 的分支逻辑（agent/handle-fallback 直通、authenticated human 按 topic_role/project_member/roster_exists 判断）、`seed()`/`seed_split()` 的去重跳过条件、`owner_handle` 回退到 `parent_owner` 的分支、项目创建时 root 话题会预先播种 owner+cheese（保证 outsider-denied 用例的 roster_exists 为真）。逻辑上应该是对的，但**没有绿灯证据**，需要在有 DB/Redis 的环境补跑确认。
+- **磁盘扩容后复查**：`df -h /` 现在 252G / 用了 58G / 剩 184G（25%），确认不再是磁盘问题。
+- `ruff check`、`pyright` 依旧全绿（用 `.venv` 里继承的解释器直接跑的，绕开了 `check.sh` 一次因为并发探测导致临时误判去重建 scratch venv 的小插曲，重跑一次同样干净）。
+- **pytest 还是没能跑，但确认了这不是磁盘问题**：这个沙箱容器里没有 `docker` 命令、没有 `/var/run/docker.sock`、`localhost:5433/6379` 都拒绝连接，而且这个用户（uid 1000，无 sudo）连 `apt-get update` 都因权限不足装不了 postgresql-server / redis-server。也就是说这个容器从一开始就没有条通往真实 Postgres/Redis 的路，跟"磁盘写满导致 ENOSPC"是两个不同性质的问题——磁盘扩容不会修好这一个。这点可能需要 <@wangchangxin> 额外确认一下：是不是这个话题的沙箱容器本身就没配 docker-in-docker / 没挂数据库基础设施（有别于其他话题报的磁盘打满）。
+- 新写的 6 个测试用例依旧**只有人工代码走读**，没有绿灯证据：逐条核对了 `authorize_topic_access` 的分支逻辑、`seed()`/`seed_split()` 的去重跳过条件、`owner_handle` 回退到 `parent_owner` 的分支、项目创建时 root 话题会预先播种 owner+cheese。逻辑上应该是对的，但没有实际跑过。
 
 ## 下一步
 
-- 需要有 DB/Redis 的环境（或磁盘问题解决后的干净沙箱）跑一次 `task check --full`，确认 6 个新测试真的通过、且没有破坏 `test_project_tree.py` 里原有的 split 测试。
-- 完成后可以把结论回流父话题，同时提示第 9 项的磁盘/基础设施问题在这个子话题里又复现了一次（第四次独立复现）。
+- 需要一个真的挂了 Postgres/Redis（或有 docker）的环境跑一次 `task check --full`，确认 6 个新测试真的通过、且没有破坏 `test_project_tree.py` 里原有的 split 测试。这个具体沙箱容器目前做不到，需要换环境或者给这个容器接上 DB/Redis。
+- 代码改动本身（鉴权 + owner 兜底）已经完成且过了 ruff/pyright，可以先请人 review；pytest 绿灯留到基础设施到位后补跑，再回流父话题结论。
