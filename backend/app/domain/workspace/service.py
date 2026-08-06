@@ -6,6 +6,7 @@ Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照
 话题分支用 jj bookmark 导出成 git branch,采纳/diff 仍走 git(colocation)。
 """
 
+import asyncio
 import os
 import re
 import shutil
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.workspace.dogfood_notices import watch_dogfood_push
 
 DEFAULT_BRANCH = "main"
 # 沙箱镜像：芝士分身在容器里跑代码/测试，碰不到宿主机 (spec §9.1).
@@ -654,8 +656,13 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     hook_started = False
     if hook.is_file() and os.access(hook, os.X_OK):
         log = Path(url) / "tmp_dogfood_push.log"
+        # The log is shared across every push-back run for this project (and a
+        # re-accept can reuse the same branch name), so grepping it for our
+        # branch would risk picking up a stale prior run. Recording the byte
+        # offset before we start pins the watcher to exactly this run's output.
+        log_offset = log.stat().st_size if log.exists() else 0
         with open(log, "a") as out:
-            subprocess.Popen(  # noqa: S603 — operator-trusted local repo hook
+            proc = subprocess.Popen(  # noqa: S603 — operator-trusted local repo hook
                 [str(hook), branch],
                 cwd=url,
                 stdout=out,
@@ -664,6 +671,14 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
                 start_new_session=True,  # survives our own redeploy
             )
         hook_started = True
+        # Report the eventual result back into the topic timeline without
+        # making this call wait for it (accept() must return immediately).
+        try:
+            asyncio.get_running_loop().create_task(
+                watch_dogfood_push(topic_id, proc, log, log_offset, branch)
+            )
+        except RuntimeError:
+            pass  # no running loop (e.g. sync tests/scripts) — nothing to schedule onto
     return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
 
 
