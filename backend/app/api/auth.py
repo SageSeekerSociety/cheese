@@ -8,6 +8,7 @@ authenticated writes, ``authorize_topic(...)``.
 """
 
 import uuid
+from dataclasses import replace
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -29,6 +30,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.user.repositories import UserRepository
 
 _log = get_logger("cheesex.auth")
 
@@ -115,6 +117,7 @@ class ActorResolver:
             actor = Actor(
                 handle="anonymous", user_id=None, is_agent=False, via="handle"
             )
+        actor = await self._recover_numeric_handle(actor)
         # Device-screen attribution (P3): a cheese call from inside an enrolled device's
         # screen carries that screen's token. It is a per-screen capability that proves
         # the call runs as that screen's agent — so it acts as the device agent-user
@@ -132,6 +135,32 @@ class ActorResolver:
         if actor.via == "handle" and actor.handle != "anonymous":
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
+
+    async def _recover_numeric_handle(self, actor: Actor) -> Actor:
+        """Repair a token actor whose handle degraded into the int User PK.
+
+        ``_token_verifier`` falls back to the ``sub`` claim when a main-minted
+        token carries no ``handle``; ``sub`` is the int PK, so the actor ends up
+        named e.g. ``"470"``. Every authorization key in the platform is the
+        handle STRING (``topic_memberships.member_handle``, ``member.user_handle``,
+        ``project.owner_handle``) — a numeric handle therefore matches no roster
+        and no project membership, and the caller silently loses every permission
+        they actually hold. Resolve the real username from the id instead.
+
+        A user we cannot resolve keeps the numeric handle (authorization still
+        denies, as it must) but is logged loudly — the previous behaviour failed
+        silently, which is what made this class of bug so hard to trace.
+        """
+        if actor.via != "token" or actor.user_id is None:
+            return actor
+        if not actor.handle.isdigit():
+            return actor
+        user = await UserRepository(self._session).get_by_id(actor.user_id)
+        if user is None:
+            _log.warning("token_handle_unresolved", user_id=actor.user_id)
+            return actor
+        _log.info("token_handle_recovered", user_id=actor.user_id, handle=user.username)
+        return replace(actor, handle=user.username)
 
     async def authorize_topic(
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID
