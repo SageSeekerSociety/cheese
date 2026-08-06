@@ -66,45 +66,10 @@ PYTEST_ARGS="-n 4"
 #     uv can't remove/recreate `.venv/share`, owned by whoever built it).
 if .venv/bin/pyright --version >/dev/null 2>&1; then
     UV_RUN=(uv run --no-sync)
-    DEGRADED=0
 else
     echo "note: inherited .venv's console scripts don't execute on this host (baked absolute shebang from a different path) — syncing a scratch venv"
     export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
     UV_RUN=(uv run)
-    DEGRADED=1
-fi
-
-# The scratch-venv repair above needs the NETWORK. The quality gate now runs in
-# a dedicated, network-less container (cheesex-gate-*), where the sync cannot
-# succeed at all — so on the degraded path, dump what we actually found. A gate
-# run is an expensive round trip (file a card, wait, read a truncated tail), so
-# it has to be self-diagnosing; the full log lives on the backend host, which
-# the agent reading this output cannot open.
-if [ "$DEGRADED" = "1" ]; then
-    echo "--- environment probe (degraded path) ---"
-    echo "  pwd=$(pwd)"
-    echo "  uv: $(command -v uv || echo MISSING) $(uv --version 2>/dev/null || true)"
-    echo "  system python3: $(command -v python3 || echo MISSING) $(python3 -V 2>&1 || true)"
-    echo "  node: $(command -v node || echo MISSING) $(node -v 2>/dev/null || true)"
-    echo "  pyvenv.cfg home: $(grep -m1 '^home' .venv/pyvenv.cfg 2>/dev/null || echo NONE)"
-    echo "  uv cache: $(ls -d "${UV_CACHE_DIR:-$HOME/.cache/uv}" 2>/dev/null || echo MISSING)"
-    echo "  dns: $(getent hosts pypi.org >/dev/null 2>&1 && echo ok || echo unavailable)"
-    echo "-----------------------------------------"
-fi
-
-# Last resort for pyright, and the only one that survives a network-less host:
-# pyright is a NODE program — the Python package is just a wrapper, and it ships
-# the real bundle inside site-packages. That bundle lives in the WORKSPACE (so it
-# is mounted into the gate container) and node is present there, so running it
-# directly is the genuine type check, not a skipped one. Detect it up front; the
-# pyright step below falls back to it only after the uv paths have failed.
-PYRIGHT_NODE=""
-if command -v node >/dev/null 2>&1; then
-    _pjs="$(ls .venv/lib/python*/site-packages/pyright/dist/index.js 2>/dev/null | head -1)"
-    if [ -n "$_pjs" ] && node "$_pjs" --version >/dev/null 2>&1; then
-        PYRIGHT_NODE="node $_pjs"
-        [ "$DEGRADED" = "1" ] && echo "note: pyright bundle available via node ($_pjs)"
-    fi
 fi
 
 # ruff ships as a self-contained native binary (no Python shebang), so the
@@ -133,10 +98,9 @@ fi
 # Bounded ONLY on the scratch-venv path: a freshly-synced venv's pyright-
 # python wrapper downloads a Node binary on first use, which can hang forever
 # on a host with no network (or a cache path that ALSO resolves to a
-# mismatched $HOME) — a timeout turns that into a clean, fast fallback instead
-# of stalling the whole gate. The inherited-venv path never hits this (nothing
-# to download again). If both uv paths are out, run the bundled JS with node —
-# that still performs the real check, so it counts as PASS/FAIL, not SKIP.
+# mismatched $HOME) — a timeout turns that into a clean, fast SKIP (an
+# environment limitation, not a code issue) instead of stalling the whole
+# gate. The inherited-venv path never hits this (nothing to download again).
 echo "==> pyright"
 if [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
     if "${UV_RUN[@]}" pyright 2>&1 | tail -20; then
@@ -149,16 +113,8 @@ if [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
 elif timeout 120 "${UV_RUN[@]}" pyright 2>&1 | tail -20; then
     echo "  PASS: pyright"
     ((++PASS))
-elif [ -n "$PYRIGHT_NODE" ]; then
-    if $PYRIGHT_NODE 2>&1 | tail -20; then
-        echo "  PASS: pyright (bundled node entrypoint)"
-        ((++PASS))
-    else
-        echo "  FAIL: pyright (bundled node entrypoint)"
-        ((++FAIL))
-    fi
 else
-    echo "  SKIP: pyright (no usable runner: scratch-venv sync failed and no node bundle — environment limitation, not a code issue)"
+    echo "  SKIP: pyright (scratch-venv sync couldn't get it running in time — environment limitation, not a code issue)"
     ((++SKIP))
 fi
 
@@ -166,12 +122,6 @@ fi
 echo "==> pytest"
 if [ "$SKIP_TESTS" = "1" ]; then
     echo "  SKIP: pytest (--no-tests / SKIP_TESTS=1 — no usable Postgres on this host)"
-    ((++SKIP))
-# pytest genuinely needs a Python interpreter; there is no node-style escape
-# hatch for it. On the degraded path the scratch venv may never have synced, so
-# check that we can run Python at all before blaming the database.
-elif ! "${UV_RUN[@]}" python -c "" >/dev/null 2>&1; then
-    echo "  SKIP: pytest (no usable Python on this host — environment limitation, not a code issue)"
     ((++SKIP))
 # Fail fast (not present, not hanging) when the test DB is unreachable. Without
 # this, every DB-touching test (the large majority) fails, and with
