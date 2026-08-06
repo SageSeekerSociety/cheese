@@ -152,6 +152,49 @@ def _ensure_worktree(project_id: uuid.UUID, branch: str) -> Path:
     return wt
 
 
+# Container path a topic's worktree is bind-mounted to (tmux_provider.py,
+# exec_in_sandbox below) — the anchor `sandbox_vcs_mounts` resolves against.
+SANDBOX_WORKDIR = "/work"
+
+
+def sandbox_vcs_mounts(
+    project_id: uuid.UUID, branch: str, *, container_workdir: str = SANDBOX_WORKDIR
+) -> list[str]:
+    """Extra `docker run -v` args so a topic's jj workspace resolves inside its
+    sandbox container.
+
+    `jj workspace add` (_ensure_worktree above) writes `<worktree>/.jj/repo` as
+    a path *relative to the real host directory nesting* between the worktree
+    (workspace_root/.worktrees/<project>/<branch>) and the project's shared
+    main repo (workspace_root/<project>) — e.g. `../../../../<project_id>/.jj
+    /repo`. A sandbox container only ever gets the worktree, remapped to
+    SANDBOX_WORKDIR (much shallower than the host tree), so that relative
+    pointer walks off the container's root instead of reaching the real store
+    — `jj status` inside the sandbox fails with "Cannot access ../../../../
+    <project_id>/.jj/repo: No such file or directory".
+
+    Compute, with the exact same relpath jj used, where that unmodified
+    pointer will resolve to once anchored at SANDBOX_WORKDIR instead of the
+    real worktree path, and mount the main repo's `.jj` (commit/op store) and
+    `.git` (colocated git dir — the store's own internal git_target is itself
+    a relative pointer into it) there. Host-native access to the worktree
+    (backend catch-up/diff/log, outside any container) is untouched — only the
+    container's extra mounts change."""
+    main = _repo(project_id)
+    wt = _worktree_path(project_id, branch)
+    rel_to_store = os.path.relpath(main / ".jj" / "repo", wt / ".jj")
+    store_in_container = Path(
+        os.path.normpath(os.path.join(container_workdir, ".jj", rel_to_store))
+    )
+    main_in_container = store_in_container.parents[1]  # strip "/.jj/repo"
+    return [
+        "-v",
+        f"{main / '.jj'}:{main_in_container / '.jj'}",
+        "-v",
+        f"{main / '.git'}:{main_in_container / '.git'}",
+    ]
+
+
 def _make_world_writable(root: Path) -> None:
     """The sandbox's non-root user must be able to edit a worktree the backend
     (possibly root) materialized — found live when 芝士 hit Permission denied on
@@ -733,6 +776,14 @@ def exec_in_sandbox(
             "stdout": "",
             "stderr": "sandbox 不可用：未找到 docker（需要 Docker 在运行）",
         }
+    # A topic's tree is a jj workspace whose .jj/repo pointer only resolves
+    # with the main repo's store mounted too (see sandbox_vcs_mounts); the
+    # project-level tree (topic_id=None) IS the main repo, no extra mount needed.
+    vcs_mounts = (
+        sandbox_vcs_mounts(project_id, branch_for_topic(topic_id))
+        if topic_id is not None
+        else []
+    )
     try:
         result = subprocess.run(
             [
@@ -749,6 +800,7 @@ def exec_in_sandbox(
                 "256",
                 "-v",
                 f"{tree}:/work",
+                *vcs_mounts,
                 "-w",
                 "/work",
                 SANDBOX_IMAGE,

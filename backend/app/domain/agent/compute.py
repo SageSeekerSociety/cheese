@@ -126,6 +126,14 @@ class LocalDockerProvider:
             "SBX_IMAGE": sandbox_image or settings.sandbox_image,
             "SBX_CONTAINER": ws.container_name(topic_id),
             "SBX_WORKTREE": str(worktree),
+            # The worktree is a jj workspace whose .jj/repo pointer is only
+            # resolvable inside the sandbox if these are ALSO mounted (see
+            # ws.sandbox_vcs_mounts) — the shim (claude-sbx) appends them to
+            # `docker run` as extra `-v` args, space-joined since deterministic
+            # workspace_root/UUID paths never contain whitespace.
+            "SBX_VCS_MOUNTS": " ".join(
+                ws.sandbox_vcs_mounts(project_id, ws.branch_for_topic(topic_id))
+            ),
             "SBX_SESSION": str(ws.session_dir(project_id, topic_id)),
             "CHEESE_API": settings.sandbox_api_base,
             "CHEESE_PROJECT": str(project_id),
