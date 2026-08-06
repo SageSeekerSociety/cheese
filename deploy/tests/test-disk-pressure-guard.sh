@@ -66,7 +66,7 @@ test ! -s "$CALLS" || fail "cleanup ran while a turn was active"
 echo "PASS: active turns defer cleanup"
 
 FAKE_USAGE_PERCENT=90 FAKE_ACTIVE_TURNS=0 run_guard
-grep -Fxq 'ps -aq --filter label=cheesex-tmux=1' "$CALLS" \
+grep -Fxq 'ps -aq --filter label=cheesex-sandbox=1' "$CALLS" \
   || fail "label-scoped sandbox query was not issued"
 grep -Fxq 'rm -f abc123 def456' "$CALLS" \
   || fail "only the selected sandbox IDs were not removed"
