@@ -14,7 +14,7 @@ PROJECT="${CHEESE_COMPOSE_PROJECT:-cheese}"
 # origin/main, not HEAD: run from a feature branch, HEAD is a commit that was
 # never meant to be deployed, and every check would report a false drift.
 git fetch -q origin main 2>/dev/null || true
-main_sha="$(git rev-parse --short origin/main 2>/dev/null || git rev-parse --short main)"
+main_sha="$(git rev-parse --short=7 origin/main 2>/dev/null || git rev-parse --short=7 main)"
 echo "origin/main     : ${main_sha}"
 
 live="$(ssh -o ConnectTimeout=20 -o BatchMode=yes "$HOST" \
