@@ -649,6 +649,13 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
         Path(settings.workspace_root) / ".sessions" / str(project_id) / topic_id.hex[:8]
     ).resolve()
     d.mkdir(parents=True, exist_ok=True)
+    # Create the hook WAL before the sandbox starts and make it writable by both
+    # container users.  The backend runs as uid 1001 while the tmux image runs as
+    # uid 1000; if the hook forwarder creates this directory first, its normal
+    # 0755 mode lets the backend read events but not park or remove them.
+    spool = d / "cheese-spool"
+    spool.mkdir(parents=True, exist_ok=True)
+    _loosen(str(spool), 0o777)
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)

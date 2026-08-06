@@ -36,6 +36,7 @@ def test_forwarder_spools_then_posts_hook_json_with_scoped_token():
     assert "--data-binary @-" in CHEESE_HOOK_SCRIPT
     # Durable-first: every hook is spooled (WAL) before the best-effort curl.
     assert "CHEESE_HOOK_SPOOL" in CHEESE_HOOK_SCRIPT
+    assert 'chmod 0777 "$CHEESE_HOOK_SPOOL"' in CHEESE_HOOK_SCRIPT
     # The inline curl is gated: unwired (no URL) or spool-only (device) → skip it, so
     # it never blocks a tool and the drainer / backend reconcile handle delivery.
     guard = '[ -z "$CHEESE_HOOK_SPOOL_ONLY" ] && [ -n "$CHEESE_HOOK_URL" ]'
