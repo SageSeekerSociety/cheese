@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# check.sh — ruff + pyright + pytest (parallel + incremental)
-# Usage: bash .claude/scripts/check.sh [--full]
-#   Default: incremental (--testmon, only affected tests, ~5s)
-#   --full:  run entire suite (no testmon, ~25s)
+# check.sh — ruff + pyright + pytest (parallel)
+# Usage: bash .claude/scripts/check.sh [--full] [--no-tests]
+#   --full:      run entire suite (default behaviour today)
+#   --no-tests:  lint + typecheck only, skip pytest (what the 机器闸门 passes)
 # Output: concise pass/fail summary. Non-zero exit on failure.
 set -euo pipefail
 
@@ -21,11 +21,29 @@ FAIL=0
 # SUBSET deselects the tests that set that state up and the survivors fail
 # intermittently. The full parallel run is fast enough to not need testmon.
 PYTEST_ARGS="-n 4"
-[[ "${1:-}" == "--full" ]] && echo "Mode: FULL suite (parallel)" || echo "Mode: full suite (parallel)"
+NO_TESTS=0
+for arg in "$@"; do [[ "$arg" == "--no-tests" ]] && NO_TESTS=1; done
+
+# The 机器闸门 runs this inside a NETWORK-LESS container (cheesex-gate-*), so any
+# `uv run` that tries to resolve/sync the environment dies on DNS before a single
+# check executes. `--no-sync` makes uv use the workspace's existing .venv as-is.
+UV=""
+for candidate in "uv run --no-sync" "uv run --offline" "uv run"; do
+    if $candidate python -c "" >/dev/null 2>&1; then UV="$candidate"; break; fi
+done
+if [ -z "$UV" ]; then
+    echo "  FAIL: no usable python environment (tried --no-sync, --offline, and a syncing uv)"
+    echo "  hint: the 闸门 container has no network; the workspace .venv must be usable as-is"
+    exit 1
+fi
+[[ "$UV" == "uv run --no-sync" ]] || echo "note: using \`$UV\` (the workspace .venv was not directly usable)"
+
+[[ "$NO_TESTS" == 1 ]] && echo "Mode: lint + typecheck only (--no-tests)" \
+                       || echo "Mode: full suite (parallel)"
 
 # --- ruff (lint + format, matching CI's test.yml lint job) ---
 echo "==> ruff check + format"
-if uv run ruff check . 2>&1 | tail -1 && uv run ruff format --check . 2>&1 | tail -1; then
+if $UV ruff check . 2>&1 | tail -1 && $UV ruff format --check . 2>&1 | tail -1; then
     echo "  PASS: ruff"
     ((++PASS))
 else
@@ -35,7 +53,7 @@ fi
 
 # --- pyright ---
 echo "==> pyright"
-if uv run pyright 2>&1 | tail -2; then
+if $UV pyright 2>&1 | tail -2; then
     echo "  PASS: pyright"
     ((++PASS))
 else
@@ -44,13 +62,17 @@ else
 fi
 
 # --- pytest ---
-echo "==> pytest"
-if uv run pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -3; then
-    echo "  PASS: pytest"
-    ((++PASS))
+if [[ "$NO_TESTS" == 1 ]]; then
+    echo "==> pytest (skipped: --no-tests)"
 else
-    echo "  FAIL: pytest"
-    ((++FAIL))
+    echo "==> pytest"
+    if $UV pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q 2>&1 | tail -3; then
+        echo "  PASS: pytest"
+        ((++PASS))
+    else
+        echo "  FAIL: pytest"
+        ((++FAIL))
+    fi
 fi
 
 # --- summary ---
