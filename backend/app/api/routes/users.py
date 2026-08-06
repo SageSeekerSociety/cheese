@@ -181,6 +181,28 @@ router = APIRouter(prefix="/users", tags=["Users"])
 logger = logging.getLogger(__name__)
 
 
+def _normalize_registration_invite_code(
+    invite_code: str | None, *, required: bool
+) -> str | None:
+    """Return the required normalized code, or ignore it in open-registration mode."""
+    if not required:
+        return None
+    normalized = (invite_code or "").strip()
+    if not normalized:
+        raise UnprocessableEntityError("Invite code is required")
+    return normalized
+
+
+def _invite_code_error(exc: ValueError) -> UnprocessableEntityError:
+    error_map = {
+        "INVALID_CODE": "Invalid invite code",
+        "CODE_DISABLED": "This invite code has been disabled",
+        "CODE_EXPIRED": "This invite code has expired",
+        "CODE_EXHAUSTED": "This invite code has been fully used",
+    }
+    return UnprocessableEntityError(error_map.get(str(exc), "Invalid invite code"))
+
+
 async def get_user_auth_service(
     db=Depends(get_db),
 ) -> UserAuthService:
@@ -947,6 +969,17 @@ async def send_register_email_code(
     from app.domain.user.verification_service import EmailVerificationService
 
     email = payload.email
+    invite_code = _normalize_registration_invite_code(
+        payload.invite_code, required=settings.require_invite_code
+    )
+
+    if invite_code:
+        from app.domain.invite.services import InviteCodeService
+
+        try:
+            await InviteCodeService(db).validate_code(invite_code)
+        except ValueError as exc:
+            raise _invite_code_error(exc) from exc
 
     email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if not re.match(email_regex, email):
@@ -1007,7 +1040,6 @@ async def register_user(
 
     from redis.asyncio import Redis as AsyncRedis
 
-    from app.core.config import settings
     from app.domain.user.verification_service import EmailVerificationService
 
     username = payload.username
@@ -1017,26 +1049,18 @@ async def register_user(
     password = payload.password
     srp_salt = payload.srp_salt
     srp_verifier = payload.srp_verifier
-    invite_code = payload.invite_code
+    invite_code = _normalize_registration_invite_code(
+        payload.invite_code, required=settings.require_invite_code
+    )
 
-    has_invite_code = bool(invite_code)
-    if has_invite_code:
+    if invite_code:
         from app.domain.invite.services import InviteCodeService
 
         invite_service = InviteCodeService(session)
         try:
             await invite_service.validate_code(invite_code)
         except ValueError as exc:
-            msg = str(exc)
-            error_map = {
-                "INVALID_CODE": "Invalid invite code",
-                "CODE_DISABLED": "This invite code has been disabled",
-                "CODE_EXPIRED": "This invite code has expired",
-                "CODE_EXHAUSTED": "This invite code has been fully used",
-            }
-            raise UnprocessableEntityError(
-                error_map.get(msg, "Invalid invite code")
-            ) from exc
+            raise _invite_code_error(exc) from exc
 
     if not username or not nickname or not email:
         raise BadRequestError("username, nickname, and email are required")
@@ -1103,11 +1127,14 @@ async def register_user(
         raise
 
     # Consume invite code after successful registration
-    if settings.require_invite_code and invite_code:
+    if invite_code:
         from app.domain.invite.services import InviteCodeService
 
         invite_service = InviteCodeService(session)
-        await invite_service.consume_code(invite_code)
+        try:
+            await invite_service.consume_code(invite_code)
+        except ValueError as exc:
+            raise _invite_code_error(exc) from exc
 
     access_token = create_access_token(user.id, handle=user.username)
     refresh_token = create_refresh_token(user.id)

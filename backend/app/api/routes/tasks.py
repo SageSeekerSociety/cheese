@@ -1180,8 +1180,8 @@ async def preview_task_from_pdf(
         forced_submitter_type=forced_submitter_type,
         user_id=auth_user.user_id,
         default_topic_ids=default_topic_ids,
+        max_tasks=max_tasks,
     )
-    drafts = drafts[:max_tasks]
 
     return {
         "code": 200,

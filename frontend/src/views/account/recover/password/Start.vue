@@ -66,7 +66,6 @@
 <script lang="ts" setup>
 import { ref } from 'vue'
 // import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
@@ -74,7 +73,7 @@ import { z } from 'zod'
 import { vuetifyConfig } from '@/utils/form'
 
 import { UserApi } from '@/network/api/users'
-import { ServerError } from '@/network/types/error'
+import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const myAlert = ref<{
   message: string | undefined
@@ -104,13 +103,9 @@ const submit = handleSubmit(async (value) => {
       type: 'success',
     }
   } catch (e) {
-    if (e instanceof ServerError) {
-      myAlert.value = {
-        message: e.message,
-        type: 'error',
-      }
-    } else {
-      toast.error(e as string)
+    myAlert.value = {
+      message: requestErrorMessage(e, '发送失败，请重试'),
+      type: 'error',
     }
   }
 })
