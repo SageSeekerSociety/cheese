@@ -341,7 +341,16 @@ class TopicService:
             kind=_child_kind(parent),
             created_by=created_by,
         )
-        await self._members.seed(new_topic.id, owner_handle=created_by)
+        # Inherit the parent's roster (not just the requested owner): a 分身-
+        # initiated split otherwise leaves every human off the child's roster
+        # (owner_handle="cheese" is skipped by seed()), which is the bug this
+        # whole path exists to close — see seed_split's docstring.
+        parent_members, _ = await self._members.list_for_topic(parent.id)
+        await self._members.seed_split(
+            new_topic.id,
+            owner_handle=created_by,
+            member_handles=[m.member_handle for m in parent_members],
+        )
         parent_doc = await self._blocks.doc_root(parent.id)
         await self._seed_brief_doc(
             new_topic,

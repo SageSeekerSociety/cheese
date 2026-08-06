@@ -61,6 +61,37 @@ class TopicMemberService:
         member joins the room, so 总览 mirrors the whole project (fusion-design
         §3). The project owner is the topic owner; other members join as members;
         芝士 joins as a member. Idempotent — re-seeding never duplicates a row."""
+        await self._seed_with_members(
+            topic_id, owner_handle=owner_handle, member_handles=member_handles
+        )
+
+    async def seed_split(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        owner_handle: str | None,
+        member_handles: list[str],
+    ) -> None:
+        """Seed a split-off sub-topic's roster: the resolved splitter becomes
+        owner, and the parent topic's members (typically its human roster) join
+        as plain members — otherwise a 分身-initiated split (owner_handle
+        "cheese", skipped by seed()) leaves every human silently off the new
+        topic's roster, the bug this exists to close. Role nuance (owner/admin
+        on the parent) is deliberately NOT preserved: importing everyone as a
+        plain member is simple and correct enough — the splitter can promote
+        people afterward if the child needs its own owner/admin split. Idempotent,
+        same as seed()."""
+        await self._seed_with_members(
+            topic_id, owner_handle=owner_handle, member_handles=member_handles
+        )
+
+    async def _seed_with_members(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        owner_handle: str | None,
+        member_handles: list[str],
+    ) -> None:
         await self.seed(topic_id, owner_handle=owner_handle)
         for handle in member_handles:
             if not handle or handle == CHEESE_HANDLE or handle == owner_handle:
