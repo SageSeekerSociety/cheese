@@ -20,13 +20,18 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
-from app.domain.agent.market import compute_default_name, compute_selectable
+from app.domain.agent.market import (
+    compute_default_name,
+    compute_listings,
+    compute_selectable,
+)
 from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.schemas import (
     ConclusionIn,
@@ -251,23 +256,34 @@ async def edit_topic_doc(
 async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
     """The compute this topic runs on (execution-architecture v4 会话级选择).
 
-    `current` is the effective pool (topic选择 → project sticky → default).
+    `current` is the effective pool
+    (topic choice → project sticky → team default → platform default).
     `locked` is true once the topic has run (session_id set) — the picker freezes
-    then, matching the device-affinity boundary. `sticky` is the project default a
-    new topic would inherit; `profiles` are the pools actually selectable here."""
+    then, matching the device-affinity boundary. `sticky` is the effective starting
+    choice for a new topic (project memory, then team default); `profiles` include
+    unavailable targets so a locked offline device still has a readable label."""
     topic = await TopicService(db).get_or_404(topic_id)
     project = await ProjectRepository(db).get(topic.project_id)
     sticky = (project.settings or {}).get("compute_profile") if project else None
+    team_default = None
+    if project is not None and project.team_id is not None:
+        team = await TeamRepository(db).get_by_id(project.team_id)
+        team_default = team.compute_profile if team is not None else None
     device_online = await project_device_online(db, topic.project_id)
     return ok(
         {
-            "current": topic.compute_profile or sticky or compute_default_name(),
+            "current": (
+                topic.compute_profile
+                or sticky
+                or team_default
+                or compute_default_name()
+            ),
             "locked": topic.session_id is not None,
             "inherited": topic.compute_profile is None,
-            "sticky": sticky or compute_default_name(),
+            "sticky": sticky or team_default or compute_default_name(),
             "profiles": [
                 asdict(v)
-                for v in compute_selectable(settings, device_online=device_online)
+                for v in compute_listings(settings, device_online=device_online)
             ],
         }
     )

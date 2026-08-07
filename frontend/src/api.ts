@@ -442,6 +442,31 @@ export function setComputeProfile(projectId: string, profile: string): Promise<{
   })
 }
 
+// MicroCloud machines are billed/audited through one project but enroll into that
+// project's team compute pool. The browser never receives provider credentials.
+export function listProjectMachines(projectId: string): Promise<ListPayload<import('./cx_types').ProjectMachine>> {
+  return request(`/projects/${encodeURIComponent(projectId)}/machines`)
+}
+
+export function createProjectMachine(
+  projectId: string,
+  spec: import('./cx_types').ProjectMachineCreate
+): Promise<import('./cx_types').ProjectMachine> {
+  return request(`/projects/${encodeURIComponent(projectId)}/machines`, {
+    method: 'POST',
+    body: JSON.stringify(spec),
+  })
+}
+
+export function deleteProjectMachine(
+  projectId: string,
+  machineId: string
+): Promise<import('./cx_types').ProjectMachine | null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/machines/${encodeURIComponent(machineId)}`, {
+    method: 'DELETE',
+  })
+}
+
 // 订阅模型: the project's current Claude model + the ones it may select. Same
 // shape as compute pools; a project picks Sonnet 5 (default) or Opus 5.
 export function getModelProfiles(projectId: string): Promise<ComputeProfiles> {

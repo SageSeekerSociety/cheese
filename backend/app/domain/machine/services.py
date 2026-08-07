@@ -234,9 +234,10 @@ class MachineService:
                 await self.refresh(machine)
             if machine.status in GONE:
                 # MicroCloud has forgotten it, so there is nothing left to
-                # report or to bill — drop the row rather than keep a tombstone
-                # that still occupies a slot.
-                await self._repo.delete(machine)
+                # report or to bill. Forgetting also removes the connector
+                # device created for this machine, including its team binding;
+                # otherwise the team pool would retain a dead "ghost" node.
+                await self.forget(machine)
                 continue
             alive.append(machine)
         return alive
@@ -284,9 +285,24 @@ class MachineService:
         device = await self._devices.approve(
             code, owner_user_id=machine.owner_user_id, name=machine.hostname
         )
-        await self._devices.assign_to_project(
-            device.device_id, machine.project_id, actor_user_id=machine.owner_user_id
-        )
+        project = await self._projects.get(machine.project_id)
+        if project is None:
+            raise NotFoundError("project not found")
+        if project.team_id is not None:
+            # v4 ownership: enroll once into the team's compute pool. Every
+            # project of that team can then select it without per-project rows.
+            await self._devices.assign_to_team(
+                device.device_id,
+                project.team_id,
+                actor_user_id=machine.owner_user_id,
+            )
+        else:
+            # Compatibility for pre-personal-team project rows.
+            await self._devices.assign_to_project(
+                device.device_id,
+                machine.project_id,
+                actor_user_id=machine.owner_user_id,
+            )
 
         script = enrollment.bootstrap_script(
             origin=origin, token=device.token, device_id=device.device_id
@@ -337,7 +353,24 @@ class MachineService:
         return {"enrolled": enrolled, "failed": failed}
 
     async def forget(self, machine: ProjectMachine) -> None:
-        """Drop the row once MicroCloud no longer has the machine."""
+        """Drop a vanished machine and the connector device enrolled for it."""
+        if machine.device_id is not None and machine.owner_user_id is not None:
+            device = await self._devices.get_device(machine.device_id)
+            if device is not None and device.owner_user_id == machine.owner_user_id:
+                # Device deletion also removes project/team/topic bindings. Do
+                # this before the machine row so a failure remains retryable.
+                await self._devices.delete_owned(
+                    machine.device_id, actor_user_id=machine.owner_user_id
+                )
+            elif device is not None:
+                # Never delete a device now owned by somebody else. This should
+                # be impossible for platform-enrolled machines, so retain an
+                # operator-visible signal if historical data disagrees.
+                logger.error(
+                    "not deleting device %s for machine %s: owner mismatch",
+                    machine.device_id,
+                    machine.hostname,
+                )
         await self._repo.delete(machine)
 
 

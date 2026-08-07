@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.machine.models import AiStatus, MachineStatus
+from app.domain.machine.models import MAX_ENROLL_ATTEMPTS, AiStatus, MachineStatus
 
 
 class MachineCreate(BaseModel):
@@ -43,5 +43,7 @@ class MachineOut(BaseModel):
     device_id: str | None
     enrolled_at: datetime | None
     enroll_error: str | None
+    enroll_attempts: int
+    enroll_max_attempts: int = MAX_ENROLL_ATTEMPTS
     requested_by: str | None
     created_at: datetime

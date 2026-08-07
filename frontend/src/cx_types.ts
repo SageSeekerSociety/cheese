@@ -533,11 +533,54 @@ export interface ComputeProfiles {
   profiles: PoolListing[]
 }
 
+export type ProjectMachineStatus =
+  | 'provisioning'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'stopped'
+  | 'deleting'
+  | 'deleted'
+  | 'error'
+  | 'unknown'
+
+export type ProjectMachineAiStatus = 'disabled' | 'provisioning' | 'ready' | 'error' | 'unknown'
+
+// A MicroCloud machine billed/audited through a project. Once enrolled, its device
+// belongs to the project's team pool and is available to every project on that team.
+export interface ProjectMachine {
+  id: string
+  project_id: string
+  machine_id: number
+  hostname: string
+  login_user: string
+  cores: number
+  memory_mb: number
+  disk_gb: number
+  status: ProjectMachineStatus
+  ip: string | null
+  ai_mode: string
+  ai_status: ProjectMachineAiStatus
+  device_id: string | null
+  enrolled_at: string | null
+  enroll_error: string | null
+  enroll_attempts: number
+  enroll_max_attempts: number
+  requested_by: string | null
+  created_at: string
+}
+
+export interface ProjectMachineCreate {
+  cores: number
+  memoryMb: number
+  diskGb: number
+}
+
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
-// `current` is the effective pool (topic选择 → project sticky → default);
+// `current` is effective (topic → project sticky → team default → platform);
 // `locked` freezes the picker once the topic has run (session started);
-// `inherited` = still following the project sticky (no own选择 yet);
-// `sticky` = the project default a new topic would inherit.
+// `inherited` = still following project/team/platform defaults (no own choice yet);
+// `sticky` = project sticky if present, otherwise the team/platform default.
 export interface TopicComputeProfile {
   current: string
   locked: boolean

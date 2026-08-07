@@ -9,11 +9,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, ValidationError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
+from app.domain.identity.actor import Actor
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.schemas import MachineCreate, MachineOut
 from app.domain.machine.services import MachineService
+from app.domain.membership.repositories import MemberRepository
+from app.domain.project.models import ProjectRole
+from app.domain.project.repositories import ProjectRepository
+from app.domain.team.repositories import TeamRepository
 
 router = APIRouter(prefix="/api/projects", tags=["machines"])
 
@@ -31,9 +41,70 @@ def _service(db: AsyncSession) -> MachineService:
     return service
 
 
+async def _require_project_access(
+    project_id: uuid.UUID,
+    db: AsyncSession,
+    resolver: ActorResolverDep,
+    *,
+    mutate: bool,
+) -> Actor:
+    """Authorize the human before exposing or spending team compute.
+
+    Machine reads contain the private address of provisioned infrastructure, and
+    creates/deletes mutate a prepaid MicroCloud account. Team members may inspect
+    their shared pool; only team owners/admins may spend or destroy it. Legacy
+    team-less projects retain their owner/lead rules. Agents cannot allocate
+    persistent paid infrastructure on a human's behalf.
+    """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    if not actor.authenticated or actor.via != "token" or actor.is_agent:
+        raise AuthenticationRequiredError("Login required to manage project machines")
+
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+
+    if project.team_id is not None:
+        if actor.user_id is None:
+            raise AuthenticationRequiredError(
+                "A current user credential is required to manage team compute"
+            )
+        teams = TeamRepository(db)
+        if not await teams.is_team_member(project.team_id, actor.user_id):
+            raise NotFoundError("Project not found")
+        if mutate and not await teams.is_team_at_least_admin(
+            project.team_id, actor.user_id
+        ):
+            raise ForbiddenError(
+                "Only team owners and admins can create or delete cloud machines"
+            )
+        return actor
+
+    # Compatibility for projects created before every project gained a team.
+    if project.owner_handle == actor.handle:
+        return actor
+    member = await MemberRepository(db).get(
+        project_id=project_id, user_handle=actor.handle
+    )
+    if member is not None and not mutate:
+        return actor
+    if member is not None and member.role == ProjectRole.lead:
+        return actor
+    if member is not None:
+        raise ForbiddenError(
+            "Only project owners and leads can create or delete cloud machines"
+        )
+
+    # Conceal the project and its machine inventory from authenticated outsiders.
+    raise NotFoundError("Project not found")
+
+
 @router.get("/{project_id}/machines")
-async def list_machines(project_id: uuid.UUID, db: DbSession) -> dict:
+async def list_machines(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """The project's machines, with status refreshed from MicroCloud."""
+    await _require_project_access(project_id, db, resolver, mutate=False)
     service = _service(db)
     machines = await service.list_for_project(project_id)
     items = [MachineOut.model_validate(m).model_dump(mode="json") for m in machines]
@@ -55,9 +126,7 @@ async def create_machine(
     """
     # Provisioning spends a project's money and leaves a machine running, so —
     # unlike the read paths — an unverified handle is not good enough.
-    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    if not who.authenticated:
-        raise AuthenticationRequiredError("Login required to provision a machine")
+    who = await _require_project_access(project_id, db, resolver, mutate=True)
 
     service = _service(db)
     try:
@@ -88,9 +157,7 @@ async def delete_machine(
 ) -> dict:
     """Destroy the machine. Asynchronous — it reports `deleting` until MicroCloud
     has torn it down, at which point the next read drops it."""
-    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    if not who.authenticated:
-        raise AuthenticationRequiredError("Login required to destroy a machine")
+    await _require_project_access(project_id, db, resolver, mutate=True)
 
     service = _service(db)
     machine = await service.get_or_404(machine_row_id)

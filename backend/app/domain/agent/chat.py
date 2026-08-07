@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
@@ -50,6 +50,7 @@ from app.domain.memory.store import memory_store
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -245,15 +246,26 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 
 
 def _resolve_compute_id(
-    project_settings: dict | None, topic_compute_profile: str | None = None
+    project_settings: dict | None,
+    topic_compute_profile: str | None = None,
+    team_compute_profile: str | None = None,
 ) -> str | None:
     """The compute pool a turn runs on (execution-architecture v4 会话级选择): the
-    topic's own selection wins, else the project's sticky default, else None (the
-    ComputePool default). An id that isn't deployed here is ignored by
-    ``ComputePool.select`` and degrades to the default — never breaks a turn."""
+    topic's own selection wins, else the project's sticky memory, then the team's
+    default, else None (the ComputePool default). An id that isn't deployed here
+    is ignored by ``ComputePool.select`` and degrades to the default — never breaks
+    a turn."""
     if topic_compute_profile:
         return topic_compute_profile
-    return (project_settings or {}).get("compute_profile")
+    return (project_settings or {}).get("compute_profile") or team_compute_profile
+
+
+async def _team_compute_profile(session: AsyncSession, project) -> str | None:
+    """Load the owning team's default without making Project own the setting."""
+    if project is None or project.team_id is None:
+        return None
+    team = await TeamRepository(session).get_by_id(project.team_id)
+    return team.compute_profile if team is not None else None
 
 
 def _transient_provider_error(result: AgentResult) -> bool:
@@ -1300,10 +1312,19 @@ class ChatService:
             project_id = topic.project_id
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
-            # Which compute this topic runs on (v4): topic选择 → project sticky.
+            # Which compute this topic runs on (v4): topic → project sticky → team.
             compute_id = _resolve_compute_id(
-                project.settings if project else None, topic.compute_profile
+                project.settings if project else None,
+                topic.compute_profile,
+                await _team_compute_profile(session, project),
             )
+            provider = self._compute.select(provider_id=compute_id)
+            if topic.compute_profile is None:
+                # v4 affinity red line: materialize the effective target BEFORE
+                # the first provider call. A later team-default/sticky change must
+                # never move an existing work tree or resumable Claude session.
+                topic.compute_profile = provider.name
+                await session.commit()
 
         # --- streaming: no DB transaction held open ---
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
@@ -1328,7 +1349,6 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        provider = self._compute.select(provider_id=compute_id)
         model_kwargs, gateway_routed = await self._model_kwargs(project_id)
 
         # Backfill any 现场 events the live hook path missed (backend down / no
@@ -1819,7 +1839,10 @@ class ChatService:
             )
             memories = await memory.recall(MemoryScope.project, str(project_id))
             topic_id = topic.id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
             await session.commit()
 
         # --- run 芝士 with the activity-digestion skill + tools ---
@@ -1903,7 +1926,10 @@ class ChatService:
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
             root_topic_id = project.root_topic_id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}] ({t.kind.value})"
@@ -1988,7 +2014,10 @@ class ChatService:
             upcoming = await milestones.list_calendar(project_id)
             memories = await memory.recall(MemoryScope.project, str(project_id))
             role = await resolve_role_description(session, project.expert_role)
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}]"

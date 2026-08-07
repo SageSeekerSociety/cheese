@@ -1,16 +1,17 @@
 <script setup lang="ts">
+import type { ComputeProfiles, ExecProfiles, ExpertRole, SandboxImageInfo, UpstreamSyncResult } from '../cx_types'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+
 import {
   createRole,
-  getComputeProfiles,
   getExecutionProfiles,
   getModelProfiles,
   getProject,
   getSandboxImage,
   getUpstream,
   listRoles,
-  setComputeProfile,
   setExecutionProfile,
   setModelProfile,
   setProjectExpertRole,
@@ -19,31 +20,20 @@ import {
   syncUpstream,
 } from '../api'
 import { myHandle } from '../me'
-import type {
-  ComputeProfiles,
-  ExecProfiles,
-  ExpertRole,
-  SandboxImageInfo,
-  UpstreamSyncResult,
-} from '../cx_types'
 
-// 项目设置 (design v3): a project picks which resource pools it runs on — an AI
-// pool (model/provider) and a compute pool (which machine runs the sandbox).
-// Both default to 知是's own pool; a project may switch to any pool available to
-// it. The full catalog (incl. pools it can't select yet) lives in the 市场.
+// Project settings. Compute is intentionally absent: execution-architecture v4
+// places the pool/default on the team and the per-run choice on the topic.
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 
 const projectName = ref('')
 const ai = ref<ExecProfiles | null>(null)
-const compute = ref<ComputeProfiles | null>(null)
 const model = ref<ComputeProfiles | null>(null)
 const savingModel = ref<string | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const env = ref<SandboxImageInfo | null>(null)
 const savingAi = ref<string | null>(null)
-const savingCompute = ref<string | null>(null)
 // '' is the sentinel for the default-image row (image null); a real image key otherwise.
 const savingEnv = ref<string | null>(null)
 // 上游仓库: the linked repo URL as edited, plus save/sync state and last result.
@@ -128,10 +118,9 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, compP, modelP, envP, upP, rolesP] = await Promise.all([
+    const [proj, execP, modelP, envP, upP, rolesP] = await Promise.all([
       getProject(props.projectId),
       getExecutionProfiles(props.projectId),
-      getComputeProfiles(props.projectId),
       getModelProfiles(props.projectId),
       getSandboxImage(props.projectId),
       getUpstream(props.projectId),
@@ -139,7 +128,6 @@ async function load() {
     ])
     projectName.value = proj.name
     ai.value = execP
-    compute.value = compP
     model.value = modelP
     env.value = envP
     upstreamSaved.value = upP.url
@@ -163,19 +151,6 @@ async function pickAi(name: string) {
     error.value = e instanceof Error ? e.message : '切换 AI 池失败'
   } finally {
     savingAi.value = null
-  }
-}
-
-async function pickCompute(id: string) {
-  if (!compute.value || compute.value.current === id) return
-  savingCompute.value = id
-  try {
-    const r = await setComputeProfile(props.projectId, id)
-    compute.value = { ...compute.value, current: r.current }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '切换算力池失败'
-  } finally {
-    savingCompute.value = null
   }
 }
 
@@ -312,7 +287,7 @@ watch(() => props.projectId, load)
                 <template #item="{ props: itemProps, item }">
                   <v-list-item
                     v-bind="itemProps"
-                    :subtitle="item.description || undefined"
+                    :subtitle="item.raw.description || undefined"
                   />
                 </template>
               </v-select>
@@ -368,54 +343,6 @@ watch(() => props.projectId, load)
               />
               <span v-else-if="ai?.current === p.name" class="pool-current">使用中</span>
             </button>
-          </div>
-        </section>
-
-        <!-- 算力池 -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-server</v-icon>
-            <span class="ln-section-title">算力池</span>
-          </div>
-          <div class="ln-body">
-            <p class="t-body c-muted mb-2" style="font-size: 0.82rem">
-              这是<strong>新话题的默认算力</strong>；每个话题在发第一条消息前，都能在输入栏
-              单独切换、之后锁定。「自托管设备」来自小队注册的机器（在小队的「算力」页里加机器）。
-            </p>
-            <button
-              v-for="p in compute?.profiles ?? []"
-              :key="p.id"
-              type="button"
-              class="pool-row"
-              :class="{ 'pool-row--active': compute?.current === p.id }"
-              :disabled="savingCompute !== null"
-              @click="pickCompute(p.id)"
-            >
-              <span
-                class="pool-radio"
-                :class="{ 'pool-radio--on': compute?.current === p.id }"
-              />
-              <div class="pool-main">
-                <div class="pool-title">
-                  {{ p.label }}
-                  <span class="pool-tier">{{ p.price }}</span>
-                </div>
-                <div class="pool-sub c-muted">{{ p.description }}</div>
-              </div>
-              <v-progress-circular
-                v-if="savingCompute === p.id"
-                indeterminate
-                size="16"
-                width="2"
-                color="primary"
-              />
-              <span v-else-if="compute?.current === p.id" class="pool-current">使用中</span>
-            </button>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              需要远程节点或 GPU？到
-              <a class="link" @click="router.push({ name: 'market' })">市场</a>
-              申请接入。
-            </p>
           </div>
         </section>
 

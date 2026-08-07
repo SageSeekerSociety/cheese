@@ -15,6 +15,8 @@ export interface Team {
   // v4 个人 = 单人真团队: true for the user's auto-provisioned personal team.
   // It sorts first in my-teams and backs personal projects + personal compute.
   personal?: boolean
+  // Present on authenticated detail/my-team responses.
+  role?: TeamMemberRoleType
   owner: User
   admins: {
     total: number
