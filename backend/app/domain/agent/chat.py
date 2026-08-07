@@ -1110,6 +1110,14 @@ class ChatService:
     _GW_CKPT = "llm_gateway_usage_ckpt"
     _GW_BUDGET = "llm_gateway_budget_usd"
 
+    async def project_gateway_key(self, project_id: uuid.UUID) -> str | None:
+        """The project's virtual gateway key, minted on first use — the same one
+        a local sandbox turn runs on. Public because the remote-machine LLM proxy
+        (routes/llm_proxy.py) has to swap it in per request: a machine off the box
+        never receives a provider credential, only its own scoped cheese token."""
+        env = await self._gateway_project_env(project_id)
+        return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
+
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn: mint (once) and return the
         project's virtual key, and keep its L2 max_budget in step with the

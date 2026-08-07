@@ -160,11 +160,16 @@ class Settings(BaseSettings):
     subscription_cap_window_s: int = 5 * 3600
 
     # --- Self-hosted / BYO device compute (P3, fusion-design §5) ---
-    # Public base URL a device reaches the backend at (NO /api suffix): the enrolled
-    # machine's `cheese-hook` POSTs Claude Code hooks to
+    # Public base URL a device reaches the backend at: the enrolled machine's
+    # `cheese-hook` POSTs Claude Code hooks to
     # `{connector_public_base}/connector/hooks/{key}`, and the device-flow approval
     # link is built from it. For a NAT'd device this must be publicly reachable
     # (outbound-only for the link WS; the hook POST is a normal outbound request).
+    # Every machine-facing URL is `{base}/<backend path>`, so the base must map
+    # 1:1 onto the backend's ROOT. Behind a reverse proxy that strips an `/api`
+    # prefix, that means the base ends in `/api` — otherwise `/sandbox/hooks/...`
+    # lands on the SPA, which answers 200/405 and drops every agent event
+    # silently (dev, 2026-08-08: the machine worked, the platform saw nothing).
     connector_public_base: str = "http://localhost:8099"
     # Single-box self-hosting (fusion §5): the host path where enrolled devices see
     # this backend's `workspace_root`. When set, a device screen runs directly in the
