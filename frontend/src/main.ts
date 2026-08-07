@@ -44,6 +44,8 @@ import AccountService from '@/services/account'
 // identity so our views have a handle (= username) when embedded here.
 import './style.css'
 
+import { installErrorReporter } from './errorReporter'
+
 try {
   const raw = localStorage.getItem('user')
   if (raw && !localStorage.getItem('cheesex.me')) {
@@ -60,6 +62,10 @@ try {
 AccountService.init()
 
 const app = createApp(App)
+
+// 现场即事实记录: browser-side errors report into the open topic's 现场 so
+// agents (who can't read a user's console) can debug them. See errorReporter.ts.
+installErrorReporter(app)
 
 registerPlugins(app)
 app.mount('#app')

@@ -19,6 +19,7 @@
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
   cheese milestone "中期汇报" --due 2026-06-20
+  cheese status                             # 平台状态快照(本轮时间预算/验收卡/闸门输出/水位)
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
   cheese serve "Vue dev server"             # 应用跑在 0.0.0.0:$CHEESE_APP_PORT 后,设为预览
   cheese artifact chart.svg --as svg        # SVG 同理
@@ -109,6 +110,56 @@ def _raw_request(method: str, path: str, data: str | None) -> None:
         sys.exit(1)
 
 
+def _format_status(d: dict) -> str:
+    """Human/agent-readable rendering of /topics/{id}/status (盲飞防护): the
+    turn's remaining time budget, every accept card with its gate tail, and the
+    platform waterlines — the questions agents used to hand-poll the API for."""
+    lines: list[str] = []
+    topic = d.get("topic") or {}
+    head = f"话题: {topic.get('title', '?')}（{topic.get('status', '?')}"
+    if topic.get("branch"):
+        head += f", 分支 {topic['branch']}"
+    lines.append(head + "）")
+    turn = d.get("turn")
+    if turn:
+        t = f"本轮: {turn.get('status')}"
+        if turn.get("budget_left_s") is not None:
+            t += f"，时间预算 {turn.get('budget_s')}s 还剩 {turn['budget_left_s']}s"
+        elif turn.get("duration_s") is not None:
+            t += f"，用时 {turn['duration_s']}s"
+        if turn.get("detail"):
+            t += f"（{turn['detail']}）"
+        lines.append(t)
+    cards = d.get("cards") or []
+    lines.append(f"验收卡: {len(cards)} 张" if cards else "验收卡: 无")
+    for c in cards:
+        row = f"- [{c.get('status')}] 递给 @{c.get('reviewer')}"
+        if c.get("decided_by"):
+            row += f"，{c['decided_by']} 处理于 {c.get('decided_at')}"
+        if c.get("note"):
+            row += f"；note: {c['note']}"
+        lines.append(row)
+        if c.get("status") == "gate_failed" and c.get("gate_output_tail"):
+            lines.append("  闸门输出（尾部）:")
+            lines.extend(
+                "    " + ln for ln in c["gate_output_tail"].splitlines()[-15:]
+            )
+    plat = d.get("platform") or {}
+    disk = plat.get("disk")
+    if disk:
+        lines.append(
+            f"磁盘: 可用 {disk.get('free_gb')}G / {disk.get('total_gb')}G"
+            f"（已用 {disk.get('used_pct')}%）"
+        )
+    credits = plat.get("credits") or {}
+    cred = "不限" if credits.get("unlimited") else f"剩 {credits.get('remaining')}"
+    lines.append(
+        f"并发: 全站运行中 {plat.get('active_turns', '?')} 轮，"
+        f"本项目排队 {plat.get('queued_turns', 0)}；额度: {cred}"
+    )
+    return "\n".join(lines)
+
+
 def _print_api_index() -> None:
     """List available operations from our FastAPI /openapi.json (like Restish,
     but built from OUR live spec). Lets `cheese api` self-describe what raw calls
@@ -185,6 +236,11 @@ def main() -> None:
     pm.add_argument("--due", default=None, help="ISO 日期,如 2026-06-20")
 
     sub.add_parser("members", help="列出项目成员(名字+handle+角色)")
+
+    sub.add_parser(
+        "status",
+        help="平台状态快照:本轮时间预算/验收卡与闸门输出/磁盘与额度水位",
+    )
 
     psv = sub.add_parser("serve", help="把容器里跑起来的应用设为当前预览(先起在 0.0.0.0:$CHEESE_APP_PORT)")
     psv.add_argument("note", nargs="?", default="app",
@@ -295,6 +351,10 @@ def main() -> None:
         for m in rows:
             h = m.get("user_handle")
             print(f"- {m.get('name')}（{m.get('role')}）→ 在消息里写 <@{h}> 点名 ta")
+    elif a.cmd == "status":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        d = _call("GET", f"/topics/{topic}/status").get("data") or {}
+        print(_format_status(d))
     elif a.cmd == "serve":
         topic = _need("CHEESE_TOPIC", TOPIC)
         port = os.environ.get("CHEESE_APP_PORT", "3000")

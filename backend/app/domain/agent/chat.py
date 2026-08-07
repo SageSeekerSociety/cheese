@@ -13,6 +13,7 @@ never hold a transaction open across the model round-trip.
 import asyncio
 import logging
 import re
+import shutil
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -50,6 +51,8 @@ from app.domain.memory.store import memory_store
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.repositories import AcceptCardRepository
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
@@ -311,6 +314,74 @@ def _chipify_paths(fact: str) -> str:
     return _BARE_PATH_RE.sub(r"<&\1>", fact)
 
 
+# Open (non-final) accept-card statuses, worth telling the agent about at turn
+# start — a card in one of these states usually implies "there is follow-up
+# work or a wait the agent should know it's in".
+_OPEN_CARD_STATUSES = (
+    AcceptStatus.pending,
+    AcceptStatus.pending_gate,
+    AcceptStatus.gate_failed,
+    AcceptStatus.conflict,
+)
+
+_OPEN_CARD_HINTS = {
+    AcceptStatus.pending: "闸门已过，等 {reviewer} 采纳",
+    AcceptStatus.pending_gate: "闸门检查进行中",
+    AcceptStatus.gate_failed: (
+        "闸门检查未过——用 `cheese status` 看失败输出，修复后重新递卡"
+    ),
+    AcceptStatus.conflict: "采纳时发现合并冲突，待处理",
+}
+
+
+def _workspace_disk(root: str) -> tuple[int, int] | None:
+    """(free, total) bytes of the workspace filesystem; None when the root
+    doesn't exist (fresh deploy, unit tests without a workspace)."""
+    try:
+        du = shutil.disk_usage(root)
+    except OSError:
+        return None
+    return du.free, du.total
+
+
+def _turn_meta_lines(
+    *,
+    budget_s: float,
+    is_resume: bool,
+    disk: tuple[int, int] | None,
+    open_cards: list[AcceptCard] | None,
+) -> list[str]:
+    """盲飞防护: the run facts an agent has no other way to see — its own time
+    budget, whether it's a continuation, disk headroom, and where this topic's
+    accept cards stand. Plain bullet lines so the prompt stays small."""
+    minutes = max(1, int(budget_s // 60))
+    lines = [
+        f"- 时间预算：本轮最多约 {minutes} 分钟，到点会被平台中断（之后自动续跑一次）。"
+        "长活边做边落盘/提交，别把成果都压在最后一步。"
+    ]
+    if is_resume:
+        lines.append(
+            "- 本轮是自动续跑：上一轮被中断后接着跑。"
+            "先确认上一轮做到哪了再继续，别重做。"
+        )
+    if disk is not None:
+        free_b, total_b = disk
+        if total_b > 0:
+            used_pct = round((total_b - free_b) * 100 / total_b)
+            line = f"- 工作区磁盘：可用 {free_b / 2**30:.1f}G（已用 {used_pct}%）。"
+            if used_pct >= 90:
+                line += "空间紧张——先清理自己产生的临时文件再写大文件。"
+            lines.append(line)
+    for card in open_cards or []:
+        hint = _OPEN_CARD_HINTS.get(card.status)
+        if hint:
+            lines.append(
+                "- 本话题验收卡：" + hint.format(reviewer=f"@{card.reviewer_handle}")
+            )
+    lines.append("- 要看完整平台状态（验收卡/闸门输出/额度），运行 `cheese status`。")
+    return lines
+
+
 def _build_system_prompt(
     base: str,
     skills: str,
@@ -320,6 +391,7 @@ def _build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
+    turn_meta: list[str] | None = None,
 ) -> str:
     parts = [base]
     if untitled:
@@ -362,6 +434,10 @@ def _build_system_prompt(
     if memories:
         facts = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
         parts.append(f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}")
+    if turn_meta:
+        parts.append(
+            "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
+        )
     return "\n\n".join(parts)
 
 
@@ -496,6 +572,9 @@ class ChatService:
     ):
         self._sessions = session_factory
         self._base_prompt = base_system_prompt
+        # For the turn-meta disk line only; sandbox mounting still goes through
+        # the compute pool below.
+        self._workspace_root = workspace_root
         # Compute side of the two-pool model: a provider owns sandbox creation +
         # turn execution + workspace checkpointing (design §3/v3, review R2). The
         # turn path talks to the pool, never to a sandbox dict. Defaults to a local
@@ -1312,6 +1391,18 @@ class ChatService:
             project_id = topic.project_id
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
+            # 盲飞防护: this topic's open accept cards, surfaced in the prompt's
+            # turn-meta header so the agent knows a gate/adoption is pending
+            # without polling.
+            open_cards = []
+            if not is_private:
+                open_cards = [
+                    c
+                    for c in await AcceptCardRepository(session).list_for_topic(
+                        topic_id
+                    )
+                    if c.status in _OPEN_CARD_STATUSES
+                ]
             # Which compute this topic runs on (v4): topic → project sticky → team.
             compute_id = _resolve_compute_id(
                 project.settings if project else None,
@@ -1337,6 +1428,12 @@ class ChatService:
             roster,
             topic_refs,
             untitled,
+            turn_meta=_turn_meta_lines(
+                budget_s=settings.agent_turn_timeout_s,
+                is_resume=is_resume,
+                disk=_workspace_disk(self._workspace_root),
+                open_cards=open_cards,
+            ),
         )
         final_text = ""
         new_session_id = resume_session_id
