@@ -1,5 +1,6 @@
 """Topic routes."""
 
+import shutil
 import uuid
 from dataclasses import asdict
 from typing import Annotated
@@ -31,6 +32,8 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.models import AcceptCard
+from app.domain.review.repositories import AcceptCardRepository
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.schemas import (
@@ -42,7 +45,7 @@ from app.domain.topic.schemas import (
     UpgradeBlockIn,
 )
 from app.domain.topic.services import TopicService
-from app.domain.usage.repositories import UsageRepository
+from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
@@ -118,6 +121,77 @@ async def topic_usage(topic_id: uuid.UUID, db: DbSession) -> dict:
     """资源用量 (spec §9.1): token/cost for this topic."""
     await TopicService(db).get_or_404(topic_id)
     return ok(await UsageRepository(db).for_topic(topic_id))
+
+
+# The agent-facing gate-output slice: enough to read the failure, small enough
+# for a prompt. The full output is already capped at persist time (GATE_TAIL).
+_GATE_OUTPUT_TAIL = 2000
+
+
+def _card_snapshot(card: AcceptCard) -> dict:
+    return {
+        "id": str(card.id),
+        "status": str(card.status),
+        "reviewer": card.reviewer_handle,
+        "decided_by": card.decided_by,
+        "decided_at": card.decided_at.isoformat() if card.decided_at else None,
+        "note": card.note,
+        "gate_passed_at": (
+            card.gate_passed_at.isoformat() if card.gate_passed_at else None
+        ),
+        "gate_output_tail": card.gate_output[-_GATE_OUTPUT_TAIL:],
+        "created_at": card.created_at.isoformat(),
+    }
+
+
+def _disk_snapshot(root: str) -> dict | None:
+    try:
+        du = shutil.disk_usage(root)
+    except OSError:
+        return None
+    used_pct = round((du.total - du.free) * 100 / du.total) if du.total else None
+    return {
+        "free_gb": round(du.free / 2**30, 1),
+        "total_gb": round(du.total / 2**30, 1),
+        "used_pct": used_pct,
+    }
+
+
+@router.get("/{topic_id}/status")
+async def topic_status(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+) -> dict:
+    """盲飞防护: one snapshot of "what is going on" for this topic — accept
+    cards with their gate output, the current/last turn's time budget, and the
+    platform waterlines (disk/queue/credits) — so an agent (via `cheese
+    status`) or a debugging human doesn't have to poll several endpoints and
+    guess. Read path, open like the rest of the MVP read surface."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    cards = await AcceptCardRepository(db).list_for_topic(topic_id)
+    credits = await ComputeGrantRepository(db).summary(topic.project_id)
+    return ok(
+        {
+            "topic": {
+                "id": str(topic.id),
+                "title": topic.title,
+                "status": str(topic.status),
+                "branch": topic.branch_name,
+            },
+            "turn": runner.topic_turn(topic_id),
+            "cards": [_card_snapshot(c) for c in cards],
+            "platform": {
+                "active_turns": runner.active_turns(),
+                "queued_turns": runner.project_queue_depth(topic.project_id),
+                "disk": _disk_snapshot(settings.workspace_root),
+                "credits": {
+                    "unlimited": credits["unlimited"],
+                    "remaining": credits["credits_remaining"],
+                },
+            },
+        }
+    )
 
 
 @router.get("/{topic_id}/children")

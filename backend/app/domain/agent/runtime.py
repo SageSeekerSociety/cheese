@@ -163,6 +163,27 @@ class TurnRunner:
         redeploy can drain (wait for running turns) instead of killing them."""
         return len(self._tasks)
 
+    def topic_turn(self, topic_id: uuid.UUID) -> dict | None:
+        """Latest lifecycle record for this topic, with the wall-clock budget —
+        the agent-facing "how much time do I have" figure that otherwise exists
+        only as the runner's private timeout. Ring-buffer-backed, so None after
+        a restart or ~100 turns elsewhere."""
+        key = str(topic_id)
+        for rec in reversed(self._recent):
+            if rec["topic_id"] != key:
+                continue
+            out = dict(rec)
+            out["budget_s"] = round(self._timeout)
+            if rec["status"] == "running":
+                elapsed = time.time() - rec["started_at"]
+                out["budget_left_s"] = max(0, round(self._timeout - elapsed))
+            return out
+        return None
+
+    def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
+        """Turns currently waiting on this project's concurrency semaphore."""
+        return self._project_waiting.get(str(project_id), 0)
+
     def submit(
         self,
         chat_service,
