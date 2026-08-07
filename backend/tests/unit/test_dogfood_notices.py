@@ -219,7 +219,8 @@ async def test_watch_dogfood_push_skips_silently_if_topic_is_gone(
 async def test_watch_dogfood_push_retries_a_flaky_post_until_it_lands(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(asyncio, "sleep", lambda *_: asyncio.sleep(0))
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda *_: real_sleep(0))
     topic_id, project_id = uuid.uuid4(), uuid.uuid4()
     sink = _wire_fake_db(
         monkeypatch, topic=FakeTopic(topic_id, project_id), fail_times=2
@@ -235,7 +236,8 @@ async def test_watch_dogfood_push_retries_a_flaky_post_until_it_lands(
 async def test_watch_dogfood_push_gives_up_quietly_after_exhausting_retries(
     tmp_path, monkeypatch, caplog
 ):
-    monkeypatch.setattr(asyncio, "sleep", lambda *_: asyncio.sleep(0))
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda *_: real_sleep(0))
     topic_id, project_id = uuid.uuid4(), uuid.uuid4()
     sink = _wire_fake_db(
         monkeypatch, topic=FakeTopic(topic_id, project_id), fail_times=99

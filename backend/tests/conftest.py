@@ -33,6 +33,11 @@ from sqlalchemy.pool import NullPool
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
 
+# Client construction validates credentials before the mocked transport is used.
+# Keep the suite hermetic instead of depending on a developer or CI secret.
+os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
+os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", "test-anthropic-token")
+
 # Bind the app engine (app.core.db — the single pool; app.db.session re-exports
 # it) to THIS worker's integration DB — must happen before any app import (the
 # engine is built from settings.database_url at import time). -------------------
