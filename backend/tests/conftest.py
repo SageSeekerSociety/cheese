@@ -227,7 +227,96 @@ async def _admin_recreate_db(db_name: str) -> None:
         await conn.close()
 
 
-def _create_and_migrate(db_name: str, db_url: str) -> None:
+def _migration_fingerprint() -> str:
+    """Identity of the migration history, so a template built from an older one
+    is never reused."""
+    import hashlib
+    from pathlib import Path
+
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    digest = hashlib.sha256()
+    for path in sorted(versions.glob("*.py")):
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+_TEMPLATE_DB = f"cheesex_tpl_{_migration_fingerprint()}"
+
+
+async def _db_exists(db_name: str) -> bool:
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        return bool(
+            await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", db_name)
+        )
+    finally:
+        await conn.close()
+
+
+async def _clone_db(db_name: str, template: str) -> None:
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)')
+        await conn.execute(f'CREATE DATABASE "{db_name}" TEMPLATE "{template}"')
+    finally:
+        await conn.close()
+
+
+async def _rename_db(old: str, new: str) -> None:
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(f'DROP DATABASE IF EXISTS "{new}" WITH (FORCE)')
+        await conn.execute(f'ALTER DATABASE "{old}" RENAME TO "{new}"')
+    finally:
+        await conn.close()
+
+
+def _ensure_template() -> bool:
+    """Build (once per machine, per migration history) a migrated template other
+    databases are copied from. Returns False if anything went wrong, so the
+    caller can fall back to migrating directly.
+
+    Every xdist worker used to replay the entire history into its own database:
+    a dozen concurrent transactions each creating ~90 tables with their indexes
+    exhausts Postgres's preallocated lock table, and the server refuses with
+    "out of shared memory" — which killed every worker's migration and errored
+    the whole session before a single test ran. A service container cannot be
+    given a larger lock table (no way to pass server arguments), so the fix is
+    to stop asking for that many locks: migrate once, then clone.
+
+    The template is built under a temporary name and renamed on success, so its
+    existence means "complete" — a run killed mid-migration leaves the failed
+    build behind, not a half-migrated template that later runs would trust.
+    """
+    import fcntl
+    import tempfile
+    from pathlib import Path
+
+    lock_path = Path(tempfile.gettempdir()) / f"{_TEMPLATE_DB}.lock"
+    try:
+        with open(lock_path, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if asyncio.run(_db_exists(_TEMPLATE_DB)):
+                return True
+            building = f"{_TEMPLATE_DB}_building"
+            _migrate_fresh_db(building, f"{_PG_BASE}/{building}")
+            asyncio.run(_rename_db(building, _TEMPLATE_DB))
+            return True
+    except Exception:  # noqa: BLE001 — fall back to the slow path, never block
+        return False
+
+
+def _migrate_fresh_db(db_name: str, db_url: str) -> None:
     """Drop + recreate a database and migrate it to head (alembic)."""
     import subprocess
     import sys
@@ -257,6 +346,19 @@ def _create_and_migrate(db_name: str, db_url: str) -> None:
         )
 
 
+def _create_and_migrate(db_name: str, db_url: str) -> None:
+    """This worker's database, at head — cloned from the shared template when
+    one could be built, migrated directly otherwise."""
+    if _TEMPLATE_READY:
+        asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
+        return
+    _migrate_fresh_db(db_name, db_url)
+
+
+# Built lazily by the first worker to reach the fixture; the rest clone it.
+_TEMPLATE_READY = False
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _pg_schema():
     """Create + migrate THIS worker's two dedicated databases once per session:
@@ -266,6 +368,8 @@ def _pg_schema():
     are per-worker, so nothing races across xdist workers. Talks to the Postgres
     server at TEST_PG_BASE (local docker pg :5433 by default; CI overrides it).
     """
+    global _TEMPLATE_READY
+    _TEMPLATE_READY = _ensure_template()
     _create_and_migrate(_INTG_DB_NAME, settings.database_url)
     _create_and_migrate(_CLIENT_DB_NAME, TEST_DATABASE_URL)
     yield
