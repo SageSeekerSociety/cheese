@@ -27,9 +27,23 @@ class TopicStatus(enum.StrEnum):
 
 
 class TopicKind(enum.StrEnum):
+    """What a node in the tree IS — a place you talk in, or a piece of work.
+
+    ``root``/``topic`` are rooms: they hold a roster, they outlive the work done
+    in them, and they are what the sidebar lists. ``task`` is one piece of work
+    inside a room — it carries the branch, the accept card and the progress, it
+    ends when accepted, and the room it lives in does not end with it. The UI
+    renders a task as a card in the room's timeline rather than a tree node.
+
+    ``subtopic`` is what tasks were called when a room and a piece of work were
+    the same object. Kept so existing rows keep working; nothing new is created
+    with it.
+    """
+
     root = "root"  # 根话题 = 项目本身, 芝士本体
-    topic = "topic"  # 二级话题
-    subtopic = "subtopic"  # 三级+, 芝士分身工作处
+    topic = "topic"  # 二级话题 = 房间
+    task = "task"  # 一件事: 带分支/验收卡, 完成即结束, 房间照常活着
+    subtopic = "subtopic"  # 历史值: task 的前身
 
 
 class TopicRole(enum.StrEnum):
