@@ -6,7 +6,10 @@ project default and freezes once the topic has run (session_id set).
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
+from app.domain.project.repositories import ProjectRepository
+from app.domain.team.models import Team
 from app.domain.topic.repositories import TopicRepository
 
 
@@ -43,6 +46,35 @@ def test_new_topic_inherits_default_and_is_unlocked(client):
     assert body["locked"] is False
     assert body["inherited"] is True
     assert "local-docker" in {p["id"] for p in body["profiles"]}
+
+
+def test_fresh_project_inherits_its_team_default(client):
+    pid = _project(client)
+    tid = _topic(client, pid)
+
+    async def _seed_team_default() -> None:
+        async with client.test_factory() as session:
+            now = datetime.now(UTC)
+            team = Team(
+                name="Default compute team",
+                intro="",
+                description="",
+                avatar_id=1,
+                compute_profile="remote-cheesed",
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(team)
+            await session.flush()
+            project = await ProjectRepository(session).get(uuid.UUID(pid))
+            project.team_id = team.id
+            await session.commit()
+
+    asyncio.run(_seed_team_default())
+    body = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]
+    assert body["current"] == "remote-cheesed"
+    assert body["sticky"] == "remote-cheesed"
+    assert body["inherited"] is True
 
 
 def test_select_persists_to_topic_and_project_sticky(client):

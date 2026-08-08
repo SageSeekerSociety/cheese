@@ -13,12 +13,13 @@ never hold a transaction open across the model round-trip.
 import asyncio
 import logging
 import re
+import shutil
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
@@ -50,6 +51,9 @@ from app.domain.memory.store import memory_store
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.repositories import AcceptCardRepository
+from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -245,15 +249,26 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 
 
 def _resolve_compute_id(
-    project_settings: dict | None, topic_compute_profile: str | None = None
+    project_settings: dict | None,
+    topic_compute_profile: str | None = None,
+    team_compute_profile: str | None = None,
 ) -> str | None:
     """The compute pool a turn runs on (execution-architecture v4 会话级选择): the
-    topic's own selection wins, else the project's sticky default, else None (the
-    ComputePool default). An id that isn't deployed here is ignored by
-    ``ComputePool.select`` and degrades to the default — never breaks a turn."""
+    topic's own selection wins, else the project's sticky memory, then the team's
+    default, else None (the ComputePool default). An id that isn't deployed here
+    is ignored by ``ComputePool.select`` and degrades to the default — never breaks
+    a turn."""
     if topic_compute_profile:
         return topic_compute_profile
-    return (project_settings or {}).get("compute_profile")
+    return (project_settings or {}).get("compute_profile") or team_compute_profile
+
+
+async def _team_compute_profile(session: AsyncSession, project) -> str | None:
+    """Load the owning team's default without making Project own the setting."""
+    if project is None or project.team_id is None:
+        return None
+    team = await TeamRepository(session).get_by_id(project.team_id)
+    return team.compute_profile if team is not None else None
 
 
 def _transient_provider_error(result: AgentResult) -> bool:
@@ -299,6 +314,74 @@ def _chipify_paths(fact: str) -> str:
     return _BARE_PATH_RE.sub(r"<&\1>", fact)
 
 
+# Open (non-final) accept-card statuses, worth telling the agent about at turn
+# start — a card in one of these states usually implies "there is follow-up
+# work or a wait the agent should know it's in".
+_OPEN_CARD_STATUSES = (
+    AcceptStatus.pending,
+    AcceptStatus.pending_gate,
+    AcceptStatus.gate_failed,
+    AcceptStatus.conflict,
+)
+
+_OPEN_CARD_HINTS = {
+    AcceptStatus.pending: "闸门已过，等 {reviewer} 采纳",
+    AcceptStatus.pending_gate: "闸门检查进行中",
+    AcceptStatus.gate_failed: (
+        "闸门检查未过——用 `cheese status` 看失败输出，修复后重新递卡"
+    ),
+    AcceptStatus.conflict: "采纳时发现合并冲突，待处理",
+}
+
+
+def _workspace_disk(root: str) -> tuple[int, int] | None:
+    """(free, total) bytes of the workspace filesystem; None when the root
+    doesn't exist (fresh deploy, unit tests without a workspace)."""
+    try:
+        du = shutil.disk_usage(root)
+    except OSError:
+        return None
+    return du.free, du.total
+
+
+def _turn_meta_lines(
+    *,
+    budget_s: float,
+    is_resume: bool,
+    disk: tuple[int, int] | None,
+    open_cards: list[AcceptCard] | None,
+) -> list[str]:
+    """盲飞防护: the run facts an agent has no other way to see — its own time
+    budget, whether it's a continuation, disk headroom, and where this topic's
+    accept cards stand. Plain bullet lines so the prompt stays small."""
+    minutes = max(1, int(budget_s // 60))
+    lines = [
+        f"- 时间预算：本轮最多约 {minutes} 分钟，到点会被平台中断（之后自动续跑一次）。"
+        "长活边做边落盘/提交，别把成果都压在最后一步。"
+    ]
+    if is_resume:
+        lines.append(
+            "- 本轮是自动续跑：上一轮被中断后接着跑。"
+            "先确认上一轮做到哪了再继续，别重做。"
+        )
+    if disk is not None:
+        free_b, total_b = disk
+        if total_b > 0:
+            used_pct = round((total_b - free_b) * 100 / total_b)
+            line = f"- 工作区磁盘：可用 {free_b / 2**30:.1f}G（已用 {used_pct}%）。"
+            if used_pct >= 90:
+                line += "空间紧张——先清理自己产生的临时文件再写大文件。"
+            lines.append(line)
+    for card in open_cards or []:
+        hint = _OPEN_CARD_HINTS.get(card.status)
+        if hint:
+            lines.append(
+                "- 本话题验收卡：" + hint.format(reviewer=f"@{card.reviewer_handle}")
+            )
+    lines.append("- 要看完整平台状态（验收卡/闸门输出/额度），运行 `cheese status`。")
+    return lines
+
+
 def _build_system_prompt(
     base: str,
     skills: str,
@@ -308,6 +391,7 @@ def _build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
+    turn_meta: list[str] | None = None,
 ) -> str:
     parts = [base]
     if untitled:
@@ -350,6 +434,10 @@ def _build_system_prompt(
     if memories:
         facts = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
         parts.append(f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}")
+    if turn_meta:
+        parts.append(
+            "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
+        )
     return "\n\n".join(parts)
 
 
@@ -484,6 +572,9 @@ class ChatService:
     ):
         self._sessions = session_factory
         self._base_prompt = base_system_prompt
+        # For the turn-meta disk line only; sandbox mounting still goes through
+        # the compute pool below.
+        self._workspace_root = workspace_root
         # Compute side of the two-pool model: a provider owns sandbox creation +
         # turn execution + workspace checkpointing (design §3/v3, review R2). The
         # turn path talks to the pool, never to a sandbox dict. Defaults to a local
@@ -1019,6 +1110,14 @@ class ChatService:
     _GW_CKPT = "llm_gateway_usage_ckpt"
     _GW_BUDGET = "llm_gateway_budget_usd"
 
+    async def project_gateway_key(self, project_id: uuid.UUID) -> str | None:
+        """The project's virtual gateway key, minted on first use — the same one
+        a local sandbox turn runs on. Public because the remote-machine LLM proxy
+        (routes/llm_proxy.py) has to swap it in per request: a machine off the box
+        never receives a provider credential, only its own scoped cheese token."""
+        env = await self._gateway_project_env(project_id)
+        return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
+
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn: mint (once) and return the
         project's virtual key, and keep its L2 max_budget in step with the
@@ -1300,10 +1399,31 @@ class ChatService:
             project_id = topic.project_id
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
-            # Which compute this topic runs on (v4): topic选择 → project sticky.
+            # 盲飞防护: this topic's open accept cards, surfaced in the prompt's
+            # turn-meta header so the agent knows a gate/adoption is pending
+            # without polling.
+            open_cards = []
+            if not is_private:
+                open_cards = [
+                    c
+                    for c in await AcceptCardRepository(session).list_for_topic(
+                        topic_id
+                    )
+                    if c.status in _OPEN_CARD_STATUSES
+                ]
+            # Which compute this topic runs on (v4): topic → project sticky → team.
             compute_id = _resolve_compute_id(
-                project.settings if project else None, topic.compute_profile
+                project.settings if project else None,
+                topic.compute_profile,
+                await _team_compute_profile(session, project),
             )
+            provider = self._compute.select(provider_id=compute_id)
+            if topic.compute_profile is None:
+                # v4 affinity red line: materialize the effective target BEFORE
+                # the first provider call. A later team-default/sticky change must
+                # never move an existing work tree or resumable Claude session.
+                topic.compute_profile = provider.name
+                await session.commit()
 
         # --- streaming: no DB transaction held open ---
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
@@ -1316,6 +1436,12 @@ class ChatService:
             roster,
             topic_refs,
             untitled,
+            turn_meta=_turn_meta_lines(
+                budget_s=settings.agent_turn_timeout_s,
+                is_resume=is_resume,
+                disk=_workspace_disk(self._workspace_root),
+                open_cards=open_cards,
+            ),
         )
         final_text = ""
         new_session_id = resume_session_id
@@ -1328,7 +1454,6 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        provider = self._compute.select(provider_id=compute_id)
         model_kwargs, gateway_routed = await self._model_kwargs(project_id)
 
         # Backfill any 现场 events the live hook path missed (backend down / no
@@ -1819,7 +1944,10 @@ class ChatService:
             )
             memories = await memory.recall(MemoryScope.project, str(project_id))
             topic_id = topic.id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
             await session.commit()
 
         # --- run 芝士 with the activity-digestion skill + tools ---
@@ -1903,7 +2031,10 @@ class ChatService:
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
             root_topic_id = project.root_topic_id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}] ({t.kind.value})"
@@ -1988,7 +2119,10 @@ class ChatService:
             upcoming = await milestones.list_calendar(project_id)
             memories = await memory.recall(MemoryScope.project, str(project_id))
             role = await resolve_role_description(session, project.expert_role)
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}]"

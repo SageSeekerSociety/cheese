@@ -89,7 +89,7 @@ watch(
         <button type="button" class="cp-chip" v-bind="menuProps" :disabled="loading">
           <v-icon size="13">{{ iconFor(state.current) }}</v-icon>
           {{ labelFor(state.current) }}
-          <span v-if="state.inherited" class="cp-inherit">· 跟随项目</span>
+          <span v-if="state.inherited" class="cp-inherit">· 沿用上次</span>
           <v-icon size="13" class="cp-caret">mdi-menu-up</v-icon>
         </button>
       </template>

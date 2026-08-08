@@ -22,6 +22,7 @@ pytestmark = pytest.mark.anyio
 class FakeDevices:
     def __init__(self):
         self.assigned: list[tuple[str, uuid.UUID]] = []
+        self.team_assigned: list[tuple[str, int]] = []
         self.started: list[str] = []
 
     async def start(self, name):
@@ -35,6 +36,17 @@ class FakeDevices:
 
     async def assign_to_project(self, device_id, project_id, *, actor_user_id):
         self.assigned.append((device_id, project_id))
+
+    async def assign_to_team(self, device_id, team_id, *, actor_user_id):
+        self.team_assigned.append((device_id, team_id))
+
+
+class FakeProjects:
+    def __init__(self, team_id=None):
+        self.team_id = team_id
+
+    async def get(self, project_id):
+        return SimpleNamespace(id=project_id, team_id=self.team_id)
 
 
 class FakeMachineRepo:
@@ -77,12 +89,19 @@ def make_machine(**overrides):
     return SimpleNamespace(**base)
 
 
-def build_service(monkeypatch, *, bootstrap=None, origin="https://cheese.example"):
+def build_service(
+    monkeypatch,
+    *,
+    bootstrap=None,
+    origin="https://cheese.example",
+    team_id=None,
+):
     from app.domain.machine.services import MachineService
 
     service = MachineService.__new__(MachineService)
     service._session = None
     service._repo = FakeMachineRepo()
+    service._projects = FakeProjects(team_id)
     service._devices = FakeDevices()
     service._client = SimpleNamespace(configured=True)
 
@@ -117,6 +136,16 @@ async def test_enrollment_writes_the_credential_the_device_flow_would_have(
     assert "link connect" in script
     assert machine.device_id == "dev123"
     assert service._devices.assigned == [("dev123", machine.project_id)]
+
+
+async def test_team_machine_enrolls_into_the_team_pool(monkeypatch):
+    service, _ = build_service(monkeypatch, team_id=73)
+    machine = make_machine()
+
+    await service.enroll(machine)
+
+    assert service._devices.team_assigned == [("dev123", 73)]
+    assert service._devices.assigned == []
 
 
 async def test_the_bootstrap_key_does_not_outlive_its_one_use(monkeypatch):

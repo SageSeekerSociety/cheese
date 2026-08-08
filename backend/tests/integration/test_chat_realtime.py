@@ -16,6 +16,7 @@ from app.domain.agent.service import (
     AgentSessionInfo,
 )
 from app.domain.project.services import ProjectService
+from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 
 
@@ -42,6 +43,56 @@ class SlowAgent(AgentService):
         yield AgentDelta(text="thinking…")
         await self.release.wait()
         yield AgentResult(text="done", session_id="s1", usage=None)
+
+
+class InstantAgent(AgentService):
+    async def stream_reply(
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
+    ):
+        yield AgentSessionInfo(session_id="s-affinity")
+        yield AgentResult(text="done", session_id="s-affinity", usage=None)
+
+
+@pytest.mark.anyio
+async def test_first_turn_materializes_inherited_compute_before_running(
+    client, tmp_path
+):
+    """Changing a later default must never move an existing topic session."""
+    factory = client.test_factory  # type: ignore[attr-defined]
+    svc = ChatService(
+        session_factory=factory,
+        agent=InstantAgent(model="stub"),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project.settings = {"compute_profile": "local-docker"}
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="start", summon=True
+    ):
+        pass
+
+    async with factory() as session:
+        topic = await TopicRepository(session).get(topic_id)
+        assert topic is not None
+        assert topic.compute_profile == "local-docker"
+        assert topic.session_id == "s-affinity"
 
 
 @pytest.mark.anyio

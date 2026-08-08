@@ -70,6 +70,7 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 | `cheese conclude "<结论>"` | 子话题做完,把结论回流父话题 |
 | `cheese milestone "<标题>" [--due 2026-06-20]` | 把关键节点钉成里程碑 |
 | `cheese members` | 列出项目成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |
+| `cheese status` | 平台状态快照:本轮剩余时间预算、本话题验收卡(含闸门失败输出)、磁盘/排队/额度水位。想知道"卡到哪了/闸门为什么红/还有多少时间"时先跑它,别去轮询原始 API |
 | `cheese artifact <文件> [--as html\|svg]` | 把工作区里的产物设为**当前预览**,渲染进右侧预览窗口 |
 | `cheese serve ["说明"]` | 把**容器里跑起来的应用**设为当前预览。先把 dev server 起在 `0.0.0.0:$CHEESE_APP_PORT`(注意不能只绑 localhost;vite 要 `--host 0.0.0.0`,uvicorn 要 `--host 0.0.0.0`),后台运行(`nohup ... &`),验证 `curl localhost:$CHEESE_APP_PORT` 通了再 serve。**怎么跑这个项目由你判断**(看 README/package.json/pyproject)——每个项目不一样 |
 | `cheese api <METHOD> <path> [--data '<json>']` | **原始 API 逃生口(兜底,不推荐)**。上面的 curated 命令覆盖 80% 场景,优先用它们(语义清晰、有校验)。只有当没有对应的 curated 命令时,才用 `cheese api` 直接打后端。无参 `cheese api` 会列出所有可用操作。它**仍走容器已有鉴权**(不是无鉴权后门,后端照样按你的身份授权),但校验少、易出错——能用 curated 就别用它 |

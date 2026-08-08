@@ -1,3 +1,4 @@
+import type { ComputeProfiles } from '@/cx_types'
 import type {
   ApplicationStatus,
   Page,
@@ -109,6 +110,19 @@ export namespace TeamsApi {
     NewApiInstance.request<{ members: TeamMember[] }>({
       url: `/teams/${teamId}/members`,
       method: 'GET',
+    })
+
+  export const getComputeProfile = (teamId: number) =>
+    NewApiInstance.request<ComputeProfiles>({
+      url: `/teams/${teamId}/compute-profile`,
+      method: 'GET',
+    })
+
+  export const setComputeProfile = (teamId: number, profile: string) =>
+    NewApiInstance.request<{ current: string }>({
+      url: `/teams/${teamId}/compute-profile`,
+      method: 'PUT',
+      data: { profile },
     })
 
   // 团队申请加入请求相关API

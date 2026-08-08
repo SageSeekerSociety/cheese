@@ -611,6 +611,11 @@ const visible = computed<Block[]>(() => {
     if (m.kind === 'message' || m.kind === 'attachment') {
       out.push(m)
     } else if (m.kind === 'event' && m.author_type === 'system') {
+      // 前端报错 events belong to the 现场 drawer (debugging surface), not the
+      // group chat — same rule as tool events (frontend_log.py).
+      if ((m.meta as Record<string, unknown> | null)?.event_type === 'frontend_error') {
+        continue
+      }
       // Collapse a run of identical system lines (e.g. repeated 编辑了文档) so
       // a burst of edits shows as one line, not a wall.
       const prev = out[out.length - 1]

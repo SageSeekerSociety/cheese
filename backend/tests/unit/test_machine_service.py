@@ -104,7 +104,7 @@ class FakeRepo:
         self.rows: list[SimpleNamespace] = []
 
     async def add(self, **kwargs):
-        row = SimpleNamespace(id=uuid.uuid4(), **kwargs)
+        row = SimpleNamespace(id=uuid.uuid4(), device_id=None, **kwargs)
         self.rows.append(row)
         return row
 
@@ -128,6 +128,21 @@ class FakeRepo:
         self.rows.remove(machine)
 
 
+class FakeDevices:
+    def __init__(self):
+        self.devices: dict[str, SimpleNamespace] = {}
+        self.deleted: list[str] = []
+
+    async def get_device(self, device_id):
+        return self.devices.get(device_id)
+
+    async def delete_owned(self, device_id, *, actor_user_id):
+        device = self.devices[device_id]
+        assert device.owner_user_id == actor_user_id
+        self.deleted.append(device_id)
+        del self.devices[device_id]
+
+
 _UNSET = object()
 
 
@@ -136,6 +151,7 @@ def build_service(client=None, project=_UNSET, repo=None):
     service._session = None
     service._client = client or FakeMicroCloud()
     service._repo = repo or FakeRepo()
+    service._devices = FakeDevices()
     if project is _UNSET:
         project = SimpleNamespace(id=uuid.uuid4(), name="Cheese 自建")
     service._projects = SimpleNamespace(get=_returning(project))
@@ -439,3 +455,37 @@ async def test_a_forgotten_machine_disappears_from_the_listing():
 
     assert remaining == [], "a tombstone is not a machine anyone can use"
     assert machine not in await service._repo.list_for_project(project_id)
+
+
+async def test_forgetting_an_enrolled_machine_removes_its_device():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(
+        project_id=project_id, requested_by="andy", owner_user_id=42
+    )
+    machine.device_id = "cloud-device"
+    service._devices.devices[machine.device_id] = SimpleNamespace(owner_user_id=42)
+
+    client.machines.clear()
+    await service.list_for_project(project_id)
+
+    assert service._devices.deleted == ["cloud-device"]
+    assert machine not in await service._repo.list_for_project(project_id)
+
+
+async def test_forgetting_never_deletes_a_device_owned_by_somebody_else():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(
+        project_id=project_id, requested_by="andy", owner_user_id=42
+    )
+    machine.device_id = "reassigned-device"
+    service._devices.devices[machine.device_id] = SimpleNamespace(owner_user_id=99)
+
+    client.machines.clear()
+    await service.list_for_project(project_id)
+
+    assert service._devices.deleted == []
+    assert "reassigned-device" in service._devices.devices

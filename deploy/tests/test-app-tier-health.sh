@@ -107,6 +107,85 @@ test_app_only_deploy_does_not_require_agent_images() {
   echo "PASS: app-only deployment stays compatible with historical releases"
 }
 
+test_local_app_images_skip_registry_pull() {
+  mkdir -p "$ROOT/tmp"
+  run_dir="$(mktemp -d "$ROOT/tmp/local-app-images.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    BACKEND_IMAGE=repo/backend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha \
+    DEPLOY_APP_IMAGE_SOURCE=local \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+
+  grep -Fqx 'image inspect repo/backend:testsha' "$docker_log" || \
+    fail "local deploy did not verify the backend image"
+  grep -Fqx 'image inspect repo/frontend:testsha' "$docker_log" || \
+    fail "local deploy did not verify the frontend image"
+  if grep -F 'pull backend frontend' "$docker_log" >/dev/null; then
+    fail "local deploy unexpectedly pulled app images from the registry"
+  fi
+  rm -rf "$run_dir"
+  echo "PASS: local deployment verifies images without registry pull"
+}
+
+test_local_app_images_must_exist() {
+  mkdir -p "$ROOT/tmp"
+  run_dir="$(mktemp -d "$ROOT/tmp/local-app-missing.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=local_image_missing \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    BACKEND_IMAGE=repo/backend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha \
+    DEPLOY_APP_IMAGE_SOURCE=local \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "local deploy continued with a missing frontend image"
+  fi
+  if grep -F 'run --rm backend' "$docker_log" >/dev/null; then
+    rm -rf "$run_dir"
+    fail "local deploy reached migration after image verification failed"
+  fi
+  rm -rf "$run_dir"
+  echo "PASS: local deployment rejects a missing image before migration"
+}
+
+test_rollback_restores_exact_previous_images() {
+  mkdir -p "$ROOT/tmp"
+  run_dir="$(mktemp -d "$ROOT/tmp/exact-rollback.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=rollback \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    BACKEND_IMAGE=repo/backend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha \
+    DEPLOY_APP_IMAGE_SOURCE=local \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "rollback scenario unexpectedly passed health checks"
+  fi
+  grep -Fqx \
+    'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha' \
+    "$docker_log" || fail "rollback did not restore the exact previous images"
+  rm -rf "$run_dir"
+  echo "PASS: rollback restores exact previous image references"
+}
+
 test_operator_rejects_stale_frontend() {
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=frontend_stale \
@@ -174,6 +253,9 @@ case "$CASE" in
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
   runtime-images) test_deploy_keeps_agent_runtime_images ;;
   app-only) test_app_only_deploy_does_not_require_agent_images ;;
+  local-images) test_local_app_images_skip_registry_pull ;;
+  local-images-missing) test_local_app_images_must_exist ;;
+  rollback-images) test_rollback_restores_exact_previous_images ;;
   operator) test_operator_rejects_stale_frontend ;;
   operator-sha-width) test_operator_uses_registry_sha_width ;;
   workflow) test_workflow_rejects_stale_frontend ;;
@@ -183,6 +265,9 @@ case "$CASE" in
     test_deploy_accepts_healthy_pair
     test_deploy_keeps_agent_runtime_images
     test_app_only_deploy_does_not_require_agent_images
+    test_local_app_images_skip_registry_pull
+    test_local_app_images_must_exist
+    test_rollback_restores_exact_previous_images
     test_operator_rejects_stale_frontend
     test_operator_uses_registry_sha_width
     test_workflow_rejects_stale_frontend

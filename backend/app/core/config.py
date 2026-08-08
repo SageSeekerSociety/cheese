@@ -160,11 +160,16 @@ class Settings(BaseSettings):
     subscription_cap_window_s: int = 5 * 3600
 
     # --- Self-hosted / BYO device compute (P3, fusion-design §5) ---
-    # Public base URL a device reaches the backend at (NO /api suffix): the enrolled
-    # machine's `cheese-hook` POSTs Claude Code hooks to
+    # Public base URL a device reaches the backend at: the enrolled machine's
+    # `cheese-hook` POSTs Claude Code hooks to
     # `{connector_public_base}/connector/hooks/{key}`, and the device-flow approval
     # link is built from it. For a NAT'd device this must be publicly reachable
     # (outbound-only for the link WS; the hook POST is a normal outbound request).
+    # Every machine-facing URL is `{base}/<backend path>`, so the base must map
+    # 1:1 onto the backend's ROOT. Behind a reverse proxy that strips an `/api`
+    # prefix, that means the base ends in `/api` — otherwise `/sandbox/hooks/...`
+    # lands on the SPA, which answers 200/405 and drops every agent event
+    # silently (dev, 2026-08-08: the machine worked, the platform saw nothing).
     connector_public_base: str = "http://localhost:8099"
     # Single-box self-hosting (fusion §5): the host path where enrolled devices see
     # this backend's `workspace_root`. When set, a device screen runs directly in the
@@ -187,11 +192,11 @@ class Settings(BaseSettings):
     # Per-turn wall-clock ceiling for a device turn (mirrors agent_turn_timeout_s).
     device_turn_timeout_s: float = 900.0
 
-    # --- MicroCloud: project machines (the team's IaaS control plane) ---
-    # MicroCloud provisions the Debian machines a project gets as compute. It is
-    # a separate service with its own tenants; cheese is one tenant and holds an
-    # opaque secret. Empty secret = the feature reports itself unavailable, which
-    # is the correct state for any deployment that isn't wired to it.
+    # --- MicroCloud: cloud nodes for the team's compute pool ---
+    # A project remains the billing/audit unit for each machine, but enrollment
+    # binds the resulting device to that project's team. Cheese is one MicroCloud
+    # tenant and keeps the opaque provider secret server-side. Empty secret = the
+    # feature reports itself unavailable without breaking self-hosted compute.
     microcloud_base_url: str = ""
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
@@ -204,8 +209,8 @@ class Settings(BaseSettings):
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
     microcloud_login_user: str = "cheese"
-    # The project's fund account, and the balance kept in it. MicroCloud bills
-    # compute against this; 0 disables top-ups (an operator funds it by hand).
+    # The billing project's fund account, and the balance kept in it. MicroCloud
+    # bills compute against this; 0 disables top-ups (an operator funds it by hand).
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
     # A ceiling per project: provisioning is one API call, and nothing else here

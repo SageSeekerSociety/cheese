@@ -417,5 +417,7 @@ async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
     blob = repr(hub.env)
     assert "UPSTREAM-PROVIDER-KEY" not in blob, "the provider key reached the machine"
     assert "provider.example" not in blob, "the machine was pointed at the upstream"
-    assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/api/llm"
+    # The route is root-mounted (`/llm`), like /sandbox and /connector: the
+    # base already maps 1:1 onto the backend root — see routes/llm_proxy.py.
+    assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/llm"
     assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-token-for-this-topic"

@@ -1,12 +1,26 @@
+from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.deps import team_device_online
 from app.auth.checker import require_auth_user, require_permission
 from app.auth.core import Action, AuthUserInfo, Resource
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.config import settings
+from app.core.errors import (
+    BadRequestError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.db.session import get_db
+from app.domain.agent.market import (
+    compute_default_name,
+    compute_listings,
+    compute_selectable,
+)
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.models import (
     ApplicationStatus,
@@ -57,6 +71,10 @@ class AddTeamMemberRequest(BaseModel):
 
     user_id: int = Field(..., alias="userId", gt=0)
     role: str = "MEMBER"
+
+
+class ComputeProfileRequest(BaseModel):
+    profile: str = ""
 
 
 class CreateTeamInvitationRequest(BaseModel):
@@ -482,6 +500,75 @@ async def get_team(
                 profiles_map=profiles_map,
             )
         },
+    }
+
+
+@router.get(
+    "/{teamId}/compute-profile",
+    summary="Query Team Compute Default",
+)
+async def get_team_compute_profile(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """The team's compute pool and default (execution-architecture v4)."""
+    repo = TeamRepository(session=db)
+    team = await repo.get_by_id(team_id)
+    if team is None or not await repo.is_team_member(team_id, auth_user.user_id):
+        # Compute inventory contains private infrastructure details. Conceal it
+        # from authenticated outsiders just like project machine inventory.
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "id": team_id}
+        )
+    online = await team_device_online(db, team_id)
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "current": team.compute_profile or compute_default_name(),
+            "profiles": [
+                asdict(profile)
+                for profile in compute_listings(settings, device_online=online)
+            ],
+        },
+    }
+
+
+@router.put(
+    "/{teamId}/compute-profile",
+    summary="Update Team Compute Default",
+)
+async def put_team_compute_profile(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    payload: ComputeProfileRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """Set the default inherited by new projects/topics; admin-only."""
+    repo = TeamRepository(session=db)
+    team = await repo.get_by_id(team_id)
+    if team is None or not await repo.is_team_member(team_id, auth_user.user_id):
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "id": team_id}
+        )
+    if not await repo.is_team_at_least_admin(team_id, auth_user.user_id):
+        raise ForbiddenError("Only team owners and admins can change compute")
+
+    name = payload.profile.strip() or compute_default_name()
+    online = await team_device_online(db, team_id)
+    allowed = {
+        profile.id for profile in compute_selectable(settings, device_online=online)
+    }
+    if name not in allowed:
+        raise ValidationError(f"Compute pool {name!r} is not available")
+    team.compute_profile = name
+    team.updated_at = datetime.now(UTC)
+    await db.flush()
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"current": name},
     }
 
 

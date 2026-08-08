@@ -109,3 +109,48 @@ def test_raw_request_sends_cheese_token(monkeypatch):
     assert seen["url"] == "http://backend/api/topics/x/blocks"
     assert seen["method"] == "GET"
     assert seen["token"] == "tok-123"
+
+
+def test_status_subcommand_calls_status_endpoint(monkeypatch, capsys):
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    seen: dict[str, object] = {}
+
+    def fake_call(method: str, path: str, body: dict | None = None) -> dict:
+        seen.update(method=method, path=path, body=body)
+        return {"data": {"topic": {"title": "修东西", "status": "active"}}}
+
+    monkeypatch.setattr(cli, "_call", fake_call)
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "status"])
+    cli.main()
+    assert seen["method"] == "GET"
+    assert seen["path"] == "/topics/t-1/status"
+    assert "修东西" in capsys.readouterr().out
+
+
+def test_format_status_renders_budget_cards_and_waterlines():
+    cli = _load()
+    out = cli._format_status(
+        {
+            "topic": {"title": "T", "status": "active", "branch": "topic/x"},
+            "turn": {"status": "running", "budget_s": 900, "budget_left_s": 300},
+            "cards": [
+                {
+                    "status": "gate_failed",
+                    "reviewer": "alice",
+                    "gate_output_tail": "FAIL: ruff\nResult: 0/3 passed",
+                }
+            ],
+            "platform": {
+                "active_turns": 1,
+                "queued_turns": 0,
+                "disk": {"free_gb": 10.0, "total_gb": 100.0, "used_pct": 90},
+                "credits": {"unlimited": True},
+            },
+        }
+    )
+    assert "还剩 300s" in out
+    assert "闸门输出（尾部）" in out
+    assert "Result: 0/3 passed" in out
+    assert "已用 90%" in out
+    assert "额度: 不限" in out

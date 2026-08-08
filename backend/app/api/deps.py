@@ -28,6 +28,7 @@ __all__ = [
     "get_broker",
     "get_turn_runner",
     "project_device_online",
+    "team_device_online",
 ]
 
 
@@ -38,6 +39,13 @@ async def project_device_online(db: AsyncSession, project_id: uuid.UUID) -> bool
     compute-profile routes to scope the 自托管设备 pool to a project's own machines."""
     service = DeviceService(SqlDeviceRepository(db))
     return await service.project_has_online_device(project_id, device_hub.is_online)
+
+
+async def team_device_online(db: AsyncSession, team_id: int) -> bool:
+    """Whether one of the team's registered compute nodes is connected now."""
+    service = DeviceService(SqlDeviceRepository(db))
+    devices = await service.list_devices_for_team(team_id)
+    return any(device_hub.is_online(device.device_id) for device in devices)
 
 
 @lru_cache

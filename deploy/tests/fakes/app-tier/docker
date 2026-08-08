@@ -6,13 +6,20 @@ tag="${APP_TIER_MAIN_SHA:-testsha}"
 
 if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$APP_TIER_DOCKER_LOG"
+  if [ "${1:-}" = compose ] && [[ "$*" == *" up -d backend frontend"* ]]; then
+    printf 'compose-up-env BACKEND_IMAGE=%s FRONTEND_IMAGE=%s IMAGE_TAG=%s\n' \
+      "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" \
+      >> "$APP_TIER_DOCKER_LOG"
+  fi
 fi
 
 emit_named_rows() {
   printf 'cheese-backend-1 repo/backend:%s\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then
     frontend_tag="$tag"
-    [ "$scenario" = "frontend_stale" ] && frontend_tag="old9999"
+    if [ "$scenario" = frontend_stale ] || [ "$scenario" = rollback ]; then
+      frontend_tag="old9999"
+    fi
     printf 'cheese-frontend-1 repo/frontend:%s\n' "$frontend_tag"
   fi
 }
@@ -21,7 +28,9 @@ emit_contract_rows() {
   printf 'backend\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then
     frontend_tag="$tag"
-    [ "$scenario" = "frontend_stale" ] && frontend_tag="old9999"
+    if [ "$scenario" = frontend_stale ] || [ "$scenario" = rollback ]; then
+      frontend_tag="old9999"
+    fi
     printf 'frontend\trepo/frontend:%s\trunning\tUp 1 minute (healthy)\n' \
       "$frontend_tag"
   fi
@@ -41,10 +50,39 @@ if [ "${1:-}" = "compose" ]; then
   done
 
   case "${1:-}" in
-    ps|images)
+    ps)
+      if [ "${2:-}" = -q ] && [ "$scenario" = rollback ]; then
+        case "${3:-}" in
+          backend) printf 'backend-container\n' ;;
+          frontend) printf 'frontend-container\n' ;;
+        esac
+      fi
+      ;;
+    images)
       ;;
     pull|run|up|exec)
       ;;
+  esac
+  exit 0
+fi
+
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+  if [ "$scenario" = local_image_missing ] && \
+    [ "${3:-}" = repo/frontend:testsha ]; then
+    exit 1
+  fi
+  exit 0
+fi
+
+if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
+  case "${3:-}" in
+    *Config.Image*)
+      case "${4:-}" in
+        backend-container) printf 'repo/backend:oldsha\n' ;;
+        frontend-container) printf 'repo/frontend:oldsha\n' ;;
+      esac
+      ;;
+    *com.cheese.image_tag*) printf 'oldsha\n' ;;
   esac
   exit 0
 fi
