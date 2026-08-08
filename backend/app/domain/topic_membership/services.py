@@ -28,6 +28,7 @@ _MANAGER_ROLES = frozenset({TopicRole.owner, TopicRole.admin})
 
 class TopicMemberService:
     def __init__(self, session: AsyncSession):
+        self._session = session
         self._repo = TopicMembershipRepository(session)
         self._topics = TopicRepository(session)
 
@@ -81,6 +82,46 @@ class TopicMemberService:
             await self._repo.list_for_topic(topic_id),
             await self._repo.count_for_topic(topic_id),
         )
+
+    async def agent_handles(self, topic_id: uuid.UUID) -> list[str]:
+        """Which of this topic's members are agents, in roster order.
+
+        Derived from the execution binding, never a hard-coded handle check: a
+        member is an agent iff it carries an ``AgentBinding``. Returns every
+        such member, because a room may host more than one 芝士 — callers that
+        need "the agent acting here" want :meth:`resolve_agent_handle`.
+        """
+        from app.domain.identity.repositories import AgentBindingRepository
+        from app.domain.user.repositories import UserRepository
+
+        members = await self._repo.list_for_topic(topic_id)
+        if not members:
+            return []
+        by_handle = await UserRepository(self._session).get_by_handles(
+            [m.member_handle for m in members]
+        )
+        agent_ids = await AgentBindingRepository(self._session).agent_user_ids(
+            [u.id for u in by_handle.values()]
+        )
+        return [
+            m.member_handle
+            for m in members
+            if (user := by_handle.get(m.member_handle)) is not None
+            and user.id in agent_ids
+        ]
+
+    async def resolve_agent_handle(self, topic_id: uuid.UUID) -> str:
+        """The handle 芝士 acts under in this topic — for authoring blocks and
+        keying its memory.
+
+        Falls back to :data:`CHEESE_HANDLE` when the roster resolves to no bound
+        agent. That is the pre-agent-as-user state: rooms seeded before bindings
+        existed carry a plain ``cheese`` member with no user row behind it, and
+        an agent turn still has to answer "who am I". The fallback keeps those
+        rooms working instead of writing an empty author.
+        """
+        handles = await self.agent_handles(topic_id)
+        return handles[0] if handles else CHEESE_HANDLE
 
     async def add(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
