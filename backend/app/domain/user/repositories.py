@@ -33,6 +33,18 @@ class UserRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_handles(self, handles: Sequence[str]) -> dict[str, User]:
+        """Batch handle → user. Roster-wide lookups run on every agent turn, so
+        they must not go N+1 over ``get_by_handle``."""
+        names = {h for h in handles if h}
+        if not names:
+            return {}
+        stmt: Select[tuple[User]] = select(User).where(
+            User.username.in_(names), User.deleted_at.is_(None)
+        )
+        result = await self._session.execute(stmt)
+        return {u.username: u for u in result.scalars()}
+
     async def get_by_id(self, user_id: int) -> User | None:
         stmt: Select[tuple[User]] = select(User).where(
             User.id == user_id, User.deleted_at.is_(None)

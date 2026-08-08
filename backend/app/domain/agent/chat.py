@@ -46,7 +46,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.memory.store import memory_store
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
@@ -57,6 +57,7 @@ from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.workspace import service as ws
@@ -687,7 +688,7 @@ class ChatService:
             # on the summoning message the moment its turn is underway — a
             # deterministic ack. Only a real human summon gets it: a resume /
             # nudge / kickoff turn has no user block and skips this branch.
-            ack = await self._ack_summon(user_block_id)
+            ack = await self._ack_summon(user_block_id, topic_id)
             if ack is not None:
                 yield {"type": "reaction", **ack}
 
@@ -878,20 +879,56 @@ class ChatService:
             await session.commit()
         return payloads, anchor_id
 
-    async def _ack_summon(self, user_block_id: uuid.UUID) -> dict | None:
+    async def _ack_summon(
+        self, user_block_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> dict | None:
         """Add 芝士's ✅ receipt to the summoning user message (idempotent) and
         return the WS reaction payload. Best-effort: a failed receipt must
         never kill the turn."""
         try:
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
-                await blocks.add_reaction_if_absent(user_block_id, "✅", CHEESE_AUTHOR)
+                await blocks.add_reaction_if_absent(
+                    user_block_id, "✅", await self._agent_handle(session, topic_id)
+                )
                 reactions = await blocks.reactions_for_block(user_block_id)
                 await session.commit()
             return {"block_id": str(user_block_id), "reactions": reactions}
         except Exception:  # noqa: BLE001 — the turn matters more than the ack
             logger.exception("failed to ✅-ack block %s", user_block_id)
             return None
+
+    async def _recall_agent_memories(
+        self,
+        memory,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        agent_handle: str,
+    ) -> list[str]:
+        """What this 芝士 remembers inside this project.
+
+        Reads its own per-agent scope first, then the legacy shared ``project``
+        pool. Writes only ever go to the per-agent scope, so the pool is a
+        read-only tail of what was learned before memory was split per agent —
+        rooms that accumulated it keep it, and nothing new lands there.
+        """
+        own = await memory.recall(
+            MemoryScope.agent_project,
+            agent_project_scope_id(project_id, agent_handle),
+        )
+        shared = await memory.recall(MemoryScope.project, str(project_id))
+        return [*own, *shared]
+
+    async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
+        """The handle 芝士 authors under in this topic.
+
+        Resolved from the roster's execution bindings rather than the fixed
+        ``cheese`` string, so a room hosting more than one agent attributes each
+        message to the one that wrote it. Falls back to ``cheese`` for rooms
+        seeded before agent-as-user, which is what the old constant meant.
+        """
+        return await TopicMemberService(session).resolve_agent_handle(topic_id)
 
     async def _persist_assistant_message(
         self,
@@ -920,10 +957,11 @@ class ChatService:
             meta = {**(meta or {}), "backfilled": True}
         async with self._sessions() as session:
             blocks = BlockRepository(session)
+            author = await self._agent_handle(session, topic_id)
             block = await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
-                author=CHEESE_AUTHOR,
+                author=author,
                 author_type=AuthorType.ai,
                 content=text,
                 kind=BlockKind.message,
@@ -937,7 +975,7 @@ class ChatService:
             # Hallucinated handles get flagged in 现场, never silently no-op.
             if topic is not None:
                 resolved, unresolved = await self._notify_mentions(
-                    session, topic, CHEESE_AUTHOR, text, roster
+                    session, topic, author, text, roster
                 )
                 refs = [f"user:{h}" for h in resolved] + _topic_refs(text)
                 if refs:
@@ -946,7 +984,7 @@ class ChatService:
                     await blocks.add(
                         project_id=project_id,
                         topic_id=topic_id,
-                        author=CHEESE_AUTHOR,
+                        author=author,
                         author_type=AuthorType.ai,
                         content=f"⚠️ @了 <@{bad}>，但项目里没有这个成员，没能通知到",
                         kind=BlockKind.event,
@@ -984,7 +1022,7 @@ class ChatService:
             block = await BlockRepository(session).add(
                 project_id=project_id,
                 topic_id=topic_id,
-                author=CHEESE_AUTHOR,
+                author=await self._agent_handle(session, topic_id),
                 author_type=AuthorType.ai,
                 content=_format_tool_event(name, tool_input),
                 kind=BlockKind.event,
@@ -1314,11 +1352,19 @@ class ChatService:
             # Expand @all/@here to the topic's members. @here should be the
             # ACTIVE members, but there's no presence signal yet, so it equals
             # @all for now (TODO: intersect with presence once it lands).
+            #
+            # A broadcast reaches the room's humans only: every 芝士 in the room
+            # already reads the timeline, so notifying them adds nothing. An
+            # explicit <@handle> is different and is NOT filtered here — that is
+            # how one agent addresses another, which a room hosting several 芝士
+            # depends on.
             members = await TopicMembershipRepository(session).list_for_topic(topic.id)
-            concrete += [m.member_handle for m in members]
-        targets = [
-            h for h in dict.fromkeys(concrete) if h not in (author, CHEESE_AUTHOR)
-        ]
+            agents = set(await TopicMemberService(session).agent_handles(topic.id))
+            concrete += [
+                m.member_handle for m in members if m.member_handle not in agents
+            ]
+        # Nobody needs a notification for their own message.
+        targets = [h for h in dict.fromkeys(concrete) if h != author]
         if targets:
             notifs = NotificationService(session)
             preview = markdown_preview(text, 200)
@@ -1395,13 +1441,17 @@ class ChatService:
 
             is_private = topic.is_private
             private_owner = topic.private_owner
+            acting_agent = await self._agent_handle(session, topic.id)
             if is_private and private_owner:
                 # Private chat: the owner's cross-project personal memory.
                 memories = await memory.recall(MemoryScope.user, private_owner)
                 doc_text = None
             else:
-                memories = await memory.recall(
-                    MemoryScope.project, str(topic.project_id)
+                memories = await self._recall_agent_memories(
+                    memory,
+                    session,
+                    project_id=topic.project_id,
+                    agent_handle=acting_agent,
                 )
                 doc_root = await blocks.doc_root(topic.id)
                 doc_text = doc_root.content if doc_root else None
@@ -1797,11 +1847,12 @@ class ChatService:
             # Persistent, clickable action cards for the cheese actions this turn
             # (system events show in the conversation; refs tag the resource).
             action_payloads = []
+            acting_agent = await self._agent_handle(session, topic_id)
             for resource in actions:
                 blk = await blocks.add(
                     project_id=project_id,
                     topic_id=topic_id,
-                    author=CHEESE_AUTHOR,
+                    author=acting_agent,
                     author_type=AuthorType.system,
                     content=f"芝士 {_ACTION_LABEL[resource]}",
                     kind=BlockKind.event,
@@ -1869,6 +1920,7 @@ class ChatService:
                 project_id=project_id,
                 is_private=is_private,
                 private_owner=private_owner,
+                agent_handle=acting_agent,
                 user_text=prompt_text,
                 assistant_text=final_text,
             )
@@ -1886,6 +1938,7 @@ class ChatService:
         project_id: uuid.UUID,
         is_private: bool,
         private_owner: str | None,
+        agent_handle: str,
         user_text: str,
         assistant_text: str,
     ) -> None:
@@ -1903,7 +1956,13 @@ class ChatService:
         if is_private and private_owner:
             scope, scope_id = MemoryScope.user, private_owner
         else:
-            scope, scope_id = MemoryScope.project, str(project_id)
+            # What 芝士 learns in a project is its own, the way a teammate's is.
+            # Never the shared pool: two agents in one project would dilute each
+            # other's memory, which is the case this split exists for.
+            scope, scope_id = (
+                MemoryScope.agent_project,
+                agent_project_scope_id(project_id, agent_handle),
+            )
 
         async def _run() -> None:
             from app.domain.memory.openviking_store import OpenVikingMemoryStore
@@ -1968,7 +2027,12 @@ class ChatService:
                 content=text,
                 kind=BlockKind.event,
             )
-            memories = await memory.recall(MemoryScope.project, str(project_id))
+            memories = await self._recall_agent_memories(
+                memory,
+                session,
+                project_id=project_id,
+                agent_handle=await self._agent_handle(session, topic.id),
+            )
             topic_id = topic.id
             compute_id = _resolve_compute_id(
                 project.settings,
@@ -2011,7 +2075,7 @@ class ChatService:
             await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
-                author=CHEESE_AUTHOR,
+                author=await self._agent_handle(session, topic_id),
                 author_type=AuthorType.ai,
                 content=final_text,
                 kind=BlockKind.message,
@@ -2119,7 +2183,7 @@ class ChatService:
             await BlockRepository(session).add(
                 project_id=project_id,
                 topic_id=root_topic_id,
-                author=CHEESE_AUTHOR,
+                author=await self._agent_handle(session, root_topic_id),
                 author_type=AuthorType.ai,
                 content=f"【巡检决策日志】\n{final_text}",
                 kind=BlockKind.event,
@@ -2143,6 +2207,9 @@ class ChatService:
                 raise NotFoundError("Project not found")
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
+            # Deliberately the shared pool, not any one agent's memory: a project
+            # summary describes the project, and what a 芝士 learned for itself is
+            # not project knowledge.
             memories = await memory.recall(MemoryScope.project, str(project_id))
             role = await resolve_role_description(session, project.expert_role)
             compute_id = _resolve_compute_id(
