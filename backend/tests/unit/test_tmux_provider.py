@@ -228,3 +228,35 @@ async def test_run_turn_not_ready_yields_error(_stub_env, monkeypatch):
     ]
     assert isinstance(events[-1], AgentResult) and events[-1].is_error is True
     assert "未就绪" in events[-1].text
+
+
+def test_env_stamp_ignores_per_turn_values_but_tracks_the_model_route():
+    """The stamp decides whether a long-lived container is still valid. It must
+    change when model routing changes and NOT change per turn, or every turn
+    would rebuild the box."""
+    from app.domain.agent.tmux_provider import _env_stamp
+
+    base = {
+        "ANTHROPIC_BASE_URL": "http://gw/api/llm",
+        "ANTHROPIC_AUTH_TOKEN": "tok-1",
+        "CLAUDE_MODEL": "opus",
+        "CHEESE_API": "http://backend/api",
+        "CHEESE_TURN": "turn-aaa",
+    }
+
+    same_turn_later = {**base, "CHEESE_TURN": "turn-bbb"}
+    assert _env_stamp(base) == _env_stamp(same_turn_later)
+
+    rerouted = {**base, "ANTHROPIC_BASE_URL": "http://other/api/llm"}
+    assert _env_stamp(base) != _env_stamp(rerouted)
+
+    remodelled = {**base, "CLAUDE_MODEL": "sonnet"}
+    assert _env_stamp(base) != _env_stamp(remodelled)
+
+
+def test_env_stamp_does_not_leak_the_credential():
+    from app.domain.agent.tmux_provider import _env_stamp
+
+    stamp = _env_stamp({"ANTHROPIC_AUTH_TOKEN": "sk-super-secret-value"})
+    assert "sk-super-secret-value" not in stamp
+    assert len(stamp) == 16

@@ -77,6 +77,12 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
         "skipDangerousModePermissionPrompt": True,
         "hooks": {
             "SessionStart": plain,
+            # The delivery receipt. We inject a prompt by typing it into the
+            # terminal, and typing has no return value: tmux confirms the bytes
+            # reached the pane and nothing confirms a prompt box read them. This
+            # hook fires for pasted input exactly as for a human's keystrokes,
+            # so its arrival is the proof that the message became a user turn.
+            "UserPromptSubmit": plain,
             "PreToolUse": tool_matched,
             "PostToolUse": tool_matched,
             "MessageDisplay": plain,
@@ -122,12 +128,26 @@ exit 0
 """
 
 
+# How long a turn waits for ANY sign the prompt was received before calling it
+# undelivered. Generous enough for a busy container to schedule the hook,
+# far short of the turn ceiling — the point is that "nothing arrived" is
+# reported in seconds instead of being indistinguishable from "still working"
+# for fifteen minutes (dev, 2026-08-08).
+DELIVERY_TIMEOUT_S = 25.0
+UNDELIVERED_MESSAGE = (
+    "⚠️ 这条消息没能送到芝士那边（她的会话没有任何反应）。改动都还在，"
+    "再 @ 她一次就会重开会话重试。"
+)
+
+
 async def run_hooks_turn(
     *,
     queue: "asyncio.Queue[dict]",
     turn_timeout_s: float,
     resume_session_id: str | None,
     timeout_message: str,
+    delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
+    delivery_message: str = UNDELIVERED_MESSAGE,
 ) -> AsyncIterator[AgentEvent]:
     """Drain the topic's hook queue, translating each hook to an ``AgentEvent``,
     until the ``Stop`` hook (→ ``AgentResult``) ends the turn or the deadline
@@ -137,21 +157,33 @@ async def run_hooks_turn(
     The CALLER owns the queue lifecycle — it must ``router.register`` BEFORE
     ensuring the screen / sending the prompt (so no hook is missed) and
     ``unregister`` in a ``finally``; this loop only reads the queue."""
-    deadline = asyncio.get_event_loop().time() + turn_timeout_s
+    now = asyncio.get_event_loop().time
+    deadline = now() + turn_timeout_s
+    # Until something comes back, we have no evidence the prompt was received at
+    # all: it is typed into a terminal, and typing has no return value. So the
+    # first wait is short. Any hook clears it — `UserPromptSubmit` is the direct
+    # receipt, and any other activity proves delivery just as well.
+    delivered = False
+    delivery_deadline = now() + delivery_timeout_s
     while True:
-        remaining = deadline - asyncio.get_event_loop().time()
+        remaining = deadline - now()
         if remaining <= 0:
             yield AgentResult(
                 text=timeout_message, session_id=resume_session_id, is_error=True
             )
             return
+        wait_for = remaining if delivered else min(remaining, delivery_deadline - now())
         try:
-            hook = await asyncio.wait_for(queue.get(), timeout=remaining)
+            hook = await asyncio.wait_for(queue.get(), timeout=max(wait_for, 0.01))
         except TimeoutError:
+            undelivered = not delivered and now() < deadline
             yield AgentResult(
-                text=timeout_message, session_id=resume_session_id, is_error=True
+                text=delivery_message if undelivered else timeout_message,
+                session_id=resume_session_id,
+                is_error=True,
             )
             return
+        delivered = True
         event = translate_hook(hook)
         if event is None:
             continue
