@@ -215,3 +215,66 @@ async def test_failed_precheck_never_touches_the_router():
     # The live turn's queue is untouched: pushes still reach it.
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is True
     assert live_queue.qsize() == 1
+
+
+async def test_undelivered_prompt_fails_fast_instead_of_waiting_out_the_turn():
+    """A prompt typed into a terminal has no return value: tmux confirms the
+    bytes reached the pane, nothing confirms a prompt box read them. When
+    NOTHING comes back, the turn used to sit until the 900s ceiling (dev,
+    2026-08-08). It must give up on the delivery window instead."""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+
+    events = await _drain(
+        queue,
+        turn_timeout_s=30,
+        timeout_message="超时",
+        delivery_timeout_s=0.3,
+        delivery_message="没送到",
+    )
+
+    assert len(events) == 1
+    assert events[0].is_error
+    assert events[0].text == "没送到"
+
+
+async def test_the_prompt_receipt_opens_the_full_turn_budget():
+    """UserPromptSubmit is the receipt: once it lands, the turn is a normal one
+    and only the turn ceiling applies."""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    queue.put_nowait(
+        {"hook_event_name": "Stop", "last_assistant_message": "done", "session_id": "s"}
+    )
+
+    events = await _drain(
+        queue,
+        turn_timeout_s=30,
+        timeout_message="超时",
+        delivery_timeout_s=0.3,
+        delivery_message="没送到",
+    )
+
+    # The receipt itself is bookkeeping, not something the topic should render.
+    assert [type(e).__name__ for e in events] == ["AgentResult"]
+    assert not events[0].is_error
+    assert events[0].text == "done"
+
+
+async def test_agent_activity_also_counts_as_delivery():
+    """An older session may predate the receipt hook; any real activity proves
+    the prompt landed just as well."""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "MessageDisplay", "delta": "working"})
+    queue.put_nowait(
+        {"hook_event_name": "Stop", "last_assistant_message": "ok", "session_id": "s"}
+    )
+
+    events = await _drain(
+        queue,
+        turn_timeout_s=30,
+        timeout_message="超时",
+        delivery_timeout_s=0.3,
+        delivery_message="没送到",
+    )
+
+    assert [type(e).__name__ for e in events] == ["AgentMessage", "AgentResult"]

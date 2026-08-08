@@ -524,6 +524,27 @@ def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
 
 
+# How a platform-initiated turn announces itself. A resume nudge, a 分身's
+# kickoff and a returned conclusion are NOT anyone speaking, and until now they
+# reached 芝士 as bare text indistinguishable from a person's message. Claude
+# Code frames its own non-user input the same way ("The user sent a new message
+# while you were working:" for a human, a peer marker for another session); this
+# is the platform's equivalent for the one channel it owns.
+PLATFORM_NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话："
+
+
+def platform_prompt(content: str) -> str:
+    return f"{PLATFORM_NOTICE}\n{content}"
+
+
+def _strip_platform_notice(text: str) -> str:
+    """Neutralize the platform marker inside HUMAN text, so a person cannot type
+    a message that reads as a platform instruction. The marker is the one thing
+    in the prompt that claims institutional authority, so it has to be
+    unforgeable from the content side."""
+    return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
+
+
 def _prompt_line(b) -> str:
     """One speaker-labelled prompt line per pending human block. An attachment
     block is a worktree image — embedded NATIVELY in this turn's user message
@@ -534,7 +555,7 @@ def _prompt_line(b) -> str:
             f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
             f"它同时存在你工作目录的 {b.content}）"
         )
-    return f"[{b.author}]: {b.content}"
+    return f"[{b.author}]: {_strip_platform_notice(b.content)}"
 
 
 # What an exhausted relay balance looks like coming back from newapi. It arrives
@@ -1357,7 +1378,12 @@ class ChatService:
                 if b.kind in (BlockKind.message, BlockKind.attachment)
                 and b.author_type == AuthorType.human
             ]
-            prompt_text = "\n".join(_prompt_line(b) for b in pending) or content
+            # No pending human block ⇒ nobody spoke: this is a resume nudge,
+            # a kickoff or a returned conclusion. Say so, rather than handing
+            # 芝士 bare text that looks like a person's message.
+            prompt_text = "\n".join(
+                _prompt_line(b) for b in pending
+            ) or platform_prompt(content)
             # 图片输入: every pending image rides this turn's user message as a
             # NATIVE base64 image block (Claude Code native image input) — the
             # provider side that has the file does the embedding.
