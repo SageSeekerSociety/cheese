@@ -131,6 +131,19 @@ def _env_stamp(env: dict[str, str]) -> str:
     return hashlib.sha256(material.encode()).hexdigest()[:16]
 
 
+def env_stamp_drifted(current: str, wanted: str) -> bool:
+    """Whether a container's recorded model route disagrees with the wanted one.
+
+    An UNSTAMPED container is not evidence of drift — it predates the stamp. It
+    must be left alone, because rebuilding kills its tmux session and that
+    session IS the topic's conversational continuity: treating "unknown" as
+    "wrong" would silently reset every existing topic's memory on its next turn.
+    Nothing is stranded by waiting, since the sandbox image tag carries the
+    commit sha, so every container is rebuilt (and stamped) within one deploy.
+    """
+    return bool(current) and current != wanted
+
+
 def pane_ready(capture: str) -> bool:
     """True when a captured tmux pane shows Claude Code's input box (the `❯`
     prompt) — the ready signal before injecting a prompt (spike 就绪握手). Pure so
@@ -271,7 +284,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             _, cur_stamp, _ = await _docker(
                 "inspect", "-f", f'{{{{index .Config.Labels "{_ENV_LABEL}"}}}}', name
             )
-            env_drifted = cur_stamp.strip() != _env_stamp(env)
+            env_drifted = env_stamp_drifted(cur_stamp.strip(), _env_stamp(env))
         if image_switched or env_drifted:
             await _docker("rm", "-f", name)  # image or model route changed
             exists = False

@@ -260,3 +260,20 @@ def test_env_stamp_does_not_leak_the_credential():
     stamp = _env_stamp({"ANTHROPIC_AUTH_TOKEN": "sk-super-secret-value"})
     assert "sk-super-secret-value" not in stamp
     assert len(stamp) == 16
+
+
+def test_an_unstamped_container_is_not_treated_as_drifted():
+    """Rebuilding kills the tmux session, and that session is the topic's
+    conversational continuity. A container from before the stamp existed says
+    nothing about its route, so it must not be torn down on suspicion —
+    otherwise shipping the stamp resets every live topic's memory."""
+    from app.domain.agent.tmux_provider import env_stamp_drifted
+
+    assert not env_stamp_drifted("", "abc123")
+
+
+def test_a_differing_stamp_is_drift():
+    from app.domain.agent.tmux_provider import env_stamp_drifted
+
+    assert env_stamp_drifted("old456", "abc123")
+    assert not env_stamp_drifted("abc123", "abc123")
