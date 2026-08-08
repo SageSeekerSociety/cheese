@@ -238,13 +238,23 @@ def _create_and_migrate(db_name: str, db_url: str) -> None:
     # DATABASE_URL maps to settings.database_url, which alembic/env.py reads.
     # `python -m alembic` works from any host (local venv or CI) without assuming
     # a `.venv/bin/alembic` path.
-    subprocess.run(
+    result = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=backend_dir,
         env={**os.environ, "DATABASE_URL": db_url},
-        check=True,
         capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        # check=True raises with only the argv, so a migration failure reached
+        # the log as "returned non-zero exit status 1" and nothing else — every
+        # test in the session then errors with no way to tell a wedged Postgres
+        # from a genuinely broken migration. Surface alembic's own words.
+        raise RuntimeError(
+            f"alembic upgrade head failed for {db_name} (rc={result.returncode})\n"
+            f"--- stdout ---\n{result.stdout.strip()}\n"
+            f"--- stderr ---\n{result.stderr.strip()}"
+        )
 
 
 @pytest.fixture(scope="session", autouse=True)
