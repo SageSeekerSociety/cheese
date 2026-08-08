@@ -129,7 +129,12 @@ function inferKind(t: Topic): string {
 const KIND_BADGE: Record<string, string> = {
   root: '全局',
   topic: '话题',
-  subtopic: '分身',
+  // A task is one piece of work inside a room. It still shows in the rail for
+  // now — moving it into the room's timeline as a card is a UI change of its
+  // own, and dropping the row before that lands would make split-out work
+  // unreachable.
+  task: '任务',
+  subtopic: '分身', // legacy rows, created before work had its own kind
 }
 
 function kindLabel(t: Topic): string {

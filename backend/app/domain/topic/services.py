@@ -34,8 +34,14 @@ PLACEHOLDER_TITLE = "新话题"
 
 
 def _child_kind(parent: Topic) -> TopicKind:
-    # A child of the root is a topic; a child of a topic/subtopic is a subtopic.
-    return TopicKind.topic if parent.kind == TopicKind.root else TopicKind.subtopic
+    """A child of the root is a room; anything below a room is a piece of work.
+
+    Rooms nest exactly one level. Work does not nest at all — a task cannot be
+    split into sub-tasks, which is the same call Claude Code's agent teams make
+    (a teammate cannot spawn teammates). Splitting work further means another
+    task in the same room, not a deeper tree.
+    """
+    return TopicKind.topic if parent.kind == TopicKind.root else TopicKind.task
 
 
 def _brief_doc(
