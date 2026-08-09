@@ -23,6 +23,18 @@ RUN curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj
       | tar xz -C /usr/local/bin ./jj \
     && jj --version
 
+# GitHub CLI — so 芝士 can inspect CI/CD (`gh run view --log-failed`) with the
+# read-only token `cheese gh-token` mints (#188/#193). curl works too, but gh
+# is far less error-prone for reading Actions. Direct from releases (musl-free
+# deb), same reason as jj: reliable through the proxy, unlike ghcr/apt-key.
+ARG GH_VERSION=2.62.0
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
+      | tar xz -C /tmp \
+    && mv "/tmp/gh_${GH_VERSION}_linux_${ARCH}/bin/gh" /usr/local/bin/gh \
+    && rm -rf "/tmp/gh_${GH_VERSION}_linux_${ARCH}" \
+    && gh --version
+
 # Claude Code CLI (the agent runtime that runs in-container)
 RUN npm install -g @anthropic-ai/claude-code && claude --version
 
