@@ -11,13 +11,21 @@
 - 只动 `backend/tests/conftest.py`，不碰 `backend/alembic/versions/` 下任何文件。
 - 改完要证明：`alembic heads` 输出恰好一条；至少一套 DB 支撑的测试跑通。
 
-## 进度
+## 进度（已完工，等待验收）
 
-- [x] 代码改动已完成：`heads`→`head`，删掉解释性 docstring 段落（保留原本的一行摘要 docstring 和其余不相关注释）。
-- [ ] `alembic heads` 验证单头——命令在跑（`uv run` 首次同步依赖较慢），验证中。
-- [ ] DB 支撑测试跑通证据——待 alembic 验证完成后执行。
-- [ ] 确认未触碰迁移文件——初步检查未改动，待最终确认后写入验收卡。
+- [x] 代码改动：`heads`→`head`，删掉解释性 docstring 段落（保留原本一行摘要 docstring 和其余不相关注释）。diff 只有这两处，只动了 `backend/tests/conftest.py`。
+- [x] `alembic heads` 验证：`b5045bf862fe (head)`，恰好一条。
+- [x] DB 支撑测试：沙箱内自建 pgserver（TCP 127.0.0.1:5433，角色 cheesex/cheesex）+ 自带 redis-server（127.0.0.1:6379）跑通 `tests/integration` 全量——979 passed / 40 failed / 24 skipped。40 个失败全部核实为沙箱既有环境缺口（jj 沙箱权限、市场价格配置、`/upstream` 路由 422 等），跟迁移改动无关；且当前只有单头，`upgrade head` 与 `upgrade heads` 在这个前提下行为完全等价，这行改动本身不可能是那 40 个失败的原因。
+- [x] ruff/pyright 对改动文件全绿。
+- [x] 确认未触碰任何迁移文件：本话题全程只对 `backend/tests/conftest.py` 调用过 Edit，`backend/alembic/versions/` 下 59 个文件未动。
+
+## 验收证据摘要
+
+1. diff（`git show main:backend/tests/conftest.py` 对比）：只有 `heads`→`head` 一处 + 删掉一段 docstring。
+2. `alembic heads` → `b5045bf862fe (head)`。
+3. `pytest tests/integration`：979 passed，40 failed（均为预置环境缺口，非本改动引入），24 skipped。
+4. `ruff check` / `pyright` 均 0 错误。
 
 ## 下一步
 
-拿到 `alembic heads` 输出和一套 DB 测试的通过证据后，贴出 diff + 证据，`cheese accept-request` 递验收卡给父话题（简报强调：conclude 不等于递卡，必须显式递验收卡）。
+已递 `cheese accept-request` 给父话题，附上述证据。
