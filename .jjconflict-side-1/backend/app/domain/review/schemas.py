@@ -41,10 +41,12 @@ class AcceptCardOut(BaseModel):
     # 机器闸门 (eval C2): set when the project's check_command passed.
     gate_passed_at: datetime | None = None
     gate_output: str = ""
-    # 两阶段采纳 (PR迭代式): populated while status == pr_open.
+    # PR-based accept (#188 §5.1): the real GitHub PR this card rides on.
+    # pr_repo/pr_head_sha/pr_merged_at are 两阶段采纳 (PR迭代式) only, populated
+    # while status == pr_open — see models.AcceptCard for the full story.
     pr_number: int | None = None
-    pr_repo: str | None = None
     pr_url: str | None = None
+    pr_repo: str | None = None
     pr_head_sha: str | None = None
     pr_merged_at: datetime | None = None
     # 主分支保护 (spec §4.4): votes so far / votes needed. Enriched by the
@@ -52,6 +54,3 @@ class AcceptCardOut(BaseModel):
     # setting), so plain model_validate(card) keeps the defaults.
     approvals: list[str] = []
     approvals_required: int = 1
-    # PR-based accept (#188 §5.1): the real GitHub PR this card rides on.
-    pr_number: int | None = None
-    pr_url: str | None = None

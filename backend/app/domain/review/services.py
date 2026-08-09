@@ -309,13 +309,25 @@ class AcceptService:
                 f"批准人数不足，还差 {required - votes} 票（{votes}/{required}）"
             )
 
-        # 两阶段采纳 (PR迭代式, 2026-08-09): try the real-PR path first. Any
-        # missing prerequisite (no connected token / no connected repo) or any
-        # GitHub-side failure (push/API) degrades to the old direct-merge path
-        # below — a normal degrade, never an accept failure (拍板 decision 2).
-        # Resolving the prerequisites themselves must degrade the same way: a
-        # DB hiccup here is exactly as "mechanism unavailable" as a missing
-        # token, never a reason to fail the whole accept.
+        # PR-based accept (#188 §5.1): a card that ALREADY rides a real PR
+        # (published fire-and-forget by pr_publish.py when the card turned
+        # pending, behind settings.accept_via_pr — off by default) is accepted
+        # by merging THAT PR via the API, never by opening a second one. Falls
+        # through to the local path when GitHub is unreachable (availability
+        # must never regress) — the merge commit landing on main closes the
+        # PR anyway.
+        if card.pr_number is not None:
+            settled = await self._accept_via_pr(card, topic, decided_by)
+            if settled is not None:
+                return settled
+
+        # 两阶段采纳 (PR迭代式, 2026-08-09): no PR yet — try opening a NEW one via
+        # the approver's own connected GitHub token. Any missing prerequisite
+        # (no connected token / no connected repo) or any GitHub-side failure
+        # (push/API) degrades to the old direct-merge path below — a normal
+        # degrade, never an accept failure (拍板 decision 2). Resolving the
+        # prerequisites themselves must degrade the same way: a DB hiccup here
+        # is exactly as "mechanism unavailable" as a missing token.
         try:
             pr_prereqs = await self._resolve_pr_prerequisites(topic, decided_by)
         except Exception as exc:  # noqa: BLE001 — degrade, don't fail the accept
@@ -329,7 +341,7 @@ class AcceptService:
         if pr_prereqs is not None:
             token, pr_owner, pr_repo = pr_prereqs
             try:
-                return await self._accept_via_pr(
+                return await self._open_pr_for_accept(
                     card=card,
                     topic=topic,
                     decided_by=decided_by,
@@ -344,7 +356,6 @@ class AcceptService:
                     topic.id,
                     exc,
                 )
-
         # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
         # conflict must never silently archive the topic while the work is
         # stranded on its branch (that shipped a lie once): the card moves to
@@ -471,7 +482,7 @@ class AcceptService:
         owner, _, repo_name = installation.repo.partition("/")
         return token, owner, repo_name
 
-    async def _accept_via_pr(
+    async def _open_pr_for_accept(
         self,
         *,
         card: AcceptCard,
@@ -481,11 +492,13 @@ class AcceptService:
         owner: str,
         repo: str,
     ) -> AcceptCard:
-        """Push the topic branch, open a real PR, and hand the rest to the
+        """Push the topic branch, open a NEW real PR, and hand the rest to the
         scheduler's PrPollRunner (SchedulerService.poll_open_prs /
         advance_pr_card) — this call does NOT wait for CI. Topic stays
         active; no merge_topic()/push_back()/archive here (拍板 decision 3:
-        archive gates on the PR *and* its triggered deploy both succeeding)."""
+        archive gates on the PR *and* its triggered deploy both succeeding).
+        Distinct from `_accept_via_pr` below (#188 §5.1), which merges a PR
+        that ALREADY exists on the card rather than opening a new one."""
         from app.domain.review import github_pr
         from app.domain.workspace import service as ws
 
@@ -738,6 +751,133 @@ class AcceptService:
             f"话题归档。\n{card.pr_url}",
         )
 
+%%%%%%% diff from: mstkvkmw 36ec831c "采纳 topic/6196e41a → main"
+\\\\\\\        to: ssssymsq e6cbcb5f "同步上游 upstream/main → main"
++    async def _accept_via_pr(
++        self, card: AcceptCard, topic: Topic, decided_by: str
++    ) -> AcceptCard | None:
++        """Accept by merging the card's GitHub PR (#188 §5.1).
++
++        Returns the settled card (accepted or conflict), or None to fall back
++        to the local merge path — config drift and GitHub outages must leave
++        accept exactly as available as before PR-based accept existed.
++        """
++        from app.domain.agent.github_app import github_app_tokens_for_project
++        from app.domain.review.github_pr import (
++            GitHubPRClient,
++            GitHubPRMergeBlocked,
++            parse_github_repo,
++        )
++        from app.domain.workspace import service as ws
++
++        assert card.pr_number is not None
++        number = card.pr_number
++        # #192: resolve the installation from the card's project, not a global.
++        tokens = await github_app_tokens_for_project(topic.project_id, self._session)
++        upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
++        parsed = parse_github_repo(upstream)
++        if tokens is None or parsed is None:
++            return None  # App unconfigured / upstream changed since the PR opened
++        client = GitHubPRClient(*parsed, tokens)
++        branch = ws.branch_for_topic(topic.id)
++
++        try:
++            # Someone may have handled the PR on GitHub directly — respect it.
++            view = await client.pr_view(number)
++            if view.get("merged"):
++                return await self._settle_pr_accept(
++                    card, topic, decided_by, note=f"PR #{number} 已在 GitHub 合并"
++                )
++            if view.get("state") == "closed":
++                logger.warning(
++                    "PR #%s for card %s was closed unmerged — falling back "
++                    "to the local merge path",
++                    number,
++                    card.id,
++                )
++                return None
++
++            # Re-push first: last-minute worktree edits and conflict fixes must
++            # be what actually merges.
++            token, _ = await tokens.write_token()
++            await asyncio.to_thread(
++                ws.push_topic_branch, topic.project_id, topic.id, token
++            )
++            await client.merge_pr(
++                number,
++                title=f"采纳 {branch} → {view.get('base', {}).get('ref', 'main')} "
++                f"(#{number})",
++                message=f"验收人：{decided_by}\n\n{card.routing_reason}".strip(),
++            )
++        except GitHubPRMergeBlocked:
++            # Same contract as a local merge conflict: card → conflict, 芝士 is
++            # dispatched (routes/accept.py), human retries. Sync the local base
++            # first so the materialized conflict matches what GitHub sees.
++            try:
++                await asyncio.to_thread(ws.sync_upstream, topic.project_id)
++            except Exception:  # noqa: BLE001 — the conflict flow still works on a stale base
++                logger.exception(
++                    "sync_upstream after merge refusal failed for %s", topic.id
++                )
++            await self._repo.add_approval(card.id, decided_by)
++            card.status = AcceptStatus.conflict
++            card.decided_by = decided_by
++            card.decided_at = datetime.now(UTC)
++            card.note = f"PR #{number} 合并冲突，已派芝士解决"
++            await self._session.flush()
++            await self._session.refresh(card)
++            return card
++        except Exception as exc:  # noqa: BLE001 — any non-conflict failure falls back
++            logger.exception(
++                "PR accept failed for card %s (PR #%s): %s — falling back "
++                "to the local merge path",
++                card.id,
++                number,
++                exc,
++            )
++            return None
++
++        return await self._settle_pr_accept(
++            card, topic, decided_by, note=f"已通过 PR #{number} 合并到上游"
++        )
++
++    async def _settle_pr_accept(
++        self, card: AcceptCard, topic: Topic, decided_by: str, *, note: str
++    ) -> AcceptCard:
++        """Post-merge bookkeeping shared by the PR path: sync the platform's
++        main down from upstream (the merge happened THERE), then archive."""
++        from app.domain.workspace import service as ws
++
++        try:
++            synced = await asyncio.to_thread(ws.sync_upstream, topic.project_id)
++            if not synced.get("synced"):
++                note += f"；本地同步待补：{synced.get('reason', '')}"
++        except Exception as exc:  # noqa: BLE001 — never fail the accept itself
++            note += f"；本地同步待补：{exc}"
++
++        await self._repo.add_approval(card.id, decided_by)
++        now = datetime.now(UTC)
++        card.status = AcceptStatus.accepted
++        card.decided_by = decided_by
++        card.decided_at = now
++        card.note = note[:2000]
++
++        try:
++            ws.stop_topic_container(topic.id)
++        except Exception:  # noqa: BLE001 — best effort, never fatal
++            pass
++
++        # 采纳即归档 (spec §6.3).
++        topic.status = TopicStatus.archived
++        topic.accepted_by = decided_by
++        topic.accepted_at = now
++        topic.archived_at = now
++
++        await self._session.flush()
++        await self._session.refresh(card)
++        return card
++
+>>>>>>> conflict 2 of 2 ends
     async def reject(
         self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
     ) -> AcceptCard:

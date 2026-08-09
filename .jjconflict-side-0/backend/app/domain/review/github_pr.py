@@ -1,22 +1,36 @@
-"""GitHub PR client for 两阶段采纳 (PR迭代式, 2026-08-09).
+"""GitHub PR clients for PR-based accept — two mechanisms live here side by
+side (2026-08-09):
 
-A small Protocol so `AcceptService.accept()` and `PrPollRunner` (scheduler)
-can be driven by a fake in tests without touching real GitHub — same shape as
-`app.domain.agent.github_app.GitHubAppTokens`, but for the write-side PR
-operations (open/merge) plus read-side check/workflow status, both keyed off
-the approving human's own connected token, not the App's installation token.
+- `GitHubPRClient` (capital PR) — #188 §5.1's original design. Auth is the
+  cheesex-app installation token (write mint for pull/merge, read-only mint
+  for check runs); a PR is opened fire-and-forget by `review/pr_publish.py`
+  when a card turns pending (behind `settings.accept_via_pr`, off by
+  default), and `AcceptService._accept_via_pr` merges it synchronously when
+  a human clicks accept.
+- `GitHubPrClient` (lowercase pr) Protocol + `HttpxGitHubPrClient` — the
+  两阶段采纳 (PR迭代式, 2026-08-09) design. Auth is the APPROVING HUMAN's own
+  connected GitHub token (attribution matters — see the PR trailer); a PR is
+  opened when accept() is clicked and tracked asynchronously by the
+  scheduler's poller through CI, merge, and the deploy workflow it triggers,
+  before the topic finally archives.
 
-Not implemented here: opening the App's own write-scoped installation token
-(#188 §5.1 "reserved for PR-based accept") — per 2026-08-09 拍板 this feature
-uses the approver's connected GitHub account token instead, so that minting
-path stays untouched.
+Both are real, live code paths — see `AcceptService.accept()` for how they're
+tried in order (an already-PR'd card is never re-published; a PR-less one
+tries opening a fresh one via the human's token, then falls back to a local
+merge). Not implemented here: opening the App's own write-scoped token for
+the 两阶段采纳 flow — per 2026-08-09 拍板 that flow deliberately uses the
+approver's own token instead, so `GitHubAppTokens`'s write-mint stays solely
+`GitHubPRClient`'s concern.
 """
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
 import httpx
+
+from app.domain.agent.github_app import GitHubAppTokens
 
 CheckState = Literal["pending", "success", "failure"]
 
@@ -260,3 +274,151 @@ def pr_branch_name(topic_id: uuid.UUID) -> str:
     topic's PR — distinct from the local topic branch name so a re-push after
     芝士 fixes something is an update, not a new branch."""
     return f"cheesex/{topic_id.hex[:8]}"
+
+
+# ---- #188 §5.1's original client (App installation token, sync accept) ----
+
+# Upstream URL shapes eligible for PR-based accept. SSH remotes are excluded on
+# purpose: an installation token only authenticates over https.
+_GITHUB_HTTPS_RE = re.compile(
+    r"^https://github\.com/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+?)(?:\.git)?/?$"
+)
+
+
+def parse_github_repo(url: str | None) -> tuple[str, str] | None:
+    """(owner, repo) when the upstream is an https GitHub remote, else None."""
+    if not url:
+        return None
+    match = _GITHUB_HTTPS_RE.match(url.strip())
+    if match is None:
+        return None
+    return match.group("owner"), match.group("repo")
+
+
+class GitHubPRError(RuntimeError):
+    """GitHub refused an operation (or the network did)."""
+
+
+class GitHubPRMergeBlocked(GitHubPRError):
+    """The merge was refused because the PR is not mergeable (conflict)."""
+
+
+class GitHubPRClient:
+    def __init__(
+        self,
+        owner: str,
+        repo: str,
+        tokens: GitHubAppTokens,
+        *,
+        api_base: str = "https://api.github.com",
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
+        self._owner = owner
+        self._repo = repo
+        self._tokens = tokens
+        self._api_base = api_base.rstrip("/")
+        self._transport = transport
+
+    def _url(self, path: str) -> str:
+        return f"{self._api_base}/repos/{self._owner}/{self._repo}{path}"
+
+    @staticmethod
+    def _headers(token: str) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+
+    async def open_pr(self, *, head: str, base: str, title: str, body: str) -> dict:
+        """Open (or find the already-open) PR for a branch.
+
+        Re-submitting a card for the same topic must not fail on GitHub's
+        "a pull request already exists" — the existing PR IS this topic's PR.
+        """
+        token, _ = await self._tokens.write_token()
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.post(
+                self._url("/pulls"),
+                json={"title": title, "head": head, "base": base, "body": body},
+                headers=self._headers(token),
+            )
+            if resp.status_code == 201:
+                return resp.json()
+            if resp.status_code == 422 and "already exist" in resp.text:
+                listing = await client.get(
+                    self._url("/pulls"),
+                    params={"head": f"{self._owner}:{head}", "state": "open"},
+                    headers=self._headers(token),
+                )
+                if listing.status_code == 200 and listing.json():
+                    return listing.json()[0]
+            raise GitHubPRError(
+                f"PR creation failed (HTTP {resp.status_code}): {resp.text[:300]}"
+            )
+
+    async def pr_view(self, number: int) -> dict:
+        token, _ = await self._tokens.write_token()
+        async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
+            resp = await client.get(
+                self._url(f"/pulls/{number}"), headers=self._headers(token)
+            )
+        if resp.status_code != 200:
+            raise GitHubPRError(
+                f"PR read failed (HTTP {resp.status_code}): {resp.text[:300]}"
+            )
+        return resp.json()
+
+    async def merge_pr(self, number: int, *, title: str, message: str) -> dict:
+        """Merge the PR with a merge commit (matches the platform's history).
+
+        405 (not mergeable) raises GitHubPRMergeBlocked — the caller routes it
+        to the existing conflict-resolution flow. Anything else is a plain
+        GitHubPRError.
+        """
+        token, _ = await self._tokens.write_token()
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.put(
+                self._url(f"/pulls/{number}/merge"),
+                json={
+                    "merge_method": "merge",
+                    "commit_title": title,
+                    "commit_message": message,
+                },
+                headers=self._headers(token),
+            )
+        if resp.status_code == 200:
+            return resp.json()
+        if resp.status_code == 405:
+            raise GitHubPRMergeBlocked(
+                f"PR #{number} is not mergeable: {resp.text[:300]}"
+            )
+        raise GitHubPRError(
+            f"PR merge failed (HTTP {resp.status_code}): {resp.text[:300]}"
+        )
+
+    async def check_runs(self, ref: str) -> list[dict]:
+        """Simplified check runs for a ref (branch name or sha) — display only.
+
+        Uses the read-only mint (checks:read); the write mint has no checks
+        permission by design.
+        """
+        token, _ = await self._tokens.readonly_token()
+        async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
+            resp = await client.get(
+                self._url(f"/commits/{ref}/check-runs"),
+                params={"per_page": 50},
+                headers=self._headers(token),
+            )
+        if resp.status_code != 200:
+            raise GitHubPRError(
+                f"check-runs read failed (HTTP {resp.status_code}): {resp.text[:300]}"
+            )
+        return [
+            {
+                "name": run.get("name"),
+                "status": run.get("status"),
+                "conclusion": run.get("conclusion"),
+                "url": run.get("html_url"),
+            }
+            for run in resp.json().get("check_runs", [])
+        ]
