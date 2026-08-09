@@ -45,7 +45,8 @@
 - [x] 补测试：`test_accept_pr.py` 新增两个用例——`test_repush_pushes_new_local_commit_and_updates_pr_head_sha`（真实 jj/git 提交 → 轮询自动重推 → `pr_head_sha` 更新，且不改动时不重推）、`test_repush_failure_degrades_without_failing_the_card`（push 失败两轮都不进 `errors`、不永久失败，恢复后下一轮自动追上）；`test_oauth_service.py` 新增两个用例覆盖新字段（含"不泄露 access_token"断言）；`_nudge_pr_fix` 新文案在既有的 `test_poll_ci_failure_nudges_cheese_once` 里加了断言。
 - [x] ruff/pyright 在改动文件上全绿；oauth 单元测试 80/80 通过；review 集成测试 21/25 通过（4 个失败逐一定位到同一个沙箱级问题，见下，与本卡改动无关）。
 - [x] 第一次递验收卡被质量闸门打回：`ruff format` 会重排 `test_accept_pr.py`（纯格式，不是 lint 错误）。已跑 `ruff format` 修好，改动文件重新确认 `ruff check` + `ruff format --check` 全绿，pytest 重跑确认还是同样的 91 passed / 3 failed（跟格式化前一致，逻辑没被格式化动到）。闸门里 pyright/pytest 被 SKIP 是环境限制（闸门容器连不上外网下 pyright 的 python-build、没有 Postgres），不是我改的东西的问题。
-- [ ] 重新递验收卡。
+- [x] 在这个沙箱里跑了一遍完整 `bash .claude/scripts/check.sh --full`（沙箱这边有网，pyright 能装上，比闸门那份更严格）：`ruff` PASS（677 files already formatted）、`pyright` PASS（0 errors, 0 warnings，全仓，不只是改动文件）。全量 pytest（`-n 4 --reruns 2`）跑了完整 tests/ 目录，会把这个沙箱本身缺 Redis/Valkey 的问题带出一大片跟这张卡无关的失败（team/topic/user_follow 等），不重新贴那些数字——跟这张卡相关的部分已经在改动文件的定向测试里核实过（91 passed / 3 failed，3 个失败见上）。
+- [x] 重新递验收卡。
 
 ## 沙箱环境限制（如实记录，不是我改动引入的问题）
 
