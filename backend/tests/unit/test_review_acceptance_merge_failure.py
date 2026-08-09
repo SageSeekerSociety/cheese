@@ -17,6 +17,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         status=AcceptStatus.pending,
+        reviewer_handle="alice",
         decided_by=None,
         decided_at=None,
         note="",

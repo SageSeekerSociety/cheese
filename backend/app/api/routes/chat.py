@@ -110,11 +110,16 @@ async def chat(
                 continue
             content = (payload.get("content") or "").strip()
             # Verified token → the actor's handle (forgery-proof); else Phase-0
-            # fallback to the body's author (deprecated, works pre-token).
+            # fallback to the body's author (deprecated, works pre-token; #190:
+            # an unauthenticated socket can still claim any author string —
+            # accepted as a known Phase-0 gap, see the "webhook 原语" decision
+            # log, not fixed here). Trimmed/capped so it can't be used to stuff
+            # control chars or unbounded length into a stored block, but this
+            # is hygiene, not an authenticity guarantee.
             author = (
                 conn_actor.handle
                 if conn_actor.authenticated
-                else (payload.get("author") or "anonymous")
+                else (payload.get("author") or "anonymous").strip()[:64] or "anonymous"
             )
             # @芝士 toggle: summon the AI, or just post (spec C3, default post).
             summon = bool(payload.get("summon", False))

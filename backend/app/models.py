@@ -37,3 +37,4 @@ from app.domain.topic import models as topic  # noqa: F401
 from app.domain.topics import models as topics  # noqa: F401
 from app.domain.usage import models as usage  # noqa: F401
 from app.domain.user import models as user  # noqa: F401
+from app.domain.webhook import models as webhook  # noqa: F401

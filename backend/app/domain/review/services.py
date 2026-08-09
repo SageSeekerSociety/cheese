@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
@@ -232,6 +232,10 @@ class AcceptService:
         # pending → first attempt; conflict → retry after 芝士 resolved.
         if card.status not in (AcceptStatus.pending, AcceptStatus.conflict):
             raise ValidationError("验收卡已处理，不能重复验收")
+        # 递给某个具体的人 (spec §4.4): only the routed reviewer may accept —
+        # decided_by is the caller's verified actor handle, never body-trusted.
+        if decided_by != card.reviewer_handle:
+            raise ForbiddenError("你不是这张验收卡指定的验收人，无权采纳")
 
         topic = await self._topic_or_404(card.topic_id)
         # 采纳一次性 (spec §6.3): can't re-accept an already-archived topic.
@@ -352,6 +356,8 @@ class AcceptService:
         card = await self._card_or_404(card_id)
         if card.status != AcceptStatus.pending:
             raise ValidationError("验收卡已处理，不能重复决议")
+        if decided_by != card.reviewer_handle:
+            raise ForbiddenError("你不是这张验收卡指定的验收人，无权驳回")
 
         card.status = AcceptStatus.rejected
         card.decided_by = decided_by
