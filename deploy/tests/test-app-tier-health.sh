@@ -160,6 +160,118 @@ test_local_app_images_must_exist() {
   echo "PASS: local deployment rejects a missing image before migration"
 }
 
+test_pull_retries_transient_failure() {
+  mkdir -p "$ROOT/tmp"
+  run_dir="$(mktemp -d "$ROOT/tmp/pull-retry.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if ! PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_PULL_FAIL_COUNT=2 \
+    APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
+    DEPLOY_PULL_BACKOFF_SECONDS="0 0" \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
+    cat "$run_dir/out" >&2
+    rm -rf "$run_dir"
+    fail "deploy gave up on a pull that would have succeeded on retry"
+  fi
+
+  attempts="$(grep -c 'pull backend frontend$' "$docker_log" || true)"
+  [ "$attempts" = 3 ] || fail "expected 3 pull attempts, saw $attempts"
+  grep -q 'image pull: succeeded on attempt 3/3' "$run_dir/out" || \
+    fail "the retry that finally worked was not reported"
+
+  # The reclaim between attempts must actually precede the retry, not trail it.
+  first_prune="$(grep -nF 'image prune -af' "$docker_log" | head -n 1 | cut -d: -f1)"
+  last_pull="$(grep -n 'pull backend frontend$' "$docker_log" | tail -n 1 | cut -d: -f1)"
+  [ -n "$first_prune" ] && [ "$first_prune" -lt "$last_pull" ] || \
+    fail "no disk reclaim happened between the failed pull and the retry"
+  rm -rf "$run_dir"
+  echo "PASS: a transient pull failure is retried with a reclaim in between"
+}
+
+test_exhausted_pull_retries_still_fail_the_deploy() {
+  mkdir -p "$ROOT/tmp"
+  run_dir="$(mktemp -d "$ROOT/tmp/pull-exhausted.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_PULL_FAIL_COUNT=99 \
+    APP_TIER_PULL_COUNTER="$run_dir/pull.count" \
+    DEPLOY_PULL_BACKOFF_SECONDS="0 0" \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
+    rm -rf "$run_dir"
+    fail "deploy reported success after every pull attempt failed"
+  fi
+
+  grep -q 'image pull failed after 3 attempts' "$run_dir/out" || \
+    fail "the failure did not name how many attempts were spent"
+  grep -q 'attempt 1 exited 1; attempt 2 exited 1; attempt 3 exited 1' \
+    "$run_dir/out" || fail "the failure did not report each attempt's outcome"
+  if grep -F 'run --rm backend' "$docker_log" >/dev/null; then
+    fail "deploy proceeded to migration after the pull was given up on"
+  fi
+  grep -F 'image prune -af' "$docker_log" >/dev/null || \
+    fail "the abandoned deploy left its pulled layers on disk"
+  rm -rf "$run_dir"
+  echo "PASS: exhausted pull retries still abort the deploy, and still reclaim"
+}
+
+test_failed_deploy_reclaims_disk() {
+  mkdir -p "$ROOT/tmp"
+  run_dir="$(mktemp -d "$ROOT/tmp/failed-reclaim.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=frontend_absent \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1; then
+    rm -rf "$run_dir"
+    fail "deploy succeeded with no frontend container"
+  fi
+  grep -F 'image prune -af' "$docker_log" >/dev/null || \
+    fail "a deploy that failed its health check reclaimed nothing"
+  grep -q 'reclaiming disk on the way out' "$run_dir/out" || \
+    fail "the exit-path reclaim did not announce itself in the deploy log"
+  rm -rf "$run_dir"
+  echo "PASS: a deploy failing after the pull still reclaims disk on the way out"
+}
+
+test_deploy_logs_disk_watermarks() {
+  mkdir -p "$ROOT/tmp"
+  run_dir="$(mktemp -d "$ROOT/tmp/disk-watermark.XXXXXX")"
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/out" 2>&1
+
+  for when in 'before pull' 'after pull' 'after reclaim, successful deploy'; do
+    grep -q "disk ($when) .* avail=.*GiB use=" "$run_dir/out" || \
+      fail "no disk watermark logged for: $when"
+  done
+  rm -rf "$run_dir"
+  echo "PASS: deploy logs disk watermarks around the pull and after reclaim"
+}
+
 test_rollback_restores_exact_previous_images() {
   mkdir -p "$ROOT/tmp"
   run_dir="$(mktemp -d "$ROOT/tmp/exact-rollback.XXXXXX")"
@@ -217,8 +329,10 @@ from pathlib import Path
 import yaml
 
 workflow = yaml.safe_load(Path(sys.argv[1]).read_text())
+# Prefix match: the step has been renamed once already (it gained ", converge on
+# drift"), and an exact match silently turned this whole case into a hard error.
 for step in workflow["jobs"]["drift"]["steps"]:
-    if step.get("name") == "Compare main with what is running":
+    if str(step.get("name", "")).startswith("Compare main with what is running"):
         print(step["run"])
         break
 else:
@@ -256,6 +370,10 @@ case "$CASE" in
   local-images) test_local_app_images_skip_registry_pull ;;
   local-images-missing) test_local_app_images_must_exist ;;
   rollback-images) test_rollback_restores_exact_previous_images ;;
+  pull-retry) test_pull_retries_transient_failure ;;
+  pull-exhausted) test_exhausted_pull_retries_still_fail_the_deploy ;;
+  failed-reclaim) test_failed_deploy_reclaims_disk ;;
+  disk-watermark) test_deploy_logs_disk_watermarks ;;
   operator) test_operator_rejects_stale_frontend ;;
   operator-sha-width) test_operator_uses_registry_sha_width ;;
   workflow) test_workflow_rejects_stale_frontend ;;
@@ -268,6 +386,10 @@ case "$CASE" in
     test_local_app_images_skip_registry_pull
     test_local_app_images_must_exist
     test_rollback_restores_exact_previous_images
+    test_pull_retries_transient_failure
+    test_exhausted_pull_retries_still_fail_the_deploy
+    test_failed_deploy_reclaims_disk
+    test_deploy_logs_disk_watermarks
     test_operator_rejects_stale_frontend
     test_operator_uses_registry_sha_width
     test_workflow_rejects_stale_frontend
