@@ -47,6 +47,7 @@ from app.domain.topic.schemas import (
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.webhook import service as webhook_service
 from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
@@ -471,6 +472,20 @@ async def answer_options(
         summon=True,
     )
     return ok(updated)
+
+
+@router.post("/{topic_id}/webhook-token")
+async def mint_webhook_token(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """Mint (or rotate) this topic's webhook credential — used by the `cheese`
+    CLI to hand a caller a token for POST /webhooks/{topic_id}. Rotating
+    invalidates every previously-minted token for this topic; the raw value is
+    returned once and never recoverable afterwards."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    token = await webhook_service.mint(
+        db, topic_id=topic_id, project_id=topic.project_id
+    )
+    await db.commit()
+    return ok({"token": token})
 
 
 @router.post("/{topic_id}/decision")

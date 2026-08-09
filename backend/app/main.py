@@ -175,6 +175,7 @@ register_all_permissions()
 # open like the rest of the app — closing those needs browser user-auth first.
 # Each pattern captures the scoping id as group "topic" or "project".
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/webhook-token$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/decision$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/title$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/return-conclusion$")),
