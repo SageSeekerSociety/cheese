@@ -417,13 +417,37 @@ class OAuthService:
             token_expires,
         )
 
-    async def get_github_user_token(self, user_id: int) -> str | None:
+    def _decrypt_stored_token(self, stored: str, *, user_id: int) -> str | None:
+        """A token column decrypted, or None when the ciphertext can't be read.
+
+        Tokens are Fernet-encrypted at rest, so a rotated ``CHEESE_SECRET`` or a
+        legacy plaintext row makes ``decrypt_text`` raise. That must not blow up
+        the caller (the accept flow degrades on None, it does not handle
+        exceptions from here) — but it must never be silent either: an
+        unnoticed token problem is exactly how the "returns raw ciphertext" bug
+        survived, so this always logs.
+        """
+        try:
+            return decrypt_text(stored)
+        except Exception:
+            logger.exception(
+                "github account link: stored token for user %s could not be "
+                "decrypted (key rotated, or a legacy plaintext row?) — "
+                "treating the account link as unavailable",
+                user_id,
+            )
+            return None
+
+    async def get_github_user_token(
+        self, user_id: int, *, provider_id: str = "github_app"
+    ) -> str | None:
         """The decrypted, usable GitHub user-to-server access token (#192
         account link) for ``user_id``, or None if there's no connected
-        account, no stored token, or the token is expired with nothing to
-        refresh it with. Callers must treat None as "fall back", not raise.
+        account, no stored token, the stored token can't be decrypted, or the
+        token is expired with nothing to refresh it with. Callers must treat
+        None as "fall back", not raise.
         """
-        conn = await self._repo.get_by_user_and_provider(user_id, "github_app")
+        conn = await self._repo.get_by_user_and_provider(user_id, provider_id)
         if conn is None or not conn.access_token:
             return None
 
@@ -431,18 +455,32 @@ class OAuthService:
             conn.token_expires is None
             or conn.token_expires - datetime.now(UTC) > _GITHUB_TOKEN_REFRESH_MARGIN
         ):
-            return decrypt_text(conn.access_token)
+            return self._decrypt_stored_token(conn.access_token, user_id=user_id)
 
-        if not conn.refresh_token:
+        stored_refresh = (
+            self._decrypt_stored_token(conn.refresh_token, user_id=user_id)
+            if conn.refresh_token
+            else None
+        )
+        if not stored_refresh:
             return None
 
-        provider = self.get_provider("github_app")
+        try:
+            provider = self.get_provider(provider_id)
+        except NotFoundError:
+            # Provider not configured on this deployment (oauth_enabled_providers
+            # / client id + secret unset). Degrade like any other missing
+            # prerequisite — raising here would escape into the accept flow.
+            logger.warning(
+                "github account link: provider %r is not configured, cannot "
+                "refresh an expiring token",
+                provider_id,
+            )
+            return None
         if not isinstance(provider, GitHubProvider):
             return None
         try:
-            token_data = await provider.refresh_access_token(
-                decrypt_text(conn.refresh_token)
-            )
+            token_data = await provider.refresh_access_token(stored_refresh)
             new_access_token = token_data["access_token"]
         except Exception:
             logger.exception("github account link: token refresh failed")
@@ -456,7 +494,7 @@ class OAuthService:
         await self.update_connection_tokens(
             connection_id=conn.id,
             access_token=new_access_token,
-            refresh_token=new_refresh_token or decrypt_text(conn.refresh_token),
+            refresh_token=new_refresh_token or stored_refresh,
             token_expires=new_expires,
         )
         return new_access_token
@@ -522,22 +560,24 @@ async def get_github_user_token_for_handle(
     cheesex-app, distinct from the plain "github" login provider) since PR
     open/merge needs to act as the App on the user's behalf.
 
-    ``UserOAuthConnection`` does not persist an ``access_token`` column yet —
-    that is a separate in-flight fix (the callback currently discards the
-    token after exchange). Reading it via ``getattr`` means this function
-    returns None today (→ callers degrade to the old direct-merge accept
-    path, which is the correct, expected behavior) and starts returning real
-    tokens automatically once that column lands, with no change needed here.
+    A thin handle → user_id adapter over ``OAuthService.get_github_user_token``,
+    deliberately NOT its own token lookup: tokens are Fernet-encrypted at rest
+    (``create_connection`` / ``update_connection_tokens`` both call
+    ``encrypt_text``), and expiry/refresh handling lives on that method. Reading
+    ``conn.access_token`` straight off the row — as this function used to — hands
+    the caller raw ciphertext, which is non-empty and so passes every
+    ``if not token`` guard before failing against GitHub with a 401 that looks
+    exactly like "no connected account".
+
+    Returns None, never raises, whenever the mechanism is unavailable: unknown
+    handle, no connected account, no or undecryptable token, or an expired token
+    with no usable refresh. Callers treat None as "degrade to the direct-merge
+    accept path".
     """
-    from app.domain.oauth.repositories import OAuthConnectionRepository
     from app.domain.user.repositories import UserRepository
 
     user = await UserRepository(session).get_by_handle(handle)
     if user is None:
         return None
-    conn = await OAuthConnectionRepository(session).get_by_user_and_provider(
-        user.id, provider_id
-    )
-    if conn is None:
-        return None
-    return getattr(conn, "access_token", None)
+    service = OAuthService(OAuthConnectionRepository(session))
+    return await service.get_github_user_token(user.id, provider_id=provider_id)

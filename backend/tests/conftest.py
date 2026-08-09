@@ -317,7 +317,15 @@ def _ensure_template() -> bool:
 
 
 def _migrate_fresh_db(db_name: str, db_url: str) -> None:
-    """Drop + recreate a database and migrate it to head (alembic)."""
+    """Drop + recreate a database and migrate it to head (alembic).
+
+    ``heads``, not ``head``: parallel topics keep landing two merge-migrations
+    for the same fork point (right now ``c2f677c441f0`` and ``fbd4bf2a51b6``
+    both merge 504ece6e60ea+c7d8e9f0a1b2), and ``head`` then aborts with
+    "Multiple head revisions are present" — taking every DB-backed test in the
+    suite down with it, for a reason that has nothing to do with the code under
+    test. A test database wants all heads applied regardless.
+    """
     import subprocess
     import sys
     from pathlib import Path
@@ -328,7 +336,7 @@ def _migrate_fresh_db(db_name: str, db_url: str) -> None:
     # `python -m alembic` works from any host (local venv or CI) without assuming
     # a `.venv/bin/alembic` path.
     result = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "heads"],
         cwd=backend_dir,
         env={**os.environ, "DATABASE_URL": db_url},
         capture_output=True,
