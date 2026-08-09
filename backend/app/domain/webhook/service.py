@@ -1,5 +1,12 @@
 """Webhook ingress: mint credentials, verify inbound posts, land them as Blocks.
 
+Two layers, deliberately separate (review #190): mint()/verify() are the
+token-auth layer that only the HTTP door (app.api.routes.webhooks) calls;
+post_with_retries() is the internal shared "land a system post" function with
+no auth of its own — any trusted in-process caller (the HTTP route after it
+verifies, or a future internal caller like the merge-result-back-to-room card)
+invokes it directly.
+
 Delivery retry mirrors app.domain.workspace.dogfood_notices — a dropped inbound
 webhook is a silent hole in the topic's timeline (CI results, deploy outcomes),
 so a transient DB failure is retried before giving up.
@@ -49,8 +56,19 @@ async def post_with_retries(
     content: str,
     source: str,
 ) -> bool:
-    """Land an inbound webhook payload as an event Block, retrying transient DB
-    failures. Returns whether it landed. Never raises."""
+    """Internal shared entrypoint for landing a system-authored post into a
+    topic's timeline, retrying transient DB failures. Returns whether it
+    landed. Never raises.
+
+    Deliberately does NOT call verify() or touch any token — that check lives
+    only in the HTTP layer (app.api.routes.webhooks.receive_webhook), which
+    calls this AFTER authenticating the caller. An in-process caller (e.g. the
+    future "merge 后结果回房间" card) already knows its own project_id/topic_id
+    from context and is trusted by construction, so it calls this function
+    directly and skips the HTTP hop and the webhook-token check entirely —
+    that check is for the external HTTP door, not a gate this function itself
+    enforces.
+    """
     last_exc: Exception | None = None
     for delay in _RETRY_DELAYS_SECONDS:
         if delay:
