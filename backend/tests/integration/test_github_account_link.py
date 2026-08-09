@@ -283,3 +283,100 @@ class TestAccountLinkTokenPersistence:
 
         asyncio.run(_scenario())
         asyncio.run(_refresh_scenario())
+
+    def test_token_for_handle_round_trips_through_encryption(self, client):
+        """两阶段采纳's entry point (`get_github_user_token_for_handle`) against a
+        real DB: write a token through the encrypting service path, read it back
+        by handle, and assert the caller gets the ORIGINAL PLAINTEXT.
+
+        Deliberately monkeypatch-free. The only existing coverage of this
+        function (tests/integration/test_accept_pr.py) stubs the whole thing
+        out, which is precisely how it shipped returning raw ciphertext — a
+        non-empty string that passes every `if not token` guard and then 401s
+        against GitHub, indistinguishable from "no connected account".
+        """
+        from app.domain.oauth.repositories import OAuthConnectionRepository
+        from app.domain.oauth.services import (
+            OAuthService,
+            get_github_user_token_for_handle,
+        )
+
+        handle = "frank_ghhandle"
+        user_id = int(decode_token(seed_user(client, handle))["sub"])
+        plaintext = "ghu_plaintext_secret"
+
+        async def _scenario() -> None:
+            async with client.test_factory() as session:  # type: ignore[attr-defined]
+                repo = OAuthConnectionRepository(session)
+
+                # No such user / no connected account → degrade, never raise.
+                assert await get_github_user_token_for_handle(session, "nobody") is None
+                assert await get_github_user_token_for_handle(session, handle) is None
+
+                # The real write path: OAuthService encrypts on the way in.
+                await OAuthService(repo=repo).create_connection(
+                    user_id=user_id,
+                    provider_id="github_app",
+                    provider_user_id="gh-uid-frank",
+                    access_token=plaintext,
+                )
+                await session.commit()
+
+                stored = await repo.get_by_user_and_provider(user_id, "github_app")
+                assert stored is not None
+                # Prove the column really holds ciphertext, otherwise the
+                # round-trip assertion below could pass vacuously.
+                assert stored.access_token != plaintext
+                assert decrypt_text(stored.access_token) == plaintext
+
+                assert (
+                    await get_github_user_token_for_handle(session, handle) == plaintext
+                )
+
+        asyncio.run(_scenario())
+
+    def test_token_for_handle_degrades_to_none_instead_of_raising(self, client):
+        """Every "mechanism unavailable" shape returns None so the accept flow
+        falls back to the direct-merge path — none of them may raise."""
+        from app.domain.oauth.repositories import OAuthConnectionRepository
+        from app.domain.oauth.services import (
+            OAuthService,
+            get_github_user_token_for_handle,
+        )
+
+        handle = "grace_ghhandle"
+        user_id = int(decode_token(seed_user(client, handle))["sub"])
+
+        async def _scenario() -> None:
+            async with client.test_factory() as session:  # type: ignore[attr-defined]
+                repo = OAuthConnectionRepository(session)
+                conn_dict = await OAuthService(repo=repo).create_connection(
+                    user_id=user_id,
+                    provider_id="github_app",
+                    provider_user_id="gh-uid-grace",
+                    access_token="usable-token",
+                )
+                await session.commit()
+                conn_id = conn_dict["id"]
+
+                # expired, nothing to refresh with
+                await repo.update_tokens(
+                    conn_id,
+                    encrypt_text("stale-token"),
+                    None,
+                    datetime.now(UTC) - timedelta(hours=1),
+                )
+                await session.commit()
+                assert await get_github_user_token_for_handle(session, handle) is None
+
+                # ciphertext that can't be read (rotated key / legacy plaintext)
+                await repo.update_tokens(conn_id, "legacy-plaintext-token", None, None)
+                await session.commit()
+                assert await get_github_user_token_for_handle(session, handle) is None
+
+                # connection row exists but holds no token at all
+                await repo.update_tokens(conn_id, None, None, None)
+                await session.commit()
+                assert await get_github_user_token_for_handle(session, handle) is None
+
+        asyncio.run(_scenario())

@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1180,6 +1181,69 @@ class TestGetGithubUserToken:
             result = await svc.get_github_user_token(42)
 
         assert result == "fresh-token"
+
+    @pytest.mark.anyio
+    async def test_undecryptable_access_token_degrades_to_none_and_logs(self, caplog):
+        """A row whose ciphertext can't be read (key rotated, or a legacy
+        plaintext row) must degrade exactly like a missing token — callers
+        handle None, they do not handle an exception — but must not be silent.
+        """
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            access_token="ghu_legacy_plaintext_never_encrypted",
+            token_expires=None,
+            refresh_token=None,
+        )
+
+        with caplog.at_level(logging.ERROR, logger="app.domain.oauth.services"):
+            assert await svc.get_github_user_token(42) is None
+
+        assert "could not be" in caplog.text
+
+    @pytest.mark.anyio
+    async def test_undecryptable_refresh_token_degrades_to_none(self, caplog):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            id=7,
+            access_token=encrypt_text("stale-token"),
+            token_expires=datetime.now(UTC) - timedelta(hours=1),
+            refresh_token="not-a-fernet-token",
+        )
+
+        with caplog.at_level(logging.ERROR, logger="app.domain.oauth.services"):
+            assert await svc.get_github_user_token(42) is None
+
+        repo.update_tokens.assert_not_awaited()
+        assert "could not be" in caplog.text
+
+    @pytest.mark.anyio
+    async def test_expiring_token_with_unconfigured_provider_returns_none(self):
+        """github_app not in oauth_enabled_providers → get_provider() raises
+        NotFoundError. That must not escape into the accept flow."""
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            id=7,
+            access_token=encrypt_text("stale-token"),
+            token_expires=datetime.now(UTC) - timedelta(hours=1),
+            refresh_token=encrypt_text("stored-refresh"),
+        )
+        svc._initialized = True
+        svc._providers = {}
+
+        assert await svc.get_github_user_token(42) is None
+        repo.update_tokens.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_provider_id_is_threaded_through(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            access_token=encrypt_text("live-token"), token_expires=None
+        )
+
+        result = await svc.get_github_user_token(42, provider_id="github")
+
+        repo.get_by_user_and_provider.assert_awaited_once_with(42, "github")
+        assert result == "live-token"
 
 
 # ---------------------------------------------------------------------------
