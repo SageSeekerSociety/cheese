@@ -326,6 +326,17 @@ class Settings(BaseSettings):
         "soul",
     ]
 
+    # --- GitHub App (cheesex-app, #188 minimal / #192 git integration) ---
+    # The platform's GitHub credential: the backend holds the App private key
+    # and mints short-lived installation tokens, narrowed per use (sandboxes
+    # only ever see read-only ones). Unset = the /sandbox/github-token
+    # endpoint answers "not configured"; nothing else changes.
+    github_app_id: int | None = None
+    github_app_private_key_path: str | None = None
+    # Phase 0: one installation (our own repo). #192 replaces this with a
+    # per-project table once repos are connected through the install flow.
+    github_app_installation_id: int | None = None
+
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared
     # env vars are silently dropped and the feature can never be configured) ---
