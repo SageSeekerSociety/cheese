@@ -26,7 +26,10 @@ export async function login(page: Page, username = DEMO_USERNAME, password = DEM
 // Opens the first project from the rail and waits for its topic sidebar to
 // finish loading, returning the count of visible (non-archived) topic rows.
 export async function openFirstProject(page: Page) {
-  await page.locator('.app-rail-item:not(.app-rail-item--add)').first().click();
+  // Project tiles carry `--tile` (they render an avatar image); the bare
+  // `.app-rail-item:not(--add)` also matches the 首页/cheese home icon, which
+  // sits first in the rail — clicking it lands on /spaces, not a project.
+  await page.locator('.app-rail-item--tile').first().click();
   await page.locator('[title="新建话题"]').waitFor();
   return page.locator('.topic-row');
 }

@@ -62,8 +62,10 @@ class TestPasskeyVerifyCarriesHandle:
             "/users/auth/passkey/verify",
             json={"response": _fake_credential(challenge)},
         )
-        assert verify_resp.status_code == 201, (
-            f"Expected 201, got {verify_resp.status_code}: {verify_resp.text}"
+        # HTTP 200 with body code 201, like every sibling passkey assertion in
+        # test_passkey.py — the route sets no status_code and never returned 201.
+        assert verify_resp.status_code == 200, (
+            f"Expected 200, got {verify_resp.status_code}: {verify_resp.text}"
         )
         access_token = verify_resp.json()["data"]["accessToken"]
         claims = _decode(access_token)
