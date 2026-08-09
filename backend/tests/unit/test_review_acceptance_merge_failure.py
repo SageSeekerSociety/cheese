@@ -20,6 +20,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         decided_by=None,
         decided_at=None,
         note="",
+        # No PR riding this card — accept takes the local merge path.
+        pr_number=None,
+        pr_url=None,
     )
     topic = SimpleNamespace(
         id=card.topic_id,

@@ -57,6 +57,13 @@ class AcceptCard(UuidPk, Timestamps, Base):
     )
     # Tail of the check output (green or red) — full output is in the gate log.
     gate_output: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # PR-based accept (#188 §5.1): the real GitHub PR this card rides on. Set
+    # best-effort when the card turns pending; a card WITH a pr_number is
+    # accepted by merging that PR via the API, a card without falls back to the
+    # local merge + push_back path — every card is self-describing, so flag
+    # flips and GitHub outages never strand one.
+    pr_number: Mapped[int | None] = mapped_column(nullable=True)
+    pr_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class AcceptApproval(UuidPk, Timestamps, Base):

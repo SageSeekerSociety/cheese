@@ -33,13 +33,16 @@ def branch_for_topic(topic_id: uuid.UUID) -> str:
     return f"topic/{topic_id.hex[:8]}"
 
 
-def _git(repo: Path, *args: str, timeout: int = 20) -> str:
+def _git(
+    repo: Path, *args: str, timeout: int = 20, env: dict[str, str] | None = None
+) -> str:
     result = subprocess.run(
         ["git", *args],
         cwd=repo,
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=env,
     )
     if result.returncode != 0:
         # git reports merge conflicts on stdout with an empty stderr — fall back
@@ -680,6 +683,57 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         except RuntimeError:
             pass  # no running loop (e.g. sync tests/scripts) — nothing to schedule onto
     return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
+
+
+def _token_push_env(token: str) -> dict[str, str]:
+    """Subprocess env that authenticates one git push with an App token.
+
+    The token travels via env var into an inline credential helper — never argv
+    (visible in ps), never disk. The helper list is reset first: the container
+    wires a store-file helper through GIT_CONFIG_* (compose), and letting it run
+    first would push with the host credential instead of the App's identity.
+    """
+    helper = (
+        "!f() { echo username=x-access-token; "
+        'echo "password=$CHEESE_GIT_PUSH_TOKEN"; }; f'
+    )
+    return {
+        **os.environ,
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": "credential.helper",
+        "GIT_CONFIG_VALUE_0": "",
+        "GIT_CONFIG_KEY_1": "credential.helper",
+        "GIT_CONFIG_VALUE_1": helper,
+        "CHEESE_GIT_PUSH_TOKEN": token,
+    }
+
+
+def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) -> str:
+    """Push the topic's branch to the upstream (PR-based accept, #188 §5.1).
+
+    Snapshots the worktree first so the PR head is exactly what the reviewer
+    sees. --force-with-lease: a re-push after a conflict fix must move the
+    remote branch, but never trample one somebody else moved."""
+    repo = ensure_repo(project_id)
+    if get_upstream(project_id) is None:
+        raise ValidationError("未关联上游仓库，无法推分支")
+    try:
+        snapshot_worktree(project_id, topic_id, "PR 快照")
+    except ValidationError:
+        pass  # no workspace/jj state yet — nothing pending to fold
+    branch = branch_for_topic(topic_id)
+    if not _branch_exists(repo, branch):
+        raise ValidationError("话题没有分支，无法推送")
+    _git(
+        repo,
+        "push",
+        "--force-with-lease",
+        UPSTREAM_REMOTE,
+        f"{branch}:{branch}",
+        timeout=120,
+        env=_token_push_env(token),
+    )
+    return branch
 
 
 def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.domain.review import pr_publish
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.gate")
@@ -92,6 +93,16 @@ async def _run(
         result["exit_code"],
         log_path,
     )
+
+    if passed and pr_publish.enabled():
+        # PR-based accept (#188 §5.1): a green gate is when the card reaches
+        # the reviewer — open its PR now so CI runs while the card waits.
+        pr_publish.dispatch(
+            session_factory,
+            card_id=card_id,
+            topic_id=topic_id,
+            project_id=project_id,
+        )
 
     if not passed:
         # 红了 → 芝士收到系统 nudge 去修（same dispatch pattern as the accept

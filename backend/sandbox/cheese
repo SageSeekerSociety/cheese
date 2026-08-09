@@ -139,6 +139,11 @@ def _format_status(d: dict) -> str:
         if c.get("note"):
             row += f"；note: {c['note']}"
         lines.append(row)
+        if c.get("pr_url"):
+            lines.append(
+                f"  PR: #{c.get('pr_number')} {c['pr_url']}"
+                "（CI 状态: GH_TOKEN=$(cheese gh-token) 后用 gh 查）"
+            )
         if c.get("status") == "gate_failed" and c.get("gate_output_tail"):
             lines.append("  闸门输出（尾部）:")
             lines.extend(

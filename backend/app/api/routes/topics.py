@@ -141,6 +141,10 @@ def _card_snapshot(card: AcceptCard) -> dict:
             card.gate_passed_at.isoformat() if card.gate_passed_at else None
         ),
         "gate_output_tail": card.gate_output[-_GATE_OUTPUT_TAIL:],
+        # PR-based accept (#188 §5.1): the agent checks its PR's CI itself
+        # (`cheese gh-token` + gh api) — the snapshot carries the pointer.
+        "pr_number": card.pr_number,
+        "pr_url": card.pr_url,
         "created_at": card.created_at.isoformat(),
     }
 

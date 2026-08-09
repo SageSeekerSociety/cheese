@@ -28,6 +28,7 @@ import {
   createProject,
   createTopic,
   getAcceptCards,
+  getPrChecks,
   getPrivateChat,
   getTopic,
   getTopicUnread,
@@ -46,6 +47,7 @@ import { usePendingAttachments } from '../lib/attachments'
 import type {
   AcceptCard,
   ChatAttachment,
+  PrChecks,
   Project,
   ProjectMemberRow,
   Topic,
@@ -532,6 +534,38 @@ watch(
 )
 onUnmounted(() => {
   if (gatePollTimer !== null) window.clearInterval(gatePollTimer)
+})
+
+// 采纳 PR 化 (#188 §5.1): live CI state of the pending card's PR. Polled
+// slowly while such a card is on screen — checks take minutes, not seconds.
+const prChecks = ref<PrChecks | null>(null)
+let prPollTimer: number | null = null
+async function loadPrChecks() {
+  const tid = selectedTopicId.value
+  if (!tid || !pendingCard.value?.pr_number) return
+  try {
+    const payload = await getPrChecks(tid)
+    if (selectedTopicId.value === tid) prChecks.value = payload
+  } catch {
+    // Best-effort; the PR row just shows the link without CI state.
+  }
+}
+watch(
+  () => (pendingCard.value?.pr_number ? selectedTopicId.value : null),
+  (active) => {
+    prChecks.value = null
+    if (active && prPollTimer === null) {
+      void loadPrChecks()
+      prPollTimer = window.setInterval(() => void loadPrChecks(), 15000)
+    } else if (!active && prPollTimer !== null) {
+      window.clearInterval(prPollTimer)
+      prPollTimer = null
+    }
+  },
+  { immediate: true },
+)
+onUnmounted(() => {
+  if (prPollTimer !== null) window.clearInterval(prPollTimer)
 })
 
 // 主分支保护 (spec §4.4): my vote toward the pending card's accept.
@@ -1226,6 +1260,52 @@ onUnmounted(() => {
                 >
                   <v-icon color="success" size="15">mdi-check-decagram</v-icon>
                   平台检查已通过
+                </div>
+                <!-- 采纳 PR 化 (#188 §5.1): the real PR + its CI, live. -->
+                <div v-if="pendingCard.pr_url" class="mb-2">
+                  <div class="d-flex align-center flex-wrap ga-2">
+                    <v-chip
+                      size="small"
+                      variant="tonal"
+                      prepend-icon="mdi-source-pull"
+                      :href="pendingCard.pr_url"
+                      target="_blank"
+                    >
+                      PR #{{ pendingCard.pr_number }}
+                    </v-chip>
+                    <span
+                      v-if="prChecks?.available && prChecks.mergeable === false"
+                      class="text-caption text-error"
+                    >
+                      与主分支冲突
+                    </span>
+                  </div>
+                  <div
+                    v-for="chk in prChecks?.checks ?? []"
+                    :key="chk.name"
+                    class="d-flex align-center ga-1 text-caption text-medium-emphasis mt-1"
+                  >
+                    <v-icon
+                      size="14"
+                      :color="
+                        chk.conclusion === 'success'
+                          ? 'success'
+                          : chk.conclusion === 'failure'
+                            ? 'error'
+                            : undefined
+                      "
+                    >
+                      {{
+                        chk.conclusion === 'success'
+                          ? 'mdi-check-circle'
+                          : chk.conclusion === 'failure'
+                            ? 'mdi-close-circle'
+                            : 'mdi-progress-clock'
+                      }}
+                    </v-icon>
+                    {{ chk.name }}
+                    <span v-if="chk.status !== 'completed'">（进行中）</span>
+                  </div>
                 </div>
                 <!-- 主分支保护 (spec §4.4): N 人批准后采纳才会真正合入。 -->
                 <div

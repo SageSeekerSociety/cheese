@@ -378,6 +378,21 @@ export interface AcceptCard {
   // 主分支保护 (spec §4.4): votes so far / votes needed.
   approvals: string[]
   approvals_required: number
+  // 采纳 PR 化 (#188 §5.1): the real GitHub PR this card rides on, when the
+  // platform opened one (flag-gated, best-effort).
+  pr_number: number | null
+  pr_url: string | null
+}
+
+// GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).
+export interface PrChecks {
+  available: boolean
+  reason?: string
+  pr_number?: number
+  pr_url?: string
+  state?: string
+  mergeable?: boolean | null
+  checks?: { name: string; status: string; conclusion: string | null; url?: string }[]
 }
 
 // ---- 通知中心 (G2/G3) ----

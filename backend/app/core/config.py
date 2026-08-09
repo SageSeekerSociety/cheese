@@ -336,6 +336,11 @@ class Settings(BaseSettings):
     # Phase 0: one installation (our own repo). #192 replaces this with a
     # per-project table once repos are connected through the install flow.
     github_app_installation_id: int | None = None
+    # PR-based accept (#188 §5.1, docs/plans/2026-08-09-pr-based-accept-design.md):
+    # submitting an accept card pushes the topic branch and opens a real PR;
+    # 采纳 merges that PR via the API. Submission-side only — accept dispatches
+    # on the card's stored pr_number, so flipping this never strands a card.
+    accept_via_pr: bool = False
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared

@@ -46,3 +46,6 @@ class AcceptCardOut(BaseModel):
     # setting), so plain model_validate(card) keeps the defaults.
     approvals: list[str] = []
     approvals_required: int = 1
+    # PR-based accept (#188 §5.1): the real GitHub PR this card rides on.
+    pr_number: int | None = None
+    pr_url: str | None = None

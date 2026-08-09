@@ -18,6 +18,7 @@ import type {
   MarketTask,
   MemberSummary,
   MilestoneFull,
+  PrChecks,
   PreviewInfo,
   Project,
   ProjectCredits,
@@ -768,6 +769,12 @@ export function getProjectUsage(projectId: string): Promise<UsageStats> {
 // Accept cards for a topic, newest first.
 export function getAcceptCards(topicId: string): Promise<ListPayload<AcceptCard>> {
   return request<ListPayload<AcceptCard>>(`/topics/${encodeURIComponent(topicId)}/accept-card`)
+}
+
+// 采纳 PR 化 (#188 §5.1): live CI state of the newest card's PR. Safe to poll —
+// answers {available:false} when the topic has no PR-riding card.
+export function getPrChecks(topicId: string): Promise<PrChecks> {
+  return request<PrChecks>(`/topics/${encodeURIComponent(topicId)}/pr-checks`)
 }
 
 export function acceptCard(cardId: string, decidedBy: string): Promise<AcceptCard> {
