@@ -26,9 +26,7 @@ def test_authorize_url_404s_when_provider_not_configured(client):
     # the generic OAuthService reports it as an unregistered provider — same
     # behavior as any other disabled OAuth provider, not a #192-specific 500.
     token = seed_user(client, "alice")
-    r = client.get(
-        "/api/users/me/github-account/authorize-url", headers=_bearer(token)
-    )
+    r = client.get("/api/users/me/github-account/authorize-url", headers=_bearer(token))
     assert r.status_code == 404
 
 

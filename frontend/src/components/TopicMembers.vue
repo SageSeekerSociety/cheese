@@ -4,14 +4,11 @@
 // drawer showing every member with their role; an owner/admin can add project
 // members, remove them, or change roles. 芝士 (the AI member) wears an Agent
 // badge, mirroring the @-mention menu.
-import { computed, ref, watch } from 'vue'
-import {
-  addTopicMember,
-  listTopicMembers,
-  removeTopicMember,
-  updateTopicMemberRole,
-} from '../api'
 import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
+
+import { computed, ref, watch } from 'vue'
+
+import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
 
 const props = defineProps<{
   topicId: string
@@ -60,15 +57,9 @@ const stackFaces = computed(() => humans.value.slice(0, MAX_FACES))
 const overflow = computed(() => Math.max(0, humans.value.length - MAX_FACES))
 
 // My role in THIS topic decides whether the management controls show at all.
-const myRole = computed(
-  () => members.value.find((m) => m.member_handle === props.me)?.role ?? null,
-)
-const canManage = computed(
-  () => myRole.value === 'owner' || myRole.value === 'admin',
-)
-const ownerCount = computed(
-  () => members.value.filter((m) => m.role === 'owner').length,
-)
+const myRole = computed(() => members.value.find((m) => m.member_handle === props.me)?.role ?? null)
+const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'admin')
+const ownerCount = computed(() => members.value.filter((m) => m.role === 'owner').length)
 
 // Project members not already in the room — the "add member" dropdown.
 const addable = computed(() => {
@@ -120,12 +111,7 @@ async function onSetRole(handle: string, role: string) {
 </script>
 
 <template>
-  <v-menu
-    v-model="open"
-    :close-on-content-click="false"
-    location="bottom start"
-    offset="6"
-  >
+  <v-menu v-model="open" :close-on-content-click="false" location="bottom start" offset="6">
     <template #activator="{ props: act }">
       <button
         v-bind="act"
@@ -140,18 +126,18 @@ async function onSetRole(handle: string, role: string) {
             :key="m.id"
             class="members-mini__face"
             :style="{ zIndex: MAX_FACES - i }"
-          >{{ initial(m.name || m.member_handle) }}</span>
-          <span
-            v-if="overflow"
-            class="members-mini__face members-mini__face--more"
-            :style="{ zIndex: 0 }"
-          >+{{ overflow }}</span>
+            >{{ initial(m.name || m.member_handle) }}</span
+          >
+          <span v-if="overflow" class="members-mini__face members-mini__face--more" :style="{ zIndex: 0 }"
+            >+{{ overflow }}</span
+          >
           <span
             v-if="hasAgent"
             class="members-mini__face members-mini__face--agent"
             :style="{ zIndex: MAX_FACES + 1 }"
             title="芝士在这个话题里"
-          >芝</span>
+            >芝</span
+          >
         </span>
         <span class="members-mini__count">{{ humans.length }}</span>
       </button>
@@ -168,10 +154,7 @@ async function onSetRole(handle: string, role: string) {
       <div v-if="loading" class="roster__empty">加载中…</div>
       <ul v-else class="roster__list">
         <li v-for="m in members" :key="m.id" class="roster__item">
-          <span
-            class="roster__avatar"
-            :class="{ 'roster__avatar--agent': m.agent }"
-          >
+          <span class="roster__avatar" :class="{ 'roster__avatar--agent': m.agent }">
             <template v-if="m.agent">芝</template>
             <template v-else>{{ initial(m.name || m.member_handle) }}</template>
           </span>
@@ -185,12 +168,7 @@ async function onSetRole(handle: string, role: string) {
           <template v-if="canManage && !m.agent">
             <v-menu location="bottom end">
               <template #activator="{ props: rp }">
-                <button
-                  v-bind="rp"
-                  type="button"
-                  class="roster__role roster__role--btn"
-                  :disabled="busy"
-                >
+                <button v-bind="rp" type="button" class="roster__role roster__role--btn" :disabled="busy">
                   {{ roleLabel(m.role) }}
                   <v-icon size="12">mdi-chevron-down</v-icon>
                 </button>
@@ -200,9 +178,7 @@ async function onSetRole(handle: string, role: string) {
                   v-for="r in ROLES"
                   :key="r"
                   :active="r === m.role"
-                  :disabled="
-                    m.role === 'owner' && r !== 'owner' && ownerCount <= 1
-                  "
+                  :disabled="m.role === 'owner' && r !== 'owner' && ownerCount <= 1"
                   @click="onSetRole(m.member_handle, r)"
                 >
                   <v-list-item-title class="text-body-2">

@@ -10,7 +10,7 @@ export const TOPIC_TITLE_MAX_LENGTH = 80
 export function normalizeTopicTitle(
   draft: string,
   currentTitle: string,
-  maxLength: number = TOPIC_TITLE_MAX_LENGTH,
+  maxLength: number = TOPIC_TITLE_MAX_LENGTH
 ): string | null {
   const title = draft.trim().slice(0, maxLength)
   if (!title || title === currentTitle) return null

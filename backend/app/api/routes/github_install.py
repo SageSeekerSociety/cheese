@@ -45,9 +45,7 @@ _SETTINGS_ROUTE = "/project/{project_id}/settings"
 
 def _settings_redirect(project_id: uuid.UUID | None, **query: str) -> RedirectResponse:
     path = (
-        _SETTINGS_ROUTE.format(project_id=project_id)
-        if project_id is not None
-        else "/"
+        _SETTINGS_ROUTE.format(project_id=project_id) if project_id is not None else "/"
     )
     url = f"{settings.frontend_url}{path}"
     if query:
@@ -144,9 +142,7 @@ async def github_app_install_callback(
         )
     except Exception:
         await db.rollback()
-        logger.exception(
-            "github install callback failed for project %s", project_id
-        )
+        logger.exception("github install callback failed for project %s", project_id)
         return _settings_redirect(
             project_id, github_install="error", reason="internal_error"
         )

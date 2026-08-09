@@ -230,7 +230,9 @@
                 </v-alert>
                 <div class="d-flex align-center gap-2 text-body-2">
                   <v-icon color="primary" size="small">mdi-open-in-new</v-icon>
-                  <a :href="sanitizedVideoUrl" target="_blank" rel="noopener" class="text-truncate">{{ sanitizedVideoUrl }}</a>
+                  <a :href="sanitizedVideoUrl" target="_blank" rel="noopener" class="text-truncate">{{
+                    sanitizedVideoUrl
+                  }}</a>
                 </div>
               </div>
             </div>
@@ -388,13 +390,7 @@
             </div>
             <div v-else class="text-medium-emphasis">还没有人从这道赛题开始做。</div>
 
-            <v-alert
-              v-if="taskProjectError"
-              type="error"
-              density="compact"
-              variant="tonal"
-              class="mt-3"
-            >
+            <v-alert v-if="taskProjectError" type="error" density="compact" variant="tonal" class="mt-3">
               {{ taskProjectError }}
             </v-alert>
 
@@ -447,6 +443,7 @@
 </template>
 
 <script setup lang="ts">
+import type { Project as CheesexProject } from '@/cx_types'
 import type { Task } from '@/types'
 
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
@@ -456,13 +453,12 @@ import dayjs from 'dayjs'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
-import { TaskParticipationInfo } from '@/network/api/tasks/types'
-import AccountService from '@/services/account'
 // The cheesex (2.0) client: a project here is a git repo + root topic + 芝士,
 // not the 1.0 team-project that shares the word.
 import { createProject as createCheesexProject, listProjectsForTask } from '@/api'
-import type { Project as CheesexProject } from '@/cx_types'
+import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
+import { TaskParticipationInfo } from '@/network/api/tasks/types'
+import AccountService from '@/services/account'
 
 /** Markdown 渲染器实例，用于将非 TipTap 格式的赛题描述渲染为 HTML */
 const markdownRenderer = new MarkdownRenderer()
@@ -504,12 +500,7 @@ async function createProjectFromTask() {
   creatingTaskProject.value = true
   taskProjectError.value = ''
   try {
-    const project = await createCheesexProject(
-      props.taskData?.name || `赛题 ${id}`,
-      undefined,
-      undefined,
-      id,
-    )
+    const project = await createCheesexProject(props.taskData?.name || `赛题 ${id}`, undefined, undefined, id)
     window.location.href = `/project/${project.id}`
   } catch (e) {
     taskProjectError.value = e instanceof Error ? e.message : String(e)

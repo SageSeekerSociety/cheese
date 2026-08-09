@@ -6,10 +6,12 @@
 // on it is decided per session/project later. Approval also deliberately does NOT
 // ask which project the machine serves: a machine belongs to *you*, and which
 // project uses its compute is decided later (device page / when a session picks it).
+import type { DeviceApproval } from '../cx_types'
+
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
+
 import { authToken, connectDevice, deviceProposedName } from '../api'
-import type { DeviceApproval } from '../cx_types'
 
 const route = useRoute()
 const code = computed(() => String(route.query.code ?? ''))
@@ -49,10 +51,7 @@ async function approve() {
   loading.value = true
   error.value = null
   try {
-    approved.value = await connectDevice(
-      code.value,
-      deviceName.value.trim() || undefined,
-    )
+    approved.value = await connectDevice(code.value, deviceName.value.trim() || undefined)
   } catch (e) {
     error.value = e instanceof Error ? e.message : '审批失败'
   } finally {
@@ -68,26 +67,15 @@ async function approve() {
         <div class="t-eyebrow mb-1">设备连接</div>
         <h1 class="t-page-title">批准这台设备</h1>
         <div class="t-body c-muted mt-1">
-          你的机器请求作为 self-hosted 算力节点接入芝士。批准后它成为归你所有的算力，
-          芝士的分身即可派到这台机器上干活。
+          你的机器请求作为 self-hosted 算力节点接入芝士。批准后它成为归你所有的算力， 芝士的分身即可派到这台机器上干活。
         </div>
       </div>
 
-      <v-alert
-        v-if="!code"
-        type="warning"
-        density="comfortable"
-        class="mb-4"
-      >
+      <v-alert v-if="!code" type="warning" density="comfortable" class="mb-4">
         链接里没有设备码。请从 cli（<code>cheese link</code>）打开的地址进入本页面。
       </v-alert>
 
-      <v-alert
-        v-else-if="!loggedIn"
-        type="info"
-        density="comfortable"
-        class="mb-4"
-      >
+      <v-alert v-else-if="!loggedIn" type="info" density="comfortable" class="mb-4">
         请先登录你的账号，再批准这台设备归你所有。
         <template #append>
           <v-btn size="small" variant="tonal" :to="loginLink">去登录</v-btn>
@@ -110,40 +98,24 @@ async function approve() {
           @keyup.enter="approve"
         />
 
-        <v-alert
-          v-if="error"
-          type="error"
-          density="compact"
-          class="mb-3"
-        >
+        <v-alert v-if="error" type="error" density="compact" class="mb-3">
           {{ error }}
         </v-alert>
 
-        <v-btn
-          color="primary"
-          :loading="loading"
-          :disabled="!code"
-          block
-          @click="approve"
-        >
-          批准并绑定到我
-        </v-btn>
+        <v-btn color="primary" :loading="loading" :disabled="!code" block @click="approve"> 批准并绑定到我 </v-btn>
       </v-card>
 
       <v-card v-else class="pa-5 text-center">
-        <v-icon size="40" color="success" class="mb-2">
-          mdi-check-circle-outline
-        </v-icon>
+        <v-icon size="40" color="success" class="mb-2"> mdi-check-circle-outline </v-icon>
         <h2 class="t-title mb-1">设备已连接</h2>
         <div class="t-body c-muted mb-3">
-          算力节点 «<strong>{{ approved.device_name }}</strong>» 已绑定到你。
+          算力节点 «<strong>{{ approved.device_name }}</strong
+          >» 已绑定到你。
         </div>
         <div class="t-caption c-muted mb-4">
           回到 cli 运行 <code>cheese link connect</code>，它就会保持在线、接受派活。
         </div>
-        <v-btn variant="tonal" :to="{ name: 'my-devices' }">
-          去「我的设备」
-        </v-btn>
+        <v-btn variant="tonal" :to="{ name: 'my-devices' }"> 去「我的设备」 </v-btn>
       </v-card>
     </v-container>
   </div>

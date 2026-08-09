@@ -2,12 +2,8 @@
 // (tool-name prefix / literal `cheese <sub>` in a Bash command) — never
 // guessed from natural language.
 import { describe, expect, it } from 'vitest'
-import {
-  formatToolAction,
-  isPlatformAction,
-  isPlatformEvent,
-  toolLabel,
-} from './toolLabels'
+
+import { formatToolAction, isPlatformAction, isPlatformEvent, toolLabel } from './toolLabels'
 
 describe('toolLabel', () => {
   it('translates native tools (incl. the ones that used to leak raw)', () => {
@@ -31,12 +27,8 @@ describe('isPlatformAction (live worklog dots)', () => {
   })
 
   it('flags Bash commands invoking the cheese CLI', () => {
-    expect(isPlatformAction('Bash', { command: 'cheese title "新标题"' })).toBe(
-      true,
-    )
-    expect(
-      isPlatformAction('Bash', { command: '/usr/local/bin/cheese doc set' }),
-    ).toBe(true)
+    expect(isPlatformAction('Bash', { command: 'cheese title "新标题"' })).toBe(true)
+    expect(isPlatformAction('Bash', { command: '/usr/local/bin/cheese doc set' })).toBe(true)
   })
 
   it('keeps plain work neutral', () => {
@@ -44,12 +36,8 @@ describe('isPlatformAction (live worklog dots)', () => {
     expect(isPlatformAction('Bash', { command: 'echo cheese' })).toBe(false)
     expect(isPlatformAction('Bash', {})).toBe(false)
     expect(isPlatformAction('Grep', { pattern: 'cheese title' })).toBe(false)
-    expect(isPlatformAction('Read', { file_path: '/a/cheese title.txt' })).toBe(
-      false,
-    )
-    expect(isPlatformAction('Agent', { description: '查 cheese 用法' })).toBe(
-      false,
-    )
+    expect(isPlatformAction('Read', { file_path: '/a/cheese title.txt' })).toBe(false)
+    expect(isPlatformAction('Agent', { description: '查 cheese 用法' })).toBe(false)
   })
 })
 
@@ -73,9 +61,7 @@ describe('isPlatformEvent (persisted event blocks)', () => {
 describe('formatToolAction', () => {
   it('renders verb · preview from the live tool input', () => {
     expect(formatToolAction('Grep', { pattern: 'TODO' })).toBe('搜内容 · TODO')
-    expect(formatToolAction('mcp__cheese__notify', { title: '进展' })).toBe(
-      '发送通知 · 进展',
-    )
+    expect(formatToolAction('mcp__cheese__notify', { title: '进展' })).toBe('发送通知 · 进展')
   })
 
   it('renders the bare verb when the preview arg is missing', () => {

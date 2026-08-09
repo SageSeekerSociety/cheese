@@ -7,13 +7,15 @@
 // and DocPanel can never drift apart on schema/round-trip fidelity — and the
 // same getDoc/putDoc API + autosave contract, so 项目文档 edits persist exactly
 // like the workspace doc does.
-import { myHandle } from '../me'
-import { onBeforeUnmount, ref, watch } from 'vue'
-import { useEditor, EditorContent } from '@tiptap/vue-3'
-import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
+
+import { onBeforeUnmount, ref, watch } from 'vue'
+import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
+import { EditorContent, useEditor } from '@tiptap/vue-3'
+
 import { getDoc, putDoc } from '../api'
+import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
+import { myHandle } from '../me'
 
 const props = withDefaults(
   defineProps<{
@@ -27,7 +29,7 @@ const props = withDefaults(
   {
     editable: true,
     placeholder: '',
-  },
+  }
 )
 
 // State surfaced to the parent so it can show 保存中… / 已保存 / 未保存.
@@ -172,7 +174,10 @@ function addBlockBelow() {
   const hovered = ed.state.doc.nodeAt(hoverPos.value)
   const emptyPara = hovered?.type.name === 'paragraph' && hovered.content.size === 0
   if (emptyPara) {
-    ed.chain().focus().setTextSelection(hoverPos.value + 1).run()
+    ed.chain()
+      .focus()
+      .setTextSelection(hoverPos.value + 1)
+      .run()
     return
   }
   const insertAt = hoverPos.value + hoverNodeSize.value
@@ -194,7 +199,7 @@ watch(
       setEditorMarkdown('')
     }
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 // Editable toggle from the parent: setEditable(v, false) so tiptap's synthetic
@@ -204,7 +209,7 @@ watch(
   (v) => {
     editor.value?.setEditable(v, false)
     if (!v && dirty.value) void save()
-  },
+  }
 )
 
 // Reload from the server (e.g. AI activity). Respects unsaved local edits.
@@ -234,27 +239,15 @@ onBeforeUnmount(() => {
     <div v-if="loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
-    <div
-      class="doc-editor"
-      @keydown="onKeydown"
-      @focusout="onBlur"
-    >
+    <div class="doc-editor" @keydown="onKeydown" @focusout="onBlur">
       <EditorContent v-if="editor" :editor="editor" />
       <!-- Empty-doc hint: a soft placeholder over the blank editor. -->
-      <div
-        v-if="editor && !loading && rawDoc.trim() === '' && placeholder"
-        class="doc-editor__placeholder"
-      >
+      <div v-if="editor && !loading && rawDoc.trim() === '' && placeholder" class="doc-editor__placeholder">
         {{ placeholder }}
       </div>
       <!-- Feishu-style left gutter block handles: ＋ inserts below, ⠿ reorders.
            Edit mode only, exactly like DocPanel. -->
-      <DragHandle
-        v-if="editor && editable"
-        :editor="editor"
-        :on-node-change="onNodeChange"
-        class="doc-handle"
-      >
+      <DragHandle v-if="editor && editable" :editor="editor" :on-node-change="onNodeChange" class="doc-handle">
         <button
           type="button"
           class="doc-handle__btn doc-handle__add"
@@ -371,7 +364,9 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 5px;
   user-select: none;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .doc-handle__add {
   cursor: pointer;
