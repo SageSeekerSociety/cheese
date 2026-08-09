@@ -76,6 +76,9 @@
         <v-btn variant="text" @click="loadCxProjects">重试</v-btn>
       </template>
     </v-snackbar>
+
+    <!-- 内测: running-build badge, self-hides unless the box opted in. -->
+    <VersionBadge />
   </my-app>
 </template>
 
@@ -97,6 +100,7 @@ import { usePageTitleStore } from './stores/title'
 import { createProject, listProjects } from '@/api'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
+import VersionBadge from '@/components/common/VersionBadge.vue'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import { myHandle } from '@/me'
 

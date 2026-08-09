@@ -190,6 +190,10 @@ jobs:
           file: ./backend/Dockerfile
           target: production
           push: true
+          # Bake the commit sha so the running app can report its own version
+          # (settings.app_version → /api/version → the 内测 badge).
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           # The connector sources live at the repo root, outside the backend
           # context; without this the image ships no cheesehost binaries and
           # one-line device enrollment 404s.
