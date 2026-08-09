@@ -15,6 +15,7 @@ class UserOAuthConnection(Base):
     provider_id: Mapped[str] = mapped_column(Text, nullable=False)
     provider_user_id: Mapped[str] = mapped_column(Text, nullable=False)
     raw_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_expires: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

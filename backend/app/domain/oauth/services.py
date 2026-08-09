@@ -1,15 +1,23 @@
+import logging
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 
 from app.core.config import settings
+from app.core.crypto import decrypt_text, encrypt_text
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.oauth.repositories import OAuthConnectionRepository
+
+logger = logging.getLogger(__name__)
+
+# Refresh an expiring GitHub user-to-server token this long before it
+# actually expires, so a token handed to a caller has headroom to be used.
+_GITHUB_TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
 
 
 @dataclass
@@ -68,6 +76,27 @@ class GitHubProvider(OAuthProvider):
                     "client_secret": self.config.client_secret,
                     "code": code,
                     "redirect_uri": self.config.redirect_url,
+                },
+                headers={"Accept": "application/json"},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
+        """Exchange a refresh_token for a new access_token.
+
+        Only meaningful for GitHub Apps that opted into "Expire user
+        authorization tokens" — same response shape as ``exchange_code``
+        (access_token, expires_in, refresh_token, refresh_token_expires_in).
+        """
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                self.config.token_url,
+                data={
+                    "client_id": self.config.client_id,
+                    "client_secret": self.config.client_secret,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
                 },
                 headers={"Accept": "application/json"},
             )
@@ -358,6 +387,7 @@ class OAuthService:
         provider_id: str,
         provider_user_id: str,
         raw_profile: dict | None = None,
+        access_token: str | None = None,
         refresh_token: str | None = None,
         token_expires: datetime | None = None,
     ) -> dict:
@@ -366,10 +396,70 @@ class OAuthService:
             provider_id=provider_id,
             provider_user_id=provider_user_id,
             raw_profile=raw_profile,
-            refresh_token=refresh_token,
+            access_token=encrypt_text(access_token) if access_token else None,
+            refresh_token=encrypt_text(refresh_token) if refresh_token else None,
             token_expires=token_expires,
         )
         return self._connection_to_dict(conn)
+
+    async def update_connection_tokens(
+        self,
+        *,
+        connection_id: int,
+        access_token: str | None,
+        refresh_token: str | None,
+        token_expires: datetime | None,
+    ) -> None:
+        await self._repo.update_tokens(
+            connection_id,
+            encrypt_text(access_token) if access_token else None,
+            encrypt_text(refresh_token) if refresh_token else None,
+            token_expires,
+        )
+
+    async def get_github_user_token(self, user_id: int) -> str | None:
+        """The decrypted, usable GitHub user-to-server access token (#192
+        account link) for ``user_id``, or None if there's no connected
+        account, no stored token, or the token is expired with nothing to
+        refresh it with. Callers must treat None as "fall back", not raise.
+        """
+        conn = await self._repo.get_by_user_and_provider(user_id, "github_app")
+        if conn is None or not conn.access_token:
+            return None
+
+        if (
+            conn.token_expires is None
+            or conn.token_expires - datetime.now(UTC) > _GITHUB_TOKEN_REFRESH_MARGIN
+        ):
+            return decrypt_text(conn.access_token)
+
+        if not conn.refresh_token:
+            return None
+
+        provider = self.get_provider("github_app")
+        if not isinstance(provider, GitHubProvider):
+            return None
+        try:
+            token_data = await provider.refresh_access_token(
+                decrypt_text(conn.refresh_token)
+            )
+            new_access_token = token_data["access_token"]
+        except Exception:
+            logger.exception("github account link: token refresh failed")
+            return None
+
+        expires_in = token_data.get("expires_in")
+        new_expires = (
+            datetime.now(UTC) + timedelta(seconds=expires_in) if expires_in else None
+        )
+        new_refresh_token = token_data.get("refresh_token")
+        await self.update_connection_tokens(
+            connection_id=conn.id,
+            access_token=new_access_token,
+            refresh_token=new_refresh_token or decrypt_text(conn.refresh_token),
+            token_expires=new_expires,
+        )
+        return new_access_token
 
     async def list_user_connections(self, user_id: int) -> list[dict]:
         conns = await self._repo.list_by_user(user_id)
