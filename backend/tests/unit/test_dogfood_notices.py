@@ -6,7 +6,9 @@ right event land on the right topic" is verified."""
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -53,11 +55,35 @@ class FakeBlockRepository:
         self._sink = sink
         self._remaining = remaining
 
-    async def add(self, **kwargs) -> None:
+    async def add(self, **kwargs) -> SimpleNamespace:
         if self._remaining["fail"] > 0:
             self._remaining["fail"] -= 1
             raise RuntimeError("db unavailable")
         self._sink.append(kwargs)
+        # Production now validates the persisted row through BlockOut before it
+        # publishes the realtime event_block, so `add` must hand back an object
+        # BlockOut can read via from_attributes — returning None made that
+        # validation raise, retry 3x, and land 3 rows in the sink.
+        return SimpleNamespace(
+            id=uuid.uuid4(),
+            topic_id=kwargs["topic_id"],
+            kind=kwargs["kind"],
+            author_type=kwargs["author_type"],
+            author=kwargs["author"],
+            content=kwargs["content"],
+            reply_to=None,
+            struct_parent=None,
+            node_type=None,
+            struct_order=None,
+            anchor_quote=None,
+            mime_type=None,
+            refs=[],
+            upgraded_to_topic_id=None,
+            turn_id=None,
+            meta=None,
+            reactions=[],
+            created_at=datetime.now(UTC),
+        )
 
 
 class FakeSession:
