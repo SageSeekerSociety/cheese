@@ -8,11 +8,13 @@ Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照
 
 import asyncio
 import contextlib
+import logging
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -24,6 +26,8 @@ from app.domain.workspace.dogfood_notices import watch_dogfood_push
 DEFAULT_BRANCH = "main"
 # 沙箱镜像：芝士分身在容器里跑代码/测试，碰不到宿主机 (spec §9.1).
 SANDBOX_IMAGE = "python:3.12-slim"
+
+logger = logging.getLogger("cheesex.workspace")
 
 
 class GitTimeoutError(ValidationError):
@@ -471,6 +475,38 @@ def _merge_worktree_path(project_id: uuid.UUID) -> Path:
     return Path(settings.workspace_root) / ".worktrees" / str(project_id) / "_merge"
 
 
+# A merge worktree left on disk this long was abandoned by a process that
+# never got to run its own `finally` cleanup (2026-08-09 incident, round 2:
+# a `docker compose up` redeploy SIGKILLed the backend mid-accept, so nothing
+# was left running to remove it) — never by an operation still in flight, since
+# a single merge/checkout here finishes in well under a second. Purely disk/
+# `.git/worktrees` registry hygiene: each attempt uses a fresh uuid, so debris
+# from a killed run is never revisited and can never wedge a future one — it
+# just sits there forever unless swept.
+_ORPHANED_MERGE_WORKTREE_AFTER_S = 3600.0
+
+
+def _reap_orphaned_merge_worktrees(repo: Path, project_id: uuid.UUID) -> None:
+    root = _merge_worktree_path(project_id)
+    if not root.is_dir():
+        return
+    now = time.time()
+    for entry in root.iterdir():
+        try:
+            age_s = now - entry.stat().st_mtime
+        except OSError:
+            continue
+        if age_s < _ORPHANED_MERGE_WORKTREE_AFTER_S:
+            continue
+        logger.warning(
+            "reaping orphaned merge worktree %s (age=%.0fs) — a prior run "
+            "never got to clean it up",
+            entry,
+            age_s,
+        )
+        _discard_worktree(repo, entry)
+
+
 def _discard_worktree(repo: Path, wt: Path) -> None:
     """Best-effort teardown of a throwaway merge worktree. `git worktree
     remove` also frees the linked admin dir under `.git/worktrees/<name>/`
@@ -516,6 +552,52 @@ def _isolated_worktree(project_id: uuid.UUID, repo: Path, ref: str) -> Iterator[
         _discard_worktree(repo, wt)
 
 
+def _lock_held_by_a_live_process(lock: Path) -> bool:
+    """Best-effort: is any process on this host holding `lock` open right
+    now? Scans `/proc/*/fd` (Linux; this backend always runs there) instead
+    of shelling out to `lsof`, which a slim container image often lacks.
+    Fails OPEN (assumes held) on anything unreadable — staleness must never
+    be inferred from a probe that couldn't actually see the answer."""
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return True
+    try:
+        target = str(lock.resolve())
+    except OSError:
+        return True
+    for pid_dir in proc.iterdir():
+        if not pid_dir.name.isdigit():
+            continue
+        try:
+            fds = list((pid_dir / "fd").iterdir())
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink(fd) == target:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _is_lock_stale(lock: Path, age_threshold_s: float) -> bool:
+    try:
+        age_s = time.time() - lock.stat().st_mtime
+    except OSError:
+        return False  # already gone — nothing to clear
+    if age_s < age_threshold_s:
+        return False  # could still be a legitimate, just-slow operation
+    return not _lock_held_by_a_live_process(lock)
+
+
+# checkout+reset here is plumbing, not a merge — a real one finishes in well
+# under a second, so a lock this old was abandoned, not merely slow.
+_SHARED_LOCK_STALE_AFTER_S = 60.0
+_SHARED_CHECKOUT_ATTEMPTS = 5
+_SHARED_CHECKOUT_RETRY_DELAY_S = 0.2
+
+
 def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
     """The ONE piece of a merge that must still touch the shared repo
     directory: point its own working tree at the new base tip, since
@@ -523,9 +605,52 @@ def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
     bind-mount all read straight off these files. Deliberately just a
     fast-forward reset — no merge algorithm, no conflict possible — to keep
     the shared directory's exposure to a hang as small as this fix can make
-    it."""
-    _git(repo, "checkout", "-q", base)
-    _git(repo, "reset", "-q", "--hard", sha)
+    it.
+
+    2026-08-09 incident, round 2: even with the merge itself isolated, the
+    backend process running THIS step can still be SIGKILLed mid-checkout by
+    a redeploy (observed live: a `docker compose up` mid-flight left a
+    zero-byte `.git/index.lock` here that then wedged every later accept on
+    the project until a human deleted it). Unlike `_run_subprocess`'s own
+    timeout path (which clears a lock only after confirming — via wait() —
+    that ITS OWN subprocess died), there's no process handle to confirm
+    against here: it was someone else's process, killed before we ever ran.
+    So staleness is inferred instead — old enough that no legitimate
+    checkout/reset could still be running it, AND not currently held open by
+    any process on the host — and only then cleared, with a retry loop for
+    the (much more likely) case of two accepts landing here within
+    milliseconds of each other, which needs a brief wait, not a lock clear."""
+    last_exc: ValidationError | None = None
+    for attempt in range(_SHARED_CHECKOUT_ATTEMPTS):
+        lock = repo / ".git" / "index.lock"
+        if lock.exists():
+            try:
+                mtime = lock.stat().st_mtime
+            except OSError:
+                mtime = None
+            if mtime is not None and _is_lock_stale(lock, _SHARED_LOCK_STALE_AFTER_S):
+                logger.warning(
+                    "clearing stale %s (mtime=%s, age=%.0fs) — no live "
+                    "process holds it; a prior operation was killed before "
+                    "it could finish",
+                    lock,
+                    mtime,
+                    time.time() - mtime,
+                )
+                try:
+                    lock.unlink()
+                except OSError:
+                    pass
+        try:
+            _git(repo, "checkout", "-q", base)
+            _git(repo, "reset", "-q", "--hard", sha)
+            return
+        except ValidationError as exc:
+            last_exc = exc
+            if attempt + 1 < _SHARED_CHECKOUT_ATTEMPTS:
+                time.sleep(_SHARED_CHECKOUT_RETRY_DELAY_S)
+    assert last_exc is not None
+    raise last_exc
 
 
 _MERGE_RETRY_LIMIT = 5
@@ -553,6 +678,7 @@ def _merge_ref_into_base(
     exhausted) — always returns a dict with a `merged` key, same contract as
     the old direct implementation. Genuine git failures (bad ref, etc.) still
     raise ValidationError."""
+    _reap_orphaned_merge_worktrees(repo, project_id)
     for _attempt in range(_MERGE_RETRY_LIMIT):
         old_sha = _git(repo, "rev-parse", base).strip()
         with _isolated_worktree(project_id, repo, old_sha) as wt:

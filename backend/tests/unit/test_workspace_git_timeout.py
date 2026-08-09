@@ -5,7 +5,10 @@ anything it was holding — a lock file, a worktree — gets touched. Exercises
 subprocesses; the merge-isolation behavior itself is covered in
 tests/integration/test_workspace.py."""
 
+import os
+import subprocess
 import sys
+import time
 
 import pytest
 
@@ -98,3 +101,130 @@ def test_clear_own_lock_is_a_noop_for_a_linked_worktree(tmp_path):
     (tmp_path / ".git").write_text("gitdir: /somewhere/else\n")
     ws._clear_own_lock(tmp_path)  # must not raise
     assert (tmp_path / ".git").read_text() == "gitdir: /somewhere/else\n"
+
+
+def _backdate(path, age_s: float) -> None:
+    now = time.time()
+    os.utime(path, (now - age_s, now - age_s))
+
+
+class TestLockStaleness:
+    """2026-08-09 incident, round 2: a redeploy SIGKILLed the backend
+    mid-checkout in the SHARED repo directory (not an isolated worktree —
+    there's no process handle to confirm death against here, unlike
+    `_run_subprocess`'s own timeout path), leaving a lock nobody will ever
+    clear. `_is_lock_stale` is the heuristic that decides when it's safe to
+    drop: old enough that no legitimate operation could still be running it,
+    AND not currently held open by any live process."""
+
+    def test_fresh_lock_is_never_stale_even_if_unheld(self, tmp_path):
+        lock = tmp_path / "index.lock"
+        lock.write_text("")
+        assert ws._is_lock_stale(lock, age_threshold_s=60) is False
+
+    def test_old_unheld_lock_is_stale(self, tmp_path):
+        lock = tmp_path / "index.lock"
+        lock.write_text("")
+        _backdate(lock, 120)
+        assert ws._is_lock_stale(lock, age_threshold_s=60) is True
+
+    def test_old_lock_still_held_open_is_not_stale(self, tmp_path):
+        lock = tmp_path / "index.lock"
+        held = open(lock, "w")  # noqa: SIM115 — must stay open for the assertion
+        try:
+            _backdate(lock, 120)
+            assert ws._is_lock_stale(lock, age_threshold_s=60) is False
+        finally:
+            held.close()
+
+    def test_missing_lock_is_not_stale(self, tmp_path):
+        assert ws._is_lock_stale(tmp_path / "gone", age_threshold_s=60) is False
+
+
+class TestSyncSharedCheckout:
+    def _repo(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+            cwd=repo,
+            check=True,
+        )
+        return repo
+
+    def test_stale_lock_is_cleared_and_checkout_proceeds(self, tmp_path):
+        repo = self._repo(tmp_path)
+        sha = subprocess.run(  # noqa: S607
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+        lock = repo / ".git" / "index.lock"
+        lock.write_text("")
+        _backdate(lock, 120)
+
+        ws._sync_shared_checkout(repo, "main", sha)  # must not raise
+
+        assert not lock.exists()
+
+    def test_live_lock_is_retried_then_raises_without_being_deleted(
+        self, tmp_path, monkeypatch
+    ):
+        """A lock that's NOT stale (fresh, or held open) must never be
+        deleted out from under whatever legitimately holds it — the caller
+        retries a few times and then surfaces a clear failure instead."""
+        monkeypatch.setattr(ws, "_SHARED_CHECKOUT_RETRY_DELAY_S", 0.01)
+        repo = self._repo(tmp_path)
+        sha = subprocess.run(  # noqa: S607
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+        lock = repo / ".git" / "index.lock"
+        lock.write_text("")  # fresh — never considered stale regardless of holder
+
+        with pytest.raises(ws.ValidationError):
+            ws._sync_shared_checkout(repo, "main", sha)
+
+        assert lock.exists(), "a lock that isn't provably stale must survive"
+
+
+class TestReapOrphanedMergeWorktrees:
+    def test_old_worktree_dir_is_removed(self, tmp_path, monkeypatch):
+        import uuid as uuid_mod
+
+        monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
+        pid = uuid_mod.uuid4()
+        repo = ws.ensure_repo(pid)
+        merge_root = ws._merge_worktree_path(pid)
+        merge_root.mkdir(parents=True)
+        stale = merge_root / "deadbeef"
+        stale.mkdir()
+        _backdate(stale, ws._ORPHANED_MERGE_WORKTREE_AFTER_S + 60)
+
+        ws._reap_orphaned_merge_worktrees(repo, pid)
+
+        assert not stale.exists()
+
+    def test_fresh_worktree_dir_is_left_alone(self, tmp_path, monkeypatch):
+        import uuid as uuid_mod
+
+        monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
+        pid = uuid_mod.uuid4()
+        repo = ws.ensure_repo(pid)
+        merge_root = ws._merge_worktree_path(pid)
+        merge_root.mkdir(parents=True)
+        fresh = merge_root / "cafebabe"
+        fresh.mkdir()
+
+        ws._reap_orphaned_merge_worktrees(repo, pid)
+
+        assert fresh.exists()
