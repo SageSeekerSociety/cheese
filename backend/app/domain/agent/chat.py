@@ -348,18 +348,33 @@ def _workspace_disk(root: str) -> tuple[int, int] | None:
 def _turn_meta_lines(
     *,
     budget_s: float,
+    activity_aware: bool,
     is_resume: bool,
     disk: tuple[int, int] | None,
     open_cards: list[AcceptCard] | None,
 ) -> list[str]:
     """盲飞防护: the run facts an agent has no other way to see — its own time
     budget, whether it's a continuation, disk headroom, and where this topic's
-    accept cards stand. Plain bullet lines so the prompt stays small."""
-    minutes = max(1, int(budget_s // 60))
-    lines = [
-        f"- 时间预算：本轮最多约 {minutes} 分钟，到点会被平台中断（之后自动续跑一次）。"
-        "长活边做边落盘/提交，别把成果都压在最后一步。"
-    ]
+    accept cards stand. Plain bullet lines so the prompt stays small.
+
+    ``activity_aware`` (the tmux backend, turn 活跃度检测): that backend no
+    longer dies on a fixed minute count — only real idleness (checked, then
+    confirmed dead) or a many-hours hard ceiling ends it — so a countdown-style
+    "到点会被中断" line is both inaccurate and was observed making the agent
+    rush (dev, 2026-08-08: shortened verification to "save time" against a
+    deadline that was only ever meant as a wedged-turn safety net)."""
+    if activity_aware:
+        lines = [
+            "- 这轮跑在有活跃度检测的后端上：没有固定时长倒计时，只要还在"
+            "产生动静（工具调用、终端输出）就不会被打断，真的卡死了才会兜底"
+            "结束。长活照样要边做边落盘/提交，别把成果都压在最后一步。"
+        ]
+    else:
+        minutes = max(1, int(budget_s // 60))
+        lines = [
+            f"- 时间预算：本轮最多约 {minutes} 分钟，到点会被平台中断"
+            "（之后自动续跑一次）。长活边做边落盘/提交，别把成果都压在最后一步。"
+        ]
     if is_resume:
         lines.append(
             "- 本轮是自动续跑：上一轮被中断后接着跑。"
@@ -626,6 +641,11 @@ class ChatService:
     @property
     def session_factory(self) -> async_sessionmaker:
         return self._sessions
+
+    def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
+        """`cheese status`'s idle-suspect signal (turn 活跃度检测) — see
+        `ComputePool.tmux_activity_status`."""
+        return self._compute.tmux_activity_status(topic_id)
 
     def _lock_for(self, topic_id: uuid.UUID) -> asyncio.Lock:
         lock = self._topic_locks.get(topic_id)
@@ -1494,6 +1514,13 @@ class ChatService:
                 await _team_compute_profile(session, project),
             )
             provider = self._compute.select(provider_id=compute_id)
+            # turn 活跃度检测: only the tmux backend has a real activity signal
+            # (hooks_substrate's idle-suspect + hard-ceiling loop) — SDK/device
+            # emit nothing here and TurnRunner's outer wall-clock wrap (runtime.py)
+            # keeps its unchanged `agent_turn_timeout_s` default for them.
+            from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+            is_activity_aware_backend = isinstance(provider, TmuxHooksProvider)
             if topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later team-default/sticky change must
@@ -1502,6 +1529,13 @@ class ChatService:
                 await session.commit()
 
         # --- streaming: no DB transaction held open ---
+        if is_activity_aware_backend:
+            # Tells TurnRunner's outer wall-clock wrap (runtime.py) to reschedule
+            # to this backend's real ceiling instead of the generic
+            # `agent_turn_timeout_s` — the ONLY frame kind that does so, and only
+            # emitted here, so every other backend's outer-wrap behaviour is
+            # untouched (turn 活跃度检测).
+            yield {"type": "turn_ceiling", "seconds": provider.hard_ceiling_s}
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
         system_prompt = _build_system_prompt(
             self._base_prompt,
@@ -1514,6 +1548,7 @@ class ChatService:
             untitled,
             turn_meta=_turn_meta_lines(
                 budget_s=settings.agent_turn_timeout_s,
+                activity_aware=is_activity_aware_backend,
                 is_resume=is_resume,
                 disk=_workspace_disk(self._workspace_root),
                 open_cards=open_cards,

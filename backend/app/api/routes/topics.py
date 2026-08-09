@@ -164,15 +164,24 @@ async def topic_status(
     topic_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """盲飞防护: one snapshot of "what is going on" for this topic — accept
-    cards with their gate output, the current/last turn's time budget, and the
+    cards with their gate output, the current/last turn's state, and the
     platform waterlines (disk/queue/credits) — so an agent (via `cheese
     status`) or a debugging human doesn't have to poll several endpoints and
-    guess. Read path, open like the rest of the MVP read surface."""
+    guess. Read path, open like the rest of the MVP read surface.
+
+    ``turn.activity`` (turn 活跃度检测, tmux backend only — None otherwise) is
+    the idle-suspect signal: ``suspect_since_s_ago`` set means the turn has been
+    idle past the threshold and is being actively re-confirmed alive, not yet
+    treated as dead."""
     topic = await TopicService(db).get_or_404(topic_id)
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
     credits = await ComputeGrantRepository(db).summary(topic.project_id)
+    turn = runner.topic_turn(topic_id)
+    if turn is not None and turn.get("status") == "running":
+        turn["activity"] = chat_service.tmux_activity_status(topic_id)
     return ok(
         {
             "topic": {
@@ -181,7 +190,7 @@ async def topic_status(
                 "status": str(topic.status),
                 "branch": topic.branch_name,
             },
-            "turn": runner.topic_turn(topic_id),
+            "turn": turn,
             "cards": [_card_snapshot(c) for c in cards],
             "platform": {
                 "active_turns": runner.active_turns(),
