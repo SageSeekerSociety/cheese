@@ -360,6 +360,11 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
+    # PR-based accept (#188 §5.1, docs/plans/2026-08-09-pr-based-accept-design.md):
+    # submitting an accept card pushes the topic branch and opens a real PR;
+    # 采纳 merges that PR via the API. Submission-side only — accept dispatches
+    # on the card's stored pr_number, so flipping this never strands a card.
+    accept_via_pr: bool = False
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared

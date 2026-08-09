@@ -34,6 +34,9 @@ from app.domain.project.repositories import ProjectGitInstallationRepository
 
 # What a sandbox may do with GitHub: look, not touch.
 _READONLY_PERMISSIONS = {"actions": "read", "checks": "read", "metadata": "read"}
+# What the BACKEND ITSELF may do for PR-based accept (#188 §5.1): push the topic
+# branch, open and merge the PR. Never exposed through any sandbox-facing route.
+_WRITE_PERMISSIONS = {"contents": "write", "metadata": "read", "pull_requests": "write"}
 # GitHub caps app JWTs at 10 minutes; stay clear of clock-skew rejections.
 _JWT_TTL_S = 540
 # Re-mint when the cached token has less life left than a long agent turn.
@@ -62,7 +65,8 @@ class GitHubAppTokens:
         self._api_base = api_base.rstrip("/")
         self._transport = transport
         self._key_text: str | None = None
-        self._cached: tuple[str, float] | None = None  # (token, expires_epoch)
+        # One cache slot per permission set: {slot: (token, expires_epoch)}.
+        self._cached: dict[str, tuple[str, float]] = {}
         self._lock = asyncio.Lock()
 
     @property
@@ -83,14 +87,27 @@ class GitHubAppTokens:
         )
 
     async def readonly_token(self) -> tuple[str, str]:
-        """A read-only installation token and its ISO expiry.
+        """A read-only installation token and its ISO expiry (sandbox-facing)."""
+        return await self._mint("readonly", _READONLY_PERMISSIONS)
+
+    async def write_token(self) -> tuple[str, str]:
+        """A contents+pull_requests write token — BACKEND-INTERNAL ONLY.
+
+        Used by PR-based accept to push the topic branch and open/merge the PR.
+        No route may ever return this to a caller.
+        """
+        return await self._mint("write", _WRITE_PERMISSIONS)
+
+    async def _mint(self, slot: str, permissions: dict[str, str]) -> tuple[str, str]:
+        """Mint (or reuse) the installation token for one permission set.
 
         Serialized under a lock so concurrent turns share one mint instead of
         racing GitHub for identical tokens.
         """
         async with self._lock:
-            if self._cached and self._cached[1] - time.time() > _REFRESH_MARGIN_S:
-                token, exp = self._cached
+            cached = self._cached.get(slot)
+            if cached and cached[1] - time.time() > _REFRESH_MARGIN_S:
+                token, exp = cached
                 return token, _iso(exp)
             async with httpx.AsyncClient(
                 transport=self._transport, timeout=20.0
@@ -98,7 +115,7 @@ class GitHubAppTokens:
                 resp = await client.post(
                     f"{self._api_base}/app/installations/"
                     f"{self._installation_id}/access_tokens",
-                    json={"permissions": _READONLY_PERMISSIONS},
+                    json={"permissions": permissions},
                     headers={
                         "Authorization": f"Bearer {self._app_jwt()}",
                         "Accept": "application/vnd.github+json",
@@ -114,7 +131,7 @@ class GitHubAppTokens:
             expires_epoch = datetime.fromisoformat(
                 body["expires_at"].replace("Z", "+00:00")
             ).timestamp()
-            self._cached = (token, expires_epoch)
+            self._cached[slot] = (token, expires_epoch)
             return token, _iso(expires_epoch)
 
 
