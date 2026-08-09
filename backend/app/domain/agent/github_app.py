@@ -173,6 +173,52 @@ async def github_app_tokens_for_project(
     return _tokens_for_installation(installation.installation_id)
 
 
+def _settings_app_jwt() -> str | None:
+    """A 10-minute App JWT from the platform credential, or None when the App
+    is not configured. App-level endpoints (``/app/installations``) take this
+    directly — no installation context exists yet."""
+    if not settings.github_app_id or not settings.github_app_private_key_path:
+        return None
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "iat": now - 60,
+            "exp": now + _JWT_TTL_S,
+            "iss": str(settings.github_app_id),
+        },
+        Path(settings.github_app_private_key_path).read_text(),
+        algorithm="RS256",
+    )
+
+
+async def list_app_installations() -> list[dict]:
+    """Every installation of the App, via the App JWT.
+
+    The install flow needs this because GitHub's ``installations/new`` page
+    dead-ends when the App is ALREADY installed on the org: it shows the
+    installation settings page and never fires the setup_url callback, so the
+    signed state is lost and the platform waits forever. The connect route
+    therefore looks for an existing installation itself first.
+    """
+    token = _settings_app_jwt()
+    if token is None:
+        raise GitHubAppError("GitHub App is not configured on this deployment")
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.get(
+            "https://api.github.com/app/installations",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+    if resp.status_code != 200:
+        raise GitHubAppError(
+            f"GitHub refused to list installations (HTTP {resp.status_code}): "
+            f"{resp.text[:200]}"
+        )
+    return list(resp.json())
+
+
 async def fetch_installation_repos(installation_id: int) -> list[dict]:
     """The repos `installation_id` can access, via its own read-only token.
 

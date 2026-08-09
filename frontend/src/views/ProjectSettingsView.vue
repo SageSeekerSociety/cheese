@@ -12,11 +12,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
+  connectGithubRepo as apiConnectGithubRepo,
   createRole,
   getExecutionProfiles,
   getGithubAccountAuthorizeUrl,
   getGithubConnection,
-  getGithubInstallUrl,
   getModelProfiles,
   getProject,
   getSandboxImage,
@@ -237,10 +237,24 @@ async function doSyncUpstream() {
 async function connectGithubRepo() {
   connectingGithubRepo.value = true
   try {
-    const { url } = await getGithubInstallUrl(props.projectId)
-    window.location.href = url
+    // Try an existing installation first: GitHub's install page dead-ends
+    // (never fires the callback) when the App is already installed, so the
+    // backend looks for an installation covering the upstream repo itself.
+    const res = await apiConnectGithubRepo(props.projectId)
+    if (res.connected) {
+      githubConnection.value = { connected: true, repo: res.repo, account: res.account }
+      githubCallbackNotice.value = { type: 'success', text: `已连接 ${res.repo}` }
+      connectingGithubRepo.value = false
+      return
+    }
+    if (res.install_url) {
+      window.location.href = res.install_url
+      return
+    }
+    error.value = '连接失败：后端没有返回安装链接'
+    connectingGithubRepo.value = false
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '获取安装链接失败'
+    error.value = e instanceof Error ? e.message : '连接 GitHub 仓库失败'
     connectingGithubRepo.value = false
   }
 }
