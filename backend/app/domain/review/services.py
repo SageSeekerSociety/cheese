@@ -363,7 +363,7 @@ class AcceptService:
         from app.domain.workspace import service as ws
 
         try:
-            merged = ws.merge_topic(topic.project_id, topic.id)
+            merged = await asyncio.to_thread(ws.merge_topic, topic.project_id, topic.id)
         except Exception as exc:  # noqa: BLE001 — surface, don't invent success
             logger.exception(
                 "accept merge raised for project=%s topic=%s",
@@ -419,7 +419,9 @@ class AcceptService:
         # nothing reached the upstream and no one could tell why.
         if merged.get("merged"):
             try:
-                pushed = ws.push_back(topic.project_id, topic.id)
+                pushed = await asyncio.to_thread(
+                    ws.push_back, topic.project_id, topic.id
+                )
             except Exception as exc:  # noqa: BLE001 — never fail the accept itself
                 card.note = f"上游回推失败：{exc}"[:2000]
             else:
@@ -503,7 +505,8 @@ class AcceptService:
         from app.domain.workspace import service as ws
 
         remote_branch = github_pr.pr_branch_name(topic.id)
-        pushed = ws.push_topic_branch_for_github_pr(
+        pushed = await asyncio.to_thread(
+            ws.push_topic_branch_for_github_pr,
             topic.project_id,
             topic.id,
             owner=owner,
@@ -511,7 +514,7 @@ class AcceptService:
             remote_branch=remote_branch,
             token=token,
         )
-        base = ws.pr_base_branch(topic.project_id)
+        base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
         client = github_pr.default_client()
         pr = await client.open_pull_request(
             owner=owner,
