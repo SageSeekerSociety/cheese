@@ -19,8 +19,10 @@ import uuid
 from pathlib import Path
 
 from app.core.db import async_session_factory
+from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
 from app.domain.topic.repositories import TopicRepository
 
 logger = logging.getLogger(__name__)
@@ -126,7 +128,7 @@ async def _post_with_retries(topic_id: uuid.UUID, content: str) -> None:
                 topic = await TopicRepository(session).get(topic_id)
                 if topic is None:
                     return
-                await BlockRepository(session).add(
+                block = await BlockRepository(session).add(
                     project_id=topic.project_id,
                     topic_id=topic.id,
                     author="system",
@@ -134,7 +136,11 @@ async def _post_with_retries(topic_id: uuid.UUID, content: str) -> None:
                     content=content,
                     kind=BlockKind.event,
                 )
+                payload = BlockOut.model_validate(block).model_dump(mode="json")
                 await session.commit()
+            await get_broker().publish(
+                str(topic.id), {"type": "event_block", "block": payload}
+            )
             return
         except Exception as exc:  # noqa: BLE001 — retry, then give up loudly
             last_exc = exc
