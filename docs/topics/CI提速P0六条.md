@@ -1,4 +1,4 @@
-## 状态：六条全部完工，已跑通本地可跑的检查，等待验收
+## 状态：六条全部完工，已跑通本地可跑的检查，验收卡已递给 wangchangxin，等待其批准
 
 执行「CI 提速执行方案」里的 P0 六条（零成本配置修复），只做 P0，未碰 P1~P4 和禁区。改动只涉及 `.github/workflows/{e2e,test,build}.yml`、`deploy/deploy-docker.sh`、`deploy/tests/test-app-tier-health.sh`、`CLAUDE.md`（仅一行）。
 
