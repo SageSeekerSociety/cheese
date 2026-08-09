@@ -10,7 +10,15 @@ const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
 export default defineConfig({
   testDir: './tests',
-  timeout: 30_000,
+  // 60s (not 30s): the vite dev server compiles routes on-demand, and the first
+  // navigation into a heavy route (the project workspace pulls in tiptap /
+  // prosemirror / DocEditor) can take >30s to transform on a cold start.
+  timeout: 60_000,
+  // Serial on CI: parallel workers each trigger a fresh cold compile at once,
+  // and the resulting storm blows the per-test timeout. The suite is small, so
+  // serializing costs little and makes cold runs deterministic. Local stays
+  // parallel (dev servers are usually already warm via reuseExistingServer).
+  workers: process.env.CI ? 1 : undefined,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   use: {
@@ -35,7 +43,12 @@ export default defineConfig({
       // banner, never reachable — which is exactly how it failed in CI.
       command: `cd ../frontend && pnpm exec vite --port ${FRONTEND_PORT} --strictPort`,
       url: `http://localhost:${FRONTEND_PORT}`,
-      env: { BACKEND_URL },
+      // VITE_API_BASE_URL=/api makes the 知是 1.0 layer prefix its calls with
+      // /api (so /users/auth/login → /api/users/auth/login), which the proxy's
+      // strip-one-/api rewrite then forwards to the backend as /users/auth/login.
+      // Production bakes the same value at build time; without it the 1.0 routes
+      // are relative (/users/...), miss the /api proxy entirely, and hit the SPA.
+      env: { BACKEND_URL, VITE_API_BASE_URL: '/api' },
       reuseExistingServer: !process.env.CI,
       // Same 180s the backend gets: a cold vite start pre-bundles deps and runs
       // the legacy plugin, on a runner that is also building and deploying.

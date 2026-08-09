@@ -4,10 +4,12 @@
 // `/connector/session/{sid}/screen` (the hub fans out raw `screen.data`); the only
 // thing we send back is a `resize` control frame so the device sizes its tmux to us.
 // Read-only by design — keystrokes are never forwarded (perception, not control).
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { FitAddon } from '@xterm/addon-fit'
+import { Terminal } from '@xterm/xterm'
+
 import { screenWsUrl } from '../api'
 
 const props = defineProps<{ sid: string }>()
@@ -21,9 +23,7 @@ let ro: ResizeObserver | null = null
 
 function sendResize(): void {
   if (!term || !socket || socket.readyState !== WebSocket.OPEN) return
-  socket.send(
-    JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }),
-  )
+  socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
 }
 
 function fitAndResize(): void {
@@ -74,8 +74,7 @@ onMounted(() => {
   term = new Terminal({
     convertEol: false,
     disableStdin: true, // read-only 现场
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
     fontSize: 13,
     theme: { background: '#1e1e1e' },
   })
@@ -94,7 +93,7 @@ watch(
   (sid) => {
     term?.reset()
     connect(sid)
-  },
+  }
 )
 
 onBeforeUnmount(() => {

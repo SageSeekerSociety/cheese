@@ -339,9 +339,11 @@ class Settings(BaseSettings):
     # endpoint answers "not configured"; nothing else changes.
     github_app_id: int | None = None
     github_app_private_key_path: str | None = None
-    # Phase 0: one installation (our own repo). #192 replaces this with a
-    # per-project table once repos are connected through the install flow.
-    github_app_installation_id: int | None = None
+    # Which installation to mint a token for is resolved per-project via the
+    # project_git_installations table (#192), not a config value — a
+    # deployment can have many connected repos, each with its own
+    # installation_id.
+    github_app_slug: str = "cheesex-app"
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared
@@ -356,6 +358,13 @@ class Settings(BaseSettings):
     oauth_ruc_client_id: str | None = None
     oauth_ruc_client_secret: str | None = None
     oauth_ruc_redirect_url: str | None = None
+    # #192 "连接 GitHub 账号": the cheesex-app GitHub App's own user-to-server
+    # OAuth credential — deliberately separate from oauth_github_client_id
+    # (the login provider above), even though it's the same authorize/token
+    # endpoints. Add "github_app" to oauth_enabled_providers to turn this on.
+    oauth_github_app_client_id: str | None = None
+    oauth_github_app_client_secret: str | None = None
+    oauth_github_app_redirect_url: str | None = None
 
     # --- WebAuthn / passkeys (same declare-or-dropped rule as above) ---
     # webauthn_origin MUST exactly match the scheme://host:port in the browser

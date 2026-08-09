@@ -52,7 +52,11 @@ def _require(client, project_id: str, n: int) -> None:
 
 def _approve(client, card_id: str, handle: str):
     return client.post(
-        f"/api/accept-cards/{card_id}/approve", json={"approver_handle": handle}
+        f"/api/accept-cards/{card_id}/approve",
+        json={"approver_handle": handle},
+        headers={
+            "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
+        },
     )
 
 

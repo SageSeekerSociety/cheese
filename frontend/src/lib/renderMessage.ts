@@ -39,7 +39,7 @@ const ESCAPED_TOKEN = /&lt;([@#])([\w-]+)&gt;|&lt;(&amp;|&)([\w./\u4e00-\u9fff-]
 
 export function highlightTokens(html: string, maps: RefMaps): string {
   return html.replace(ESCAPED_TOKEN, (_m, k, id, _fk, fid) =>
-    fid ? tokenChip('&', fid, maps) : tokenChip(k, id, maps),
+    fid ? tokenChip('&', fid, maps) : tokenChip(k, id, maps)
   )
 }
 
@@ -48,10 +48,7 @@ export function highlightTokens(html: string, maps: RefMaps): string {
 // break; strict-markdown paragraph rules would silently swallow it.
 export function renderMarkdown(text: string, maps: RefMaps): string {
   return DOMPurify.sanitize(
-    highlightTokens(
-      marked.parse(text, { async: false, gfm: true, breaks: true }) as string,
-      maps,
-    ),
+    highlightTokens(marked.parse(text, { async: false, gfm: true, breaks: true }) as string, maps)
   )
 }
 
