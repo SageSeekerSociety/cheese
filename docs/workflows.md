@@ -58,6 +58,7 @@ PYTHONPATH=. uv run python scripts/smoke_tools.py    # 芝士真的调工具改�
 改了 model（新表/新列）：`uv run alembic revision --autogenerate -m "..."` → `upgrade head`。
 - 给已有行加 `NOT NULL` 列要带 `server_default`。
 - 循环外键（projects↔topics、topics↔blocks）用 `use_alter=True`。
+- **链必须始终单 head**：提交前 `uv run alembic heads` 必须恰好一条；合并 main 后重查，main 长了新迁移就把自己的 `down_revision` 接到新 head 上。平行迁移分叉过 4 次、每次都断 dev 部署；CI 有 `migration-heads` 守卫，但别等它抓。细则见 `.claude/rules/migrations.md`。
 
 ---
 
