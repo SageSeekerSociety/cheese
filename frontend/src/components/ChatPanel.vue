@@ -814,15 +814,21 @@ function onComposerKey(e: KeyboardEvent) {
   sendDraft()
 }
 
+// Keyed on the topic's id, NOT the object reference: the parent replaces
+// `topics.value` wholesale on every refreshTopics() (e.g. after each agent
+// turn), which mints a brand-new object for the SAME topic. Watching the
+// object itself made every turn look like a topic switch — full reconnect,
+// history reload, composer disabled mid-reconnect (which blurs it). Only a
+// real id change is a real switch.
 watch(
-  () => props.topic,
-  (t, oldT) => {
+  () => props.topic?.id,
+  (id, oldId) => {
     // Save where we were in the topic we're leaving, so coming back restores it.
-    if (oldT && scrollRef.value) {
+    if (oldId && scrollRef.value) {
       const el = scrollRef.value
-      scrollMemory.set(oldT.id, { top: el.scrollTop, atBottom: isAtBottom(el) })
+      scrollMemory.set(oldId, { top: el.scrollTop, atBottom: isAtBottom(el) })
     }
-    if (t) loadTopic(t)
+    if (props.topic) loadTopic(props.topic)
     else {
       messages.value = []
       closeSocket()
