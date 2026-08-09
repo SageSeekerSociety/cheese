@@ -182,6 +182,7 @@ class MachineService:
             body["sshPubkey"] = authorized
 
         created = await self._client.create_machine(body)
+        created = await self._apply_desired_ai_mode(created)
         return await self._repo.add(
             project_id=project_id,
             machine_id=int(created["id"]),
@@ -201,6 +202,63 @@ class MachineService:
             owner_user_id=owner_user_id,
             bootstrap_key=bootstrap_private,
         )
+
+    async def _apply_desired_ai_mode(self, created: dict) -> dict:
+        """Switch a fresh machine's built-in AI channel to the configured mode.
+
+        MicroCloud provisions on newapi, whose default routes to a cheap
+        non-Claude model — the operator guidance is ccproxy (the console's
+        →ccproxy button). Best-effort: a failure here must not fail the
+        provision, and the enrollment sweep reconciles stragglers."""
+        desired = (settings.microcloud_ai_mode or "").strip().lower()
+        current = str(created.get("aiMode") or "").lower()
+        if not desired or current == desired:
+            return created
+        try:
+            switched = await self._client.switch_ai(int(created["id"]), desired)
+        except Exception:  # noqa: BLE001 — the sweep retries; provision must land
+            logger.warning(
+                "switching machine %s AI channel to %s failed — the enrollment "
+                "sweep will retry",
+                created.get("id"),
+                desired,
+            )
+            return created
+        return {
+            **created,
+            "aiMode": str(switched.get("aiMode") or desired).lower(),
+            "aiStatus": str(switched.get("aiStatus") or "provisioning").lower(),
+        }
+
+    async def reconcile_ai_mode(self, limit: int = 5) -> int:
+        """Level-triggered half of the →ccproxy story: any settled machine on
+        the wrong built-in AI channel gets switched. Catches machines whose
+        provision-time switch failed or raced MicroCloud's own wiring, and
+        machines that predate the setting."""
+        desired = (settings.microcloud_ai_mode or "").strip().lower()
+        if not desired:
+            return 0
+        machines = await self._repo.list_ai_mode_mismatch(desired, limit)
+        switched = 0
+        for machine in machines:
+            try:
+                result = await self._client.switch_ai(machine.machine_id, desired)
+            except MicroCloudError:
+                logger.warning(
+                    "switching machine %s to %s failed", machine.hostname, desired
+                )
+                continue
+            await self._repo.set_state(
+                machine,
+                status=machine.status,
+                ip=machine.ip,
+                ai_mode=str(result.get("aiMode") or desired).lower(),
+                ai_status=_as_ai_status(str(result.get("aiStatus") or "").lower()),
+            )
+            switched += 1
+        if switched:
+            logger.info("AI channel reconcile: %s machine(s) → %s", switched, desired)
+        return switched
 
     async def refresh(self, machine: ProjectMachine) -> ProjectMachine:
         """Bring one row in line with MicroCloud. Never raises for a provider

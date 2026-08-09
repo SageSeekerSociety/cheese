@@ -148,6 +148,26 @@ class ProjectMachineRepository:
         )
         return list(result.scalars())
 
+    async def list_ai_mode_mismatch(
+        self, desired: str, limit: int
+    ) -> list[ProjectMachine]:
+        """Machines whose built-in AI channel settled on the wrong mode.
+
+        Only settled machines (running + ai ready) are candidates — a machine
+        still provisioning will be judged when it lands, and fighting a
+        transitional state would race MicroCloud's own wiring."""
+        result = await self._session.execute(
+            select(ProjectMachine)
+            .where(
+                ProjectMachine.status == MachineStatus.running,
+                ProjectMachine.ai_status == AiStatus.ready,
+                ProjectMachine.ai_mode != desired,
+            )
+            .order_by(ProjectMachine.created_at)
+            .limit(limit)
+        )
+        return list(result.scalars())
+
     async def is_provisioned_device(self, device_id: str) -> bool:
         """Whether this device is a machine cheese provisioned from MicroCloud.
 
