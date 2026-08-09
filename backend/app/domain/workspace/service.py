@@ -7,12 +7,14 @@ Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照
 """
 
 import asyncio
+import contextlib
 import os
 import re
 import shutil
 import subprocess
 import tempfile
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 from app.core.config import settings
@@ -22,6 +24,87 @@ from app.domain.workspace.dogfood_notices import watch_dogfood_push
 DEFAULT_BRANCH = "main"
 # 沙箱镜像：芝士分身在容器里跑代码/测试，碰不到宿主机 (spec §9.1).
 SANDBOX_IMAGE = "python:3.12-slim"
+
+
+class GitTimeoutError(ValidationError):
+    """A git subprocess ran past its timeout. Only ever raised AFTER the
+    process is confirmed dead (SIGTERM, escalating to SIGKILL, then waited
+    on) — never while it might still be running, so callers can safely clean
+    up whatever it was holding (worktree, lock file)."""
+
+
+# Grace periods for the terminate→kill escalation below — generous enough for
+# git to unwind a real operation cleanly on SIGTERM, short enough that a
+# genuinely stuck process doesn't stall the caller for long.
+_TERMINATE_GRACE_S = 5.0
+_KILL_GRACE_S = 5.0
+
+
+def _terminate_confirmed(proc: subprocess.Popen) -> None:
+    """Escalate a timed-out subprocess to a CONFIRMED exit. SIGTERM first (lets
+    git release its lock on a clean unwind); SIGKILL only if it ignores that;
+    then wait for the exit to actually be observed. Never assume — a caller
+    that deletes a lock file out from under a still-running process is exactly
+    the failure mode this exists to avoid. Reads the module-level grace
+    periods at call time (not as bound defaults) so tests can shrink them via
+    monkeypatch instead of waiting out the real 5s/5s in production."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=_TERMINATE_GRACE_S)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    proc.kill()
+    try:
+        proc.wait(timeout=_KILL_GRACE_S)
+    except subprocess.TimeoutExpired as exc:
+        # Genuinely stuck (e.g. uninterruptible I/O wait) — surface it rather
+        # than silently proceeding as if the process were gone.
+        raise ValidationError(f"子进程 pid={proc.pid} 在 SIGKILL 后仍未退出") from exc
+
+
+def _clear_own_lock(cwd: Path) -> None:
+    """Drop `.git/index.lock` left by a subprocess we JUST confirmed dead (via
+    _terminate_confirmed) — safe because we killed it ourselves and waited for
+    the exit, not because we're guessing at some other process's liveness. A
+    no-op for a linked worktree (`.git` there is a file, not a directory):
+    its whole admin dir is disposed of by the caller instead."""
+    git_dir = cwd / ".git"
+    if not git_dir.is_dir():
+        return
+    try:
+        (git_dir / "index.lock").unlink()
+    except OSError:
+        pass
+
+
+def _run_subprocess(
+    argv: list[str],
+    cwd: Path,
+    timeout: float,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    """subprocess.run with a timeout that actually cleans up: on expiry, kill
+    the process (confirmed), clear any lock it held, then raise
+    GitTimeoutError — instead of letting subprocess.TimeoutExpired escape
+    unhandled (the previous behavior) with the process's fate unknown."""
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_confirmed(proc)
+        _clear_own_lock(cwd)
+        raise GitTimeoutError(
+            f"{argv[0] if argv else '?'} 超时（>{timeout}s），子进程已确认终止"
+        ) from exc
+    return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
 
 def _repo(project_id: uuid.UUID) -> Path:
@@ -36,14 +119,7 @@ def branch_for_topic(topic_id: uuid.UUID) -> str:
 def _git(
     repo: Path, *args: str, timeout: int = 20, env: dict[str, str] | None = None
 ) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=env,
-    )
+    result = _run_subprocess(["git", *args], repo, timeout, env)
     if result.returncode != 0:
         # git reports merge conflicts on stdout with an empty stderr — fall back
         # so the caller's error isn't blank.
@@ -388,6 +464,142 @@ def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
     return _git(repo, "diff", f"{base}...{branch}")
 
 
+def _merge_worktree_path(project_id: uuid.UUID) -> Path:
+    """Root for throwaway merge worktrees — sibling to (never colliding with)
+    the topic worktrees under `.worktrees/{project}/`, which are all named
+    after a sanitized branch (`topic_xxxxxxxx`) and never `_merge`."""
+    return Path(settings.workspace_root) / ".worktrees" / str(project_id) / "_merge"
+
+
+def _discard_worktree(repo: Path, wt: Path) -> None:
+    """Best-effort teardown of a throwaway merge worktree. `git worktree
+    remove` also frees the linked admin dir under `.git/worktrees/<name>/`
+    (where that worktree's OWN index/MERGE_HEAD/lock live — never the shared
+    repo's own `.git/index.lock`, so a stuck merge here can never wedge
+    another operation). If remove itself fails (e.g. its own subprocess
+    timed out — already confirmed dead by `_run_subprocess` by this point),
+    fall back to deleting the checkout directory and pruning the now-dangling
+    admin entry."""
+    try:
+        _git(repo, "worktree", "remove", "--force", str(wt))
+        return
+    except ValidationError:
+        pass
+    shutil.rmtree(wt, ignore_errors=True)
+    try:
+        _git(repo, "worktree", "prune")
+    except ValidationError:
+        pass
+
+
+@contextlib.contextmanager
+def _isolated_worktree(project_id: uuid.UUID, repo: Path, ref: str) -> Iterator[Path]:
+    """A throwaway git worktree, detached at `ref`'s current commit, for git
+    operations that must not contend with anything else sharing the project's
+    main repo directory (2026-08-09 incident: a merge killed mid-flight left
+    `.git/index.lock` in that ONE shared directory, jamming every accept on
+    the project until a human deleted it by hand). `--detach` (rather than
+    checking out `ref` by branch name) matters even outside any timeout: git
+    refuses to check out the same branch in two worktrees at once, which a
+    concurrent accept on the same base branch would otherwise hit immediately.
+    Always removed on the way out, success or failure."""
+    wt = (_merge_worktree_path(project_id) / uuid.uuid4().hex).resolve()
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _git(repo, "worktree", "add", "--detach", "-q", str(wt), ref)
+    except ValidationError:
+        _discard_worktree(repo, wt)
+        raise
+    try:
+        yield wt
+    finally:
+        _discard_worktree(repo, wt)
+
+
+def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
+    """The ONE piece of a merge that must still touch the shared repo
+    directory: point its own working tree at the new base tip, since
+    list_files/read_file/exec_in_sandbox (topic_id=None) and the sandbox
+    bind-mount all read straight off these files. Deliberately just a
+    fast-forward reset — no merge algorithm, no conflict possible — to keep
+    the shared directory's exposure to a hang as small as this fix can make
+    it."""
+    _git(repo, "checkout", "-q", base)
+    _git(repo, "reset", "-q", "--hard", sha)
+
+
+_MERGE_RETRY_LIMIT = 5
+
+
+def _merge_ref_into_base(
+    project_id: uuid.UUID,
+    repo: Path,
+    base: str,
+    merge_ref: str,
+    message: str,
+    *,
+    allow_unrelated_histories: bool = False,
+) -> dict:
+    """Merge `merge_ref` into `base` without ever running the merge itself in
+    the project's shared working directory. The merge happens in a throwaway
+    detached worktree (own index, own lock, discarded whole regardless of
+    outcome); only a fast, always-conflict-free ref move + working-tree sync
+    touches the shared repo. That ref move is a compare-and-swap
+    (`update-ref old new`) — if another accept landed on `base` in the
+    meantime, this retries against the new tip rather than clobbering it or
+    silently merging on top of a stale base.
+
+    Never raises for an ordinary merge failure (conflict, or retries
+    exhausted) — always returns a dict with a `merged` key, same contract as
+    the old direct implementation. Genuine git failures (bad ref, etc.) still
+    raise ValidationError."""
+    for _attempt in range(_MERGE_RETRY_LIMIT):
+        old_sha = _git(repo, "rev-parse", base).strip()
+        with _isolated_worktree(project_id, repo, old_sha) as wt:
+            args = [
+                "-c",
+                "user.name=芝士",
+                "-c",
+                "user.email=cheese@zhishi.local",
+                "merge",
+                "--no-ff",
+                "-q",
+            ]
+            if allow_unrelated_histories:
+                args.append("--allow-unrelated-histories")
+            args += ["-m", message, merge_ref]
+            try:
+                _git(wt, *args)
+            except ValidationError as exc:
+                try:
+                    conflicts = (
+                        _git(wt, "diff", "--name-only", "--diff-filter=U")
+                        .strip()
+                        .splitlines()
+                    )
+                except ValidationError:
+                    conflicts = []
+                try:
+                    _git(wt, "merge", "--abort")
+                except ValidationError:
+                    pass
+                reason = (
+                    "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
+                )
+                return {"merged": False, "reason": reason, "conflicts": conflicts}
+            new_sha = _git(wt, "rev-parse", "HEAD").strip()
+        try:
+            _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
+        except ValidationError:
+            continue  # base moved concurrently (another accept landed) — retry
+        _sync_shared_checkout(repo, base, new_sha)
+        return {"merged": True, "branch": merge_ref, "into": base}
+    return {
+        "merged": False,
+        "reason": f"合并失败：{base} 分支并发更新冲突过多，请重试",
+    }
+
+
 def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     """采纳 = merge (spec §6.3): merge the topic's branch into the base branch.
     Best-effort — on conflict it aborts and reports, never half-merges."""
@@ -409,37 +621,9 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
             "noop": True,
             "reason": "topic is the base branch",
         }
-    _git(repo, "checkout", "-q", base)
-    try:
-        _git(
-            repo,
-            "-c",
-            "user.name=芝士",
-            "-c",
-            "user.email=cheese@zhishi.local",
-            "merge",
-            "--no-ff",
-            "-q",
-            "-m",
-            f"采纳 {branch} → {base}",
-            branch,
-        )
-    except ValidationError as exc:
-        try:
-            conflicts = (
-                _git(repo, "diff", "--name-only", "--diff-filter=U")
-                .strip()
-                .splitlines()
-            )
-        except ValidationError:
-            conflicts = []
-        try:
-            _git(repo, "merge", "--abort")
-        except ValidationError:
-            pass
-        reason = "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
-        return {"merged": False, "reason": reason, "conflicts": conflicts}
-    return {"merged": True, "branch": branch, "into": base}
+    return _merge_ref_into_base(
+        project_id, repo, base, branch, f"采纳 {branch} → {base}"
+    )
 
 
 # ---- 上游仓库 (spec §6.3): 关联已有 repo + 同步上游 ----------------------------
@@ -520,39 +704,20 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
     behind = int(_git(repo, "rev-list", "--count", f"{base}..{ref}").strip() or "0")
     if behind == 0:
         return {"synced": True, "commits": 0, "reason": "已是最新"}
-    _git(repo, "checkout", "-q", base)
-    try:
-        _git(
-            repo,
-            "-c",
-            "user.name=芝士",
-            "-c",
-            "user.email=cheese@zhishi.local",
-            "merge",
-            "--no-ff",
-            "-q",
-            "--allow-unrelated-histories",
-            "-m",
-            f"同步上游 {ref} → {base}",
-            ref,
-        )
-    except ValidationError as exc:
-        # Name the conflicted files before aborting — "同步失败" without saying
-        # where is undebuggable for the user.
-        try:
-            conflicts = (
-                _git(repo, "diff", "--name-only", "--diff-filter=U")
-                .strip()
-                .splitlines()
-            )
-        except ValidationError:
-            conflicts = []
-        try:
-            _git(repo, "merge", "--abort")
-        except ValidationError:
-            pass
-        reason = "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
-        return {"synced": False, "reason": reason, "conflicts": conflicts}
+    result = _merge_ref_into_base(
+        project_id,
+        repo,
+        base,
+        ref,
+        f"同步上游 {ref} → {base}",
+        allow_unrelated_histories=True,
+    )
+    if not result["merged"]:
+        return {
+            "synced": False,
+            "reason": result["reason"],
+            "conflicts": result.get("conflicts", []),
+        }
     return {"synced": True, "commits": behind}
 
 
