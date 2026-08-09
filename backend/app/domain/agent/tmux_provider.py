@@ -28,6 +28,7 @@ import uuid
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import clone, provider_env
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
@@ -512,10 +513,17 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             # of the metering proxy — silently, on a path that otherwise looks
             # correct. Only the ANTHROPIC_* routing keys are overridden; the
             # caller's other env is kept.
+            # A per-session scoped token authenticates the container to the
+            # metering proxy (see subscription_provider): the proxy verifies it
+            # before spending the subscription, so the proxy can be exposed to a
+            # machine network without the public placeholder becoming a way in.
             sub = provider_env.subscription_provider(
                 ca_path="/etc/cheese/proxy-ca.pem",
                 project_id=str(project_id),
                 topic_id=str(topic_id),
+                session_token=mint_scoped_token(
+                    project_id=str(project_id), topic_id=str(topic_id)
+                ),
             ).env
             merged = {**(env or {})}
             # The caller's env is the gateway provider (BASE_URL + model pins).
