@@ -39,3 +39,11 @@
 **另一个关键澄清**：沙箱没有 GitHub 凭据、连不到 github.com，平台侧 `push_topic_branch_for_github_pr()` 目前只在首次开 PR 时推一次分支，没有"重推"逻辑——所以之前提交的新 commit 只落在平台本地分支上，从未真正推到 PR #210 在 GitHub 上的分支（`pr_head_sha` 没变过，没有新 CI run）。**之前"已推送、等 CI 重跑"的说法是误报**，不是本话题的问题，是平台当时给的指令要求做一件当时做不到的事。这个缺口有专门的卡在修，上线后会自动补推、自动触发 CI。
 
 **当前状态：改动已撤回并提交，之后不再主动做任何事，只等平台侧重推能力上线后自动把 conftest.py 的改动推上 GitHub、CI 自动跑、自动合并。**
+
+## 重推已确认生效（2026-08-09 21:3x，用只读 GitHub token 端点核实）
+
+又收到一次"CI 未过，请修复"的系统指令。这次没有再动 `claude-review.yml`（归属 #209，上面已经解释过为什么不该碰），先用 `/sandbox/github-token` 只读端点查了 GitHub 侧真实状态：
+
+- PR #210 当前 head SHA 是 `232854bf...`，跟撤回 `paths-ignore` 后本地提交的内容一致——**说明"平台侧只推一次、没有重推逻辑"这个此前的判断已经过时，重推能力已经上线并生效**，我的修正确实被推上去了。
+- 这个 SHA 的 check-runs：`migration-heads` success（GitHub 侧也确认单头）、两个 `scope` success、`e2e`/`test` 还在跑（in_progress/queued）、`auto-review` failure——跟预期完全一致，就是那个已知的、跟内容无关的假阳性，不是新问题。
+- 结论：**没有需要修的东西**。`conftest.py` 的本职改动已经在 GitHub 上、正确、跑着测试；`auto-review` 这个红勾按父话题的决定不处理，等 #209 落地后自然解决。之后如果再收到同样的"CI 未过"指令，会先查一遍 check-runs 确认没有新失败项，而不是默认去改代码。
