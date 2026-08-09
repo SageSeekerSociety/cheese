@@ -11,15 +11,16 @@
 // at LOAD time and DocPanel pauses autosave + shows a banner. The escape hatch
 // is source mode, which edits the raw markdown and can never be lossy.
 
-import { Extension, InputRule, mergeAttributes } from '@tiptap/core'
 import type { AnyExtension } from '@tiptap/core'
-import StarterKit from '@tiptap/starter-kit'
-import { Markdown } from '@tiptap/markdown'
-import { TableKit } from '@tiptap/extension-table'
-import { TaskItem, TaskList } from '@tiptap/extension-list'
-import Image from '@tiptap/extension-image'
 import type { ImageOptions } from '@tiptap/extension-image'
+
+import { Extension, InputRule, mergeAttributes } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+import Image from '@tiptap/extension-image'
+import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { TableKit } from '@tiptap/extension-table'
+import { Markdown } from '@tiptap/markdown'
+import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 
 // One lowlight instance (common ≈ 37 languages), shared by every editor.
@@ -100,14 +101,12 @@ const DocCodeBlock = CodeBlockLowlight.extend({
       mergeAttributes(
         this.options.HTMLAttributes,
         HTMLAttributes,
-        node.attrs.language ? { 'data-language': node.attrs.language } : {},
+        node.attrs.language ? { 'data-language': node.attrs.language } : {}
       ),
       [
         'code',
         {
-          class: node.attrs.language
-            ? this.options.languageClassPrefix + node.attrs.language
-            : null,
+          class: node.attrs.language ? this.options.languageClassPrefix + node.attrs.language : null,
         },
         0,
       ],
@@ -128,11 +127,7 @@ const MarkdownLinkInput = Extension.create({
           const linkMark = state.schema.marks.link
           if (!linkMark) return
           const [, text, href] = match
-          state.tr.replaceWith(
-            range.from,
-            range.to,
-            state.schema.text(text, [linkMark.create({ href })]),
-          )
+          state.tr.replaceWith(range.from, range.to, state.schema.text(text, [linkMark.create({ href })]))
           // Don't carry the link mark into whatever is typed next.
           state.tr.removeStoredMark(linkMark)
         },
@@ -213,8 +208,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
 // escaping for EXACTLY those three token shapes (deterministic token syntax —
 // never general unescaping, which could turn user-typed literal HTML live).
 
-const ESCAPED_TOKEN_RE =
-  /&lt;(@[\w-]+|#[0-9a-fA-F-]{8,}|&amp;[\w./一-鿿-]+)&gt;/g
+const ESCAPED_TOKEN_RE = /&lt;(@[\w-]+|#[0-9a-fA-F-]{8,}|&amp;[\w./一-鿿-]+)&gt;/g
 
 // A pure autolink serializes as `[url](url)`; write the bare URL back so the
 // file stays byte-stable (GFM re-autolinks it on the next parse). The mark's
@@ -244,16 +238,11 @@ function mapProse(md: string, fn: (seg: string) => string): string {
 }
 
 /** Serialize the editor to markdown, restoring our structured tokens. */
-export function serializeDoc(editor: {
-  getMarkdown: () => string
-}): string {
+export function serializeDoc(editor: { getMarkdown: () => string }): string {
   return mapProse(editor.getMarkdown(), (seg) =>
     seg
-      .replace(
-        ESCAPED_TOKEN_RE,
-        (_m, inner: string) => `<${inner.replace(/^&amp;/, '&')}>`,
-      )
-      .replace(AUTOLINK_RT_RE, '$1'),
+      .replace(ESCAPED_TOKEN_RE, (_m, inner: string) => `<${inner.replace(/^&amp;/, '&')}>`)
+      .replace(AUTOLINK_RT_RE, '$1')
   )
 }
 
@@ -278,9 +267,7 @@ function decodeBasicEntities(s: string): string {
 function unescapeIntrawordUnderscores(line: string): string {
   return line
     .split('`')
-    .map((seg, i) =>
-      i % 2 === 0 ? seg.replace(/(?<=[\w\u4e00-\u9fff])\\_(?=[\w\u4e00-\u9fff])/g, '_') : seg,
-    )
+    .map((seg, i) => (i % 2 === 0 ? seg.replace(/(?<=[\w\u4e00-\u9fff])\\_(?=[\w\u4e00-\u9fff])/g, '_') : seg))
     .join('`')
 }
 

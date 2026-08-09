@@ -213,6 +213,7 @@ PROVIDER_CLASSES = {
     "github": GitHubProvider,
     "google": GoogleProvider,
     "ruc": RUCProvider,
+    "github_app": GitHubProvider,
 }
 
 
@@ -283,6 +284,22 @@ class OAuthService:
                 token_url="https://v.ruc.edu.cn/oauth2/token",
                 redirect_url=redirect_url,
                 scope=["profile", "userinfo"],
+            )
+        elif provider_id == "github_app":
+            # #192: the cheesex-app GitHub App's OWN user-to-server
+            # authorization — a separate credential from the "github" login
+            # provider above, even though it's the identical OAuth 2.0 dance
+            # (GitHub Apps reuse the classic authorize/token endpoints, just
+            # keyed to the App's client_id/secret instead of an OAuth App's).
+            return OAuthProviderConfig(
+                id=provider_id,
+                name="GitHub (cheesex-app)",
+                client_id=client_id,
+                client_secret=client_secret,
+                authorization_url="https://github.com/login/oauth/authorize",
+                token_url="https://github.com/login/oauth/access_token",
+                redirect_url=redirect_url,
+                scope=["read:user", "user:email"],
             )
 
         return None
@@ -360,6 +377,7 @@ class OAuthService:
             "github": "GitHub",
             "google": "Google",
             "ruc": "微人大",
+            "github_app": "GitHub (cheesex-app)",
         }
         return [
             {

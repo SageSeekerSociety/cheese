@@ -10,15 +10,19 @@ App's private key and its write permissions never leave the backend — see
 ``app.domain.agent.github_app``.
 """
 
-from fastapi import APIRouter, Request
+import uuid
+
+from fastapi import APIRouter, Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
+from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
     GatewayUnavailableError,
 )
 from app.core.sandbox_auth import scoped_token_claims
-from app.domain.agent.github_app import GitHubAppError, github_app_tokens
+from app.domain.agent.github_app import GitHubAppError, github_app_tokens_for_project
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
@@ -36,15 +40,19 @@ def _caller_token(request: Request) -> str:
 
 
 @router.get("/github-token")
-async def sandbox_github_token(request: Request) -> dict:
+async def sandbox_github_token(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> dict:
     token = _caller_token(request)
     claims = scoped_token_claims(token) if token else None
     if not claims or not claims.get("p"):
         raise AuthenticationRequiredError("A scoped cheese token is required")
-    minter = github_app_tokens()
+    project_id = uuid.UUID(claims["p"])
+    minter = await github_app_tokens_for_project(project_id, db)
     if minter is None:
         raise GatewayUnavailableError(
-            "GitHub integration is not configured on this deployment"
+            "This project has no connected GitHub repo, or the App is not "
+            "configured on this deployment"
         )
     try:
         gh_token, expires_at = await minter.readonly_token()

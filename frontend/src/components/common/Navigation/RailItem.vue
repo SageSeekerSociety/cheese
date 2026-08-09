@@ -176,7 +176,9 @@ const { item } = toRefs(navBarProps)
     transition: box-shadow 0.2s ease;
   }
   &[aria-current] .v-img {
-    box-shadow: 0 0 0 3px rgb(var(--v-theme-surface)), 0 0 0 5px #f57f17;
+    box-shadow:
+      0 0 0 3px rgb(var(--v-theme-surface)),
+      0 0 0 5px #f57f17;
   }
 }
 

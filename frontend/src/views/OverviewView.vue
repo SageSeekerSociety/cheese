@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { myHandle } from '../me'
+import type { Contributions, InboxItem, ProjectCredits, ProjectOverview, TopicRef } from '../cx_types'
+
 import { computed, onMounted, ref, watch } from 'vue'
-import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS, label } from '../labels'
+import { marked } from 'marked'
+
 import {
   generateSummary,
   getContributions,
@@ -14,13 +15,8 @@ import {
   markRead,
   sendFeedback,
 } from '../api'
-import type {
-  Contributions,
-  InboxItem,
-  ProjectCredits,
-  ProjectOverview,
-  TopicRef,
-} from '../cx_types'
+import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
+import { myHandle } from '../me'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -53,9 +49,7 @@ async function onGenerateSummary() {
 }
 
 // waiting_on_you is keyed by handle. Pull out my items vs. everyone else's.
-const myWaiting = computed<TopicRef[]>(
-  () => overview.value?.waiting_on_you?.[ME] ?? [],
-)
+const myWaiting = computed<TopicRef[]>(() => overview.value?.waiting_on_you?.[ME] ?? [])
 const othersWaiting = computed<{ handle: string; items: TopicRef[] }[]>(() => {
   const map = overview.value?.waiting_on_you ?? {}
   return Object.entries(map)
@@ -63,9 +57,7 @@ const othersWaiting = computed<{ handle: string; items: TopicRef[] }[]>(() => {
     .map(([handle, items]) => ({ handle, items }))
 })
 
-const statusEntries = computed<[string, number][]>(() =>
-  Object.entries(overview.value?.topics_by_status ?? {}),
-)
+const statusEntries = computed<[string, number][]>(() => Object.entries(overview.value?.topics_by_status ?? {}))
 
 // upcoming_milestones includes next_milestone; drop it so the emphasized "next"
 // row isn't repeated in the list below it.
@@ -104,19 +96,11 @@ function fmtCredits(n: number): string {
 
 // ---- 贡献图 (§10.1): human vs AI split ----
 const contributions = ref<Contributions | null>(null)
-const humanCount = computed<number>(
-  () => contributions.value?.by_author_type.human ?? 0,
-)
-const aiCount = computed<number>(
-  () => contributions.value?.by_author_type.ai ?? 0,
-)
+const humanCount = computed<number>(() => contributions.value?.by_author_type.human ?? 0)
+const aiCount = computed<number>(() => contributions.value?.by_author_type.ai ?? 0)
 const contribTotal = computed<number>(() => humanCount.value + aiCount.value)
-const humanPct = computed<number>(() =>
-  contribTotal.value === 0 ? 0 : (humanCount.value / contribTotal.value) * 100,
-)
-const aiPct = computed<number>(() =>
-  contribTotal.value === 0 ? 0 : (aiCount.value / contribTotal.value) * 100,
-)
+const humanPct = computed<number>(() => (contribTotal.value === 0 ? 0 : (humanCount.value / contribTotal.value) * 100))
+const aiPct = computed<number>(() => (contribTotal.value === 0 ? 0 : (aiCount.value / contribTotal.value) * 100))
 
 function fmtDate(d: string | null): string {
   if (!d) return '待定'
@@ -220,14 +204,8 @@ onMounted(load)
             </v-btn>
           </div>
           <div class="ln-body">
-            <div
-              v-if="summary"
-              class="md-content"
-              v-html="renderMarkdown(summary)"
-            />
-            <div v-else class="c-faint t-body py-2">
-              芝士还没写总结，点生成。
-            </div>
+            <div v-if="summary" class="md-content" v-html="renderMarkdown(summary)" />
+            <div v-else class="c-faint t-body py-2">芝士还没写总结，点生成。</div>
           </div>
         </section>
 
@@ -239,9 +217,7 @@ onMounted(load)
             <span v-if="myWaiting.length" class="ln-count">{{ myWaiting.length }}</span>
           </div>
           <div class="ln-body">
-            <div v-if="myWaiting.length === 0" class="c-faint t-body py-2">
-              没有需要你处理的事
-            </div>
+            <div v-if="myWaiting.length === 0" class="c-faint t-body py-2">没有需要你处理的事</div>
             <div v-else>
               <div v-for="t in myWaiting" :key="t.id" class="ln-row">
                 <span class="ln-dot ln-dot-warn" />
@@ -254,9 +230,7 @@ onMounted(load)
             <template v-if="othersWaiting.length">
               <div class="ln-subhead">其他成员待办</div>
               <div v-for="g in othersWaiting" :key="g.handle" class="mb-1">
-                <div class="text-caption font-weight-medium text-medium-emphasis ln-group-label">
-                  @{{ g.handle }}
-                </div>
+                <div class="text-caption font-weight-medium text-medium-emphasis ln-group-label">@{{ g.handle }}</div>
                 <div v-for="t in g.items" :key="t.id" class="ln-row">
                   <span class="ln-dot ln-dot-muted" />
                   <span class="ln-row-title">{{ t.title }}</span>
@@ -288,11 +262,7 @@ onMounted(load)
                 </div>
                 <div v-else class="text-medium-emphasis text-body-2 py-2">暂无里程碑</div>
 
-                <div
-                  v-for="(m, i) in restMilestones"
-                  :key="i"
-                  class="ln-row"
-                >
+                <div v-for="(m, i) in restMilestones" :key="i" class="ln-row">
                   <span class="ln-dot ln-dot-muted" />
                   <span class="ln-row-title">{{ m.title }}</span>
                   <v-spacer />
@@ -311,9 +281,7 @@ onMounted(load)
                 <span class="ln-num text-medium-emphasis">共 {{ overview.topic_count }}</span>
               </div>
               <div class="ln-body">
-                <div v-if="statusEntries.length === 0" class="text-medium-emphasis text-body-2 py-2">
-                  暂无话题
-                </div>
+                <div v-if="statusEntries.length === 0" class="text-medium-emphasis text-body-2 py-2">暂无话题</div>
                 <div v-else>
                   <div v-for="[s, n] in statusEntries" :key="s" class="ln-row">
                     <span class="ln-dot" :style="{ background: statusDotColor(s) }" />
@@ -333,9 +301,7 @@ onMounted(load)
                 <span class="ln-section-title">贡献 · 人 / AI</span>
               </div>
               <div class="ln-body">
-                <div v-if="contribTotal === 0" class="text-medium-emphasis text-body-2 py-2">
-                  暂无贡献记录
-                </div>
+                <div v-if="contribTotal === 0" class="text-medium-emphasis text-body-2 py-2">暂无贡献记录</div>
                 <template v-else>
                   <div class="contrib-bar mb-3">
                     <div class="contrib-seg contrib-human" :style="{ width: humanPct + '%' }" />
@@ -353,9 +319,7 @@ onMounted(load)
                     <v-spacer />
                     <span class="ln-num">{{ aiCount }}</span>
                   </div>
-                  <div class="text-caption text-medium-emphasis mt-2">
-                    人指挥、AI 执行，各自统计
-                  </div>
+                  <div class="text-caption text-medium-emphasis mt-2">人指挥、AI 执行，各自统计</div>
                 </template>
               </div>
             </section>
@@ -372,9 +336,7 @@ onMounted(load)
                 </span>
               </div>
               <div class="ln-body">
-                <div v-if="!credits" class="text-medium-emphasis text-body-2 py-2">
-                  额度信息暂不可用
-                </div>
+                <div v-if="!credits" class="text-medium-emphasis text-body-2 py-2">额度信息暂不可用</div>
                 <div v-else-if="credits.unlimited" class="text-medium-emphasis text-body-2 py-2">
                   不限额 · 自治项目（未挂靠机构任务，链接题目后按资源包计量）
                 </div>
@@ -415,9 +377,7 @@ onMounted(load)
                 <span class="ln-section-title">成员</span>
               </div>
               <div class="ln-body">
-                <div v-if="!overview.members?.length" class="text-medium-emphasis text-body-2 py-2">
-                  暂无成员
-                </div>
+                <div v-if="!overview.members?.length" class="text-medium-emphasis text-body-2 py-2">暂无成员</div>
                 <router-link
                   v-for="m in overview.members"
                   :key="m.handle"
@@ -443,22 +403,13 @@ onMounted(load)
                 <span class="ln-section-title">收件箱 · 你的请求</span>
               </div>
               <div class="ln-body">
-                <div v-if="inbox.length === 0" class="text-medium-emphasis text-body-2 py-2">
-                  收件箱是空的
-                </div>
+                <div v-if="inbox.length === 0" class="text-medium-emphasis text-body-2 py-2">收件箱是空的</div>
                 <div v-else>
-                  <div
-                    v-for="item in inbox"
-                    :key="item.id"
-                    class="ln-inbox-row"
-                    :class="{ 'inbox-read': item.read }"
-                  >
+                  <div v-for="item in inbox" :key="item.id" class="ln-inbox-row" :class="{ 'inbox-read': item.read }">
                     <div class="d-flex align-center ga-2 flex-wrap">
                       <span class="ln-tag">{{ label(NOTIF_KIND, item.kind) }}</span>
                       <span class="t-body" style="font-weight: 500; color: var(--ink)">{{ item.title }}</span>
-                      <span v-if="item.source_handle" class="t-meta">
-                        来自 @{{ item.source_handle }}
-                      </span>
+                      <span v-if="item.source_handle" class="t-meta"> 来自 @{{ item.source_handle }} </span>
                       <v-spacer />
                       <v-btn
                         icon="mdi-thumb-up-outline"
@@ -474,13 +425,7 @@ onMounted(load)
                         :color="item.feedback === 'down' ? 'primary' : undefined"
                         @click="onFeedback(item, 'down')"
                       />
-                      <v-btn
-                        v-if="!item.read"
-                        size="x-small"
-                        variant="text"
-                        class="c-muted"
-                        @click="onMarkRead(item)"
-                      >
+                      <v-btn v-if="!item.read" size="x-small" variant="text" class="c-muted" @click="onMarkRead(item)">
                         标记已读
                       </v-btn>
                       <span v-else class="d-inline-flex align-center ga-1 c-faint" style="font-size: 12px">

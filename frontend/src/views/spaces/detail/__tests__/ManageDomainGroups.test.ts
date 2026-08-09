@@ -105,14 +105,7 @@ function toSelectItems(groups: ApiDomainGroup[]): SelectItem[] {
 
 describe('domain format validation', () => {
   it('accepts standard domain names', () => {
-    const valid = [
-      'example.com',
-      'ruc.edu.cn',
-      'cs.mit.edu',
-      'mail.qq.com',
-      'a.b',
-      'sub.domain.example.co.uk',
-    ]
+    const valid = ['example.com', 'ruc.edu.cn', 'cs.mit.edu', 'mail.qq.com', 'a.b', 'sub.domain.example.co.uk']
     for (const d of valid) {
       const result = domainSchema.safeParse(d)
       expect(result.success, `domain "${d}" should be valid`).toBe(true)
@@ -421,7 +414,7 @@ interface StoreState {
 async function fetchThroughStore(
   store: StoreState,
   apiResponse: ListResponse | null,
-  shouldThrow: boolean,
+  shouldThrow: boolean
 ): Promise<StoreState> {
   if (shouldThrow) {
     // Simulated API error — store should keep existing data
@@ -444,7 +437,7 @@ async function fetchThroughStore(
  */
 async function crudAndRefresh(
   apiSucceeds: boolean,
-  freshApiResponse: ListResponse,
+  freshApiResponse: ListResponse
 ): Promise<{ storeUpdated: boolean; finalGroups: ApiDomainGroup[] }> {
   const store: StoreState = {
     domainGroups: [makeGroup({ id: 1, name: 'Old' })],
@@ -480,10 +473,7 @@ describe('store-based fetchDomainGroups (ManageDomainGroups → store integratio
   it('after create, store is refreshed with updated groups', async () => {
     const { storeUpdated, finalGroups } = await crudAndRefresh(true, {
       data: {
-        groups: [
-          makeGroup({ id: 1, name: 'Old' }),
-          makeGroup({ id: 2, name: 'New' }),
-        ],
+        groups: [makeGroup({ id: 1, name: 'Old' }), makeGroup({ id: 2, name: 'New' })],
       },
     })
 
@@ -558,7 +548,7 @@ describe('store-based fetchDomainGroups (ManageDomainGroups → store integratio
 async function fetchDomainGroupsWithExplicitSpaceId(
   spaceId: number,
   storeState: { currentSpaceId: number | null; domainGroups: ApiDomainGroup[] },
-  apiFn: (id: number) => Promise<ListResponse>,
+  apiFn: (id: number) => Promise<ListResponse>
 ): Promise<{ apiCalledWith: number | null; domainGroups: ApiDomainGroup[] }> {
   let apiCalledWith: number | null = null
 

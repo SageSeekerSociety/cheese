@@ -1,24 +1,9 @@
 <script setup lang="ts">
-import { myHandle } from '../me'
-import { formatToolAction, isPlatformAction, toolLabel } from '../lib/toolLabels'
-import { refreshBlockCache } from '../lib/blockCache'
-import {
-  computed,
-  inject,
-  nextTick,
-  onMounted,
-  onUnmounted,
-  ref,
-  watch,
-  type Ref,
-} from 'vue'
+import type { AcceptCard, ChatAttachment, Project, ProjectMemberRow, Topic } from '../cx_types'
+
+import { computed, inject, nextTick, onMounted, onUnmounted, type Ref, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import ChatPanel from '../components/ChatPanel.vue'
-import DocPanel from '../components/DocPanel.vue'
-import ProjectDocsView from './ProjectDocsView.vue'
-import TopicSidebar from '../components/TopicSidebar.vue'
-import TopicMembers from '../components/TopicMembers.vue'
-import TopicComputePicker from '../components/TopicComputePicker.vue'
+
 import {
   acceptCard,
   addComment,
@@ -43,14 +28,17 @@ import {
   unarchiveTopic,
   upgradeBlock,
 } from '../api'
+import ChatPanel from '../components/ChatPanel.vue'
+import DocPanel from '../components/DocPanel.vue'
+import TopicComputePicker from '../components/TopicComputePicker.vue'
+import TopicMembers from '../components/TopicMembers.vue'
+import TopicSidebar from '../components/TopicSidebar.vue'
 import { usePendingAttachments } from '../lib/attachments'
-import type {
-  AcceptCard,
-  ChatAttachment,
-  Project,
-  ProjectMemberRow,
-  Topic,
-} from '../cx_types'
+import { refreshBlockCache } from '../lib/blockCache'
+import { formatToolAction, isPlatformAction, toolLabel } from '../lib/toolLabels'
+import { myHandle } from '../me'
+
+import ProjectDocsView from './ProjectDocsView.vue'
 
 // projectId comes from the route (/project/:projectId). When absent we fall
 // back to the first project so 工作台 is never empty.
@@ -82,10 +70,7 @@ const docRef = ref<{
 } | null>(null)
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 watch([railWidth, chatPct], () => {
-  localStorage.setItem(
-    'cheesex.layout',
-    JSON.stringify({ railWidth: railWidth.value, chatPct: chatPct.value }),
-  )
+  localStorage.setItem('cheesex.layout', JSON.stringify({ railWidth: railWidth.value, chatPct: chatPct.value }))
 })
 function onRailWidth(w: number) {
   railWidth.value = clampNum(w, 190, 480)
@@ -124,9 +109,7 @@ const globalError = ref<string | null>(null)
 // sub-topics appear (spec §7.1 实时联动).
 const activityTick = ref(0)
 
-const selectedTopic = computed<Topic | null>(
-  () => topics.value.find((t) => t.id === selectedTopicId.value) ?? null,
-)
+const selectedTopic = computed<Topic | null>(() => topics.value.find((t) => t.id === selectedTopicId.value) ?? null)
 
 // ---- 私聊 (飞书私聊): 1:1 chat with 芝士 in the main area ----
 // The main area shows either a work topic ('topic') or the private chat
@@ -159,11 +142,7 @@ async function openPrivate(peer?: string) {
   privateTopic.value = null
   try {
     const topic = await getPrivateChat(pid, AUTHOR, peer)
-    if (
-      selectedProjectId.value === pid &&
-      mode.value === 'private' &&
-      privatePeer.value === (peer ?? null)
-    ) {
+    if (selectedProjectId.value === pid && mode.value === 'private' && privatePeer.value === (peer ?? null)) {
       privateTopic.value = topic
     }
   } catch (e) {
@@ -186,9 +165,7 @@ function selectPeerDm(handle: string) {
 // Header label for the open 私聊: the peer's name for a person DM, else 芝士.
 const privateTitle = computed<string | null>(() => {
   if (privatePeer.value === null) return '芝士'
-  const m = projectMembers.value.find(
-    (x) => x.user_handle === privatePeer.value,
-  )
+  const m = projectMembers.value.find((x) => x.user_handle === privatePeer.value)
   return m?.name || privatePeer.value
 })
 
@@ -202,11 +179,7 @@ const hasError = computed<boolean>({
 
 // ---- Spanning composer (spec §7.1: 输入栏在对话+文档区域底部) ----
 const chatRef = ref<{
-  send: (
-    content: string,
-    summon: boolean,
-    attachments?: ChatAttachment[],
-  ) => boolean
+  send: (content: string, summon: boolean, attachments?: ChatAttachment[]) => boolean
   connected: boolean
 } | null>(null)
 const draft = ref('')
@@ -227,7 +200,7 @@ const {
   () => selectedTopic.value?.id,
   (msg) => {
     globalError.value = msg
-  },
+  }
 )
 function pickAttFiles() {
   composerFileInput.value?.click()
@@ -245,7 +218,6 @@ function onAttFilePicked(e: Event) {
 const worklog = ref<{ label: string; text: string; platform: boolean }[]>([])
 const working = ref(false)
 const workingSince = ref<number | null>(null)
-
 
 // ---- 评论模式 (飞书 docs 风): the doc panel's selection CTA hands the anchor +
 // quoted span here; the SAME composer then posts a comment instead of a chat
@@ -268,13 +240,7 @@ async function sendDraft() {
     if (!tid || !text || commentSending.value) return
     commentSending.value = true
     try {
-      await addComment(
-        tid,
-        text,
-        AUTHOR,
-        commentIntent.value.anchorId ?? undefined,
-        commentIntent.value.quote,
-      )
+      await addComment(tid, text, AUTHOR, commentIntent.value.anchorId ?? undefined, commentIntent.value.quote)
       draft.value = ''
       commentIntent.value = null
       void docRef.value?.refreshComments?.()
@@ -285,11 +251,7 @@ async function sendDraft() {
     }
     return
   }
-  const ok = chatRef.value?.send(
-    expandMentions(draft.value),
-    summon.value,
-    pendingAtts.value.slice(),
-  )
+  const ok = chatRef.value?.send(expandMentions(draft.value), summon.value, pendingAtts.value.slice())
   if (ok) {
     draft.value = ''
     clearPendingAtts()
@@ -334,9 +296,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
   const q = mentionQuery.value
   if (q === null) return []
   const ql = q.toLowerCase()
-  const broadcast = BROADCAST_ITEMS.filter(
-    (b) => b.insert.startsWith(ql) || b.label.includes(q),
-  )
+  const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
   const rest: MentionItem[] = [
     ...projectMembers.value.map((m) => ({
       label: m.name || m.user_handle,
@@ -377,12 +337,7 @@ function onCompositionEnd(e: CompositionEvent) {
   compositionEndedAt = e.timeStamp
 }
 function isImeKey(e: KeyboardEvent) {
-  return (
-    composing ||
-    e.isComposing ||
-    e.keyCode === 229 ||
-    e.timeStamp - compositionEndedAt < 100
-  )
+  return composing || e.isComposing || e.keyCode === 229 || e.timeStamp - compositionEndedAt < 100
 }
 
 function onComposerKey(e: KeyboardEvent) {
@@ -497,24 +452,17 @@ const showRejectInput = ref(false)
 // (采纳时合并冲突，芝士被派去解决) keeps the merge box up — as a STATE, with a
 // retry button — instead of pretending the accept went through.
 const pendingCard = computed<AcceptCard | null>(
-  () =>
-    acceptCards.value.find(
-      (c) => c.status === 'pending' || c.status === 'conflict',
-    ) ?? null,
+  () => acceptCards.value.find((c) => c.status === 'pending' || c.status === 'conflict') ?? null
 )
 // The accepted card on an archived topic — its presence lets us offer 撤回采纳.
-const acceptedCard = computed<AcceptCard | null>(
-  () => acceptCards.value.find((c) => c.status === 'accepted') ?? null,
-)
+const acceptedCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'accepted') ?? null)
 
 // 机器闸门 (eval C2): the newest card while the platform check runs / after it
 // failed. Only the newest card can be in a gate state (one in-flight card per
 // topic is enforced server-side).
 const gateCard = computed<AcceptCard | null>(() => {
   const c = acceptCards.value[0]
-  return c && (c.status === 'pending_gate' || c.status === 'gate_failed')
-    ? c
-    : null
+  return c && (c.status === 'pending_gate' || c.status === 'gate_failed') ? c : null
 })
 const showGateOutput = ref(false)
 
@@ -529,7 +477,7 @@ watch(
       window.clearInterval(gatePollTimer)
       gatePollTimer = null
     }
-  },
+  }
 )
 onUnmounted(() => {
   if (gatePollTimer !== null) window.clearInterval(gatePollTimer)
@@ -620,8 +568,7 @@ async function onAcceptCard() {
   try {
     const updated = await acceptCard(card.id, AUTHOR)
     if (updated.status === 'conflict') {
-      globalError.value =
-        '合并冲突，这次没有归档——芝士已被派去解决，它汇报后再点「重试采纳」。'
+      globalError.value = '合并冲突，这次没有归档——芝士已被派去解决，它汇报后再点「重试采纳」。'
     }
     await Promise.all([loadAcceptCard(), refreshSelectedTopic()])
   } catch (e) {
@@ -867,11 +814,7 @@ async function handleSplitTopic(payload: { topicId: string; title: string }) {
     // Untitled by default — mirrors handleCreateTopic. The backend requires a
     // non-empty title, so fall back to a neutral placeholder; the real title is
     // derived from the first message (芝士 can refine it via a tool).
-    const sub = await splitTopic(
-      payload.topicId,
-      payload.title.trim() || '新话题',
-      AUTHOR,
-    )
+    const sub = await splitTopic(payload.topicId, payload.title.trim() || '新话题', AUTHOR)
     await refreshTopics()
     selectTopic(sub.id)
   } catch (e) {
@@ -904,7 +847,7 @@ watch(
     if (first) {
       router.replace({ name: 'workspace-project', params: { projectId: first.id } })
     }
-  },
+  }
 )
 
 // Load the accept-card banner whenever the selected topic changes (covers
@@ -926,7 +869,7 @@ watch(
     if (wanted && wanted !== selectedTopicId.value && topics.value.some((x) => x.id === wanted)) {
       selectTopic(wanted)
     }
-  },
+  }
 )
 
 // 记一笔 (E1/E3): App.vue bumps this after ingesting an activity; refresh the
@@ -969,7 +912,6 @@ onUnmounted(() => {
       :width="railWidth"
       :projects="projects"
       :selected-project-id="selectedProjectId"
-      @update:width="onRailWidth"
       :topics="topics"
       :selected-topic-id="mode === 'topic' ? selectedTopicId : null"
       :loading-topics="loadingTopics"
@@ -979,6 +921,7 @@ onUnmounted(() => {
       :active-peer="mode === 'private' ? privatePeer : null"
       :active-docs="mode === 'docs' ? docKind : null"
       :unread-map="unreadMap"
+      @update:width="onRailWidth"
       @select-project="selectProject"
       @select-topic="selectTopic"
       @select-private="selectPrivate"
@@ -994,23 +937,11 @@ onUnmounted(() => {
 
     <!-- 私聊 (飞书私聊): a normal 1:1 chat with 芝士, full width, no doc / no PR
          header / no accept box. ChatPanel hosts its own composer; @芝士 ON. -->
-    <div
-      v-if="mode === 'private'"
-      class="workspace d-flex flex-column flex-grow-1"
-      style="min-width: 0"
-    >
-      <div
-        v-if="privateLoading"
-        class="flex-grow-1 d-flex align-center justify-center"
-      >
+    <div v-if="mode === 'private'" class="workspace d-flex flex-column flex-grow-1" style="min-width: 0">
+      <div v-if="privateLoading" class="flex-grow-1 d-flex align-center justify-center">
         <v-progress-circular indeterminate color="primary" />
       </div>
-      <v-alert
-        v-else-if="privateError"
-        type="error"
-        density="comfortable"
-        class="ma-3"
-      >
+      <v-alert v-else-if="privateError" type="error" density="comfortable" class="ma-3">
         {{ privateError }}
       </v-alert>
       <ChatPanel
@@ -1046,15 +977,8 @@ onUnmounted(() => {
     />
 
     <!-- Work topic: panes (chat | doc) above a spanning composer. -->
-    <div
-      v-else
-      class="workspace d-flex flex-column flex-grow-1"
-      style="min-width: 0"
-    >
-      <div
-        class="panes d-flex flex-grow-1"
-        style="min-width: 0; min-height: 0; position: relative"
-      >
+    <div v-else class="workspace d-flex flex-column flex-grow-1" style="min-width: 0">
+      <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
         <!-- 群聊感 (fusion-design §3): the topic's member roster as a COMPACT
              avatar-stack, overlaid at the top-right of the chat column's header
              row (not a full-width bar) so the chat header lines up with the doc
@@ -1064,15 +988,11 @@ onUnmounted(() => {
           class="topic-members-slot"
           :style="{ right: `calc(${100 - chatPct}% + 92px)` }"
         >
-          <TopicMembers
-            :topic-id="selectedTopic.id"
-            :project-members="projectMembers"
-            :me="AUTHOR"
-          />
+          <TopicMembers :topic-id="selectedTopic.id" :project-members="projectMembers" :me="AUTHOR" />
         </div>
         <ChatPanel
-          ref="chatRef"
           v-show="!focusMode"
+          ref="chatRef"
           class="col col-chat"
           :style="{ flex: `0 0 ${chatPct}%` }"
           :topic="selectedTopic"
@@ -1090,22 +1010,13 @@ onUnmounted(() => {
         >
           <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
           <template
-            v-if="
-              selectedTopic &&
-              (pendingCard ||
-                gateCard ||
-                (selectedTopic.status === 'archived' && acceptedCard))
-            "
+            v-if="selectedTopic && (pendingCard || gateCard || (selectedTopic.status === 'archived' && acceptedCard))"
             #timeline-end
           >
             <!-- 机器闸门 (eval C2): the platform is running the project's
                  质量检查 in this topic's workspace — the card reaches the
                  reviewer only when it's green. -->
-            <v-card
-              v-if="gateCard && gateCard.status === 'pending_gate'"
-              variant="outlined"
-              class="merge-box mt-2"
-            >
+            <v-card v-if="gateCard && gateCard.status === 'pending_gate'" variant="outlined" class="merge-box mt-2">
               <div class="merge-box__bar" />
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
@@ -1113,18 +1024,14 @@ onUnmounted(() => {
                   <span class="t-title">平台检查进行中…</span>
                 </div>
                 <div class="text-caption text-medium-emphasis">
-                  正在这个话题的工作区里跑项目配置的质量检查，通过后验收卡才会
-                  送到 <strong>@{{ gateCard.reviewer_handle }}</strong> 手上。
+                  正在这个话题的工作区里跑项目配置的质量检查，通过后验收卡才会 送到
+                  <strong>@{{ gateCard.reviewer_handle }}</strong> 手上。
                 </div>
               </div>
             </v-card>
 
             <!-- 闸门未过：卡片作废，芝士已被通知去修，修完会重新递卡。 -->
-            <v-card
-              v-else-if="gateCard && gateCard.status === 'gate_failed'"
-              variant="outlined"
-              class="merge-box mt-2"
-            >
+            <v-card v-else-if="gateCard && gateCard.status === 'gate_failed'" variant="outlined" class="merge-box mt-2">
               <div class="merge-box__bar" />
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
@@ -1137,50 +1044,27 @@ onUnmounted(() => {
                 <v-btn
                   size="small"
                   variant="text"
-                  :prepend-icon="
-                    showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'
-                  "
+                  :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
                   @click="showGateOutput = !showGateOutput"
                 >
                   {{ showGateOutput ? '收起输出' : '查看输出' }}
                 </v-btn>
-                <pre
-                  v-if="showGateOutput"
-                  class="gate-output mt-2"
-                >{{ gateCard.gate_output || '（无输出）' }}</pre>
+                <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '（无输出）' }}</pre>
               </div>
             </v-card>
 
-            <v-card
-              v-else-if="pendingCard"
-              variant="outlined"
-              class="merge-box mt-2"
-            >
+            <v-card v-else-if="pendingCard" variant="outlined" class="merge-box mt-2">
               <div class="merge-box__bar" />
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
-                  <v-icon
-                    :color="pendingCard.status === 'conflict' ? 'warning' : 'success'"
-                    size="19"
-                  >
-                    {{
-                      pendingCard.status === 'conflict'
-                        ? 'mdi-source-merge'
-                        : 'mdi-source-merge'
-                    }}
+                  <v-icon :color="pendingCard.status === 'conflict' ? 'warning' : 'success'" size="19">
+                    {{ pendingCard.status === 'conflict' ? 'mdi-source-merge' : 'mdi-source-merge' }}
                   </v-icon>
                   <span class="t-title">
-                    {{
-                      pendingCard.status === 'conflict'
-                        ? '合并冲突 · 芝士处理中'
-                        : '成果待采纳'
-                    }}
+                    {{ pendingCard.status === 'conflict' ? '合并冲突 · 芝士处理中' : '成果待采纳' }}
                   </span>
                 </div>
-                <div
-                  v-if="pendingCard.status === 'conflict'"
-                  class="text-caption text-medium-emphasis mb-2"
-                >
+                <div v-if="pendingCard.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
                   {{ pendingCard.note || '采纳时合并冲突，芝士正在工作区里解决。' }}
                   它在对话里汇报解决完之后，点下面重试。
                 </div>
@@ -1210,25 +1094,18 @@ onUnmounted(() => {
                         :active="mbr.user_handle === pendingCard.reviewer_handle"
                         @click="onReassignCard(mbr.user_handle)"
                       >
-                        <v-list-item-title class="text-body-2">
-                          @{{ mbr.user_handle }}
-                        </v-list-item-title>
+                        <v-list-item-title class="text-body-2"> @{{ mbr.user_handle }} </v-list-item-title>
                         <v-list-item-subtitle class="text-caption">
                           {{ mbr.role }}
                         </v-list-item-subtitle>
                       </v-list-item>
                       <v-list-item v-if="projectMembers.length === 0">
-                        <v-list-item-title class="text-caption text-medium-emphasis">
-                          暂无可选成员
-                        </v-list-item-title>
+                        <v-list-item-title class="text-caption text-medium-emphasis"> 暂无可选成员 </v-list-item-title>
                       </v-list-item>
                     </v-list>
                   </v-menu>
                 </div>
-                <div
-                  v-if="pendingCard.routing_reason"
-                  class="text-caption text-medium-emphasis mb-3"
-                >
+                <div v-if="pendingCard.routing_reason" class="text-caption text-medium-emphasis mb-3">
                   推荐理由：{{ pendingCard.routing_reason }}
                 </div>
                 <!-- 机器闸门 (eval C2): this card already passed the check. -->
@@ -1240,30 +1117,17 @@ onUnmounted(() => {
                   平台检查已通过
                 </div>
                 <!-- 主分支保护 (spec §4.4): N 人批准后采纳才会真正合入。 -->
-                <div
-                  v-if="pendingCard.approvals_required > 1"
-                  class="d-flex align-center flex-wrap ga-2 mb-3"
-                >
+                <div v-if="pendingCard.approvals_required > 1" class="d-flex align-center flex-wrap ga-2 mb-3">
                   <v-chip
                     size="small"
                     variant="tonal"
-                    :color="
-                      pendingCard.approvals.length >=
-                      pendingCard.approvals_required
-                        ? 'success'
-                        : undefined
-                    "
+                    :color="pendingCard.approvals.length >= pendingCard.approvals_required ? 'success' : undefined"
                     prepend-icon="mdi-account-check-outline"
                   >
-                    {{ pendingCard.approvals.length }}/{{
-                      pendingCard.approvals_required
-                    }}
+                    {{ pendingCard.approvals.length }}/{{ pendingCard.approvals_required }}
                     已批准
                   </v-chip>
-                  <span
-                    v-if="pendingCard.approvals.length"
-                    class="text-caption text-medium-emphasis"
-                  >
+                  <span v-if="pendingCard.approvals.length" class="text-caption text-medium-emphasis">
                     {{ pendingCard.approvals.map((h) => '@' + h).join('、') }}
                   </span>
                   <v-btn
@@ -1277,9 +1141,7 @@ onUnmounted(() => {
                   >
                     批准
                   </v-btn>
-                  <span v-else class="text-caption text-medium-emphasis">
-                    你已批准 ✓
-                  </span>
+                  <span v-else class="text-caption text-medium-emphasis"> 你已批准 ✓ </span>
                 </div>
                 <div class="d-flex align-center ga-2">
                   <v-btn
@@ -1290,9 +1152,7 @@ onUnmounted(() => {
                     prepend-icon="mdi-check"
                     @click="onAcceptCard"
                   >
-                    {{
-                      pendingCard.status === 'conflict' ? '重试采纳' : '采纳并归档'
-                    }}
+                    {{ pendingCard.status === 'conflict' ? '重试采纳' : '采纳并归档' }}
                   </v-btn>
                   <v-btn
                     variant="text"
@@ -1312,12 +1172,7 @@ onUnmounted(() => {
                     placeholder="退回说明（可选）"
                     class="flex-grow-1"
                   />
-                  <v-btn
-                    variant="outlined"
-                    class="btn-secondary"
-                    :loading="acceptBusy"
-                    @click="onRejectCard"
-                  >
+                  <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard">
                     确认退回
                   </v-btn>
                 </div>
@@ -1325,11 +1180,7 @@ onUnmounted(() => {
             </v-card>
 
             <!-- Archived (accepted) topic: 采纳可撤销 (spec §6.3). -->
-            <v-card
-              v-else-if="acceptedCard"
-              variant="outlined"
-              class="merge-box mt-2"
-            >
+            <v-card v-else-if="acceptedCard" variant="outlined" class="merge-box mt-2">
               <div class="merge-box__bar" />
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
@@ -1361,8 +1212,8 @@ onUnmounted(() => {
           @dblclick="chatPct = 50"
         />
         <DocPanel
-          ref="docRef"
           v-if="selectedTopic"
+          ref="docRef"
           class="col col-doc"
           :style="{ flex: '1 1 0', minWidth: 0 }"
           :topic="selectedTopic"
@@ -1384,9 +1235,7 @@ onUnmounted(() => {
         <v-divider />
         <div class="composer pa-2 px-3">
           <div class="d-flex align-center ga-2 mb-1">
-            <span class="chip-neutral">
-              <v-icon size="12">mdi-pound</v-icon>本话题
-            </span>
+            <span class="chip-neutral"> <v-icon size="12">mdi-pound</v-icon>本话题 </span>
             <span
               v-if="selectedTopic.status === 'archived'"
               class="d-inline-flex align-center ga-1 c-faint"
@@ -1413,9 +1262,7 @@ onUnmounted(() => {
           <!-- 评论模式: quote chip above the input — what this send will
                comment on. ✕ / Esc exits back to normal message mode. -->
           <div v-if="commentIntent" class="comment-mode-chip">
-            <v-icon size="14" class="comment-mode-chip__icon">
-              mdi-comment-quote-outline
-            </v-icon>
+            <v-icon size="14" class="comment-mode-chip__icon"> mdi-comment-quote-outline </v-icon>
             <span class="comment-mode-chip__label">评论</span>
             <span class="comment-mode-chip__quote">{{ commentIntent.quote }}</span>
             <button
@@ -1436,17 +1283,15 @@ onUnmounted(() => {
               class="mention-menu-item"
               @click="pickMention(mm)"
             >
-              <span
-                v-if="mm.kind === 'broadcast'"
-                class="mention-avatar mention-avatar--broadcast"
-              >
+              <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                 <v-icon size="13">mdi-bullhorn-outline</v-icon>
               </span>
               <span
                 v-else-if="mm.kind === 'member'"
                 class="mention-avatar"
                 :class="{ 'mention-avatar--agent': mm.agent }"
-              >{{ mm.label.slice(0, 1).toUpperCase() }}</span>
+                >{{ mm.label.slice(0, 1).toUpperCase() }}</span
+              >
               <span v-else class="mention-avatar mention-avatar--topic">
                 <v-icon size="13">mdi-pound</v-icon>
               </span>
@@ -1459,25 +1304,10 @@ onUnmounted(() => {
           <!-- 图片输入: images waiting to go with the next send. -->
           <div v-if="pendingAtts.length || attsUploading" class="att-strip">
             <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-              <img
-                :src="attachmentRawUrl(selectedTopic.id, a.path)"
-                :alt="a.path"
-              />
-              <button
-                type="button"
-                class="att-remove"
-                title="移除"
-                @click="removePendingAtt(i)"
-              >
-                ×
-              </button>
+              <img :src="attachmentRawUrl(selectedTopic.id, a.path)" :alt="a.path" />
+              <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">×</button>
             </div>
-            <v-progress-circular
-              v-if="attsUploading"
-              indeterminate
-              size="18"
-              width="2"
-            />
+            <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
           </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
@@ -1525,11 +1355,7 @@ onUnmounted(() => {
               icon="mdi-send"
               size="small"
               :loading="commentSending"
-              :disabled="
-                commentIntent
-                  ? !draft.trim()
-                  : !composerReady || (!draft.trim() && !pendingAtts.length)
-              "
+              :disabled="commentIntent ? !draft.trim() : !composerReady || (!draft.trim() && !pendingAtts.length)"
               @click="sendDraft"
             />
           </div>
@@ -1537,12 +1363,7 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <v-snackbar
-      v-model="hasError"
-      color="error"
-      timeout="4000"
-      location="bottom"
-    >
+    <v-snackbar v-model="hasError" color="error" timeout="4000" location="bottom">
       {{ globalError }}
     </v-snackbar>
   </div>

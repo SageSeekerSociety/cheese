@@ -32,7 +32,7 @@ interface DomainGroupStoreState {
 /** Simulates the onMounted logic in Edit.vue. Returns the store state after execution. */
 async function simulateEditOnMounted(
   taskData: TaskWithOptionalSpace | null,
-  fetchDomainGroups: () => Promise<void>,
+  fetchDomainGroups: () => Promise<void>
 ): Promise<{
   spaceIdSet: number | null
   fetchCalled: boolean
@@ -204,9 +204,7 @@ function buildEditTaskData(task: TaskForEdit | null): EditTaskFormData {
     submitterType: task.submitterType,
     rank: task.rank,
     defaultDeadline: task.defaultDeadline,
-    registrationStartAt: task.registrationStartAt
-      ? new Date(task.registrationStartAt).getTime()
-      : null,
+    registrationStartAt: task.registrationStartAt ? new Date(task.registrationStartAt).getTime() : null,
     deadline: new Date(task.deadline).getTime(),
     resubmittable: task.resubmittable,
     editable: task.editable,
