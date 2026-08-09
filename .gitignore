@@ -14,7 +14,9 @@ tmp_backend.log
 tmp_frontend.log
 
 # ---- Tooling / local agent config ----
-.claude/
+# .claude/ itself is a versioned project spec (see CLAUDE.md); only the
+# per-machine override file stays local.
+.claude/settings.local.json
 
 # ---- Python ----
 __pycache__/

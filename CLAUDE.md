@@ -16,7 +16,7 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright
 │   ├── check.sh                          # ruff + pyright + pytest, one command
 │   ├── post-pull.sh                      # Post-git-pull checks (migrations, deps, health)
 │   └── pre-commit                        # Copy to .git/hooks/ to block commits on check failure
-└── settings.json                         # Permissions allowlist for common commands
+└── settings.json                         # Permissions allowlist + enabled plugins
 ```
 
 Procedural guidance lives in **skills** (loaded on demand), not always-on prose:
