@@ -90,6 +90,40 @@ jobs:
     # Measured median 1.8m (uv sync + a graph read, no DB); generous margin for
     # a cold uv cache without leaving a stuck run to sit for hours.
     timeout-minutes: 10
+    # `uv sync` builds backend/srp_rs (a Rust/pyo3 extension) via maturin/cargo.
+    # actions/checkout resets the workspace before every run, wiping any
+    # in-tree target/ dir, so without this the crate fully recompiles every
+    # time (measured 41-44s). runner.temp/.. is a sibling of the per-run temp
+    # dir and of this repo's checkout dir inside the runner's _work root, so
+    # (like microcloud-smoke.yml's state dir) it survives the checkout reset —
+    # already proven on this same box. It's also outside Docker's storage
+    # entirely, so `docker image/builder prune` in deploy-docker.sh (which only
+    # ever touches Docker's own image/build-cache store) cannot sweep it.
+    #
+    # Keyed per job name (migration-heads/test/e2e each get their own
+    # subdirectory) rather than one shared dir: migration-heads and test run
+    # on the same single self-hosted runner and could execute concurrently,
+    # and Cargo's own target-dir lock would then serialize them (best case) or
+    # corrupt a partial build (worst case, e.g. a crash mid-write). Separate
+    # directories make that scenario impossible outright — there is nothing to
+    # lock over. The cost is that each job's cache warms up independently
+    # (three cold builds the first time, ~1-2GB combined thereafter for this
+    # small crate) instead of one job ever reusing another's freshly-built
+    # cache — but the two jobs already never shared a cache before this
+    # change, so no existing benefit is lost, and each job still gets full
+    # warm-cache savings on every run after its own first one.
+    #
+    # If a second self-hosted runner is added later (P3): job-name-keyed paths
+    # live on that runner's own local disk, so a second machine just cold-
+    # starts its own copy of each job's cache once and stays warm from then on
+    # — no cross-machine contention, because the caches were never shared
+    # filesystems to begin with. The one scenario this does NOT cover is two
+    # instances of the *same* job (e.g. two `test` runs) landing concurrently
+    # on the *same* physical runner — that would require multiple runner
+    # processes registered against one disk, which isn't how this box is set
+    # up today; flagging it here rather than assuming it away.
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/../cargo-target/migration-heads
     steps:
       - uses: actions/checkout@v4
 
@@ -103,6 +137,9 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --all-extras
+
+      - name: Report Cargo target cache size
+        run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
       - name: Exactly one alembic head
         run: |
@@ -120,6 +157,12 @@ jobs:
     # Measured median 5.1m; 20m covers a cold uv/docker cache without letting
     # a wedged run sit on the box's single runner for hours.
     timeout-minutes: 20
+    # Persists backend/srp_rs's Cargo build cache outside the checkout — see
+    # the migration-heads job above for the full reasoning (why this path,
+    # why it's immune to docker prune, and why it's job-keyed rather than
+    # shared with migration-heads/e2e).
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/../cargo-target/test
 
     services:
       postgres:
@@ -158,6 +201,9 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --all-extras
+
+      - name: Report Cargo target cache size
+        run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
       - name: Run formatting check
         run: uv run ruff format --check .
