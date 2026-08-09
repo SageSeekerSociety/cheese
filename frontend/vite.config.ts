@@ -53,8 +53,28 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      // Mirror the production nginx gateway (frontend/nginx.conf): `location /api/
+      // { proxy_pass http://backend:8081/; }` strips exactly one `/api` from every
+      // request. The frontend leans on that — api.ts uses BASE='/api/api' for 2.0
+      // routes, and the 知是 1.0 layer rides VITE_API_BASE_URL=/api — so calls
+      // arrive here double- (`/api/api/*`) or single- (`/api/users/*`) prefixed and
+      // must lose exactly one `/api` to hit the real backend route.
+      '/api': {
+        target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799',
+        changeOrigin: true,
+        ws: true,
+        // Exception: the ttyd terminal iframe loads /api/topics/<id>/terminal/live/
+        // verbatim and resolves its relative assets against that path; terminal.py
+        // serves it at that exact /api-prefixed path, so it must pass through
+        // unrewritten (see terminal.py). Everything else loses one /api like nginx.
+        rewrite: (path) =>
+          /^\/api\/topics\/[^/]+\/terminal(\/|$)/.test(path) ? path : path.replace(/^\/api/, ''),
+      },
+      // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer
+      // (e.g. SRP login GET /users/auth/methods/:username): reach the backend directly.
+      '/users': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
     },
   },
   build: {

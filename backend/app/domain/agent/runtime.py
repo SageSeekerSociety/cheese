@@ -20,6 +20,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator
+from functools import lru_cache
 
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
@@ -130,6 +131,14 @@ class InProcessBroker:
                     self._subs.pop(channel, None)
 
 
+@lru_cache
+def get_broker() -> InProcessBroker:
+    """Process-wide singleton — defined here (not app.api.deps) so domain code
+    that needs to publish outside a request/route (background watchers, retry
+    loops) can reach the SAME broker instance without importing the api layer."""
+    return InProcessBroker()
+
+
 class TurnRunner:
     """Runs a converse turn as a background task and publishes its frames to the
     broker. The turn owns its lifecycle; subscribers come and go.
@@ -164,19 +173,26 @@ class TurnRunner:
         return len(self._tasks)
 
     def topic_turn(self, topic_id: uuid.UUID) -> dict | None:
-        """Latest lifecycle record for this topic, with the wall-clock budget —
-        the agent-facing "how much time do I have" figure that otherwise exists
-        only as the runner's private timeout. Ring-buffer-backed, so None after
-        a restart or ~100 turns elsewhere."""
+        """Latest lifecycle record for this topic. `ceiling_s` is this turn's
+        effective absolute ceiling (`self._timeout` for most backends; the tmux
+        backend's own hard ceiling once its `turn_ceiling` frame has rescheduled
+        the outer wrap — see `_execute`) and `near_ceiling` is a coarse "within
+        the last 10 minutes" flag — turn 活跃度检测 deliberately does NOT expose a
+        live `budget_left_s` countdown any more: that figure was observed making
+        the agent rush against what's only meant to be a wedged-turn safety net
+        (dev, 2026-08-08). The idle-suspect layer (tmux only) isn't tracked here
+        — see `ChatService.tmux_activity_status` / `/topics/{id}/status`.
+        Ring-buffer-backed, so None after a restart or ~100 turns elsewhere."""
         key = str(topic_id)
         for rec in reversed(self._recent):
             if rec["topic_id"] != key:
                 continue
             out = dict(rec)
-            out["budget_s"] = round(self._timeout)
+            ceiling_s = rec.get("ceiling_s") or self._timeout
+            out["ceiling_s"] = round(ceiling_s)
             if rec["status"] == "running":
                 elapsed = time.time() - rec["started_at"]
-                out["budget_left_s"] = max(0, round(self._timeout - elapsed))
+                out["near_ceiling"] = (ceiling_s - elapsed) < 600
             return out
         return None
 
@@ -553,7 +569,20 @@ class TurnRunner:
             # forever. On timeout the async-for exits, closing the converse
             # generator → its `async with` blocks unwind → the topic lock releases
             # and the in-container claude process is torn down.
-            async with asyncio.timeout(self._timeout):
+            #
+            # This wrap is transport-INDEPENDENT — one TurnRunner singleton, same
+            # `self._timeout` for every backend (SDK / tmux / device). Most
+            # backends have no activity signal of their own, so this stays their
+            # only ceiling. The tmux backend now has one (turn 活跃度检测:
+            # hooks_substrate's two-layer idle-suspect + hard-ceiling loop can run
+            # well past `self._timeout`) — it signals its actual ceiling back via
+            # a `turn_ceiling` frame, and ONLY that reschedules this wrap
+            # (`Timeout.reschedule`), relative to when the turn started so a late
+            # frame can't silently grant more time than the backend promised.
+            # Every other backend never emits this frame, so their behaviour here
+            # is byte-for-byte unchanged.
+            loop_start = asyncio.get_running_loop().time()
+            async with asyncio.timeout(self._timeout) as turn_deadline:
                 turn_frames = (
                     frames
                     if frames is not None
@@ -572,6 +601,13 @@ class TurnRunner:
                 )
                 async for frame in turn_frames:
                     kind = frame.get("type")
+                    if kind == "turn_ceiling":
+                        ceiling_s = float(frame.get("seconds", self._timeout))
+                        turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
+                        # `topic_turn()` reads this so `cheese status` reports the
+                        # backend's REAL ceiling, not the generic outer default.
+                        rec["ceiling_s"] = ceiling_s
+                        continue
                     if kind == "resume_hint":
                         # Internal: chat layer says this failure is worth an
                         # automatic continuation (e.g. rate-limit reset time).

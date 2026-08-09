@@ -1,20 +1,16 @@
 <script setup lang="ts">
-import { myHandle } from '../me'
+import type { MemoryEntryOut } from '../api'
+import type { Block, Topic } from '../cx_types'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import {
-  deleteMemory,
-  getProject,
-  getProjectDecisions,
-  listMemory,
-  listTopics,
-} from '../api'
-import type { MemoryEntryOut } from '../api'
-import { relTime } from '../lib/relTime'
+import { marked } from 'marked'
+
+import { deleteMemory, getProject, getProjectDecisions, listMemory, listTopics } from '../api'
 import DocEditor from '../components/DocEditor.vue'
-import type { Block, Topic } from '../cx_types'
+import { relTime } from '../lib/relTime'
+import { myHandle } from '../me'
 
 // 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集. Shown either as a standalone
 // route or embedded inside the 工作台 (keeping the left rail) — `kind`/`embedded`
@@ -180,19 +176,13 @@ watch([kind, () => props.projectId], load)
           <template v-if="kind === 'charter'">
             <v-spacer />
             <span v-if="saving" class="t-meta">保存中…</span>
-            <span
-              v-else-if="savedAt"
-              class="d-inline-flex align-center ga-1 c-faint"
-              style="font-size: 12px"
-            >
+            <span v-else-if="savedAt" class="d-inline-flex align-center ga-1 c-faint" style="font-size: 12px">
               <span class="status-dot status-dot--ok" />已保存
             </span>
             <span v-else-if="charterDirty" class="t-meta">未保存</span>
           </template>
         </div>
-        <div v-if="kind === 'charter'" class="t-meta mt-1">
-          改了就等于给芝士下指令
-        </div>
+        <div v-if="kind === 'charter'" class="t-meta mt-1">改了就等于给芝士下指令</div>
       </div>
 
       <div v-if="loading" class="d-flex justify-center py-10">
@@ -250,33 +240,22 @@ watch([kind, () => props.projectId], load)
                 @dirty="onCharterDirty"
                 @error="onCharterError"
               />
-              <div v-else class="text-medium-emphasis text-body-2 py-2">
-                这个项目还没有根话题，暂时无法编辑章程。
-              </div>
+              <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有根话题，暂时无法编辑章程。</div>
             </div>
           </v-card>
         </template>
 
         <!-- ===== 决策记录 ===== -->
         <template v-else-if="kind === 'decisions'">
-          <div
-            v-if="decisions.length === 0"
-            class="text-medium-emphasis text-body-2 py-6 text-center"
-          >
+          <div v-if="decisions.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
             芝士还没记录决策——它在协作中定下关键决策时会记到这里。
           </div>
           <div v-else class="d-flex flex-column ga-3">
-            <v-card
-              v-for="d in decisions"
-              :key="d.id"
-              class="decision-card"
-            >
+            <v-card v-for="d in decisions" :key="d.id" class="decision-card">
               <div class="decision-bar" />
               <div class="pa-4">
                 <div class="d-flex align-center ga-2 mb-2">
-                  <v-icon size="17" class="c-faint">
-                    mdi-clipboard-text-clock-outline
-                  </v-icon>
+                  <v-icon size="17" class="c-faint"> mdi-clipboard-text-clock-outline </v-icon>
                   <span class="t-meta">{{ fmtDate(d.created_at) }}</span>
                   <v-spacer />
                   <v-btn
@@ -290,10 +269,7 @@ watch([kind, () => props.projectId], load)
                     来自话题
                   </v-btn>
                 </div>
-                <div
-                  class="md-content text-body-2"
-                  v-html="renderMarkdown(d.content)"
-                />
+                <div class="md-content text-body-2" v-html="renderMarkdown(d.content)" />
               </div>
             </v-card>
           </div>
@@ -301,24 +277,14 @@ watch([kind, () => props.projectId], load)
 
         <!-- ===== 周报集 ===== -->
         <template v-else>
-          <div
-            v-if="weeklies.length === 0"
-            class="text-medium-emphasis text-body-2 py-6 text-center"
-          >
+          <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
             周报由芝士定期产出，暂时还没有。
           </div>
           <div v-else class="d-flex flex-column ga-3">
-            <router-link
-              v-for="t in weeklies"
-              :key="t.id"
-              class="weekly-link"
-              :to="topicTo(t.id)"
-            >
+            <router-link v-for="t in weeklies" :key="t.id" class="weekly-link" :to="topicTo(t.id)">
               <v-card class="weekly-card">
                 <div class="pa-4 d-flex align-center ga-3">
-                  <v-icon size="20" class="c-faint">
-                    mdi-calendar-week-outline
-                  </v-icon>
+                  <v-icon size="20" class="c-faint"> mdi-calendar-week-outline </v-icon>
                   <div class="flex-grow-1" style="min-width: 0">
                     <div class="t-body text-truncate" style="font-weight: 500; color: var(--ink)">
                       {{ t.title }}

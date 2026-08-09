@@ -19,7 +19,9 @@ test.describe('Login', () => {
     // who the other specs depend on being able to log in.
     await page.goto('/account/signin');
     await page.getByLabel('用户名').fill('no-such-user-e2e');
-    await page.getByLabel('密码').fill('wrong-password');
+    // exact: true — see helpers.ts::login for why (Vuetify's password-visibility
+    // toggle button's auto aria-label contains "密码" as a substring).
+    await page.getByLabel('密码', { exact: true }).fill('wrong-password');
     await page.getByRole('checkbox').check();
     await page.getByRole('button', { name: '立即登录' }).click();
 

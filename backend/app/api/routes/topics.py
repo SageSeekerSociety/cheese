@@ -47,6 +47,7 @@ from app.domain.topic.schemas import (
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.webhook import service as webhook_service
 from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
@@ -163,15 +164,24 @@ async def topic_status(
     topic_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """盲飞防护: one snapshot of "what is going on" for this topic — accept
-    cards with their gate output, the current/last turn's time budget, and the
+    cards with their gate output, the current/last turn's state, and the
     platform waterlines (disk/queue/credits) — so an agent (via `cheese
     status`) or a debugging human doesn't have to poll several endpoints and
-    guess. Read path, open like the rest of the MVP read surface."""
+    guess. Read path, open like the rest of the MVP read surface.
+
+    ``turn.activity`` (turn 活跃度检测, tmux backend only — None otherwise) is
+    the idle-suspect signal: ``suspect_since_s_ago`` set means the turn has been
+    idle past the threshold and is being actively re-confirmed alive, not yet
+    treated as dead."""
     topic = await TopicService(db).get_or_404(topic_id)
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
     credits = await ComputeGrantRepository(db).summary(topic.project_id)
+    turn = runner.topic_turn(topic_id)
+    if turn is not None and turn.get("status") == "running":
+        turn["activity"] = chat_service.tmux_activity_status(topic_id)
     return ok(
         {
             "topic": {
@@ -180,7 +190,7 @@ async def topic_status(
                 "status": str(topic.status),
                 "branch": topic.branch_name,
             },
-            "turn": runner.topic_turn(topic_id),
+            "turn": turn,
             "cards": [_card_snapshot(c) for c in cards],
             "platform": {
                 "active_turns": runner.active_turns(),
@@ -473,6 +483,20 @@ async def answer_options(
     return ok(updated)
 
 
+@router.post("/{topic_id}/webhook-token")
+async def mint_webhook_token(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """Mint (or rotate) this topic's webhook credential — used by the `cheese`
+    CLI to hand a caller a token for POST /webhooks/{topic_id}. Rotating
+    invalidates every previously-minted token for this topic; the raw value is
+    returned once and never recoverable afterwards."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    token = await webhook_service.mint(
+        db, topic_id=topic_id, project_id=topic.project_id
+    )
+    await db.commit()
+    return ok({"token": token})
+
+
 @router.post("/{topic_id}/decision")
 async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     """记录关键决策到决策记录 (spec §7.1) — used by the `cheese decision` CLI."""
@@ -496,10 +520,18 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
 
 
 @router.post("/{topic_id}/title")
-async def set_title(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """给话题起/改标题 — used by `cheese title`. Titles are AI-generated (the agent
-    names an untitled topic from the task), never deterministically derived."""
+async def set_title(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """给话题起/改标题 — used by both `cheese title` (AI-generated, naming an
+    untitled topic) and the frontend sidebar rename UI (dual-use, like doc/split)."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=body.get("by"), topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError("title 不能为空")
@@ -541,16 +573,31 @@ async def split_topic(
     body: SplitIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
 ) -> dict:
     """从上往下拆解：split a todo into a sub-topic (eval A2).
 
     The child is seeded with a task-brief living doc, then its 分身 is kicked
     off automatically (spec §8.4 分身异步工作): without this, a freshly split
     sub-topic just sits idle until a human wanders in and posts a message."""
-    topic = await TopicService(db).split_to_subtopic(
+    service = TopicService(db)
+    parent = await service.get_or_404(topic_id)
+    # actor 在信任边界注入 (同 edit_topic_doc): prefer the verified token, fall
+    # back to body.created_by, and require the caller actually have access to
+    # the PARENT topic — a body-trusted `created_by` let anyone split anyone
+    # else's topic and mint an arbitrary roster owner.
+    actor = await resolver.resolve(
+        fallback_handle=body.created_by,
+        topic_id=topic_id,
+        project_id=parent.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=parent.project_id, topic_id=topic_id
+    )
+    topic = await service.split_to_subtopic(
         parent_topic_id=topic_id,
         title=body.title,
-        created_by=body.created_by,
+        created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
         brief=body.brief,
     )
     out = TopicOut.model_validate(topic).model_dump(mode="json")
@@ -630,6 +677,9 @@ async def return_conclusion(
     wake = parent.status != TopicStatus.archived
     # Commit BEFORE waking: the parent's turn runs on its own session.
     await db.commit()
+    await get_broker().publish(
+        str(parent.id), {"type": "assistant_block", "block": out}
+    )
     if wake:
         get_turn_runner().submit_kickoff(
             chat, parent.id, prompt=conclusion_digest_prompt(block.content)

@@ -13,7 +13,11 @@ export const DEMO_PASSWORD = 'demo12345';
 export async function login(page: Page, username = DEMO_USERNAME, password = DEMO_PASSWORD) {
   await page.goto('/account/signin');
   await page.getByLabel('用户名').fill(username);
-  await page.getByLabel('密码').fill(password);
+  // exact: true — Vuetify's show/hide-password toggle button gets an
+  // auto-generated aria-label of "密码 appended action" (see InputIcon.js),
+  // which is a substring match for the bare label and trips Playwright's
+  // strict mode (two elements match `getByLabel('密码')`).
+  await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: '立即登录' }).click();
   await page.locator('.app-rail-item:not(.app-rail-item--add)').first().waitFor();
@@ -22,7 +26,10 @@ export async function login(page: Page, username = DEMO_USERNAME, password = DEM
 // Opens the first project from the rail and waits for its topic sidebar to
 // finish loading, returning the count of visible (non-archived) topic rows.
 export async function openFirstProject(page: Page) {
-  await page.locator('.app-rail-item:not(.app-rail-item--add)').first().click();
+  // Project tiles carry `--tile` (they render an avatar image); the bare
+  // `.app-rail-item:not(--add)` also matches the 首页/cheese home icon, which
+  // sits first in the rail — clicking it lands on /spaces, not a project.
+  await page.locator('.app-rail-item--tile').first().click();
   await page.locator('[title="新建话题"]').waitFor();
   return page.locator('.topic-row');
 }

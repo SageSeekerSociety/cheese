@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import type { MemberSummary, ProfileProject, UserProfile } from '../cx_types'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+
 import { getMemberSummary, getUserProfile } from '../api'
-import { NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS, label } from '../labels'
-import type { MemberSummary, ProfileProject, UserProfile } from '../cx_types'
+import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
 
 // 个人主页 = LinkedIn / GitHub profile (spec §1). "项目过程即简历": the page is
 // primarily the cross-project profile; the per-project member summary (TA 发起的
@@ -26,23 +28,17 @@ const displayName = computed<string>(() => profile.value?.name || props.handle)
 // Role line: prefer the role for the project we arrived from, fall back to the
 // member summary role, then the first project on the profile.
 const roleLine = computed<string>(() => {
-  const fromProject = profile.value?.projects.find(
-    (p) => p.project_id === props.projectId,
-  )
-  const raw =
-    fromProject?.role ||
-    member.value?.role ||
-    profile.value?.projects[0]?.role ||
-    ''
+  const fromProject = profile.value?.projects.find((p) => p.project_id === props.projectId)
+  const raw = fromProject?.role || member.value?.role || profile.value?.projects[0]?.role || ''
   return label(PROJECT_ROLE, raw)
 })
 
 // Total contributions across projects → simple proportional bar (§10.1 spirit).
 const totalContributions = computed<number>(() =>
-  (profile.value?.projects ?? []).reduce((s, p) => s + p.contributions, 0),
+  (profile.value?.projects ?? []).reduce((s, p) => s + p.contributions, 0)
 )
 const maxContributions = computed<number>(() =>
-  Math.max(1, ...(profile.value?.projects ?? []).map((p) => p.contributions)),
+  Math.max(1, ...(profile.value?.projects ?? []).map((p) => p.contributions))
 )
 function contribPct(p: ProfileProject): number {
   return (p.contributions / maxContributions.value) * 100
@@ -120,13 +116,7 @@ onMounted(load)
       </v-alert>
 
       <template v-else>
-        <v-btn
-          variant="text"
-          size="small"
-          prepend-icon="mdi-arrow-left"
-          class="mb-3 px-1"
-          @click="goBack"
-        >
+        <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="mb-3 px-1" @click="goBack">
           返回
         </v-btn>
 
@@ -149,10 +139,7 @@ onMounted(load)
         </v-card>
 
         <!-- 技能 / 兴趣 -->
-        <v-card
-          v-if="profile && (profile.skills.length || profile.interests.length)"
-          class="mb-6"
-        >
+        <v-card v-if="profile && (profile.skills.length || profile.interests.length)" class="mb-6">
           <v-card-text>
             <div v-if="profile.skills.length" class="mb-4">
               <div class="t-title mb-2">技能</div>
@@ -181,11 +168,7 @@ onMounted(load)
           </v-card-title>
           <v-card-text>
             <div v-if="profile?.understanding?.length" class="d-flex flex-column ga-2">
-              <div
-                v-for="(u, idx) in profile.understanding"
-                :key="idx"
-                class="d-flex align-start ga-2"
-              >
+              <div v-for="(u, idx) in profile.understanding" :key="idx" class="d-flex align-start ga-2">
                 <span class="status-dot status-dot--muted" style="margin-top: 8px" />
                 <span class="t-body">{{ u }}</span>
               </div>
@@ -217,15 +200,10 @@ onMounted(load)
                   <span class="t-body" style="font-weight: 500; color: var(--ink)">{{ p.name }}</span>
                   <span class="chip-neutral">{{ label(PROJECT_ROLE, p.role) }}</span>
                 </div>
-                <div class="t-meta mb-2">
-                  发起 {{ p.topics_started }} 个话题 · {{ p.contributions }} 条贡献
-                </div>
+                <div class="t-meta mb-2">发起 {{ p.topics_started }} 个话题 · {{ p.contributions }} 条贡献</div>
                 <!-- Contribution bar (relative to the user's most active project) -->
                 <div class="contrib-track">
-                  <div
-                    class="contrib-fill"
-                    :style="{ width: contribPct(p) + '%' }"
-                  />
+                  <div class="contrib-fill" :style="{ width: contribPct(p) + '%' }" />
                 </div>
               </v-list-item>
             </template>
@@ -258,12 +236,7 @@ onMounted(load)
                   </span>
                 </v-card-title>
                 <v-card-text>
-                  <div
-                    v-if="(member.topics_active ?? []).length === 0"
-                    class="c-faint t-body"
-                  >
-                    当前没有在忙的话题
-                  </div>
+                  <div v-if="(member.topics_active ?? []).length === 0" class="c-faint t-body">当前没有在忙的话题</div>
                   <v-list v-else density="comfortable" class="py-0">
                     <v-list-item
                       v-for="t in member.topics_active ?? []"
@@ -291,16 +264,9 @@ onMounted(load)
                   </span>
                 </v-card-title>
                 <v-card-text>
-                  <div v-if="member.topics_started.length === 0" class="c-faint t-body">
-                    还没有发起过话题
-                  </div>
+                  <div v-if="member.topics_started.length === 0" class="c-faint t-body">还没有发起过话题</div>
                   <v-list v-else density="comfortable" class="py-0">
-                    <v-list-item
-                      v-for="t in member.topics_started"
-                      :key="t.id"
-                      class="px-0"
-                      @click="openTopic(t.id)"
-                    >
+                    <v-list-item v-for="t in member.topics_started" :key="t.id" class="px-0" @click="openTopic(t.id)">
                       <v-list-item-title>{{ t.title }}</v-list-item-title>
                       <template #append>
                         <span class="d-inline-flex align-center ga-1 c-muted" style="font-size: 12px">
@@ -324,15 +290,9 @@ onMounted(load)
                   </span>
                 </v-card-title>
                 <v-card-text>
-                  <div v-if="member.waiting_on_you.length === 0" class="c-faint t-body">
-                    没有待处理的事
-                  </div>
+                  <div v-if="member.waiting_on_you.length === 0" class="c-faint t-body">没有待处理的事</div>
                   <v-list v-else density="comfortable" class="py-0">
-                    <v-list-item
-                      v-for="t in member.waiting_on_you"
-                      :key="t.id"
-                      class="px-0"
-                    >
+                    <v-list-item v-for="t in member.waiting_on_you" :key="t.id" class="px-0">
                       <template #prepend>
                         <span class="status-dot status-dot--warn me-3" />
                       </template>

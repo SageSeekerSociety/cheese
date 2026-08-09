@@ -1,21 +1,18 @@
 // 图片输入: pending-attachment state shared by the two composers (WorkspaceView
 // 的跨栏输入框和 ChatPanel 的私聊输入框). Paste or pick an image → it uploads to
 // the topic's worktree immediately → the send only references {path, mime}.
-import { ref } from 'vue'
-import { uploadAttachment } from '../api'
 import type { ChatAttachment } from '../cx_types'
 
-const IMAGE_MIME = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-])
+import { ref } from 'vue'
+
+import { uploadAttachment } from '../api'
+
+const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const MAX_PENDING = 9
 
 export function usePendingAttachments(
   getTopicId: () => string | null | undefined,
-  onError?: (message: string) => void,
+  onError?: (message: string) => void
 ) {
   const pending = ref<ChatAttachment[]>([])
   const uploading = ref(false)

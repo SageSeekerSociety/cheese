@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import type { Project, ProjectMemberRow, Topic } from '../cx_types'
+
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+
 import { relTime } from '../lib/relTime'
-import type { Project, ProjectMemberRow, Topic } from '../cx_types'
-import CheeseAvatar from './CheeseAvatar.vue'
+import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import { avatarColor } from '../utils/avatar'
+
+import CheeseAvatar from './CheeseAvatar.vue'
 
 const props = defineProps<{
   projects: Project[]
@@ -38,6 +42,8 @@ const emit = defineEmits<{
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
+  // Rename a topic's title from the row's ⋯ actions.
+  (e: 'rename-topic', payload: { id: string; title: string }): void
   // Open the 1:1 private chat with 芝士 in the main area (飞书私聊 conversation).
   (e: 'select-private'): void
   // Open a person-to-person DM with the given member handle (飞书私聊 conversation).
@@ -74,14 +80,11 @@ const narrowPages = computed(() => (props.width ?? 280) < 216)
 // gets its own dedicated row above, and you don't DM yourself.
 const peerDms = computed(() =>
   (props.members ?? [])
-    .filter(
-      (m) =>
-        m.user_handle !== props.meHandle && m.user_handle !== 'cheese',
-    )
+    .filter((m) => m.user_handle !== props.meHandle && m.user_handle !== 'cheese')
     .map((m) => ({
       handle: m.user_handle,
       name: m.name || m.user_handle,
-    })),
+    }))
 )
 
 const projectPages = [
@@ -192,13 +195,11 @@ const tree = computed<TreeRow[]>(() => {
 // 「已归档」 group at the bottom (newest archived first) — like Feishu's
 // folded conversations. Non-archived children of an archived parent stay in
 // the active list (their work isn't done).
-const activeTree = computed<TreeRow[]>(() =>
-  tree.value.filter((r) => r.topic.status !== 'archived'),
-)
+const activeTree = computed<TreeRow[]>(() => tree.value.filter((r) => r.topic.status !== 'archived'))
 const archivedRows = computed<Topic[]>(() =>
   props.topics
     .filter((t) => t.status === 'archived' && inferKind(t) !== 'root')
-    .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? '')),
+    .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? ''))
 )
 const archivedOpen = ref(false)
 
@@ -212,20 +213,34 @@ function unreadLabel(id: string): string {
   return n > 99 ? '99+' : String(n)
 }
 // Unread hiding inside the collapsed archived group still deserves a hint.
-const archivedUnread = computed<number>(() =>
-  archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0),
-)
+const archivedUnread = computed<number>(() => archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0))
 
 // The root topic (本体) — represented by the rail header (a selector + a click
 // target), not a list row. And the current project's display name.
-const rootTopic = computed<Topic | null>(
-  () => props.topics.find((t) => inferKind(t) === 'root') ?? null,
-)
+const rootTopic = computed<Topic | null>(() => props.topics.find((t) => inferKind(t) === 'root') ?? null)
 const currentProjectName = computed<string>(
-  () =>
-    props.projects.find((p) => p.id === props.selectedProjectId)?.name ??
-    '选择项目',
+  () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? '选择项目'
 )
+
+// Inline rename (pattern mirrors MyDevicesView's rename-in-place): a click on
+// the pencil swaps the title span for a text field; enter/blur commits.
+const renamingTopicId = ref<string | null>(null)
+const draftTitle = ref('')
+
+function startRename(t: Topic) {
+  renamingTopicId.value = t.id
+  draftTitle.value = t.title
+}
+
+function cancelRename() {
+  renamingTopicId.value = null
+}
+
+function saveRename(t: Topic) {
+  const title = normalizeTopicTitle(draftTitle.value, t.title)
+  renamingTopicId.value = null
+  if (title) emit('rename-topic', { id: t.id, title })
+}
 
 function onSplit(t: Topic) {
   // Never ask the human for a title (spec §rule 4, mirrors newTopic()). The
@@ -250,10 +265,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
     <div class="d-flex flex-column fill-height">
       <!-- 本体 = 项目 = 根话题: one flush header that opens the 本体 (root topic)
            on click, and switches projects via the caret menu. -->
-      <div
-        class="bentai-bar"
-        :class="{ 'is-active': !!rootTopic && rootTopic.id === selectedTopicId }"
-      >
+      <div class="bentai-bar" :class="{ 'is-active': !!rootTopic && rootTopic.id === selectedTopicId }">
         <button
           ref="bentaiMain"
           type="button"
@@ -263,10 +275,9 @@ const onMemory = computed(() => props.activeDocs === 'memory')
           <v-icon size="18" class="bentai-bar__icon">mdi-hexagon-outline</v-icon>
           <span class="bentai-bar__name">{{ currentProjectName }}</span>
           <span class="chip-neutral">全局</span>
-          <span
-            v-if="rootTopic && unreadOf(rootTopic.id) > 0"
-            class="unread-badge"
-          >{{ unreadLabel(rootTopic.id) }}</span>
+          <span v-if="rootTopic && unreadOf(rootTopic.id) > 0" class="unread-badge">{{
+            unreadLabel(rootTopic.id)
+          }}</span>
         </button>
         <!-- 切换项目已回归左侧 rail（每个项目一个图标）——此处不再放切换器。 -->
       </div>
@@ -296,23 +307,11 @@ const onMemory = computed(() => props.activeDocs === 'memory')
         <template v-else>
           <div class="t-eyebrow side-subhead side-subhead--row">
             <span>话题</span>
-            <v-btn
-              icon="mdi-plus"
-              size="x-small"
-              variant="tonal"
-              color="primary"
-              title="新建话题"
-              @click="newTopic"
-            />
+            <v-btn icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" @click="newTopic" />
           </div>
 
           <div v-if="loadingTopics" class="px-4 py-2">
-            <v-progress-circular
-              indeterminate
-              size="20"
-              width="2"
-              color="primary"
-            />
+            <v-progress-circular indeterminate size="20" width="2" color="primary" />
           </div>
 
           <v-list v-else density="compact" nav class="py-0">
@@ -351,29 +350,47 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                 />
               </template>
               <v-list-item-title class="d-flex align-center topic-title">
-                <span
-                  class="text-truncate"
-                  :class="{ 'title-unread': unreadOf(row.topic.id) > 0 }"
-                >{{ row.topic.title }}</span>
-                <span
-                  v-if="statusBadge(row.topic.status)"
-                  class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
-                >
-                  <span class="status-dot status-dot--warn" />
-                  {{ statusBadge(row.topic.status) }}
-                </span>
+                <v-text-field
+                  v-if="renamingTopicId === row.topic.id"
+                  v-model="draftTitle"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  autofocus
+                  :maxlength="TOPIC_TITLE_MAX_LENGTH"
+                  class="rename-field"
+                  @click.stop
+                  @keyup.enter="saveRename(row.topic)"
+                  @keyup.esc="cancelRename()"
+                  @blur="saveRename(row.topic)"
+                />
+                <template v-else>
+                  <span class="text-truncate" :class="{ 'title-unread': unreadOf(row.topic.id) > 0 }">{{
+                    row.topic.title
+                  }}</span>
+                  <span
+                    v-if="statusBadge(row.topic.status)"
+                    class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
+                  >
+                    <span class="status-dot status-dot--warn" />
+                    {{ statusBadge(row.topic.status) }}
+                  </span>
+                </template>
               </v-list-item-title>
               <template #append>
-                <span
-                  v-if="unreadOf(row.topic.id) > 0"
-                  class="unread-badge"
-                >{{ unreadLabel(row.topic.id) }}</span>
+                <span v-if="unreadOf(row.topic.id) > 0" class="unread-badge">{{ unreadLabel(row.topic.id) }}</span>
                 <!-- items 感的右锚：没未读时给最后活跃时间（真实信息，非装饰） -->
-                <span v-else class="row-time">{{
-                  relTime(row.topic.updated_at)
-                }}</span>
+                <span v-else class="row-time">{{ relTime(row.topic.updated_at) }}</span>
                 <!-- hover 浮出的操作层：绝对定位覆盖行尾，不占布局宽度 -->
                 <div class="row-actions" @click.stop>
+                  <v-btn
+                    icon="mdi-pencil-outline"
+                    size="small"
+                    variant="text"
+                    density="comfortable"
+                    title="重命名"
+                    @click.stop="startRename(row.topic)"
+                  />
                   <v-btn
                     icon="mdi-archive-arrow-down-outline"
                     size="small"
@@ -394,20 +411,14 @@ const onMemory = computed(() => props.activeDocs === 'memory')
               </template>
             </v-list-item>
 
-            <v-list-item v-if="activeTree.length === 0" class="c-faint t-body">
-              暂无话题
-            </v-list-item>
+            <v-list-item v-if="activeTree.length === 0" class="c-faint t-body"> 暂无话题 </v-list-item>
           </v-list>
 
           <!-- 归档去向: collapsed 已归档 group at the bottom of the topic list.
                Archived topics leave the active tree and land here (newest
                first), so done work stops crowding the rail. -->
           <template v-if="archivedRows.length">
-            <button
-              type="button"
-              class="archived-toggle"
-              @click="archivedOpen = !archivedOpen"
-            >
+            <button type="button" class="archived-toggle" @click="archivedOpen = !archivedOpen">
               <v-icon size="15" class="c-faint">
                 {{ archivedOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
               </v-icon>
@@ -522,9 +533,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                   <CheeseAvatar :size="18" />
                 </span>
               </template>
-              <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)">
-                芝士
-              </v-list-item-title>
+              <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)"> 芝士 </v-list-item-title>
             </v-list-item>
 
             <!-- Person-to-person DMs: one row per OTHER project member. -->
@@ -619,7 +628,9 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   color: var(--muted);
   font-size: 12px;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 .proj-pages__item:hover {
   background: var(--fill-2);
@@ -680,6 +691,15 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 }
 .topic-title {
   color: var(--text);
+}
+.rename-field {
+  max-width: 220px;
+}
+.rename-field :deep(.v-field__input) {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  min-height: 28px;
+  font-size: 13.5px;
 }
 
 /* Active row: --fill bg + 2px --accent left bar + --ink text. NOT a tinted

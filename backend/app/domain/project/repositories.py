@@ -5,9 +5,11 @@ import uuid
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ConflictError
 from app.domain.project.models import (
     AiMode,
     Project,
+    ProjectGitInstallation,
     ProjectMember,
     ProjectTaskLink,
 )
@@ -191,3 +193,63 @@ class ProjectRepository:
             select(Project).where(or_(*claims)).order_by(Project.created_at)
         )
         return list(result.scalars())
+
+
+class ProjectGitInstallationRepository:
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def get_by_project(
+        self, project_id: uuid.UUID
+    ) -> ProjectGitInstallation | None:
+        stmt = select(ProjectGitInstallation).where(
+            ProjectGitInstallation.project_id == project_id
+        )
+        return (await self._session.scalars(stmt)).first()
+
+    async def get_by_installation(
+        self, installation_id: int
+    ) -> ProjectGitInstallation | None:
+        stmt = select(ProjectGitInstallation).where(
+            ProjectGitInstallation.installation_id == installation_id
+        )
+        return (await self._session.scalars(stmt)).first()
+
+    async def upsert(
+        self,
+        *,
+        project_id: uuid.UUID,
+        installation_id: int,
+        repo: str,
+        account: str,
+    ) -> ProjectGitInstallation:
+        """Bind `installation_id` to `project_id` (replacing any prior repo the
+        project was connected to). Raises ConflictError if the installation is
+        already bound to a *different* project — a GitHub installation is never
+        shared, or a minted token would be ambiguous about whose git operations
+        it's for."""
+        by_installation = await self.get_by_installation(installation_id)
+        if by_installation is not None and by_installation.project_id != project_id:
+            raise ConflictError(
+                f"installation {installation_id} is already connected to "
+                f"another project"
+            )
+
+        existing = await self.get_by_project(project_id)
+        if existing is not None:
+            existing.installation_id = installation_id
+            existing.repo = repo
+            existing.account = account
+            await self._session.flush()
+            return existing
+
+        row = ProjectGitInstallation(
+            project_id=project_id,
+            installation_id=installation_id,
+            repo=repo,
+            account=account,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        await self._session.refresh(row)
+        return row

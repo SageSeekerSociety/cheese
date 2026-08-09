@@ -11,6 +11,7 @@ import type {
   ExpertRole,
   FileContent,
   GitCommit,
+  GithubConnection,
   InboxItem,
   ListPayload,
   MarketNodes,
@@ -35,6 +36,10 @@ import type {
   UserProfile,
   WorkspaceFile,
 } from './cx_types'
+
+import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
+
+export { TOPIC_TITLE_MAX_LENGTH }
 
 // The cheesex (2.0) API, as a BROWSER must address it — deliberately doubled.
 //
@@ -337,6 +342,13 @@ export function markTopicRead(topicId: string, handle: string): Promise<Record<s
   })
 }
 
+export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title`, {
+    method: 'POST',
+    body: JSON.stringify({ title }),
+  })
+}
+
 // ---- 归档去向: manual archive / unarchive ----
 
 export function archiveTopic(topicId: string, by: string): Promise<Topic> {
@@ -543,6 +555,17 @@ export function syncUpstream(projectId: string): Promise<UpstreamSyncResult> {
   return request(`/projects/${encodeURIComponent(projectId)}/upstream/sync`, {
     method: 'POST',
   })
+}
+
+// GitHub App install flow (#192).
+export function getGithubConnection(projectId: string): Promise<GithubConnection> {
+  return request(`/projects/${encodeURIComponent(projectId)}/github/connection`)
+}
+export function getGithubInstallUrl(projectId: string): Promise<{ url: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/github/install-url`)
+}
+export function getGithubAccountAuthorizeUrl(projectId: string): Promise<{ url: string }> {
+  return request(`/users/me/github-account/authorize-url?return_project_id=${encodeURIComponent(projectId)}`)
 }
 
 // 项目总览 / 收件箱 (eval G2/G3).

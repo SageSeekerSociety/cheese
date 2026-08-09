@@ -345,12 +345,16 @@ class ComputePool:
         return cls([provider], provider.name)
 
     @classmethod
-    def tmux(cls, *, image: str, turn_timeout_s: float) -> "ComputePool":
+    def tmux(
+        cls, *, image: str, idle_suspect_s: float, hard_ceiling_s: float
+    ) -> "ComputePool":
         """Interactive/tmux backend (AGENT_BACKEND=tmux): drives `claude` in a
         tmux session and streams events from Claude Code HTTP hooks."""
         from app.domain.agent.tmux_provider import TmuxHooksProvider
 
-        provider = TmuxHooksProvider(image=image, turn_timeout_s=turn_timeout_s)
+        provider = TmuxHooksProvider(
+            image=image, idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
+        )
         return cls([provider], provider.name)
 
     @classmethod
@@ -362,6 +366,19 @@ class ComputePool:
 
         provider = DeviceProvider(turn_timeout_s=turn_timeout_s)
         return cls([provider], provider.name)
+
+    def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
+        """turn 活跃度检测: `cheese status`'s idle-suspect signal, read from
+        whichever tmux provider is in this pool (at most one — see
+        `build_compute_pool`). None when there's no tmux provider in the pool,
+        or no turn currently monitored for this topic (not running, or running
+        on a different backend)."""
+        from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+        for provider in self._providers.values():
+            if isinstance(provider, TmuxHooksProvider):
+                return provider.activity_status(topic_id)
+        return None
 
     def has(self, provider_id: str) -> bool:
         return provider_id in self._providers
@@ -406,7 +423,8 @@ def build_compute_pool(agent: AgentService) -> ComputePool:
 
         local = TmuxHooksProvider(
             image=settings.tmux_sandbox_image,
-            turn_timeout_s=settings.agent_turn_timeout_s,
+            idle_suspect_s=settings.agent_idle_suspect_s,
+            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
         )
     else:
         # The pre-convergence SDK stream-json path, retained as the orthogonal

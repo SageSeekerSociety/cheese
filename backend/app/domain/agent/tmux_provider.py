@@ -32,6 +32,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import clone, provider_env
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
+    ActivityTracker,
     HooksTurnProvider,
     ScreenSetupError,
     hooks_settings,
@@ -255,12 +256,19 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         *,
         image: str,
         router: HookRouter | None = None,
-        turn_timeout_s: float = 900.0,
+        idle_suspect_s: float = 300.0,
+        hard_ceiling_s: float = 10800.0,
     ) -> None:
-        super().__init__(router=router, turn_timeout_s=turn_timeout_s)
+        super().__init__(
+            router=router, idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
+        )
         self._image = image
         # One control-mode connection per container, reused across turns.
         self._controls: dict[str, TmuxControlClient] = {}
+        # Container name → the running turn's ActivityTracker (turn 活跃度检测),
+        # for `cheese status` to read via `activity_status()`. Populated by
+        # `_start_activity_monitor` for exactly as long as its turn runs.
+        self._activity: dict[str, ActivityTracker] = {}
 
     def available(self) -> bool:
         return ws.sandbox_available()
@@ -481,6 +489,73 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             raise
         except Exception as exc:  # noqa: BLE001 — a failed send ends the turn
             raise ScreenSetupError(f"tmux 后端启动失败：{exc}") from exc
+
+    # --- activity detection (turn 活跃度检测, 2026-08-09) -------------------
+
+    # How often the background monitor re-captures the pane. Independent of
+    # `CONFIRM_POLL_S` (hooks_substrate) — this one just watches for output
+    # changes; that one re-checks liveness once idle-suspect is already tripped.
+    _ACTIVITY_POLL_S = 12.0
+
+    async def _monitor_activity(self, name: str, tracker: ActivityTracker) -> None:
+        """Background loop for `_start_activity_monitor`: captures the pane every
+        `_ACTIVITY_POLL_S` and touches `tracker` whenever the content changes —
+        so a long tool call with no interim hook still counts as "alive" as long
+        as the pane keeps producing output, not just on hook arrivals. Registers
+        itself under `self._activity` (keyed by container name) for `cheese
+        status` to read via `activity_status()`, for exactly as long as this
+        turn's monitor runs."""
+        self._activity[name] = tracker
+        last_hash: str | None = None
+        try:
+            while True:
+                await asyncio.sleep(self._ACTIVITY_POLL_S)
+                rc, out, _ = await _docker(
+                    "exec", name, "tmux", "capture-pane", "-p", "-t", _SESSION
+                )
+                if rc != 0:
+                    continue  # transient docker hiccup — never treated as "died"
+                digest = hashlib.sha256(out.encode()).hexdigest()
+                if digest != last_hash:
+                    last_hash = digest
+                    tracker.touch(asyncio.get_event_loop().time())
+        finally:
+            self._activity.pop(name, None)
+
+    async def _start_activity_monitor(
+        self, screen: str, tracker: ActivityTracker
+    ) -> asyncio.Task | None:
+        return asyncio.create_task(self._monitor_activity(screen, tracker))
+
+    async def _confirm_alive(self, screen: str) -> bool:
+        """The idle-suspect probe: a live, on-demand confirmation distinct from
+        the passive capture-pane polling above — reuses the same `pane_dead()`
+        check `_send_prompt` already trusts before pasting. Best-effort: a
+        control-connection hiccup is not evidence of death (mirrors `_send_prompt`
+        treating a send failure, not a probe failure, as fatal)."""
+        try:
+            control = await self._control(screen)
+            return not await control.pane_dead()
+        except Exception:  # noqa: BLE001 — a probe failure isn't proof of death
+            return True
+
+    def activity_status(self, topic_id: uuid.UUID) -> dict | None:
+        """Snapshot of the running turn's activity tracker for `cheese status`
+        (`/topics/{id}/status`), or None when no tmux turn is currently being
+        monitored for this topic (not running, mid-setup before the monitor
+        starts, or already finished)."""
+        tracker = self._activity.get(_tmux_container_name(topic_id))
+        if tracker is None:
+            return None
+        now = asyncio.get_event_loop().time()
+        return {
+            "idle_for_s": round(now - tracker.last_at),
+            "suspect_since_s_ago": (
+                round(now - tracker.suspect_since)
+                if tracker.suspect_since is not None
+                else None
+            ),
+        }
 
     # --- turn --------------------------------------------------------------
 

@@ -23,7 +23,8 @@ All pure / transport-free, so it is unit-testable without Docker or a device.
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
@@ -140,50 +141,120 @@ UNDELIVERED_MESSAGE = (
 )
 
 
+@dataclass
+class ActivityTracker:
+    """Per-turn shared clock for the two-layer idle-suspect / hard-ceiling check
+    (turn 活跃度检测, 2026-08-09). Written from up to two places: ``run_hooks_turn``
+    itself on every hook arrival, and — local tmux backend only — a background
+    capture-pane poller (``TmuxHooksProvider._start_activity_monitor``), so a
+    long tool call with no interim hook but a busy pane still counts as active,
+    not just hook arrivals. ``suspect_since`` is surfaced by ``cheese status``."""
+
+    last_at: float
+    suspect_since: float | None = None
+
+    def touch(self, at: float) -> None:
+        self.last_at = at
+        self.suspect_since = None
+
+
+# How often a suspected-wedged turn re-checks liveness while it stays idle (a
+# single ``confirm_alive`` at the 5-minute mark isn't enough — the screen could
+# die at minute 6 and go unnoticed until the 3-hour hard ceiling otherwise).
+# Cheap by design (e.g. a tmux capture-pane / list-panes call), so a short
+# cadence costs nothing.
+CONFIRM_POLL_S = 15.0
+
+
 async def run_hooks_turn(
     *,
     queue: "asyncio.Queue[dict]",
-    turn_timeout_s: float,
+    idle_suspect_s: float,
+    hard_ceiling_s: float,
     resume_session_id: str | None,
     timeout_message: str,
     delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
     delivery_message: str = UNDELIVERED_MESSAGE,
+    tracker: ActivityTracker | None = None,
+    confirm_alive: Callable[[], Awaitable[bool]] | None = None,
+    confirm_poll_s: float = CONFIRM_POLL_S,
 ) -> AsyncIterator[AgentEvent]:
     """Drain the topic's hook queue, translating each hook to an ``AgentEvent``,
-    until the ``Stop`` hook (→ ``AgentResult``) ends the turn or the deadline
-    passes. Transport-independent: both the tmux and device backends run this
-    identical loop after their transport-specific ensure-screen + send-prompt.
+    until the ``Stop`` hook (→ ``AgentResult``) ends the turn. Transport-independent:
+    both the tmux and device backends run this identical loop after their
+    transport-specific ensure-screen + send-prompt.
+
+    Two layers replace the old single static deadline (turn 活跃度检测, review:
+    a static ``deadline - now()`` can't tell "still working" from "wedged"):
+
+    - ``idle_suspect_s``: below this much idle time (no hook AND, if ``tracker``
+      is fed by a backend-specific side channel, no other activity signal) a
+      turn is normal. Past it the turn is only SUSPECTED wedged — ``confirm_alive``
+      (if given) is polled every ``confirm_poll_s`` until it says the screen is
+      actually dead, or activity resumes and clears the suspicion.
+    - ``hard_ceiling_s``: an unconditional backstop regardless of activity, so a
+      pathologically "active" turn (a tool retrying forever, a real infinite
+      loop that keeps printing) still can't run forever.
+
+    With no ``tracker``/``confirm_alive`` given (the device backend today) and
+    ``idle_suspect_s == hard_ceiling_s``, this reduces to exactly the old
+    single-deadline behaviour.
 
     The CALLER owns the queue lifecycle — it must ``router.register`` BEFORE
     ensuring the screen / sending the prompt (so no hook is missed) and
     ``unregister`` in a ``finally``; this loop only reads the queue."""
     now = asyncio.get_event_loop().time
-    deadline = now() + turn_timeout_s
+    start = now()
+    hard_deadline = start + hard_ceiling_s
+    tracker = tracker if tracker is not None else ActivityTracker(last_at=start)
     # Until something comes back, we have no evidence the prompt was received at
     # all: it is typed into a terminal, and typing has no return value. So the
     # first wait is short. Any hook clears it — `UserPromptSubmit` is the direct
     # receipt, and any other activity proves delivery just as well.
     delivered = False
-    delivery_deadline = now() + delivery_timeout_s
+    delivery_deadline = start + delivery_timeout_s
     while True:
-        remaining = deadline - now()
-        if remaining <= 0:
+        t = now()
+        if t >= hard_deadline:
             yield AgentResult(
                 text=timeout_message, session_id=resume_session_id, is_error=True
             )
             return
-        wait_for = remaining if delivered else min(remaining, delivery_deadline - now())
+        if delivered:
+            idle_for = t - tracker.last_at
+            if idle_for >= idle_suspect_s:
+                wait_for = min(confirm_poll_s, hard_deadline - t)
+            else:
+                wait_for = min(idle_suspect_s - idle_for, hard_deadline - t)
+        else:
+            wait_for = min(hard_deadline - t, delivery_deadline - t)
         try:
             hook = await asyncio.wait_for(queue.get(), timeout=max(wait_for, 0.01))
         except TimeoutError:
-            undelivered = not delivered and now() < deadline
-            yield AgentResult(
-                text=delivery_message if undelivered else timeout_message,
-                session_id=resume_session_id,
-                is_error=True,
-            )
-            return
+            if not delivered:
+                if now() >= delivery_deadline:
+                    yield AgentResult(
+                        text=delivery_message,
+                        session_id=resume_session_id,
+                        is_error=True,
+                    )
+                    return
+                continue
+            idle_for = now() - tracker.last_at
+            if idle_for >= idle_suspect_s:
+                if tracker.suspect_since is None:
+                    tracker.suspect_since = now()
+                alive = await confirm_alive() if confirm_alive is not None else True
+                if not alive:
+                    yield AgentResult(
+                        text=timeout_message,
+                        session_id=resume_session_id,
+                        is_error=True,
+                    )
+                    return
+            continue
         delivered = True
+        tracker.touch(now())
         event = translate_hook(hook)
         if event is None:
             continue
@@ -220,10 +291,27 @@ class HooksTurnProvider[ScreenT]:
     _timeout_message = "轮次超时"
 
     def __init__(
-        self, *, router: HookRouter | None = None, turn_timeout_s: float = 900.0
+        self,
+        *,
+        router: HookRouter | None = None,
+        idle_suspect_s: float = 900.0,
+        hard_ceiling_s: float = 900.0,
     ) -> None:
         self._router = router or hook_router
-        self._turn_timeout_s = turn_timeout_s
+        # Equal by default → run_hooks_turn's idle-suspect check and hard-ceiling
+        # check land on the same instant, i.e. the old single-deadline behaviour
+        # (the device backend keeps this; see DeviceProvider).
+        self._idle_suspect_s = idle_suspect_s
+        self._hard_ceiling_s = hard_ceiling_s
+
+    @property
+    def hard_ceiling_s(self) -> float:
+        """This provider's effective absolute turn ceiling — read by TurnRunner
+        to reschedule its own transport-independent outer wall-clock wrap
+        (runtime.py) so a backend with a longer ceiling than
+        ``settings.agent_turn_timeout_s`` (today: the tmux backend) isn't killed
+        early by that unrelated outer guard."""
+        return self._hard_ceiling_s
 
     def available(self) -> bool:
         return True
@@ -258,6 +346,28 @@ class HooksTurnProvider[ScreenT]:
     async def _send_prompt(self, screen: ScreenT, prompt: str) -> None:
         """Deliver the turn's prompt to the ready screen. Transport-specific."""
         raise NotImplementedError
+
+    async def _start_activity_monitor(
+        self, screen: ScreenT, tracker: ActivityTracker
+    ) -> asyncio.Task | None:
+        """Optional background activity signal alongside hook arrivals (e.g. the
+        tmux backend's capture-pane polling — a long tool call between hooks
+        must still count as "alive"). Return a task that keeps ``tracker``
+        touched; ``run_turn`` cancels it when the turn ends.
+
+        Default: no extra signal, activity is judged from hook arrivals alone —
+        correct for the device backend today (TODO: an equivalent remote
+        activity probe, e.g. ``device_hub`` screen bytes, is future work; see
+        ``DeviceProvider``)."""
+        return None
+
+    async def _confirm_alive(self, screen: ScreenT) -> bool:
+        """Called (repeatedly, while idle persists) once the idle-suspect
+        threshold is crossed, to confirm the screen isn't actually dead before
+        treating the idle window as fatal. Default: assume alive — no cheap
+        probe exists at this level. ``TmuxHooksProvider`` overrides with
+        ``pane_dead()``."""
+        return True
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the turn's edits into version history. Default no-op (the
@@ -339,12 +449,25 @@ class HooksTurnProvider[ScreenT]:
                     text=str(exc), session_id=resume_session_id, is_error=True
                 )
                 return
-            async for event in run_hooks_turn(
-                queue=queue,
-                turn_timeout_s=self._turn_timeout_s,
-                resume_session_id=resume_session_id,
-                timeout_message=self._timeout_message,
-            ):
-                yield event
+            tracker = ActivityTracker(last_at=asyncio.get_event_loop().time())
+            monitor_task = await self._start_activity_monitor(screen, tracker)
+            try:
+                async for event in run_hooks_turn(
+                    queue=queue,
+                    idle_suspect_s=self._idle_suspect_s,
+                    hard_ceiling_s=self._hard_ceiling_s,
+                    resume_session_id=resume_session_id,
+                    timeout_message=self._timeout_message,
+                    tracker=tracker,
+                    confirm_alive=lambda: self._confirm_alive(screen),
+                ):
+                    yield event
+            finally:
+                if monitor_task is not None:
+                    monitor_task.cancel()
+                    try:
+                        await monitor_task
+                    except asyncio.CancelledError:
+                        pass
         finally:
             self._router.unregister(topic_key, queue)

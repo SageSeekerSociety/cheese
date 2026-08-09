@@ -7,9 +7,10 @@
 // Gate rule: routes add `beforeEnter: expOnly`; UI entries hide behind
 // `useExperimental()`. Gate ONLY genuinely 内测 surfaces — the default app is
 // the product, not a teaser.
+import type { NavigationGuardWithThis, Router } from 'vue-router'
+
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import type { NavigationGuardWithThis, Router } from 'vue-router'
 
 /** Reactive: is the current navigation in 内测态 (?exp=true)? */
 export function useExperimental() {

@@ -5,14 +5,10 @@
 // documented normalization rules (see docMarkdown.ts). A failing case here is
 // syntax the visual editor would corrupt on save — either fix the editor
 // config or make sure the lossy-load banner covers it.
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Editor } from '@tiptap/core'
-import {
-  compareRoundTrip,
-  docExtensions,
-  normalizeMarkdown,
-  serializeDoc,
-} from './docMarkdown'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+
+import { compareRoundTrip, docExtensions, normalizeMarkdown, serializeDoc } from './docMarkdown'
 
 let editor: Editor
 
@@ -49,9 +45,7 @@ describe('normalizeMarkdown tolerances', () => {
     expect(normalizeMarkdown('a  \n\n\n\nb\n')).toBe('a\n\nb')
   })
   it('normalizes table padding and separator dashes', () => {
-    expect(normalizeMarkdown('| a  |  b |\n|----|:---:|')).toBe(
-      '| a | b |\n| --- | :---: |',
-    )
+    expect(normalizeMarkdown('| a  |  b |\n|----|:---:|')).toBe('| a | b |\n| --- | :---: |')
   })
   it('normalizes bullet markers to -', () => {
     expect(normalizeMarkdown('* one\n+ two')).toBe('- one\n- two')
@@ -71,9 +65,7 @@ describe('round-trip corpus', () => {
   })
 
   it('bold / italic / strike / inline code', () => {
-    expectClean(
-      '正文有 **粗体** 和 *斜体*，还有 ~~删除线~~ 与 `inline_code()` 混排。',
-    )
+    expectClean('正文有 **粗体** 和 *斜体*，还有 ~~删除线~~ 与 `inline_code()` 混排。')
   })
 
   it('code block with language tag', () => {
@@ -93,9 +85,7 @@ describe('round-trip corpus', () => {
   })
 
   it('nested mixed list', () => {
-    expectClean(
-      '- 外层一\n  - 内层 a\n  - 内层 b\n- 外层二\n  1. 步骤一\n  2. 步骤二',
-    )
+    expectClean('- 外层一\n  - 内层 a\n  - 内层 b\n- 外层二\n  1. 步骤一\n  2. 步骤二')
   })
 
   it('task list', () => {
@@ -108,14 +98,12 @@ describe('round-trip corpus', () => {
 
   it('table', () => {
     expectClean(
-      '| 方案 | 优点 | 缺点 |\n| --- | --- | --- |\n| offset 分页 | 实现简单 | 深分页慢 |\n| cursor 分页 | 性能稳定 | 无法跳页 |',
+      '| 方案 | 优点 | 缺点 |\n| --- | --- | --- |\n| offset 分页 | 实现简单 | 深分页慢 |\n| cursor 分页 | 性能稳定 | 无法跳页 |'
     )
   })
 
   it('table with alignment markers', () => {
-    expectClean(
-      '| 左对齐 | 居中 | 右对齐 |\n| :--- | :---: | ---: |\n| a | b | c |',
-    )
+    expectClean('| 左对齐 | 居中 | 右对齐 |\n| :--- | :---: | ---: |\n| a | b | c |')
   })
 
   it('blockquote', () => {
@@ -143,9 +131,7 @@ describe('round-trip corpus', () => {
   })
 
   it('cheese tokens <@> <#> <&> survive as literal text', () => {
-    expectClean(
-      '请 <@mentor-1> 看下 <#0f14e0ab-1234-5678-9abc-def012345678> 里的 <&docs/plan.md>。',
-    )
+    expectClean('请 <@mentor-1> 看下 <#0f14e0ab-1234-5678-9abc-def012345678> 里的 <&docs/plan.md>。')
   })
 
   it('consecutive blank lines collapse without losing content', () => {
@@ -154,7 +140,7 @@ describe('round-trip corpus', () => {
 
   it('CJK/English mixed prose', () => {
     expectClean(
-      '这是一段中英混排 mixed-language paragraph，包含 100% 的数字、英文 words 和标点：句号。逗号，分号；括号（成对）。',
+      '这是一段中英混排 mixed-language paragraph，包含 100% 的数字、英文 words 和标点：句号。逗号，分号；括号（成对）。'
     )
   })
 
@@ -191,7 +177,7 @@ describe('round-trip corpus', () => {
         '```js',
         'console.log("done")',
         '```',
-      ].join('\n'),
+      ].join('\n')
     )
   })
 })

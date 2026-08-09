@@ -105,7 +105,23 @@ class Settings(BaseSettings):
     # topic lock forever. A safety net well above any real turn (coding turns run
     # minutes), not a normal-case limit — on timeout the turn is cancelled, which
     # releases the lock and tears down the in-container claude process.
+    #
+    # Still governs: TurnRunner's outer transport-independent wrap for the SDK
+    # backend (no activity signal exists there) and the remote device backend's
+    # own inner deadline. The LOCAL tmux backend no longer uses this value for
+    # its effective timeout — see agent_idle_suspect_s / agent_turn_hard_ceiling_s
+    # below (turn 活跃度检测, 2026-08-09).
     agent_turn_timeout_s: float = 900.0
+    # Two-layer safety net for the hooks-driven LOCAL tmux backend only. Below
+    # this much idle time (no hook, no tmux pane output change) a turn is normal;
+    # past it the turn is only SUSPECTED wedged and gets one lightweight liveness
+    # probe (pane_dead) rather than being killed outright — a long tool call with
+    # no interim hook must not look identical to a dead pane.
+    agent_idle_suspect_s: float = 300.0
+    # Unconditional backstop for the tmux backend regardless of activity — guards
+    # against a pathological "looks active but never converges" turn (a tool
+    # retrying forever, a genuine infinite loop that keeps printing).
+    agent_turn_hard_ceiling_s: float = 10800.0
 
     # Agent compute backend (design: two execution paths behind ComputeProvider):
     # "sdk"  → the default LocalDockerProvider: runs the Claude Agent SDK
@@ -333,9 +349,11 @@ class Settings(BaseSettings):
     # endpoint answers "not configured"; nothing else changes.
     github_app_id: int | None = None
     github_app_private_key_path: str | None = None
-    # Phase 0: one installation (our own repo). #192 replaces this with a
-    # per-project table once repos are connected through the install flow.
-    github_app_installation_id: int | None = None
+    # Which installation to mint a token for is resolved per-project via the
+    # project_git_installations table (#192), not a config value — a
+    # deployment can have many connected repos, each with its own
+    # installation_id.
+    github_app_slug: str = "cheesex-app"
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared
@@ -350,6 +368,13 @@ class Settings(BaseSettings):
     oauth_ruc_client_id: str | None = None
     oauth_ruc_client_secret: str | None = None
     oauth_ruc_redirect_url: str | None = None
+    # #192 "连接 GitHub 账号": the cheesex-app GitHub App's own user-to-server
+    # OAuth credential — deliberately separate from oauth_github_client_id
+    # (the login provider above), even though it's the same authorize/token
+    # endpoints. Add "github_app" to oauth_enabled_providers to turn this on.
+    oauth_github_app_client_id: str | None = None
+    oauth_github_app_client_secret: str | None = None
+    oauth_github_app_redirect_url: str | None = None
 
     # --- WebAuthn / passkeys (same declare-or-dropped rule as above) ---
     # webauthn_origin MUST exactly match the scheme://host:port in the browser
