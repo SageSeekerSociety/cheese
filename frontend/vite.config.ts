@@ -53,8 +53,25 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      // The prod nginx gateway's `location /api/` strips exactly one `/api`
+      // before reaching the backend, which is what makes `BASE = '/api/api'`
+      // (see frontend/src/api.ts) land on the real `/api/...` 2.0 routes. The
+      // dev server has no such gateway, so `/api/api/...` would otherwise pass
+      // straight through and 404. Only unwrap that specific doubled prefix —
+      // genuine single-`/api/...` requests (e.g. the terminal iframe URL from
+      // `terminal.py`, which is `/api/topics/.../terminal/live/` verbatim)
+      // must reach the backend unrewritten.
+      '/api': {
+        target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799',
+        changeOrigin: true,
+        ws: true,
+        rewrite: (path) => path.replace(/^\/api\/api\b/, '/api'),
+      },
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      // 1.0 routers are bare (`/users`, `/spaces`); SRP login
+      // (`GET /users/auth/methods/:username`) needs this to reach the backend
+      // in dev mode at all.
+      '/users': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
     },
   },
   build: {
