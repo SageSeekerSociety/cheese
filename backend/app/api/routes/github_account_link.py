@@ -15,6 +15,7 @@ unbind endpoints already cover viewing and removing it.
 
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query
@@ -78,14 +79,26 @@ async def github_account_link_callback(
         return _link_redirect(None, github_account="error", reason="invalid_state")
 
     try:
-        _access_token, user_info = await oauth_service.handle_callback(
-            provider_id=_PROVIDER_ID, code=code, state=state
-        )
+        provider = oauth_service.get_provider(_PROVIDER_ID)
+        token_data = await provider.exchange_code(code)
+        access_token = token_data.get("access_token")
+        if not access_token:
+            raise ValueError("provider response missing access_token")
+        user_info = await provider.get_user_info(access_token)
     except Exception:
         logger.exception("github account link: token exchange failed")
         return _link_redirect(
             claims.return_project_id, github_account="error", reason="oauth_failed"
         )
+
+    # Only set when this App has "Expire user authorization tokens" enabled
+    # on GitHub's side — otherwise the token is long-lived and these are
+    # absent from the response.
+    expires_in = token_data.get("expires_in")
+    token_expires = (
+        datetime.now(UTC) + timedelta(seconds=expires_in) if expires_in else None
+    )
+    refresh_token = token_data.get("refresh_token")
 
     existing = await oauth_service.get_connection_by_provider(
         provider_id=_PROVIDER_ID, provider_user_id=user_info.id
@@ -94,12 +107,22 @@ async def github_account_link_callback(
         return _link_redirect(
             claims.return_project_id, github_account="error", reason="already_linked"
         )
-    if not existing:
+    if existing:
+        await oauth_service.update_connection_tokens(
+            connection_id=existing["id"],
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_expires=token_expires,
+        )
+    else:
         await oauth_service.create_connection(
             user_id=claims.user_id,
             provider_id=_PROVIDER_ID,
             provider_user_id=user_info.id,
             raw_profile={"email": user_info.email, "name": user_info.name},
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_expires=token_expires,
         )
 
     return _link_redirect(claims.return_project_id, github_account="success")

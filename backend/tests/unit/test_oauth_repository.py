@@ -23,6 +23,7 @@ def _connection(**overrides):
         "provider_id": "github",
         "provider_user_id": "gh_123",
         "raw_profile": None,
+        "access_token": None,
         "refresh_token": None,
         "token_expires": None,
         "created_at": NOW,
@@ -88,10 +89,12 @@ class TestOAuthConnectionRepository:
             provider_id="github",
             provider_user_id="gh_123",
             raw_profile={"login": "user"},
+            access_token="encrypted_access_token",
             refresh_token="refresh_token",
             token_expires=expires,
         )
         assert result.raw_profile == {"login": "user"}
+        assert result.access_token == "encrypted_access_token"
         assert result.refresh_token == "refresh_token"
 
     @pytest.mark.anyio
@@ -158,7 +161,8 @@ class TestOAuthConnectionRepository:
         repo = OAuthConnectionRepository(session)
 
         expires = datetime(2025, 12, 31, tzinfo=UTC)
-        await repo.update_tokens(1, "new_refresh", expires)
+        await repo.update_tokens(1, "new_access", "new_refresh", expires)
+        assert conn.access_token == "new_access"
         assert conn.refresh_token == "new_refresh"
         assert conn.token_expires == expires
         session.flush.assert_awaited_once()
@@ -169,5 +173,5 @@ class TestOAuthConnectionRepository:
         session.execute.return_value = _mock_scalar(None)
         repo = OAuthConnectionRepository(session)
 
-        await repo.update_tokens(999, "new_refresh", None)
+        await repo.update_tokens(999, "new_access", "new_refresh", None)
         session.flush.assert_not_awaited()

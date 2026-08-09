@@ -17,6 +17,7 @@ class OAuthConnectionRepository:
         provider_id: str,
         provider_user_id: str,
         raw_profile: dict | None = None,
+        access_token: str | None = None,
         refresh_token: str | None = None,
         token_expires: datetime | None = None,
     ) -> UserOAuthConnection:
@@ -26,6 +27,7 @@ class OAuthConnectionRepository:
             provider_id=provider_id,
             provider_user_id=provider_user_id,
             raw_profile=raw_profile,
+            access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,
             created_at=now,
@@ -77,6 +79,7 @@ class OAuthConnectionRepository:
     async def update_tokens(
         self,
         connection_id: int,
+        access_token: str | None,
         refresh_token: str | None,
         token_expires: datetime | None,
     ) -> None:
@@ -86,6 +89,7 @@ class OAuthConnectionRepository:
         result = await self._session.execute(stmt)
         entity = result.scalar_one_or_none()
         if entity:
+            entity.access_token = access_token
             entity.refresh_token = refresh_token
             entity.token_expires = token_expires
             entity.updated_at = datetime.now(UTC)
