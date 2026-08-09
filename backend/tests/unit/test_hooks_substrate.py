@@ -3,6 +3,7 @@ both the local (tmux) and remote (device) backends run — settings wiring, the
 cheese-hook forwarder, and the drain loop. Tested without Docker or a device."""
 
 import asyncio
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
+    ActivityTracker,
     HooksTurnProvider,
     ScreenSetupError,
     hooks_settings,
@@ -82,7 +84,9 @@ async def test_run_hooks_turn_streams_in_order_and_ends_on_stop():
             "session_id": "s1",
         }
     )
-    events = await _drain(queue, turn_timeout_s=5, timeout_message="timeout")
+    events = await _drain(
+        queue, idle_suspect_s=5, hard_ceiling_s=5, timeout_message="timeout"
+    )
     # PostToolUse produced no event; the rest stream in order, Stop ends it.
     assert isinstance(events[0].__class__, type)  # sanity
     types = [type(e).__name__ for e in events]
@@ -95,7 +99,9 @@ async def test_run_hooks_turn_streams_in_order_and_ends_on_stop():
 
 async def test_run_hooks_turn_times_out_with_message_on_silence():
     queue: asyncio.Queue[dict] = asyncio.Queue()  # nothing ever arrives
-    events = await _drain(queue, turn_timeout_s=0.05, timeout_message="轮次超时")
+    events = await _drain(
+        queue, idle_suspect_s=0.05, hard_ceiling_s=0.05, timeout_message="轮次超时"
+    )
     assert len(events) == 1
     assert isinstance(events[0], AgentResult)
     assert events[0].is_error is True
@@ -159,7 +165,7 @@ async def test_stale_stop_from_abandoned_turn_never_ends_the_new_turn(
                 },
             )
 
-    provider = _FakeProvider(router=router, turn_timeout_s=2)
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
     events = [
         e
         async for e in provider.run_turn(
@@ -198,7 +204,7 @@ async def test_failed_precheck_never_touches_the_router():
     topic_id = _uuid.uuid4()
     live_queue = router.register(str(topic_id))  # a "running turn" holds the slot
 
-    provider = _NoRun(router=router, turn_timeout_s=1)
+    provider = _NoRun(router=router, idle_suspect_s=1, hard_ceiling_s=1)
     events = [
         e
         async for e in provider.run_turn(
@@ -226,7 +232,8 @@ async def test_undelivered_prompt_fails_fast_instead_of_waiting_out_the_turn():
 
     events = await _drain(
         queue,
-        turn_timeout_s=30,
+        idle_suspect_s=30,
+        hard_ceiling_s=30,
         timeout_message="超时",
         delivery_timeout_s=0.3,
         delivery_message="没送到",
@@ -248,7 +255,8 @@ async def test_the_prompt_receipt_opens_the_full_turn_budget():
 
     events = await _drain(
         queue,
-        turn_timeout_s=30,
+        idle_suspect_s=30,
+        hard_ceiling_s=30,
         timeout_message="超时",
         delivery_timeout_s=0.3,
         delivery_message="没送到",
@@ -271,10 +279,111 @@ async def test_agent_activity_also_counts_as_delivery():
 
     events = await _drain(
         queue,
-        turn_timeout_s=30,
+        idle_suspect_s=30,
+        hard_ceiling_s=30,
         timeout_message="超时",
         delivery_timeout_s=0.3,
         delivery_message="没送到",
     )
 
     assert [type(e).__name__ for e in events] == ["AgentMessage", "AgentResult"]
+
+
+# --- turn 活跃度检测 (2026-08-09): the two-layer idle-suspect / hard-ceiling
+# check that replaced the old single static deadline. Required verification
+# (design brief): (1) a turn that's genuinely still alive must survive past the
+# idle-suspect threshold, all the way to the hard ceiling; (2) a genuinely dead
+# screen must still be caught — not left running until the hard ceiling.
+
+
+async def test_idle_suspect_keeps_waiting_while_confirm_alive_says_alive():
+    """No hooks arrive after delivery, but `confirm_alive` keeps saying the
+    screen is alive (mirrors a long tool call with a busy tmux pane and no
+    interim hook) — the turn must NOT die at the idle-suspect threshold, only
+    at the hard ceiling, and it must have been re-probed more than once along
+    the way (a single probe at minute 5 isn't enough — the screen could die at
+    minute 6)."""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    probe_calls = 0
+
+    async def confirm_alive() -> bool:
+        nonlocal probe_calls
+        probe_calls += 1
+        return True
+
+    events = await _drain(
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=0.25,
+        timeout_message="硬顶到了",
+        confirm_alive=confirm_alive,
+        confirm_poll_s=0.05,
+    )
+    assert len(events) == 1
+    assert events[0].is_error
+    assert events[0].text == "硬顶到了"  # the HARD ceiling ended it, not idle-suspect
+    assert probe_calls >= 2
+
+
+async def test_confirm_alive_false_ends_the_turn_well_before_the_hard_ceiling():
+    """A genuinely dead screen must be caught by the idle-suspect probe and end
+    the turn promptly — NOT be left running until a many-hours hard ceiling."""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+
+    async def confirm_alive() -> bool:
+        return False
+
+    events = await _drain(
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=100.0,  # would time this test out if idle-suspect didn't fire
+        timeout_message="卡死了",
+        confirm_alive=confirm_alive,
+        confirm_poll_s=0.05,
+    )
+    assert len(events) == 1
+    assert events[0].is_error
+    assert events[0].text == "卡死了"
+
+
+async def test_external_tracker_touch_clears_idle_suspicion():
+    """A backend-specific activity signal ALONGSIDE hooks (the tmux backend's
+    capture-pane polling) must count as activity just like a hook arrival does
+    — an externally-touched tracker keeps the turn out of idle-suspect
+    entirely, so `confirm_alive` is never even called."""
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    loop = asyncio.get_event_loop()
+    tracker = ActivityTracker(last_at=loop.time())
+    probe_calls = 0
+
+    async def confirm_alive() -> bool:
+        nonlocal probe_calls
+        probe_calls += 1
+        return True
+
+    async def touch_periodically() -> None:
+        for _ in range(8):
+            await asyncio.sleep(0.03)
+            tracker.touch(loop.time())
+
+    touch_task = asyncio.create_task(touch_periodically())
+    try:
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=0.25,
+            timeout_message="硬顶到了",
+            tracker=tracker,
+            confirm_alive=confirm_alive,
+            confirm_poll_s=0.02,
+        )
+    finally:
+        touch_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await touch_task
+
+    assert events[0].text == "硬顶到了"
+    assert probe_calls == 0

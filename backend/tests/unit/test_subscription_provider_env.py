@@ -104,7 +104,7 @@ def test_no_credential_file_is_ever_planted_in_the_box(monkeypatch, tmp_path):
     from app.core.config import settings
     from app.domain.agent.tmux_provider import TmuxHooksProvider
 
-    provider = TmuxHooksProvider(image="x", turn_timeout_s=1.0)
+    provider = TmuxHooksProvider(image="x", idle_suspect_s=1.0, hard_ceiling_s=1.0)
     monkeypatch.setattr(settings, "subscription_enabled", True)
     provider._write_session_settings(str(tmp_path))
     assert not (tmp_path / ".credentials.json").exists()
