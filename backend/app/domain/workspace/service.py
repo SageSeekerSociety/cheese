@@ -682,6 +682,49 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
 
 
+def pr_base_branch(project_id: uuid.UUID) -> str:
+    """两阶段采纳 (PR迭代式): the base branch a topic's PR should target — same
+    branch merge_topic() would merge into locally."""
+    return _base_branch(ensure_repo(project_id))
+
+
+def push_topic_branch_for_github_pr(
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    owner: str,
+    repo: str,
+    remote_branch: str,
+    token: str,
+) -> dict:
+    """两阶段采纳 (PR迭代式): push the topic's OWN branch (not the base) to the
+    project's connected GitHub repo under `remote_branch`, authenticated as
+    the approving human's own token — never the App's, since attribution is
+    the point (see the PR trailer). Distinct from push_back(), which pushes
+    the ALREADY-MERGED base branch via the host's own git credentials and the
+    `upstream` remote; this instead prepares a branch for review, using
+    whichever repo #192 connected the project to.
+
+    Raises ValidationError on any git failure (bad/expired token, network,
+    GitHub outage) — the caller treats that as "mechanism unavailable" and
+    degrades to the old direct-merge path, same contract as merge_topic()."""
+    repo_path = ensure_repo(project_id)
+    try:
+        snapshot_worktree(project_id, topic_id, "两阶段采纳前快照")
+    except ValidationError:
+        pass  # no workspace/jj state yet — nothing pending to fold
+    branch = branch_for_topic(topic_id)
+    if not _branch_exists(repo_path, branch):
+        raise ValidationError("话题还没有可推送的分支")
+    # Token travels in the pushurl (briefly visible in this process's argv,
+    # same tradeoff every git-over-https-with-a-token integration makes) —
+    # never in a git remote config, so nothing persists to disk.
+    url = f"https://x-access-token:{token}@github.com/{owner}/{repo}.git"
+    _git(repo_path, "push", url, f"{branch}:refs/heads/{remote_branch}", timeout=120)
+    head_sha = _git(repo_path, "rev-parse", branch).strip()
+    return {"head_sha": head_sha, "remote_branch": remote_branch}
+
+
 def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """Host path of a topic's git worktree (created on demand), world-writable so
     the sandbox container's non-root `node` user can write into the mount."""

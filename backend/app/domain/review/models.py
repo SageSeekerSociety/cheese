@@ -10,7 +10,15 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -30,6 +38,12 @@ class AcceptStatus(enum.StrEnum):
     pending_gate = "pending_gate"
     # 检查红了：卡片作废（不递给验收人），芝士收到系统 nudge 去修，修完重新递卡。
     gate_failed = "gate_failed"
+    # 两阶段采纳 (PR迭代式，2026-08-09)：人点了采纳，批准人有可用的已连接
+    # GitHub token，PR 已推送/开出，话题不归档，容器不停。`pr_merged_at` on the
+    # card distinguishes still-waiting-on-PR-checks (None) from
+    # merged-waiting-on-deploy (set) — both live under this one status so a
+    # reviewer/API consumer sees one "still iterating" state, not two.
+    pr_open = "pr_open"
 
 
 class AcceptCard(UuidPk, Timestamps, Base):
@@ -57,6 +71,20 @@ class AcceptCard(UuidPk, Timestamps, Base):
     )
     # Tail of the check output (green or red) — full output is in the gate log.
     gate_output: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+    # 两阶段采纳 (PR迭代式): set while status == pr_open, cleared otherwise.
+    pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pr_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pr_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Head commit of the pushed PR branch — what check-runs/workflow-runs are
+    # queried against (a fresh push moves this, so polling never checks a stale
+    # commit's status after 芝士 pushes a fix).
+    pr_head_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # None: still waiting on the PR's own CI. Set: PR merged, now waiting on
+    # the deploy workflow it triggered before the topic can finally archive.
+    pr_merged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class AcceptApproval(UuidPk, Timestamps, Base):

@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
@@ -31,6 +32,28 @@ _MERGE_FAILED_MESSAGE = (
     "The card remains pending and the topic stays active; repair the workspace "
     "and retry."
 )
+
+
+def _pr_trailers(topic: Topic, decided_by: str) -> str:
+    """两阶段采纳 (PR迭代式) 设计要点5: 标清芝士代表谁开的 PR. Requested-by = 话题
+    发起人 (Topic.created_by)，Reviewed-by = 批准人 (AcceptCard.decided_by)。"""
+    lines = []
+    if topic.created_by:
+        lines.append(f"Requested-by: {topic.created_by}")
+    lines.append(f"Reviewed-by: {decided_by}")
+    lines.append(f"Cheese-Topic: {topic.id}")
+    return "\n".join(lines)
+
+
+def _pr_body(topic: Topic, decided_by: str) -> str:
+    return (
+        f"由芝士代表 {decided_by} 通过 CheeseX 平台两阶段采纳流程开出。\n\n"
+        f"{_pr_trailers(topic, decided_by)}"
+    )
+
+
+def _pr_merge_commit_message(topic: Topic, decided_by: str) -> str:
+    return f"采纳 {topic.title}\n\n{_pr_trailers(topic, decided_by)}"
 
 
 def approvals_required_of(project: Project | None) -> int:
@@ -286,6 +309,42 @@ class AcceptService:
                 f"批准人数不足，还差 {required - votes} 票（{votes}/{required}）"
             )
 
+        # 两阶段采纳 (PR迭代式, 2026-08-09): try the real-PR path first. Any
+        # missing prerequisite (no connected token / no connected repo) or any
+        # GitHub-side failure (push/API) degrades to the old direct-merge path
+        # below — a normal degrade, never an accept failure (拍板 decision 2).
+        # Resolving the prerequisites themselves must degrade the same way: a
+        # DB hiccup here is exactly as "mechanism unavailable" as a missing
+        # token, never a reason to fail the whole accept.
+        try:
+            pr_prereqs = await self._resolve_pr_prerequisites(topic, decided_by)
+        except Exception as exc:  # noqa: BLE001 — degrade, don't fail the accept
+            logger.warning(
+                "could not resolve PR prerequisites for topic=%s, degrading to "
+                "direct merge: %s",
+                topic.id,
+                exc,
+            )
+            pr_prereqs = None
+        if pr_prereqs is not None:
+            token, pr_owner, pr_repo = pr_prereqs
+            try:
+                return await self._accept_via_pr(
+                    card=card,
+                    topic=topic,
+                    decided_by=decided_by,
+                    token=token,
+                    owner=pr_owner,
+                    repo=pr_repo,
+                )
+            except Exception as exc:  # noqa: BLE001 — degrade, don't fail the accept
+                logger.warning(
+                    "PR-based accept unavailable for topic=%s, degrading to "
+                    "direct merge: %s",
+                    topic.id,
+                    exc,
+                )
+
         # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
         # conflict must never silently archive the topic while the work is
         # stranded on its branch (that shipped a lie once): the card moves to
@@ -388,6 +447,296 @@ class AcceptService:
             success_msg += f"\n{card.note}"
         self._notify_merge_result(topic, success_msg)
         return card
+
+    # ---- 两阶段采纳 (PR迭代式, 2026-08-09) ----------------------------------
+
+    async def _resolve_pr_prerequisites(
+        self, topic: Topic, decided_by: str
+    ) -> tuple[str, str, str] | None:
+        """(token, owner, repo) when the PR path is usable — a connected
+        GitHub token for the approver AND a project connected to a repo
+        (#192). Either missing → None, and the caller degrades to the old
+        direct-merge path (拍板 decision 2: this is normal, not an error)."""
+        from app.domain.oauth.services import get_github_user_token_for_handle
+        from app.domain.project.repositories import ProjectGitInstallationRepository
+
+        token = await get_github_user_token_for_handle(self._session, decided_by)
+        if not token:
+            return None
+        installation = await ProjectGitInstallationRepository(
+            self._session
+        ).get_by_project(topic.project_id)
+        if installation is None or "/" not in installation.repo:
+            return None
+        owner, _, repo_name = installation.repo.partition("/")
+        return token, owner, repo_name
+
+    async def _accept_via_pr(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        decided_by: str,
+        token: str,
+        owner: str,
+        repo: str,
+    ) -> AcceptCard:
+        """Push the topic branch, open a real PR, and hand the rest to the
+        scheduler's PrPollRunner (SchedulerService.poll_open_prs /
+        advance_pr_card) — this call does NOT wait for CI. Topic stays
+        active; no merge_topic()/push_back()/archive here (拍板 decision 3:
+        archive gates on the PR *and* its triggered deploy both succeeding)."""
+        from app.domain.review import github_pr
+        from app.domain.workspace import service as ws
+
+        remote_branch = github_pr.pr_branch_name(topic.id)
+        pushed = ws.push_topic_branch_for_github_pr(
+            topic.project_id,
+            topic.id,
+            owner=owner,
+            repo=repo,
+            remote_branch=remote_branch,
+            token=token,
+        )
+        base = ws.pr_base_branch(topic.project_id)
+        client = github_pr.default_client()
+        pr = await client.open_pull_request(
+            owner=owner,
+            repo=repo,
+            head=remote_branch,
+            base=base,
+            title=f"[cheesex] {topic.title}"[:250],
+            body=_pr_body(topic, decided_by),
+            token=token,
+        )
+
+        await self._repo.add_approval(card.id, decided_by)
+        now = datetime.now(UTC)
+        card.status = AcceptStatus.pr_open
+        card.decided_by = decided_by
+        card.decided_at = now
+        card.pr_number = pr.number
+        card.pr_repo = f"{owner}/{repo}"
+        card.pr_url = pr.url
+        card.pr_head_sha = pushed["head_sha"]
+        card.pr_merged_at = None
+        card.note = f"已开 PR #{pr.number}，等 CI 转绿后自动合并：{pr.url}"
+        await self._session.flush()
+        await self._session.refresh(card)
+        self._notify_merge_result(
+            topic,
+            f"🔁 {decided_by} 采纳了这个话题，已开 PR #{pr.number} 等待 CI：{pr.url}\n"
+            "话题保持 active（容器不停），PR 合并且部署也成功后才会归档。",
+        )
+        return card
+
+    async def advance_pr_card(
+        self, card_id: uuid.UUID, *, chat_service, runner
+    ) -> None:
+        """One polling step for a pr_open card — check the PR's CI, merge
+        when green, then check the deploy workflow the merge triggers, and
+        only archive once THAT is green too (2026-08-09 拍板: merge alone
+        doesn't count). Called by SchedulerService.poll_open_prs(); never
+        raises for a transient GitHub hiccup — the next poll just retries."""
+        card = await self._card_or_404(card_id)
+        if card.status != AcceptStatus.pr_open:
+            return
+        if not card.pr_repo or card.pr_number is None or not card.pr_head_sha:
+            logger.error("pr_open card %s missing PR fields, cannot poll", card.id)
+            return
+        topic = await self._topic_or_404(card.topic_id)
+        owner, _, repo = card.pr_repo.partition("/")
+
+        from app.domain.oauth.services import get_github_user_token_for_handle
+
+        token = await get_github_user_token_for_handle(
+            self._session, card.decided_by or ""
+        )
+        if not token:
+            logger.warning(
+                "pr_open card %s has no usable GitHub token anymore; skipping "
+                "this poll (will retry next tick)",
+                card.id,
+            )
+            return
+
+        from app.domain.review import github_pr
+
+        client = github_pr.default_client()
+        try:
+            if card.pr_merged_at is None:
+                await self._advance_pr_checks(
+                    card=card,
+                    topic=topic,
+                    owner=owner,
+                    repo=repo,
+                    token=token,
+                    client=client,
+                    chat_service=chat_service,
+                    runner=runner,
+                )
+            else:
+                await self._advance_deploy_checks(
+                    card=card,
+                    topic=topic,
+                    owner=owner,
+                    repo=repo,
+                    token=token,
+                    client=client,
+                )
+        except github_pr.GitHubPrError as exc:
+            logger.warning(
+                "GitHub API hiccup polling pr_open card %s: %s — retrying next tick",
+                card.id,
+                exc,
+            )
+
+    async def _advance_pr_checks(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        owner: str,
+        repo: str,
+        token: str,
+        client,
+        chat_service,
+        runner,
+    ) -> None:
+        """Stage 1: the PR itself hasn't merged yet."""
+        live_head = await client.pull_request_head_sha(
+            owner=owner, repo=repo, number=card.pr_number, token=token
+        )
+        if live_head != card.pr_head_sha:
+            # 芝士 pushed a new commit — track it, and clear any "already
+            # nudged" marker so a fresh failure on the NEW commit still
+            # notifies (see the note-based dedup in _nudge_pr_fix).
+            card.pr_head_sha = live_head
+            card.note = ""
+            await self._session.flush()
+
+        state, tail = await client.check_state(
+            owner=owner, repo=repo, ref=card.pr_head_sha, token=token
+        )
+        if state == "pending":
+            return
+        if state == "failure":
+            self._nudge_pr_fix(
+                card=card,
+                topic=topic,
+                tail=tail,
+                stage="CI",
+                chat_service=chat_service,
+                runner=runner,
+            )
+            await self._session.flush()
+            return
+
+        # Green → merge now. Trailers go on the merge commit too, not just
+        # the PR description (2026-08-09 设计要点5: 标清芝士代表谁).
+        message = _pr_merge_commit_message(topic, card.decided_by or "")
+        merge_sha = await client.merge_pull_request(
+            owner=owner,
+            repo=repo,
+            number=card.pr_number,
+            token=token,
+            commit_message=message,
+        )
+        if merge_sha is None:
+            return  # not mergeable yet (behind base etc.) — retry next tick
+        card.pr_merged_at = datetime.now(UTC)
+        card.pr_head_sha = merge_sha  # now tracking the merge commit (stage 2)
+        card.note = f"PR #{card.pr_number} 检查全绿，已自动合并，等部署也成功后才归档。"
+        await self._session.flush()
+        self._notify_merge_result(
+            topic,
+            f"✅ PR #{card.pr_number} 的检查全绿，已自动合并。"
+            "等部署也成功后话题才会归档。",
+        )
+
+    async def _advance_deploy_checks(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        owner: str,
+        repo: str,
+        token: str,
+        client,
+    ) -> None:
+        """Stage 2 (2026-08-09 拍板): the PR merged — now wait for the deploy
+        workflow it triggered before the topic is allowed to archive."""
+        state, tail = await client.workflow_run_state(
+            owner=owner,
+            repo=repo,
+            workflow_file=settings.accept_deploy_workflow_file,
+            head_sha=card.pr_head_sha,
+            token=token,
+        )
+        if state == "pending":
+            return
+        if state == "failure":
+            # wangchangxin 建议的默认值，评估后采纳为最终方案：topic 保持
+            # active，复用卡5 webhook 通知房间，不自动重试，交给人判断。
+            if not card.note.startswith("❌"):
+                card.note = f"❌ 部署失败：{tail}"[:2000]
+                await self._session.flush()
+                self._notify_merge_result(
+                    topic,
+                    f"❌ PR #{card.pr_number} 已合并，但触发的部署失败：{tail}\n"
+                    "话题保持 active，需要人判断下一步（不会自动重试）。",
+                )
+            return
+
+        await self._finish_pr_accept(card=card, topic=topic)
+
+    def _nudge_pr_fix(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        tail: str,
+        stage: str,
+        chat_service,
+        runner,
+    ) -> None:
+        if card.note.startswith("⚠️"):
+            return  # already nudged for this exact commit — don't spam every poll
+        card.note = f"⚠️ {stage} 检查未通过：{tail}"[:2000]
+        runner.submit(
+            chat_service,
+            topic.id,
+            author="system",
+            content=(
+                f"PR #{card.pr_number}（{card.pr_url}）的{stage}检查没通过：\n"
+                f"```\n{tail[:1500]}\n```\n"
+                "请在这个话题的工作区里修复问题，提交后推送新 commit 到这个 PR 分支，"
+                "检查会自动重新跑；转绿后平台会自动合并 PR。"
+            ),
+            summon=True,
+        )
+
+    async def _finish_pr_accept(self, *, card: AcceptCard, topic: Topic) -> None:
+        from app.domain.workspace import service as ws
+
+        now = datetime.now(UTC)
+        card.status = AcceptStatus.accepted
+        card.note = f"PR #{card.pr_number} 已合并且部署成功：{card.pr_url}"
+        try:
+            ws.stop_topic_container(topic.id)
+        except Exception:  # noqa: BLE001 — best effort, never fatal
+            pass
+        topic.status = TopicStatus.archived
+        topic.accepted_by = card.decided_by
+        topic.accepted_at = now
+        topic.archived_at = now
+        await self._session.flush()
+        await self._session.refresh(card)
+        self._notify_merge_result(
+            topic,
+            f"✅ 话题已被 {card.decided_by} 采纳：PR #{card.pr_number} 合并且部署成功，"
+            f"话题归档。\n{card.pr_url}",
+        )
 
     async def reject(
         self, *, card_id: uuid.UUID, decided_by: str, note: str = ""

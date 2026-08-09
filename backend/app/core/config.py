@@ -339,6 +339,15 @@ class Settings(BaseSettings):
     # installation_id.
     github_app_slug: str = "cheesex-app"
 
+    # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
+    # How often the background poller checks an open PR's CI / the deploy
+    # workflow it triggers after merge.
+    accept_pr_poll_interval_s: int = 60
+    # Workflow file (under .github/workflows/) that deploys after a merge to
+    # the base branch — must reach completed+success before a pr_open card's
+    # topic is finally archived (2026-08-09 拍板: merge alone is not enough).
+    accept_deploy_workflow_file: str = "deploy-dev.yml"
+
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared
     # env vars are silently dropped and the feature can never be configured) ---
