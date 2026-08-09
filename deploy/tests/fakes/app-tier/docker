@@ -13,6 +13,18 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
   fi
 fi
 
+# Fail the first APP_TIER_PULL_FAIL_COUNT pull invocations, counting across both
+# `docker pull` and `docker compose pull`. Lets a test drive the retry path — and
+# the failure path's disk reclaim — without a registry.
+pull_should_fail() {
+  local counter="${APP_TIER_PULL_COUNTER:-}" seen=0
+  [ -n "${APP_TIER_PULL_FAIL_COUNT:-}" ] && [ -n "$counter" ] || return 1
+  [ -f "$counter" ] && seen="$(cat "$counter")"
+  seen=$((seen + 1))
+  printf '%s' "$seen" > "$counter"
+  [ "$seen" -le "$APP_TIER_PULL_FAIL_COUNT" ]
+}
+
 emit_named_rows() {
   printf 'cheese-backend-1 repo/backend:%s\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then
@@ -60,9 +72,23 @@ if [ "${1:-}" = "compose" ]; then
       ;;
     images)
       ;;
-    pull|run|up|exec)
+    pull)
+      if pull_should_fail; then
+        echo "fake: compose pull failed" >&2
+        exit 1
+      fi
+      ;;
+    run|up|exec)
       ;;
   esac
+  exit 0
+fi
+
+if [ "${1:-}" = pull ]; then
+  if pull_should_fail; then
+    echo "fake: pull failed for ${2:-}" >&2
+    exit 1
+  fi
   exit 0
 fi
 
