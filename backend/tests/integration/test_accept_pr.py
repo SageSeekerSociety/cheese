@@ -149,7 +149,7 @@ def _pr_ready(
     tests pass `patch_local_head=False` to exercise the real thing."""
 
     async def fake_token(_session, h, *, provider_id="github_app"):
-        return "test-token" if h == handle else None
+        return ("test-token", None) if h == handle else (None, "not_connected")
 
     async def fake_get_by_project(_self, _project_id):
         return _fake_installation()
@@ -161,7 +161,8 @@ def _pr_ready(
         return "main"
 
     monkeypatch.setattr(
-        "app.domain.oauth.services.get_github_user_token_for_handle", fake_token
+        "app.domain.oauth.services.get_github_user_token_for_handle_with_reason",
+        fake_token,
     )
     monkeypatch.setattr(
         ProjectGitInstallationRepository, "get_by_project", fake_get_by_project
@@ -233,6 +234,43 @@ def test_accept_with_token_opens_pr_topic_stays_active(client, monkeypatch):
         assert opened["repo"] == "widgets"
         # 设计要点5: PR 描述里标清芝士代表谁 (Reviewed-by = 批准人).
         assert "Reviewed-by: alice" in opened["body"]
+    finally:
+        _reset_client()
+
+
+def test_accept_pr_open_failure_degrades_with_github_call_failed_reason(
+    client, monkeypatch
+):
+    """Token connected AND repo connected — prerequisites are fully met —
+    but the push/PR-open call itself fails (expired token by the time it
+    actually hits GitHub, network hiccup, etc). Must still degrade to the
+    direct-merge path (拍板 decision 2) AND the card must say THIS is what
+    happened, distinct from "never had a token" or "repo not connected"."""
+    _pr_ready(client, monkeypatch)
+
+    def failing_push(_project_id, _topic_id, *, owner, repo, remote_branch, token):
+        raise ValidationError("git push failed: 403 rejected")
+
+    monkeypatch.setattr(ws, "push_topic_branch_for_github_pr", failing_push)
+
+    try:
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)
+
+        r = client.post(
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=_auth("alice"),
+        )
+        assert r.status_code == 200
+        card = r.json()["data"]
+        assert card["status"] == "accepted"  # degraded to the local path
+        assert card["pr_number"] is None
+        assert "未走 PR 采纳" in card["note"]
+        assert "GitHub 侧调用失败" in card["note"]
+        assert "403 rejected" in card["note"]  # the real cause is legible
+        assert "token" not in card["note"].lower()
     finally:
         _reset_client()
 
@@ -571,6 +609,12 @@ def test_accept_without_token_or_repo_degrades_to_direct_merge(client):
     assert card["status"] == "accepted"
     assert card["pr_number"] is None
     assert _topic(client, tid)["status"] == "archived"
+    # 降级原因可见性: WHY it skipped the PR path must be legible on the card,
+    # not indistinguishable from "never eligible in the first place" — and
+    # must never contain a token or ciphertext.
+    assert "未走 PR 采纳" in card["note"]
+    assert "批准人未连接 GitHub 账号" in card["note"]
+    assert "token" not in card["note"].lower()
 
 
 def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):

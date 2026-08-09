@@ -1096,94 +1096,75 @@ class TestGetGithubUserToken:
 
         assert await svc.get_github_user_token(42) is None
 
+    # NOTE: "expired token actually gets refreshed and durably persisted",
+    # "a failed refresh leaves the stale token untouched", "near-expiry
+    # triggers an early refresh", and "an undecryptable stored refresh_token
+    # degrades cleanly" all now live in
+    # tests/integration/test_oauth_token_refresh.py against a real database.
+    # `_refresh_and_persist_token` (see its docstring) deliberately opens its
+    # OWN session/transaction rather than reusing the injected repo's — the
+    # very thing 决策 0556ac50 needed fixed — so a mocked repo can no longer
+    # observe what it actually persists; asserting on it here would just be
+    # the over-mocked test this card explicitly warns against. What's left
+    # unit-testable without a DB is the branch logic below: does an expired
+    # token actually attempt a refresh, and is a failure there forwarded as
+    # None instead of raising.
+
     @pytest.mark.anyio
-    async def test_expired_with_refresh_token_refreshes_and_persists(self):
+    async def test_expired_token_delegates_to_refresh_and_persist(self):
         svc, repo = _make_service()
-        conn = _connection(
+        repo.get_by_user_and_provider.return_value = _connection(
             id=7,
             access_token=encrypt_text("stale-token"),
             token_expires=datetime.now(UTC) - timedelta(hours=1),
             refresh_token=encrypt_text("stored-refresh"),
         )
-        repo.get_by_user_and_provider.return_value = conn
-
-        svc._initialized = True
-        mock_provider = GitHubProvider(_github_config())
-        svc._providers = {"github_app": mock_provider}
 
         with patch.object(
-            mock_provider,
-            "refresh_access_token",
-            new=AsyncMock(
-                return_value={
-                    "access_token": "fresh-token",
-                    "expires_in": 28800,
-                    "refresh_token": "fresh-refresh",
-                }
-            ),
+            svc, "_refresh_and_persist_token", new=AsyncMock(return_value="fresh-token")
         ) as mock_refresh:
-            result = await svc.get_github_user_token(42)
+            token, reason = await svc.get_github_user_token_with_reason(42)
 
-        mock_refresh.assert_awaited_once_with("stored-refresh")
-        assert result == "fresh-token"
-        repo.update_tokens.assert_awaited_once()
-        call_args = repo.update_tokens.call_args.args
-        assert call_args[0] == 7
-        assert decrypt_text(call_args[1]) == "fresh-token"
-        assert decrypt_text(call_args[2]) == "fresh-refresh"
-        assert call_args[3] is not None
+        mock_refresh.assert_awaited_once_with(7, "github_app")
+        assert token == "fresh-token"
+        assert reason is None
 
     @pytest.mark.anyio
-    async def test_refresh_failure_returns_none(self):
-        svc, repo = _make_service()
-        conn = _connection(
-            id=7,
-            access_token=encrypt_text("stale-token"),
-            token_expires=datetime.now(UTC) - timedelta(hours=1),
-            refresh_token=encrypt_text("stored-refresh"),
-        )
-        repo.get_by_user_and_provider.return_value = conn
-
-        svc._initialized = True
-        mock_provider = GitHubProvider(_github_config())
-        svc._providers = {"github_app": mock_provider}
-
-        with patch.object(
-            mock_provider,
-            "refresh_access_token",
-            new=AsyncMock(side_effect=Exception("boom")),
-        ):
-            result = await svc.get_github_user_token(42)
-
-        assert result is None
-        repo.update_tokens.assert_not_awaited()
-
-    @pytest.mark.anyio
-    async def test_soon_to_expire_token_is_refreshed_early(self):
+    async def test_soon_to_expire_token_also_delegates_to_refresh(self):
         """Inside the refresh margin counts as expired, not just past expiry."""
         svc, repo = _make_service()
-        conn = _connection(
+        repo.get_by_user_and_provider.return_value = _connection(
             id=7,
             access_token=encrypt_text("stale-token"),
             token_expires=datetime.now(UTC) + timedelta(minutes=1),
             refresh_token=encrypt_text("stored-refresh"),
         )
-        repo.get_by_user_and_provider.return_value = conn
-
-        svc._initialized = True
-        mock_provider = GitHubProvider(_github_config())
-        svc._providers = {"github_app": mock_provider}
 
         with patch.object(
-            mock_provider,
-            "refresh_access_token",
-            new=AsyncMock(
-                return_value={"access_token": "fresh-token", "expires_in": 28800}
-            ),
-        ):
+            svc, "_refresh_and_persist_token", new=AsyncMock(return_value="fresh-token")
+        ) as mock_refresh:
             result = await svc.get_github_user_token(42)
 
+        mock_refresh.assert_awaited_once_with(7, "github_app")
         assert result == "fresh-token"
+
+    @pytest.mark.anyio
+    async def test_refresh_failure_is_forwarded_as_none_with_reason(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            id=7,
+            access_token=encrypt_text("stale-token"),
+            token_expires=datetime.now(UTC) - timedelta(hours=1),
+            refresh_token=encrypt_text("stored-refresh"),
+        )
+
+        with patch.object(
+            svc, "_refresh_and_persist_token", new=AsyncMock(return_value=None)
+        ):
+            token, reason = await svc.get_github_user_token_with_reason(42)
+
+        assert token is None
+        assert reason == "refresh_failed"
 
     @pytest.mark.anyio
     async def test_undecryptable_access_token_degrades_to_none_and_logs(self, caplog):
@@ -1203,21 +1184,9 @@ class TestGetGithubUserToken:
 
         assert "could not be" in caplog.text
 
-    @pytest.mark.anyio
-    async def test_undecryptable_refresh_token_degrades_to_none(self, caplog):
-        svc, repo = _make_service()
-        repo.get_by_user_and_provider.return_value = _connection(
-            id=7,
-            access_token=encrypt_text("stale-token"),
-            token_expires=datetime.now(UTC) - timedelta(hours=1),
-            refresh_token="not-a-fernet-token",
-        )
-
-        with caplog.at_level(logging.ERROR, logger="app.domain.oauth.services"):
-            assert await svc.get_github_user_token(42) is None
-
-        repo.update_tokens.assert_not_awaited()
-        assert "could not be" in caplog.text
+    # "an undecryptable stored refresh_token degrades cleanly, without
+    # writing" is covered against a real database in
+    # tests/integration/test_oauth_token_refresh.py — see the note above.
 
     @pytest.mark.anyio
     async def test_expiring_token_with_unconfigured_provider_returns_none(self):
