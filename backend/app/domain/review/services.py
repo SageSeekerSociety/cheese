@@ -463,6 +463,79 @@ class AcceptService:
 
     # ---- 两阶段采纳 (PR迭代式, 2026-08-09) ----------------------------------
 
+    def _local_topic_branch_head(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> str | None:
+        """Local topic branch head after folding any pending 芝士 edits into a
+        jj commit — local-only (no network), used to decide whether a re-push
+        to the PR branch is needed before touching GitHub at all. Deliberately
+        built from `workspace.service`'s existing public helpers
+        (ensure_repo/branch_for_topic/snapshot_worktree) rather than adding a
+        new one there — this feature's touch scope is review/ + oauth/ only.
+        None if the repo/branch genuinely doesn't exist yet (nothing to push)."""
+        import subprocess
+
+        from app.domain.workspace import service as ws
+
+        try:
+            ws.snapshot_worktree(project_id, topic_id, "两阶段采纳 CI 轮询前快照")
+        except ValidationError:
+            pass  # no workspace/jj state yet — nothing pending to fold
+        repo_path = ws.ensure_repo(project_id)
+        branch = ws.branch_for_topic(topic_id)
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), "rev-parse", "--verify", "-q", branch],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
+    async def _repush_if_local_head_moved(
+        self, *, card: AcceptCard, topic: Topic, owner: str, repo: str, token: str
+    ) -> None:
+        """两阶段采纳: the platform side of the iterate loop — if 芝士 committed a
+        fix since the last push, push it to the PR branch ourselves (芝士's
+        sandbox has no GitHub credentials and no network to github.com, so it
+        cannot do this itself; see `_nudge_pr_fix`). Compares the LOCAL branch
+        head (cheap, no network) against `card.pr_head_sha` (last known
+        pushed/remote head) so an unchanged branch costs nothing — never a
+        blind force-push every poll tick. A push failure (expired token,
+        network hiccup, non-fast-forward) degrades gracefully: logged, card
+        left untouched, next poll tick just retries — never a permanent
+        failure and never silent."""
+        from app.domain.review import github_pr
+        from app.domain.workspace import service as ws
+
+        local_head = await asyncio.to_thread(
+            self._local_topic_branch_head, topic.project_id, topic.id
+        )
+        if local_head is None or local_head == card.pr_head_sha:
+            return
+        try:
+            pushed = await asyncio.to_thread(
+                ws.push_topic_branch_for_github_pr,
+                topic.project_id,
+                topic.id,
+                owner=owner,
+                repo=repo,
+                remote_branch=github_pr.pr_branch_name(topic.id),
+                token=token,
+            )
+        except ValidationError as exc:
+            logger.warning(
+                "pr_open card %s: re-push of local commit %s failed (%s) — "
+                "will retry next poll tick",
+                card.id,
+                local_head,
+                exc,
+            )
+            return
+        card.pr_head_sha = pushed["head_sha"]
+        card.note = ""
+        await self._session.flush()
+
     async def _resolve_pr_prerequisites(
         self, topic: Topic, decided_by: str
     ) -> tuple[str, str, str] | None:
@@ -620,13 +693,23 @@ class AcceptService:
         runner,
     ) -> None:
         """Stage 1: the PR itself hasn't merged yet."""
+        # 芝士 fixed something in its workspace — push it to the PR branch
+        # before checking CI, or a fixed commit just sits local forever (see
+        # _repush_if_local_head_moved's docstring for why 芝士 can't do this
+        # push itself).
+        await self._repush_if_local_head_moved(
+            card=card, topic=topic, owner=owner, repo=repo, token=token
+        )
+
         live_head = await client.pull_request_head_sha(
             owner=owner, repo=repo, number=card.pr_number, token=token
         )
         if live_head != card.pr_head_sha:
-            # 芝士 pushed a new commit — track it, and clear any "already
-            # nudged" marker so a fresh failure on the NEW commit still
-            # notifies (see the note-based dedup in _nudge_pr_fix).
+            # GitHub's actual head disagrees with what we have on record (e.g.
+            # our push above just landed and GitHub is catching up, or someone
+            # pushed to the PR branch directly) — GitHub is authoritative.
+            # Clear any "already nudged" marker so a fresh failure on the NEW
+            # commit still notifies (see the note-based dedup in _nudge_pr_fix).
             card.pr_head_sha = live_head
             card.note = ""
             await self._session.flush()
@@ -726,8 +809,9 @@ class AcceptService:
             content=(
                 f"PR #{card.pr_number}（{card.pr_url}）的{stage}检查没通过：\n"
                 f"```\n{tail[:1500]}\n```\n"
-                "请在这个话题的工作区里修复问题，提交后推送新 commit 到这个 PR 分支，"
-                "检查会自动重新跑；转绿后平台会自动合并 PR。"
+                "请在这个话题的工作区里修复问题并提交（不需要、也没法自己推到 "
+                "GitHub），平台会自动把新提交同步到这个 PR，检查会自动重新跑；"
+                "转绿后平台会自动合并 PR。"
             ),
             summon=True,
         )

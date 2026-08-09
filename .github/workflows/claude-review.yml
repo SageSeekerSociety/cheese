@@ -12,6 +12,11 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    # 拍板: 过滤掉非代码改动，而不是像另一版本那样用 ["**"] 把整个 workflow
+    # 对所有 PR 停用——那超出了授权，是无人明确同意的能力损失。
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   issue_comment:
     types: [created]
 

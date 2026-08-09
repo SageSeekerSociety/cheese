@@ -514,6 +514,12 @@ class OAuthService:
                 "providerName": provider_names.get(c.provider_id, c.provider_id),
                 "providerUserId": c.provider_user_id,
                 "connectedAt": c.created_at.isoformat() if c.created_at else None,
+                # Token 健康度 (2026-08-09): 只暴露元数据，绝不返回 token/密文本身.
+                "login": (c.raw_profile or {}).get("login"),
+                "tokenExpires": (
+                    c.token_expires.isoformat() if c.token_expires else None
+                ),
+                "hasRefreshToken": c.refresh_token is not None,
             }
             for c in conns
         ]
