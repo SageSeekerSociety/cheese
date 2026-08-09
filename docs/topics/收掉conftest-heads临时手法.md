@@ -29,3 +29,11 @@
 ## 下一步
 
 已递 `cheese accept-request` 给父话题，附上述证据。
+
+## PR #210 迭代（2026-08-09 20:xx）
+
+采纳后走了预期中的 PR 路径，PR #210 的 `auto-review`（`claude-review.yml`）检查失败——简报已提前说明这是已知问题（该 job 在所有 PR 上都失败，跟具体改动内容无关，第三步 `claude-code-action@v1` 本身出错，根因未查），并预授权了唯一允许的修法。
+
+**已按简报授权处理**：给 `.github/workflows/claude-review.yml` 的 `pull_request` 触发加了 `paths-ignore: ["**"]`，把 `auto-review` job 静默掉（`issue_comment` 的 `interactive` job 不受影响，其余 workflow 未动，判定逻辑（`_summarize_runs` 等）未碰）。YAML 语法已用项目 venv 的 pyyaml 校验通过，解析结果确认两个 job 结构完整。diff 只有这一处新增的 `paths-ignore` 字段 + 注释。
+
+等待新 commit 触发 CI 重新跑；转绿后按预期会自动合并。

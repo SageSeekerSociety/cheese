@@ -12,6 +12,13 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    # auto-review currently fails on every PR regardless of diff content — the
+    # job gets a runner and passes checkout, but the claude-code-action step
+    # itself errors (root cause not yet diagnosed; tracked separately). Until
+    # that's fixed, silence the trigger entirely so it can't block PR checks —
+    # remove this once the action step is confirmed working again.
+    paths-ignore:
+      - "**"
   issue_comment:
     types: [created]
 
