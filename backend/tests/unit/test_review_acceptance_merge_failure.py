@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -61,6 +62,14 @@ def _patch_notify(monkeypatch) -> AsyncMock:
     return notify
 
 
+async def _drain_notify() -> None:
+    """accept() schedules the notify via asyncio.create_task (fire-and-forget,
+    it must not block the accepter's response on a room post) — give the loop
+    one tick to actually run it before asserting, same idiom as
+    test_push_back.py's watch_dogfood_push scheduling test."""
+    await asyncio.sleep(0)
+
+
 @pytest.mark.anyio
 async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
     service, card, topic = _accept_service()
@@ -79,6 +88,7 @@ async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
     assert topic.status == TopicStatus.active
     assert topic.archived_at is None
     service._repo.add_approval.assert_not_awaited()
+    await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["project_id"] == topic.project_id
@@ -109,6 +119,7 @@ async def test_empty_conflict_result_keeps_acceptance_retryable(monkeypatch):
     assert topic.status == TopicStatus.active
     assert topic.archived_at is None
     service._repo.add_approval.assert_not_awaited()
+    await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["source"] == "accept"
@@ -136,6 +147,7 @@ async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch)
     assert card.status == AcceptStatus.conflict
     assert topic.status == TopicStatus.active
     service._repo.add_approval.assert_awaited_once_with(card.id, "alice")
+    await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["project_id"] == topic.project_id
@@ -163,6 +175,7 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
     assert card.status == AcceptStatus.accepted
     assert topic.status == TopicStatus.archived
     service._repo.add_approval.assert_awaited_once_with(card.id, "alice")
+    await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["project_id"] == topic.project_id
@@ -191,6 +204,7 @@ async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
     assert returned is card
     assert card.status == AcceptStatus.accepted
     assert topic.status == TopicStatus.archived
+    await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["source"] == "accept"

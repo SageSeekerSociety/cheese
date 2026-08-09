@@ -4,6 +4,7 @@ Spec §4.4 (AI 不能验收自己做的东西), §6.3 (采纳即归档/merge, �
 This is deterministic platform code, not AI.
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -224,19 +225,26 @@ class AcceptService:
         await self._repo.add_approval(card_id, approver_handle)
         return card
 
-    async def _notify_merge_result(self, topic: Topic, content: str) -> None:
+    def _notify_merge_result(self, topic: Topic, content: str) -> None:
         """merge 后结果回房间: post the accept's merge outcome into the topic
         timeline via the webhook primitive's internal function (卡1) — no HTTP
         hop, no token check, this call is trusted by construction. Uses its
         own session (async_session_factory), independent of self._session, so
         the notice lands even when the accept itself is about to be rolled
-        back by a raised ValidationError."""
-        await webhook_service.post_with_retries(
-            async_session_factory,
-            project_id=topic.project_id,
-            topic_id=topic.id,
-            content=content,
-            source="accept",
+        back by a raised ValidationError.
+
+        Fire-and-forget (asyncio.create_task, mirroring workspace/service.py's
+        watch_dogfood_push): post_with_retries can sleep up to 35s across its
+        retries, and the accepter's HTTP response must not wait on a room
+        notification succeeding — only on the merge itself."""
+        asyncio.get_running_loop().create_task(
+            webhook_service.post_with_retries(
+                async_session_factory,
+                project_id=topic.project_id,
+                topic_id=topic.id,
+                content=content,
+                source="accept",
+            )
         )
 
     async def accept(self, *, card_id: uuid.UUID, decided_by: str) -> AcceptCard:
@@ -292,7 +300,7 @@ class AcceptService:
                 topic.project_id,
                 topic.id,
             )
-            await self._notify_merge_result(
+            self._notify_merge_result(
                 topic, f"❌ 采纳未完成：合并出错，请检查工作区状态。（{exc}）"
             )
             raise ValidationError(_MERGE_FAILED_MESSAGE) from exc
@@ -311,7 +319,7 @@ class AcceptService:
                 conflict_msg = "❌ 采纳未完成：合并冲突，需要芝士处理后重试。"
                 if card.note:
                     conflict_msg += f"\n{card.note}"
-                await self._notify_merge_result(topic, conflict_msg)
+                self._notify_merge_result(topic, conflict_msg)
                 return card
 
             # Discussion-only topics and a topic already on the base branch
@@ -323,7 +331,7 @@ class AcceptService:
                     topic.id,
                     merged,
                 )
-                await self._notify_merge_result(
+                self._notify_merge_result(
                     topic, "❌ 采纳未完成：合并失败，请检查工作区状态。"
                 )
                 raise ValidationError(_MERGE_FAILED_MESSAGE)
@@ -378,7 +386,7 @@ class AcceptService:
         success_msg = f"✅ 话题已被 {decided_by} 采纳并合并。"
         if card.note:
             success_msg += f"\n{card.note}"
-        await self._notify_merge_result(topic, success_msg)
+        self._notify_merge_result(topic, success_msg)
         return card
 
     async def reject(
