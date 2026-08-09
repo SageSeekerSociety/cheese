@@ -53,7 +53,19 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      // Mirror the production gateway (frontend/nginx.conf): `location /api/ {
+      // proxy_pass http://backend:8081/; }` — the trailing slash strips exactly
+      // one `/api`. The frontend deliberately double-prefixes (api.ts BASE =
+      // '/api/api' for 2.0 routes; 知是 1.0 routes ride VITE_API_BASE_URL=/api),
+      // so without this rewrite every call reaches the backend as `/api/api/*`
+      // and 404s. Dev/e2e uses this proxy instead of nginx, so it must strip too.
+      '/api': {
+        target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799',
+        changeOrigin: true,
+        ws: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+      // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
     },
   },

@@ -42,7 +42,8 @@ def _auth(handle: str) -> dict[str, str]:
     the routed reviewer, matching test_accept.py."""
     from app.core.tokens import mint_session_token
 
-    return {"Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"}
+    token = mint_session_token(handle=handle, user_id=None)
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _accept(client, topic_id: str) -> None:
