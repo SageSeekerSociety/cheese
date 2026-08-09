@@ -10,6 +10,7 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright
 │   └── check-runner.md                   # Background test runner (parallel to review)
 ├── skills/                               # on-demand skills (dir form: <name>/SKILL.md)
 │   ├── cheese-py-code-review/SKILL.md    # Code review checklist + workflow (parallel & serial)
+│   ├── cheese-ui/                        # UI design language; SKILL.md + references/{product-ui,landing}.md
 │   ├── post-pull/SKILL.md                # Post-git-pull checks (migrations, deps, health)
 │   └── lark-{doc,drive,markdown,shared,wiki}  # → .agents/skills/… (vendored, see skills-lock.json)
 ├── scripts/
@@ -20,8 +21,12 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright
 ```
 
 Procedural guidance lives in **skills** (loaded on demand), not always-on prose:
-review → `cheese-py-code-review`, post-pull → `post-pull`. This file holds the
-always-relevant project conventions below.
+review → `cheese-py-code-review`, post-pull → `post-pull`, any visual/UI work →
+`cheese-ui`. This file holds the always-relevant project conventions below.
+
+`frontend/CLAUDE.md` carries the few frontend facts that apply to *every* change
+there (tokens are the source of truth, never hardcode a hex, Vuetify not Tailwind);
+the design method and mode-specific rules live in the `cheese-ui` skill.
 
 ## Development Commands
 
