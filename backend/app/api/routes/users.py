@@ -1764,7 +1764,7 @@ async def refresh_access_token(
     except ValueError as exc:
         raise AuthenticationRequiredError(str(exc)) from exc
 
-    access_token = create_access_token(user_id)
+    access_token = create_access_token(user_id, handle=user.username)
     new_refresh_token = create_refresh_token(user_id)
 
     response.set_cookie(
@@ -3052,7 +3052,7 @@ async def passkey_authenticate_verify(
     finally:
         await redis.aclose()
 
-    access_token = create_access_token(user_id)
+    access_token = create_access_token(user_id, handle=user.username)
     refresh_token = create_refresh_token(user_id)
 
     response.set_cookie(
