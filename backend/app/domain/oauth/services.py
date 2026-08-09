@@ -511,3 +511,33 @@ class OAuthService:
             return None
         await self._redis.delete(key)
         return json.loads(raw)
+
+
+async def get_github_user_token_for_handle(
+    session: Any, handle: str, *, provider_id: str = "github_app"
+) -> str | None:
+    """批准人已连接的 GitHub 账号 token (两阶段采纳 PR迭代式, 2026-08-09).
+
+    Defaults to the "github_app" connection (#192's user-to-server flow for
+    cheesex-app, distinct from the plain "github" login provider) since PR
+    open/merge needs to act as the App on the user's behalf.
+
+    ``UserOAuthConnection`` does not persist an ``access_token`` column yet —
+    that is a separate in-flight fix (the callback currently discards the
+    token after exchange). Reading it via ``getattr`` means this function
+    returns None today (→ callers degrade to the old direct-merge accept
+    path, which is the correct, expected behavior) and starts returning real
+    tokens automatically once that column lands, with no change needed here.
+    """
+    from app.domain.oauth.repositories import OAuthConnectionRepository
+    from app.domain.user.repositories import UserRepository
+
+    user = await UserRepository(session).get_by_handle(handle)
+    if user is None:
+        return None
+    conn = await OAuthConnectionRepository(session).get_by_user_and_provider(
+        user.id, provider_id
+    )
+    if conn is None:
+        return None
+    return getattr(conn, "access_token", None)

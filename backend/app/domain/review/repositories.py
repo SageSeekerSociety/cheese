@@ -58,3 +58,8 @@ class AcceptCardRepository:
             .order_by(AcceptCard.created_at.desc())
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def list_by_status(self, status: AcceptStatus) -> list[AcceptCard]:
+        """两阶段采纳 (PR迭代式): every card the PR/deploy poller must advance."""
+        stmt = select(AcceptCard).where(AcceptCard.status == status)
+        return list((await self._session.scalars(stmt)).all())

@@ -51,6 +51,7 @@ async def lifespan(_: FastAPI):
     # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
     from app.api.deps import get_chat_service, get_turn_runner
     from app.domain.scheduler.service import (
+        PrPollRunner,
         SandboxReaperRunner,
         SchedulerRunner,
         SchedulerService,
@@ -87,6 +88,11 @@ async def lifespan(_: FastAPI):
         settings.sandbox_idle_hours,
     )
     reaper.start()
+    # 两阶段采纳 (PR迭代式, 2026-08-09): advances pr_open accept cards — PR CI →
+    # merge → deploy workflow → archive. Independent interval, same shape as
+    # the reaper above.
+    pr_poller = PrPollRunner(scheduler, settings.accept_pr_poll_interval_s)
+    pr_poller.start()
 
     # Enrolling provisioned machines is platform plumbing, so it runs on its own
     # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
@@ -101,6 +107,7 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         await machines.stop()
+        await pr_poller.stop()
         await reaper.stop()
         await runner.stop()
 

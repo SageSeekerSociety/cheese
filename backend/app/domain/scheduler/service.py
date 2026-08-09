@@ -88,6 +88,39 @@ class SchedulerService:
                 reaped += 1
         return reaped
 
+    async def poll_open_prs(self) -> dict:
+        """两阶段采纳 (PR迭代式, 2026-08-09): advance every pr_open accept card
+        one step — see AcceptService.advance_pr_card for the actual state
+        machine (check PR CI → merge → check deploy workflow → archive).
+        One DB transaction per card so one card's failure can't roll back
+        another's progress."""
+        from app.api.deps import get_turn_runner
+        from app.domain.review.models import AcceptStatus
+        from app.domain.review.repositories import AcceptCardRepository
+        from app.domain.review.services import AcceptService
+
+        runner = get_turn_runner()
+        checked = 0
+        errors: list[str] = []
+        async with self._sessions() as session:
+            cards = await AcceptCardRepository(session).list_by_status(
+                AcceptStatus.pr_open
+            )
+            card_ids = [c.id for c in cards]
+        for card_id in card_ids:
+            async with self._sessions() as session:
+                try:
+                    await AcceptService(session).advance_pr_card(
+                        card_id, chat_service=self._chat, runner=runner
+                    )
+                    await session.commit()
+                    checked += 1
+                except Exception as exc:  # noqa: BLE001 — one card must not stop the rest
+                    await session.rollback()
+                    errors.append(f"{card_id}: {exc}")
+                    logger.exception("poll_open_prs failed for card %s", card_id)
+        return {"cards_checked": checked, "errors": errors}
+
 
 class SchedulerRunner:
     """Background loop driving SchedulerService.tick() on an interval."""
@@ -158,3 +191,36 @@ class SandboxReaperRunner:
                     logger.info("idle reap: removed %d container(s)", reaped)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("idle container reap failed")
+
+
+class PrPollRunner:
+    """两阶段采纳 (PR迭代式, 2026-08-09): drives SchedulerService.poll_open_prs()
+    on an interval, independent from the AI heartbeat and the idle reaper —
+    same shape as SandboxReaperRunner."""
+
+    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
+        self._scheduler = scheduler
+        self._interval = interval_seconds
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._loop())
+            logger.info("PR poll runner started (every %ss)", self._interval)
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                result = await self._scheduler.poll_open_prs()
+                if result["cards_checked"] or result["errors"]:
+                    logger.info("pr poll: %s", result)
+            except Exception:  # noqa: BLE001 -- maintenance loop must survive
+                logger.exception("pr poll failed")
