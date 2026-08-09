@@ -38,6 +38,7 @@ import {
   reassignCard,
   rejectCard,
   revokeCard,
+  setTopicTitle,
   splitTopic,
   unarchiveTopic,
   upgradeBlock,
@@ -695,6 +696,16 @@ function markSelectedRead(id: string) {
   markTopicRead(id, AUTHOR).catch(() => {})
 }
 
+async function handleRenameTopic(payload: { id: string; title: string }) {
+  try {
+    const updated = await setTopicTitle(payload.id, payload.title)
+    const t = topics.value.find((x) => x.id === payload.id)
+    if (t) t.title = updated.title
+  } catch (e) {
+    reportError(e, '重命名失败')
+  }
+}
+
 // ---- 归档去向: manual archive / unarchive from the sidebar ----
 async function handleArchiveTopic(id: string) {
   try {
@@ -975,6 +986,7 @@ onUnmounted(() => {
       @select-docs="selectDocs"
       @archive-topic="handleArchiveTopic"
       @unarchive-topic="handleUnarchiveTopic"
+      @rename-topic="handleRenameTopic"
       @create-project="handleCreateProject"
       @create-topic="handleCreateTopic"
       @split-topic="handleSplitTopic"
