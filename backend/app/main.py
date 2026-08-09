@@ -84,7 +84,7 @@ async def lifespan(_: FastAPI):
     reaper = SandboxReaperRunner(
         scheduler,
         settings.sandbox_reap_interval_seconds,
-        settings.sandbox_idle_days,
+        settings.sandbox_idle_hours,
     )
     reaper.start()
 

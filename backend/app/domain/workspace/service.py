@@ -6,6 +6,7 @@ Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照
 话题分支用 jj bookmark 导出成 git branch,采纳/diff 仍走 git(colocation)。
 """
 
+import asyncio
 import os
 import re
 import shutil
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.workspace.dogfood_notices import watch_dogfood_push
 
 DEFAULT_BRANCH = "main"
 # 沙箱镜像：芝士分身在容器里跑代码/测试，碰不到宿主机 (spec §9.1).
@@ -150,6 +152,49 @@ def _ensure_worktree(project_id: uuid.UUID, branch: str) -> Path:
     _jj(wt, "git", "export")
     _make_world_writable(wt)
     return wt
+
+
+# Container path a topic's worktree is bind-mounted to (tmux_provider.py,
+# exec_in_sandbox below) — the anchor `sandbox_vcs_mounts` resolves against.
+SANDBOX_WORKDIR = "/work"
+
+
+def sandbox_vcs_mounts(
+    project_id: uuid.UUID, branch: str, *, container_workdir: str = SANDBOX_WORKDIR
+) -> list[str]:
+    """Extra `docker run -v` args so a topic's jj workspace resolves inside its
+    sandbox container.
+
+    `jj workspace add` (_ensure_worktree above) writes `<worktree>/.jj/repo` as
+    a path *relative to the real host directory nesting* between the worktree
+    (workspace_root/.worktrees/<project>/<branch>) and the project's shared
+    main repo (workspace_root/<project>) — e.g. `../../../../<project_id>/.jj
+    /repo`. A sandbox container only ever gets the worktree, remapped to
+    SANDBOX_WORKDIR (much shallower than the host tree), so that relative
+    pointer walks off the container's root instead of reaching the real store
+    — `jj status` inside the sandbox fails with "Cannot access ../../../../
+    <project_id>/.jj/repo: No such file or directory".
+
+    Compute, with the exact same relpath jj used, where that unmodified
+    pointer will resolve to once anchored at SANDBOX_WORKDIR instead of the
+    real worktree path, and mount the main repo's `.jj` (commit/op store) and
+    `.git` (colocated git dir — the store's own internal git_target is itself
+    a relative pointer into it) there. Host-native access to the worktree
+    (backend catch-up/diff/log, outside any container) is untouched — only the
+    container's extra mounts change."""
+    main = _repo(project_id)
+    wt = _worktree_path(project_id, branch)
+    rel_to_store = os.path.relpath(main / ".jj" / "repo", wt / ".jj")
+    store_in_container = Path(
+        os.path.normpath(os.path.join(container_workdir, ".jj", rel_to_store))
+    )
+    main_in_container = store_in_container.parents[1]  # strip "/.jj/repo"
+    return [
+        "-v",
+        f"{main / '.jj'}:{main_in_container / '.jj'}",
+        "-v",
+        f"{main / '.git'}:{main_in_container / '.git'}",
+    ]
 
 
 def _make_world_writable(root: Path) -> None:
@@ -611,8 +656,13 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     hook_started = False
     if hook.is_file() and os.access(hook, os.X_OK):
         log = Path(url) / "tmp_dogfood_push.log"
+        # The log is shared across every push-back run for this project (and a
+        # re-accept can reuse the same branch name), so grepping it for our
+        # branch would risk picking up a stale prior run. Recording the byte
+        # offset before we start pins the watcher to exactly this run's output.
+        log_offset = log.stat().st_size if log.exists() else 0
         with open(log, "a") as out:
-            subprocess.Popen(  # noqa: S603 — operator-trusted local repo hook
+            proc = subprocess.Popen(  # noqa: S603 — operator-trusted local repo hook
                 [str(hook), branch],
                 cwd=url,
                 stdout=out,
@@ -621,6 +671,14 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
                 start_new_session=True,  # survives our own redeploy
             )
         hook_started = True
+        # Report the eventual result back into the topic timeline without
+        # making this call wait for it (accept() must return immediately).
+        try:
+            asyncio.get_running_loop().create_task(
+                watch_dogfood_push(topic_id, proc, log, log_offset, branch)
+            )
+        except RuntimeError:
+            pass  # no running loop (e.g. sync tests/scripts) — nothing to schedule onto
     return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
 
 
@@ -733,6 +791,14 @@ def exec_in_sandbox(
             "stdout": "",
             "stderr": "sandbox 不可用：未找到 docker（需要 Docker 在运行）",
         }
+    # A topic's tree is a jj workspace whose .jj/repo pointer only resolves
+    # with the main repo's store mounted too (see sandbox_vcs_mounts); the
+    # project-level tree (topic_id=None) IS the main repo, no extra mount needed.
+    vcs_mounts = (
+        sandbox_vcs_mounts(project_id, branch_for_topic(topic_id))
+        if topic_id is not None
+        else []
+    )
     try:
         result = subprocess.run(
             [
@@ -749,6 +815,7 @@ def exec_in_sandbox(
                 "256",
                 "-v",
                 f"{tree}:/work",
+                *vcs_mounts,
                 "-w",
                 "/work",
                 SANDBOX_IMAGE,

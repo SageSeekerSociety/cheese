@@ -14,7 +14,9 @@ two methods by relocating execution to a cheesed node and relaying the event
 stream + git refs back.
 """
 
+import asyncio
 import json
+import subprocess
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -24,6 +26,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
 from app.domain.agent.service import (
     AgentEvent,
     AgentService,
@@ -106,6 +109,31 @@ class LocalDockerProvider:
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
+    def _warn_if_image_switch(
+        self, topic_id: uuid.UUID, container: str, resolved_image: str
+    ) -> None:
+        """Read-only mirror of the sandbox shim's own check (claude-sbx): if the
+        topic's container is already running a different image than what this
+        turn resolved to, the shim is about to `docker rm -f` it (no grace
+        period) and rebuild — taking any interactive session / background
+        process in the old box with it. Warn the topic before that happens.
+        Fire-and-forget (schedules the notice, doesn't await it) so a slow DB
+        write never delays turn start; skipped outside a running loop (e.g.
+        sync tests) and on a fresh/absent container (nothing to lose)."""
+        if not self.sandboxed():
+            return
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.Config.Image}}", container],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or result.stdout.strip() == resolved_image:
+            return
+        try:
+            asyncio.get_running_loop().create_task(warn_image_switch_rebuild(topic_id))
+        except RuntimeError:
+            pass  # no running loop — nothing to schedule onto
+
     def _sandbox_config(
         self,
         project_id: uuid.UUID,
@@ -122,10 +150,21 @@ class LocalDockerProvider:
         dogfooding on this repo — spec §9.1 environment); falls back to the pool's
         default base image."""
         worktree = ws.topic_worktree(project_id, topic_id)
+        resolved_image = sandbox_image or settings.sandbox_image
+        container_name = ws.container_name(topic_id)
+        self._warn_if_image_switch(topic_id, container_name, resolved_image)
         env = {
-            "SBX_IMAGE": sandbox_image or settings.sandbox_image,
-            "SBX_CONTAINER": ws.container_name(topic_id),
+            "SBX_IMAGE": resolved_image,
+            "SBX_CONTAINER": container_name,
             "SBX_WORKTREE": str(worktree),
+            # The worktree is a jj workspace whose .jj/repo pointer is only
+            # resolvable inside the sandbox if these are ALSO mounted (see
+            # ws.sandbox_vcs_mounts) — the shim (claude-sbx) appends them to
+            # `docker run` as extra `-v` args, space-joined since deterministic
+            # workspace_root/UUID paths never contain whitespace.
+            "SBX_VCS_MOUNTS": " ".join(
+                ws.sandbox_vcs_mounts(project_id, ws.branch_for_topic(topic_id))
+            ),
             "SBX_SESSION": str(ws.session_dir(project_id, topic_id)),
             "CHEESE_API": settings.sandbox_api_base,
             "CHEESE_PROJECT": str(project_id),

@@ -21,6 +21,7 @@ continuous inside it (no --resume needed — the session IS the continuity).
 """
 
 import asyncio
+import hashlib
 import json
 import subprocess
 import uuid
@@ -34,6 +35,8 @@ from app.domain.agent.hooks_substrate import (
     ScreenSetupError,
     hooks_settings,
 )
+from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
+from app.domain.agent.tmux_control import TmuxControlClient
 from app.domain.workspace import service as ws
 
 _CHEESE_AUTHOR = "cheese"
@@ -101,6 +104,44 @@ def _resume_ready(session_dir: str, resume_session_id: str) -> bool:
     there). Pure so it can be unit-tested without a container. Guards the
     `--resume` path so an ordinary fresh topic (no transcript) never resumes."""
     return clone.transcript_file(Path(session_dir), resume_session_id).is_file()
+
+
+# Container label carrying the routing-env stamp (see _ensure_container).
+_ENV_LABEL = "cheesex.env"
+
+# Only the env that decides WHERE model calls go and as WHAT. Per-turn values
+# (CHEESE_TURN) and anything that legitimately changes without invalidating the
+# box must stay out, or every turn would rebuild the container.
+_ENV_STAMPED_KEYS = (
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "CHEESE_API",
+)
+
+
+def _env_stamp(env: dict[str, str]) -> str:
+    """A short digest of the routing-relevant env. Hashed rather than stored
+    plainly because one of the values is a credential. Pure, so the drift rule
+    is unit-testable without Docker."""
+    material = "\n".join(f"{k}={env.get(k, '')}" for k in _ENV_STAMPED_KEYS)
+    return hashlib.sha256(material.encode()).hexdigest()[:16]
+
+
+def env_stamp_drifted(current: str, wanted: str) -> bool:
+    """Whether a container's recorded model route disagrees with the wanted one.
+
+    An UNSTAMPED container is not evidence of drift — it predates the stamp. It
+    must be left alone, because rebuilding kills its tmux session and that
+    session IS the topic's conversational continuity: treating "unknown" as
+    "wrong" would silently reset every existing topic's memory on its next turn.
+    Nothing is stranded by waiting, since the sandbox image tag carries the
+    commit sha, so every container is rebuilt (and stamped) within one deploy.
+    """
+    return bool(current) and current != wanted
 
 
 def pane_ready(capture: str) -> bool:
@@ -217,6 +258,8 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
     ) -> None:
         super().__init__(router=router, turn_timeout_s=turn_timeout_s)
         self._image = image
+        # One control-mode connection per container, reused across turns.
+        self._controls: dict[str, TmuxControlClient] = {}
 
     def available(self) -> bool:
         return ws.sandbox_available()
@@ -224,17 +267,34 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
     # --- container / session lifecycle -------------------------------------
 
     async def _ensure_container(self, topic_id: uuid.UUID, env: dict[str, str]) -> str:
-        """Create (or reuse) the topic's tmux container and return its name. Env
-        is fixed at creation and reused across turns (the container is long-lived
-        per topic — same trade-off as the SDK shim)."""
+        """Create (or reuse) the topic's tmux container and return its name.
+
+        Env is fixed at CREATION and the container is long-lived per topic, so a
+        box created against an old model route keeps using it no matter what the
+        backend is reconfigured to — a fixed deployment stays stranded behind a
+        stale container (dev, 2026-08-08: a corrected gateway URL had no effect
+        because the running `claude` still held the old one). The routing part of
+        the env is therefore stamped on the container and rechecked here."""
         name = _tmux_container_name(topic_id)
         rc, cur_image, _ = await _docker("inspect", "-f", "{{.Config.Image}}", name)
         exists = rc == 0
-        if exists and cur_image.strip() != self._image:
-            await _docker("rm", "-f", name)  # env image changed → rebuild box
+        image_switched = exists and cur_image.strip() != self._image
+        env_drifted = False
+        if exists and not image_switched:
+            _, cur_stamp, _ = await _docker(
+                "inspect", "-f", f'{{{{index .Config.Labels "{_ENV_LABEL}"}}}}', name
+            )
+            env_drifted = env_stamp_drifted(cur_stamp.strip(), _env_stamp(env))
+        if image_switched or env_drifted:
+            await _docker("rm", "-f", name)  # image or model route changed
             exists = False
         if not exists:
             await self._create_container(name, env)
+            if image_switched or env_drifted:
+                # The old box (and anything running in it — the interactive
+                # session, background processes) is gone with no other
+                # warning; tell the topic (best-effort, never blocks the turn).
+                await warn_image_switch_rebuild(topic_id)
             return name
         rc, running, _ = await _docker("inspect", "-f", "{{.State.Running}}", name)
         if running.strip() != "true":
@@ -244,6 +304,14 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
     async def _create_container(self, name: str, env: dict[str, str]) -> None:
         # SBX_WORKTREE / SBX_SESSION are mount sources, not container env vars.
         mounts = {"SBX_WORKTREE", "SBX_SESSION"}
+        # The worktree is a jj workspace pointing at the project's shared main
+        # repo store via a host-relative path (see ws.sandbox_vcs_mounts) —
+        # without also mounting the main repo's .jj/.git, that pointer walks
+        # off the container's shallow root and jj/git are unusable in here.
+        vcs_mounts = ws.sandbox_vcs_mounts(
+            uuid.UUID(env["CHEESE_PROJECT"]),
+            ws.branch_for_topic(uuid.UUID(env["CHEESE_TOPIC"])),
+        )
         args = [
             "run",
             "-d",
@@ -262,6 +330,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             *_subscription_args(),
             "-v",
             f"{env['SBX_WORKTREE']}:/work",
+            *vcs_mounts,
             "-w",
             "/work",
         ]
@@ -284,6 +353,9 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             if key in mounts:
                 continue
             args += ["-e", f"{key}={value}"]
+        # Records WHICH model route this box was built for, so a later turn can
+        # tell a still-correct container from one the backend has outgrown.
+        args += ["--label", f"{_ENV_LABEL}={_env_stamp(env)}"]
         args += [self._image, "sleep", "infinity"]
         rc, _, err = await _docker(*args)
         if rc != 0:
@@ -351,19 +423,61 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             await asyncio.sleep(_READY_POLL_S)
         return False
 
+    async def _control(self, name: str) -> TmuxControlClient:
+        """The container's control-mode client, created once and reused.
+
+        One long-lived connection instead of a `docker exec` per keystroke
+        batch: every command comes back as %end or %error, so a failed
+        injection is distinguishable from a successful one."""
+        client = self._controls.get(name)
+        if client is not None and client.alive:
+            return client
+        if client is not None:
+            await client.close()
+        client = TmuxControlClient(
+            None, _SESSION, spawn_prefix=["docker", "exec", "-i", name]
+        )
+        await client.start()
+        self._controls[name] = client
+        return client
+
+    async def drop_control(self, name: str) -> None:
+        """Forget a container's control connection (its container is going away)."""
+        client = self._controls.pop(name, None)
+        if client is not None:
+            await client.close()
+
     async def _send_prompt(self, name: str, prompt: str) -> None:
         """Inject the prompt as one atomic paste, then a SEPARATE Enter (spike:
-        bracketed paste + independent Enter, so the prompt isn't split). Wrapped
-        so a docker-exec OS failure surfaces as a clean error result (review
-        finding — the old code had the send inside the same setup wrap)."""
+        bracketed paste + independent Enter, so the prompt isn't split).
+
+        Every step's result is checked. tmux accepts a send into a pane whose
+        process has exited and reports SUCCESS — measured in
+        tests/unit/test_tmux_control.py — so a live pane is confirmed BEFORE
+        pasting rather than inferred from the send not failing. That inference
+        is what let a dead session swallow a turn silently until the 900s
+        ceiling (dev, 2026-08-08)."""
         try:
-            await _docker(
+            control = await self._control(name)
+            if await control.pane_dead():
+                raise ScreenSetupError(
+                    "tmux 会话的窗格已经死掉（里面的 claude 不在了），本轮未发送"
+                )
+            # load-buffer reads the prompt on stdin, so it stays a docker exec;
+            # everything with a meaningful failure mode goes over the socket.
+            rc, _, err = await _docker(
                 "exec", "-i", name, "tmux", "load-buffer", "-", stdin=prompt.encode()
             )
-            await _docker(
-                "exec", name, "tmux", "paste-buffer", "-t", _SESSION, "-d", "-p"
-            )
-            await _docker("exec", name, "tmux", "send-keys", "-t", _SESSION, "Enter")
+            if rc != 0:
+                raise ScreenSetupError(f"tmux load-buffer 失败：{err.strip()}")
+            paste = await control.send("paste-buffer", "-t", _SESSION, "-d", "-p")
+            if not paste.ok:
+                raise ScreenSetupError(f"tmux 粘贴失败：{paste.error}")
+            enter = await control.send("send-keys", "-t", _SESSION, "Enter")
+            if not enter.ok:
+                raise ScreenSetupError(f"tmux 回车失败：{enter.error}")
+        except ScreenSetupError:
+            raise
         except Exception as exc:  # noqa: BLE001 — a failed send ends the turn
             raise ScreenSetupError(f"tmux 后端启动失败：{exc}") from exc
 

@@ -25,7 +25,7 @@ logger = logging.getLogger("cheesex.scheduler")
 # long-lived sandbox container(s) removed. The worktree + ~/.claude session live
 # on host volumes, so the next turn simply recreates the box — nothing is lost.
 # Covers topics that are never 采纳'd (the accept path already reaps its own).
-IDLE_REAP_DAYS = 3
+IDLE_REAP_HOURS = 8
 
 
 class SchedulerService:
@@ -52,14 +52,20 @@ class SchedulerService:
 
         return {"projects_inspected": inspected, "errors": errors}
 
-    async def reap_idle_containers(self, idle_days: int = IDLE_REAP_DAYS) -> int:
+    async def reap_idle_containers(self, idle_hours: float = IDLE_REAP_HOURS) -> int:
         """Remove sandbox containers whose topic has had NO block activity for
-        ``idle_days`` (or whose topic no longer exists). Safe by construction: an
-        active turn has just-persisted blocks, so its topic can never look idle."""
+        ``idle_hours`` (or whose topic no longer exists). Safe by construction:
+        an active turn has just-persisted blocks, so its topic can never look
+        idle.
+
+        Reaping is not destructive to the conversation. The transcript lives in
+        the topic's ``~/.claude`` mount on the HOST, so the next turn recreates
+        the box and resumes from it — the container is the body, not the
+        continuity."""
         names = ws.list_sandbox_containers()
         if not names:
             return 0
-        cutoff = datetime.now(UTC) - timedelta(days=idle_days)
+        cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
         reaped = 0
         async with self._sessions() as session:
             ids = (await session.execute(select(Topic.id))).scalars().all()
@@ -120,20 +126,20 @@ class SandboxReaperRunner:
         self,
         scheduler: SchedulerService,
         interval_seconds: int,
-        idle_days: int = IDLE_REAP_DAYS,
+        idle_hours: float = IDLE_REAP_HOURS,
     ):
         self._scheduler = scheduler
         self._interval = interval_seconds
-        self._idle_days = idle_days
+        self._idle_hours = idle_hours
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
         if self._interval > 0 and self._task is None:
             self._task = asyncio.create_task(self._loop())
             logger.info(
-                "sandbox reaper started (every %ss, idle>%sd)",
+                "sandbox reaper started (every %ss, idle>%sh)",
                 self._interval,
-                self._idle_days,
+                self._idle_hours,
             )
 
     async def stop(self) -> None:
@@ -147,7 +153,7 @@ class SandboxReaperRunner:
         while True:
             await asyncio.sleep(self._interval)
             try:
-                reaped = await self._scheduler.reap_idle_containers(self._idle_days)
+                reaped = await self._scheduler.reap_idle_containers(self._idle_hours)
                 if reaped:
                     logger.info("idle reap: removed %d container(s)", reaped)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive

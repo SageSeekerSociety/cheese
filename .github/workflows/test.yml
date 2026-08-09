@@ -140,6 +140,20 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
         run: uv run alembic upgrade head
 
+      # The sandbox test runs `docker run python:3.12-slim`. On the self-hosted
+      # runner that image is nobody's dependency between test runs, so the
+      # deploy's `docker image prune -af` reclaims it — and the box cannot reach
+      # Docker Hub to re-pull (auth.docker.io closes the connection), leaving
+      # `docker run` to fail with exit 125 and the suite red for a reason that
+      # has nothing to do with the change under test. Ensure it from the mirror
+      # the box CAN reach, and keep the plain tag the code asks for.
+      - name: Ensure the sandbox test base image
+        run: |
+          if ! docker image inspect python:3.12-slim >/dev/null 2>&1; then
+            docker pull mirror.gcr.io/library/python:3.12-slim
+            docker tag mirror.gcr.io/library/python:3.12-slim python:3.12-slim
+          fi
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test

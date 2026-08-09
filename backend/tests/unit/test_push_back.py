@@ -4,6 +4,8 @@ side branch and SAYS so; local-path upstreams keep the branch + trusted hook; no
 upstream = clean skip. Landing must never require cheese-specific setup in the
 target repo."""
 
+import asyncio
+import subprocess
 import uuid
 
 import pytest
@@ -99,3 +101,79 @@ def test_no_upstream_skips(monkeypatch, repo_stub):
     out = ws.push_back(uuid.uuid4(), uuid.uuid4())
     assert out["pushed"] is False
     assert not repo_stub  # nothing pushed
+
+
+@pytest.mark.anyio
+async def test_local_upstream_hook_schedules_a_result_watcher(
+    monkeypatch, tmp_path, repo_stub
+):
+    """A local-path upstream's hook is launched detached (never awaited by
+    push_back itself), but its eventual result must still get watched — that
+    watcher is what reports the deploy outcome back to the topic."""
+    upstream = tmp_path / "upstream"
+    (upstream / "scripts").mkdir(parents=True)
+    hook = upstream / "scripts" / "on-dogfood-push.sh"
+    hook.write_text("#!/bin/sh\n")
+    hook.chmod(0o755)
+    (upstream / "tmp_dogfood_push.log").write_text("stale prior run\n")
+
+    monkeypatch.setattr(ws, "get_upstream", lambda pid: str(upstream))
+
+    popen_calls: list[dict] = []
+
+    class FakeProc:
+        pid = 4242
+
+    def fake_popen(args, **kw):
+        popen_calls.append({"args": args, "cwd": kw.get("cwd")})
+        return FakeProc()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    scheduled: list[tuple] = []
+
+    async def fake_watch(topic_id, proc, log, offset, branch):
+        scheduled.append((topic_id, proc, log, offset, branch))
+
+    monkeypatch.setattr(ws, "watch_dogfood_push", fake_watch)
+
+    tid = uuid.uuid4()
+    out = ws.push_back(uuid.uuid4(), tid)
+    branch = f"dogfood/{tid.hex[:8]}"
+
+    assert out == {"pushed": True, "mode": "branch", "branch": branch, "hook": True}
+    assert popen_calls == [{"args": [str(hook), branch], "cwd": str(upstream)}]
+
+    # create_task only schedules the coroutine; give the loop one tick to run it.
+    await asyncio.sleep(0)
+    assert len(scheduled) == 1
+    watched_topic_id, watched_proc, watched_log, watched_offset, watched_branch = (
+        scheduled[0]
+    )
+    assert watched_topic_id == tid
+    assert isinstance(watched_proc, FakeProc)
+    assert watched_log == upstream / "tmp_dogfood_push.log"
+    assert watched_offset == len("stale prior run\n")  # skips the pre-existing log
+    assert watched_branch == branch
+
+
+@pytest.mark.anyio
+async def test_local_upstream_without_hook_starts_no_watcher(
+    monkeypatch, tmp_path, repo_stub
+):
+    upstream = tmp_path / "upstream"  # no scripts/on-dogfood-push.sh here
+    upstream.mkdir()
+    monkeypatch.setattr(ws, "get_upstream", lambda pid: str(upstream))
+
+    scheduled: list[tuple] = []
+
+    async def fake_watch(*args):
+        scheduled.append(args)
+
+    monkeypatch.setattr(ws, "watch_dogfood_push", fake_watch)
+
+    out = ws.push_back(uuid.uuid4(), uuid.uuid4())
+
+    assert out["hook"] is False
+    await asyncio.sleep(0)
+    assert scheduled == []

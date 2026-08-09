@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Unified Docker deploy for the bare-metal-turned-container boxes (dev / prod RUC).
 #
-# Pulls the per-commit images, migrates, and brings the app tier up — the Docker
-# equivalent of deploy-blue-green.sh, minus the on-box source build (images are
-# prebuilt by build.yml). The DB/Redis are EXTERNAL (this script never touches
-# them); uploads live on a host path outside the containers. Rollback = redeploy
-# the previously-running sha (captured below) and `up -d`.
+# Selects the per-commit images, migrates, and brings the app tier up — the
+# Docker equivalent of deploy-blue-green.sh. Registry images remain the default;
+# an operator may instead use images built locally on the box. The DB/Redis are
+# EXTERNAL (this script never touches them); uploads live on a host path outside
+# the containers. Rollback restores the exact image references captured below.
 #
 # Usage: deploy-docker.sh <image-sha> [compose-file]
 #   image-sha:    the commit sha to deploy (pins backend+frontend together)
@@ -15,6 +15,8 @@
 #   BACKEND_ENV_FILE   path to the box's backend/.env   (default in compose)
 #   UPLOADS_HOST_PATH  host dir holding uploads          (default in compose)
 #   PROJECT            compose project name              (default cheese)
+#   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
+#                      BACKEND_IMAGE and FRONTEND_IMAGE must name existing images.
 set -euo pipefail
 
 # Box-local deploy overrides (chmod-600, NOT in git — same pattern as ~/ops/r2.env):
@@ -30,6 +32,7 @@ COMPOSE="${2:-$HERE/compose/docker-compose.base.yml}"
 PROJECT="${PROJECT:-cheese}"
 HEALTH_ATTEMPTS="${DEPLOY_HEALTH_ATTEMPTS:-15}"
 HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-3}"
+APP_IMAGE_SOURCE="${DEPLOY_APP_IMAGE_SOURCE:-registry}"
 export IMAGE_TAG="$SHA"
 export SANDBOX_IMAGE="${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:$SHA}"
 export TMUX_SANDBOX_IMAGE="${TMUX_SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox-tmux:$SHA}"
@@ -77,17 +80,53 @@ for _f in $COMPOSE_OVERLAYS; do
   log "overlay: $_f"
 done
 
-# Capture the currently-running sha so we can roll back to it on failure.
-PREV_SHA="$(dc ps -q backend 2>/dev/null | xargs -r docker inspect \
-  --format '{{ index .Config.Labels "com.cheese.image_tag" }}' 2>/dev/null || true)"
+# Capture the exact currently-running images so rollback also works when an
+# environment overrides BACKEND_IMAGE / FRONTEND_IMAGE instead of using IMAGE_TAG.
+service_container() {
+  dc ps -q "$1" 2>/dev/null | head -n 1 || true
+}
+service_image() {
+  local container="$1"
+  [ -n "$container" ] || return 0
+  docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null || true
+}
+
+PREV_BACKEND_CONTAINER="$(service_container backend)"
+PREV_FRONTEND_CONTAINER="$(service_container frontend)"
+PREV_BACKEND_IMAGE="$(service_image "$PREV_BACKEND_CONTAINER")"
+PREV_FRONTEND_IMAGE="$(service_image "$PREV_FRONTEND_CONTAINER")"
+PREV_SHA=""
+if [ -n "$PREV_BACKEND_CONTAINER" ]; then
+  PREV_SHA="$(docker inspect \
+    --format '{{ index .Config.Labels "com.cheese.image_tag" }}' \
+    "$PREV_BACKEND_CONTAINER" 2>/dev/null || true)"
+fi
 if [ -z "$PREV_SHA" ]; then
   # Fall back to reading the image tag actually in use.
   PREV_SHA="$(dc images backend 2>/dev/null | awk 'NR==2{print $3}' || true)"
 fi
 log "deploying sha=$SHA (previous=${PREV_SHA:-none}) via $COMPOSE"
 
-log "pulling images…"
-dc pull backend frontend || fail "image pull failed"
+case "$APP_IMAGE_SOURCE" in
+  registry)
+    log "pulling app images…"
+    dc pull backend frontend || fail "image pull failed"
+    ;;
+  local)
+    [ -n "${BACKEND_IMAGE:-}" ] || \
+      fail "BACKEND_IMAGE is required when DEPLOY_APP_IMAGE_SOURCE=local"
+    [ -n "${FRONTEND_IMAGE:-}" ] || \
+      fail "FRONTEND_IMAGE is required when DEPLOY_APP_IMAGE_SOURCE=local"
+    log "verifying locally built app images…"
+    docker image inspect "$BACKEND_IMAGE" >/dev/null 2>&1 || \
+      fail "local backend image not found: $BACKEND_IMAGE"
+    docker image inspect "$FRONTEND_IMAGE" >/dev/null 2>&1 || \
+      fail "local frontend image not found: $FRONTEND_IMAGE"
+    ;;
+  *)
+    fail "DEPLOY_APP_IMAGE_SOURCE must be registry or local (got: $APP_IMAGE_SOURCE)"
+    ;;
+esac
 
 # Runtime images are launched on demand through docker.sock, so compose cannot
 # pull or retain them for us. Pull both execution paths and run the same minimum
@@ -144,8 +183,15 @@ if [ "$code" != ok ]; then
   log "HEALTH CHECK FAILED"
   printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" || true
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
-    log "rolling back to $PREV_SHA…"
-    IMAGE_TAG="$PREV_SHA" dc up -d backend frontend || true
+    log "rolling back to ${PREV_SHA}…"
+    if [ -n "$PREV_BACKEND_IMAGE" ] && [ -n "$PREV_FRONTEND_IMAGE" ]; then
+      BACKEND_IMAGE="$PREV_BACKEND_IMAGE" \
+        FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE" \
+        IMAGE_TAG="$PREV_SHA" \
+        dc up -d backend frontend || true
+    else
+      IMAGE_TAG="$PREV_SHA" dc up -d backend frontend || true
+    fi
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
 fi

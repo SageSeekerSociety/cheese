@@ -13,12 +13,13 @@ never hold a transaction open across the model round-trip.
 import asyncio
 import logging
 import re
+import shutil
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
@@ -45,14 +46,18 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.memory.store import memory_store
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.repositories import AcceptCardRepository
+from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.workspace import service as ws
@@ -245,15 +250,26 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 
 
 def _resolve_compute_id(
-    project_settings: dict | None, topic_compute_profile: str | None = None
+    project_settings: dict | None,
+    topic_compute_profile: str | None = None,
+    team_compute_profile: str | None = None,
 ) -> str | None:
     """The compute pool a turn runs on (execution-architecture v4 会话级选择): the
-    topic's own selection wins, else the project's sticky default, else None (the
-    ComputePool default). An id that isn't deployed here is ignored by
-    ``ComputePool.select`` and degrades to the default — never breaks a turn."""
+    topic's own selection wins, else the project's sticky memory, then the team's
+    default, else None (the ComputePool default). An id that isn't deployed here
+    is ignored by ``ComputePool.select`` and degrades to the default — never breaks
+    a turn."""
     if topic_compute_profile:
         return topic_compute_profile
-    return (project_settings or {}).get("compute_profile")
+    return (project_settings or {}).get("compute_profile") or team_compute_profile
+
+
+async def _team_compute_profile(session: AsyncSession, project) -> str | None:
+    """Load the owning team's default without making Project own the setting."""
+    if project is None or project.team_id is None:
+        return None
+    team = await TeamRepository(session).get_by_id(project.team_id)
+    return team.compute_profile if team is not None else None
 
 
 def _transient_provider_error(result: AgentResult) -> bool:
@@ -299,6 +315,74 @@ def _chipify_paths(fact: str) -> str:
     return _BARE_PATH_RE.sub(r"<&\1>", fact)
 
 
+# Open (non-final) accept-card statuses, worth telling the agent about at turn
+# start — a card in one of these states usually implies "there is follow-up
+# work or a wait the agent should know it's in".
+_OPEN_CARD_STATUSES = (
+    AcceptStatus.pending,
+    AcceptStatus.pending_gate,
+    AcceptStatus.gate_failed,
+    AcceptStatus.conflict,
+)
+
+_OPEN_CARD_HINTS = {
+    AcceptStatus.pending: "闸门已过，等 {reviewer} 采纳",
+    AcceptStatus.pending_gate: "闸门检查进行中",
+    AcceptStatus.gate_failed: (
+        "闸门检查未过——用 `cheese status` 看失败输出，修复后重新递卡"
+    ),
+    AcceptStatus.conflict: "采纳时发现合并冲突，待处理",
+}
+
+
+def _workspace_disk(root: str) -> tuple[int, int] | None:
+    """(free, total) bytes of the workspace filesystem; None when the root
+    doesn't exist (fresh deploy, unit tests without a workspace)."""
+    try:
+        du = shutil.disk_usage(root)
+    except OSError:
+        return None
+    return du.free, du.total
+
+
+def _turn_meta_lines(
+    *,
+    budget_s: float,
+    is_resume: bool,
+    disk: tuple[int, int] | None,
+    open_cards: list[AcceptCard] | None,
+) -> list[str]:
+    """盲飞防护: the run facts an agent has no other way to see — its own time
+    budget, whether it's a continuation, disk headroom, and where this topic's
+    accept cards stand. Plain bullet lines so the prompt stays small."""
+    minutes = max(1, int(budget_s // 60))
+    lines = [
+        f"- 时间预算：本轮最多约 {minutes} 分钟，到点会被平台中断（之后自动续跑一次）。"
+        "长活边做边落盘/提交，别把成果都压在最后一步。"
+    ]
+    if is_resume:
+        lines.append(
+            "- 本轮是自动续跑：上一轮被中断后接着跑。"
+            "先确认上一轮做到哪了再继续，别重做。"
+        )
+    if disk is not None:
+        free_b, total_b = disk
+        if total_b > 0:
+            used_pct = round((total_b - free_b) * 100 / total_b)
+            line = f"- 工作区磁盘：可用 {free_b / 2**30:.1f}G（已用 {used_pct}%）。"
+            if used_pct >= 90:
+                line += "空间紧张——先清理自己产生的临时文件再写大文件。"
+            lines.append(line)
+    for card in open_cards or []:
+        hint = _OPEN_CARD_HINTS.get(card.status)
+        if hint:
+            lines.append(
+                "- 本话题验收卡：" + hint.format(reviewer=f"@{card.reviewer_handle}")
+            )
+    lines.append("- 要看完整平台状态（验收卡/闸门输出/额度），运行 `cheese status`。")
+    return lines
+
+
 def _build_system_prompt(
     base: str,
     skills: str,
@@ -308,6 +392,7 @@ def _build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
+    turn_meta: list[str] | None = None,
 ) -> str:
     parts = [base]
     if untitled:
@@ -350,6 +435,10 @@ def _build_system_prompt(
     if memories:
         facts = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
         parts.append(f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}")
+    if turn_meta:
+        parts.append(
+            "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
+        )
     return "\n\n".join(parts)
 
 
@@ -436,6 +525,27 @@ def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
 
 
+# How a platform-initiated turn announces itself. A resume nudge, a 分身's
+# kickoff and a returned conclusion are NOT anyone speaking, and until now they
+# reached 芝士 as bare text indistinguishable from a person's message. Claude
+# Code frames its own non-user input the same way ("The user sent a new message
+# while you were working:" for a human, a peer marker for another session); this
+# is the platform's equivalent for the one channel it owns.
+PLATFORM_NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话："
+
+
+def platform_prompt(content: str) -> str:
+    return f"{PLATFORM_NOTICE}\n{content}"
+
+
+def _strip_platform_notice(text: str) -> str:
+    """Neutralize the platform marker inside HUMAN text, so a person cannot type
+    a message that reads as a platform instruction. The marker is the one thing
+    in the prompt that claims institutional authority, so it has to be
+    unforgeable from the content side."""
+    return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
+
+
 def _prompt_line(b) -> str:
     """One speaker-labelled prompt line per pending human block. An attachment
     block is a worktree image — embedded NATIVELY in this turn's user message
@@ -446,7 +556,7 @@ def _prompt_line(b) -> str:
             f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
             f"它同时存在你工作目录的 {b.content}）"
         )
-    return f"[{b.author}]: {b.content}"
+    return f"[{b.author}]: {_strip_platform_notice(b.content)}"
 
 
 # What an exhausted relay balance looks like coming back from newapi. It arrives
@@ -484,6 +594,9 @@ class ChatService:
     ):
         self._sessions = session_factory
         self._base_prompt = base_system_prompt
+        # For the turn-meta disk line only; sandbox mounting still goes through
+        # the compute pool below.
+        self._workspace_root = workspace_root
         # Compute side of the two-pool model: a provider owns sandbox creation +
         # turn execution + workspace checkpointing (design §3/v3, review R2). The
         # turn path talks to the pool, never to a sandbox dict. Defaults to a local
@@ -575,7 +688,7 @@ class ChatService:
             # on the summoning message the moment its turn is underway — a
             # deterministic ack. Only a real human summon gets it: a resume /
             # nudge / kickoff turn has no user block and skips this branch.
-            ack = await self._ack_summon(user_block_id)
+            ack = await self._ack_summon(user_block_id, topic_id)
             if ack is not None:
                 yield {"type": "reaction", **ack}
 
@@ -766,20 +879,56 @@ class ChatService:
             await session.commit()
         return payloads, anchor_id
 
-    async def _ack_summon(self, user_block_id: uuid.UUID) -> dict | None:
+    async def _ack_summon(
+        self, user_block_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> dict | None:
         """Add 芝士's ✅ receipt to the summoning user message (idempotent) and
         return the WS reaction payload. Best-effort: a failed receipt must
         never kill the turn."""
         try:
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
-                await blocks.add_reaction_if_absent(user_block_id, "✅", CHEESE_AUTHOR)
+                await blocks.add_reaction_if_absent(
+                    user_block_id, "✅", await self._agent_handle(session, topic_id)
+                )
                 reactions = await blocks.reactions_for_block(user_block_id)
                 await session.commit()
             return {"block_id": str(user_block_id), "reactions": reactions}
         except Exception:  # noqa: BLE001 — the turn matters more than the ack
             logger.exception("failed to ✅-ack block %s", user_block_id)
             return None
+
+    async def _recall_agent_memories(
+        self,
+        memory,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        agent_handle: str,
+    ) -> list[str]:
+        """What this 芝士 remembers inside this project.
+
+        Reads its own per-agent scope first, then the legacy shared ``project``
+        pool. Writes only ever go to the per-agent scope, so the pool is a
+        read-only tail of what was learned before memory was split per agent —
+        rooms that accumulated it keep it, and nothing new lands there.
+        """
+        own = await memory.recall(
+            MemoryScope.agent_project,
+            agent_project_scope_id(project_id, agent_handle),
+        )
+        shared = await memory.recall(MemoryScope.project, str(project_id))
+        return [*own, *shared]
+
+    async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
+        """The handle 芝士 authors under in this topic.
+
+        Resolved from the roster's execution bindings rather than the fixed
+        ``cheese`` string, so a room hosting more than one agent attributes each
+        message to the one that wrote it. Falls back to ``cheese`` for rooms
+        seeded before agent-as-user, which is what the old constant meant.
+        """
+        return await TopicMemberService(session).resolve_agent_handle(topic_id)
 
     async def _persist_assistant_message(
         self,
@@ -808,10 +957,11 @@ class ChatService:
             meta = {**(meta or {}), "backfilled": True}
         async with self._sessions() as session:
             blocks = BlockRepository(session)
+            author = await self._agent_handle(session, topic_id)
             block = await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
-                author=CHEESE_AUTHOR,
+                author=author,
                 author_type=AuthorType.ai,
                 content=text,
                 kind=BlockKind.message,
@@ -825,7 +975,7 @@ class ChatService:
             # Hallucinated handles get flagged in 现场, never silently no-op.
             if topic is not None:
                 resolved, unresolved = await self._notify_mentions(
-                    session, topic, CHEESE_AUTHOR, text, roster
+                    session, topic, author, text, roster
                 )
                 refs = [f"user:{h}" for h in resolved] + _topic_refs(text)
                 if refs:
@@ -834,7 +984,7 @@ class ChatService:
                     await blocks.add(
                         project_id=project_id,
                         topic_id=topic_id,
-                        author=CHEESE_AUTHOR,
+                        author=author,
                         author_type=AuthorType.ai,
                         content=f"⚠️ @了 <@{bad}>，但项目里没有这个成员，没能通知到",
                         kind=BlockKind.event,
@@ -872,7 +1022,7 @@ class ChatService:
             block = await BlockRepository(session).add(
                 project_id=project_id,
                 topic_id=topic_id,
-                author=CHEESE_AUTHOR,
+                author=await self._agent_handle(session, topic_id),
                 author_type=AuthorType.ai,
                 content=_format_tool_event(name, tool_input),
                 kind=BlockKind.event,
@@ -1018,6 +1168,14 @@ class ChatService:
     _GW_KEY = "llm_gateway_key"
     _GW_CKPT = "llm_gateway_usage_ckpt"
     _GW_BUDGET = "llm_gateway_budget_usd"
+
+    async def project_gateway_key(self, project_id: uuid.UUID) -> str | None:
+        """The project's virtual gateway key, minted on first use — the same one
+        a local sandbox turn runs on. Public because the remote-machine LLM proxy
+        (routes/llm_proxy.py) has to swap it in per request: a machine off the box
+        never receives a provider credential, only its own scoped cheese token."""
+        env = await self._gateway_project_env(project_id)
+        return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
 
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn: mint (once) and return the
@@ -1194,11 +1352,19 @@ class ChatService:
             # Expand @all/@here to the topic's members. @here should be the
             # ACTIVE members, but there's no presence signal yet, so it equals
             # @all for now (TODO: intersect with presence once it lands).
+            #
+            # A broadcast reaches the room's humans only: every 芝士 in the room
+            # already reads the timeline, so notifying them adds nothing. An
+            # explicit <@handle> is different and is NOT filtered here — that is
+            # how one agent addresses another, which a room hosting several 芝士
+            # depends on.
             members = await TopicMembershipRepository(session).list_for_topic(topic.id)
-            concrete += [m.member_handle for m in members]
-        targets = [
-            h for h in dict.fromkeys(concrete) if h not in (author, CHEESE_AUTHOR)
-        ]
+            agents = set(await TopicMemberService(session).agent_handles(topic.id))
+            concrete += [
+                m.member_handle for m in members if m.member_handle not in agents
+            ]
+        # Nobody needs a notification for their own message.
+        targets = [h for h in dict.fromkeys(concrete) if h != author]
         if targets:
             notifs = NotificationService(session)
             preview = markdown_preview(text, 200)
@@ -1258,7 +1424,12 @@ class ChatService:
                 if b.kind in (BlockKind.message, BlockKind.attachment)
                 and b.author_type == AuthorType.human
             ]
-            prompt_text = "\n".join(_prompt_line(b) for b in pending) or content
+            # No pending human block ⇒ nobody spoke: this is a resume nudge,
+            # a kickoff or a returned conclusion. Say so, rather than handing
+            # 芝士 bare text that looks like a person's message.
+            prompt_text = "\n".join(
+                _prompt_line(b) for b in pending
+            ) or platform_prompt(content)
             # 图片输入: every pending image rides this turn's user message as a
             # NATIVE base64 image block (Claude Code native image input) — the
             # provider side that has the file does the embedding.
@@ -1270,13 +1441,17 @@ class ChatService:
 
             is_private = topic.is_private
             private_owner = topic.private_owner
+            acting_agent = await self._agent_handle(session, topic.id)
             if is_private and private_owner:
                 # Private chat: the owner's cross-project personal memory.
                 memories = await memory.recall(MemoryScope.user, private_owner)
                 doc_text = None
             else:
-                memories = await memory.recall(
-                    MemoryScope.project, str(topic.project_id)
+                memories = await self._recall_agent_memories(
+                    memory,
+                    session,
+                    project_id=topic.project_id,
+                    agent_handle=acting_agent,
                 )
                 doc_root = await blocks.doc_root(topic.id)
                 doc_text = doc_root.content if doc_root else None
@@ -1300,10 +1475,31 @@ class ChatService:
             project_id = topic.project_id
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
-            # Which compute this topic runs on (v4): topic选择 → project sticky.
+            # 盲飞防护: this topic's open accept cards, surfaced in the prompt's
+            # turn-meta header so the agent knows a gate/adoption is pending
+            # without polling.
+            open_cards = []
+            if not is_private:
+                open_cards = [
+                    c
+                    for c in await AcceptCardRepository(session).list_for_topic(
+                        topic_id
+                    )
+                    if c.status in _OPEN_CARD_STATUSES
+                ]
+            # Which compute this topic runs on (v4): topic → project sticky → team.
             compute_id = _resolve_compute_id(
-                project.settings if project else None, topic.compute_profile
+                project.settings if project else None,
+                topic.compute_profile,
+                await _team_compute_profile(session, project),
             )
+            provider = self._compute.select(provider_id=compute_id)
+            if topic.compute_profile is None:
+                # v4 affinity red line: materialize the effective target BEFORE
+                # the first provider call. A later team-default/sticky change must
+                # never move an existing work tree or resumable Claude session.
+                topic.compute_profile = provider.name
+                await session.commit()
 
         # --- streaming: no DB transaction held open ---
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
@@ -1316,6 +1512,12 @@ class ChatService:
             roster,
             topic_refs,
             untitled,
+            turn_meta=_turn_meta_lines(
+                budget_s=settings.agent_turn_timeout_s,
+                is_resume=is_resume,
+                disk=_workspace_disk(self._workspace_root),
+                open_cards=open_cards,
+            ),
         )
         final_text = ""
         new_session_id = resume_session_id
@@ -1328,7 +1530,6 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        provider = self._compute.select(provider_id=compute_id)
         model_kwargs, gateway_routed = await self._model_kwargs(project_id)
 
         # Backfill any 现场 events the live hook path missed (backend down / no
@@ -1646,11 +1847,12 @@ class ChatService:
             # Persistent, clickable action cards for the cheese actions this turn
             # (system events show in the conversation; refs tag the resource).
             action_payloads = []
+            acting_agent = await self._agent_handle(session, topic_id)
             for resource in actions:
                 blk = await blocks.add(
                     project_id=project_id,
                     topic_id=topic_id,
-                    author=CHEESE_AUTHOR,
+                    author=acting_agent,
                     author_type=AuthorType.system,
                     content=f"芝士 {_ACTION_LABEL[resource]}",
                     kind=BlockKind.event,
@@ -1718,6 +1920,7 @@ class ChatService:
                 project_id=project_id,
                 is_private=is_private,
                 private_owner=private_owner,
+                agent_handle=acting_agent,
                 user_text=prompt_text,
                 assistant_text=final_text,
             )
@@ -1735,6 +1938,7 @@ class ChatService:
         project_id: uuid.UUID,
         is_private: bool,
         private_owner: str | None,
+        agent_handle: str,
         user_text: str,
         assistant_text: str,
     ) -> None:
@@ -1752,7 +1956,13 @@ class ChatService:
         if is_private and private_owner:
             scope, scope_id = MemoryScope.user, private_owner
         else:
-            scope, scope_id = MemoryScope.project, str(project_id)
+            # What 芝士 learns in a project is its own, the way a teammate's is.
+            # Never the shared pool: two agents in one project would dilute each
+            # other's memory, which is the case this split exists for.
+            scope, scope_id = (
+                MemoryScope.agent_project,
+                agent_project_scope_id(project_id, agent_handle),
+            )
 
         async def _run() -> None:
             from app.domain.memory.openviking_store import OpenVikingMemoryStore
@@ -1817,9 +2027,17 @@ class ChatService:
                 content=text,
                 kind=BlockKind.event,
             )
-            memories = await memory.recall(MemoryScope.project, str(project_id))
+            memories = await self._recall_agent_memories(
+                memory,
+                session,
+                project_id=project_id,
+                agent_handle=await self._agent_handle(session, topic.id),
+            )
             topic_id = topic.id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
             await session.commit()
 
         # --- run 芝士 with the activity-digestion skill + tools ---
@@ -1857,7 +2075,7 @@ class ChatService:
             await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
-                author=CHEESE_AUTHOR,
+                author=await self._agent_handle(session, topic_id),
                 author_type=AuthorType.ai,
                 content=final_text,
                 kind=BlockKind.message,
@@ -1903,7 +2121,10 @@ class ChatService:
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
             root_topic_id = project.root_topic_id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}] ({t.kind.value})"
@@ -1962,7 +2183,7 @@ class ChatService:
             await BlockRepository(session).add(
                 project_id=project_id,
                 topic_id=root_topic_id,
-                author=CHEESE_AUTHOR,
+                author=await self._agent_handle(session, root_topic_id),
                 author_type=AuthorType.ai,
                 content=f"【巡检决策日志】\n{final_text}",
                 kind=BlockKind.event,
@@ -1986,9 +2207,15 @@ class ChatService:
                 raise NotFoundError("Project not found")
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
+            # Deliberately the shared pool, not any one agent's memory: a project
+            # summary describes the project, and what a 芝士 learned for itself is
+            # not project knowledge.
             memories = await memory.recall(MemoryScope.project, str(project_id))
             role = await resolve_role_description(session, project.expert_role)
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}]"

@@ -611,6 +611,11 @@ const visible = computed<Block[]>(() => {
     if (m.kind === 'message' || m.kind === 'attachment') {
       out.push(m)
     } else if (m.kind === 'event' && m.author_type === 'system') {
+      // 前端报错 events belong to the 现场 drawer (debugging surface), not the
+      // group chat — same rule as tool events (frontend_log.py).
+      if ((m.meta as Record<string, unknown> | null)?.event_type === 'frontend_error') {
+        continue
+      }
       // Collapse a run of identical system lines (e.g. repeated 编辑了文档) so
       // a burst of edits shows as one line, not a wall.
       const prev = out[out.length - 1]
@@ -809,15 +814,21 @@ function onComposerKey(e: KeyboardEvent) {
   sendDraft()
 }
 
+// Keyed on the topic's id, NOT the object reference: the parent replaces
+// `topics.value` wholesale on every refreshTopics() (e.g. after each agent
+// turn), which mints a brand-new object for the SAME topic. Watching the
+// object itself made every turn look like a topic switch — full reconnect,
+// history reload, composer disabled mid-reconnect (which blurs it). Only a
+// real id change is a real switch.
 watch(
-  () => props.topic,
-  (t, oldT) => {
+  () => props.topic?.id,
+  (id, oldId) => {
     // Save where we were in the topic we're leaving, so coming back restores it.
-    if (oldT && scrollRef.value) {
+    if (oldId && scrollRef.value) {
       const el = scrollRef.value
-      scrollMemory.set(oldT.id, { top: el.scrollTop, atBottom: isAtBottom(el) })
+      scrollMemory.set(oldId, { top: el.scrollTop, atBottom: isAtBottom(el) })
     }
-    if (t) loadTopic(t)
+    if (props.topic) loadTopic(props.topic)
     else {
       messages.value = []
       closeSocket()

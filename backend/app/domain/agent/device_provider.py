@@ -272,7 +272,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # project's virtual key, so the credential stays on the box and spend is
         # attributed without having to trust the machine to report it.
         provider = provider_env.api_key_provider(
-            gateway_base=f"{self._public_base}/api/llm",
+            gateway_base=f"{self._public_base}/llm",
             key=token,
             model=settings.agent_model,
         )

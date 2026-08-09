@@ -27,6 +27,7 @@ from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.membership.repositories import MemberRepository
+from app.domain.memory.models import MemoryScope
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.schemas import (
@@ -38,6 +39,7 @@ from app.domain.project.schemas import (
 from app.domain.project.services import ProjectService
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -184,11 +186,32 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(page(items, len(items)))
 
 
+async def _agent_memory_scope(
+    db: DbSession, project_id: uuid.UUID, topic_raw: str
+) -> tuple[MemoryScope, str] | None:
+    """Resolve ``topic`` into the acting 芝士's own memory scope in this project.
+
+    What an agent learns is its own, the way a teammate's is — a project hosting
+    several 芝士 must not pool one's operational trivia with another's product
+    decisions. Returns ``None`` when no usable topic was supplied, so the caller
+    falls back to the shared project pool.
+    """
+    from app.domain.memory.models import agent_project_scope_id
+
+    try:
+        topic_id = uuid.UUID(topic_raw)
+    except ValueError:
+        return None
+    handle = await TopicMemberService(db).resolve_agent_handle(topic_id)
+    return MemoryScope.agent_project, agent_project_scope_id(project_id, handle)
+
+
 @router.post("/{project_id}/memory")
 async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """记入记忆 — used by the `cheese remember` CLI. Defaults to project memory
-    (spec §8.4); with scope="user"+owner it writes that member's personal memory
-    (private chat, spec §8.4 个人记忆跟着人走)."""
+    """记入记忆 — used by the `cheese remember` CLI. With a ``topic`` it writes
+    the acting 芝士's own memory for this project; with scope="user"+owner it
+    writes that member's personal memory (private chat, spec §8.4 个人记忆跟着
+    人走). Without either it falls back to the shared project pool."""
     from app.domain.memory.models import MemoryScope
     from app.domain.memory.store import memory_store
 
@@ -201,6 +224,10 @@ async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
         await memory_store(db).remember(MemoryScope.user, owner, content)
+        return ok({"remembered": True})
+    agent_scope = await _agent_memory_scope(db, project_id, body.get("topic") or "")
+    if agent_scope is not None:
+        await memory_store(db).remember(*agent_scope, content)
     else:
         await memory_store(db).remember(MemoryScope.project, str(project_id), content)
     return ok({"remembered": True})
@@ -219,14 +246,20 @@ async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dic
     query = (body.get("query") or "").strip()
     if not query:
         raise ValidationError("query 不能为空")
+    store = memory_store(db)
     if (body.get("scope") or "project") == "user":
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        scope, scope_id = MemoryScope.user, owner
-    else:
-        scope, scope_id = MemoryScope.project, str(project_id)
-    hits = await memory_store(db).search(scope, scope_id, query)
+        hits = await store.search(MemoryScope.user, owner, query)
+        return ok({"hits": [h.as_dict() for h in hits]})
+    # The agent's own memory first, then the shared pool — which is a read-only
+    # tail of what was written before memory was split per agent.
+    hits = []
+    agent_scope = await _agent_memory_scope(db, project_id, body.get("topic") or "")
+    if agent_scope is not None:
+        hits.extend(await store.search(*agent_scope, query))
+    hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     return ok({"hits": [h.as_dict() for h in hits]})
 
 

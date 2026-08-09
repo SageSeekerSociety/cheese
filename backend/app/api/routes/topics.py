@@ -1,5 +1,6 @@
 """Topic routes."""
 
+import shutil
 import uuid
 from dataclasses import asdict
 from typing import Annotated
@@ -20,13 +21,20 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
-from app.domain.agent.market import compute_default_name, compute_selectable
+from app.domain.agent.market import (
+    compute_default_name,
+    compute_listings,
+    compute_selectable,
+)
 from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.models import AcceptCard
+from app.domain.review.repositories import AcceptCardRepository
+from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.schemas import (
     ConclusionIn,
@@ -37,7 +45,8 @@ from app.domain.topic.schemas import (
     UpgradeBlockIn,
 )
 from app.domain.topic.services import TopicService
-from app.domain.usage.repositories import UsageRepository
+from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
@@ -113,6 +122,77 @@ async def topic_usage(topic_id: uuid.UUID, db: DbSession) -> dict:
     """资源用量 (spec §9.1): token/cost for this topic."""
     await TopicService(db).get_or_404(topic_id)
     return ok(await UsageRepository(db).for_topic(topic_id))
+
+
+# The agent-facing gate-output slice: enough to read the failure, small enough
+# for a prompt. The full output is already capped at persist time (GATE_TAIL).
+_GATE_OUTPUT_TAIL = 2000
+
+
+def _card_snapshot(card: AcceptCard) -> dict:
+    return {
+        "id": str(card.id),
+        "status": str(card.status),
+        "reviewer": card.reviewer_handle,
+        "decided_by": card.decided_by,
+        "decided_at": card.decided_at.isoformat() if card.decided_at else None,
+        "note": card.note,
+        "gate_passed_at": (
+            card.gate_passed_at.isoformat() if card.gate_passed_at else None
+        ),
+        "gate_output_tail": card.gate_output[-_GATE_OUTPUT_TAIL:],
+        "created_at": card.created_at.isoformat(),
+    }
+
+
+def _disk_snapshot(root: str) -> dict | None:
+    try:
+        du = shutil.disk_usage(root)
+    except OSError:
+        return None
+    used_pct = round((du.total - du.free) * 100 / du.total) if du.total else None
+    return {
+        "free_gb": round(du.free / 2**30, 1),
+        "total_gb": round(du.total / 2**30, 1),
+        "used_pct": used_pct,
+    }
+
+
+@router.get("/{topic_id}/status")
+async def topic_status(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+) -> dict:
+    """盲飞防护: one snapshot of "what is going on" for this topic — accept
+    cards with their gate output, the current/last turn's time budget, and the
+    platform waterlines (disk/queue/credits) — so an agent (via `cheese
+    status`) or a debugging human doesn't have to poll several endpoints and
+    guess. Read path, open like the rest of the MVP read surface."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    cards = await AcceptCardRepository(db).list_for_topic(topic_id)
+    credits = await ComputeGrantRepository(db).summary(topic.project_id)
+    return ok(
+        {
+            "topic": {
+                "id": str(topic.id),
+                "title": topic.title,
+                "status": str(topic.status),
+                "branch": topic.branch_name,
+            },
+            "turn": runner.topic_turn(topic_id),
+            "cards": [_card_snapshot(c) for c in cards],
+            "platform": {
+                "active_turns": runner.active_turns(),
+                "queued_turns": runner.project_queue_depth(topic.project_id),
+                "disk": _disk_snapshot(settings.workspace_root),
+                "credits": {
+                    "unlimited": credits["unlimited"],
+                    "remaining": credits["credits_remaining"],
+                },
+            },
+        }
+    )
 
 
 @router.get("/{topic_id}/children")
@@ -251,23 +331,34 @@ async def edit_topic_doc(
 async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
     """The compute this topic runs on (execution-architecture v4 会话级选择).
 
-    `current` is the effective pool (topic选择 → project sticky → default).
+    `current` is the effective pool
+    (topic choice → project sticky → team default → platform default).
     `locked` is true once the topic has run (session_id set) — the picker freezes
-    then, matching the device-affinity boundary. `sticky` is the project default a
-    new topic would inherit; `profiles` are the pools actually selectable here."""
+    then, matching the device-affinity boundary. `sticky` is the effective starting
+    choice for a new topic (project memory, then team default); `profiles` include
+    unavailable targets so a locked offline device still has a readable label."""
     topic = await TopicService(db).get_or_404(topic_id)
     project = await ProjectRepository(db).get(topic.project_id)
     sticky = (project.settings or {}).get("compute_profile") if project else None
+    team_default = None
+    if project is not None and project.team_id is not None:
+        team = await TeamRepository(db).get_by_id(project.team_id)
+        team_default = team.compute_profile if team is not None else None
     device_online = await project_device_online(db, topic.project_id)
     return ok(
         {
-            "current": topic.compute_profile or sticky or compute_default_name(),
+            "current": (
+                topic.compute_profile
+                or sticky
+                or team_default
+                or compute_default_name()
+            ),
             "locked": topic.session_id is not None,
             "inherited": topic.compute_profile is None,
-            "sticky": sticky or compute_default_name(),
+            "sticky": sticky or team_default or compute_default_name(),
             "profiles": [
                 asdict(v)
-                for v in compute_selectable(settings, device_online=device_online)
+                for v in compute_listings(settings, device_online=device_online)
             ],
         }
     )
@@ -312,7 +403,7 @@ async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     blk = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author="cheese",
+        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
         author_type=AuthorType.ai,
         content=question,
         kind=BlockKind.message,
@@ -395,7 +486,7 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
     block = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author="cheese",
+        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
         author_type=AuthorType.ai,
         content=decision,
         kind=BlockKind.decision,
@@ -590,7 +681,7 @@ async def set_artifact(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     block = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author="cheese",
+        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
         author_type=AuthorType.ai,
         content=path,
         kind=BlockKind.artifact,
