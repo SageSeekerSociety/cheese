@@ -876,6 +876,7 @@ class AcceptService:
         await self._session.flush()
         await self._session.refresh(card)
         return card
+
     async def reject(
         self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
     ) -> AcceptCard:
