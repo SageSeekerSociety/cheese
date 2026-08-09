@@ -71,6 +71,38 @@ jobs:
           fi
           echo "run_heavy=$run_heavy" >> "$GITHUB_OUTPUT"
 
+  # Alembic must always have exactly ONE head. Parallel migrations (采纳 pushes,
+  # upstream syncs) landing side by side fork the chain; `alembic upgrade head`
+  # then refuses, and both the test job and the deploy abort on it — this broke
+  # the dev deploy four times on 2026-08-09/10 alone. Deliberately NOT behind
+  # the scope gate: squash-merge skipping is exactly how the fork slipped past
+  # CI before, so this must run on every push and PR. ~seconds with a warm uv
+  # cache; reads the migration graph only, no database needed.
+  migration-heads:
+    runs-on: [self-hosted, cheese-dev]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Exactly one alembic head
+        run: |
+          uv run alembic heads
+          heads="$(uv run alembic heads | grep -c '(head)')"
+          if [ "$heads" != "1" ]; then
+            echo "::error::alembic has $heads heads — parallel migrations forked the chain. Rechain your new migration onto the current head (or run 'uv run alembic merge heads') before merging."
+            exit 1
+          fi
+
   test:
     needs: scope
     if: needs.scope.outputs.run_heavy == 'true'
