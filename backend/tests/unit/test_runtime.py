@@ -176,6 +176,56 @@ async def test_wedged_turn_times_out_and_is_cancelled():
     await asyncio.wait_for(cancelled.wait(), 1)  # the wedged turn was cancelled
 
 
+# --- turn 活跃度检测 (2026-08-09): `turn_ceiling` reschedules the outer wrap.
+# hooks_substrate's two-layer idle-suspect/hard-ceiling logic is pointless if
+# THIS outer, transport-independent wrap still kills the turn at the generic
+# `agent_turn_timeout_s` regardless of activity — these prove the reschedule
+# actually takes effect, is scoped to only the turn that asks for it, and never
+# leaks as a visible frame to subscribers.
+
+
+@pytest.mark.anyio
+async def test_turn_ceiling_frame_reschedules_the_outer_timeout():
+    """The tmux backend signals its OWN (longer) ceiling via a `turn_ceiling`
+    frame — TurnRunner must reschedule its outer wall-clock wrap to that value."""
+    broker = InProcessBroker()
+    runner = TurnRunner(broker, turn_timeout_s=0.05)  # the generic default
+
+    class _LongTmuxTurn:
+        async def converse(self, **_):
+            yield {"type": "turn_ceiling", "seconds": 10.0}
+            # Longer than the generic 0.05s default, well under the 10s ceiling
+            # this turn actually asked for.
+            await asyncio.sleep(0.15)
+            yield {"type": "done"}
+
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(_LongTmuxTurn(), topic, author="u", content="hi", summon=True)
+        f = await asyncio.wait_for(q.get(), 2)
+    # Never timed out, and the internal control frame never leaked to subscribers.
+    assert f["type"] == "done"
+
+
+@pytest.mark.anyio
+async def test_topic_turn_reports_the_rescheduled_ceiling():
+    broker = InProcessBroker()
+    runner = TurnRunner(broker, turn_timeout_s=0.05)
+
+    class _Turn:
+        async def converse(self, **_):
+            yield {"type": "turn_ceiling", "seconds": 123.0}
+            yield {"type": "done"}
+
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(_Turn(), topic, author="u", content="hi", summon=True)
+        await asyncio.wait_for(q.get(), 2)
+    rec = runner.topic_turn(topic)
+    assert rec is not None
+    assert rec["ceiling_s"] == 123
+
+
 @pytest.mark.anyio
 async def test_runner_publishes_friendly_error_on_failure():
     broker = InProcessBroker()

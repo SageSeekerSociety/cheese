@@ -105,7 +105,23 @@ class Settings(BaseSettings):
     # topic lock forever. A safety net well above any real turn (coding turns run
     # minutes), not a normal-case limit — on timeout the turn is cancelled, which
     # releases the lock and tears down the in-container claude process.
+    #
+    # Still governs: TurnRunner's outer transport-independent wrap for the SDK
+    # backend (no activity signal exists there) and the remote device backend's
+    # own inner deadline. The LOCAL tmux backend no longer uses this value for
+    # its effective timeout — see agent_idle_suspect_s / agent_turn_hard_ceiling_s
+    # below (turn 活跃度检测, 2026-08-09).
     agent_turn_timeout_s: float = 900.0
+    # Two-layer safety net for the hooks-driven LOCAL tmux backend only. Below
+    # this much idle time (no hook, no tmux pane output change) a turn is normal;
+    # past it the turn is only SUSPECTED wedged and gets one lightweight liveness
+    # probe (pane_dead) rather than being killed outright — a long tool call with
+    # no interim hook must not look identical to a dead pane.
+    agent_idle_suspect_s: float = 300.0
+    # Unconditional backstop for the tmux backend regardless of activity — guards
+    # against a pathological "looks active but never converges" turn (a tool
+    # retrying forever, a genuine infinite loop that keeps printing).
+    agent_turn_hard_ceiling_s: float = 10800.0
 
     # Agent compute backend (design: two execution paths behind ComputeProvider):
     # "sdk"  → the default LocalDockerProvider: runs the Claude Agent SDK
@@ -200,6 +216,12 @@ class Settings(BaseSettings):
     microcloud_base_url: str = ""
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
+    # The machine's built-in AI channel (the tenant console's →ccproxy button).
+    # MicroCloud provisions new machines on newapi, whose default routes to a
+    # cheap non-Claude model; the operator guidance is ccproxy. Provision
+    # switches right after create, and the enrollment sweep reconciles any
+    # machine that slipped through. "" = leave whatever MicroCloud defaults to.
+    microcloud_ai_mode: str = "ccproxy"
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
     microcloud_offering_id: int = 0
@@ -459,6 +481,15 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5200",
         "http://localhost:5200",
     ]
+
+    # Which build is running. Baked into the image at build time (Dockerfile
+    # ARG GIT_SHA → ENV APP_VERSION), so the image is self-describing — a stale
+    # or mis-tagged deploy can't lie about its version. "dev" for a local run.
+    app_version: str = "dev"
+    # 内测: show the running commit sha in a corner of the UI, so a tester can
+    # confirm at a glance which build they're on. Off by default (prod); the
+    # dev/test box's .env sets it true. The frontend reads it from /api/version.
+    show_version_badge: bool = False
 
 
 @lru_cache

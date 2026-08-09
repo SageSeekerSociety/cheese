@@ -128,29 +128,75 @@ def test_status_subcommand_calls_status_endpoint(monkeypatch, capsys):
     assert "修东西" in capsys.readouterr().out
 
 
-def test_format_status_renders_budget_cards_and_waterlines():
+def _status_payload(turn: dict) -> dict:
+    return {
+        "topic": {"title": "T", "status": "active", "branch": "topic/x"},
+        "turn": turn,
+        "cards": [
+            {
+                "status": "gate_failed",
+                "reviewer": "alice",
+                "gate_output_tail": "FAIL: ruff\nResult: 0/3 passed",
+            }
+        ],
+        "platform": {
+            "active_turns": 1,
+            "queued_turns": 0,
+            "disk": {"free_gb": 10.0, "total_gb": 100.0, "used_pct": 90},
+            "credits": {"unlimited": True},
+        },
+    }
+
+
+def test_format_status_renders_cards_and_waterlines():
     cli = _load()
     out = cli._format_status(
-        {
-            "topic": {"title": "T", "status": "active", "branch": "topic/x"},
-            "turn": {"status": "running", "budget_s": 900, "budget_left_s": 300},
-            "cards": [
-                {
-                    "status": "gate_failed",
-                    "reviewer": "alice",
-                    "gate_output_tail": "FAIL: ruff\nResult: 0/3 passed",
-                }
-            ],
-            "platform": {
-                "active_turns": 1,
-                "queued_turns": 0,
-                "disk": {"free_gb": 10.0, "total_gb": 100.0, "used_pct": 90},
-                "credits": {"unlimited": True},
-            },
-        }
+        _status_payload({"status": "running", "near_ceiling": False, "activity": None})
     )
-    assert "还剩 300s" in out
+    assert "正常运行中" in out
     assert "闸门输出（尾部）" in out
     assert "Result: 0/3 passed" in out
     assert "已用 90%" in out
     assert "额度: 不限" in out
+
+
+def test_format_status_never_renders_a_live_countdown():
+    """turn 活跃度检测 (2026-08-09): a literal "还剩 Ns" figure was observed
+    making the agent rush against what's only meant to be a wedged-turn safety
+    net — the three-state rendering must never reintroduce it."""
+    cli = _load()
+    for turn in (
+        {"status": "running", "near_ceiling": False, "activity": None},
+        {"status": "running", "near_ceiling": True, "activity": None},
+        {
+            "status": "running",
+            "near_ceiling": False,
+            "activity": {"idle_for_s": 400, "suspect_since_s_ago": 120},
+        },
+    ):
+        out = cli._format_status(_status_payload(turn))
+        assert "还剩" not in out
+        assert "budget" not in out
+
+
+def test_format_status_renders_idle_suspect_state():
+    cli = _load()
+    out = cli._format_status(
+        _status_payload(
+            {
+                "status": "running",
+                "near_ceiling": False,
+                "activity": {"idle_for_s": 320, "suspect_since_s_ago": 120},
+            }
+        )
+    )
+    assert "疑似卡死" in out
+    assert "2 分钟" in out  # 120s → 2min, rounded
+
+
+def test_format_status_renders_near_ceiling_state():
+    cli = _load()
+    out = cli._format_status(
+        _status_payload({"status": "running", "near_ceiling": True, "activity": None})
+    )
+    assert "接近硬顶" in out

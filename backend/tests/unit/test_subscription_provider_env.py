@@ -40,6 +40,33 @@ def test_login_is_a_placeholder_oauth_token_not_a_real_one():
     assert tok == provider_env.SUBSCRIPTION_PLACEHOLDER_TOKEN
 
 
+def test_session_token_is_carried_as_the_bearer_when_given():
+    """Once the proxy is reachable beyond the box's own bridge, the placeholder
+    (public in this repo) becomes a way in — so a per-session scoped token rides
+    as the Bearer instead. The proxy verifies it before spending the sub."""
+    env = provider_env.subscription_provider(
+        ca_path="/ca.pem", session_token="scoped.abc123"
+    ).env
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "scoped.abc123"
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] != provider_env.SUBSCRIPTION_PLACEHOLDER_TOKEN
+
+
+def test_the_carried_token_is_one_the_proxy_can_verify():
+    """The scoped token the container carries must be verifiable with the shared
+    signing secret AND expose the project/topic to bill — this is what lets the
+    proxy take attribution from the token instead of the spoofable header."""
+    from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
+
+    token = mint_scoped_token(project_id="proj-1", topic_id="topic-2")
+    env = provider_env.subscription_provider(
+        ca_path="/ca.pem", project_id="proj-1", topic_id="topic-2", session_token=token
+    ).env
+    claims = scoped_token_claims(env["CLAUDE_CODE_OAUTH_TOKEN"])
+    assert claims is not None  # good signature, unexpired
+    assert claims["p"] == "proj-1"
+    assert claims["t"] == "topic-2"
+
+
 def test_attribution_header_is_emitted_for_the_meter():
     choice = provider_env.subscription_provider(
         ca_path="/ca.pem", project_id="proj-1", topic_id="topic-2"
@@ -104,7 +131,7 @@ def test_no_credential_file_is_ever_planted_in_the_box(monkeypatch, tmp_path):
     from app.core.config import settings
     from app.domain.agent.tmux_provider import TmuxHooksProvider
 
-    provider = TmuxHooksProvider(image="x", turn_timeout_s=1.0)
+    provider = TmuxHooksProvider(image="x", idle_suspect_s=1.0, hard_ceiling_s=1.0)
     monkeypatch.setattr(settings, "subscription_enabled", True)
     provider._write_session_settings(str(tmp_path))
     assert not (tmp_path / ".credentials.json").exists()

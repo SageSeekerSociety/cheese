@@ -122,7 +122,17 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         public_base: str | None = None,
         turn_timeout_s: float = 900.0,
     ) -> None:
-        super().__init__(router=router, turn_timeout_s=turn_timeout_s)
+        # TODO(turn 活跃度检测): the local tmux backend got a two-layer idle-suspect
+        # + hard-ceiling timeout (capture-pane polling + pane_dead probe); the
+        # remote device backend explicitly did NOT — the design doc flagged "what's
+        # an equivalent lightweight activity/liveness probe for a device screen"
+        # as still-open (device_hub's per-screen bytes aren't wired for this yet).
+        # Passing the same value for both layers reduces run_hooks_turn's two-layer
+        # check back to the old single static deadline, so behaviour here is
+        # UNCHANGED until that follow-up lands.
+        super().__init__(
+            router=router, idle_suspect_s=turn_timeout_s, hard_ceiling_s=turn_timeout_s
+        )
         self._hub = hub or device_hub
         self._session_factory = session_factory
         # A resolver may be injected (tests / future routing); otherwise the DB-backed
