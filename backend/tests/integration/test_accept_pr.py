@@ -16,6 +16,15 @@ import pytest
 from app.domain.review.github_pr import GitHubPRError, GitHubPRMergeBlocked
 
 
+def _auth(handle: str) -> dict[str, str]:
+    """Accept requires the authenticated reviewer (accept-authorization)."""
+    from app.core.tokens import mint_session_token
+
+    return {
+        "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
+    }
+
+
 def _make_project(client) -> str:
     r = client.post("/api/projects", json={"name": "P"})
     assert r.status_code == 200
@@ -140,7 +149,11 @@ def test_pr_card_is_accepted_by_merging_the_pr(client, pr_world):
     cid = _make_card(client, tid)
     _give_card_a_pr(client, cid, number=7)
 
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["status"] == "accepted"
@@ -167,7 +180,11 @@ def test_pr_merge_refusal_lands_in_the_conflict_flow(client, pr_world):
     _give_card_a_pr(client, cid, number=8)
     _FakeClient.merge_error = GitHubPRMergeBlocked("PR #8 is not mergeable")
 
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["status"] == "conflict"
@@ -179,7 +196,11 @@ def test_pr_merge_refusal_lands_in_the_conflict_flow(client, pr_world):
 
     # After the fix, retry succeeds (the branch is re-pushed and merged).
     _FakeClient.merge_error = None
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "accepted"
     assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
@@ -192,7 +213,11 @@ def test_github_down_falls_back_to_the_local_path(client, pr_world):
     _give_card_a_pr(client, cid, number=9)
     _FakeClient.view = GitHubPRError("GitHub unreachable")
 
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200
     # Availability parity: the accept still completes, via the local path.
     assert r.json()["data"]["status"] == "accepted"
@@ -207,7 +232,11 @@ def test_pr_already_merged_on_github_is_respected(client, pr_world):
     _give_card_a_pr(client, cid, number=10)
     _FakeClient.view = {"merged": True, "state": "closed"}
 
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["status"] == "accepted"
@@ -223,7 +252,11 @@ def test_prless_card_never_touches_github(client, pr_world):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)  # no PR seeded
 
-    r = client.post(f"/api/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "accepted"
     assert _FakeClient.calls == []  # GitHub never consulted
