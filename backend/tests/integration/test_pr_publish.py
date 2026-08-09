@@ -55,8 +55,13 @@ def _github_world(monkeypatch) -> None:
     from app.domain.workspace import service as ws
 
     _FakeClient.opened = []
+
+    # #192: the installation is resolved per-project, not from a global.
+    async def _fake_tokens_for_project(_project_id, _session):
+        return _FakeTokens()
+
     # pr_publish binds these names at module import — patch them there.
-    monkeypatch.setattr(pr_publish, "github_app_tokens", lambda: _FakeTokens())
+    monkeypatch.setattr(pr_publish, "github_app_tokens_for_project", _fake_tokens_for_project)
     monkeypatch.setattr(pr_publish, "GitHubPRClient", _FakeClient)
     monkeypatch.setattr(
         ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
@@ -158,7 +163,10 @@ def test_submit_route_dispatches_when_enabled(client, monkeypatch):
 
     dispatched: list[dict] = []
     monkeypatch.setattr(settings, "accept_via_pr", True)
-    monkeypatch.setattr(pr_publish, "github_app_tokens", lambda: _FakeTokens())
+    # enabled() gates on the App being configured (per-project resolution happens
+    # in the task); #192 dropped the global github_app_tokens() probe.
+    monkeypatch.setattr(settings, "github_app_id", 12345)
+    monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake-app.pem")
     monkeypatch.setattr(
         pr_publish, "dispatch", lambda factory, **kw: dispatched.append(kw)
     )
