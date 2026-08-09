@@ -1,5 +1,6 @@
 """Accept-card / Review routes — the 验收 state machine (spec §4.4, §6.3)."""
 
+import asyncio
 import logging
 import uuid
 from typing import Annotated
@@ -13,8 +14,14 @@ from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
+from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.runtime import TurnRunner
-from app.domain.review import gate
+from app.domain.review import gate, pr_publish
+from app.domain.review.github_pr import (
+    GitHubPRClient,
+    GitHubPRError,
+    parse_github_repo,
+)
 from app.domain.review.models import AcceptStatus
 from app.domain.review.schemas import (
     AcceptCardCreate,
@@ -61,6 +68,17 @@ async def create_accept_card(
             project_id=project_id,
             command=command or "",
         )
+    elif card.status == AcceptStatus.pending and pr_publish.enabled():
+        # PR-based accept (#188 §5.1): a card born pending (no gate) gets its
+        # PR opened right away. Gated cards get theirs when the gate turns
+        # green — see gate._run.
+        project_id, _ = await svc.gate_plan(topic_id)
+        pr_publish.dispatch(
+            chat.session_factory,
+            card_id=card.id,
+            topic_id=topic_id,
+            project_id=project_id,
+        )
     return ok(await svc.describe(card))
 
 
@@ -69,6 +87,45 @@ async def list_accept_cards(topic_id: uuid.UUID, db: DbSession) -> dict:
     svc = AcceptService(db)
     cards, total = await svc.list_for_topic(topic_id)
     return ok(page([await svc.describe(c) for c in cards], total))
+
+
+@router.get("/topics/{topic_id}/pr-checks")
+async def topic_pr_checks(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """PR-based accept (#188 §5.1): live PR + check-run state for the newest
+    card that rides a PR. Display only — never blocks anything. Answers
+    {"available": false} instead of erroring so every caller (card UI, CLI)
+    can poll it unconditionally."""
+    svc = AcceptService(db)
+    cards, _ = await svc.list_for_topic(topic_id)
+    card = next((c for c in cards if c.pr_number is not None), None)
+    if card is None or card.pr_number is None:
+        return ok({"available": False})
+    topic = await svc._topic_or_404(topic_id)
+    # #192: the installation to mint from is resolved per-project, not global.
+    tokens = await github_app_tokens_for_project(topic.project_id, db)
+    if tokens is None:
+        return ok({"available": False})
+    upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
+    parsed = parse_github_repo(upstream)
+    if parsed is None:
+        return ok({"available": False})
+    client = GitHubPRClient(*parsed, tokens)
+    try:
+        view = await client.pr_view(card.pr_number)
+        head_sha = (view.get("head") or {}).get("sha")
+        checks = await client.check_runs(head_sha or ws.branch_for_topic(topic_id))
+    except GitHubPRError as exc:
+        return ok({"available": False, "reason": str(exc)[:200]})
+    return ok(
+        {
+            "available": True,
+            "pr_number": card.pr_number,
+            "pr_url": card.pr_url,
+            "state": "merged" if view.get("merged") else view.get("state"),
+            "mergeable": view.get("mergeable"),
+            "checks": checks,
+        }
+    )
 
 
 @router.post("/accept-cards/{card_id}/approve")
