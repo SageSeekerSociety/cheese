@@ -30,6 +30,21 @@
 - `docs/topics/两阶段采纳-PR迭代式设计.md` 设计文档在本仓库里不存在（子话题产出未合并进 main），无法读取原文，只能依赖简报里转述的五点结论。
 - `config.py` 的 `Settings` 已有 `oauth_github_client_id` 等字段和 `subscription_enabled`/`agent_sandbox_enabled` 这类布尔开关先例，可参照加新配置。
 
+## 2026-08-09 采纳时合并冲突：#195 + OAuth token 持久化都在此期间真合并进 main 了
+
+wangchangxin 点采纳后合并冲突，平台把 main 合进了工作区。核实发现：**不是普通文本冲突**——#195（PR-based accept，简报写它"停滞"）和前置修复（OAuth token 持久化，id=12147a29-...）在我实现期间都**真的合并进 main 了**，且两者都独立创建了 `app/domain/review/github_pr.py`、`accept_cards.pr_number/pr_url` 字段、`review/services.py::_accept_via_pr` 方法名——同名不同实现，jj 没能识别成冲突的部分（models.py 里 `pr_number`/`pr_url` 被定义了两次）我也一并修了。
+
+**#195 最终落地的实际设计**（跟简报转述的"进度停滞"不一样）：card 一变 `pending` 就在后台 fire-and-forget 开 PR（`pr_publish.py`，用 App 自己的 write_token，从 git `upstream` 远程解析 owner/repo），行为**同步**——人点采纳时若 `card.pr_number` 已经有值，直接调 API 合并那个 PR（CI 没跑完会被 GitHub 拒绝合并，转 `conflict` 状态）。默认关闭（`settings.accept_via_pr = False`，dark ship）。
+
+**合并策略**（保留双方意图，语义化合并）：
+- `accept()` 里两段判断按顺序共存：① `card.pr_number is not None`（#195，已有 PR 就合并它，绝不重复开 PR）→ ② 我的 `_resolve_pr_prerequisites`（没有 PR 才尝试开新的）→ ③ 老的本地 merge 降级路径。`accept_via_pr` 默认关闭，① 在当前配置下永远是 no-op，两条机制互不干扰；哪天有人打开那个 flag，两条机制会真正并存，这点已经写进验收卡说明里让 wangchangxin 知道。
+- 命名冲突：我的 `_accept_via_pr(card, topic, decided_by, *, token, owner, repo)`（开新 PR）改名成 `_open_pr_for_accept`，让位给 #195 原本的 `_accept_via_pr(card, topic, decided_by)`（合并已有 PR）。
+- `alembic`：#195 已有自己的 `pr_number`/`pr_url` 迁移（`b3d5f7a9c102`），我的迁移改成只加净新列（`pr_repo`/`pr_head_sha`/`pr_merged_at`），down_revision 改指向合并 `f9a1c7e3b502`（access_token 列）+ `b3d5f7a9c102` 两个头；顺带删掉了我自己那个后来发现是重复劳动的 merge-heads 迁移（`093133add3e1`，跟 `f9a1c7e3b502`/`b2958d64e679` 做的是同一件事）。`alembic heads` 现在唯一。
+- 顺手把我自己的 `push_topic_branch_for_github_pr` 也改成用 #195 的 `_token_push_env`（env var 传 token 给 git credential helper）而不是把 token 拼进 push URL——更安全，避免 token 在 `ps` 里短暂可见。
+- 测试文件重名（都叫 `test_accept_pr.py`）：我的留在原文件，#195 那份挪到新文件 `test_accept_pr_publish.py`（完整保留，未改动断言）。
+
+**验证**：`ruff check .`/`ruff format --check .`/`pyright` 全绿；`alembic upgrade head` 在干净库上从头跑通，唯一 head；`test_accept_pr.py`(8) + `test_accept_pr_publish.py`(5, #195 自己的用例) + `test_github_pr.py`(9) + `test_accept_gate.py`(11) + `test_review_acceptance_merge_failure.py`(6) + `test_scheduler.py`/`test_github_account_link.py`/`test_github_install.py` 全部通过，只有那个已知的沙箱 jj 权限问题（跟这次冲突无关）还是红。`tests/unit` 全量 2465 passed（新增的都是 #195 带来的用例），失败的 22 个跟之前排查过的一样（machine_service 域不相关 + tmux_control 缺 `kill` 二进制），不是这次冲突解决引入的。
+
 ## 实现已完成
 
 - `review/models.py`：`AcceptStatus` 加 `pr_open`；`AcceptCard` 加 `pr_number`/`pr_repo`/`pr_url`/`pr_head_sha`/`pr_merged_at`（`pr_merged_at` 区分"还在等 PR CI"(None) vs "PR 已合并等部署"(已设置)，同一个 `pr_open` 状态覆盖两个子阶段）。迁移：`093133add3e1`（先合并此前两个分叉的 alembic head）+ `c7d8e9f0a1b2`（新增列）。
