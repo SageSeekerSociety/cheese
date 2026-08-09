@@ -61,7 +61,9 @@ def _github_world(monkeypatch) -> None:
         return _FakeTokens()
 
     # pr_publish binds these names at module import — patch them there.
-    monkeypatch.setattr(pr_publish, "github_app_tokens_for_project", _fake_tokens_for_project)
+    monkeypatch.setattr(
+        pr_publish, "github_app_tokens_for_project", _fake_tokens_for_project
+    )
     monkeypatch.setattr(pr_publish, "GitHubPRClient", _FakeClient)
     monkeypatch.setattr(
         ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
