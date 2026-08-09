@@ -88,10 +88,7 @@ const CHEESE_CMD_RE = /\bcheese\s+\w+/
 
 // Live tool events (WS "tool" frames): platform = cheese MCP tool, or a Bash
 // command that invokes the in-sandbox `cheese` CLI.
-export function isPlatformAction(
-  name: string,
-  input: Record<string, unknown> | null | undefined,
-): boolean {
+export function isPlatformAction(name: string, input: Record<string, unknown> | null | undefined): boolean {
   const short = name.replace(/^mcp__cheese__/, '')
   if (name.startsWith('mcp__cheese__') || PLATFORM_TOOLS.has(short)) return true
   if (short === 'Bash') return CHEESE_CMD_RE.test(String(input?.command ?? ''))
@@ -108,19 +105,13 @@ export interface EventMeta {
 // Persisted event blocks: the structured meta decides; legacy rows without
 // meta fall back to the refs action-tag (our own structured token). Rows with
 // neither stay neutral — no guessing from the baked content text.
-export function isPlatformEvent(
-  meta: EventMeta | null | undefined,
-  refs: string[] | null | undefined,
-): boolean {
+export function isPlatformEvent(meta: EventMeta | null | undefined, refs: string[] | null | undefined): boolean {
   if (meta?.platform === true) return true
   return (refs ?? []).some((r) => r.startsWith('action:'))
 }
 
 // "搜内容 pattern…" — the live one-liner shown while 芝士 works (Claude Code 风).
-export function formatToolAction(
-  name: string,
-  input: Record<string, unknown> | null | undefined,
-): string {
+export function formatToolAction(name: string, input: Record<string, unknown> | null | undefined): string {
   const short = name.replace(/^mcp__cheese__/, '')
   const label = TOOL_LABELS[short] ?? short
   const key = PREVIEW_ARG[short]
@@ -135,7 +126,5 @@ export function formatToolAction(
 export function summarizeActions(labels: string[]): string {
   const counts = new Map<string, number>()
   for (const l of labels) counts.set(l, (counts.get(l) ?? 0) + 1)
-  return [...counts.entries()]
-    .map(([label, n]) => (n > 1 ? `${label}×${n}` : label))
-    .join(' · ')
+  return [...counts.entries()].map(([label, n]) => (n > 1 ? `${label}×${n}` : label)).join(' · ')
 }

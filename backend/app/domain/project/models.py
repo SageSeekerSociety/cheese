@@ -114,3 +114,25 @@ class ProjectMember(UuidPk, Timestamps, Base):
         Enum(ProjectRole, native_enum=False, length=16),
         default=ProjectRole.member,
     )
+
+
+class ProjectGitInstallation(UuidPk, Timestamps, Base):
+    """One project's connected cheesex-app GitHub App installation (#192).
+
+    Both `project_id` and `installation_id` are unique: a project connects to
+    one repo at a time, and one installation (= one GitHub-side "connect this
+    App to this repo" grant) is never shared between two platform projects —
+    otherwise a token minted for it would be ambiguous about which project's
+    git operations it belongs to.
+    """
+
+    __tablename__ = "project_git_installations"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), unique=True
+    )
+    installation_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    # "owner/repo" full name, e.g. "SageSeekerSociety/cheese".
+    repo: Mapped[str] = mapped_column(String(255))
+    # The GitHub org or user login the installation lives under.
+    account: Mapped[str] = mapped_column(String(255))

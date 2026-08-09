@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { getMarketPools } from '../api'
 import type { MarketPools, PoolListing } from '../cx_types'
+
+import { computed, onMounted, ref } from 'vue'
+
+import { getMarketPools } from '../api'
 import NodeBoard from '../components/NodeBoard.vue'
 import TaskMarket from '../components/TaskMarket.vue'
 
@@ -50,12 +52,8 @@ onMounted(load)
       </div>
 
       <v-tabs v-model="tab" density="comfortable" color="primary" class="mb-5">
-        <v-tab value="tasks">
-          <v-icon size="18" class="me-2">mdi-handshake-outline</v-icon>题目匹配
-        </v-tab>
-        <v-tab value="pools">
-          <v-icon size="18" class="me-2">mdi-server</v-icon>算力资源
-        </v-tab>
+        <v-tab value="tasks"> <v-icon size="18" class="me-2">mdi-handshake-outline</v-icon>题目匹配 </v-tab>
+        <v-tab value="pools"> <v-icon size="18" class="me-2">mdi-server</v-icon>算力资源 </v-tab>
       </v-tabs>
 
       <v-window v-model="tab">
@@ -63,8 +61,7 @@ onMounted(load)
         <v-window-item value="tasks">
           <p class="t-body c-muted mb-5" style="max-width: 660px">
             机构（Space）把 <strong>题目</strong> 发布到市场；团队用自己的项目
-            <strong>应征</strong>。应征被接受后，项目自动链接到题目——资源包与条件即刻生效
-            （签下协议）。
+            <strong>应征</strong>。应征被接受后，项目自动链接到题目——资源包与条件即刻生效 （签下协议）。
           </p>
           <TaskMarket />
         </v-window-item>
@@ -73,8 +70,8 @@ onMounted(load)
         <v-window-item value="pools">
           <p class="t-body c-muted mb-5" style="max-width: 660px">
             知是把 <strong>AI 模型</strong> 和 <strong>算力</strong> 都看成资源池。默认的池平台已经补贴，
-            开箱即用；更强的模型、你自己的机器、或带 GPU 的算力也在这里上架。
-            在任意项目的 <strong>设置 → 资源池</strong> 里挑选要用的池。
+            开箱即用；更强的模型、你自己的机器、或带 GPU 的算力也在这里上架。 在任意项目的
+            <strong>设置 → 资源池</strong> 里挑选要用的池。
           </p>
 
           <!-- 节点状态: live board of compute nodes (local + cheesed remote),
@@ -187,7 +184,9 @@ onMounted(load)
   background: var(--surface);
   display: flex;
   flex-direction: column;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition:
+    box-shadow 0.15s,
+    border-color 0.15s;
 }
 .pool-card:hover {
   border-color: rgba(var(--v-theme-primary), 0.5);

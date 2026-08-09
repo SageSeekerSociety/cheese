@@ -14,7 +14,7 @@ from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
-from app.domain.agent.github_app import github_app_tokens
+from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.runtime import TurnRunner
 from app.domain.review import gate, pr_publish
 from app.domain.review.github_pr import (
@@ -98,10 +98,13 @@ async def topic_pr_checks(topic_id: uuid.UUID, db: DbSession) -> dict:
     svc = AcceptService(db)
     cards, _ = await svc.list_for_topic(topic_id)
     card = next((c for c in cards if c.pr_number is not None), None)
-    tokens = github_app_tokens()
-    if card is None or card.pr_number is None or tokens is None:
+    if card is None or card.pr_number is None:
         return ok({"available": False})
     topic = await svc._topic_or_404(topic_id)
+    # #192: the installation to mint from is resolved per-project, not global.
+    tokens = await github_app_tokens_for_project(topic.project_id, db)
+    if tokens is None:
+        return ok({"available": False})
     upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
     parsed = parse_github_repo(upstream)
     if parsed is None:

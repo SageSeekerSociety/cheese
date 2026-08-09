@@ -1,7 +1,8 @@
 // 功能旗 (exp.ts): sticky ?exp=true semantics — enter via URL, stay across
 // in-app navigation, gate 内测-only routes, plain URLs stay stable.
-import { describe, expect, it } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { describe, expect, it } from 'vitest'
+
 import { expOnly, installExperimentalGuard } from './exp'
 
 const Stub = { template: '<div />' }

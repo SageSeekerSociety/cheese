@@ -27,10 +27,7 @@ describe('renderMarkdown (芝士 replies)', () => {
   })
 
   it('renders a <#topicId> token as a topic chip with its title', () => {
-    const html = renderMarkdown(
-      '进展见 <#abc12345-0000-0000-0000-000000000000>',
-      MAPS,
-    )
+    const html = renderMarkdown('进展见 <#abc12345-0000-0000-0000-000000000000>', MAPS)
     expect(html).toContain('data-topic="abc12345-0000-0000-0000-000000000000"')
     expect(html).toContain('#搭建推荐算法原型')
   })
@@ -131,10 +128,7 @@ describe('historical fragmented Markdown compatibility', () => {
   })
 
   it('does not join a fence across turn boundaries', () => {
-    const blocks = [
-      aiBlock('open', '```python\n'),
-      aiBlock('close', 'print("other turn")\n```\n', 'another-turn'),
-    ]
+    const blocks = [aiBlock('open', '```python\n'), aiBlock('close', 'print("other turn")\n```\n', 'another-turn')]
     expect(coalesceSplitFencedCodeBlocks(blocks)).toEqual(blocks)
   })
 })

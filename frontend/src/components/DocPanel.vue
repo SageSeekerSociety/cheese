@@ -1,26 +1,18 @@
 <script setup lang="ts">
-import { myHandle } from '../me'
-import { isPlatformEvent, summarizeActions, toolLabel } from '../lib/toolLabels'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { relTime } from '../lib/relTime'
-import { useEditor, EditorContent } from '@tiptap/vue-3'
-import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
-import { Extension } from '@tiptap/core'
 import type { ChainedCommands, Editor as CoreEditor } from '@tiptap/core'
-import { Suggestion } from '@tiptap/suggestion'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import type { SuggestionProps } from '@tiptap/suggestion'
+import type { Block, FileContent, GitCommit, Topic, UsageStats, WorkspaceFile } from '../cx_types'
+
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { Extension } from '@tiptap/core'
+import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import type { Node as PMNode } from '@tiptap/pm/model'
-// The editor schema + round-trip fidelity machinery live in docMarkdown.ts —
-// ONE extension list shared with the corpus tests, so "what the tests prove"
-// and "what the editor runs" can never drift apart. (History: TipTap without
-// the table extension silently DROPPED every GFM table on parse, and a later
-// save wrote the table-less doc back — data loss. 军规 1.)
-import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
-import CheeseAvatar from './CheeseAvatar.vue'
-import CodeEditor from './CodeEditor.vue'
+import { Suggestion } from '@tiptap/suggestion'
+import { EditorContent, useEditor } from '@tiptap/vue-3'
+
 import {
   BASE as API_BASE,
   getComments,
@@ -39,14 +31,18 @@ import {
   workspaceFileRawUrl,
   writeFile,
 } from '../api'
-import type {
-  Block,
-  FileContent,
-  GitCommit,
-  Topic,
-  UsageStats,
-  WorkspaceFile,
-} from '../cx_types'
+// The editor schema + round-trip fidelity machinery live in docMarkdown.ts —
+// ONE extension list shared with the corpus tests, so "what the tests prove"
+// and "what the editor runs" can never drift apart. (History: TipTap without
+// the table extension silently DROPPED every GFM table on parse, and a later
+// save wrote the table-less doc back — data loss. 军规 1.)
+import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
+import { relTime } from '../lib/relTime'
+import { isPlatformEvent, summarizeActions, toolLabel } from '../lib/toolLabels'
+import { myHandle } from '../me'
+
+import CheeseAvatar from './CheeseAvatar.vue'
+import CodeEditor from './CodeEditor.vue'
 
 // The living doc is the core interface (spec §2.2): an AI-maintained markdown
 // document the user can also edit ("改文档即指令"). Stored as markdown, so the
@@ -77,7 +73,7 @@ const props = withDefaults(
     workingSince: null,
     focus: false,
     topicList: () => [],
-  },
+  }
 )
 
 // 专注模式 toggle is owned by the parent (it hides the chat pane); we just ask.
@@ -110,9 +106,7 @@ function isFillerBlock(el: HTMLElement): boolean {
 // The rendered top-level blocks that correspond to server nodes — the raw
 // ProseMirror children minus any trailing filler paragraph(s) tiptap appends.
 function contentBlocks(): HTMLElement[] {
-  const els = Array.from(
-    document.querySelectorAll('.doc-editor .ProseMirror > *'),
-  ) as HTMLElement[]
+  const els = Array.from(document.querySelectorAll('.doc-editor .ProseMirror > *')) as HTMLElement[]
   while (els.length && isFillerBlock(els[els.length - 1])) els.pop()
   return els
 }
@@ -248,7 +242,7 @@ function liveRefDecorations(doc: PMNode): DecorationSet {
       Decoration.widget(pos, () => liveRefWidget(topicId), {
         side: 1,
         key: `liveref-${topicId}`,
-      }),
+      })
     )
   })
   return DecorationSet.create(doc, decos)
@@ -276,7 +270,7 @@ function commentMarkDecorations(doc: PMNode): DecorationSet {
         Decoration.inline(offset + 1 + at, offset + 1 + at + c.quote.length, {
           class: 'comment-anchor',
           'data-comment': c.id,
-        }),
+        })
       )
     }
   })
@@ -346,7 +340,6 @@ function refreshLiveRefBadges(nodes: Block[]) {
   if (view) view.dispatch(view.state.tr.setMeta(liveRefKey, true))
 }
 
-
 async function pulse() {
   document.querySelector('.doc-body')?.scrollTo({ top: 0, behavior: 'smooth' })
   pulsing.value = false
@@ -390,9 +383,7 @@ function togglePin() {
 // One width for the tool drawer, shared by both float and pinned modes so
 // toggling 钉住 never changes the drawer's width (it just docks in place).
 // Persisted. Default 380 = the drawer's long-standing floating width.
-const toolWidth = ref<number>(
-  Number(localStorage.getItem('cheesex.toolWidth')) || 380,
-)
+const toolWidth = ref<number>(Number(localStorage.getItem('cheesex.toolWidth')) || 380)
 watch(toolWidth, (w) => localStorage.setItem('cheesex.toolWidth', String(w)))
 function startToolResize(e: MouseEvent) {
   e.preventDefault()
@@ -416,8 +407,7 @@ function closeTool() {
   drawerOpen.value = false
   openTool.value = null
 }
-const activeToolLabel = () =>
-  TOOLS.find((t) => t.key === openTool.value)?.label ?? ''
+const activeToolLabel = () => TOOLS.find((t) => t.key === openTool.value)?.label ?? ''
 
 const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
 
@@ -474,7 +464,6 @@ async function loadComments(tid: string) {
 // 页级评论折叠态 (Feishu-style, collapsed head keeps the doc quiet).
 const commentsFolded = ref(false)
 
-
 // 现场: read-only transcript timeline.
 const transcript = ref<Block[]>([])
 // 现场实时终端: when the tmux backend has this topic's container up, the 现场
@@ -490,7 +479,7 @@ watch(
     if (tickTimer) clearInterval(tickTimer)
     tickTimer = w ? setInterval(() => (nowTick.value = Date.now()), 1000) : null
   },
-  { immediate: true },
+  { immediate: true }
 )
 onBeforeUnmount(() => {
   if (tickTimer) clearInterval(tickTimer)
@@ -499,9 +488,7 @@ const liveElapsed = computed(() => {
   if (!props.working || !props.workingSince) return null
   return Math.max(0, Math.round((nowTick.value - props.workingSince) / 1000))
 })
-const liveSummary = computed(() =>
-  summarizeActions(props.worklog.map((w) => w.label)),
-)
+const liveSummary = computed(() => summarizeActions(props.worklog.map((w) => w.label)))
 // Git: commit log + working-tree diff.
 const gitCommits = ref<GitCommit[]>([])
 const gitDiff = ref<string>('')
@@ -549,9 +536,7 @@ function revealInTree(path: string) {
     expandedDirs.value = next
   }
   void nextTick(() => {
-    fileListEl.value
-      ?.querySelector('.file-item--active')
-      ?.scrollIntoView({ block: 'nearest' })
+    fileListEl.value?.querySelector('.file-item--active')?.scrollIntoView({ block: 'nearest' })
   })
 }
 const fileRows = computed<FileRow[]>(() => {
@@ -616,11 +601,7 @@ function openPreviewInNewTab() {
     window.open(previewAppUrl.value, '_blank', 'noopener')
   } else if (previewFile.value && props.topic) {
     // Served with CSP sandbox (opaque origin) — a real tab, not our origin.
-    window.open(
-      `${API_BASE}/topics/${props.topic.id}/preview/raw`,
-      '_blank',
-      'noopener',
-    )
+    window.open(`${API_BASE}/topics/${props.topic.id}/preview/raw`, '_blank', 'noopener')
   }
 }
 
@@ -645,10 +626,7 @@ async function loadTool(key: string) {
       // Prefer the real terminal (tmux backend); fall back to the worklog
       // timeline. The terminal probe must never break 现场 — on any error it
       // just stays null and the worklog view renders.
-      const [tx, term] = await Promise.all([
-        getTranscript(tid),
-        getTerminal(tid).catch(() => null),
-      ])
+      const [tx, term] = await Promise.all([getTranscript(tid), getTerminal(tid).catch(() => null)])
       if (props.topic?.id !== tid) return
       transcript.value = tx.data
       // `url` is already a root-relative path ("/api/topics/…/terminal/live/")
@@ -673,10 +651,7 @@ async function loadTool(key: string) {
         if (files.value.length) await selectFile(files.value[0].path)
       }
     } else if (key === 'resources') {
-      const [tu, pu] = await Promise.all([
-        getTopicUsage(tid),
-        getProjectUsage(pid),
-      ])
+      const [tu, pu] = await Promise.all([getTopicUsage(tid), getProjectUsage(pid)])
       if (props.topic?.id !== tid) return
       topicUsage.value = tu
       projectUsage.value = pu
@@ -717,9 +692,7 @@ function isImagePath(path: string): boolean {
 }
 const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.value))
 const openImageUrl = computed(() =>
-  openPath.value && projectId.value
-    ? workspaceFileRawUrl(projectId.value, openPath.value, props.topic?.id)
-    : '',
+  openPath.value && projectId.value ? workspaceFileRawUrl(projectId.value, openPath.value, props.topic?.id) : ''
 )
 
 async function selectFile(path: string) {
@@ -860,10 +833,7 @@ function checkFidelity(md: string) {
   const report = compareRoundTrip(md, serializeDoc(ed))
   lossy.value = !report.clean
   if (!report.clean) {
-    console.debug(
-      '[doc] lossy load detected — visual edit would rewrite these lines:\n' +
-        report.diff,
-    )
+    console.debug('[doc] lossy load detected — visual edit would rewrite these lines:\n' + report.diff)
   }
 }
 
@@ -874,11 +844,7 @@ const TOKEN_RE = /<@([\w-]+)>|<#([0-9a-fA-F-]{8,})>|<&([\w./\u4e00-\u9fff-]+)>/g
 
 // Build the pretty chip element a token renders as. The raw token stays in the
 // document (markdown is the source of truth); the chip is display-only.
-function tokenWidget(
-  kind: '@' | '#' | '&',
-  id: string,
-  lookupTopic: (tid: string) => string | undefined,
-): HTMLElement {
+function tokenWidget(kind: '@' | '#' | '&', id: string, lookupTopic: (tid: string) => string | undefined): HTMLElement {
   const el = document.createElement('span')
   if (kind === '@') {
     el.className = 'mention'
@@ -897,10 +863,7 @@ function tokenWidget(
   return el
 }
 
-function tokenDecorations(
-  doc: PMNode,
-  lookupTopic: (tid: string) => string | undefined,
-): DecorationSet {
+function tokenDecorations(doc: PMNode, lookupTopic: (tid: string) => string | undefined): DecorationSet {
   const decos: Decoration[] = []
   doc.descendants((node, pos) => {
     if (!node.isText) return
@@ -919,7 +882,7 @@ function tokenDecorations(
         Decoration.widget(from, () => tokenWidget(kind, id, lookupTopic), {
           side: 1,
         }),
-        Decoration.inline(from, to, { style: 'display: none' }),
+        Decoration.inline(from, to, { style: 'display: none' })
       )
     }
   })
@@ -937,8 +900,7 @@ const TokenChips = Extension.create({
       new Plugin({
         state: {
           init: (_cfg, state) => tokenDecorations(state.doc, lookupTopicTitle),
-          apply: (tr, old) =>
-            tr.docChanged ? tokenDecorations(tr.doc, lookupTopicTitle) : old,
+          apply: (tr, old) => (tr.docChanged ? tokenDecorations(tr.doc, lookupTopicTitle) : old),
         },
         props: {
           decorations(state) {
@@ -1013,8 +975,22 @@ function onDocMouseOver(e: MouseEvent) {
 
 // Curated language choices for the picker (all present in lowlight common).
 const CODE_LANGS = [
-  'python', 'typescript', 'javascript', 'bash', 'json', 'yaml', 'sql',
-  'html', 'css', 'go', 'rust', 'java', 'c', 'cpp', 'markdown', 'plaintext',
+  'python',
+  'typescript',
+  'javascript',
+  'bash',
+  'json',
+  'yaml',
+  'sql',
+  'html',
+  'css',
+  'go',
+  'rust',
+  'java',
+  'c',
+  'cpp',
+  'markdown',
+  'plaintext',
 ]
 const codeLangOpen = ref(false)
 
@@ -1149,47 +1125,100 @@ interface SlashItem {
 // that's what makes 标题↔正文↔列表↔引用 all interconvertible. Text survives;
 // 代码块 takes the whole block's text as its code content.
 const SLASH_ITEMS: SlashItem[] = [
-  { key: 'text', label: '正文', icon: 'mdi-format-paragraph', hint: 'text',
+  {
+    key: 'text',
+    label: '正文',
+    icon: 'mdi-format-paragraph',
+    hint: 'text',
     keywords: ['text', 'paragraph', 'p', 'zw', 'zhengwen'],
-    run: (c) => c.clearNodes() },
-  { key: 'h1', label: '标题 1', icon: 'mdi-format-header-1', hint: 'h1',
+    run: (c) => c.clearNodes(),
+  },
+  {
+    key: 'h1',
+    label: '标题 1',
+    icon: 'mdi-format-header-1',
+    hint: 'h1',
     keywords: ['h1', 'heading1', 'title', 'bt1', 'biaoti'],
-    run: (c) => c.clearNodes().setNode('heading', { level: 1 }) },
-  { key: 'h2', label: '标题 2', icon: 'mdi-format-header-2', hint: 'h2',
+    run: (c) => c.clearNodes().setNode('heading', { level: 1 }),
+  },
+  {
+    key: 'h2',
+    label: '标题 2',
+    icon: 'mdi-format-header-2',
+    hint: 'h2',
     keywords: ['h2', 'heading2', 'bt2', 'biaoti'],
-    run: (c) => c.clearNodes().setNode('heading', { level: 2 }) },
-  { key: 'h3', label: '标题 3', icon: 'mdi-format-header-3', hint: 'h3',
+    run: (c) => c.clearNodes().setNode('heading', { level: 2 }),
+  },
+  {
+    key: 'h3',
+    label: '标题 3',
+    icon: 'mdi-format-header-3',
+    hint: 'h3',
     keywords: ['h3', 'heading3', 'bt3', 'biaoti'],
-    run: (c) => c.clearNodes().setNode('heading', { level: 3 }) },
-  { key: 'bullet', label: '无序列表', icon: 'mdi-format-list-bulleted', hint: 'list',
+    run: (c) => c.clearNodes().setNode('heading', { level: 3 }),
+  },
+  {
+    key: 'bullet',
+    label: '无序列表',
+    icon: 'mdi-format-list-bulleted',
+    hint: 'list',
     keywords: ['ul', 'list', 'bullet', 'wxlb', 'liebiao'],
-    run: (c) => c.clearNodes().toggleBulletList() },
-  { key: 'ordered', label: '有序列表', icon: 'mdi-format-list-numbered', hint: '1.',
+    run: (c) => c.clearNodes().toggleBulletList(),
+  },
+  {
+    key: 'ordered',
+    label: '有序列表',
+    icon: 'mdi-format-list-numbered',
+    hint: '1.',
     keywords: ['ol', 'list', 'ordered', 'number', 'yxlb', 'liebiao'],
-    run: (c) => c.clearNodes().toggleOrderedList() },
-  { key: 'task', label: '任务列表', icon: 'mdi-format-list-checks', hint: 'todo',
+    run: (c) => c.clearNodes().toggleOrderedList(),
+  },
+  {
+    key: 'task',
+    label: '任务列表',
+    icon: 'mdi-format-list-checks',
+    hint: 'todo',
     keywords: ['todo', 'task', 'checkbox', 'rwlb', 'renwu'],
-    run: (c) => c.clearNodes().toggleTaskList() },
-  { key: 'code', label: '代码块', icon: 'mdi-code-tags', hint: 'code',
+    run: (c) => c.clearNodes().toggleTaskList(),
+  },
+  {
+    key: 'code',
+    label: '代码块',
+    icon: 'mdi-code-tags',
+    hint: 'code',
     keywords: ['code', 'codeblock', 'pre', 'dmk', 'daima'],
-    run: (c) => c.clearNodes().setNode('codeBlock') },
-  { key: 'quote', label: '引用', icon: 'mdi-format-quote-close', hint: 'quote',
+    run: (c) => c.clearNodes().setNode('codeBlock'),
+  },
+  {
+    key: 'quote',
+    label: '引用',
+    icon: 'mdi-format-quote-close',
+    hint: 'quote',
     keywords: ['quote', 'blockquote', 'yy', 'yinyong'],
-    run: (c) => c.clearNodes().toggleBlockquote() },
-  { key: 'table', label: '表格', icon: 'mdi-table', hint: 'table',
+    run: (c) => c.clearNodes().toggleBlockquote(),
+  },
+  {
+    key: 'table',
+    label: '表格',
+    icon: 'mdi-table',
+    hint: 'table',
     keywords: ['table', 'bg', 'biaoge'],
-    run: (c) => c.insertTable({ rows: 2, cols: 3, withHeaderRow: true }) },
-  { key: 'hr', label: '分割线', icon: 'mdi-minus', hint: '---',
+    run: (c) => c.insertTable({ rows: 2, cols: 3, withHeaderRow: true }),
+  },
+  {
+    key: 'hr',
+    label: '分割线',
+    icon: 'mdi-minus',
+    hint: '---',
     keywords: ['hr', 'divider', 'line', 'fgx', 'fengexian'],
-    run: (c) => c.setHorizontalRule() },
+    run: (c) => c.setHorizontalRule(),
+  },
 ]
 
 function filterSlashItems(query: string): SlashItem[] {
   const q = query.toLowerCase().trim()
   if (!q) return SLASH_ITEMS
-  return SLASH_ITEMS.filter(
-    (it) => it.label.includes(q) || it.keywords.some((k) => k.includes(q)),
-  )
+  return SLASH_ITEMS.filter((it) => it.label.includes(q) || it.keywords.some((k) => k.includes(q)))
 }
 
 const slashPluginKey = new PluginKey('cheeseSlashMenu')
@@ -1214,7 +1243,7 @@ let plusSlashPending = false
 // menu would run past the viewport bottom.
 function slashMenuPos(
   clientRect: (() => DOMRect | null) | null | undefined,
-  itemCount: number,
+  itemCount: number
 ): { top: number; left: number } | null {
   const wrap = document.querySelector('.doc-editor-wrap') as HTMLElement | null
   const rect = clientRect?.()
@@ -1241,9 +1270,7 @@ function showSlashMenu(p: SuggestionProps<SlashItem, SlashItem>) {
 
 function scrollActiveSlashItem() {
   void nextTick(() => {
-    slashMenuEl.value
-      ?.querySelector('.doc-slash__item--active')
-      ?.scrollIntoView({ block: 'nearest' })
+    slashMenuEl.value?.querySelector('.doc-slash__item--active')?.scrollIntoView({ block: 'nearest' })
   })
 }
 
@@ -1277,10 +1304,7 @@ function onSlashExit(p: SuggestionProps<SlashItem, SlashItem>) {
   try {
     const ed = p.editor
     const $from = ed.state.doc.resolve(p.range.from)
-    if (
-      $from.parent.type.name === 'paragraph' &&
-      $from.parent.textContent === '/'
-    ) {
+    if ($from.parent.type.name === 'paragraph' && $from.parent.textContent === '/') {
       ed.commands.deleteRange({ from: p.range.from, to: p.range.from + 1 })
     }
   } catch {
@@ -1331,13 +1355,7 @@ const SlashCommands = Extension.create({
 
 const editor = useEditor({
   content: '',
-  extensions: [
-    ...docExtensions({ resolveImageSrc }),
-    TokenChips,
-    LiveRefBadges,
-    CommentMarks,
-    SlashCommands,
-  ],
+  extensions: [...docExtensions({ resolveImageSrc }), TokenChips, LiveRefBadges, CommentMarks, SlashCommands],
   editable: editable.value,
   editorProps: {
     attributes: { class: 'doc-prose' },
@@ -1435,9 +1453,7 @@ async function commentOnSelection() {
   // Same filler-tolerant alignment as split/highlight. Falls back to a
   // whole-doc comment if the structure can't be mapped.
   const anchor =
-    cta.nodeIndex >= nodes.length || nodes.length !== contentBlocks().length
-      ? null
-      : nodes[cta.nodeIndex].id
+    cta.nodeIndex >= nodes.length || nodes.length !== contentBlocks().length ? null : nodes[cta.nodeIndex].id
   commentCta.value = null
   // 复用底部主输入框: hand the anchor + quote to the parent composer, which
   // flips into comment mode (quote chip + Esc/✕ to exit).
@@ -1470,10 +1486,13 @@ function addBlockBelow() {
   // empty line reads as a bug.
   plusSlashPending = true
   const hovered = ed.state.doc.nodeAt(hoverPos.value)
-  const emptyPara =
-    hovered?.type.name === 'paragraph' && hovered.content.size === 0
+  const emptyPara = hovered?.type.name === 'paragraph' && hovered.content.size === 0
   if (emptyPara) {
-    ed.chain().focus().setTextSelection(hoverPos.value + 1).insertContent('/').run()
+    ed.chain()
+      .focus()
+      .setTextSelection(hoverPos.value + 1)
+      .insertContent('/')
+      .run()
     return
   }
   const insertAt = hoverPos.value + hoverNodeSize.value
@@ -1502,9 +1521,7 @@ function splitDuplicateTitle(md: string): { prefix: string; body: string } {
   const title = props.topic?.title?.trim()
   if (!title) return { prefix: '', body: md }
   const m = md.match(/^#\s+(.+?)\s*\n+/)
-  return m && m[1].trim() === title
-    ? { prefix: m[0], body: md.slice(m[0].length) }
-    : { prefix: '', body: md }
+  return m && m[1].trim() === title ? { prefix: m[0], body: md.slice(m[0].length) } : { prefix: '', body: md }
 }
 
 // Install fresh server content into the panel state (editor + source draft +
@@ -1710,7 +1727,7 @@ watch(
     // Drop the previous topic's terminal so it can't flash in the new 现场.
     terminalUrl.value = null
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 // AI activity: soft reload (respects unsaved edits).
@@ -1719,7 +1736,7 @@ watch(
   () => {
     const id = props.topic?.id
     if (id) reloadFromActivity(id)
-  },
+  }
 )
 
 // A2: when the sidebar's topics change (a subtopic's status moved, or a new one
@@ -1731,7 +1748,7 @@ watch(
     const tid = props.topic?.id
     if (tid) void loadComments(tid).catch(() => {})
   },
-  { deep: true },
+  { deep: true }
 )
 
 onBeforeUnmount(() => {
@@ -1741,10 +1758,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="doc d-flex flex-column fill-height" style="position: relative">
-    <div
-      v-if="!topic"
-      class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis"
-    >
+    <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-file-document-outline</v-icon>
         <div>选择一个话题查看文档</div>
@@ -1762,22 +1776,12 @@ onBeforeUnmount(() => {
 
         <span v-if="loading" class="t-meta me-2">加载中…</span>
         <span v-else-if="saving" class="t-meta me-2">保存中…</span>
-        <span
-          v-else-if="savedAt"
-          class="d-inline-flex align-center ga-1 c-faint me-2"
-          style="font-size: 12px"
-        >
+        <span v-else-if="savedAt" class="d-inline-flex align-center ga-1 c-faint me-2" style="font-size: 12px">
           <span class="status-dot status-dot--ok" />已保存
         </span>
         <span v-else-if="dirty" class="t-meta me-2">编辑中…</span>
 
-        <v-btn
-          size="small"
-          variant="text"
-          class="me-1 c-muted"
-          :disabled="sourceMode"
-          @click="toggleEditable"
-        >
+        <v-btn size="small" variant="text" class="me-1 c-muted" :disabled="sourceMode" @click="toggleEditable">
           {{ editable ? '只读' : '编辑' }}
         </v-btn>
         <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
@@ -1819,620 +1823,556 @@ onBeforeUnmount(() => {
 
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
-      <!-- 源码模式: the raw markdown file in Monaco. Full-bleed (no page
+        <!-- 源码模式: the raw markdown file in Monaco. Full-bleed (no page
            column) — this is the file itself, not the document view. -->
-      <div v-if="sourceMode" class="doc-source" @keydown="onDocKeydown">
-        <CodeEditor
-          :model-value="sourceDraft"
-          filename="doc.md"
-          :readonly="!editable"
-          @update:model-value="onSourceInput"
-          @save="save()"
-        />
-      </div>
-      <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
-      <div
-        v-else
-        class="doc-body overflow-y-auto"
-        :class="{ readonly: !editable }"
-        @focusout="onBlur"
-        @scroll.passive="codeCopy = null"
-      >
-        <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
-          <!-- Large document title (Feishu Docs), = the topic title -->
-          <h1 class="doc-page__title">{{ topic.title }}</h1>
-          <!-- 军规 1 banner: this doc uses syntax the visual editor can't
+        <div v-if="sourceMode" class="doc-source" @keydown="onDocKeydown">
+          <CodeEditor
+            :model-value="sourceDraft"
+            filename="doc.md"
+            :readonly="!editable"
+            @update:model-value="onSourceInput"
+            @save="save()"
+          />
+        </div>
+        <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
+        <div
+          v-else
+          class="doc-body overflow-y-auto"
+          :class="{ readonly: !editable }"
+          @focusout="onBlur"
+          @scroll.passive="codeCopy = null"
+        >
+          <div class="doc-page" :class="{ 'doc-pulse': pulsing }">
+            <!-- Large document title (Feishu Docs), = the topic title -->
+            <h1 class="doc-page__title">{{ topic.title }}</h1>
+            <!-- 军规 1 banner: this doc uses syntax the visual editor can't
                fully represent — autosave is paused, source mode is lossless. -->
-          <div v-if="lossy" class="doc-lossy-banner">
-            <v-icon size="16" class="doc-lossy-banner__icon">mdi-alert-outline</v-icon>
-            <div class="doc-lossy-banner__text">
-              此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。
-              自动保存已暂停——建议用源码模式编辑。
+            <div v-if="lossy" class="doc-lossy-banner">
+              <v-icon size="16" class="doc-lossy-banner__icon">mdi-alert-outline</v-icon>
+              <div class="doc-lossy-banner__text">
+                此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。 自动保存已暂停——建议用源码模式编辑。
+              </div>
+              <button type="button" class="doc-lossy-banner__btn" @click="enterSourceMode">源码模式</button>
             </div>
-            <button type="button" class="doc-lossy-banner__btn" @click="enterSourceMode">
-              源码模式
-            </button>
-          </div>
-          <div
-            class="doc-editor-wrap"
-            @click="onDocClick"
-            @keydown="onDocKeydown"
-            @mouseover="onDocMouseOver"
-          >
-            <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
-            <!-- B4 Feishu-style: select text in the doc → a floating 评论 button
+            <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
+              <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
+              <!-- B4 Feishu-style: select text in the doc → a floating 评论 button
                  appears over the selection. Click to comment on that span. -->
-            <button
-              v-if="commentCta"
-              type="button"
-              class="doc-comment-cta"
-              :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
-              title="评论选中内容"
-              @mousedown.prevent
-              @click="commentOnSelection"
-            >
-              <v-icon size="14">mdi-comment-plus-outline</v-icon>
-              评论
-            </button>
-            <!-- Notion-style slash menu: anchored to the caret (suggestion
+              <button
+                v-if="commentCta"
+                type="button"
+                class="doc-comment-cta"
+                :style="{ top: `${commentCta.top}px`, left: `${commentCta.left}px` }"
+                title="评论选中内容"
+                @mousedown.prevent
+                @click="commentOnSelection"
+              >
+                <v-icon size="14">mdi-comment-plus-outline</v-icon>
+                评论
+              </button>
+              <!-- Notion-style slash menu: anchored to the caret (suggestion
                  clientRect), wrap-relative like the other overlays. Keyboard
                  (↑↓/Enter/Esc) is handled in the suggestion plugin; the mouse
                  path routes through the same command(). -->
-            <div
-              v-if="slashMenu"
-              ref="slashMenuEl"
-              class="doc-slash__menu"
-              :style="{ top: `${slashMenu.top}px`, left: `${slashMenu.left}px` }"
-            >
-              <button
-                v-for="(it, i) in slashMenu.items"
-                :key="it.key"
-                type="button"
-                class="doc-slash__item"
-                :class="{ 'doc-slash__item--active': i === slashMenu.index }"
-                @mousedown.prevent
-                @mouseenter="slashMenu.index = i"
-                @click="runSlashItem(it)"
+              <div
+                v-if="slashMenu"
+                ref="slashMenuEl"
+                class="doc-slash__menu"
+                :style="{ top: `${slashMenu.top}px`, left: `${slashMenu.left}px` }"
               >
-                <v-icon size="15" class="doc-slash__icon">{{ it.icon }}</v-icon>
-                <span class="doc-slash__label">{{ it.label }}</span>
-                <span class="doc-slash__hint">{{ it.hint }}</span>
-              </button>
-            </div>
-            <!-- Code-block hover toolbar: ONE right-anchored flex bar
+                <button
+                  v-for="(it, i) in slashMenu.items"
+                  :key="it.key"
+                  type="button"
+                  class="doc-slash__item"
+                  :class="{ 'doc-slash__item--active': i === slashMenu.index }"
+                  @mousedown.prevent
+                  @mouseenter="slashMenu.index = i"
+                  @click="runSlashItem(it)"
+                >
+                  <v-icon size="15" class="doc-slash__icon">{{ it.icon }}</v-icon>
+                  <span class="doc-slash__label">{{ it.label }}</span>
+                  <span class="doc-slash__hint">{{ it.hint }}</span>
+                </button>
+              </div>
+              <!-- Code-block hover toolbar: ONE right-anchored flex bar
                  ([language ∨][copy]) growing leftward — the two controls can
                  no longer overlap however long the language name gets. -->
-            <div
-              v-if="codeCopy"
-              class="doc-codebar"
-              :style="{ top: `${codeCopy.top}px`, left: `${codeCopy.right}px` }"
-            >
-              <div v-if="editable" class="doc-codelang">
-                <button type="button" class="doc-codelang__chip" @click="codeLangOpen = !codeLangOpen">
-                  {{ currentCodeLang() }}
-                  <v-icon size="12">mdi-chevron-down</v-icon>
-                </button>
-                <div v-if="codeLangOpen" class="doc-codelang__menu">
-                  <button
-                    v-for="l in CODE_LANGS"
-                    :key="l"
-                    type="button"
-                    class="doc-codelang__item"
-                    @click="setCodeBlockLang(l)"
-                  >
-                    {{ l }}
-                  </button>
-                </div>
-              </div>
-              <button
-                type="button"
-                class="doc-codecopy"
-                :class="{ 'doc-codecopy--done': codeCopy.done }"
-                :title="codeCopy.done ? '已复制' : '复制代码'"
-                @mousedown.prevent
-                @click="copyCodeBlock"
+              <div
+                v-if="codeCopy"
+                class="doc-codebar"
+                :style="{ top: `${codeCopy.top}px`, left: `${codeCopy.right}px` }"
               >
-                <v-icon size="14">
-                  {{ codeCopy.done ? 'mdi-check' : 'mdi-content-copy' }}
-                </v-icon>
-              </button>
-            </div>
-            <!-- A2 in-place live-refs are ProseMirror widget decorations now —
+                <div v-if="editable" class="doc-codelang">
+                  <button type="button" class="doc-codelang__chip" @click="codeLangOpen = !codeLangOpen">
+                    {{ currentCodeLang() }}
+                    <v-icon size="12">mdi-chevron-down</v-icon>
+                  </button>
+                  <div v-if="codeLangOpen" class="doc-codelang__menu">
+                    <button
+                      v-for="l in CODE_LANGS"
+                      :key="l"
+                      type="button"
+                      class="doc-codelang__item"
+                      @click="setCodeBlockLang(l)"
+                    >
+                      {{ l }}
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="doc-codecopy"
+                  :class="{ 'doc-codecopy--done': codeCopy.done }"
+                  :title="codeCopy.done ? '已复制' : '复制代码'"
+                  @mousedown.prevent
+                  @click="copyCodeBlock"
+                >
+                  <v-icon size="14">
+                    {{ codeCopy.done ? 'mdi-check' : 'mdi-content-copy' }}
+                  </v-icon>
+                </button>
+              </div>
+              <!-- A2 in-place live-refs are ProseMirror widget decorations now —
                  rendered in the document flow at the end of their paragraph by
                  the LiveRefBadges extension (no overlay, no cursor dead zone).
                  Clicks are delegated through onDocClick above. -->
-            <!-- Real block handles: 🧩 splits the block into a subtopic, ⠿ drags to
+              <!-- Real block handles: 🧩 splits the block into a subtopic, ⠿ drags to
                  reorder, ＋ inserts a block below. Only in edit mode. -->
-            <DragHandle
-              v-if="editor && editable"
-              :editor="editor"
-              :on-node-change="onDocNodeChange"
-              class="doc-handle"
-            >
-              <!-- mdi icons, not text glyphs: "+" (18px font) and "⠿"
+              <DragHandle
+                v-if="editor && editable"
+                :editor="editor"
+                :on-node-change="onDocNodeChange"
+                class="doc-handle"
+              >
+                <!-- mdi icons, not text glyphs: "+" (18px font) and "⠿"
                    (braille, 16px) center on different baselines and read as
                    non-parallel; icons share one geometric grid. -->
-              <button
-                type="button"
-                class="doc-handle__btn doc-handle__add"
-                title="在下方插入块"
-                draggable="false"
-                @dragstart.stop.prevent
-                @click="addBlockBelow"
-              >
-                <v-icon size="15">mdi-plus</v-icon>
-              </button>
-              <span class="doc-handle__btn doc-handle__grip" title="拖动以排序">
-                <v-icon size="15">mdi-drag-vertical</v-icon>
-              </span>
-            </DragHandle>
+                <button
+                  type="button"
+                  class="doc-handle__btn doc-handle__add"
+                  title="在下方插入块"
+                  draggable="false"
+                  @dragstart.stop.prevent
+                  @click="addBlockBelow"
+                >
+                  <v-icon size="15">mdi-plus</v-icon>
+                </button>
+                <span class="doc-handle__btn doc-handle__grip" title="拖动以排序">
+                  <v-icon size="15">mdi-drag-vertical</v-icon>
+                </span>
+              </DragHandle>
+            </div>
 
-          </div>
-
-          <!-- 飞书 docs 风常驻评论区: ALL comments live at the bottom of the
+            <!-- 飞书 docs 风常驻评论区: ALL comments live at the bottom of the
                document (评论归一 — the drawer tool is gone). Anchored comments
                carry a quote chip that scrolls + flashes their paragraph;
                page-level comments render plain. -->
-          <div class="doc-comments">
-            <!-- Collapsible head; ONE 写评论 action that reuses the main
+            <div class="doc-comments">
+              <!-- Collapsible head; ONE 写评论 action that reuses the main
                  composer in comment mode — the doc never grows its own input. -->
-            <div class="doc-comments__head">
-              <button
-                type="button"
-                class="doc-comments__fold"
-                :title="commentsFolded ? '展开评论' : '收起评论'"
-                @click="commentsFolded = !commentsFolded"
-              >
-                <v-icon size="15" class="c-faint">
-                  {{ commentsFolded ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
-                </v-icon>
-                <v-icon size="15" class="c-faint">mdi-comment-text-outline</v-icon>
-                评论
-                <span v-if="comments.length" class="doc-comments__count">
-                  {{ comments.length }}
-                </span>
-              </button>
-              <v-spacer />
-              <v-btn
-                icon="mdi-plus"
-                size="x-small"
-                variant="tonal"
-                color="primary"
-                title="写评论"
-                @click="emit('comment-intent', { anchorId: null, quote: '' })"
-              />
-            </div>
-            <template v-if="!commentsFolded">
-              <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
-                <span class="doc-comments__avatar">
-                  {{ (c.author || '?').slice(0, 1).toUpperCase() }}
-                </span>
-                <div class="doc-comments__main">
-                  <div class="doc-comments__meta">
-                    <span class="doc-comments__author">{{ c.author }}</span>
-                    <span class="t-meta">{{ relTime(c.created_at) }}</span>
-                  </div>
-                  <!-- Anchored comment: quoted-span chip → scroll & flash its
+              <div class="doc-comments__head">
+                <button
+                  type="button"
+                  class="doc-comments__fold"
+                  :title="commentsFolded ? '展开评论' : '收起评论'"
+                  @click="commentsFolded = !commentsFolded"
+                >
+                  <v-icon size="15" class="c-faint">
+                    {{ commentsFolded ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+                  </v-icon>
+                  <v-icon size="15" class="c-faint">mdi-comment-text-outline</v-icon>
+                  评论
+                  <span v-if="comments.length" class="doc-comments__count">
+                    {{ comments.length }}
+                  </span>
+                </button>
+                <v-spacer />
+                <v-btn
+                  icon="mdi-plus"
+                  size="x-small"
+                  variant="tonal"
+                  color="primary"
+                  title="写评论"
+                  @click="emit('comment-intent', { anchorId: null, quote: '' })"
+                />
+              </div>
+              <template v-if="!commentsFolded">
+                <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
+                  <span class="doc-comments__avatar">
+                    {{ (c.author || '?').slice(0, 1).toUpperCase() }}
+                  </span>
+                  <div class="doc-comments__main">
+                    <div class="doc-comments__meta">
+                      <span class="doc-comments__author">{{ c.author }}</span>
+                      <span class="t-meta">{{ relTime(c.created_at) }}</span>
+                    </div>
+                    <!-- Anchored comment: quoted-span chip → scroll & flash its
                        paragraph. A dead anchor — the node id no longer resolves,
                        or the node row was deleted and the FK nulled reply_to
                        (leaving only the quote) — says so instead of a dead chip. -->
-                  <button
-                    v-if="c.reply_to && commentAnchor(c)"
-                    type="button"
-                    class="doc-comments__chip"
-                    title="定位到该段"
-                    @click="highlightNode(c.reply_to!)"
-                  >
-                    {{ c.anchor_quote || nodeLabel(commentAnchor(c)!.content) }}
-                  </button>
-                  <div
-                    v-else-if="c.reply_to || c.anchor_quote"
-                    class="doc-comments__stale"
-                  >
-                    原段落已改动
+                    <button
+                      v-if="c.reply_to && commentAnchor(c)"
+                      type="button"
+                      class="doc-comments__chip"
+                      title="定位到该段"
+                      @click="highlightNode(c.reply_to!)"
+                    >
+                      {{ c.anchor_quote || nodeLabel(commentAnchor(c)!.content) }}
+                    </button>
+                    <div v-else-if="c.reply_to || c.anchor_quote" class="doc-comments__stale">原段落已改动</div>
+                    <div class="doc-comments__text">{{ c.content }}</div>
                   </div>
-                  <div class="doc-comments__text">{{ c.content }}</div>
                 </div>
-              </div>
-            </template>
+              </template>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- Tool panel (spec §7.1): floats over the doc for a quick peek, or docks
+        <!-- Tool panel (spec §7.1): floats over the doc for a quick peek, or docks
            beside it when 钉住 (pinned). The scrim closes a floating panel on an
            outside click; a pinned panel stays and the doc makes room for it. -->
-      <div v-if="drawerOpen && !pinned" class="tool-scrim" @click="closeTool" />
-      <transition name="tool-slide">
-        <aside
-          v-if="drawerOpen"
-          class="tool-panel"
-          :class="pinned ? 'tool-panel--pinned' : 'tool-panel--float'"
-          :style="pinned ? { flex: `0 0 ${toolWidth}px` } : { width: `${toolWidth}px` }"
-        >
-          <!-- Drag the left edge to resize the pinned drawer (width persisted). -->
-          <div
-            v-if="pinned"
-            class="tool-resizer"
-            title="拖动调整宽度"
-            @mousedown="startToolResize"
-          />
-          <div class="tool-panel__head">
-            <span class="tool-panel__title">{{ activeToolLabel() }}</span>
-            <v-spacer />
-            <template v-if="openTool === 'preview' && (previewAppUrl || previewFile)">
+        <div v-if="drawerOpen && !pinned" class="tool-scrim" @click="closeTool" />
+        <transition name="tool-slide">
+          <aside
+            v-if="drawerOpen"
+            class="tool-panel"
+            :class="pinned ? 'tool-panel--pinned' : 'tool-panel--float'"
+            :style="pinned ? { flex: `0 0 ${toolWidth}px` } : { width: `${toolWidth}px` }"
+          >
+            <!-- Drag the left edge to resize the pinned drawer (width persisted). -->
+            <div v-if="pinned" class="tool-resizer" title="拖动调整宽度" @mousedown="startToolResize" />
+            <div class="tool-panel__head">
+              <span class="tool-panel__title">{{ activeToolLabel() }}</span>
+              <v-spacer />
+              <template v-if="openTool === 'preview' && (previewAppUrl || previewFile)">
+                <v-btn
+                  icon="mdi-open-in-new"
+                  size="small"
+                  variant="text"
+                  class="c-muted"
+                  title="在新标签页打开"
+                  @click="openPreviewInNewTab"
+                />
+                <v-btn
+                  icon="mdi-arrow-expand-all"
+                  size="small"
+                  variant="text"
+                  class="c-muted"
+                  title="全屏预览"
+                  @click="previewFull = true"
+                />
+              </template>
               <v-btn
-                icon="mdi-open-in-new"
+                :icon="pinned ? 'mdi-pin' : 'mdi-pin-outline'"
                 size="small"
                 variant="text"
-                class="c-muted"
-                title="在新标签页打开"
-                @click="openPreviewInNewTab"
+                :title="pinned ? '取消钉住' : '钉住（停靠在文档旁）'"
+                :class="pinned ? 'tool-btn--active' : 'c-muted'"
+                @click="togglePin"
               />
-              <v-btn
-                icon="mdi-arrow-expand-all"
-                size="small"
-                variant="text"
-                class="c-muted"
-                title="全屏预览"
-                @click="previewFull = true"
-              />
-            </template>
-            <v-btn
-              :icon="pinned ? 'mdi-pin' : 'mdi-pin-outline'"
-              size="small"
-              variant="text"
-              :title="pinned ? '取消钉住' : '钉住（停靠在文档旁）'"
-              :class="pinned ? 'tool-btn--active' : 'c-muted'"
-              @click="togglePin"
-            />
-            <v-btn icon="mdi-close" variant="text" size="small" class="c-muted" @click="closeTool" />
-          </div>
-          <v-divider />
+              <v-btn icon="mdi-close" variant="text" size="small" class="c-muted" @click="closeTool" />
+            </div>
+            <v-divider />
 
-          <div class="tool-content">
-          <div
-            v-if="toolLoading"
-            class="d-flex justify-center py-8"
-          >
-            <v-progress-circular indeterminate color="primary" size="28" />
-          </div>
-          <v-alert
-            v-else-if="toolError"
-            type="error"
-            density="compact"
-            class="ma-4"
-          >
-            {{ toolError }}
-          </v-alert>
+            <div class="tool-content">
+              <div v-if="toolLoading" class="d-flex justify-center py-8">
+                <v-progress-circular indeterminate color="primary" size="28" />
+              </div>
+              <v-alert v-else-if="toolError" type="error" density="compact" class="ma-4">
+                {{ toolError }}
+              </v-alert>
 
-          <!-- 现场: real terminal (tmux backend) OR read-only transcript timeline -->
-          <template v-else-if="openTool === 'site' && terminalUrl">
-            <!-- 实时终端(只读): the topic container's ttyd pane, proxied by the
+              <!-- 现场: real terminal (tmux backend) OR read-only transcript timeline -->
+              <template v-else-if="openTool === 'site' && terminalUrl">
+                <!-- 实时终端(只读): the topic container's ttyd pane, proxied by the
                  backend. iframe is the simplest embed — ttyd ships its own
                  xterm.js frontend, and same-origin (via the /api proxy) means no
                  CSP/cross-origin friction. Read-only mirror (ttyd -R). -->
-            <div class="term-wrap">
-              <div class="term-bar text-caption px-3 py-1">
-                <span class="term-bar__dot">●</span>
-                实时终端（只读）
-              </div>
-              <iframe
-                class="term-frame"
-                :src="terminalUrl"
-                title="实时终端（只读）"
-              />
-            </div>
-          </template>
-
-          <!-- 现场: read-only transcript timeline (芝士 messages + 🔧 events) -->
-          <template v-else-if="openTool === 'site'">
-            <div
-              v-if="transcript.length === 0 && worklog.length === 0"
-              class="text-center text-medium-emphasis py-6"
-            >
-              本话题暂无施工记录
-            </div>
-            <div v-else class="site-log pa-3">
-              <template v-for="b in transcript" :key="b.id">
-                <!-- Tool action — Claude Code style: ● verb + ⎿ arg preview -->
-                <div v-if="b.kind === 'event'" class="site-act">
-                  <span
-                    class="site-act__dot"
-                    :class="{ 'site-act__dot--platform': eventPlatform(b) }"
-                  >●</span>
-                  <div class="site-act__body">
-                    <span class="site-act__verb">{{ eventVerb(b) }}</span>
-                    <div v-if="eventArg(b)" class="site-act__arg">
-                      ⎿ {{ eventArg(b) }}
-                    </div>
+                <div class="term-wrap">
+                  <div class="term-bar text-caption px-3 py-1">
+                    <span class="term-bar__dot">●</span>
+                    实时终端（只读）
                   </div>
-                  <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
+                  <iframe class="term-frame" :src="terminalUrl" title="实时终端（只读）" />
                 </div>
-                <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
-                <div v-else class="site-msg">
-                  <CheeseAvatar :size="26" class="site-msg__av" />
-                  <div class="site-msg__main">
-                    <div class="site-msg__meta">
-                      <span class="site-msg__name">{{ authorLabel(b) }}</span>
-                      <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
+              </template>
+
+              <!-- 现场: read-only transcript timeline (芝士 messages + 🔧 events) -->
+              <template v-else-if="openTool === 'site'">
+                <div
+                  v-if="transcript.length === 0 && worklog.length === 0"
+                  class="text-center text-medium-emphasis py-6"
+                >
+                  本话题暂无施工记录
+                </div>
+                <div v-else class="site-log pa-3">
+                  <template v-for="b in transcript" :key="b.id">
+                    <!-- Tool action — Claude Code style: ● verb + ⎿ arg preview -->
+                    <div v-if="b.kind === 'event'" class="site-act">
+                      <span class="site-act__dot" :class="{ 'site-act__dot--platform': eventPlatform(b) }">●</span>
+                      <div class="site-act__body">
+                        <span class="site-act__verb">{{ eventVerb(b) }}</span>
+                        <div v-if="eventArg(b)" class="site-act__arg">⎿ {{ eventArg(b) }}</div>
+                      </div>
+                      <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
                     </div>
-                    <!-- Raw transcript text on purpose (决定: 现场内容改为raw):
+                    <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
+                    <div v-else class="site-msg">
+                      <CheeseAvatar :size="26" class="site-msg__av" />
+                      <div class="site-msg__main">
+                        <div class="site-msg__meta">
+                          <span class="site-msg__name">{{ authorLabel(b) }}</span>
+                          <span class="t-meta">{{ fmtTime(b.created_at) }}</span>
+                        </div>
+                        <!-- Raw transcript text on purpose (决定: 现场内容改为raw):
                          现场 shows what 芝士 actually emitted — markdown syntax,
                          <@handle> tokens and all — like a Claude Code session,
                          NOT the rendered chat version. -->
-                    <div class="site-msg__raw">{{ b.content }}</div>
-                  </div>
-                </div>
-              </template>
+                        <div class="site-msg__raw">{{ b.content }}</div>
+                      </div>
+                    </div>
+                  </template>
 
-              <!-- 本轮实时动作 (live feed): what 芝士 is doing RIGHT NOW —
+                  <!-- 本轮实时动作 (live feed): what 芝士 is doing RIGHT NOW —
                    newest line pulses; the list clears when the turn ends and
                    the persisted transcript above becomes the record. -->
-              <template v-for="(act, i) in worklog" :key="'live-' + i">
-                <div class="site-act">
-                  <span
-                    class="site-act__dot"
-                    :class="{
-                      'site-act__dot--platform': act.platform,
-                      'site-act__dot--live': working && i === worklog.length - 1,
-                    }"
-                  >●</span>
-                  <div class="site-act__body">
-                    <span class="site-act__verb">{{ act.text }}</span>
+                  <template v-for="(act, i) in worklog" :key="'live-' + i">
+                    <div class="site-act">
+                      <span
+                        class="site-act__dot"
+                        :class="{
+                          'site-act__dot--platform': act.platform,
+                          'site-act__dot--live': working && i === worklog.length - 1,
+                        }"
+                        >●</span
+                      >
+                      <div class="site-act__body">
+                        <span class="site-act__verb">{{ act.text }}</span>
+                      </div>
+                    </div>
+                  </template>
+                  <!-- 本轮聚合摘要 (Claude Code 风): deterministic counts + ⏱ -->
+                  <div v-if="working && worklog.length" class="site-summary">
+                    <span class="site-act__dot site-act__dot--live">●</span>
+                    <span>
+                      {{ liveSummary }}
+                      <template v-if="liveElapsed !== null"> （{{ liveElapsed }}s） </template>
+                    </span>
                   </div>
                 </div>
               </template>
-              <!-- 本轮聚合摘要 (Claude Code 风): deterministic counts + ⏱ -->
-              <div v-if="working && worklog.length" class="site-summary">
-                <span class="site-act__dot site-act__dot--live">●</span>
-                <span>
-                  {{ liveSummary }}
-                  <template v-if="liveElapsed !== null">
-                    （{{ liveElapsed }}s）
-                  </template>
-                </span>
-              </div>
-            </div>
-          </template>
 
-          <!-- Git: commit log + working-tree diff -->
-          <template v-else-if="openTool === 'git'">
-            <div class="pa-3">
-              <div class="t-eyebrow mb-2">提交记录</div>
-              <div
-                v-if="gitCommits.length === 0"
-                class="text-medium-emphasis text-body-2 mb-3"
-              >
-                暂无提交
-              </div>
-              <v-list v-else density="compact" class="py-0 mb-3">
-                <v-list-item v-for="c in gitCommits" :key="c.hash" class="px-0">
-                  <template #prepend>
-                    <v-icon size="14" class="me-1 c-faint">mdi-source-commit</v-icon>
-                  </template>
-                  <v-list-item-title class="text-body-2">
-                    {{ c.message }}
-                  </v-list-item-title>
-                  <v-list-item-subtitle class="text-caption">
-                    {{ c.hash.slice(0, 7) }} · {{ c.author }}
-                  </v-list-item-subtitle>
-                </v-list-item>
-              </v-list>
+              <!-- Git: commit log + working-tree diff -->
+              <template v-else-if="openTool === 'git'">
+                <div class="pa-3">
+                  <div class="t-eyebrow mb-2">提交记录</div>
+                  <div v-if="gitCommits.length === 0" class="text-medium-emphasis text-body-2 mb-3">暂无提交</div>
+                  <v-list v-else density="compact" class="py-0 mb-3">
+                    <v-list-item v-for="c in gitCommits" :key="c.hash" class="px-0">
+                      <template #prepend>
+                        <v-icon size="14" class="me-1 c-faint">mdi-source-commit</v-icon>
+                      </template>
+                      <v-list-item-title class="text-body-2">
+                        {{ c.message }}
+                      </v-list-item-title>
+                      <v-list-item-subtitle class="text-caption">
+                        {{ c.hash.slice(0, 7) }} · {{ c.author }}
+                      </v-list-item-subtitle>
+                    </v-list-item>
+                  </v-list>
 
-              <v-divider class="mb-3" />
-              <div class="t-eyebrow mb-2">改动 diff</div>
-              <pre v-if="gitDiff.trim()" class="code-pre">{{ gitDiff }}</pre>
-              <div v-else class="text-medium-emphasis text-body-2">
-                工作区干净，无未提交改动
-              </div>
-            </div>
-          </template>
+                  <v-divider class="mb-3" />
+                  <div class="t-eyebrow mb-2">改动 diff</div>
+                  <pre v-if="gitDiff.trim()" class="code-pre">{{ gitDiff }}</pre>
+                  <div v-else class="text-medium-emphasis text-body-2">工作区干净，无未提交改动</div>
+                </div>
+              </template>
 
-          <!-- 文件: two-pane — the list stays on the left, the opened file loads
+              <!-- 文件: two-pane — the list stays on the left, the opened file loads
                into a code editor on the right (editable; 保存 = 人改文件即指令). -->
-          <template v-else-if="openTool === 'files'">
-            <div class="file-tool">
-              <div class="file-bar">
-                <v-btn
-                  icon
-                  size="x-small"
-                  variant="text"
-                  class="file-icon-btn"
-                  :class="{ 'file-icon-btn--on': fileListOpen }"
-                  title="文件列表"
-                  @click="fileListOpen = !fileListOpen"
-                >
-                  <v-icon size="18">mdi-format-list-bulleted</v-icon>
-                </v-btn>
-                <span class="file-bar__path" :title="openPath || ''">
-                  {{ openPath || '未打开文件' }}
-                </span>
-                <span v-if="fileDirty" class="file-bar__dot" title="未保存" />
-                <v-spacer />
-                <v-btn
-                  size="x-small"
-                  variant="flat"
-                  color="primary"
-                  :loading="fileSaving"
-                  :disabled="!fileDirty"
-                  @click="saveFile"
-                >
-                  保存
-                </v-btn>
-              </div>
-              <div class="file-body">
-                <div v-if="fileListOpen" ref="fileListEl" class="file-list">
-                  <div
-                    v-if="files.length === 0"
-                    class="text-center c-faint py-6"
-                    style="font-size: 0.8rem"
-                  >
-                    暂无文件
-                  </div>
-                  <template v-for="row in fileRows" :key="`${row.type}:${row.path}`">
-                    <!-- folder row: click toggles expand/collapse -->
-                    <button
-                      v-if="row.type === 'dir'"
-                      type="button"
-                      class="file-item file-item--dir"
-                      :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
-                      :title="row.path"
-                      @click="toggleDir(row.path)"
+              <template v-else-if="openTool === 'files'">
+                <div class="file-tool">
+                  <div class="file-bar">
+                    <v-btn
+                      icon
+                      size="x-small"
+                      variant="text"
+                      class="file-icon-btn"
+                      :class="{ 'file-icon-btn--on': fileListOpen }"
+                      title="文件列表"
+                      @click="fileListOpen = !fileListOpen"
                     >
-                      <v-icon size="13" class="c-muted">
-                        {{ expandedDirs.has(row.path) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
-                      </v-icon>
-                      <v-icon size="13" class="me-1 c-muted">
-                        {{ expandedDirs.has(row.path) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}
-                      </v-icon>
-                      <span class="file-item__name">{{ row.name }}</span>
-                    </button>
-                    <!-- file row: shows only the file name, indented under its folder -->
-                    <button
-                      v-else
-                      type="button"
-                      class="file-item"
-                      :class="{ 'file-item--active': openPath === row.path }"
-                      :style="{ paddingLeft: `${8 + row.depth * 14 + 13}px` }"
-                      :title="`${row.path} · ${fmtBytes(row.bytes)}`"
-                      @click="selectFile(row.path)"
+                      <v-icon size="18">mdi-format-list-bulleted</v-icon>
+                    </v-btn>
+                    <span class="file-bar__path" :title="openPath || ''">
+                      {{ openPath || '未打开文件' }}
+                    </span>
+                    <span v-if="fileDirty" class="file-bar__dot" title="未保存" />
+                    <v-spacer />
+                    <v-btn
+                      size="x-small"
+                      variant="flat"
+                      color="primary"
+                      :loading="fileSaving"
+                      :disabled="!fileDirty"
+                      @click="saveFile"
                     >
-                      <v-icon size="13" class="me-1 c-muted">mdi-file-outline</v-icon>
-                      <span class="file-item__name">{{ row.name }}</span>
-                    </button>
-                  </template>
-                </div>
-                <div class="file-editor">
-                  <div v-if="openPath && openIsImage" class="file-image-view">
-                    <img :src="openImageUrl" :alt="openPath" />
+                      保存
+                    </v-btn>
                   </div>
-                  <CodeEditor
-                    v-else-if="openPath"
-                    v-model="fileDraft"
-                    :filename="openPath"
-                    @save="saveFile"
-                  />
+                  <div class="file-body">
+                    <div v-if="fileListOpen" ref="fileListEl" class="file-list">
+                      <div v-if="files.length === 0" class="text-center c-faint py-6" style="font-size: 0.8rem">
+                        暂无文件
+                      </div>
+                      <template v-for="row in fileRows" :key="`${row.type}:${row.path}`">
+                        <!-- folder row: click toggles expand/collapse -->
+                        <button
+                          v-if="row.type === 'dir'"
+                          type="button"
+                          class="file-item file-item--dir"
+                          :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
+                          :title="row.path"
+                          @click="toggleDir(row.path)"
+                        >
+                          <v-icon size="13" class="c-muted">
+                            {{ expandedDirs.has(row.path) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
+                          </v-icon>
+                          <v-icon size="13" class="me-1 c-muted">
+                            {{ expandedDirs.has(row.path) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}
+                          </v-icon>
+                          <span class="file-item__name">{{ row.name }}</span>
+                        </button>
+                        <!-- file row: shows only the file name, indented under its folder -->
+                        <button
+                          v-else
+                          type="button"
+                          class="file-item"
+                          :class="{ 'file-item--active': openPath === row.path }"
+                          :style="{ paddingLeft: `${8 + row.depth * 14 + 13}px` }"
+                          :title="`${row.path} · ${fmtBytes(row.bytes)}`"
+                          @click="selectFile(row.path)"
+                        >
+                          <v-icon size="13" class="me-1 c-muted">mdi-file-outline</v-icon>
+                          <span class="file-item__name">{{ row.name }}</span>
+                        </button>
+                      </template>
+                    </div>
+                    <div class="file-editor">
+                      <div v-if="openPath && openIsImage" class="file-image-view">
+                        <img :src="openImageUrl" :alt="openPath" />
+                      </div>
+                      <CodeEditor v-else-if="openPath" v-model="fileDraft" :filename="openPath" @save="saveFile" />
+                      <div
+                        v-else
+                        class="d-flex align-center justify-center fill-height c-faint"
+                        style="font-size: 0.85rem"
+                      >
+                        选择左侧文件查看 / 编辑
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- 资源: usage stat rows (本话题 vs 全项目) -->
+              <template v-else-if="openTool === 'resources'">
+                <div class="pa-3">
                   <div
-                    v-else
-                    class="d-flex align-center justify-center fill-height c-faint"
-                    style="font-size: 0.85rem"
+                    v-for="row in [
+                      { label: '本话题', u: topicUsage },
+                      { label: '全项目', u: projectUsage },
+                    ]"
+                    :key="row.label"
+                    class="mb-4"
                   >
-                    选择左侧文件查看 / 编辑
+                    <div class="t-eyebrow mb-2">
+                      {{ row.label }}
+                    </div>
+                    <div v-if="row.u" class="usage-grid">
+                      <div class="usage-cell">
+                        <div class="usage-num">{{ row.u.turns }}</div>
+                        <div class="t-meta">轮次</div>
+                      </div>
+                      <div class="usage-cell">
+                        <div class="usage-num">{{ row.u.total_tokens }}</div>
+                        <div class="t-meta">总 token</div>
+                      </div>
+                      <div class="usage-cell">
+                        <div class="usage-num">{{ row.u.input_tokens }}</div>
+                        <div class="t-meta">输入</div>
+                      </div>
+                      <div class="usage-cell">
+                        <div class="usage-num">{{ row.u.output_tokens }}</div>
+                        <div class="t-meta">输出</div>
+                      </div>
+                      <div class="usage-cell">
+                        <div class="usage-num">{{ fmtCost(row.u.cost_usd) }}</div>
+                        <div class="t-meta">费用</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>
-          </template>
+              </template>
 
-          <!-- 资源: usage stat rows (本话题 vs 全项目) -->
-          <template v-else-if="openTool === 'resources'">
-            <div class="pa-3">
-              <div
-                v-for="row in [
-                  { label: '本话题', u: topicUsage },
-                  { label: '全项目', u: projectUsage },
-                ]"
-                :key="row.label"
-                class="mb-4"
-              >
-                <div class="t-eyebrow mb-2">
-                  {{ row.label }}
-                </div>
-                <div v-if="row.u" class="usage-grid">
-                  <div class="usage-cell">
-                    <div class="usage-num">{{ row.u.turns }}</div>
-                    <div class="t-meta">轮次</div>
-                  </div>
-                  <div class="usage-cell">
-                    <div class="usage-num">{{ row.u.total_tokens }}</div>
-                    <div class="t-meta">总 token</div>
-                  </div>
-                  <div class="usage-cell">
-                    <div class="usage-num">{{ row.u.input_tokens }}</div>
-                    <div class="t-meta">输入</div>
-                  </div>
-                  <div class="usage-cell">
-                    <div class="usage-num">{{ row.u.output_tokens }}</div>
-                    <div class="t-meta">输出</div>
-                  </div>
-                  <div class="usage-cell">
-                    <div class="usage-num">{{ fmtCost(row.u.cost_usd) }}</div>
-                    <div class="t-meta">费用</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
-
-          <!-- 预览 (spec §9.1): the artifact 芝士 pointed at (cheese artifact),
+              <!-- 预览 (spec §9.1): the artifact 芝士 pointed at (cheese artifact),
                rendered by its mimeType. Never guessed by the platform. -->
-          <template v-else-if="openTool === 'preview'">
-            <!-- 运行环境预览: live app in the topic's container -->
-            <div v-if="previewAppUrl" class="preview-wrap">
-              <div class="preview-bar text-caption px-3 pt-2">
-                <span class="text-medium-emphasis">{{ previewAppNote }}</span>
-                <v-chip size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
-                <v-chip size="x-small" variant="outlined" class="ms-1">
-                  {{ previewAppUrl }}
-                </v-chip>
-              </div>
-              <!-- The app is on 127.0.0.1:<port> — already a DIFFERENT origin
+              <template v-else-if="openTool === 'preview'">
+                <!-- 运行环境预览: live app in the topic's container -->
+                <div v-if="previewAppUrl" class="preview-wrap">
+                  <div class="preview-bar text-caption px-3 pt-2">
+                    <span class="text-medium-emphasis">{{ previewAppNote }}</span>
+                    <v-chip size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
+                    <v-chip size="x-small" variant="outlined" class="ms-1">
+                      {{ previewAppUrl }}
+                    </v-chip>
+                  </div>
+                  <!-- The app is on 127.0.0.1:<port> — already a DIFFERENT origin
                    from the platform, so allow-same-origin only lets the app be
                    itself (cookies/storage on its own origin), never us. -->
-              <iframe
-                class="preview-frame"
-                :src="previewAppUrl"
-                sandbox="allow-same-origin allow-scripts allow-forms"
-              />
-            </div>
-            <div
-              v-else-if="previewNamed && previewAppNote"
-              class="text-center text-medium-emphasis py-8"
-            >
-              <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
-              <div>应用暂时不在线</div>
-              <div class="text-caption mt-1">
-                芝士声明过一个运行中的应用，但它的容器当前没在跑——再 @ 它一次即可拉起。
-              </div>
-            </div>
-            <div v-else-if="previewFile" class="preview-wrap">
-              <div class="preview-bar text-caption px-3 pt-2">
-                <span class="text-medium-emphasis">{{ previewFile.path }}</span>
-                <v-chip
-                  v-if="previewNamed"
-                  size="x-small"
-                  color="primary"
-                  variant="tonal"
-                  class="ms-2"
-                >芝士指定</v-chip>
-                <v-chip size="x-small" variant="outlined" class="ms-1">
-                  {{ previewMime }}
-                </v-chip>
-              </div>
-              <!-- allow-scripts WITHOUT allow-same-origin (Claude Artifacts
+                  <iframe
+                    class="preview-frame"
+                    :src="previewAppUrl"
+                    sandbox="allow-same-origin allow-scripts allow-forms"
+                  />
+                </div>
+                <div v-else-if="previewNamed && previewAppNote" class="text-center text-medium-emphasis py-8">
+                  <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
+                  <div>应用暂时不在线</div>
+                  <div class="text-caption mt-1">
+                    芝士声明过一个运行中的应用，但它的容器当前没在跑——再 @ 它一次即可拉起。
+                  </div>
+                </div>
+                <div v-else-if="previewFile" class="preview-wrap">
+                  <div class="preview-bar text-caption px-3 pt-2">
+                    <span class="text-medium-emphasis">{{ previewFile.path }}</span>
+                    <v-chip v-if="previewNamed" size="x-small" color="primary" variant="tonal" class="ms-2"
+                      >芝士指定</v-chip
+                    >
+                    <v-chip size="x-small" variant="outlined" class="ms-1">
+                      {{ previewMime }}
+                    </v-chip>
+                  </div>
+                  <!-- allow-scripts WITHOUT allow-same-origin (Claude Artifacts
                    posture): interactive artifacts run their JS, but in an
                    opaque origin that cannot touch the platform page. -->
-              <iframe
-                class="preview-frame"
-                :srcdoc="previewFile.content"
-                sandbox="allow-scripts"
-              />
+                  <iframe class="preview-frame" :srcdoc="previewFile.content" sandbox="allow-scripts" />
+                </div>
+                <div v-else class="text-center text-medium-emphasis py-8">
+                  <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
+                  <div>芝士还没有指定预览</div>
+                  <div class="text-caption mt-1">
+                    它做出网页 / 图表等可看的产物时，会把成果放到这里。 预览渲染的是自足的单文件产物；要跑整个应用（如
+                    Vue 工程） 属于"运行环境预览"，还没做。
+                  </div>
+                </div>
+              </template>
             </div>
-            <div v-else class="text-center text-medium-emphasis py-8">
-              <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-              <div>芝士还没有指定预览</div>
-              <div class="text-caption mt-1">
-                它做出网页 / 图表等可看的产物时，会把成果放到这里。
-                预览渲染的是自足的单文件产物；要跑整个应用（如 Vue 工程）
-                属于"运行环境预览"，还没做。
-              </div>
-            </div>
-          </template>
-          </div>
-        </aside>
-      </transition>
-      </div><!-- /.doc-stage -->
+          </aside>
+        </transition>
+      </div>
+      <!-- /.doc-stage -->
 
       <!-- 全屏预览 overlay: same artifact, workspace-covering (Esc / ✕ closes). -->
       <Teleport to="body">
@@ -2450,13 +2390,7 @@ onBeforeUnmount(() => {
               title="在新标签页打开"
               @click="openPreviewInNewTab"
             />
-            <v-btn
-              icon="mdi-close"
-              size="small"
-              variant="text"
-              class="c-muted"
-              @click="previewFull = false"
-            />
+            <v-btn icon="mdi-close" size="small" variant="text" class="c-muted" @click="previewFull = false" />
           </div>
           <iframe
             v-if="previewAppUrl"
@@ -2486,15 +2420,9 @@ onBeforeUnmount(() => {
           </v-card-text>
           <v-card-actions>
             <v-spacer />
-            <v-btn size="small" variant="text" @click="lossyConfirmOpen = false">
-              取消
-            </v-btn>
-            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode">
-              用源码模式
-            </v-btn>
-            <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave">
-              仍要保存
-            </v-btn>
+            <v-btn size="small" variant="text" @click="lossyConfirmOpen = false"> 取消 </v-btn>
+            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode"> 用源码模式 </v-btn>
+            <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave"> 仍要保存 </v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -2782,11 +2710,18 @@ onBeforeUnmount(() => {
   color: var(--muted, #777);
 }
 @keyframes site-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .site-act__dot--live { animation: none; }
+  .site-act__dot--live {
+    animation: none;
+  }
 }
 /* 圆点分级: neutral = plain work (read/search/run), amber = platform action
    (cheese tool / cheese CLI / doc edit). --live (pulse) overrides both. */
@@ -2839,7 +2774,9 @@ onBeforeUnmount(() => {
 }
 .tool-slide-enter-active,
 .tool-slide-leave-active {
-  transition: transform 0.18s ease, opacity 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    opacity 0.18s ease;
 }
 .tool-slide-enter-from,
 .tool-slide-leave-to {
@@ -3101,7 +3038,9 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 5px;
   user-select: none;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .doc-handle__add {
   cursor: pointer;
@@ -3149,9 +3088,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   height: 100%;
   overflow: auto;
-  background:
-    conic-gradient(var(--line-2) 0 25%, transparent 0 50%, var(--line-2) 0 75%, transparent 0)
-    0 0 / 16px 16px; /* checkerboard so transparency reads */
+  background: conic-gradient(var(--line-2) 0 25%, transparent 0 50%, var(--line-2) 0 75%, transparent 0) 0 0 / 16px 16px; /* checkerboard so transparency reads */
 }
 .file-image-view img {
   max-width: 95%;
@@ -3174,8 +3111,12 @@ onBeforeUnmount(() => {
   animation: comment-pulse 1.5s ease;
 }
 @keyframes comment-pulse {
-  0% { background: rgba(var(--v-theme-primary), 0.16); }
-  100% { background: transparent; }
+  0% {
+    background: rgba(var(--v-theme-primary), 0.16);
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 .doc-error-toast {
@@ -3211,7 +3152,9 @@ onBeforeUnmount(() => {
   box-shadow: 0 1px 3px rgba(16, 18, 22, 0.06);
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s, box-shadow 0.15s;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
 }
 .doc-editor :deep(.doc-liveref:hover) {
   background: rgba(var(--v-theme-primary), 0.1);
@@ -3353,7 +3296,9 @@ onBeforeUnmount(() => {
   font-size: 13.5px;
   color: var(--text);
   outline: none;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 .doc-comments__input:focus {
   border-color: rgba(var(--v-theme-primary), 0.5);
@@ -3769,7 +3714,9 @@ onBeforeUnmount(() => {
   color: var(--muted);
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(16, 18, 22, 0.08);
-  transition: color 0.12s ease, border-color 0.12s ease;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 .doc-codecopy:hover {
   color: var(--ink);

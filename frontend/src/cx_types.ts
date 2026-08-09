@@ -639,6 +639,14 @@ export interface UpstreamSyncResult {
   reason?: string
 }
 
+// GitHub App install flow (#192): a project connects to one repo via
+// cheesex-app, replacing the classic 上游仓库 URL entry for repos it manages.
+export interface GithubConnection {
+  connected: boolean
+  repo?: string
+  account?: string
+}
+
 // ---- self-hosted 设备连接器 (P3 Phase B) ----
 
 // One agent (a screen) currently running on an enrolled device — a live 现场 the

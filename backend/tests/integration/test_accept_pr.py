@@ -115,7 +115,13 @@ def pr_world(monkeypatch):
 
     recorded: dict[str, list] = {"pushes": [], "syncs": [], "local_merges": []}
 
-    monkeypatch.setattr(github_app, "github_app_tokens", lambda: _FakeTokens())
+    # #192: the accept path resolves the installation per-project, not globally.
+    async def _fake_tokens_for_project(_project_id, _session):
+        return _FakeTokens()
+
+    monkeypatch.setattr(
+        github_app, "github_app_tokens_for_project", _fake_tokens_for_project
+    )
     monkeypatch.setattr(github_pr_module, "GitHubPRClient", _FakeClient)
     monkeypatch.setattr(
         ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"

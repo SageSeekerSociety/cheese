@@ -8,7 +8,9 @@
           </v-avatar>
         </template>
         <v-card-title class="text-h6 ps-0">PDF 快速发布</v-card-title>
-        <v-card-subtitle class="ps-0">上传赛题 PDF 后，系统会解析赛题内容；发布参数请在下方表单统一填写</v-card-subtitle>
+        <v-card-subtitle class="ps-0"
+          >上传赛题 PDF 后，系统会解析赛题内容；发布参数请在下方表单统一填写</v-card-subtitle
+        >
       </v-card-item>
 
       <v-card-text class="pt-2">

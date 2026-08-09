@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { getMarketNodes } from '../api'
 import type { MarketNodes } from '../cx_types'
+
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+
+import { getMarketNodes } from '../api'
 
 // 节点状态 (spec §9.1): the physical side of the compute pools — every
 // configured node (local docker + cheesed remote), its liveness, and how many
@@ -40,9 +42,7 @@ onBeforeUnmount(() => {
       <h2 class="node-board__title">节点状态</h2>
       <span class="node-board__hint c-faint">算力池背后的机器，在线状态与当前负载</span>
       <v-spacer />
-      <span v-if="board" class="node-board__total c-faint">
-        全平台进行中 {{ board.active_turns_total }} 轮
-      </span>
+      <span v-if="board" class="node-board__total c-faint"> 全平台进行中 {{ board.active_turns_total }} 轮 </span>
     </div>
 
     <div v-if="loading" class="d-flex justify-center py-6">
@@ -53,12 +53,7 @@ onBeforeUnmount(() => {
     </v-alert>
 
     <div v-else-if="board" class="node-grid">
-      <article
-        v-for="n in board.nodes"
-        :key="n.id"
-        class="node-card"
-        :class="{ 'node-card--offline': !n.online }"
-      >
+      <article v-for="n in board.nodes" :key="n.id" class="node-card" :class="{ 'node-card--offline': !n.online }">
         <div class="node-card__top">
           <span class="node-dot" :class="n.online ? 'node-dot--on' : 'node-dot--off'" />
           <span class="node-card__status">{{ n.online ? '在线' : '离线' }}</span>

@@ -17,7 +17,7 @@ import uuid
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.domain.agent.github_app import github_app_tokens
+from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
 from app.domain.workspace import service as ws
 
@@ -27,10 +27,14 @@ _TASKS: set[asyncio.Task] = set()
 
 
 def enabled() -> bool:
-    """Cheap pre-check: the flag is on and the App is configured. The
-    per-project eligibility (upstream is a GitHub https remote) is checked in
-    the task itself — it needs a subprocess."""
-    return bool(settings.accept_via_pr) and github_app_tokens() is not None
+    """Cheap pre-check: the flag is on and the App is configured at all. The
+    per-project eligibility (which installation, upstream is a GitHub https
+    remote) is resolved in the task itself — it needs the DB and a subprocess."""
+    return (
+        bool(settings.accept_via_pr)
+        and bool(settings.github_app_id)
+        and bool(settings.github_app_private_key_path)
+    )
 
 
 def dispatch(
@@ -82,7 +86,9 @@ async def _publish(
     topic_id: uuid.UUID,
     project_id: uuid.UUID,
 ) -> dict | None:
-    tokens = github_app_tokens()
+    # #192: the installation is resolved from this card's project, not a global.
+    async with session_factory() as session:
+        tokens = await github_app_tokens_for_project(project_id, session)
     if tokens is None:
         return None
     upstream = await asyncio.to_thread(ws.get_upstream, project_id)
