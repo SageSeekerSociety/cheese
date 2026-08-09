@@ -1,0 +1,79 @@
+{
+  "name": "v-viewer",
+  "scope": "VueViewer",
+  "version": "3.0.22",
+  "description": "Image viewer component for vue, supports rotation, scale, zoom and so on, based on viewer.js",
+  "author": "mirari",
+  "license": "MIT",
+  "homepage": "https://github.com/mirari/v-viewer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mirari/v-viewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mirari/v-viewer/issues"
+  },
+  "keywords": [
+    "vue",
+    "viewer",
+    "gallery",
+    "picture",
+    "img",
+    "image"
+  ],
+  "main": "./dist/index.umd.cjs",
+  "module": "./dist/index.js",
+  "unpkg": "./dist/index.iife.js",
+  "types": "./types/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.js",
+      "import": "./dist/index.js",
+      "require": "./dist/index.umd.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "types",
+    "README.md"
+  ],
+  "scripts": {
+    "prepare": "husky install",
+    "dev": "vite serve example --config example/vite.config.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview:build": "vite build example --config example/vite.config.ts",
+    "preview:serve": "vite preview example --config example/vite.config.ts",
+    "release": "standard-version",
+    "publish": "npm run build && npm publish",
+    "publish:next": "npm run build && npm publish --tag next"
+  },
+  "peerDependencies": {
+    "viewerjs": "^1.11.0",
+    "vue": "^3.0.0"
+  },
+  "dependencies": {
+    "viewerjs": "^1.11.6",
+    "lodash-es": "^4.17.21"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^0.27.0",
+    "@commitlint/cli": "^17.1.2",
+    "@commitlint/config-conventional": "^17.1.0",
+    "@types/lodash-es": "^4.17.6",
+    "@vitejs/plugin-vue": "^3.1.0",
+    "@vue/compiler-sfc": "^3.2.26",
+    "bulma": "^0.9.4",
+    "eslint": "^8.26.0",
+    "husky": "^8.0.1",
+    "lint-staged": "^15.2.10",
+    "sass": "^1.55.0",
+    "standard-version": "^9.5.0",
+    "typescript": "^4.6.4",
+    "vite": "^3.1.0",
+    "vue": "^3.2.37",
+    "vue-tsc": "^0.40.4"
+  }
+}

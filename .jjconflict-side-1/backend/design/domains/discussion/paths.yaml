@@ -1,0 +1,197 @@
+# Discussion Domain Paths
+
+/discussions:
+  get:
+    summary: List discussions
+    operationId: listDiscussions
+    tags: [Discussions]
+    parameters:
+      - name: modelType
+        in: query
+        required: true
+        schema:
+          type: string
+          enum: [QUESTION, ANSWER, PROJECT, KNOWLEDGE, TASK]
+      - name: modelId
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: parentId
+        in: query
+        schema:
+          type: integer
+          format: int64
+          nullable: true
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Discussions list
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    discussions:
+                      type: array
+                      items:
+                        $ref: './schemas.yaml#/Discussion'
+                    page:
+                      $ref: '../../common/responses.yaml#/Page'
+  post:
+    summary: Create discussion
+    operationId: createDiscussion
+    tags: [Discussions]
+    security:
+      - BearerAuth: []
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              modelType:
+                type: string
+                enum: [QUESTION, ANSWER, PROJECT, KNOWLEDGE, TASK]
+              modelId:
+                type: integer
+                format: int64
+              content:
+                type: string
+              parentId:
+                type: integer
+                format: int64
+                nullable: true
+              mentionedUserIds:
+                type: array
+                items:
+                  type: integer
+                  format: int64
+            required:
+              - modelType
+              - modelId
+              - content
+    responses:
+      '201':
+        description: Discussion created
+
+/discussions/{discussionId}:
+  get:
+    summary: Get discussion details
+    operationId: getDiscussion
+    tags: [Discussions]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/DiscussionId'
+    responses:
+      '200':
+        description: Discussion details
+  put:
+    summary: Update discussion
+    operationId: updateDiscussion
+    tags: [Discussions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/DiscussionId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/UpdateDiscussionRequest'
+    responses:
+      '200':
+        description: Discussion updated
+  delete:
+    summary: Delete discussion
+    operationId: deleteDiscussion
+    tags: [Discussions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/DiscussionId'
+    responses:
+      '204':
+        description: Discussion deleted
+
+/discussions/{discussionId}/sub-discussions:
+  get:
+    summary: List sub-discussions (replies)
+    operationId: listSubDiscussions
+    tags: [Discussions]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/DiscussionId'
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Sub-discussions list
+
+/discussions/reactions:
+  get:
+    summary: List available reaction types
+    operationId: listReactionTypes
+    tags: [Discussions]
+    responses:
+      '200':
+        description: Reaction types list
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    reactionTypes:
+                      type: array
+                      items:
+                        $ref: './schemas.yaml#/ReactionType'
+
+/discussions/{discussionId}/reactions/{reactionTypeId}:
+  post:
+    summary: Add reaction to discussion
+    operationId: addReaction
+    tags: [Discussions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/DiscussionId'
+      - name: reactionTypeId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '201':
+        description: Reaction added
+  delete:
+    summary: Remove reaction from discussion
+    operationId: removeReaction
+    tags: [Discussions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/DiscussionId'
+      - name: reactionTypeId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '204':
+        description: Reaction removed

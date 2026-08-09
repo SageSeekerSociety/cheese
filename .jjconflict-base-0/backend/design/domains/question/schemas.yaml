@@ -1,0 +1,141 @@
+# Question Domain Schemas
+
+Question:
+  type: object
+  description: Question details
+  properties:
+    id:
+      type: integer
+      format: int64
+      description: Question ID
+    title:
+      type: string
+      description: Question title
+    content:
+      type: string
+      description: Question content
+    attachments:
+      type: array
+      description: Attachments in the content
+      items:
+        $ref: '../attachment/schemas.yaml#/Attachment'
+    author:
+      $ref: '../user/schemas.yaml#/User'
+    type:
+      type: integer
+      description: Question type
+    topics:
+      type: array
+      items:
+        $ref: '../topic/schemas.yaml#/Topic'
+    created_at:
+      type: integer
+      format: int64
+      description: Creation timestamp
+    updated_at:
+      type: integer
+      format: int64
+      description: Last update timestamp
+    attitudes:
+      $ref: '../../common/responses.yaml#/AttitudeStats'
+    is_follow:
+      type: boolean
+      description: Whether current user follows this question
+    my_answer_id:
+      type: integer
+      format: int64
+      nullable: true
+      description: Current user's answer ID if answered
+    answer_count:
+      type: integer
+      description: Number of answers
+    comment_count:
+      type: integer
+      description: Number of comments
+    follow_count:
+      type: integer
+      description: Number of followers
+    view_count:
+      type: integer
+      description: Number of views
+    bounty:
+      type: integer
+      format: int64
+      minimum: 0
+      maximum: 20
+      description: Bounty amount
+    bounty_start_at:
+      type: integer
+      format: int64
+      description: Bounty start timestamp
+    accepted_answer:
+      $ref: '../answer/schemas.yaml#/Answer'
+      nullable: true
+    group:
+      $ref: '../group/schemas.yaml#/Group'
+      nullable: true
+
+QuestionInvitation:
+  type: object
+  description: Question invitation
+  properties:
+    id:
+      type: integer
+      format: int64
+      description: Invitation ID
+    question_id:
+      type: integer
+      format: int64
+      description: Question ID
+    user:
+      $ref: '../user/schemas.yaml#/User'
+    created_at:
+      type: integer
+      format: int64
+    updated_at:
+      type: integer
+      format: int64
+    is_answered:
+      type: boolean
+      description: Whether the invited user has answered
+
+CreateQuestionRequest:
+  type: object
+  properties:
+    title:
+      type: string
+    content:
+      type: string
+    type:
+      type: integer
+    topics:
+      type: array
+      items:
+        type: integer
+        format: int64
+    group_id:
+      type: integer
+      format: int64
+      description: Group ID (optional)
+    bounty:
+      type: integer
+      format: int64
+      default: 0
+  required:
+    - title
+    - content
+
+UpdateQuestionRequest:
+  type: object
+  properties:
+    title:
+      type: string
+    content:
+      type: string
+    type:
+      type: integer
+    topics:
+      type: array
+      items:
+        type: integer
+        format: int64

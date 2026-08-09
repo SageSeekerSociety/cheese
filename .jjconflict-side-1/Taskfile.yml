@@ -1,0 +1,104 @@
+version: '3'
+
+dotenv: ['.env', 'backend/.env']
+
+set: [pipefail]
+
+includes:
+  be:
+    taskfile: ./backend/Taskfile.yml
+    dir: ./backend
+    aliases: [backend]
+  fe:
+    taskfile: ./frontend/Taskfile.yml
+    dir: ./frontend
+    aliases: [frontend]
+  e2e:
+    taskfile: ./e2e/Taskfile.yml
+    dir: ./e2e
+
+tasks:
+  default:
+    desc: Show available commands
+    silent: true
+    cmds:
+      - task --list
+
+  setup:
+    desc: First-time setup — install deps, start infra, run migrations
+    preconditions:
+      - sh: command -v uv
+        msg: "uv is required. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
+      - sh: command -v pnpm
+        msg: "pnpm is required. Install: corepack enable"
+      - sh: command -v docker
+        msg: "Docker is required. Install: https://docs.docker.com/get-docker/"
+    cmds:
+      - task: be:deps:sync
+      - task: fe:install
+      - task: infra
+      - task: be:db:migrate
+      - echo ""
+      - echo "Setup complete! Run 'task dev' to start backend + frontend."
+
+  dev:
+    desc: Start backend + frontend dev servers (+ infrastructure)
+    deps: [dev:backend, dev:frontend]
+
+  dev:backend:
+    desc: Start backend dev server only
+    deps: [infra]
+    cmds:
+      - task: be:dev
+
+  dev:frontend:
+    desc: Start frontend dev server only
+    aliases: [dev:fe]
+    cmds:
+      - task: fe:dev
+
+  dev:docker:
+    desc: Start all services in Docker (Windows without WSL)
+    cmds:
+      - docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+      - echo ""
+      - echo "Backend running at http://localhost:8081"
+      - echo "Run 'task dev:fe' in another terminal for frontend."
+
+  check:
+    desc: Run all checks (backend + frontend)
+    cmds:
+      - task: be:check
+      - task: fe:check
+
+  check:full:
+    desc: Run all checks with full test suite
+    cmds:
+      - task: be:check:full
+
+  infra:
+    desc: Start infrastructure services (PG, Valkey)
+    cmds:
+      - docker compose up -d
+    status:
+      - docker compose ps --status running postgres --quiet
+
+  infra:down:
+    desc: Stop infrastructure services
+    cmds:
+      - docker compose down
+
+  infra:logs:
+    desc: Tail infrastructure logs
+    cmds:
+      - docker compose logs -f {{.CLI_ARGS}}
+
+  infra:ps:
+    desc: Show running infrastructure containers
+    cmds:
+      - docker compose ps
+
+  live:
+    desc: "What is actually running on dev, next to what main says"
+    cmds:
+      - bash scripts/whats-live.sh

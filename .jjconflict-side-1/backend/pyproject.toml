@@ -1,0 +1,106 @@
+[project]
+name = "cheesex-backend"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "aioboto3>=15.5.0",
+    "aiofiles>=25.1.0",
+    "aiosmtplib>=5.1.0",
+    "alembic>=1.18.4",
+    "asyncpg>=0.31.0",
+    "bcrypt>=5.0.0",
+    "claude-agent-sdk>=0.2.101",
+    "fastapi>=0.137.0",
+    "httpx>=0.28.1",
+    "meilisearch-python-sdk>=7.1.4",
+    "openviking>=0.4.7",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.1",
+    "pyjwt>=2.13.0",
+    "pymupdf4llm>=1.28.0",
+    "pyotp>=2.10.0",
+    "python-dotenv>=1.2.2",
+    "redis>=8.0.1",
+    "segno>=1.6.6",
+    "sqlalchemy[asyncio]>=2.0",
+    "srp-rs",
+    "structlog>=26.1.0",
+    "taskiq[fastapi,redis]>=0.11.0,<1.0.0",
+    "uvicorn[standard]>=0.49.0",
+    "webauthn>=3.0.0",
+    "websockets>=16.0",
+]
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "anyio>=4.13.0",
+    "httpx>=0.28.1",
+    "pyright>=1.1.410",
+    "pytest>=9.1.0",
+    "pytest-anyio>=0.0.0",
+    "pytest-rerunfailures>=16.4",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.15.17",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# UP042 wants `class X(str, Enum)` → `class X(StrEnum)`. That is NOT behaviour-
+# preserving: `str(member)` returns "X.MEMBER" for (str, Enum) but the raw value
+# for StrEnum, which silently changes serialization/logging output. The existing
+# (str, Enum) pattern is valid and intentional across the merged tree, so we keep
+# it rather than risk a subtle behaviour change for a stylistic modernization.
+ignore = ["UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic migrations are generated/historical and carry long inline seed-data
+# strings; line length there is noise, not a defect.
+"alembic/versions/*" = ["E501"]
+
+# FastAPI's dependency-injection markers are CALLED in parameter defaults
+# (`x = Depends(dep)`, `q = Query(...)`) — that's the framework's idiom, not the
+# B008 "mutable/expensive default" anti-pattern. Whitelist them so B008 flags
+# only genuine call-in-default mistakes. (Without this the merged tree shows ~636
+# false positives, all fastapi.Depends/Query/Body/File.)
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Body",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Form",
+    "fastapi.File",
+    "fastapi.Security",
+    # our own DI marker, used exactly like fastapi.Depends in route defaults
+    "app.auth.checker.require_permission",
+]
+
+[tool.pyright]
+# Type-check the application source only. Tests deliberately pass SimpleNamespace
+# / Mock ducks where typed objects are declared, and scripts/ are one-off spikes —
+# holding either to strict typing yields hundreds of false positives with no
+# app-correctness value. (Project standard: pyright zero errors in app code.)
+include = ["app"]
+typeCheckingMode = "basic"
+pythonVersion = "3.13"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+anyio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.uv.workspace]
+members = [
+    "srp_rs",
+]
+
+[tool.uv.sources]
+srp-rs = { workspace = true }

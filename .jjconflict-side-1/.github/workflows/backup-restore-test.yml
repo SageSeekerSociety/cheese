@@ -1,0 +1,22 @@
+name: Backup restore test
+
+# Weekly proof that the DB backups actually restore (not just that a dump file
+# exists). Runs on the dev box's self-hosted runner, which has docker and the
+# local dumps; restores the newest dump into a throwaway postgres container and
+# fails (-> GitHub emails admins) if the restore or sanity check fails.
+
+on:
+  schedule:
+    - cron: '17 4 * * 1' # Mondays 04:17 UTC
+  workflow_dispatch: {}
+
+jobs:
+  restore-test:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove restore failures fail the drill
+        run: bash deploy/tests/test-db-restore-test.sh
+      - name: Restore latest backup into a throwaway postgres
+        run: bash deploy/db-restore-test.sh

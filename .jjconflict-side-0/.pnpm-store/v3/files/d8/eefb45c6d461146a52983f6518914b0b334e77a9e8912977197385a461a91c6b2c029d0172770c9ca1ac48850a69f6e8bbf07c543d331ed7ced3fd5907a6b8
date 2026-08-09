@@ -1,0 +1,35 @@
+{
+  "name": "editorjs-latex",
+  "version": "1.0.5",
+  "description": "LaTeX block support for EditorJS",
+  "main": "./src/index.js",
+  "scripts": {
+    "build": "gulp"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mdgaziur/EditorJS-LaTeX.git"
+  },
+  "keywords": [
+    "EditorJS",
+    "LaTeX"
+  ],
+  "author": "MD Gaziur Rahman Noor",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mdgaziur/EditorJS-LaTeX/issues"
+  },
+  "homepage": "https://github.com/mdgaziur/EditorJS-LaTeX#readme",
+  "devDependencies": {
+    "browserify": "^17.0.0",
+    "gulp": "^4.0.2",
+    "gulp-clean-css": "^4.3.0",
+    "gulp-concat": "^2.6.1",
+    "gulp-minify": "^3.1.0",
+    "vinyl-buffer": "^1.0.1",
+    "vinyl-source-stream": "^2.0.0"
+  },
+  "dependencies": {
+    "katex": "^0.16.4"
+  }
+}

@@ -1,0 +1,111 @@
+# Discussion Domain Schemas
+
+Discussion:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    model_type:
+      type: string
+      description: Type of the parent model
+      enum:
+        - QUESTION
+        - ANSWER
+        - PROJECT
+        - KNOWLEDGE
+        - TASK
+    model_id:
+      type: integer
+      format: int64
+      description: ID of the parent model
+    parent_id:
+      type: integer
+      format: int64
+      nullable: true
+      description: Parent discussion ID for replies
+    content:
+      type: string
+    author:
+      $ref: '../user/schemas.yaml#/User'
+    created_at:
+      type: integer
+      format: int64
+    updated_at:
+      type: integer
+      format: int64
+    reply_count:
+      type: integer
+      format: int64
+    reactions:
+      type: array
+      items:
+        $ref: '#/DiscussionReactionSummary'
+    sub_discussions:
+      type: array
+      items:
+        $ref: '#/Discussion'
+      description: Nested replies
+
+DiscussionReaction:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    discussion_id:
+      type: integer
+      format: int64
+    user:
+      $ref: '../user/schemas.yaml#/User'
+    reaction_type:
+      $ref: '#/ReactionType'
+    created_at:
+      type: integer
+      format: int64
+
+DiscussionReactionSummary:
+  type: object
+  properties:
+    reaction_type:
+      $ref: '#/ReactionType'
+    count:
+      type: integer
+      format: int64
+    reacted:
+      type: boolean
+      description: Whether current user has this reaction
+
+ReactionType:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    name:
+      type: string
+    emoji:
+      type: string
+
+CreateDiscussionRequest:
+  type: object
+  properties:
+    content:
+      type: string
+    parentId:
+      type: integer
+      format: int64
+      nullable: true
+    mentionedUserIds:
+      type: array
+      items:
+        type: integer
+        format: int64
+  required:
+    - content
+
+UpdateDiscussionRequest:
+  type: object
+  properties:
+    content:
+      type: string
