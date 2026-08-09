@@ -53,3 +53,6 @@ new.md
 
 # Scratch / working dir (never commit; may hold sensitive material)
 tmp/
+
+# pnpm content-addressable store — a cache, never belongs in git
+.pnpm-store/
