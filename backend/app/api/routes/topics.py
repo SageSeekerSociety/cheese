@@ -541,16 +541,31 @@ async def split_topic(
     body: SplitIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
 ) -> dict:
     """从上往下拆解：split a todo into a sub-topic (eval A2).
 
     The child is seeded with a task-brief living doc, then its 分身 is kicked
     off automatically (spec §8.4 分身异步工作): without this, a freshly split
     sub-topic just sits idle until a human wanders in and posts a message."""
-    topic = await TopicService(db).split_to_subtopic(
+    service = TopicService(db)
+    parent = await service.get_or_404(topic_id)
+    # actor 在信任边界注入 (同 edit_topic_doc): prefer the verified token, fall
+    # back to body.created_by, and require the caller actually have access to
+    # the PARENT topic — a body-trusted `created_by` let anyone split anyone
+    # else's topic and mint an arbitrary roster owner.
+    actor = await resolver.resolve(
+        fallback_handle=body.created_by,
+        topic_id=topic_id,
+        project_id=parent.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=parent.project_id, topic_id=topic_id
+    )
+    topic = await service.split_to_subtopic(
         parent_topic_id=topic_id,
         title=body.title,
-        created_by=body.created_by,
+        created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
         brief=body.brief,
     )
     out = TopicOut.model_validate(topic).model_dump(mode="json")
