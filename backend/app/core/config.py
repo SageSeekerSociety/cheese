@@ -105,7 +105,23 @@ class Settings(BaseSettings):
     # topic lock forever. A safety net well above any real turn (coding turns run
     # minutes), not a normal-case limit — on timeout the turn is cancelled, which
     # releases the lock and tears down the in-container claude process.
+    #
+    # Still governs: TurnRunner's outer transport-independent wrap for the SDK
+    # backend (no activity signal exists there) and the remote device backend's
+    # own inner deadline. The LOCAL tmux backend no longer uses this value for
+    # its effective timeout — see agent_idle_suspect_s / agent_turn_hard_ceiling_s
+    # below (turn 活跃度检测, 2026-08-09).
     agent_turn_timeout_s: float = 900.0
+    # Two-layer safety net for the hooks-driven LOCAL tmux backend only. Below
+    # this much idle time (no hook, no tmux pane output change) a turn is normal;
+    # past it the turn is only SUSPECTED wedged and gets one lightweight liveness
+    # probe (pane_dead) rather than being killed outright — a long tool call with
+    # no interim hook must not look identical to a dead pane.
+    agent_idle_suspect_s: float = 300.0
+    # Unconditional backstop for the tmux backend regardless of activity — guards
+    # against a pathological "looks active but never converges" turn (a tool
+    # retrying forever, a genuine infinite loop that keeps printing).
+    agent_turn_hard_ceiling_s: float = 10800.0
 
     # Agent compute backend (design: two execution paths behind ComputeProvider):
     # "sdk"  → the default LocalDockerProvider: runs the Claude Agent SDK

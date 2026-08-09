@@ -19,7 +19,7 @@
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
   cheese milestone "中期汇报" --due 2026-06-20
-  cheese status                             # 平台状态快照(本轮时间预算/验收卡/闸门输出/水位)
+  cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
   cheese serve "Vue dev server"             # 应用跑在 0.0.0.0:$CHEESE_APP_PORT 后,设为预览
   cheese artifact chart.svg --as svg        # SVG 同理
@@ -112,8 +112,13 @@ def _raw_request(method: str, path: str, data: str | None) -> None:
 
 def _format_status(d: dict) -> str:
     """Human/agent-readable rendering of /topics/{id}/status (盲飞防护): the
-    turn's remaining time budget, every accept card with its gate tail, and the
-    platform waterlines — the questions agents used to hand-poll the API for."""
+    turn's state, every accept card with its gate tail, and the platform
+    waterlines — the questions agents used to hand-poll the API for.
+
+    turn 活跃度检测 (2026-08-09): a running turn is shown as one of three states
+    — 正常运行中 / 疑似卡死（已 X 分钟无活跃信号）/ 接近硬顶 — never as a live
+    countdown of seconds. A literal "还剩 Ns" figure was observed making the
+    agent rush against what's only ever meant to be a wedged-turn safety net."""
     lines: list[str] = []
     topic = d.get("topic") or {}
     head = f"话题: {topic.get('title', '?')}（{topic.get('status', '?')}"
@@ -123,8 +128,15 @@ def _format_status(d: dict) -> str:
     turn = d.get("turn")
     if turn:
         t = f"本轮: {turn.get('status')}"
-        if turn.get("budget_left_s") is not None:
-            t += f"，时间预算 {turn.get('budget_s')}s 还剩 {turn['budget_left_s']}s"
+        if turn.get("status") == "running":
+            activity = turn.get("activity") or {}
+            suspect_s = activity.get("suspect_since_s_ago")
+            if suspect_s is not None:
+                t += f"，疑似卡死（已 {round(suspect_s / 60)} 分钟无活跃信号，正在探活确认）"
+            elif turn.get("near_ceiling"):
+                t += "，接近硬顶（即将触发兜底结束）"
+            else:
+                t += "，正常运行中"
         elif turn.get("duration_s") is not None:
             t += f"，用时 {turn['duration_s']}s"
         if turn.get("detail"):
@@ -241,7 +253,7 @@ def main() -> None:
 
     sub.add_parser(
         "status",
-        help="平台状态快照:本轮时间预算/验收卡与闸门输出/磁盘与额度水位",
+        help="平台状态快照:本轮运行状态/验收卡与闸门输出/磁盘与额度水位",
     )
 
     psv = sub.add_parser("serve", help="把容器里跑起来的应用设为当前预览(先起在 0.0.0.0:$CHEESE_APP_PORT)")

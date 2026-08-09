@@ -6,12 +6,15 @@ are pushed into the router the moment the prompt is "sent". Asserts the provider
 yields SessionInfo → ToolUse → Message → Result in order.
 """
 
+import asyncio
+import contextlib
 import uuid
 
 import pytest
 
 from app.domain.agent import tmux_provider as tp
 from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.hooks_substrate import ActivityTracker
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
@@ -134,7 +137,9 @@ def _stub_env(monkeypatch, tmp_path):
 @pytest.mark.anyio
 async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
     router = HookRouter()
-    provider = TmuxHooksProvider(image="img:test", router=router, turn_timeout_s=5)
+    provider = TmuxHooksProvider(
+        image="img:test", router=router, idle_suspect_s=5, hard_ceiling_s=5
+    )
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
     topic_key = str(topic_id)
 
@@ -228,6 +233,105 @@ async def test_run_turn_not_ready_yields_error(_stub_env, monkeypatch):
     ]
     assert isinstance(events[-1], AgentResult) and events[-1].is_error is True
     assert "未就绪" in events[-1].text
+
+
+# --- turn 活跃度检测 (2026-08-09): TmuxHooksProvider's activity-detection seam.
+
+
+@pytest.mark.anyio
+async def test_confirm_alive_reflects_pane_dead(monkeypatch):
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+
+    class _FakeControl:
+        def __init__(self, dead: bool) -> None:
+            self._dead = dead
+
+        async def pane_dead(self) -> bool:
+            return self._dead
+
+    async def control_alive(_name: str):
+        return _FakeControl(False)
+
+    monkeypatch.setattr(provider, "_control", control_alive)
+    assert await provider._confirm_alive("box") is True
+
+    async def control_dead(_name: str):
+        return _FakeControl(True)
+
+    monkeypatch.setattr(provider, "_control", control_dead)
+    assert await provider._confirm_alive("box") is False
+
+
+@pytest.mark.anyio
+async def test_confirm_alive_treats_a_probe_failure_as_alive(monkeypatch):
+    """A control-connection hiccup while probing isn't proof of death — mirrors
+    `_send_prompt` treating a SEND failure (not a probe failure) as fatal."""
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+
+    async def boom(_name: str):
+        raise RuntimeError("control connection dropped")
+
+    monkeypatch.setattr(provider, "_control", boom)
+    assert await provider._confirm_alive("box") is True
+
+
+@pytest.mark.anyio
+async def test_activity_monitor_touches_tracker_on_pane_change(monkeypatch):
+    """The background poller must count a CHANGED capture-pane as activity —
+    the tmux backend's answer to "no hook, but the pane is clearly busy"; an
+    unchanged pane must NOT keep touching the tracker."""
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    monkeypatch.setattr(provider, "_ACTIVITY_POLL_S", 0.01)
+    outputs = ["frame-1", "frame-1", "frame-2", "frame-2", "frame-2"]
+    calls = {"i": 0}
+
+    async def fake_docker(*args: str, stdin=None):
+        i = min(calls["i"], len(outputs) - 1)
+        calls["i"] += 1
+        return 0, outputs[i], ""
+
+    monkeypatch.setattr(tp, "_docker", fake_docker)
+    tracker = ActivityTracker(last_at=0.0)
+
+    task = await provider._start_activity_monitor("box", tracker)
+    assert task is not None
+    try:
+        await asyncio.sleep(0.08)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    # The unchanged→changed transition touched it off the initial sentinel.
+    assert tracker.last_at > 0.0
+
+
+@pytest.mark.anyio
+async def test_activity_status_none_when_no_turn_is_monitored():
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    assert provider.activity_status(uuid.uuid4()) is None
+
+
+@pytest.mark.anyio
+async def test_activity_status_reports_idle_and_suspect_state(monkeypatch):
+    """`cheese status` reads this while a turn is running (turn 活跃度检测) — it
+    must reflect a currently-monitored turn's idle time and, once idle-suspect
+    trips, how long it's been suspected."""
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    topic_id = uuid.uuid4()
+    name = tp._tmux_container_name(topic_id)
+    loop = asyncio.get_event_loop()
+    tracker = ActivityTracker(last_at=loop.time())
+    provider._activity[name] = tracker
+
+    status = provider.activity_status(topic_id)
+    assert status is not None
+    assert status["idle_for_s"] >= 0
+    assert status["suspect_since_s_ago"] is None
+
+    tracker.suspect_since = loop.time() - 5
+    status = provider.activity_status(topic_id)
+    assert status["suspect_since_s_ago"] >= 5
 
 
 def test_env_stamp_ignores_per_turn_values_but_tracks_the_model_route():
