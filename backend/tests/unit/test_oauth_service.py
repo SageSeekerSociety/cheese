@@ -57,6 +57,9 @@ def _connection(**overrides):
         "provider_id": "github",
         "provider_user_id": "gh-123",
         "created_at": NOW,
+        "raw_profile": None,
+        "token_expires": None,
+        "refresh_token": None,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -1329,6 +1332,47 @@ class TestListUserConnections:
         result = await svc.list_user_connections(42)
 
         assert result[0]["connectedAt"] is None
+
+    @pytest.mark.anyio
+    async def test_token_health_fields_when_fully_populated(self):
+        """Token 健康度 (2026-08-09): GitHub 用户名 / 过期时间 / 是否能自动续期，
+        没有这三个字段就分不清"没连账号"和"连了但 token 不可用"。"""
+        svc, repo = _make_service()
+        conn = _connection(
+            id=1,
+            raw_profile={"login": "octocat", "id": 583231},
+            token_expires=NOW,
+            refresh_token="rt-secret",
+            access_token="at-secret",
+        )
+        repo.list_by_user.return_value = [conn]
+
+        result = await svc.list_user_connections(42)
+
+        assert result[0]["login"] == "octocat"
+        assert result[0]["tokenExpires"] == NOW.isoformat()
+        assert result[0]["hasRefreshToken"] is True
+        # 不能把 token/密文本身泄露到接口返回里.
+        assert "at-secret" not in result[0].values()
+        assert "accessToken" not in result[0]
+        assert "access_token" not in result[0]
+
+    @pytest.mark.anyio
+    async def test_token_health_fields_default_to_absent(self):
+        """A connection with no profile snapshot and a non-expiring token
+        (GitHub App's "expire user authorization tokens" left off, per
+        #188 diagnosis) must show up as absent, not crash or fake a value."""
+        svc, repo = _make_service()
+        conn = _connection(
+            id=1, raw_profile=None, token_expires=None, refresh_token=None
+        )
+        repo.list_by_user.return_value = [conn]
+
+        result = await svc.list_user_connections(42)
+
+        assert result[0]["login"] is None
+        assert result[0]["tokenExpires"] is None
+        assert result[0]["hasRefreshToken"] is False
 
 
 # ---------------------------------------------------------------------------
