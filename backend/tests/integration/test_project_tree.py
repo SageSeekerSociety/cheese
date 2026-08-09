@@ -10,7 +10,9 @@ from tests.conftest import wait_turns_idle as _wait_turns_idle
 
 
 def _auth(handle: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"}
+    return {
+        "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
+    }
 
 
 def _project(client, **kw) -> dict:

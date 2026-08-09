@@ -161,7 +161,9 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
         json={"reviewer_handle": "u", "routing_reason": ""},
     ).json()["data"]["id"]
     r = client.post(
-        f"/api/accept-cards/{card}/accept", json={"decided_by": "u"}, headers=_owner(client, "u")
+        f"/api/accept-cards/{card}/accept",
+        json={"decided_by": "u"},
+        headers=_owner(client, "u"),
     )
     assert r.status_code == 200
 
@@ -212,7 +214,9 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
         json={"reviewer_handle": "u", "routing_reason": ""},
     ).json()["data"]["id"]
     r = client.post(
-        f"/api/accept-cards/{card}/accept", json={"decided_by": "u"}, headers=_owner(client, "u")
+        f"/api/accept-cards/{card}/accept",
+        json={"decided_by": "u"},
+        headers=_owner(client, "u"),
     )
     assert r.status_code == 200
     d = r.json()["data"]
@@ -231,7 +235,9 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
 
     # Retry accept → clean merge, archived, base has the resolution.
     r = client.post(
-        f"/api/accept-cards/{card}/accept", json={"decided_by": "u"}, headers=_owner(client, "u")
+        f"/api/accept-cards/{card}/accept",
+        json={"decided_by": "u"},
+        headers=_owner(client, "u"),
     )
     assert r.status_code == 200 and r.json()["data"]["status"] == "accepted"
     t = client.get(f"/api/topics/{tid}").json()["data"]

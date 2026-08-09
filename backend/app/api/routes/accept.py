@@ -129,7 +129,10 @@ async def accept_card(
 
 @router.post("/accept-cards/{card_id}/reassign")
 async def reassign_card(
-    card_id: uuid.UUID, body: AcceptCardCreate, db: DbSession, resolver: ActorResolverDep
+    card_id: uuid.UUID,
+    body: AcceptCardCreate,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """改验收人 (spec §4.4)."""
     actor = await resolver.resolve(fallback_handle=None)

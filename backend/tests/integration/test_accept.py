@@ -16,7 +16,9 @@ from app.core.tokens import mint_session_token
 
 
 def _auth(handle: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"}
+    return {
+        "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
+    }
 
 
 def _make_project(client) -> str:

@@ -5,7 +5,9 @@ from tests.conftest import seed_space
 
 
 def _auth(handle: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"}
+    return {
+        "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
+    }
 
 
 def _setup_with_mentor_condition(client) -> tuple[str, str]:
