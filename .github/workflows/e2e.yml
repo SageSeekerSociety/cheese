@@ -16,11 +16,28 @@ on:
       - 'e2e/**'
       - '.github/workflows/e2e.yml'
 
+# A single self-hosted runner serves this repo, so superseded runs must not
+# queue behind each other (deploys share the same runner). test.yml and
+# build.yml already do this; e2e.yml was the one workflow still missing it —
+# any backend/frontend change triggers all three at once, and without this an
+# e2e run for a superseded commit keeps running to completion instead of
+# being cancelled (measured: only ~1.7% of e2e runs were ever cancelled, vs
+# 15%/33% for test/build).
+concurrency:
+  group: ci-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # See test.yml: merged squash commits contain the exact PR tree already gated.
   # The cheap API decision preserves full CI for direct main pushes.
   scope:
-    runs-on: [self-hosted, cheese-dev]
+    # Hosted, not the box: identical zero-dependency `gh api` job as
+    # test.yml's scope (no checkout, no box-local network/files), moved for
+    # the same reason — avoid queueing behind other work on the box's single
+    # runner before the jobs it gates.
+    runs-on: ubuntu-latest
+    # Same job as test.yml's scope: measured median 0.2m, wide margin.
+    timeout-minutes: 5
     permissions:
       actions: read
       contents: read
@@ -58,12 +75,11 @@ jobs:
   e2e:
     needs: scope
     if: needs.scope.outputs.run_heavy == 'true'
-    # Not ubuntu-latest: GitHub-hosted runners are unavailable to this org (the
-    # job is refused before any step runs — "recent account payments have failed
-    # or your spending limit needs to be increased"), so this gate has been dead
-    # rather than passing. Every self-hosted job in this repo is green. Move it
-    # back once billing is sorted; the dev box's 5432/6379 are free, so the
-    # service containers below bind the same ports they did.
+    # Not ubuntu-latest: this is a private repo, so hosted minutes are billed
+    # per-minute, and this job needs native amd64 Docker plus the Playwright
+    # browser install — the box already has both for free and warm. (Hosted
+    # runners themselves work fine now; billing was never actually exhausted
+    # long-term — see the scope job above, which is cheap enough to run there.)
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 15
 
@@ -97,10 +113,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
-          version: "latest"
+          version: "0.12.1"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.13
 
       - uses: pnpm/action-setup@v4
         with:

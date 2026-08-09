@@ -1,12 +1,11 @@
 name: Backend Test
 
-# Runs on the dev box's own runner, not a GitHub-hosted one: hosted minutes are
-# billed for this private repo and ran out mid-2026-07-26, which stopped ALL CI
-# ("the job was not started because recent account payments have failed or your
-# spending limit needs to be increased"). The box is Linux/x64 with Docker, so it
-# satisfies everything these jobs need — service containers and native amd64
-# builds — with no emulation. Move back to ubuntu-latest once billing is sorted
-# if you prefer hosted isolation; nothing else in these files depends on it.
+# The heavy jobs below run on the dev box's own runner, not a GitHub-hosted
+# one: this is a private repo, so hosted minutes are billed per-minute, and
+# these jobs need service containers plus native amd64 Docker with no
+# emulation — the box already has both for free. (Hosted runners themselves
+# work fine; billing was never actually exhausted long-term — see the scope
+# job below, which is cheap enough to run there.)
 on:
   push:
     branches: [main]
@@ -35,7 +34,15 @@ jobs:
   # image publishing and deploy without testing new code. Direct pushes to main
   # have no merged PR association and therefore still run the full gate.
   scope:
-    runs-on: [self-hosted, cheese-dev]
+    # Hosted, not the box: this job is nothing but `gh api` calls (no
+    # checkout, no box-local network/files), and it sits in `test`'s `needs`
+    # chain — on the box it queued behind whatever else the single runner was
+    # doing (~1.3m measured), which is pure serial overhead on the critical
+    # path. Hosted picks it up in ~2s instead.
+    runs-on: ubuntu-latest
+    # Measured median 0.2m (a couple of gh api calls); wide margin still small
+    # next to the jobs it gates.
+    timeout-minutes: 5
     permissions:
       actions: read
       contents: read
@@ -80,16 +87,19 @@ jobs:
   # cache; reads the migration graph only, no database needed.
   migration-heads:
     runs-on: [self-hosted, cheese-dev]
+    # Measured median 1.8m (uv sync + a graph read, no DB); generous margin for
+    # a cold uv cache without leaving a stuck run to sit for hours.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
-          version: "latest"
+          version: "0.12.1"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.13
 
       - name: Install dependencies
         run: uv sync --all-extras
@@ -107,6 +117,9 @@ jobs:
     needs: scope
     if: needs.scope.outputs.run_heavy == 'true'
     runs-on: [self-hosted, cheese-dev]
+    # Measured median 5.1m; 20m covers a cold uv/docker cache without letting
+    # a wedged run sit on the box's single runner for hours.
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -138,10 +151,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
-          version: "latest"
+          version: "0.12.1"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.13
 
       - name: Install dependencies
         run: uv sync --all-extras

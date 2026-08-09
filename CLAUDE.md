@@ -39,7 +39,7 @@ After `git pull`: `bash .claude/scripts/post-pull.sh`
 
 ## Python Conventions
 
-- Python >=3.11. `list[str]`, `dict[int, str]`, `X | None` natively. No `from __future__ import annotations`.
+- Python >=3.13. `list[str]`, `dict[int, str]`, `X | None` natively. No `from __future__ import annotations`.
 - Do NOT name methods `list`, `set`, `dict`, `type` — they shadow builtins.
 - All function signatures must be type-annotated. No `Any` unless at external boundaries.
 - Pydantic v2 for request/response schemas.
