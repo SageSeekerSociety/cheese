@@ -53,20 +53,28 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      // Mirror the production gateway (frontend/nginx.conf): `location /api/ {
-      // proxy_pass http://backend:8081/; }` — the trailing slash strips exactly
-      // one `/api`. The frontend deliberately double-prefixes (api.ts BASE =
-      // '/api/api' for 2.0 routes; 知是 1.0 routes ride VITE_API_BASE_URL=/api),
-      // so without this rewrite every call reaches the backend as `/api/api/*`
-      // and 404s. Dev/e2e uses this proxy instead of nginx, so it must strip too.
+      // Mirror the production nginx gateway (frontend/nginx.conf): `location /api/
+      // { proxy_pass http://backend:8081/; }` strips exactly one `/api` from every
+      // request. The frontend leans on that — api.ts uses BASE='/api/api' for 2.0
+      // routes, and the 知是 1.0 layer rides VITE_API_BASE_URL=/api — so calls
+      // arrive here double- (`/api/api/*`) or single- (`/api/users/*`) prefixed and
+      // must lose exactly one `/api` to hit the real backend route.
       '/api': {
         target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799',
         changeOrigin: true,
         ws: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
+        // Exception: the ttyd terminal iframe loads /api/topics/<id>/terminal/live/
+        // verbatim and resolves its relative assets against that path; terminal.py
+        // serves it at that exact /api-prefixed path, so it must pass through
+        // unrewritten (see terminal.py). Everything else loses one /api like nginx.
+        rewrite: (path) =>
+          /^\/api\/topics\/[^/]+\/terminal(\/|$)/.test(path) ? path : path.replace(/^\/api/, ''),
       },
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer
+      // (e.g. SRP login GET /users/auth/methods/:username): reach the backend directly.
+      '/users': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
     },
   },
   build: {
