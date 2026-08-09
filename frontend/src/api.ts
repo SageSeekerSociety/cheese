@@ -565,6 +565,15 @@ export function getGithubConnection(projectId: string): Promise<GithubConnection
 export function getGithubInstallUrl(projectId: string): Promise<{ url: string }> {
   return request(`/projects/${encodeURIComponent(projectId)}/github/install-url`)
 }
+// Connect via an existing cheesex-app installation when one already covers the
+// upstream repo; {connected:false, install_url} means "go through GitHub".
+// (GitHub's install page never fires the callback when the App is already
+// installed, so the frontend must try this first.)
+export function connectGithubRepo(
+  projectId: string
+): Promise<{ connected: boolean; repo?: string; account?: string; install_url?: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/github/connect`, { method: 'POST' })
+}
 export function getGithubAccountAuthorizeUrl(projectId: string): Promise<{ url: string }> {
   return request(`/users/me/github-account/authorize-url?return_project_id=${encodeURIComponent(projectId)}`)
 }
