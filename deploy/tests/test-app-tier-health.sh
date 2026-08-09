@@ -85,6 +85,40 @@ test_deploy_keeps_agent_runtime_images() {
   echo "PASS: deploy pulls, verifies, and retains agent runtime images"
 }
 
+test_deploy_retains_ci_service_images() {
+  mkdir -p "$ROOT/tmp"
+  run_dir="$(mktemp -d "$ROOT/tmp/ci-service-images.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+
+  grep -Fq 'image inspect mirror.gcr.io/paradedb/paradedb' "$docker_log" || \
+    fail "deploy never checked whether the CI postgres image is present"
+  grep -Fq \
+    'create --name cheese-ci-postgres-image-retainer --label com.cheese.image-retainer=ci-postgres --entrypoint /bin/true mirror.gcr.io/paradedb/paradedb' \
+    "$docker_log" || fail "deploy did not retain the CI postgres image"
+  grep -Fq \
+    'create --name cheese-ci-redis-image-retainer --label com.cheese.image-retainer=ci-redis --entrypoint /bin/true mirror.gcr.io/valkey/valkey' \
+    "$docker_log" || fail "deploy did not retain the CI redis image"
+
+  retain_line="$(grep -nF 'create --name cheese-ci-redis-image-retainer' \
+    "$docker_log" | tail -n 1 | cut -d: -f1)"
+  prune_line="$(grep -nF 'image prune -af' "$docker_log" | head -n 1 | cut -d: -f1)"
+  [ -n "$retain_line" ] && [ -n "$prune_line" ] && \
+    [ "$retain_line" -lt "$prune_line" ] || \
+    fail "CI service images were not retained before pruning"
+
+  rm -rf "$run_dir"
+  echo "PASS: deploy retains CI service-container images before pruning"
+}
+
 test_app_only_deploy_does_not_require_agent_images() {
   mkdir -p "$ROOT/tmp"
   run_dir="$(mktemp -d "$ROOT/tmp/app-only-images.XXXXXX")"
@@ -366,6 +400,7 @@ case "$CASE" in
   deploy) test_deploy_rejects_absent_frontend ;;
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
   runtime-images) test_deploy_keeps_agent_runtime_images ;;
+  ci-service-images) test_deploy_retains_ci_service_images ;;
   app-only) test_app_only_deploy_does_not_require_agent_images ;;
   local-images) test_local_app_images_skip_registry_pull ;;
   local-images-missing) test_local_app_images_must_exist ;;
@@ -382,6 +417,7 @@ case "$CASE" in
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
     test_deploy_keeps_agent_runtime_images
+    test_deploy_retains_ci_service_images
     test_app_only_deploy_does_not_require_agent_images
     test_local_app_images_skip_registry_pull
     test_local_app_images_must_exist

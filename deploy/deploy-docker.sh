@@ -19,6 +19,9 @@
 #                      BACKEND_IMAGE and FRONTEND_IMAGE must name existing images.
 #   DEPLOY_PULL_ATTEMPTS         how many times to try each pull   (default 3)
 #   DEPLOY_PULL_BACKOFF_SECONDS  waits between pull attempts       (default "5 15")
+#   CI_POSTGRES_IMAGE / CI_REDIS_IMAGE  pinned refs to protect from image
+#                      prune, see retain_ci_service_images() below (defaults
+#                      match test.yml/e2e.yml `services:`)
 set -euo pipefail
 
 # Box-local deploy overrides (chmod-600, NOT in git — same pattern as ~/ops/r2.env):
@@ -45,6 +48,13 @@ APP_IMAGE_SOURCE="${DEPLOY_APP_IMAGE_SOURCE:-registry}"
 # deploy quickly instead of holding the box's single shared runner.
 PULL_ATTEMPTS="${DEPLOY_PULL_ATTEMPTS:-3}"
 PULL_BACKOFF_SECONDS="${DEPLOY_PULL_BACKOFF_SECONDS:-5 15}"
+# This box's only runner also serves test.yml/e2e.yml, whose `services:`
+# postgres/redis images are pulled straight by Docker for the job and belong
+# to no container once it ends — `docker image prune -af` below reclaims them
+# like anything else unused, so the next CI run re-pulls from scratch. Kept
+# in sync with those workflows' pinned digests; see retain_ci_service_images.
+CI_POSTGRES_IMAGE="${CI_POSTGRES_IMAGE:-mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2}"
+CI_REDIS_IMAGE="${CI_REDIS_IMAGE:-mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9}"
 export IMAGE_TAG="$SHA"
 export SANDBOX_IMAGE="${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:$SHA}"
 export TMUX_SANDBOX_IMAGE="${TMUX_SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox-tmux:$SHA}"
@@ -118,6 +128,34 @@ log_disk() {
   done
 }
 
+# Keeps a CI service-container image (see CI_POSTGRES_IMAGE/CI_REDIS_IMAGE
+# above) out of `docker image prune -af` below. `docker image prune` — even
+# with `-a` — only ever removes images no container references, running or
+# stopped; it has no visibility into container labels, so there is no prune
+# --filter that reaches this from the image side. A stopped, labeled
+# reference container is the mechanism, and it is not new: it is the exact
+# trick build.yml's cheese-buildkit-image-retainer and this script's own
+# prepare_image_retainer() below already use for the same reason. Opportunistic
+# and best-effort — this script never pulls these images itself (they land on
+# the box as a side effect of a CI job's `services:` block running here), so a
+# deploy before CI has ever run on this box is simply a no-op, not a forced
+# pull.
+retain_ci_service_images() {
+  local kind image retainer
+  for kind in postgres redis; do
+    case "$kind" in
+      postgres) image="$CI_POSTGRES_IMAGE" ;;
+      redis) image="$CI_REDIS_IMAGE" ;;
+    esac
+    docker image inspect "$image" >/dev/null 2>&1 || continue
+    retainer="cheese-ci-${kind}-image-retainer"
+    docker rm -f "$retainer" >/dev/null 2>&1 || true
+    docker create --name "$retainer" \
+      --label "com.cheese.image-retainer=ci-${kind}" \
+      --entrypoint /bin/true "$image" >/dev/null 2>&1 || true
+  done
+}
+
 # Reclaim is best-effort by construction: a deploy that is otherwise fine must
 # never be failed by a prune, which is why every command here ends in `|| true`.
 #
@@ -130,6 +168,7 @@ log_disk() {
 reclaim_docker_disk() {
   local when="$1" prune_images="$2"
   if [ "$prune_images" = true ]; then
+    retain_ci_service_images
     log "pruning all unused docker images ($when)…"
     docker image prune -af >/dev/null 2>&1 || true
   else

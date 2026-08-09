@@ -1,12 +1,11 @@
 name: Build and Push Docker Image
 
-# Runs on the dev box's own runner, not a GitHub-hosted one: hosted minutes are
-# billed for this private repo and ran out mid-2026-07-26, which stopped ALL CI
-# ("the job was not started because recent account payments have failed or your
-# spending limit needs to be increased"). The box is Linux/x64 with Docker, so it
-# satisfies everything these jobs need — service containers and native amd64
-# builds — with no emulation. Move back to ubuntu-latest once billing is sorted
-# if you prefer hosted isolation; nothing else in these files depends on it.
+# Runs on the dev box's own runner, not a GitHub-hosted one: this is a private
+# repo, so hosted minutes are billed per-minute, and these jobs need native
+# amd64 Docker with a warm layer cache across runs — the box already has both
+# for free, and a hosted runner would rebuild every layer from scratch every
+# time. (Hosted runners themselves work fine; billing was never actually
+# exhausted long-term.)
 on:
   push:
     branches: [main]
@@ -30,6 +29,9 @@ concurrency:
 jobs:
   plan:
     runs-on: [self-hosted, cheese-dev]
+    # gh api calls + a planning script, no docker builds; still bounded well
+    # under the jobs it gates.
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: read
@@ -127,6 +129,11 @@ jobs:
     needs: plan
     if: needs.plan.outputs.backend == 'true'
     runs-on: [self-hosted, cheese-dev]
+    # No step-level profiling for this job; sized to comfortably cover a
+    # cold-cache docker build+push while killing the kind of wedged run that
+    # measured 681m in the wild (would otherwise pin the box's one runner for
+    # half a day).
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -219,6 +226,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.sandbox == 'true'
     runs-on: [self-hosted, cheese-dev]
+    # Builds two images back-to-back (sandbox, then sandbox-tmux from it), so
+    # gets more headroom than build-backend/build-frontend.
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -331,6 +341,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.frontend == 'true'
     runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
