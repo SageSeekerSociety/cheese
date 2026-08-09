@@ -16,8 +16,10 @@ import logging
 import uuid
 
 from app.core.db import async_session_factory
+from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
 from app.domain.topic.repositories import TopicRepository
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,7 @@ async def warn_image_switch_rebuild(topic_id: uuid.UUID) -> None:
             topic = await TopicRepository(session).get(topic_id)
             if topic is None:
                 return
-            await BlockRepository(session).add(
+            block = await BlockRepository(session).add(
                 project_id=topic.project_id,
                 topic_id=topic.id,
                 author="system",
@@ -45,7 +47,11 @@ async def warn_image_switch_rebuild(topic_id: uuid.UUID) -> None:
                 content=IMAGE_SWITCH_REBUILD_TEXT,
                 kind=BlockKind.event,
             )
+            payload = BlockOut.model_validate(block).model_dump(mode="json")
             await session.commit()
+        await get_broker().publish(
+            str(topic.id), {"type": "event_block", "block": payload}
+        )
     except Exception:  # noqa: BLE001 — best effort, must never break the turn
         logger.exception(
             "failed to post image-switch rebuild notice for topic %s", topic_id
