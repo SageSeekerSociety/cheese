@@ -155,6 +155,12 @@ USER cheese
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
+# The commit this image was built from, so the running app can report its own
+# version (settings.app_version → /api/version). Passed by build.yml; "dev" for
+# a plain local build.
+ARG GIT_SHA=dev
+ENV APP_VERSION=$GIT_SHA
+
 EXPOSE 8081
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

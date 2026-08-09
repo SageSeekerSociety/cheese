@@ -446,6 +446,15 @@ class Settings(BaseSettings):
         "http://localhost:5200",
     ]
 
+    # Which build is running. Baked into the image at build time (Dockerfile
+    # ARG GIT_SHA → ENV APP_VERSION), so the image is self-describing — a stale
+    # or mis-tagged deploy can't lie about its version. "dev" for a local run.
+    app_version: str = "dev"
+    # 内测: show the running commit sha in a corner of the UI, so a tester can
+    # confirm at a glance which build they're on. Off by default (prod); the
+    # dev/test box's .env sets it true. The frontend reads it from /api/version.
+    show_version_badge: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

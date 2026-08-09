@@ -35,6 +35,7 @@ import type {
   UserProfile,
   WorkspaceFile,
 } from './cx_types'
+
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 
 export { TOPIC_TITLE_MAX_LENGTH }
@@ -771,6 +772,18 @@ export function getTopicUsage(topicId: string): Promise<UsageStats> {
 
 export function getProjectUsage(projectId: string): Promise<UsageStats> {
   return request<UsageStats>(`/projects/${encodeURIComponent(projectId)}/usage`)
+}
+
+// 内测版本徽标: the running backend build. `badge` is the box's opt-in flag;
+// `short` is the 7-char sha to show. Public, unauthenticated.
+export interface AppVersion {
+  sha: string
+  short: string
+  badge: boolean
+}
+
+export function getAppVersion(): Promise<AppVersion> {
+  return request<AppVersion>('/version')
 }
 
 // ---- 采纳卡 / 验收 (eval C5/A3) ----

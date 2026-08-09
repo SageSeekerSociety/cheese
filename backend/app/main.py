@@ -270,9 +270,32 @@ async def health() -> dict:
     from app.api.deps import get_turn_runner
 
     # active_turns lets a redeploy drain: wait until no agent turn is in flight
-    # before restarting, so a deploy never kills 芝士 mid-work.
+    # before restarting, so a deploy never kills 芝士 mid-work. version rides
+    # along so a deploy check can confirm the running build in one call.
     return {
         "code": 200,
         "message": "ok",
-        "data": {"status": "healthy", "active_turns": get_turn_runner().active_turns()},
+        "data": {
+            "status": "healthy",
+            "active_turns": get_turn_runner().active_turns(),
+            "version": settings.app_version,
+        },
+    }
+
+
+@app.get("/api/version")
+async def app_version() -> dict:
+    """The running build, for the UI's 内测 version badge. Public, unauthenticated
+    — it exposes only a commit sha, and only when the box opts in. `badge` is the
+    flag the frontend honours; the sha is always returned so a curl can check a
+    deploy regardless of the badge."""
+    sha = settings.app_version
+    return {
+        "code": 200,
+        "message": "ok",
+        "data": {
+            "sha": sha,
+            "short": sha[:7] if sha and sha != "dev" else sha,
+            "badge": settings.show_version_badge,
+        },
     }
