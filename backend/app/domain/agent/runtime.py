@@ -20,6 +20,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator
+from functools import lru_cache
 
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
@@ -128,6 +129,14 @@ class InProcessBroker:
                 subs.discard(q)
                 if not subs:
                     self._subs.pop(channel, None)
+
+
+@lru_cache
+def get_broker() -> InProcessBroker:
+    """Process-wide singleton — defined here (not app.api.deps) so domain code
+    that needs to publish outside a request/route (background watchers, retry
+    loops) can reach the SAME broker instance without importing the api layer."""
+    return InProcessBroker()
 
 
 class TurnRunner:

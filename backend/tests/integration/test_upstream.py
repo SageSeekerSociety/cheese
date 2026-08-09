@@ -160,7 +160,11 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
         f"/api/topics/{tid}/accept-card",
         json={"reviewer_handle": "u", "routing_reason": ""},
     ).json()["data"]["id"]
-    r = client.post(f"/api/accept-cards/{card}/accept", json={"decided_by": "u"})
+    r = client.post(
+        f"/api/accept-cards/{card}/accept",
+        json={"decided_by": "u"},
+        headers=_owner(client, "u"),
+    )
     assert r.status_code == 200
 
     branch = f"dogfood/{tuid.hex[:8]}"
@@ -209,7 +213,11 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
         f"/api/topics/{tid}/accept-card",
         json={"reviewer_handle": "u", "routing_reason": ""},
     ).json()["data"]["id"]
-    r = client.post(f"/api/accept-cards/{card}/accept", json={"decided_by": "u"})
+    r = client.post(
+        f"/api/accept-cards/{card}/accept",
+        json={"decided_by": "u"},
+        headers=_owner(client, "u"),
+    )
     assert r.status_code == 200
     d = r.json()["data"]
     assert d["status"] == "conflict"
@@ -226,7 +234,11 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     ws.snapshot_worktree(puid, tuid, "解决采纳冲突")
 
     # Retry accept → clean merge, archived, base has the resolution.
-    r = client.post(f"/api/accept-cards/{card}/accept", json={"decided_by": "u"})
+    r = client.post(
+        f"/api/accept-cards/{card}/accept",
+        json={"decided_by": "u"},
+        headers=_owner(client, "u"),
+    )
     assert r.status_code == 200 and r.json()["data"]["status"] == "accepted"
     t = client.get(f"/api/topics/{tid}").json()["data"]
     assert t["status"] == "archived"
