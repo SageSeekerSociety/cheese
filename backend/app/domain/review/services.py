@@ -56,6 +56,46 @@ def _pr_merge_commit_message(topic: Topic, decided_by: str) -> str:
     return f"采纳 {topic.title}\n\n{_pr_trailers(topic, decided_by)}"
 
 
+# 两阶段采纳 (PR迭代式) 降级原因可见性: TOKEN_UNAVAILABLE_* → 人能看懂的中文说明,
+# 绝不包含 token/密文本身 —— 这些常量只是"哪个前提没满足"的分类标签.
+_TOKEN_UNAVAILABLE_MESSAGES = {
+    "not_connected": "批准人未连接 GitHub 账号",
+    "undecryptable": (
+        "批准人的 GitHub 账号已连接，但存储的 token 无法解密"
+        "（密钥已轮换，或数据损坏），需要重新连接账号"
+    ),
+    "expired_no_refresh": (
+        "批准人的 GitHub token 已过期，且没有可用于续期的 refresh token，"
+        "需要重新连接账号"
+    ),
+    "refresh_failed": (
+        "批准人的 GitHub token 已过期，续期失败"
+        "（GitHub 拒绝、refresh token 本身不可用，或网络错误）"
+    ),
+    "provider_not_configured": "服务器未启用 GitHub 账号连接（oauth provider 未配置）",
+}
+
+
+def _describe_token_unavailable(reason: str | None) -> str:
+    if reason is None:
+        return "批准人未连接 GitHub 账号"
+    return _TOKEN_UNAVAILABLE_MESSAGES.get(
+        reason, f"批准人的 GitHub token 不可用（{reason}）"
+    )
+
+
+def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
+    """Prefix a local-merge accept note with WHY the two-phase PR path was
+    skipped, so a card that fell back reads as "两阶段采纳没走成，原因是 X；
+    然后走了老路径，结果是 Y" instead of looking identical to a topic that
+    was never eligible for the PR path at all. No-op when the PR path never
+    even attempted a degrade for this accept (`pr_degrade_reason` empty)."""
+    if not pr_degrade_reason:
+        return base
+    prefix = f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）"
+    return (f"{prefix}；{base}" if base else prefix)[:2000]
+
+
 def approvals_required_of(project: Project | None) -> int:
     """主分支保护 (spec §4.4): distinct approvals an accept needs. Default 1 —
     the accepter's own accept counts, so unconfigured projects are unchanged."""
@@ -328,8 +368,17 @@ class AcceptService:
         # degrade, never an accept failure (拍板 decision 2). Resolving the
         # prerequisites themselves must degrade the same way: a DB hiccup here
         # is exactly as "mechanism unavailable" as a missing token.
+        #
+        # `pr_degrade_reason` makes WHY visible (this card's whole reason for
+        # existing): every path below that falls through to the local-merge
+        # branch sets it to a human-readable, secret-free explanation, and it
+        # gets prefixed onto card.note further down so "looks like account
+        # not connected" and "账号连了但密文坏了" are no longer
+        # indistinguishable in the UI.
         try:
-            pr_prereqs = await self._resolve_pr_prerequisites(topic, decided_by)
+            pr_prereqs, pr_degrade_reason = await self._resolve_pr_prerequisites(
+                topic, decided_by
+            )
         except Exception as exc:  # noqa: BLE001 — degrade, don't fail the accept
             logger.warning(
                 "could not resolve PR prerequisites for topic=%s, degrading to "
@@ -338,6 +387,7 @@ class AcceptService:
                 exc,
             )
             pr_prereqs = None
+            pr_degrade_reason = f"检查 PR 前提条件时出错（{type(exc).__name__}）"
         if pr_prereqs is not None:
             token, pr_owner, pr_repo = pr_prereqs
             try:
@@ -356,6 +406,13 @@ class AcceptService:
                     topic.id,
                     exc,
                 )
+                # exc is either GitHubPrError (GitHub's own response body,
+                # capped at 300 chars) or a ValidationError from a git push
+                # failure (the token travels via an env-var credential
+                # helper, never argv/URL — see _token_push_env — so git's
+                # stderr can't contain it either); safe to surface verbatim,
+                # same as the existing push_back() failure note below.
+                pr_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
         # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
         # conflict must never silently archive the topic while the work is
         # stranded on its branch (that shipped a lie once): the card moves to
@@ -383,7 +440,9 @@ class AcceptService:
                 card.status = AcceptStatus.conflict
                 card.decided_by = decided_by
                 card.decided_at = datetime.now(UTC)
-                card.note = merged.get("reason", "")
+                card.note = _with_pr_degrade_note(
+                    merged.get("reason", ""), pr_degrade_reason
+                )
                 await self._session.flush()
                 await self._session.refresh(card)
                 conflict_msg = "❌ 采纳未完成：合并冲突，需要芝士处理后重试。"
@@ -418,27 +477,34 @@ class AcceptService:
         # outright) used to be swallowed here, so the accept looked complete while
         # nothing reached the upstream and no one could tell why.
         if merged.get("merged"):
+            note = ""
             try:
                 pushed = await asyncio.to_thread(
                     ws.push_back, topic.project_id, topic.id
                 )
             except Exception as exc:  # noqa: BLE001 — never fail the accept itself
-                card.note = f"上游回推失败：{exc}"[:2000]
+                note = f"上游回推失败：{exc}"[:2000]
             else:
                 mode = pushed.get("mode")
                 if mode == "upstream":
-                    card.note = f"已合并并推送到上游 {pushed.get('target')}"
+                    note = f"已合并并推送到上游 {pushed.get('target')}"
                 elif mode == "branch":
                     why = (pushed.get("reason") or "").strip()
-                    card.note = (
+                    note = (
                         f"上游 {pushed.get('target')} 未能直接推送，"
                         f"已推分支 {pushed.get('branch')} 待合并"
                         + (f"（{why[-200:]}）" if why else "")
                     )[:2000]
                 elif mode == "blocked":
-                    card.note = str(pushed.get("reason") or "")[:2000]
+                    note = str(pushed.get("reason") or "")[:2000]
                 elif mode == "none":
-                    card.note = str(pushed.get("reason") or "")[:2000]
+                    note = str(pushed.get("reason") or "")[:2000]
+            card.note = _with_pr_degrade_note(note, pr_degrade_reason)
+        else:
+            # noop (nothing to merge, e.g. a discussion-only topic) still
+            # deserves the degrade reason — the two-phase attempt happened
+            # and fell back, even though there's no push outcome to report.
+            card.note = _with_pr_degrade_note("", pr_degrade_reason)
 
         # Topic is done → free its long-lived sandbox container (it would be
         # recreated on demand if the archived topic is ever resumed).
@@ -538,24 +604,31 @@ class AcceptService:
 
     async def _resolve_pr_prerequisites(
         self, topic: Topic, decided_by: str
-    ) -> tuple[str, str, str] | None:
+    ) -> tuple[tuple[str, str, str] | None, str]:
         """(token, owner, repo) when the PR path is usable — a connected
         GitHub token for the approver AND a project connected to a repo
-        (#192). Either missing → None, and the caller degrades to the old
-        direct-merge path (拍板 decision 2: this is normal, not an error)."""
-        from app.domain.oauth.services import get_github_user_token_for_handle
+        (#192) — paired with a human-readable, secret-free reason (empty
+        string when prereqs resolved). Either missing → (None, reason), and
+        the caller degrades to the old direct-merge path (拍板 decision 2:
+        this is normal, not an error) with that reason surfaced on the card.
+        """
+        from app.domain.oauth.services import (
+            get_github_user_token_for_handle_with_reason,
+        )
         from app.domain.project.repositories import ProjectGitInstallationRepository
 
-        token = await get_github_user_token_for_handle(self._session, decided_by)
+        token, reason = await get_github_user_token_for_handle_with_reason(
+            self._session, decided_by
+        )
         if not token:
-            return None
+            return None, _describe_token_unavailable(reason)
         installation = await ProjectGitInstallationRepository(
             self._session
         ).get_by_project(topic.project_id)
         if installation is None or "/" not in installation.repo:
-            return None
+            return None, "项目未连接 GitHub 仓库"
         owner, _, repo_name = installation.repo.partition("/")
-        return token, owner, repo_name
+        return (token, owner, repo_name), ""
 
     async def _open_pr_for_accept(
         self,
