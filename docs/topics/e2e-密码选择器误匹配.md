@@ -1,4 +1,4 @@
-## 状态：修复已落地，正在做实测验证
+## 状态：修复已落地，已递验收卡（含未能实测的局限说明）
 
 ## 根因（已用 Vuetify 3.9.3 源码定位，非猜测）
 
@@ -18,22 +18,26 @@
 - `<&e2e/tests/auth.spec.ts>`：发现同一个 helper 之外还有一处直接内联的 `getByLabel('密码')`（"wrong credentials" 用例），
   同一个 bug，一并改成 `exact: true`。全仓 `getByLabel` 命中只有这两处，已全部覆盖。
 
-## 验证方式（因沙箱无 Docker/Postgres，绕开真实登录流程验证选择器本身）
+## 验证方式和结果（如实记录，没有跑通实机浏览器测试）
 
-思路：登录页是纯前端渲染，不需要后端/DB 就能挂载出密码框 + 眼睛图标两个元素。所以不起后端，只起
-`vite` 前端 dev server + Playwright chromium，直接在 `/account/signin` 页面上验证：
-- 改动前的写法 `getByLabel('密码')`（不带 exact）应该命中 2 个元素（复现 strict-mode violation）
-- 改动后的写法（`exact: true`）应该只命中 1 个，且能正常 fill
+尝试过的路径：登录页是纯前端渲染，不需要后端/DB 就能挂载出密码框 + 眼睛图标两个元素，所以想绕开后端，只起
+`vite` 前端 dev server + 一次性 Playwright 脚本直接访问 `/account/signin` 断言选择器命中数量。
 
-当前在后台跑 `pnpm install`（frontend + e2e）和 `playwright install chromium`，验证脚本还没执行。
+- frontend `pnpm install` 第一次因 pnpm 全局内容寻址 store 的 hardlink chmod 权限问题（`EPERM chmod .../tsc`
+  等）失败，换成 `--store-dir` 指到本地全新目录后装成功，vite 也顺利起在 3000 端口。
+- 到实际跑 Playwright 脚本这步，卡在 `chrome-headless-shell: error while loading shared libraries:
+  libglib-2.0.so.0`——沙箱里没有 root，`playwright install --with-deps` 需要的系统依赖装不了（`sudo`
+  认证失败），普通 `apt-get install` 也因为拿不到 dpkg 锁被拒绝。这是沙箱本身的限制，不是代码问题，
+  也没法在这个话题里绕过去（换个沙箱/有 root 权限的环境应该就没这个问题）。
 
-## 下一步
+**结论：selector 修复没有跑通实机浏览器验证**，只做到了源码级的定性证明：直接读了 Vuetify 3.9.3 的
+`InputIcon.js` 和 `locale/en.js` 源码，确认了 aria-label 拼接逻辑（`"{fieldLabel} appended action"`），
+这是确定性的库行为，不依赖运行时环境，可信度接近实测，但不等于实测——如实告知 wangchangxin，请人工过一遍或者在有
+Docker/root 权限的环境里跑一次 `task e2e:test` 做最终确认。
 
-1. 装完依赖后，起 `vite --port 3000`，写一个一次性 Playwright 脚本（不经过 webServer/backend）直接访问
-   `/account/signin`，断言上面两条选择器行为
-2. 如果沙箱资源/时间不够跑完整 `pnpm exec playwright test`（需要真后端+PG+demo 种子数据，本沙箱没有 Docker），
-   就如实说明：选择器修复已通过读 Vuetify 源码 + DOM 结构定性验证，但没有跑通完整 e2e 用例，把这个局限写进验收说明，不谎报"测试全绿"
-3. 递验收卡给 wangchangxin，附上根因说明和验证方式（含未能完整跑 e2e 的局限，如果最终没跑成）
+## 已递交
+
+验收卡已递给 <@wangchangxin>，说明里包含：改动内容、根因证明方式、以及"未能实机跑通"这个局限。
 
 ## 范围边界（不越界）
 
