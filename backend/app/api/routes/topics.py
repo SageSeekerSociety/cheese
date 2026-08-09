@@ -511,10 +511,18 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
 
 
 @router.post("/{topic_id}/title")
-async def set_title(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """给话题起/改标题 — used by `cheese title`. Titles are AI-generated (the agent
-    names an untitled topic from the task), never deterministically derived."""
+async def set_title(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """给话题起/改标题 — used by both `cheese title` (AI-generated, naming an
+    untitled topic) and the frontend sidebar rename UI (dual-use, like doc/split)."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=body.get("by"), topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError("title 不能为空")
@@ -660,6 +668,9 @@ async def return_conclusion(
     wake = parent.status != TopicStatus.archived
     # Commit BEFORE waking: the parent's turn runs on its own session.
     await db.commit()
+    await get_broker().publish(
+        str(parent.id), {"type": "assistant_block", "block": out}
+    )
     if wake:
         get_turn_runner().submit_kickoff(
             chat, parent.id, prompt=conclusion_digest_prompt(block.content)
