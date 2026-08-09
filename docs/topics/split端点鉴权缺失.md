@@ -23,5 +23,6 @@
 
 ## 下一步
 
-- 需要一个真的挂了 Postgres/Redis（或有 docker）的环境跑一次 `task check --full`，确认 6 个新测试真的通过、且没有破坏 `test_project_tree.py` 里原有的 split 测试。这个具体沙箱容器目前做不到，需要换环境或者给这个容器接上 DB/Redis。
-- 代码改动本身（鉴权 + owner 兜底）已经完成且过了 ruff/pyright，可以先请人 review；pytest 绿灯留到基础设施到位后补跑，再回流父话题结论。
+- <@wangchangxin> 已在 2026-08-06 拍板：沙箱无 DB/Redis 属于环境限制，不必死磕本地 pytest 绿灯，代码就绪即可递交验收卡（决策记录见 `/projects/de808b13-ffd2-4b8a-9d1d-fba7babe389f/decisions`）。
+- 已执行 `cheese accept-request wangchangxin` 递交验收卡，等待他在验收卡界面确认。
+- pytest 仍未在本沙箱跑通（无 docker/DB server/root，见上节诊断），若后续换到有 DB 的环境，建议补跑 `task check --full` 核对 6 个新测试 + `test_project_tree.py` 原有 split 测试，再回流父话题结论。
