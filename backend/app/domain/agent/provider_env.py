@@ -73,6 +73,7 @@ def subscription_provider(
     ca_path: str,
     project_id: str | None = None,
     topic_id: str | None = None,
+    session_token: str | None = None,
 ) -> ProviderChoice:
     """The subscription, as the container env for a metered sandbox.
 
@@ -87,10 +88,23 @@ def subscription_provider(
         the backend's key and silently drops to API-key mode;
       - announce which project/topic to bill.
 
-    Login is established by CLAUDE_CODE_OAUTH_TOKEN (a placeholder): interactive
-    Claude Code takes an OAuth token from the env as "logged in" without the local
-    validation it applies to a .credentials.json file, which rejected the same
-    placeholder as "Not logged in". The proxy rewrites it to the real token.
+    Login is established by CLAUDE_CODE_OAUTH_TOKEN: interactive Claude Code takes
+    an OAuth token from the env as "logged in" without the local validation it
+    applies to a .credentials.json file, and sends it as the Bearer — the proxy
+    swaps it for the real token.
+
+    ``session_token`` is what that Bearer carries. When the metering proxy is
+    reachable only on the box's own docker bridge, a fixed placeholder is enough
+    (nothing else can reach the proxy). The moment the proxy is exposed to a
+    machine network, the placeholder — which is public in this repo — would let
+    anyone reach through it and spend the subscription; so a real, per-session
+    **scoped cheese token** (HMAC over {project, topic, exp}) is passed instead.
+    The proxy verifies its signature before injecting the real token and takes
+    the billing attribution from its claims, not from the spoofable
+    ``x-cheese-attr`` header. A scoped token is not a subscription credential —
+    it authenticates ONLY "ask the proxy to bill this project", so the hard
+    "no real credential on the machine" rule still holds. Absent, it falls back
+    to the placeholder (unchanged single-host behaviour).
 
     Crucially it sets NO ``ANTHROPIC_BASE_URL``. Setting one puts interactive
     Claude Code into "API Usage Billing" mode — it treats the endpoint as a
@@ -104,8 +118,8 @@ def subscription_provider(
     """
     env = {
         # Establishes "logged in" AND is what the CLI sends as the Bearer — the
-        # proxy swaps it for the real token. A non-credential on its own.
-        "CLAUDE_CODE_OAUTH_TOKEN": SUBSCRIPTION_PLACEHOLDER_TOKEN,
+        # proxy verifies it, then swaps it for the real token.
+        "CLAUDE_CODE_OAUTH_TOKEN": session_token or SUBSCRIPTION_PLACEHOLDER_TOKEN,
         # Blank, not absent: an inherited ANTHROPIC_AUTH_TOKEN would flip the CLI
         # into API-key mode and bypass the OAuth path.
         "ANTHROPIC_AUTH_TOKEN": "",

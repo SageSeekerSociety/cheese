@@ -216,6 +216,12 @@ class Settings(BaseSettings):
     microcloud_base_url: str = ""
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
+    # The machine's built-in AI channel (the tenant console's →ccproxy button).
+    # MicroCloud provisions new machines on newapi, whose default routes to a
+    # cheap non-Claude model; the operator guidance is ccproxy. Provision
+    # switches right after create, and the enrollment sweep reconciles any
+    # machine that slipped through. "" = leave whatever MicroCloud defaults to.
+    microcloud_ai_mode: str = "ccproxy"
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
     microcloud_offering_id: int = 0
@@ -470,6 +476,15 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5200",
         "http://localhost:5200",
     ]
+
+    # Which build is running. Baked into the image at build time (Dockerfile
+    # ARG GIT_SHA → ENV APP_VERSION), so the image is self-describing — a stale
+    # or mis-tagged deploy can't lie about its version. "dev" for a local run.
+    app_version: str = "dev"
+    # 内测: show the running commit sha in a corner of the UI, so a tester can
+    # confirm at a glance which build they're on. Off by default (prod); the
+    # dev/test box's .env sets it true. The frontend reads it from /api/version.
+    show_version_badge: bool = False
 
 
 @lru_cache
