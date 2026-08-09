@@ -280,8 +280,13 @@ class Settings(BaseSettings):
     scheduler_interval_seconds: int = 0
     # Container lifecycle is deterministic maintenance and must keep running
     # even when model-consuming automatic heartbeats are disabled.
-    sandbox_reap_interval_seconds: int = 24 * 3600
-    sandbox_idle_days: int = 3
+    # A room now outlives the work done in it, so boxes accumulate per ROOM
+    # rather than draining as topics close. Hours, not days: container count
+    # should track work in flight, and a box whose room nobody has touched
+    # since yesterday is paying rent for a conversation that will resume from
+    # its transcript anyway.
+    sandbox_reap_interval_seconds: int = 3600
+    sandbox_idle_hours: float = 8
 
     # --- Memory backend (spec §8.4 / §15 Q9) ---
     # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).

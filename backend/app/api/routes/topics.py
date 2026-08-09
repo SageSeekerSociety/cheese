@@ -45,6 +45,7 @@ from app.domain.topic.schemas import (
     UpgradeBlockIn,
 )
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.workspace import service as ws
 
@@ -402,7 +403,7 @@ async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     blk = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author="cheese",
+        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
         author_type=AuthorType.ai,
         content=question,
         kind=BlockKind.message,
@@ -485,7 +486,7 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
     block = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author="cheese",
+        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
         author_type=AuthorType.ai,
         content=decision,
         kind=BlockKind.decision,
@@ -680,7 +681,7 @@ async def set_artifact(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     block = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author="cheese",
+        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
         author_type=AuthorType.ai,
         content=path,
         kind=BlockKind.artifact,

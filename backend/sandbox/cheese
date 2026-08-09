@@ -288,7 +288,9 @@ def main() -> None:
         print(f"话题标题已设为：{a.text}")
     elif a.cmd == "remember":
         proj = _need("CHEESE_PROJECT", PROJECT)
-        body = {"content": a.fact}
+        # 带上话题：后端据此认出是哪个芝士在记，存进它自己的项目记忆
+        # (同一个项目里的两个芝士各记各的，跟人一样)。
+        body = {"content": a.fact, "topic": TOPIC}
         if MEMORY_SCOPE == "personal" and OWNER:
             body["scope"] = "user"
             body["owner"] = OWNER
@@ -299,7 +301,7 @@ def main() -> None:
             print("已记入项目记忆。")
     elif a.cmd == "recall":
         proj = _need("CHEESE_PROJECT", PROJECT)
-        body = {"query": a.query}
+        body = {"query": a.query, "topic": TOPIC}
         if MEMORY_SCOPE == "personal" and OWNER:
             body["scope"] = "user"
             body["owner"] = OWNER

@@ -16,7 +16,9 @@ export const TOPIC_STATUS: Record<string, string> = {
 export const TOPIC_KIND: Record<string, string> = {
   root: '全局',
   topic: '话题',
-  subtopic: '分身',
+  // 一件事：带分支和验收卡，完成即结束，所在话题照常活着。
+  task: '任务',
+  subtopic: '分身', // 历史值：task 的前身
 }
 
 export const AI_MODE: Record<string, string> = {
