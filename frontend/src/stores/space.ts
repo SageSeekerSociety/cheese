@@ -1,4 +1,12 @@
-import type { DomainGroup, Space, SpaceAdminRoleType, SpaceAnnouncement, SpaceCategory, SpaceTaskTemplate, Topic } from '@/types'
+import type {
+  DomainGroup,
+  Space,
+  SpaceAdminRoleType,
+  SpaceAnnouncement,
+  SpaceCategory,
+  SpaceTaskTemplate,
+  Topic,
+} from '@/types'
 
 import { computed, ref } from 'vue'
 import { toast } from 'vuetify-sonner'

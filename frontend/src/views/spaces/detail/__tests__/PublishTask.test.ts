@@ -3,10 +3,10 @@
  * PublishTask.vue receives TaskFormSubmitData from TaskForm and maps it
  * to TasksApi.create() params or PDF confirm options.
  */
-import { describe, expect, it } from 'vitest'
-
-import type { TaskFormSubmitData } from '@/types'
 import type { PostTaskRequestData } from '@/network/api/tasks/types'
+import type { TaskFormSubmitData } from '@/types'
+
+import { describe, expect, it } from 'vitest'
 
 // ---------------------------------------------------------------------------
 // The API parameter mapping logic from PublishTask.submitTask(),
@@ -16,7 +16,7 @@ import type { PostTaskRequestData } from '@/network/api/tasks/types'
 function buildApiParams(
   taskData: TaskFormSubmitData,
   spaceId: number,
-  submissionSchema: Array<{ prompt: string; type: 'FILE' | 'TEXT' }>,
+  submissionSchema: Array<{ prompt: string; type: 'FILE' | 'TEXT' }>
 ): PostTaskRequestData {
   return {
     ...taskData,
@@ -25,16 +25,14 @@ function buildApiParams(
     requireRealName: taskData.requireRealName || false,
     categoryId: taskData.categoryId,
     accessControlEnabled: taskData.accessControlEnabled || false,
-    accessDomainGroupIds: taskData.accessControlEnabled
-      ? taskData.accessDomainGroupIds
-      : undefined,
+    accessDomainGroupIds: taskData.accessControlEnabled ? taskData.accessDomainGroupIds : undefined,
   }
 }
 
 function buildPdfConfirmOptions(
   taskData: TaskFormSubmitData,
   spaceId: number,
-  submissionSchema: Array<{ prompt: string; type: 'FILE' | 'TEXT' }>,
+  submissionSchema: Array<{ prompt: string; type: 'FILE' | 'TEXT' }>
 ) {
   return {
     ...buildApiParams(taskData, spaceId, submissionSchema),

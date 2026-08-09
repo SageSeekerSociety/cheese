@@ -6,10 +6,7 @@ withDefaults(defineProps<{ size?: number | string }>(), { size: 28 })
 </script>
 
 <template>
-  <div
-    class="cheese-avatar"
-    :style="{ width: size + 'px', height: size + 'px' }"
-  >
+  <div class="cheese-avatar" :style="{ width: size + 'px', height: size + 'px' }">
     <span class="cheese-avatar__glyph">芝</span>
   </div>
 </template>

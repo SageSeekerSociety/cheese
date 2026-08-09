@@ -124,6 +124,15 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
         run: uv run alembic upgrade head
 
+      # alice (seeded by the migration above) owns no project until this runs;
+      # the app-shell / topic / chat specs need her to land on a real project
+      # rail tile. This is the same fusion demo the dev box is seeded with.
+      - name: Seed fusion demo data
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
+        run: uv run python -m scripts.seed_fusion_demo
+
       - name: Install frontend deps
         working-directory: frontend
         run: pnpm install --frozen-lockfile

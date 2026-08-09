@@ -26,13 +26,7 @@ import type {
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import {
-  answerOptions,
-  attachmentRawUrl,
-  chatWsUrl,
-  listBlocks,
-  toggleReaction as apiToggleReaction,
-} from '../api'
+import { answerOptions, attachmentRawUrl, chatWsUrl, listBlocks, toggleReaction as apiToggleReaction } from '../api'
 import { usePendingAttachments } from '../lib/attachments'
 import { blockCache } from '../lib/blockCache'
 import { platformErrorPresentation } from '../lib/platformEvents'
@@ -90,7 +84,7 @@ const props = withDefaults(
     members: () => [],
     topicList: () => [],
     titleOverride: null,
-  },
+  }
 )
 
 // Surface AI activity so the parent can refresh the living doc / topic list
@@ -129,7 +123,7 @@ watch(
     mentionNames.all = '所有人'
     mentionNames.here = '在线成员'
   },
-  { immediate: true, deep: true },
+  { immediate: true, deep: true }
 )
 watch(
   () => props.topicList,
@@ -137,7 +131,7 @@ watch(
     for (const k of Object.keys(topicTitles)) delete topicTitles[k]
     for (const t of ts) topicTitles[t.id] = t.title
   },
-  { immediate: true, deep: true },
+  { immediate: true, deep: true }
 )
 
 const messages = ref<Block[]>([])
@@ -176,9 +170,7 @@ function askOptions(m: Block): string[] | null {
 }
 function askAnswered(m: Block): { option: string; by: string } | null {
   const meta = m.meta as Record<string, unknown> | null
-  return meta?.answered
-    ? { option: String(meta.answered), by: String(meta.answered_by ?? '') }
-    : null
+  return meta?.answered ? { option: String(meta.answered), by: String(meta.answered_by ?? '') } : null
 }
 const askBusy = ref<string | null>(null)
 async function pickOption(m: Block, option: string) {
@@ -563,21 +555,14 @@ function imageUrl(m: Block): string {
   return props.topic ? attachmentRawUrl(props.topic.id, m.content) : ''
 }
 function scrollToMessage(id: string) {
-  document
-    .querySelector(`[data-mid="${id}"]`)
-    ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  document.querySelector(`[data-mid="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
-function send(
-  content: string,
-  summon: boolean,
-  attachments?: ChatAttachment[],
-): boolean {
+function send(content: string, summon: boolean, attachments?: ChatAttachment[]): boolean {
   const trimmed = content.trim()
   const atts = attachments?.length ? attachments : undefined
   // An image-only send (no text) is a valid message (图片输入).
-  if ((!trimmed && !atts) || !socket || socket.readyState !== WebSocket.OPEN)
-    return false
+  if ((!trimmed && !atts) || !socket || socket.readyState !== WebSocket.OPEN) return false
   errorMsg.value = null
   const msg: WsClientMessage = {
     type: 'message',
@@ -619,12 +604,7 @@ const visible = computed<Block[]>(() => {
       // Collapse a run of identical system lines (e.g. repeated 编辑了文档) so
       // a burst of edits shows as one line, not a wall.
       const prev = out[out.length - 1]
-      if (
-        prev &&
-        prev.kind === 'event' &&
-        prev.author_type === 'system' &&
-        prev.content === m.content
-      ) {
+      if (prev && prev.kind === 'event' && prev.author_type === 'system' && prev.content === m.content) {
         continue
       }
       out.push(m)
@@ -697,9 +677,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
   const q = mentionQuery.value
   if (q === null) return []
   const ql = q.toLowerCase()
-  const broadcast = BROADCAST_ITEMS.filter(
-    (b) => b.insert.startsWith(ql) || b.label.includes(q),
-  )
+  const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
   const rest: MentionItem[] = [
     ...props.members.map((m) => ({
       label: m.name || m.user_handle,
@@ -736,9 +714,7 @@ function expandMentions(text: string): string {
       { pat: `@${m.name || m.user_handle}`, token: `<@${m.user_handle}>` },
       { pat: `@${m.user_handle}`, token: `<@${m.user_handle}>` },
     ]),
-    ...props.topicList
-      .filter((t) => t.kind !== 'root')
-      .map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
+    ...props.topicList.filter((t) => t.kind !== 'root').map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
   ].sort((a, b) => b.pat.length - a.pat.length)
   let out = text
   for (const s of subs) out = out.split(s.pat).join(s.token)
@@ -759,7 +735,7 @@ const {
   () => props.topic?.id,
   (msg) => {
     errorMsg.value = msg
-  },
+  }
 )
 function pickFiles() {
   fileInput.value?.click()
@@ -790,12 +766,7 @@ function onCompositionEnd(e: CompositionEvent) {
   compositionEndedAt = e.timeStamp
 }
 function isImeKey(e: KeyboardEvent) {
-  return (
-    composing ||
-    e.isComposing ||
-    e.keyCode === 229 ||
-    e.timeStamp - compositionEndedAt < 100
-  )
+  return composing || e.isComposing || e.keyCode === 229 || e.timeStamp - compositionEndedAt < 100
 }
 
 function onComposerKey(e: KeyboardEvent) {
@@ -834,7 +805,7 @@ watch(
       closeSocket()
     }
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 onBeforeUnmount(() => {
@@ -847,10 +818,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="chat d-flex flex-column fill-height">
-    <div
-      v-if="!topic"
-      class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis"
-    >
+    <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-forum-outline</v-icon>
         <div>选择或新建一个话题，开始对话</div>
@@ -899,247 +867,198 @@ onBeforeUnmount(() => {
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
         <div ref="contentRef">
-        <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">
-          加载历史…
-        </div>
+          <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载历史…</div>
 
-        <template v-for="(m, i) in visible" :key="m.id">
-          <!-- Infrastructure incidents are facts in the conversation, but they
+          <template v-for="(m, i) in visible" :key="m.id">
+            <!-- Infrastructure incidents are facts in the conversation, but they
                are neither 芝士 messages nor faint activity lines. Structured
                metadata selects this persistent, accessible recovery card. -->
-          <div
-            v-if="platformErrorPresentation(m)"
-            class="platform-incident"
-            role="alert"
-            :data-error-code="platformErrorPresentation(m)!.code"
-            data-testid="platform-error-card"
-          >
-            <div class="platform-incident__icon" aria-hidden="true">
-              <v-icon :icon="platformErrorPresentation(m)!.icon" size="20" />
-            </div>
-            <div class="platform-incident__content">
-              <div class="platform-incident__eyebrow">平台资源</div>
-              <div class="platform-incident__title">
-                {{ platformErrorPresentation(m)!.title }}
-              </div>
-              <div class="platform-incident__body">
-                {{ platformErrorPresentation(m)!.body }}
-              </div>
-              <div class="platform-incident__status">
-                <span class="platform-incident__pulse" aria-hidden="true" />
-                {{ platformErrorPresentation(m)!.status }}
-              </div>
-            </div>
-          </div>
-          <!-- action row: 芝士's cheese action this turn — a quiet system line
-               (amber dot = platform act) with an inline amber link, no box. -->
-          <div v-else-if="m.kind === 'event' && actionResource(m)" class="action-card">
-            <!-- actionText may carry a <@handle> actor token (编辑了文档): render
-                 through the shared token→chip path so the actor is clickable. -->
-            <span class="action-verb" v-html="renderPlain(actionText(m))" />
-            <button
-              v-if="ACTION_META[actionResource(m)!]?.btn"
-              type="button"
-              class="action-link"
-              @click="
-                emit('open-resource', actionResource(m)!, m.turn_id ?? undefined)
-              "
+            <div
+              v-if="platformErrorPresentation(m)"
+              class="platform-incident"
+              role="alert"
+              :data-error-code="platformErrorPresentation(m)!.code"
+              data-testid="platform-error-card"
             >
-              {{ ACTION_META[actionResource(m)!].btn }}
-            </button>
-          </div>
-          <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
+              <div class="platform-incident__icon" aria-hidden="true">
+                <v-icon :icon="platformErrorPresentation(m)!.icon" size="20" />
+              </div>
+              <div class="platform-incident__content">
+                <div class="platform-incident__eyebrow">平台资源</div>
+                <div class="platform-incident__title">
+                  {{ platformErrorPresentation(m)!.title }}
+                </div>
+                <div class="platform-incident__body">
+                  {{ platformErrorPresentation(m)!.body }}
+                </div>
+                <div class="platform-incident__status">
+                  <span class="platform-incident__pulse" aria-hidden="true" />
+                  {{ platformErrorPresentation(m)!.status }}
+                </div>
+              </div>
+            </div>
+            <!-- action row: 芝士's cheese action this turn — a quiet system line
+               (amber dot = platform act) with an inline amber link, no box. -->
+            <div v-else-if="m.kind === 'event' && actionResource(m)" class="action-card">
+              <!-- actionText may carry a <@handle> actor token (编辑了文档): render
+                 through the shared token→chip path so the actor is clickable. -->
+              <span class="action-verb" v-html="renderPlain(actionText(m))" />
+              <button
+                v-if="ACTION_META[actionResource(m)!]?.btn"
+                type="button"
+                class="action-link"
+                @click="emit('open-resource', actionResource(m)!, m.turn_id ?? undefined)"
+              >
+                {{ ACTION_META[actionResource(m)!].btn }}
+              </button>
+            </div>
+            <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
                Content may carry a <@handle> actor token (归档/编辑…): render it
                through the SAME token→chip path as messages so the actor is a
                clickable mention, not raw text. -->
-          <div v-else-if="m.kind === 'event'" class="im-event text-caption">
-            <span v-html="renderPlain(m.content)" />
-          </div>
-
-          <!-- message row -->
-          <div
-            v-else
-            class="im-row"
-            :class="{ 'im-row--cont': !isRunStart(i) }"
-            :data-mid="m.id"
-          >
-            <!-- avatar gutter: only on the first of a run -->
-            <div class="im-gutter">
-              <template v-if="isRunStart(i)">
-                <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" />
-                <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(m.author) }">
-                  {{ m.author.slice(0, 1).toUpperCase() }}
-                </div>
-              </template>
+            <div v-else-if="m.kind === 'event'" class="im-event text-caption">
+              <span v-html="renderPlain(m.content)" />
             </div>
 
-            <div class="im-main">
-              <div v-if="isRunStart(i)" class="im-meta">
-                <span class="im-name">{{ displayName(m) }}</span>
-                <span class="im-time">{{ fmtTime(m.created_at) }}</span>
-              </div>
-              <!-- B3: a reply shows the message it threads under -->
-              <button
-                v-if="showReplyCue(m)"
-                type="button"
-                class="im-replied"
-                @click="scrollToMessage(m.reply_to!)"
-              >
-                <v-icon size="12">mdi-reply</v-icon>
-                回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
-              </button>
-              <!-- 图片输入: an attachment block renders as the image itself
-                   (click opens the original in a new tab). -->
-              <a
-                v-if="isImageBlock(m)"
-                class="im-image-link"
-                :href="imageUrl(m)"
-                target="_blank"
-                rel="noopener"
-              >
-                <img class="im-image" :src="imageUrl(m)" :alt="m.content" loading="lazy" />
-              </a>
-              <div
-                v-else-if="m.author_type === 'ai'"
-                class="im-text md-content"
-                v-html="renderMarkdown(m.content)"
-              />
-              <!-- 现场尊重原文: human text renders verbatim — newlines and
-                   spacing preserved (pre-wrap), no markdown reflow. -->
-              <div
-                v-else
-                class="im-text im-text--verbatim"
-                v-html="renderPlain(m.content)"
-              />
-              <!-- 选项问题 (cheese ask): one-click answer buttons; answered
-                   state shows the pick + who made it (everyone sees it). -->
-              <div v-if="askOptions(m)" class="ask-row">
-                <template v-if="!askAnswered(m)">
-                  <button
-                    v-for="opt in askOptions(m)"
-                    :key="opt"
-                    type="button"
-                    class="ask-option"
-                    :disabled="askBusy === m.id"
-                    @click="pickOption(m, opt)"
-                  >
-                    {{ opt }}
-                  </button>
+            <!-- message row -->
+            <div v-else class="im-row" :class="{ 'im-row--cont': !isRunStart(i) }" :data-mid="m.id">
+              <!-- avatar gutter: only on the first of a run -->
+              <div class="im-gutter">
+                <template v-if="isRunStart(i)">
+                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" />
+                  <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(m.author) }">
+                    {{ m.author.slice(0, 1).toUpperCase() }}
+                  </div>
                 </template>
-                <div v-else class="ask-answered">
-                  <v-icon size="13" color="primary">mdi-check-circle</v-icon>
-                  {{ askAnswered(m)!.by }} 选了「{{ askAnswered(m)!.option }}」
+              </div>
+
+              <div class="im-main">
+                <div v-if="isRunStart(i)" class="im-meta">
+                  <span class="im-name">{{ displayName(m) }}</span>
+                  <span class="im-time">{{ fmtTime(m.created_at) }}</span>
+                </div>
+                <!-- B3: a reply shows the message it threads under -->
+                <button v-if="showReplyCue(m)" type="button" class="im-replied" @click="scrollToMessage(m.reply_to!)">
+                  <v-icon size="12">mdi-reply</v-icon>
+                  回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
+                </button>
+                <!-- 图片输入: an attachment block renders as the image itself
+                   (click opens the original in a new tab). -->
+                <a v-if="isImageBlock(m)" class="im-image-link" :href="imageUrl(m)" target="_blank" rel="noopener">
+                  <img class="im-image" :src="imageUrl(m)" :alt="m.content" loading="lazy" />
+                </a>
+                <div v-else-if="m.author_type === 'ai'" class="im-text md-content" v-html="renderMarkdown(m.content)" />
+                <!-- 现场尊重原文: human text renders verbatim — newlines and
+                   spacing preserved (pre-wrap), no markdown reflow. -->
+                <div v-else class="im-text im-text--verbatim" v-html="renderPlain(m.content)" />
+                <!-- 选项问题 (cheese ask): one-click answer buttons; answered
+                   state shows the pick + who made it (everyone sees it). -->
+                <div v-if="askOptions(m)" class="ask-row">
+                  <template v-if="!askAnswered(m)">
+                    <button
+                      v-for="opt in askOptions(m)"
+                      :key="opt"
+                      type="button"
+                      class="ask-option"
+                      :disabled="askBusy === m.id"
+                      @click="pickOption(m, opt)"
+                    >
+                      {{ opt }}
+                    </button>
+                  </template>
+                  <div v-else class="ask-answered">
+                    <v-icon size="13" color="primary">mdi-check-circle</v-icon>
+                    {{ askAnswered(m)!.by }} 选了「{{ askAnswered(m)!.option }}」
+                  </div>
+                </div>
+                <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
+                <button
+                  v-if="m.upgraded_to_topic_id"
+                  type="button"
+                  class="im-upgraded"
+                  @click="emit('open-topic', m.upgraded_to_topic_id)"
+                >
+                  <v-icon size="13">mdi-arrow-top-right</v-icon>
+                  已升级为话题，点击查看
+                </button>
+                <!-- Emoji reaction chips (Slack): count per emoji, own reactions
+                   highlighted; click toggles. 芝士's ✅ receipt lands here too. -->
+                <div v-if="m.reactions?.length" class="rx-row">
+                  <button
+                    v-for="r in m.reactions"
+                    :key="r.emoji"
+                    type="button"
+                    class="rx-chip"
+                    :class="{ 'rx-chip--mine': myReacted(r) }"
+                    :title="r.authors.join('、')"
+                    @click="onReact(m, r.emoji)"
+                  >
+                    <span class="rx-emoji">{{ r.emoji }}</span>
+                    <span class="rx-count">{{ r.count }}</span>
+                  </button>
                 </div>
               </div>
-              <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
-              <button
-                v-if="m.upgraded_to_topic_id"
-                type="button"
-                class="im-upgraded"
-                @click="emit('open-topic', m.upgraded_to_topic_id)"
-              >
-                <v-icon size="13">mdi-arrow-top-right</v-icon>
-                已升级为话题，点击查看
-              </button>
-              <!-- Emoji reaction chips (Slack): count per emoji, own reactions
-                   highlighted; click toggles. 芝士's ✅ receipt lands here too. -->
-              <div v-if="m.reactions?.length" class="rx-row">
-                <button
-                  v-for="r in m.reactions"
-                  :key="r.emoji"
-                  type="button"
-                  class="rx-chip"
-                  :class="{ 'rx-chip--mine': myReacted(r) }"
-                  :title="r.authors.join('、')"
-                  @click="onReact(m, r.emoji)"
-                >
-                  <span class="rx-emoji">{{ r.emoji }}</span>
-                  <span class="rx-count">{{ r.count }}</span>
-                </button>
-              </div>
-            </div>
 
-            <!-- hover action bar, top-right of the row (Feishu). Only actions
+              <!-- hover action bar, top-right of the row (Feishu). Only actions
                  we actually implement are shown (no dead buttons). -->
-            <div
-              class="im-actions"
-              :class="{ 'im-actions--open': reactionPickerFor === m.id }"
-            >
-              <button
-                type="button"
-                class="im-act rx-toggle"
-                :class="{ 'im-act--on': reactionPickerFor === m.id }"
-                title="加表情"
-                @click="
-                  reactionPickerFor = reactionPickerFor === m.id ? null : m.id
-                "
-              >
-                <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
-              </button>
-              <button type="button" class="im-act" title="回复" @click="setReply(m)">
-                <v-icon size="15">mdi-reply-outline</v-icon>
-              </button>
-              <button
-                type="button"
-                class="im-act"
-                title="升级为话题"
-                @click="emit('upgrade-message', m.id)"
-              >
-                <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
-              </button>
-              <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
-              <div v-if="reactionPickerFor === m.id" class="rx-picker">
+              <div class="im-actions" :class="{ 'im-actions--open': reactionPickerFor === m.id }">
                 <button
-                  v-for="e in QUICK_EMOJIS"
-                  :key="e"
                   type="button"
-                  class="rx-pick"
-                  @click="onReact(m, e)"
+                  class="im-act rx-toggle"
+                  :class="{ 'im-act--on': reactionPickerFor === m.id }"
+                  title="加表情"
+                  @click="reactionPickerFor = reactionPickerFor === m.id ? null : m.id"
                 >
-                  {{ e }}
+                  <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
                 </button>
+                <button type="button" class="im-act" title="回复" @click="setReply(m)">
+                  <v-icon size="15">mdi-reply-outline</v-icon>
+                </button>
+                <button type="button" class="im-act" title="升级为话题" @click="emit('upgrade-message', m.id)">
+                  <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
+                </button>
+                <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
+                <div v-if="reactionPickerFor === m.id" class="rx-picker">
+                  <button v-for="e in QUICK_EMOJIS" :key="e" type="button" class="rx-pick" @click="onReact(m, e)">
+                    {{ e }}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        </template>
+          </template>
 
-        <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
+          <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until the turn's FIRST message lands; the live
              working-log checklist stays visible for the whole turn. -->
-        <div v-if="awaitingReply || todoItems.length" class="im-row">
-          <div class="im-gutter">
-            <CheeseAvatar :size="28" />
-          </div>
-          <div class="im-main">
-            <div class="im-meta">
-              <span class="im-name">芝士</span>
+          <div v-if="awaitingReply || todoItems.length" class="im-row">
+            <div class="im-gutter">
+              <CheeseAvatar :size="28" />
             </div>
+            <div class="im-main">
+              <div class="im-meta">
+                <span class="im-name">芝士</span>
+              </div>
 
-            <!-- Live working-log checklist (芝士's tasks this turn, §3.1.1) -->
-            <ul v-if="todoItems.length" class="todo-list">
-              <li
-                v-for="t in todoItems"
-                :key="t.id"
-                class="todo-item"
-                :class="'todo-' + t.status"
-              >
-                <span class="todo-mark">{{ todoMark(t.status) }}</span>
-                <span class="todo-text">{{ t.subject }}</span>
-              </li>
-            </ul>
+              <!-- Live working-log checklist (芝士's tasks this turn, §3.1.1) -->
+              <ul v-if="todoItems.length" class="todo-list">
+                <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
+                  <span class="todo-mark">{{ todoMark(t.status) }}</span>
+                  <span class="todo-text">{{ t.subject }}</span>
+                </li>
+              </ul>
 
-            <!-- Instant ack before the first message / during cold start -->
-            <div v-if="awaitingReply" class="im-text">
-              <span class="text-medium-emphasis">芝士 正在看…</span>
-              <span class="caret" />
+              <!-- Instant ack before the first message / during cold start -->
+              <div v-if="awaitingReply" class="im-text">
+                <span class="text-medium-emphasis">芝士 正在看…</span>
+                <span class="caret" />
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
-        <div class="px-4">
-          <slot name="timeline-end" />
-        </div>
+          <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
+          <div class="px-4">
+            <slot name="timeline-end" />
+          </div>
         </div>
       </div>
 
@@ -1157,16 +1076,8 @@ onBeforeUnmount(() => {
       <!-- B3: replying-to indicator — the next message threads under this one. -->
       <div v-if="replyTarget" class="reply-bar">
         <v-icon size="14" class="me-1">mdi-reply</v-icon>
-        <span class="reply-bar__text">
-          回复 {{ displayName(replyTarget) }}：{{ replySnippet(replyTarget) }}
-        </span>
-        <v-btn
-          icon="mdi-close"
-          size="x-small"
-          variant="text"
-          density="comfortable"
-          @click="clearReply"
-        />
+        <span class="reply-bar__text"> 回复 {{ displayName(replyTarget) }}：{{ replySnippet(replyTarget) }} </span>
+        <v-btn icon="mdi-close" size="x-small" variant="text" density="comfortable" @click="clearReply" />
       </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
@@ -1196,17 +1107,15 @@ onBeforeUnmount(() => {
               class="mention-menu-item"
               @click="pickMention(mm)"
             >
-              <span
-                v-if="mm.kind === 'broadcast'"
-                class="mention-avatar mention-avatar--broadcast"
-              >
+              <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                 <v-icon size="13">mdi-bullhorn-outline</v-icon>
               </span>
               <span
                 v-else-if="mm.kind === 'member'"
                 class="mention-avatar"
                 :class="{ 'mention-avatar--agent': mm.agent }"
-              >{{ mm.label.slice(0, 1).toUpperCase() }}</span>
+                >{{ mm.label.slice(0, 1).toUpperCase() }}</span
+              >
               <span v-else class="mention-avatar mention-avatar--topic">
                 <v-icon size="13">mdi-pound</v-icon>
               </span>
@@ -1220,21 +1129,9 @@ onBeforeUnmount(() => {
           <div v-if="pendingAtts.length || attsUploading" class="att-strip">
             <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
               <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
-              <button
-                type="button"
-                class="att-remove"
-                title="移除"
-                @click="removePendingAtt(i)"
-              >
-                ×
-              </button>
+              <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">×</button>
             </div>
-            <v-progress-circular
-              v-if="attsUploading"
-              indeterminate
-              size="18"
-              width="2"
-            />
+            <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
           </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
@@ -1734,7 +1631,9 @@ onBeforeUnmount(() => {
   background: none;
   color: var(--muted);
   cursor: pointer;
-  transition: background 0.1s ease, color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
 }
 .im-act:hover {
   background: var(--fill);
@@ -1792,7 +1691,9 @@ onBeforeUnmount(() => {
   padding: 5px 14px;
   font-size: 0.85rem;
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
 }
 .ask-option:hover {
   border-color: rgb(var(--v-theme-primary));
@@ -1861,9 +1762,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, #c65a1e 28%, var(--line));
   border-radius: 10px;
-  background:
-    linear-gradient(105deg, rgb(198 90 30 / 9%), transparent 38%),
-    var(--surface);
+  background: linear-gradient(105deg, rgb(198 90 30 / 9%), transparent 38%), var(--surface);
   box-shadow:
     inset 3px 0 0 #c65a1e,
     0 6px 20px rgb(73 35 16 / 6%);

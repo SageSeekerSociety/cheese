@@ -1,12 +1,22 @@
 <script setup lang="ts">
-import type { ComputeProfiles, ExecProfiles, ExpertRole, SandboxImageInfo, UpstreamSyncResult } from '../cx_types'
+import type {
+  ComputeProfiles,
+  ExecProfiles,
+  ExpertRole,
+  GithubConnection,
+  SandboxImageInfo,
+  UpstreamSyncResult,
+} from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import {
   createRole,
   getExecutionProfiles,
+  getGithubAccountAuthorizeUrl,
+  getGithubConnection,
+  getGithubInstallUrl,
   getModelProfiles,
   getProject,
   getSandboxImage,
@@ -25,6 +35,7 @@ import { myHandle } from '../me'
 // places the pool/default on the team and the per-run choice on the topic.
 const props = defineProps<{ projectId: string }>()
 const router = useRouter()
+const route = useRoute()
 
 const projectName = ref('')
 const ai = ref<ExecProfiles | null>(null)
@@ -42,6 +53,15 @@ const upstreamSaved = ref<string | null>(null)
 const savingUpstream = ref(false)
 const syncing = ref(false)
 const syncResult = ref<UpstreamSyncResult | null>(null)
+
+// GitHub App install flow (#192): repo connection is read-only status here —
+// connecting/reconnecting happens on github.com, not in this form.
+const githubConnection = ref<GithubConnection | null>(null)
+const connectingGithubRepo = ref(false)
+const connectingGithubAccount = ref(false)
+// Set from ?github_install=/&github_account= on the redirect back from our
+// own callback routes (app/api/routes/github_install.py, github_account_link.py).
+const githubCallbackNotice = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
 
 // 专家角色 (spec §8.2): which persona 芝士 loads for this project. The catalog
 // merges built-in library roles with custom ones; '' = generic 芝士.
@@ -118,13 +138,14 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, modelP, envP, upP, rolesP] = await Promise.all([
+    const [proj, execP, modelP, envP, upP, rolesP, ghP] = await Promise.all([
       getProject(props.projectId),
       getExecutionProfiles(props.projectId),
       getModelProfiles(props.projectId),
       getSandboxImage(props.projectId),
       getUpstream(props.projectId),
       listRoles(),
+      getGithubConnection(props.projectId),
     ])
     projectName.value = proj.name
     ai.value = execP
@@ -134,6 +155,7 @@ async function load() {
     upstreamUrl.value = upP.url ?? ''
     roles.value = rolesP.data
     roleCurrent.value = proj.expert_role ?? ''
+    githubConnection.value = ghP
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载设置失败'
   } finally {
@@ -210,6 +232,61 @@ async function doSyncUpstream() {
   }
 }
 
+// Send the browser to GitHub's install page; the callback (github_install.py)
+// bounces back here with ?github_install=success|pending|error afterward.
+async function connectGithubRepo() {
+  connectingGithubRepo.value = true
+  try {
+    const { url } = await getGithubInstallUrl(props.projectId)
+    window.location.href = url
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '获取安装链接失败'
+    connectingGithubRepo.value = false
+  }
+}
+
+// Same shape, but for the App's user-to-server "连接 GitHub 账号" — a
+// separate identity link, not a repo connection (github_account_link.py).
+async function connectGithubAccount() {
+  connectingGithubAccount.value = true
+  try {
+    const { url } = await getGithubAccountAuthorizeUrl(props.projectId)
+    window.location.href = url
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '获取授权链接失败'
+    connectingGithubAccount.value = false
+  }
+}
+
+// The two callback routes redirect back to this exact page with a result in
+// the query string (no session/cookie hand-off — this page is the only
+// signal). Read it once, show it, then strip it so a refresh doesn't repeat it.
+function consumeGithubCallbackNotice() {
+  const install = route.query.github_install as string | undefined
+  const account = route.query.github_account as string | undefined
+  if (!install && !account) return
+
+  if (install === 'success') {
+    const repo = route.query.repo as string | undefined
+    githubCallbackNotice.value = { type: 'success', text: `已连接仓库 ${repo ?? ''}`.trim() }
+  } else if (install === 'pending') {
+    githubCallbackNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准。' }
+  } else if (install === 'error') {
+    githubCallbackNotice.value = { type: 'error', text: `连接仓库失败：${route.query.reason ?? '未知原因'}` }
+  } else if (account === 'success') {
+    githubCallbackNotice.value = { type: 'success', text: '已连接 GitHub 账号。' }
+  } else if (account === 'error') {
+    githubCallbackNotice.value = { type: 'error', text: `连接账号失败：${route.query.reason ?? '未知原因'}` }
+  }
+
+  const { github_install, github_account, repo, reason, ...rest } = route.query
+  void github_install
+  void github_account
+  void repo
+  void reason
+  router.replace({ query: rest })
+}
+
 // Back to wherever you came from (the workspace, via the gear), with an overview
 // fallback for a deep link — same pattern as the member page.
 function goBack() {
@@ -217,7 +294,10 @@ function goBack() {
   else router.push({ name: 'overview', params: { projectId: props.projectId } })
 }
 
-onMounted(load)
+onMounted(() => {
+  consumeGithubCallbackNotice()
+  load()
+})
 watch(() => props.projectId, load)
 </script>
 
@@ -225,15 +305,7 @@ watch(() => props.projectId, load)
   <div class="settings-page fill-height overflow-y-auto">
     <v-container class="py-6" style="max-width: 900px">
       <div class="d-flex align-center mb-4">
-        <v-btn
-          variant="text"
-          size="small"
-          prepend-icon="mdi-arrow-left"
-          class="px-1"
-          @click="goBack"
-        >
-          返回
-        </v-btn>
+        <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="px-1" @click="goBack"> 返回 </v-btn>
         <v-spacer />
         <v-btn
           variant="text"
@@ -249,8 +321,7 @@ watch(() => props.projectId, load)
         <div class="t-eyebrow mb-1">项目设置 · {{ projectName }}</div>
         <h1 class="t-page-title">资源池</h1>
         <p class="t-body c-muted mt-1" style="max-width: 640px">
-          选择这个项目用哪套 AI 模型、跑在哪套算力上。默认都是知是自己的池，开箱即用；
-          需要更强的模型或专属机器，可以在
+          选择这个项目用哪套 AI 模型、跑在哪套算力上。默认都是知是自己的池，开箱即用； 需要更强的模型或专属机器，可以在
           <a class="link" @click="router.push({ name: 'market' })">市场</a> 里挑。
         </p>
       </div>
@@ -285,24 +356,13 @@ watch(() => props.projectId, load)
                 @update:model-value="pickRole"
               >
                 <template #item="{ props: itemProps, item }">
-                  <v-list-item
-                    v-bind="itemProps"
-                    :subtitle="item.raw.description || undefined"
-                  />
+                  <v-list-item v-bind="itemProps" :subtitle="item.raw.description || undefined" />
                 </template>
               </v-select>
-              <v-btn
-                size="small"
-                variant="tonal"
-                prepend-icon="mdi-plus"
-                @click="roleDialog = true"
-              >
-                新建角色
-              </v-btn>
+              <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="roleDialog = true"> 新建角色 </v-btn>
             </div>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              芝士以这个专家身份进驻项目（影响它的口吻和关注点）。平台内置了几个；
-              也可以给机构或自己定义新角色。
+              芝士以这个专家身份进驻项目（影响它的口吻和关注点）。平台内置了几个； 也可以给机构或自己定义新角色。
             </p>
           </div>
         </section>
@@ -323,10 +383,7 @@ watch(() => props.projectId, load)
               :disabled="savingAi !== null"
               @click="pickAi(p.name)"
             >
-              <span
-                class="pool-radio"
-                :class="{ 'pool-radio--on': ai?.current === p.name }"
-              />
+              <span class="pool-radio" :class="{ 'pool-radio--on': ai?.current === p.name }" />
               <div class="pool-main">
                 <div class="pool-title">
                   {{ p.label }}
@@ -334,13 +391,7 @@ watch(() => props.projectId, load)
                 </div>
                 <div class="pool-sub c-muted">模型 {{ p.model }}</div>
               </div>
-              <v-progress-circular
-                v-if="savingAi === p.name"
-                indeterminate
-                size="16"
-                width="2"
-                color="primary"
-              />
+              <v-progress-circular v-if="savingAi === p.name" indeterminate size="16" width="2" color="primary" />
               <span v-else-if="ai?.current === p.name" class="pool-current">使用中</span>
             </button>
           </div>
@@ -354,8 +405,8 @@ watch(() => props.projectId, load)
           </div>
           <div class="ln-body">
             <p class="t-body c-muted mb-2" style="font-size: 0.82rem">
-              芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省
-              订阅额度）；复杂项目可切 <strong>Opus 5</strong>（更强，但更快消耗额度）。
+              芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省 订阅额度）；复杂项目可切
+              <strong>Opus 5</strong>（更强，但更快消耗额度）。
             </p>
             <button
               v-for="p in model?.profiles ?? []"
@@ -366,10 +417,7 @@ watch(() => props.projectId, load)
               :disabled="savingModel !== null"
               @click="pickModel(p.id)"
             >
-              <span
-                class="pool-radio"
-                :class="{ 'pool-radio--on': model?.current === p.id }"
-              />
+              <span class="pool-radio" :class="{ 'pool-radio--on': model?.current === p.id }" />
               <div class="pool-main">
                 <div class="pool-title">
                   {{ p.label }}
@@ -377,13 +425,7 @@ watch(() => props.projectId, load)
                 </div>
                 <div class="pool-sub c-muted">{{ p.description }}</div>
               </div>
-              <v-progress-circular
-                v-if="savingModel === p.id"
-                indeterminate
-                size="16"
-                width="2"
-                color="primary"
-              />
+              <v-progress-circular v-if="savingModel === p.id" indeterminate size="16" width="2" color="primary" />
               <span v-else-if="model?.current === p.id" class="pool-current">使用中</span>
             </button>
           </div>
@@ -428,26 +470,17 @@ watch(() => props.projectId, load)
               :disabled="savingEnv !== null"
               @click="pickEnv(o.image)"
             >
-              <span
-                class="pool-radio"
-                :class="{ 'pool-radio--on': env?.current === o.image }"
-              />
+              <span class="pool-radio" :class="{ 'pool-radio--on': env?.current === o.image }" />
               <div class="pool-main">
                 <div class="pool-title">{{ o.label }}</div>
                 <div class="pool-sub c-muted">{{ o.image }}</div>
               </div>
-              <v-progress-circular
-                v-if="savingEnv === o.image"
-                indeterminate
-                size="16"
-                width="2"
-                color="primary"
-              />
+              <v-progress-circular v-if="savingEnv === o.image" indeterminate size="16" width="2" color="primary" />
               <span v-else-if="env?.current === o.image" class="pool-current">使用中</span>
             </button>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              基座装了 uv / node / git 等通用工具；cheesex-dev 额外预装了本仓库的
-              依赖，芝士可以直接在盒子里跑 cheesex 自己的测试（dogfooding）。
+              基座装了 uv / node / git 等通用工具；cheesex-dev 额外预装了本仓库的 依赖，芝士可以直接在盒子里跑 cheesex
+              自己的测试（dogfooding）。
             </p>
           </div>
         </section>
@@ -469,14 +502,7 @@ watch(() => props.projectId, load)
                 style="flex: 1"
                 @keydown.enter="saveUpstream"
               />
-              <v-btn
-                size="small"
-                variant="tonal"
-                :loading="savingUpstream"
-                @click="saveUpstream"
-              >
-                保存
-              </v-btn>
+              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
               <v-btn
                 size="small"
                 color="primary"
@@ -501,8 +527,77 @@ watch(() => props.projectId, load)
               <template v-else>同步失败：{{ syncResult.reason }}</template>
             </p>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              关联一个已有的 git 仓库，把它的历史拉进这个项目；之后随时同步新提交。
-              有冲突时会原样中止，不会合一半。
+              关联一个已有的 git 仓库，把它的历史拉进这个项目；之后随时同步新提交。 有冲突时会原样中止，不会合一半。
+            </p>
+          </div>
+        </section>
+
+        <!-- 连接 GitHub 仓库 (#192): cheesex-app 安装到具体仓库, 之后该项目的
+             git 操作走这个 installation 的短时 token -->
+        <section class="ln-section">
+          <div class="ln-section-head">
+            <v-icon size="18" class="me-1 c-muted">mdi-github</v-icon>
+            <span class="ln-section-title">连接 GitHub 仓库</span>
+          </div>
+          <div class="ln-body">
+            <v-alert
+              v-if="githubCallbackNotice"
+              :type="githubCallbackNotice.type"
+              density="comfortable"
+              closable
+              class="mb-3"
+              @click:close="githubCallbackNotice = null"
+            >
+              {{ githubCallbackNotice.text }}
+            </v-alert>
+            <div v-if="githubConnection?.connected" class="d-flex align-center" style="gap: 8px">
+              <v-icon size="18" color="success">mdi-check-circle</v-icon>
+              <span class="t-body">
+                已连接 <strong>{{ githubConnection.repo }}</strong>
+              </span>
+              <v-spacer />
+              <v-btn size="small" variant="tonal" :loading="connectingGithubRepo" @click="connectGithubRepo">
+                重新连接
+              </v-btn>
+            </div>
+            <div v-else class="d-flex align-center" style="gap: 8px">
+              <span class="t-body c-muted">尚未连接仓库</span>
+              <v-spacer />
+              <v-btn
+                size="small"
+                color="primary"
+                variant="flat"
+                :loading="connectingGithubRepo"
+                @click="connectGithubRepo"
+              >
+                连接 GitHub 仓库
+              </v-btn>
+            </div>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后沙箱看 CI/CD 用的短时 token
+              会按这个连接铸造，不用再手工配凭据。
+            </p>
+          </div>
+        </section>
+
+        <!-- 连接 GitHub 账号 (#192): App 的 user-to-server 授权, 独立于经典
+             OAuth 登录 —— 只是记录"这个人是哪个 GitHub 账号", 供 credit 归属用 -->
+        <section class="ln-section">
+          <div class="ln-section-head">
+            <v-icon size="18" class="me-1 c-muted">mdi-account-box-outline</v-icon>
+            <span class="ln-section-title">连接 GitHub 账号</span>
+          </div>
+          <div class="ln-body">
+            <div class="d-flex align-center" style="gap: 8px">
+              <span class="t-body c-muted">把你自己的 GitHub 账号和这个平台身份关联起来</span>
+              <v-spacer />
+              <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
+                连接 GitHub 账号
+              </v-btn>
+            </div>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              用于把你 merge 的提交正确归到你名下（committer credit）。跟登录用的 GitHub 账号授权是两回事，可以是同一个
+              GitHub 账号，也可以不是。
             </p>
           </div>
         </section>
@@ -550,12 +645,7 @@ watch(() => props.projectId, load)
             variant="outlined"
             auto-grow
           />
-          <v-alert
-            v-if="roleFormError"
-            type="error"
-            density="compact"
-            class="mb-2"
-          >
+          <v-alert v-if="roleFormError" type="error" density="compact" class="mb-2">
             {{ roleFormError }}
           </v-alert>
         </v-card-text>
@@ -611,7 +701,10 @@ watch(() => props.projectId, load)
   border-radius: 10px;
   background: var(--surface);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.15s;
 }
 .pool-row:hover:not(:disabled) {
   border-color: rgba(var(--v-theme-primary), 0.5);
@@ -634,12 +727,7 @@ watch(() => props.projectId, load)
 }
 .pool-radio--on {
   border-color: rgb(var(--v-theme-primary));
-  background:
-    radial-gradient(
-      circle,
-      rgb(var(--v-theme-primary)) 0 4px,
-      transparent 5px
-    );
+  background: radial-gradient(circle, rgb(var(--v-theme-primary)) 0 4px, transparent 5px);
 }
 .pool-main {
   flex: 1;

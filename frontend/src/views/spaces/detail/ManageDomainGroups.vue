@@ -105,9 +105,9 @@ import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { toTypedSchema } from '@vee-validate/zod'
+import { storeToRefs } from 'pinia'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
-import { storeToRefs } from 'pinia'
 
 import { vuetifyConfig } from '@/utils/form'
 

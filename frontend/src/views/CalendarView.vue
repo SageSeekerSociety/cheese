@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { getCalendar, getProject, listMilestones } from '../api'
 import type { MilestoneFull } from '../cx_types'
+
+import { computed, onMounted, ref, watch } from 'vue'
+
+import { getCalendar, getProject, listMilestones } from '../api'
 
 // 时间维度 (spec §7.2): a clean deadline list with countdowns, plus the done
 // milestones shown faded.
@@ -14,9 +16,7 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 
 // Done milestones (status === 'done'), kept separate to render faded.
-const done = computed<MilestoneFull[]>(() =>
-  allMilestones.value.filter((m) => m.status === 'done'),
-)
+const done = computed<MilestoneFull[]>(() => allMilestones.value.filter((m) => m.status === 'done'))
 
 function fmtDate(d: string | null): string {
   if (!d) return '待定'
@@ -53,10 +53,7 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [cal, all] = await Promise.all([
-      getCalendar(props.projectId),
-      listMilestones(props.projectId),
-    ])
+    const [cal, all] = await Promise.all([getCalendar(props.projectId), listMilestones(props.projectId)])
     upcoming.value = cal.data
     allMilestones.value = all.data
     try {
@@ -100,9 +97,7 @@ onMounted(load)
             <span v-if="upcoming.length" class="chip-neutral">{{ upcoming.length }}</span>
           </v-card-title>
           <v-card-text>
-            <div v-if="upcoming.length === 0" class="c-faint t-body py-2">
-              暂无即将到来的里程碑
-            </div>
+            <div v-if="upcoming.length === 0" class="c-faint t-body py-2">暂无即将到来的里程碑</div>
             <v-list v-else density="comfortable" class="py-0">
               <v-list-item v-for="m in upcoming" :key="m.id" class="px-0">
                 <template #prepend>
@@ -111,9 +106,7 @@ onMounted(load)
                 <v-list-item-title style="font-weight: 500; color: var(--ink)">
                   {{ m.title }}
                 </v-list-item-title>
-                <v-list-item-subtitle class="c-muted">
-                  截止 {{ fmtDate(m.due_date) }}
-                </v-list-item-subtitle>
+                <v-list-item-subtitle class="c-muted"> 截止 {{ fmtDate(m.due_date) }} </v-list-item-subtitle>
                 <template #append>
                   <span
                     class="d-inline-flex align-center ga-1"
