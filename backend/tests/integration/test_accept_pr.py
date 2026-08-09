@@ -174,9 +174,7 @@ def _pr_ready(
         def fake_local_head(_self, _project_id, _topic_id):
             return None
 
-        monkeypatch.setattr(
-            AcceptService, "_local_topic_branch_head", fake_local_head
-        )
+        monkeypatch.setattr(AcceptService, "_local_topic_branch_head", fake_local_head)
 
     fake_client = FakeGitHubPrClient()
     github_pr.set_default_client(fake_client)

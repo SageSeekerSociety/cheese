@@ -44,7 +44,8 @@
 - [x] 落地四处代码改动（重推逻辑 / `_nudge_pr_fix` 措辞 / `claude-review.yml` paths-ignore / `list_user_connections` 新字段）。
 - [x] 补测试：`test_accept_pr.py` 新增两个用例——`test_repush_pushes_new_local_commit_and_updates_pr_head_sha`（真实 jj/git 提交 → 轮询自动重推 → `pr_head_sha` 更新，且不改动时不重推）、`test_repush_failure_degrades_without_failing_the_card`（push 失败两轮都不进 `errors`、不永久失败，恢复后下一轮自动追上）；`test_oauth_service.py` 新增两个用例覆盖新字段（含"不泄露 access_token"断言）；`_nudge_pr_fix` 新文案在既有的 `test_poll_ci_failure_nudges_cheese_once` 里加了断言。
 - [x] ruff/pyright 在改动文件上全绿；oauth 单元测试 80/80 通过；review 集成测试 21/25 通过（4 个失败逐一定位到同一个沙箱级问题，见下，与本卡改动无关）。
-- [ ] 递验收卡。
+- [x] 第一次递验收卡被质量闸门打回：`ruff format` 会重排 `test_accept_pr.py`（纯格式，不是 lint 错误）。已跑 `ruff format` 修好，改动文件重新确认 `ruff check` + `ruff format --check` 全绿，pytest 重跑确认还是同样的 91 passed / 3 failed（跟格式化前一致，逻辑没被格式化动到）。闸门里 pyright/pytest 被 SKIP 是环境限制（闸门容器连不上外网下 pyright 的 python-build、没有 Postgres），不是我改的东西的问题。
+- [ ] 重新递验收卡。
 
 ## 沙箱环境限制（如实记录，不是我改动引入的问题）
 
@@ -57,6 +58,8 @@
 `test_accept_pr.py` 里剩下的 4 个失败（我的两个新重推用例 + 两个已存在的直接-merge 降级用例）全部卡在同一处 `jj git init --colocate`，已用 `docs/topics/` 里能查到的证据核实是这一个根因，不是四个不同问题。我的两条重推测试逻辑上是对的（本地真实 git 提交检测 + 真实 rev-parse，只 fake 了连不到 github.com 的那一跳网络请求，跟文件里已有的真实 git 测试用同一套手法），只是在这个具体沙箱实例里跑不动；换一个没有这个残留挂载的沙箱应该就能跑绿。没有为了让它变绿而删测试或放宽断言。
 
 全量 `task check --full` 因为这个沙箱也没有 Redis/Valkey（大量无关模块——team/topic/user_follow 等，跟这张卡完全无关——因为连不上 `localhost:6379` 报错），噪音太大不代表什么，没有意义，已跳过；只针对改动到的文件和 review 领域做了有针对性的验证（见上）。
+
+**父话题给的 `git -c safe.directory='*'` 读仓库技巧已验证有效，但解决的是另一个问题**：那个技巧是在共享工作区 `/de808b13-.../` 上用 git（不是 jj）读历史/核main状态，我已经用它确认了两件事——① 我自己话题分支 `topic/d354423a` 上的提交（包括这次 ruff format 修复后的一次快照）确实进了共享仓库,没有丢；② main 上 `claude-review.yml` 到现在依然没有 `paths-ignore`，我的改动仍然不会跟别的 PR 重复叠加。但它没解决我测试卡住的那个问题——我需要的是在**全新的、每项目独立的**工作区（`backend/.workspaces/<project_id>`）里跑 `jj git init --colocate` 这类**写**操作来搭真实测试仓库，这类操作从 cwd 向上找 `.jj` 时会先撞到 `/work/.jj`（本话题工作区自己的 jj 标记，指针指向同一个读不了 `config-id` 的共享仓库），跟"读 main 历史"是两条不同的路径，git 读历史的技巧对它不适用。这点和父话题"jj 在沙箱里完全不可用"的结论一致，不是新分歧。
 
 ## 特别提醒（简报原文，自己会遵守）
 
