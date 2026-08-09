@@ -13,7 +13,7 @@ export const DEMO_PASSWORD = 'demo12345';
 export async function login(page: Page, username = DEMO_USERNAME, password = DEMO_PASSWORD) {
   await page.goto('/account/signin');
   await page.getByLabel('用户名').fill(username);
-  await page.getByLabel('密码').fill(password);
+  await page.getByRole('textbox', { name: '密码' }).fill(password);
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: '立即登录' }).click();
   await page.locator('.app-rail-item:not(.app-rail-item--add)').first().waitFor();
