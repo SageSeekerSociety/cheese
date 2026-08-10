@@ -147,18 +147,31 @@ ls: cannot access '.jj/repo/config-id': No such file or directory   ← 没有�
 
 > 备选（若某天必须保留 per-repo 配置）：给沙箱**预置** `~/.config/jj/repos/<id>/metadata.binpb`，内容写容器侧看到的 store 路径，jj 就不会重建。实测有效（手写的 protobuf 也认）。但上表第三行是个陷阱：**路径写错 = 沙箱里所有 jj 硬失败**。E 不碰这个雷区，所以优先 E。
 
-## 落地方案（写在 #237 之上）
+## 已落地的改动（代码写完了）
 
-1. **`_ensure_jj()`**：删掉两行 `jj config set --repo`；`_jj()` 用 `env={**os.environ, "JJ_USER": "芝士", "JJ_EMAIL": "cheese@zhishi.local"}` 注入身份（注意 `subprocess.run` 传 `env` 会**替换**整个环境，必须基于 `os.environ` 拷贝）。
-2. **`_share_jj_modes()` 里加一步 `_drop_repo_config_id(store)`**：`config-id` 存在就 unlink（try/except OSError 吞掉）。这一步同时是 **A 的兜底自愈**——万一哪个 agent 手动跑了 `jj config set --repo`，下一次后端 jj 调用就把它清掉，而不是等人来 chmod。
-3. **D**：`_jj()` 里把 secure-config 类失败翻译成带路径和修法的工作区错误。
-4. **测试**（照 `backend/tests/unit/test_sandbox_vcs_perms.py` 的路子，unit、无 DB）：
-   - 造一个真 jj 仓库 → `jj config set --repo` 造出 `config-id` → 跑一次 `_jj()` → 断言文件已消失且命令成功；
-   - 断言 `_jj()` 提交出来的 commit 作者是「芝士」（证明身份没丢）；
-   - 把 `config-id` 造成 0000 → 断言 `_jj()` 能自愈并成功（模拟外属主不可读）；
-   - 断言 secure-config 失败被翻译成新文案。
+wangchangxin 已拍板：**不动盒子，等 PR 合并部署**。所以下面就是唯一的修复路径；在部署完成之前，盒子上的 `config-id` 仍可能被任何一次 agent 的 jj 调用打回 0600。
 
-**基线提醒**：本工作区基于 `5fbf903c`（无 #237）。改动落在 `_jj()`/`_ensure_jj()`——正是 #237 改过的两个函数，两阶段采纳推 PR 前会先同步 GitHub main，**届时这两处必然冲突，需要手工合并**（保留 #237 的 `_share_jj_modes(repo, since=started)` 调用，在其后追加本卡的 unlink 与 env 注入）。
+**`backend/app/domain/workspace/service.py`**
+
+- 新增 `_jj_store()`（**与 #237 同名同实现**，为的是合并时直接留一份就行）和 `_drop_repo_config_id()`：**每次 `_jj()` 调用之前**删掉 `<store>/config-id`。删而不是 chmod——unlink 只看**目录**写权限（后端是目录属主），chmod 却要求是**文件**属主。放在调用**前**而不是后：投毒状态下 jj 本身已经跑不动了，事后修没有意义。
+- `_ensure_jj()` 不再写 per-repo 配置（那两行 `jj config set --repo` 正是 `config-id` 的唯一来源）；身份改由 `_jj()` 注入 `JJ_USER`/`JJ_EMAIL`。**补一条实测**：这两个环境变量的优先级**高于用户级 `config.toml`**，所以盒子上后端用户 home 里有没有 jj 配置都不影响作者身份。（注意 `subprocess.run` 传 `env` 会**替换**整个环境，代码里是基于 `os.environ` 拷贝的。）
+- 新增 `_jj_failure_message()`：secure-config 类失败翻译成带**具体文件路径 + 一句修法**的中文错误；其它 jj 错误措辞原样不动。
+
+**`backend/app/domain/agent/platform_failures.py`（D）**
+
+新增 `workspace_vcs_perms` 分类。原来这类失败落进最后的兜底分支、渲染成「AI 服务返回错误」；现在有自己的标题「工作区版本库权限异常」，正文明确"项目文件和版本历史都没有受影响、平台会自动清掉这个文件并恢复"，`retryable=True`，且**不泄露内部路径**（路径只进后端错误/日志）。
+
+**测试**：`backend/tests/unit/test_jj_config_id.py`（7 条）+ `backend/tests/unit/test_platform_failures.py`（新增 4 条）。unit、不碰 DB，但**依赖真的 jj 二进制**（沿用 #237 `test_sandbox_vcs_perms.py` 的做法，不 mock）。覆盖：
+
+- 建仓之后**根本不存在** `config-id`；
+- 没有 per-repo 配置，commit 作者仍然是「芝士 cheese@zhishi.local」；
+- **投毒（0000 不可读）后 `_jj()` 能自愈并成功**——复现 11:39 的原始故障；
+- **投毒后新话题仍然起得来**（直接测 `_ensure_worktree`，即"所有新话题起不来"那条路径）；
+- 修复**只**删这一个文件：`store/`/`op_store/`/`index/` 逐项比对不变；
+- 删不掉时报出准确原因（含路径）并被分类成 `workspace_vcs_perms`，用户看到的文案里**没有**「AI 服务」；
+- 普通 jj 错误（`jj log -r no-such-revision`）措辞保持 `jj log failed:` 原样。
+
+**基线提醒（合并时要注意）**：本工作区基于 `5fbf903c`（**没有 #237**）。改动正好落在 #237 也改过的 `_jj()`/`_ensure_jj()`，两阶段采纳推 PR 前会先同步 GitHub main，**届时这两处必然冲突，需要手工合并**：保留 #237 的 `_share_jj_modes(repo, since=started)` 调用，在其前后分别保留本卡的 `_drop_repo_config_id(...)` 与 env 注入；`_jj_store()` 两边同名同实现，留一份即可。
 
 ## 失败模式 / 发现时延 / 回滚
 
@@ -188,10 +201,23 @@ ls -l <workspace_root>/<project_id>/.jj/repo/config-id   # 期望：仍然不存
 
 第 2 步是**关键判据**：今天同样这条命令会把文件打回 `node:node 0600`。
 
-## 现状与一个需要拍板的动作
+## 检查结果（如实报告）
+
+沙箱里按 CLAUDE.md 的办法起了 PG+Redis（`.claude/scripts/dev-db.sh start`）后跑的：
+
+- **ruff**：改动的 4 个文件 `All checks passed`（`ruff format` 改过一次格式，已收进改动）。
+- **pyright**：`app/domain/workspace/service.py` + `app/domain/agent/platform_failures.py` → **0 errors, 0 warnings**。
+- **`pytest tests/unit`**：**2543 passed / 22 failed / 1 skipped**。22 条全部在 `test_machine_service.py`(21) 和 `test_tmux_control.py`(1)，原因是沙箱**缺宿主机命令**——`FileNotFoundError: 'ssh-keygen'` 与 `'kill'`，正是 CLAUDE.md 里记着的那两条已知沙箱缺口，**与本卡无关**。
+- 起 DB 之前另有 3 条 ERROR（`test_idle_reap`、`test_task_ai_advice_routes`），是连不上 5433 导致的；**起了 PG 之后全部消失**，所以确认是环境不是代码。
+- 本卡新增的 11 条测试全绿。
+
+`task check` 的完整结果（含 integration/contract）见下方"闸门"一节 / 递卡后的自动检查。CLAUDE.md 记着沙箱里还会有约 43 条因**没有 git identity** 而失败的用例（凡是要建真 worktree 的），同样不是本卡引入的。
+
+## 现状（已拍板：不动盒子）
 
 - 共享仓库的 `config-id` 现在是 `node:node 0666`（我 13:03 误触发后立刻修回的），**平台可用，但仍然靠这个手工权限撑着**——任何 agent 的下一条 jj 命令都会再打回 0600。
-- **在 PR 合并部署之前，有一个一次性动作能立刻止血**：删掉盒子上该项目的 `.jj/repo/config-id`，**并同时**给后端用户配一个用户级 jj 身份（`jj config set --user user.name 芝士` / `user.email`），否则 `snapshot_worktree` 的 `jj commit` 会因为没有身份而失败。这是盒子操作、要走部署 runbook，所以交给人拍板，我不擅自做。
+- 我提过一个可以立刻止血的一次性盒子操作（删掉 `config-id` + 给后端用户配用户级 jj 身份），**wangchangxin 选了「不动盒子，等 PR 合并部署」**。所以：**在部署完成之前，这条风险仍然是敞开的**——任何一个 agent 跑一次 jj，就会再次让所有话题起不来，届时仍需要人手工 `chmod`（属主是 node 时，任何 uid 1000 的进程都能改）。
+- 部署之后这条风险归零：文件不再存在，也不会被重新创建。
 
 ## 我自己踩了一次（如实记录）
 
