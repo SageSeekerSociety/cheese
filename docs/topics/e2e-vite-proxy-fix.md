@@ -1,3 +1,8 @@
+> **⚠️ 已过时（2026-08-10）**：本文写的「`VITE_API_BASE_URL` 不需要设置」已不成立——
+> 现行配置在 e2e 里显式设 `VITE_API_BASE_URL=/api`（`e2e/playwright.config.ts`），
+> proxy 也已重写为"剥一个 `/api` + terminal 路径例外"（`frontend/vite.config.ts`）。
+> 以代码内注释为准；topics/ 是事故记录，不是约定。
+
 ## 状态：已修复，待验收
 
 ## 改动

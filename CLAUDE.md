@@ -2,26 +2,7 @@
 
 Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright). See `README.md` for setup and commands.
 
-## .claude/ Directory Structure
-
-```
-.claude/
-├── agents/
-│   └── check-runner.md                   # Background test runner (parallel to review)
-├── skills/                               # on-demand skills (dir form: <name>/SKILL.md)
-│   ├── cheese-py-code-review/SKILL.md    # Code review checklist + workflow (parallel & serial)
-│   ├── post-pull/SKILL.md                # Post-git-pull checks (migrations, deps, health)
-│   └── lark-{doc,drive,markdown,shared,wiki}  # → .agents/skills/… (vendored, see skills-lock.json)
-├── scripts/
-│   ├── check.sh                          # ruff + pyright + pytest, one command
-│   ├── post-pull.sh                      # Post-git-pull checks (migrations, deps, health)
-│   └── pre-commit                        # Copy to .git/hooks/ to block commits on check failure
-└── settings.json                         # Permissions allowlist for common commands
-```
-
-Procedural guidance lives in **skills** (loaded on demand), not always-on prose:
-review → `cheese-py-code-review`, post-pull → `post-pull`. This file holds the
-always-relevant project conventions below.
+Procedural guidance lives in `.claude/` (skills, path-scoped rules, agents, scripts — `ls .claude/` is the inventory), not in always-on prose here: review → `cheese-py-code-review` skill, post-pull → `post-pull` skill; area-specific pitfalls (migrations, backend tests, e2e) live in `.claude/rules/` and load automatically when you touch matching files. This file holds only the always-relevant conventions below.
 
 ## Development Commands
 
@@ -106,11 +87,8 @@ The root-level `reference/` directory (gitignored) contains original implementat
 - After making changes, always run `task check` to verify.
 - After `git pull`, run `bash .claude/scripts/post-pull.sh`.
 - **All commits go through PR**: never commit directly to main.
-- **CLAUDE.md ↔ .claude/ stay in sync** (peer project specs — the highest-priority rule): any change to one must be mirrored in the other, in the same change.
-  - New/changed `.claude/skills|agents|scripts` → update the Directory Structure tree above.
-  - Changed a convention here (Python/API/testing/datetime/security) → update the matching checklist in `cheese-py-code-review` skill.
-  - Changed a check item in a skill → update the matching CLAUDE.md section.
-  - Self-check after editing: does the tree list every subdir/file? Are the conventions identical on both sides?
+- **Multiple agents work this repo concurrently.** Before starting a fix, check open PRs and recent main commits for the same problem; before `git add`/`commit` in a shared checkout, check for another session's activity (or use a separate worktree). Never `git add -A` — review the staged list; a cache directory in it (43k files once) is a stop sign.
+- Box operations (env changes, container recreation) go through `deploy/deploy-docker.sh` only — see the runbook in `docs/infrastructure.md`. Hand-rolled `docker compose up` drops the deploy script's image-pin exports and has broken dev before.
 
 ## Documentation Map
 

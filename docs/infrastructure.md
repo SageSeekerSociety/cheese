@@ -83,6 +83,49 @@ without deploying — use it to validate connectivity safely.
 The repo is **squash-only** (merge commits and rebase are disabled; branches
 auto-delete on merge). Every PR lands as one squashed commit.
 
+## Box ops runbook — changing backend env on a box
+
+The one rule: **containers are only ever (re)created by `deploy/deploy-docker.sh`.**
+A hand-run `docker compose up` looks equivalent but is not — the script exports
+`IMAGE_TAG` / `SANDBOX_IMAGE` / `TMUX_SANDBOX_IMAGE` / `QUALITY_GATE_IMAGE`
+pinned to the deploy SHA and sources `~/ops/deploy.env` (`COMPOSE_OVERLAYS`
+etc.). Recreating without those pins silently flips the sandbox images to
+nonexistent `:main` tags; on 2026-08-10 that broke every @芝士 turn on dev
+("Agent 运行组件暂时缺失") until a proper redeploy.
+
+Changing backend env (e.g. enabling an OAuth provider):
+
+1. Edit the env file — dev: `/home/nictheboy/cheese-backend-py/backend/.env`
+   (the compose `env_file` default; `BACKEND_ENV_FILE` overrides). **Back it up
+   first** (`cp .env .env.bak-$(date +%Y%m%d-%H%M%S)`).
+2. env_file is read at container **create** time — `docker restart` does NOT
+   pick up changes. Recreate via the deploy script, re-deploying the sha that
+   is already running:
+
+   ```bash
+   cd ~/actions-runner/_work/cheese/cheese
+   SHA=$(docker inspect cheese-backend-1 --format '{{.Config.Image}}' | sed 's/.*://')
+   bash deploy/deploy-docker.sh "$SHA"
+   ```
+
+3. The box holds no ghcr login outside workflow runs (deploy-dev.yml logs in
+   per-run). If the pull is denied, use local-image mode:
+
+   ```bash
+   DEPLOY_APP_IMAGE_SOURCE=local \
+   BACKEND_IMAGE=ghcr.io/sageseekersociety/cheese/backend:$SHA \
+   FRONTEND_IMAGE=ghcr.io/sageseekersociety/cheese/frontend:$SHA \
+   bash deploy/deploy-docker.sh "$SHA"
+   ```
+
+4. Verify: container env via `docker inspect` (parse the JSON — don't split on
+   commas, values like `OAUTH_ENABLED_PROVIDERS=ruc,github_app` get chopped),
+   then `curl -sf localhost:8081/healthz`.
+
+Related: never hand-install files INTO a running container (they evaporate on
+the next recreate); the gateway's own env keys follow the same
+recreate-not-restart rule (`deploy/gateway/README.md`).
+
 ## Backups
 
 Every box runs the same scripts (only the R2 prefix and host differ); details and

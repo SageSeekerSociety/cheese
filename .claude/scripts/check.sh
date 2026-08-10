@@ -132,6 +132,27 @@ else
     ((++SKIP))
 fi
 
+# --- alembic single head ---
+# Parallel migrations fork the chain; `upgrade head` then refuses and the
+# deploy aborts (four times on 2026-08-09/10). Mirror of CI's migration-heads
+# job so the fork is caught before push. Reads the migration graph only — no
+# DB. SKIP (not FAIL) when the venv can't import the app: environment, not code.
+echo "==> alembic heads"
+if HEADS_OUT="$(timeout 60 "${UV_RUN[@]}" alembic heads 2>/dev/null)"; then
+    HEADS_N="$(printf '%s\n' "$HEADS_OUT" | grep -c '(head)')"
+    if [ "$HEADS_N" = "1" ]; then
+        echo "  PASS: exactly one migration head"
+        ((++PASS))
+    else
+        printf '%s\n' "$HEADS_OUT" | sed 's/^/    /'
+        echo "  FAIL: $HEADS_N migration heads — rechain your migration onto the current head (see .claude/rules/migrations.md)"
+        ((++FAIL))
+    fi
+else
+    echo "  SKIP: alembic heads (couldn't run alembic in this environment)"
+    ((++SKIP))
+fi
+
 # --- pytest ---
 echo "==> pytest"
 if [ "$SKIP_TESTS" = "1" ]; then

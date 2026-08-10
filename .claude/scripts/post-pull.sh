@@ -11,9 +11,9 @@ echo "=== Post-pull checks ==="
 # 1. New migrations
 echo ""
 echo "==> New migrations"
-if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -q "migrations/versions/"; then
+if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -q "alembic/versions/"; then
     echo "  NEW migrations detected:"
-    git diff --name-only HEAD@{1} HEAD | grep "migrations/versions/"
+    git diff --name-only HEAD@{1} HEAD | grep "alembic/versions/"
 else
     echo "  No new migrations."
 fi
