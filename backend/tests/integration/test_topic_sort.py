@@ -35,7 +35,10 @@ def _set_updated_at(client, topic_id: str, when: datetime) -> None:
 
 
 def _titles(client, project_id: str, **params) -> list[str]:
-    r = client.get(f"/api/topics?project_id={project_id}", params=params)
+    # project_id must ride in `params` too: httpx REPLACES a URL's existing
+    # query string with `params=` instead of merging, so putting it in the URL
+    # silently dropped it and every request 400ed on the missing field.
+    r = client.get("/api/topics", params={"project_id": project_id, **params})
     assert r.status_code == 200
     # Exclude the auto-created root topic — this test only cares about the
     # work topics it seeded, in the order it seeded checkable titles for.
@@ -95,7 +98,7 @@ def test_sort_does_not_break_parent_child_structure(client):
     child = _make_topic(client, pid, "Alpha child", parent_id=parent)
 
     r = client.get(
-        f"/api/topics?project_id={pid}", params={"sort": "title", "order": "asc"}
+        "/api/topics", params={"project_id": pid, "sort": "title", "order": "asc"}
     )
     assert r.status_code == 200
     by_id = {t["id"]: t for t in r.json()["data"]["data"]}
