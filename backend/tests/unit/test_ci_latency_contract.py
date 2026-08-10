@@ -31,14 +31,27 @@ def test_squash_merge_does_not_repeat_pr_backend_and_e2e_suites():
         assert "needs.scope.outputs.run_heavy == 'true'" in heavy["if"]
 
 
-def test_backend_lint_reuses_the_test_environment():
+def test_backend_lint_is_a_separate_hosted_job():
+    """Inverted from the single-runner era (#166), where a separate lint job
+    could only queue serially behind test on the one slot, so lint HAD to
+    reuse the test environment. The CI plan's P3 schedules the split for when
+    real runners exist; the cheese-ci pool (#212) is that moment. Lint now
+    reds in ~2 minutes on a hosted runner without occupying a pool slot, and
+    the pool's test job must NOT duplicate it."""
     workflow = load_workflow("test.yml")
-    assert "lint" not in workflow["jobs"]
+    lint = workflow["jobs"]["lint"]
+    assert lint["runs-on"] == "ubuntu-latest"
 
-    test_steps = workflow["jobs"]["test"]["steps"]
-    commands = "\n".join(step.get("run", "") for step in test_steps)
-    assert "ruff format --check ." in commands
-    assert "ruff check ." in commands
+    lint_commands = "\n".join(s.get("run", "") for s in lint["steps"])
+    assert "ruff format --check ." in lint_commands
+    assert "ruff check ." in lint_commands
+    assert "pyright" in lint_commands
+
+    test_commands = "\n".join(
+        s.get("run", "") for s in workflow["jobs"]["test"]["steps"]
+    )
+    assert "ruff" not in test_commands
+    assert "pyright" not in test_commands
 
 
 def test_ci_service_images_do_not_depend_on_docker_hub():

@@ -137,6 +137,12 @@ jobs:
             frontend/pnpm-lock.yaml
             e2e/pnpm-lock.yaml
 
+      # Persistent venv (same trick as test.yml): checkout wipes the workspace
+      # every run; an out-of-workspace venv turns the measured ~93s uv sync
+      # into a no-op re-check.
+      - name: Point uv at a persistent venv
+        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/e2e" >> "$GITHUB_ENV"
+
       - name: Install backend deps
         working-directory: backend
         run: uv sync --all-extras

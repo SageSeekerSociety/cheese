@@ -128,6 +128,11 @@ jobs:
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/migration-heads" >> "$GITHUB_ENV"
 
+      # Persistent venv, same reasoning as the Cargo dir above (and same
+      # per-job keying): checkout wipes an in-workspace .venv every run.
+      - name: Point uv at a persistent venv
+        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/migration-heads" >> "$GITHUB_ENV"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
@@ -150,6 +155,42 @@ jobs:
             echo "::error::alembic has $heads heads — parallel migrations forked the chain. Rechain your new migration onto the current head (or run 'uv run alembic merge heads') before merging."
             exit 1
           fi
+
+  # ruff + pyright pulled OUT of the test job onto a hosted runner: the most
+  # common failure class (format/lint/type) now reds in ~2 minutes without
+  # occupying a pool slot, and the pool's test job sheds the ~25s it spent on
+  # them. Hosted is the right home per the CI plan's budget math (~1.2m/run);
+  # enable-cache is correct HERE because hosted runners are ephemeral — the
+  # same option would be a negative on the persistent pool machines.
+  lint:
+    needs: scope
+    if: needs.scope.outputs.run_heavy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.12.1"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run formatting check
+        run: uv run ruff format --check .
+
+      - name: Run linting
+        run: uv run ruff check .
+
+      - name: Run type checking
+        run: uv run pyright
 
   test:
     needs: scope
@@ -192,6 +233,13 @@ jobs:
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
 
+      # Same persistence trick as Cargo above, for the venv itself: checkout
+      # wipes the workspace every run, so an in-workspace .venv is rebuilt from
+      # scratch (~90s measured on the pool). A venv parked outside the
+      # workspace makes `uv sync` a no-op re-check (~10s).
+      - name: Point uv at a persistent venv
+        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/test" >> "$GITHUB_ENV"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
@@ -205,15 +253,6 @@ jobs:
 
       - name: Report Cargo target cache size
         run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
-
-      - name: Run formatting check
-        run: uv run ruff format --check .
-
-      - name: Run linting
-        run: uv run ruff check .
-
-      - name: Run type checking
-        run: uv run pyright
 
       # The cheesex workspace/gate/upstream tests version project repos with
       # Jujutsu (jj colocate). Install the same binary the app shells out to.
