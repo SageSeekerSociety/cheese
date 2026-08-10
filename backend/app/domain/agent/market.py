@@ -168,11 +168,33 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool]] = [
         "",
         True,
     ),
+    # Full model ids from here down, not CLI aliases: Fable falls back to
+    # Opus 4.8 specifically (safety classifiers on cyber/bio topics reroute
+    # there, Anthropic-official, <5% of sessions — plus quota-style silent
+    # downgrades reported on Max), so 4.8-vs-5 is a distinction users must be
+    # able to SEE and pick; a bare "opus" alias hides which one you get.
     (
-        "opus",
+        "opus",  # id kept as-is: stored selections must not break
         "Claude Opus 5",
         "最强：复杂任务表现更好，但更快消耗订阅额度（Max 有上限）。",
-        "opus",
+        "claude-opus-5",
+        False,
+    ),
+    (
+        "opus-4.8",
+        "Claude Opus 4.8",
+        "上一代 Opus：Fable 被降级时实际落到的模型；想省 Opus 5 额度"
+        "或复现降级后水平时可显式选它。",
+        "claude-opus-4-8",
+        False,
+    ),
+    (
+        "fable",
+        "Claude Fable 5",
+        "前沿：新一代最强模型。注意：安全分类器命中（网络安全/生物类话题）或"
+        "配额受限时会被自动降级到 Opus 4.8，且降级可能持续到会话结束"
+        "（重开会话恢复）。",
+        "claude-fable-5",
         False,
     ),
 ]
