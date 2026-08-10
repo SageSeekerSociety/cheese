@@ -72,6 +72,7 @@ def _machine(**kw):
         ip="192.168.31.6",
         device_id="dev-1",
         last_seen_at=None,
+        owner_user_id=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)
