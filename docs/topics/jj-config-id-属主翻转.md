@@ -230,6 +230,15 @@ Result: 3/4 passed
 
 22 + 1 = 23，**和全量跑的数字对得上，没有第 24 条**。这三个文件都跟 jj / 工作区 / 错误分类毫无关系，本卡改的 4 个文件相关的用例全绿。
 
+### 解完冲突之后又跑了一遍（以 main 为底重贴之后）
+
+- **ruff**：`app/` + `tests/` 全量 `All checks passed`。
+- **pyright**：改动的两个 app 文件 **0 errors, 0 warnings**。
+- **`pytest tests/unit`**：**2543 passed / 22 failed / 1 skipped**——失败数和文件分布跟合并前**一模一样**（21 条 `test_machine_service.py` + 1 条 `test_tmux_control.py`，缺 `ssh-keygen`/`kill`），说明这次合并没有引入任何新问题。
+- **专门验证没弄坏 #237**：把 main 上的 `tests/unit/test_sandbox_vcs_perms.py`（#237 自己的 6 条测试，我的分支还没有这个文件）取过来对着合并后的代码跑，**6 passed**；跑完就把这份临时副本删了，合并时它会随 main 一起进来。
+
+> 一个环境插曲，如实记录：中途容器被重建过一次，`~/.local/share/uv` 里的 Python 3.13 和 `.venv` 的解释器一起没了（`/work` 是挂载进来的，改动都还在）。重新 `uv run` 装回 196 个包之后继续，`dev-db.sh` 的 PG/Redis 也重下了一遍。**沙箱里的 `cheese` 仍是 8/7 那份、没有 `await`**——#240 的修复要等这个容器换代才吃得到。
+
 > 顺带一条对 CLAUDE.md 的更正：那里记着沙箱里还会有约 43 条因**没有 git identity** 而失败的用例（`test_workspace.py`/`test_upstream.py`/`test_accept*.py`/`test_git_http.py`…）。这次**没有出现**——全量 3639 passed，说明那条环境缺口已经不存在了。
 
 递卡时闸门跑的是 `check.sh --no-tests`（只有 ruff+pyright），这两项都绿。
