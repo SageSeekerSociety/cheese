@@ -31,6 +31,11 @@ __pycache__/
 # ---- Agent-backed project repos (runtime git workspaces) ----
 .workspaces/
 
+# Throwaway probe repos/dirs 芝士 builds to experiment against git/jj. One of
+# these (.probe-jj/) rode a 3-file change into main as 25 extra files; the glob
+# covers the whole family, not just that one name.
+.probe-*/
+
 # ---- Node ----
 node_modules/
 dist/

@@ -174,6 +174,12 @@ class Settings(BaseSettings):
     # Enforced BEFORE forwarding: a cap that only reports the overspend is not a cap.
     subscription_token_cap: int = 0
     subscription_cap_window_s: int = 5 * 3600
+    # The metering proxy's usage.jsonl as mounted in THIS container (issue #218):
+    # subscription turns are metered there, and this is the one place the numbers
+    # exist. Empty = no ingestion (deployments without the proxy). The compose
+    # subscription overlay mounts the proxy's log dir read-only and sets this.
+    subscription_usage_log: str = ""
+    subscription_ingest_interval_s: int = 30
 
     # --- Self-hosted / BYO device compute (P3, fusion-design §5) ---
     # Public base URL a device reaches the backend at: the enrolled machine's
@@ -374,6 +380,15 @@ class Settings(BaseSettings):
     # the base branch — must reach completed+success before a pr_open card's
     # topic is finally archived (2026-08-09 拍板: merge alone is not enough).
     accept_deploy_workflow_file: str = "deploy-dev.yml"
+    # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
+    # be one the target repo actually allows — GitHub answers 405 forever for
+    # a disabled one, which is exactly how 两阶段采纳 shipped never having
+    # merged once (hardcoded "merge" against a squash-only repo). Configurable
+    # rather than hardcoded so a differently-configured repo isn't a code
+    # change; deliberately NOT auto-retried with another method, since 405 also
+    # means draft PR / branch protection and silently switching would both mask
+    # those and produce merge commits in repos that allow several methods.
+    accept_pr_merge_method: str = "squash"
 
     # --- OAuth login providers (read via getattr in app.domain.oauth.services;
     # they MUST be declared here — Settings has extra="ignore", so undeclared
