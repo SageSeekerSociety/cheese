@@ -83,6 +83,33 @@ without deploying — use it to validate connectivity safely.
 The repo is **squash-only** (merge commits and rebase are disabled; branches
 auto-delete on merge). Every PR lands as one squashed commit.
 
+## CI runner pool (cheese-ci)
+
+Heavy CI (`test.yml`'s migration-heads/test, `e2e.yml`'s e2e) runs on the
+**cheese-ci** label — a pool of MicroCloud VMs (prod tenant, customer
+`cheese-ci`, offering 103 standard-vm, 8c/8G/40G, one runner slot per machine:
+`cheese-ci-runner-{1..3}` at `192.168.30.{3..5}`), NOT on the dev box. The box
+keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
+heartbeat, backup checks) — its single slot used to serialize every heavy job
+(measured: 61% of CI time was queueing).
+
+- Provisioning is scripted: `deploy/ci-runner/deps.sh` (build-essential +
+  rustup — `uv sync` compiles the local srp_rs crate; weekly docker prune —
+  nothing else reclaims layers here) then `deploy/ci-runner/provision.sh
+  <name> <registration-token>` (runner + systemd service with Restart=always +
+  OOMPolicy=continue — the dev-box runner once died silently for 25h after an
+  OOM kill). Registration tokens: `gh api -X POST
+  repos/SageSeekerSociety/cheese/actions/runners/registration-token`.
+- Machines are created via the MicroCloud prod API
+  (`http://microcloud-prod.119net.ghg.org.cn/microcloud`, Bearer = tenant
+  secret, held by Lg / in the team chat — never committed). Reach the machines
+  from the dev box (`ssh ci@192.168.30.x`, dev box's `~/.ssh/id_ed25519`).
+  MicroCloud does not support resizing yet — pick sizes at creation; more
+  machines = ask Lg for capacity.
+- One runner slot per machine is deliberate: the workflows bind host ports
+  5432/6379 for service containers, so two heavy jobs on one machine would
+  collide (`port is already allocated`).
+
 ## Box ops runbook — changing backend env on a box
 
 The one rule: **containers are only ever (re)created by `deploy/deploy-docker.sh`.**

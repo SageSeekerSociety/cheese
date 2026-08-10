@@ -77,10 +77,10 @@ jobs:
     if: needs.scope.outputs.run_heavy == 'true'
     # Not ubuntu-latest: this is a private repo, so hosted minutes are billed
     # per-minute, and this job needs native amd64 Docker plus the Playwright
-    # browser install — the box already has both for free and warm. (Hosted
-    # runners themselves work fine now; billing was never actually exhausted
-    # long-term — see the scope job above, which is cheap enough to run there.)
-    runs-on: [self-hosted, cheese-dev]
+    # browser install. Runs on the cheese-ci pool (MicroCloud VMs, one runner
+    # slot each — see docs/infrastructure.md), NOT on the dev box: the box is
+    # the deploy target and its single slot serialized every heavy job.
+    runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 15
     # Persists backend/srp_rs's Cargo build cache outside the checkout, same
     # as test.yml's migration-heads/test jobs — see the comment on
