@@ -21,6 +21,8 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.models import AcceptStatus
+from app.domain.review.repositories import AcceptCardRepository
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -93,6 +95,7 @@ class TopicService:
         self._projects = ProjectRepository(session)
         self._blocks = BlockRepository(session)
         self._members = TopicMemberService(session)
+        self._accept_cards = AcceptCardRepository(session)
 
     async def create(
         self,
@@ -522,6 +525,11 @@ class TopicService:
         back to its parent (本体) three ways — a referencing message in the
         conversation, woven into the parent's living doc (so 分身 stay consistent
         via the doc, spec §8.4), and a change-alert so the coordinator is notified.
+
+        自动归结: concluding is also how a 分身 signals its own topic is DONE, so
+        it's archived here too — unless a human review is already in flight (an
+        open accept card), in which case that card's accept/reject decides the
+        outcome instead of this call racing ahead of it.
         """
         sub = await self.get_or_404(subtopic_id)
         if sub.parent_id is None:
@@ -558,4 +566,21 @@ class TopicService:
             body=markdown_preview(conclusion, 200),
             topic_id=sub.parent_id,
         )
+
+        # 4) 完成即归结: no open review in flight → archive automatically. An
+        # open card (pending/pending_gate/conflict) means a human still has to
+        # accept/reject it — don't preempt that with an auto-archive here (a
+        # rejected card must be able to leave the topic active for another
+        # round, and accept()/reject()/revoke() keep owning the status then).
+        if sub.status != TopicStatus.archived:
+            cards = await self._accept_cards.list_for_topic(sub.id)
+            open_statuses = (
+                AcceptStatus.pending,
+                AcceptStatus.pending_gate,
+                AcceptStatus.conflict,
+            )
+            has_open_card = any(c.status in open_statuses for c in cards)
+            if not has_open_card:
+                await self.archive(sub.id, by=CHEESE_AUTHOR)
+
         return block
