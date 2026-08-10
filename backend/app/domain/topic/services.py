@@ -123,9 +123,43 @@ class TopicService:
             created_by=created_by,
         )
         # 群聊房间的地基 (fusion-design §3): seed the roster — creator = owner,
-        # 芝士 joins as a member.
-        await self._members.seed(topic.id, owner_handle=created_by)
+        # 芝士 joins as a member. `created_by` alone is not enough: 芝士 itself
+        # creating a topic, or a caller whose token didn't resolve (anonymous
+        # Phase-0), would leave the room OWNERLESS — seed() deliberately skips
+        # "cheese"/None as owner — and then nobody can manage its roster, and
+        # every sub-topic split beneath it inherits the same emptiness
+        # (split_to_subtopic falls back to the PARENT's owner). Same fallback
+        # ladder as split_to_subtopic, one level wider.
+        await self._members.seed(
+            topic.id,
+            owner_handle=await self._resolve_owner(
+                created_by, parent_id=parent_id, project_owner=project.owner_handle
+            ),
+        )
         return topic
+
+    async def _resolve_owner(
+        self,
+        created_by: str | None,
+        *,
+        parent_id: uuid.UUID | None,
+        project_owner: str | None,
+    ) -> str | None:
+        """Who owns a newborn topic: the real human who created it, else the
+        parent room's owner, else the project's owner. Returns None only when
+        the whole chain is ownerless (a legacy project) — the caller still
+        seeds 芝士, and the room stays manageable by any project member."""
+        if created_by and created_by != CHEESE_AUTHOR:
+            return created_by
+        if parent_id is not None:
+            parent_members, _ = await self._members.list_for_topic(parent_id)
+            parent_owner = next(
+                (m.member_handle for m in parent_members if m.role == TopicRole.owner),
+                None,
+            )
+            if parent_owner:
+                return parent_owner
+        return project_owner
 
     async def get_or_create_private(
         self,
@@ -367,9 +401,14 @@ class TopicService:
         # 分身发起的拆分) or no human is identified at all, `created_by` alone
         # would leave the child ownerless (seed() intentionally skips "cheese"
         # as owner) — nobody could then manage its roster. Default to the
-        # parent's real human owner instead, so every sub-topic keeps one.
+        # parent's real human owner instead — and when the parent is itself
+        # ownerless (a room born before this fallback existed), the project's
+        # owner, so the emptiness stops cascading down the tree.
+        project = await self._projects.get(parent.project_id)
         owner_handle = (
-            created_by if created_by and created_by != CHEESE_AUTHOR else parent_owner
+            created_by
+            if created_by and created_by != CHEESE_AUTHOR
+            else parent_owner or (project.owner_handle if project else None)
         )
         await self._members.seed_split(
             new_topic.id,
