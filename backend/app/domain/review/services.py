@@ -8,6 +8,7 @@ import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +25,9 @@ from app.domain.review.schemas import AcceptCardOut
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
+
+if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
+    from app.domain.review.github_pr import PullRequestStatus
 
 logger = logging.getLogger("cheesex.review")
 
@@ -627,7 +631,7 @@ class AcceptService:
 
     async def _repush_if_local_head_moved(
         self, *, card: AcceptCard, topic: Topic, owner: str, repo: str, token: str
-    ) -> None:
+    ) -> bool:
         """两阶段采纳: the platform side of the iterate loop — if 芝士 committed a
         fix since the last push, push it to the PR branch ourselves (芝士's
         sandbox has no GitHub credentials and no network to github.com, so it
@@ -637,7 +641,22 @@ class AcceptService:
         blind force-push every poll tick. A push failure (expired token,
         network hiccup, non-fast-forward) degrades gracefully: logged, card
         left untouched, next poll tick just retries — never a permanent
-        failure and never silent."""
+        failure and never silent.
+
+        Returns True only when a push actually landed (so the caller knows the
+        PR head it read a moment ago may be stale).
+
+        红鲱鱼警告 (2026-08-10): cards #210/#211 wore the note
+        `⚠️ 平台自动重推失败（refusing to allow ... without workflows
+        permission）` and that note says NOTHING about whether their work
+        landed — it was a *symptom* of the stuck-card bug, not the cause. The
+        PRs had already been merged by hand; the poller kept coming back here
+        anyway, and a re-push first merges the base branch in, so main's
+        `.github/workflows/build.yml` changes (#212/#214) became part of the
+        payload and GitHub rejected the push for lacking the `workflows`
+        scope. `_advance_pr_checks`'s up-front merged-check now returns before
+        this function on the first tick that observes the merge, so the loop —
+        and the noise — stops on its own."""
         from app.domain.review import github_pr
         from app.domain.workspace import service as ws
 
@@ -645,7 +664,7 @@ class AcceptService:
             self._local_topic_branch_head, topic.project_id, topic.id
         )
         if local_head is None or local_head == card.pr_head_sha:
-            return
+            return False
         try:
             pushed = await asyncio.to_thread(
                 ws.push_topic_branch_for_github_pr,
@@ -671,10 +690,11 @@ class AcceptService:
             if not card.note.startswith("⚠️ 平台自动重推失败"):
                 card.note = (f"⚠️ 平台自动重推失败（下一轮还会重试）：{exc}")[:2000]
                 await self._session.flush()
-            return
+            return False
         card.pr_head_sha = pushed["head_sha"]
         card.note = ""
         await self._session.flush()
+        return True
 
     async def _resolve_pr_prerequisites(
         self, topic: Topic, decided_by: str
@@ -850,20 +870,48 @@ class AcceptService:
         chat_service,
         runner,
     ) -> None:
-        """Stage 1: the PR itself hasn't merged yet."""
+        """Stage 1: the card's PR hasn't reached the deploy gate yet — either
+        because it isn't merged, or because someone merged it on GitHub
+        without us noticing."""
         number = card.pr_number
         if number is None:  # already guaranteed by poll_open_pr_card's guard
             return
+
+        # FIRST, before anything else: did a human already handle this PR on
+        # GitHub? This check has to be up here rather than folded into the
+        # merge call's 405 branch, because a red `check_state` nudges 芝士 and
+        # returns before the merge call ever happens — so on a PR merged by
+        # hand while its checks were red (exactly what happened to #210/#211)
+        # that 405 never arrives and the card polls at `pr_open` forever.
+        status = await client.pull_request_status(
+            owner=owner, repo=repo, number=number, token=token
+        )
+        if status.merged:
+            await self._settle_external_merge(card=card, topic=topic, status=status)
+            return
+        if status.state == "closed":
+            self._note_pr_closed_unmerged(card=card, topic=topic)
+            await self._session.flush()
+            return
+
         # 芝士 fixed something in its workspace — push it to the PR branch
         # before checking CI, or a fixed commit just sits local forever (see
         # _repush_if_local_head_moved's docstring for why 芝士 can't do this
         # push itself).
-        await self._repush_if_local_head_moved(
+        pushed = await self._repush_if_local_head_moved(
             card=card, topic=topic, owner=owner, repo=repo, token=token
         )
 
-        live_head = await client.pull_request_head_sha(
-            owner=owner, repo=repo, number=card.pr_number, token=token
+        # Only re-read the head when the push above actually moved it;
+        # otherwise `status` was fetched moments ago and says the same thing.
+        # Keeps the steady-state cost at one GET /pulls/{n} per tick, same as
+        # before the merged-check was added.
+        live_head = (
+            await client.pull_request_head_sha(
+                owner=owner, repo=repo, number=number, token=token
+            )
+            if pushed
+            else status.head_sha
         )
         if live_head != card.pr_head_sha:
             # GitHub's actual head disagrees with what we have on record (e.g.
@@ -956,6 +1004,86 @@ class AcceptService:
             return
 
         await self._finish_pr_accept(card=card, topic=topic)
+
+    async def _settle_external_merge(
+        self, *, card: AcceptCard, topic: Topic, status: "PullRequestStatus"
+    ) -> None:
+        """Someone merged the PR on GitHub themselves (人工放行, another bot,
+        the merge queue). Book it exactly like our own successful merge —
+        `pr_merged_at` + head moved to the merge commit — so the card falls
+        through to stage 2 and the deploy gate on the next tick. The only
+        差别 from the platform-merged path is where the sha and the timestamp
+        come from.
+
+        Deliberately does NOT archive here: 拍板 2026-08-09 says merge alone
+        never archives, and an externally merged PR triggers the same deploy
+        workflow ours does.
+        """
+        merge_sha = status.merge_commit_sha
+        if not merge_sha:
+            # Never settle onto a sha we don't actually have. Stage 2 looks
+            # the deploy run up BY `pr_head_sha`; pointing it at the PR branch
+            # head (or anything else invented here) means the card waits for a
+            # deploy run that will never exist. Staying in stage 1 costs one
+            # more poll; guessing costs the card forever.
+            note = (
+                f"⚠️ PR #{card.pr_number} 已在 GitHub 合并，但 GitHub 没返回合并提交 "
+                "sha，无法确认要等哪次部署（下一轮还会重试）"
+            )[:2000]
+            if card.note != note:
+                card.note = note
+                await self._session.flush()
+                logger.warning(
+                    "card %s: PR #%s reports merged with no merge_commit_sha",
+                    card.id,
+                    card.pr_number,
+                )
+            return
+
+        card.pr_merged_at = status.merged_at or datetime.now(UTC)
+        card.pr_head_sha = merge_sha  # now tracking the merge commit (stage 2)
+        card.note = (
+            f"PR #{card.pr_number} 已在 GitHub 侧被人工合并，等部署也成功后才归档。"
+        )
+        await self._session.flush()
+        self._notify_merge_result(
+            topic,
+            f"✅ PR #{card.pr_number} 已在 GitHub 上被人工合并（不是平台合的）。"
+            "等部署也成功后话题才会归档。",
+        )
+
+    def _note_pr_closed_unmerged(self, *, card: AcceptCard, topic: Topic) -> None:
+        """The PR was closed on GitHub WITHOUT merging. Say so and stop there.
+
+        No auto-settle and no fallback to the local merge path: unlike
+        `_accept_via_pr` (where the accept hasn't landed anywhere yet and
+        falling back is the graceful thing), this card's accept is already
+        decided and its branch already pushed — a human closing the PR is
+        them saying "not this", and merging it locally behind their back
+        would be the opposite of what they asked for. A human reopens the PR
+        or revokes the accept; either way the poller picks it up from there.
+
+        Without this the card would keep reaching the merge call, take a 405,
+        and wear a note that says its checks were green and GitHub refused —
+        true but thoroughly misleading about what actually happened.
+        """
+        note = (
+            f"🚪 PR #{card.pr_number} 已在 GitHub 被关闭且没有合并，平台不会自动合并。"
+            "需要人决定：重开 PR，或撤销这次采纳。"
+        )[:2000]
+        if card.note == note:
+            return  # already said once — the 60s poll must not repeat it
+        card.note = note
+        logger.warning(
+            "card %s: PR #%s was closed unmerged — poller is now idling on it",
+            card.id,
+            card.pr_number,
+        )
+        self._notify_merge_result(
+            topic,
+            f"🚪 PR #{card.pr_number} 在 GitHub 上被关闭且没有合并，平台不会自动合并。"
+            "话题保持 active，需要人决定：重开 PR，或撤销这次采纳。",
+        )
 
     def _note_merge_blocked(self, *, card: AcceptCard, reason: str) -> None:
         """Put GitHub's merge refusal on the card's `note` — the one surface
