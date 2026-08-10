@@ -36,6 +36,7 @@ from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     ConclusionIn,
     DocEditIn,
@@ -89,8 +90,12 @@ async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    sort: TopicSortField | None = None,
+    order: SortOrder = "asc",
 ) -> dict:
-    topics, total = await TopicService(db).list_for_project(project_id)
+    topics, total = await TopicService(db).list_for_project(
+        project_id, sort=sort, order=order
+    )
     running_ids = runner.running_topic_ids()
     items = [_topic_out(t, running_ids) for t in topics]
     return ok(page(items, total))

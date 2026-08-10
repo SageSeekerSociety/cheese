@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { TopicSortField, TopicSortOrder } from '../api'
 import type { Project, ProjectMemberRow, Topic } from '../cx_types'
 
 import { computed, ref } from 'vue'
@@ -31,6 +32,11 @@ const props = defineProps<{
   width?: number
   // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
   unreadMap?: Record<string, number>
+  // 话题列表排序: the backend field/direction currently applied — the sort
+  // menu just reflects and changes this, the actual ordering comes back
+  // from the server in `topics` (so tree/sibling order stays consistent).
+  topicSort?: TopicSortField
+  topicOrder?: TopicSortOrder
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +58,8 @@ const emit = defineEmits<{
   (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
   // Live drawer width while dragging the right edge.
   (e: 'update:width', w: number): void
+  // Sort menu picked a new field/direction for the topic list.
+  (e: 'update:topic-sort', payload: { sort: TopicSortField; order: TopicSortOrder }): void
 }>()
 
 // Drag the rail's right edge — emit the cursor's x (= rail width from the left).
@@ -110,6 +118,24 @@ function captureSwitcherWidth() {
 // it; the title is derived from the first message (and 芝士 can refine it).
 function newTopic() {
   emit('create-topic', '')
+}
+
+// ----- 话题列表排序 -----
+// Four fixed combinations (field × direction) — a picker, not a builder, so a
+// v-menu list beats a two-axis control for this small a option set.
+const SORT_OPTIONS: Array<{ sort: TopicSortField; order: TopicSortOrder; label: string }> = [
+  { sort: 'updated_at', order: 'desc', label: '最后更新 · 新到旧' },
+  { sort: 'updated_at', order: 'asc', label: '最后更新 · 旧到新' },
+  { sort: 'title', order: 'asc', label: '标题 · A→Z' },
+  { sort: 'title', order: 'desc', label: '标题 · Z→A' },
+]
+const sortMenuOpen = ref(false)
+const currentSortLabel = computed(
+  () => SORT_OPTIONS.find((o) => o.sort === props.topicSort && o.order === props.topicOrder)?.label ?? '排序'
+)
+function pickSort(opt: { sort: TopicSortField; order: TopicSortOrder }) {
+  sortMenuOpen.value = false
+  emit('update:topic-sort', opt)
 }
 
 // ----- Topic tree -----
@@ -307,7 +333,37 @@ const onMemory = computed(() => props.activeDocs === 'memory')
         <template v-else>
           <div class="t-eyebrow side-subhead side-subhead--row">
             <span>话题</span>
-            <v-btn icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" @click="newTopic" />
+            <div class="d-flex align-center ga-1">
+              <v-menu v-model="sortMenuOpen" location="bottom end">
+                <template #activator="{ props: menuProps }">
+                  <v-btn
+                    v-bind="menuProps"
+                    icon="mdi-sort"
+                    size="x-small"
+                    variant="text"
+                    :title="`排序：${currentSortLabel}`"
+                  />
+                </template>
+                <v-list density="compact" nav>
+                  <v-list-item
+                    v-for="opt in SORT_OPTIONS"
+                    :key="`${opt.sort}-${opt.order}`"
+                    :active="opt.sort === topicSort && opt.order === topicOrder"
+                    @click="pickSort(opt)"
+                  >
+                    <v-list-item-title class="t-body">{{ opt.label }}</v-list-item-title>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+              <v-btn
+                icon="mdi-plus"
+                size="x-small"
+                variant="tonal"
+                color="primary"
+                title="新建话题"
+                @click="newTopic"
+              />
+            </div>
           </div>
 
           <div v-if="loadingTopics" class="px-4 py-2">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { TopicSortField, TopicSortOrder } from '../api'
 import type { AcceptCard, ChatAttachment, PrChecks, Project, ProjectMemberRow, Topic } from '../cx_types'
 
 import { computed, inject, nextTick, onMounted, onUnmounted, type Ref, ref, watch } from 'vue'
@@ -104,6 +105,18 @@ const selectedProjectId = ref<string | null>(null)
 const selectedTopicId = ref<string | null>(null)
 const loadingTopics = ref(false)
 const globalError = ref<string | null>(null)
+
+// 话题列表排序: defaults to most-recently-active first — the sidebar's row
+// already shows relTime(updated_at) as its right anchor, so this is the
+// ordering that anchor implies. `title` sorting is the other option.
+const topicSort = ref<TopicSortField>('updated_at')
+const topicOrder = ref<TopicSortOrder>('desc')
+
+async function setTopicSort(payload: { sort: TopicSortField; order: TopicSortOrder }) {
+  topicSort.value = payload.sort
+  topicOrder.value = payload.order
+  await refreshTopics()
+}
 
 // Bumped on every AI turn / tool use. Watched by DocPanel (reload the living
 // doc 芝士 maintained) and used here to refresh the topic tree so new
@@ -391,7 +404,7 @@ async function loadTopicsFor(id: string) {
   loadingTopics.value = true
   loadProjectMembers()
   try {
-    const payload = await listTopics(id)
+    const payload = await listTopics(id, { sort: topicSort.value, order: topicOrder.value })
     if (selectedProjectId.value !== id) return
     topics.value = payload.data
     // A ?topic=<id> in the URL (from 来自话题 / member links) pre-selects that
@@ -714,7 +727,7 @@ async function refreshTopics() {
   const id = selectedProjectId.value
   if (!id) return
   try {
-    const payload = await listTopics(id)
+    const payload = await listTopics(id, { sort: topicSort.value, order: topicOrder.value })
     if (selectedProjectId.value === id) topics.value = payload.data
   } catch {
     // Best-effort background refresh; ignore.
@@ -958,7 +971,10 @@ onUnmounted(() => {
       :active-peer="mode === 'private' ? privatePeer : null"
       :active-docs="mode === 'docs' ? docKind : null"
       :unread-map="unreadMap"
+      :topic-sort="topicSort"
+      :topic-order="topicOrder"
       @update:width="onRailWidth"
+      @update:topic-sort="setTopicSort"
       @select-project="selectProject"
       @select-topic="selectTopic"
       @select-private="selectPrivate"
