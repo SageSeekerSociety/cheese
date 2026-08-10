@@ -164,7 +164,10 @@ class BlockRepository:
         )
         if before is not None:
             # Row-value comparison: `(created_at, id) < (:ts, :id)` in one go,
-            # which the (created_at, id) index can walk directly.
+            # so the cursor test matches the ORDER BY key exactly. There is no
+            # composite index on (topic_id, created_at, id) today — the topic_id
+            # index narrows to one topic's rows and Postgres sorts those (a few
+            # thousand at worst). Paging's win is the payload, not the scan.
             stmt = stmt.where(
                 tuple_(Block.created_at, Block.id) < (before.created_at, before.id)
             )
