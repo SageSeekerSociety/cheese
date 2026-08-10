@@ -2,6 +2,7 @@
 import type { Contributions, InboxItem, ProjectCredits, ProjectOverview, TopicRef } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 
@@ -19,6 +20,7 @@ import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
 import { myHandle } from '../me'
 
 const props = defineProps<{ projectId: string }>()
+const router = useRouter()
 
 const ME = myHandle()
 
@@ -167,6 +169,14 @@ async function onFeedback(item: InboxItem, feedback: 'up' | 'down') {
   }
 }
 
+// Back to wherever you came from (the workspace, via a notification/action
+// card or the rail), with a workspace fallback for a deep link — same pattern
+// as the settings and member pages.
+function goBack() {
+  if (window.history.state?.back != null) router.back()
+  else router.push({ name: 'workspace-project', params: { projectId: props.projectId } })
+}
+
 watch(() => props.projectId, load)
 onMounted(load)
 </script>
@@ -182,6 +192,10 @@ onMounted(load)
       </v-alert>
 
       <template v-else-if="overview">
+        <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="mb-3 px-1" @click="goBack">
+          返回
+        </v-btn>
+
         <div class="mb-6">
           <div class="t-eyebrow mb-1">项目总览</div>
           <h1 class="t-page-title">{{ overview.name }}</h1>
