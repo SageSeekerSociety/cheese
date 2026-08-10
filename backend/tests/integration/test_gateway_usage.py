@@ -102,10 +102,10 @@ async def test_virtual_key_minted_once_and_injected(client, tmp_path):
     fake = FakeGateway()
     svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
 
-    kw1, routed1 = await svc._model_kwargs(pid)
-    kw2, routed2 = await svc._model_kwargs(pid)
+    kw1, route1 = await svc._model_kwargs(pid, "local-docker")
+    kw2, route2 = await svc._model_kwargs(pid, "local-docker")
     # Injected into the turn env both times, but minted exactly once (persisted).
-    assert routed1 and routed2
+    assert route1 == route2 == "gateway"
     assert kw1["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-virt-1"
     assert kw2["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-virt-1"
     assert fake.minted == [pid]
@@ -123,7 +123,7 @@ async def test_gateway_pool_refuses_turn_when_project_key_cannot_be_minted(
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
 
     with pytest.raises(AppError, match="project-scoped key"):
-        await svc._model_kwargs(pid)
+        await svc._model_kwargs(pid, "local-docker")
 
     assert fake.minted == [pid]
 
@@ -132,9 +132,9 @@ async def test_gateway_pool_refuses_turn_when_project_key_cannot_be_minted(
 async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path):
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, None)
 
-    kwargs, routed = await svc._model_kwargs(pid)
+    kwargs, route = await svc._model_kwargs(pid, "local-docker")
 
-    assert routed is False
+    assert route == "native"
     assert "env" not in kwargs
 
 
@@ -177,9 +177,9 @@ async def test_non_pool_profile_keeps_its_own_credentials(
         project.settings = {"execution_profile": "byo"}
         await session.commit()
 
-    kwargs, routed = await svc._model_kwargs(pid)
+    kwargs, route = await svc._model_kwargs(pid, "local-docker")
 
-    assert routed is False
+    assert route == "native"
     assert kwargs["env"]["ANTHROPIC_AUTH_TOKEN"] == "byo-key"
     assert fake.minted == []
 
@@ -280,3 +280,140 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
     async with factory() as session:
         agg = await UsageRepository(session).for_project(pid)
     assert (agg["input_tokens"], agg["output_tokens"]) == (80, 20)
+
+
+@pytest.mark.anyio
+async def test_device_turn_is_gateway_routed_and_carries_no_env(client, tmp_path):
+    """A device turn's credentials belong to the device provider (/llm route +
+    scoped token). The profile env — box-local gateway URL + a real key — must
+    never reach the machine, and the route is gateway regardless of the
+    deployment's subscription flag."""
+    from app.core.config import settings as app_settings
+
+    pool_url = "http://pool.example"
+    profiles = ProfileRegistry(
+        [
+            AgentProfile(
+                "default", "Pool", TIER_DEFAULT, "pool-model", pool_url, "pool-key"
+            )
+        ],
+        "default",
+    )
+    fake = FakeGateway()
+    svc, _factory, pid, _tid = await _mk_service(
+        client.test_factory, tmp_path, fake, profiles=profiles
+    )
+
+    kwargs, route = await svc._model_kwargs(pid, "device")
+
+    assert route == "gateway"
+    assert "env" not in kwargs  # no profile env, no virtual key on the machine
+    assert fake.minted == []  # the key is swapped in per request by /llm
+    assert app_settings.subscription_enabled is False  # and with the flag on:
+
+    import unittest.mock
+
+    with unittest.mock.patch.object(app_settings, "subscription_enabled", True):
+        kwargs, route = await svc._model_kwargs(pid, "device")
+    assert route == "gateway"
+    assert "env" not in kwargs
+
+
+@pytest.mark.anyio
+async def test_subscription_route_applies_only_to_the_tmux_provider(
+    client, tmp_path, monkeypatch
+):
+    """subscription_enabled names a capability only the tmux provider implements
+    (metering-proxy env). The sdk provider under that flag used to fall through
+    with no env and run on the backend's own inherited credentials — it must
+    keep its profile/gateway routing instead."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    fake = FakeGateway()
+    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+
+    kwargs, route = await svc._model_kwargs(pid, "tmux-hooks")
+    assert route == "subscription"
+    assert "env" not in kwargs  # the tmux provider builds the proxy env itself
+
+    kwargs, route = await svc._model_kwargs(pid, "local-docker")
+    assert route == "gateway"  # profile/gateway logic, not the subscription
+    assert kwargs["env"]["ANTHROPIC_AUTH_TOKEN"] == "sk-virt-1"
+
+
+@pytest.mark.anyio
+async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
+    async def _no_sleep(_s):
+        return None
+
+    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", _no_sleep)
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)
+
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="做点事", summon=True
+    ):
+        pass
+
+    from sqlalchemy import select
+
+    from app.domain.usage.models import ResourceUsage
+
+    async with factory() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(ResourceUsage).where(ResourceUsage.project_id == pid)
+                )
+            ).scalars()
+        )
+    assert rows and all(r.route == "gateway" for r in rows)
+
+
+@pytest.mark.anyio
+async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
+    client, tmp_path
+):
+    """Interactive Claude Code's Stop hook decodes to an all-zero usage — that
+    is 'unknown', not 'this turn was free'. Without a meter for the route, the
+    row must say unmetered."""
+    from app.domain.agent.service import AgentUsage
+
+    class ZeroUsageAgent(AgentService):
+        def __init__(self) -> None:
+            super().__init__(model="stub")
+
+        async def stream_reply(self, **_kw):
+            yield AgentResult(text="ok", session_id="s1", usage=AgentUsage())
+
+    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, None)
+    # Rebuild the pool around the zero-usage agent (the ctor built it already).
+    from app.domain.agent.compute import ComputePool
+
+    svc._compute = ComputePool.local(
+        agent=ZeroUsageAgent(),
+        workspace_root=str(tmp_path / "ws"),
+        sandbox_enabled=False,
+    )
+
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="做点事", summon=True
+    ):
+        pass
+
+    from sqlalchemy import select
+
+    from app.domain.usage.models import ResourceUsage
+
+    async with factory() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(ResourceUsage).where(ResourceUsage.project_id == pid)
+                )
+            ).scalars()
+        )
+    assert rows and all(r.kind == "chat:unmetered" for r in rows)
+    assert all(r.total_tokens == 0 for r in rows)

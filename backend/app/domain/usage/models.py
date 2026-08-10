@@ -52,3 +52,7 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     kind: Mapped[str] = mapped_column(String(24), default="chat")
+    # The supply the traffic actually took (issue #218): "gateway" (LiteLLM),
+    # "subscription" (metering proxy), "native" (profile-pinned credentials).
+    # "" on rows that predate the column.
+    route: Mapped[str] = mapped_column(String(16), default="")
