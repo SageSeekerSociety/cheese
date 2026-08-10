@@ -211,7 +211,9 @@ ls -l <workspace_root>/<project_id>/.jj/repo/config-id   # 期望：仍然不存
 - 起 DB 之前另有 3 条 ERROR（`test_idle_reap`、`test_task_ai_advice_routes`），是连不上 5433 导致的；**起了 PG 之后全部消失**，所以确认是环境不是代码。
 - 本卡新增的 11 条测试全绿。
 
-`task check` 的完整结果（含 integration/contract）见下方"闸门"一节 / 递卡后的自动检查。CLAUDE.md 记着沙箱里还会有约 43 条因**没有 git identity** 而失败的用例（凡是要建真 worktree 的），同样不是本卡引入的。
+`check.sh --full` 的前三段已经出结果：**ruff PASS、pyright PASS（0 errors）、alembic 只有一个 head**。第四段（整套 pytest，含 integration/contract）跑得慢——它带 `--reruns 2 --reruns-delay 3`，而沙箱里那些**必然失败**的用例每条都要额外重试两次，结果出来后补在这里。
+
+按 CLAUDE.md 的记录，沙箱里预期还会有约 43 条因**没有 git identity** 而失败的用例（凡是要建真 worktree 的：`test_workspace.py`、`test_upstream.py`、`test_accept*.py`、`test_git_http.py`…），加上上面那 22 条缺宿主机命令的，**都不是本卡引入的**。递卡时闸门跑的是 `check.sh --no-tests`（只有 ruff+pyright），这两项已经绿。
 
 ## 现状（已拍板：不动盒子）
 
