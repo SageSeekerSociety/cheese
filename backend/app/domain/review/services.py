@@ -52,8 +52,21 @@ def _pr_body(topic: Topic, decided_by: str) -> str:
     )
 
 
+# The squash commit's title line. GitHub only auto-appends "(#N)" to the
+# DEFAULT title (the one derived from the repo's `squash_merge_commit_title`
+# setting); an explicit `commit_title` replaces that default wholesale, so the
+# PR number has to be appended here or the repo's "… (#213)" history style
+# breaks.
+def _pr_merge_commit_title(topic: Topic, number: int) -> str:
+    title = topic.title if len(topic.title) <= 60 else f"{topic.title[:59]}…"
+    return f"采纳 {title} (#{number})"
+
+
 def _pr_merge_commit_message(topic: Topic, decided_by: str) -> str:
-    return f"采纳 {topic.title}\n\n{_pr_trailers(topic, decided_by)}"
+    """The squash commit's BODY. Just the trailers — the "采纳 …" line lives in
+    `_pr_merge_commit_title` now, and repeating it here would put it in the
+    commit twice."""
+    return _pr_trailers(topic, decided_by)
 
 
 # 两阶段采纳 (PR迭代式) 降级原因可见性: TOKEN_UNAVAILABLE_* → 人能看懂的中文说明,
@@ -84,15 +97,50 @@ def _describe_token_unavailable(reason: str | None) -> str:
     )
 
 
+# 两阶段采纳: the one degrade that is a KNOWN, PERMANENT limitation instead of a
+# failure — this card really does change `.github/workflows/`, and the platform's
+# credential has no `workflows` scope, so no retry or sync can ever make the PR
+# path work for it. Carried as an exact sentinel string (not a substring match)
+# so a combined reason — an existing-PR degrade AND this one — deliberately
+# falls back to the ⚠️ wording: that combination does need a human.
+_WORKFLOW_SCOPE_DEGRADE_REASON = (
+    "本卡改动了 .github/workflows/ 下的文件，平台的 GitHub App 没有 workflows "
+    "权限，按已知限制无法走 PR（不是故障）"
+)
+
+
+def _is_known_workflow_scope_degrade(exc: BaseException) -> bool:
+    """Did the two-phase push fail because this card genuinely changes workflow
+    files? `push_topic_branch_for_github_pr` already absorbs the FIRST such
+    rejection (it syncs GitHub's default branch in and pushes exactly once
+    more), so a workflow-permission rejection that reaches this caller is the
+    SECOND one — a precise signal, no file-tree diff needed. A sync that could
+    not complete raises a different message ("…无法同步"), which does not match
+    and stays in the ⚠️ bucket, correctly: that one does need a human."""
+    from app.domain.workspace.service import _is_workflow_permission_rejection
+
+    return isinstance(exc, ValidationError) and _is_workflow_permission_rejection(
+        str(exc)
+    )
+
+
 def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
     """Prefix a local-merge accept note with WHY the two-phase PR path was
     skipped, so a card that fell back reads as "两阶段采纳没走成，原因是 X；
     然后走了老路径，结果是 Y" instead of looking identical to a topic that
     was never eligible for the PR path at all. No-op when the PR path never
-    even attempted a degrade for this accept (`pr_degrade_reason` empty)."""
+    even attempted a degrade for this accept (`pr_degrade_reason` empty).
+
+    Two shapes, so a reader can tell 正常 from 需要处理 at a glance: the known
+    workflow-scope limitation gets a calm ℹ️ sentence and no git output (the
+    300-char rejection tail is pure noise for a card whose whole point is that
+    it edits workflow files), everything else keeps the ⚠️ + raw-error form."""
     if not pr_degrade_reason:
         return base
-    prefix = f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）"
+    if pr_degrade_reason == _WORKFLOW_SCOPE_DEGRADE_REASON:
+        prefix = f"ℹ️ {pr_degrade_reason}"
+    else:
+        prefix = f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）"
     return (f"{prefix}；{base}" if base else prefix)[:2000]
 
 
@@ -410,13 +458,18 @@ class AcceptService:
                     topic.id,
                     exc,
                 )
-                # exc is either GitHubPrError (GitHub's own response body,
-                # capped at 300 chars) or a ValidationError from a git push
-                # failure (the token travels via an env-var credential
-                # helper, never argv/URL — see _token_push_env — so git's
-                # stderr can't contain it either); safe to surface verbatim,
-                # same as the existing push_back() failure note below.
-                two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
+                if _is_known_workflow_scope_degrade(exc):
+                    # Known limitation, not a failure — say so plainly and drop
+                    # the raw git rejection entirely (see the sentinel above).
+                    two_phase_degrade_reason = _WORKFLOW_SCOPE_DEGRADE_REASON
+                else:
+                    # exc is either GitHubPrError (GitHub's own response body,
+                    # capped at 300 chars) or a ValidationError from a git push
+                    # failure (the token travels via an env-var credential
+                    # helper, never argv/URL — see _token_push_env — so git's
+                    # stderr can't contain it either); safe to surface verbatim,
+                    # same as the existing push_back() failure note below.
+                    two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
         # Combine rather than overwrite: an existing-PR degrade (closed
         # unmerged / merge-call failure, see `_accept_via_pr`) must not be
         # silently dropped just because the two-phase attempt that follows it
@@ -798,6 +851,9 @@ class AcceptService:
         runner,
     ) -> None:
         """Stage 1: the PR itself hasn't merged yet."""
+        number = card.pr_number
+        if number is None:  # already guaranteed by poll_open_pr_card's guard
+            return
         # 芝士 fixed something in its workspace — push it to the PR branch
         # before checking CI, or a fixed commit just sits local forever (see
         # _repush_if_local_head_moved's docstring for why 芝士 can't do this
@@ -837,17 +893,24 @@ class AcceptService:
             return
 
         # Green → merge now. Trailers go on the merge commit too, not just
-        # the PR description (2026-08-09 设计要点5: 标清芝士代表谁).
-        message = _pr_merge_commit_message(topic, card.decided_by or "")
-        merge_sha = await client.merge_pull_request(
+        # the PR description (2026-08-09 设计要点5: 标清芝士代表谁) — under
+        # squash that means the body field, with the title passed separately.
+        result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
             number=card.pr_number,
             token=token,
-            commit_message=message,
+            commit_title=_pr_merge_commit_title(topic, number),
+            commit_message=_pr_merge_commit_message(topic, card.decided_by or ""),
         )
-        if merge_sha is None:
-            return  # not mergeable yet (behind base etc.) — retry next tick
+        if result.sha is None:
+            # GitHub refused (405/409). NOT necessarily transient — a
+            # merge_method the repo disabled refuses on every poll forever —
+            # so the reason goes on the card rather than into the void.
+            self._note_merge_blocked(card=card, reason=result.blocked_reason or "")
+            await self._session.flush()
+            return
+        merge_sha = result.sha
         card.pr_merged_at = datetime.now(UTC)
         card.pr_head_sha = merge_sha  # now tracking the merge commit (stage 2)
         card.note = f"PR #{card.pr_number} 检查全绿，已自动合并，等部署也成功后才归档。"
@@ -893,6 +956,31 @@ class AcceptService:
             return
 
         await self._finish_pr_accept(card=card, topic=topic)
+
+    def _note_merge_blocked(self, *, card: AcceptCard, reason: str) -> None:
+        """Put GitHub's merge refusal on the card's `note` — the one surface
+        both 芝士 and the user actually read. Before this existed a refusal
+        left `note` empty, so a permanently-unmergeable PR looked exactly like
+        a healthy one still waiting on CI.
+
+        Two things the 60s poll makes mandatory:
+
+        - **No spam.** The note is rewritten only when the text actually
+          changes, so an unchanging reason costs one write, not one per poll.
+          (Stricter than `_nudge_pr_fix`'s prefix check, which can't notice a
+          405 turning into a 409.)
+        - **No clobbering.** `❌ 部署失败` outranks this and is never
+          overwritten — that note describes a merged PR whose deploy broke,
+          which is strictly more urgent than "not merged yet".
+        """
+        if card.note.startswith("❌"):
+            return
+        note = f"🚫 PR #{card.pr_number} 检查全绿，但 GitHub 拒绝合并（{reason}）"
+        note = note[:2000]
+        if card.note == note:
+            return
+        card.note = note
+        logger.warning("PR merge refused for card %s: %s", card.id, reason)
 
     def _nudge_pr_fix(
         self,

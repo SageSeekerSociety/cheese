@@ -6,7 +6,7 @@ visible at each level (话题→项目→机构).
 
 import uuid
 
-from sqlalchemy import Float, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -52,3 +52,25 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     kind: Mapped[str] = mapped_column(String(24), default="chat")
+    # The supply the traffic actually took (issue #218): "gateway" (LiteLLM),
+    # "subscription" (metering proxy), "native" (profile-pinned credentials).
+    # "" on rows that predate the column.
+    route: Mapped[str] = mapped_column(String(16), default="")
+
+
+class IngestCheckpoint(Base):
+    """Exactly-once progress marker for an append-only usage log (issue #218).
+
+    One row per source file. ``byte_offset`` is how far ingestion has consumed;
+    ``fingerprint`` hashes the file's first bytes so a rotated/replaced file
+    reads as a new generation and restarts from zero — the alternative is
+    silently skipping (offset past a shorter file) or double-billing (offset
+    reset against the same file). Committed in the SAME transaction as the rows
+    it covers, which is the whole exactly-once argument.
+    """
+
+    __tablename__ = "ingest_checkpoints"
+
+    source: Mapped[str] = mapped_column(String(128), primary_key=True)
+    byte_offset: Mapped[int] = mapped_column(BigInteger, default=0)
+    fingerprint: Mapped[str] = mapped_column(String(64), default="")

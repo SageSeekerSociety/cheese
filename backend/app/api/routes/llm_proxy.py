@@ -25,8 +25,10 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_chat_service
+from app.api.deps import get_chat_service, get_db
+from app.api.response import ok
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -34,7 +36,9 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sandbox_auth import scoped_token_claims
+from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
+from app.domain.usage.repositories import ComputeGrantRepository
 
 logger = logging.getLogger("cheesex.llm_proxy")
 
@@ -82,6 +86,40 @@ def _caller_token(request: Request) -> str:
 def _upstream_url(path: str) -> str:
     base = (settings.anthropic_base_url or "").rstrip("/")
     return f"{base}/{path.lstrip('/')}"
+
+
+# Registered BEFORE the catch-all below — FastAPI matches in declaration order,
+# and the catch-all would otherwise swallow this path and forward it upstream.
+@router.post("/admission", include_in_schema=False)
+async def admission(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict:
+    """Whether the caller's project can afford one more subscription turn.
+
+    The metering proxy calls this BEFORE forwarding a ``/v1/messages`` request;
+    the Bearer is the sandbox's per-session scoped cheese token (#198), so the
+    project comes from verified claims rather than a spoofable header. The
+    decision reads the same compute-grant balance the gateway brake prices in
+    USD — one budget, two enforcement points. Refusing is this endpoint's only
+    job: the proxy fails OPEN on transport errors (a broken brake must not be
+    a broken platform) and keeps its rolling token cap as the backstop.
+    """
+    token = _caller_token(request)
+    claims = scoped_token_claims(token) if token else None
+    if not claims or not claims.get("p"):
+        raise AuthenticationRequiredError("A scoped cheese token is required")
+    try:
+        project_uuid = uuid.UUID(claims["p"])
+    except ValueError as exc:
+        raise NotFoundError("Unknown project") from exc
+    summary = await ComputeGrantRepository(db).summary(project_uuid)
+    state = BudgetState(
+        spent=summary["credits_used"],
+        limit=None if summary["unlimited"] else summary["credits_total"],
+    )
+    decision = decide(state)
+    return ok({"allow": decision.allow, "reason": decision.reason})
 
 
 @router.api_route("/{path:path}", methods=["GET", "POST"], include_in_schema=False)

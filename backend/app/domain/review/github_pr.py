@@ -32,6 +32,7 @@ from typing import Literal, Protocol
 
 import httpx
 
+from app.core.config import settings
 from app.domain.agent.github_app import GitHubAppTokens
 
 CheckState = Literal["pending", "success", "failure"]
@@ -44,10 +45,44 @@ class PullRequest:
     head_sha: str
 
 
+@dataclass
+class MergeResult:
+    """Outcome of one merge attempt.
+
+    Exactly one side is set: `sha` when GitHub actually merged, else
+    `blocked_reason` — a human-readable, secret-free explanation of why
+    GitHub refused (405/409). The refusal MUST carry a reason: returning a
+    bare None here is what hid the squash-only bug for half a day (405 on a
+    disabled merge_method never clears, so "just retry next tick" looped
+    forever with nothing written anywhere)."""
+
+    sha: str | None = None
+    blocked_reason: str | None = None
+
+
 class GitHubPrError(RuntimeError):
     """A GitHub API call failed outright (bad token, repo gone, rate limit,
     GitHub outage, ...). The caller treats this as "mechanism unavailable"
     and degrades — never as "the work is bad"."""
+
+
+def _github_message(resp: httpx.Response) -> str:
+    """`HTTP 405：Merge commits are not allowed on this repository` — GitHub's
+    own explanation, which is the whole point (the status code alone doesn't
+    tell you the merge_method is disabled). Falls back to the raw body when
+    the response isn't the usual `{"message": ...}` error shape."""
+    detail = ""
+    try:
+        payload = resp.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        detail = str(payload.get("message") or "")
+    if not detail:
+        detail = resp.text
+    if not detail:
+        return f"HTTP {resp.status_code}"
+    return f"HTTP {resp.status_code}：{detail[:300]}"
 
 
 class GitHubPrClient(Protocol):
@@ -94,11 +129,15 @@ class GitHubPrClient(Protocol):
         repo: str,
         number: int,
         token: str,
+        commit_title: str | None = None,
         commit_message: str | None = None,
-    ) -> str | None:
-        """The merge commit SHA once GitHub actually merged it, else None for
-        a recoverable "not mergeable yet" — the poller just tries again next
-        tick, not an error."""
+    ) -> MergeResult:
+        """Merge the PR. `commit_title`/`commit_message` are GitHub's two
+        squash-commit fields (title line / body) — see the caller in
+        `review/services.py` for why both are passed explicitly.
+
+        Returns the merge commit SHA on success, else a `blocked_reason` the
+        poller surfaces on the card — never a silent "try again later"."""
         ...
 
     async def workflow_run_state(
@@ -136,9 +175,15 @@ class HttpxGitHubPrClient:
         transport: httpx.AsyncBaseTransport | None = None,
         zero_checks_grace_s: float = _ZERO_CHECKS_GRACE_SECONDS,
         clock: Callable[[], float] = time.monotonic,
+        merge_method: str | None = None,
     ) -> None:
         self._api_base = api_base.rstrip("/")
         self._transport = transport
+        # None → read `settings.accept_pr_merge_method` at merge time (not at
+        # construction): `default_client()` builds one process-wide singleton,
+        # so binding the value here would freeze whatever settings looked like
+        # at first use.
+        self._merge_method = merge_method
         self._zero_checks_grace_s = zero_checks_grace_s
         self._clock = clock
         # ref → monotonic time it was first seen with zero check-runs AND no
@@ -300,9 +345,13 @@ class HttpxGitHubPrClient:
         repo: str,
         number: int,
         token: str,
+        commit_title: str | None = None,
         commit_message: str | None = None,
-    ) -> str | None:
-        body: dict = {"merge_method": "merge"}
+    ) -> MergeResult:
+        method = self._merge_method or settings.accept_pr_merge_method
+        body: dict = {"merge_method": method}
+        if commit_title:
+            body["commit_title"] = commit_title
         if commit_message:
             body["commit_message"] = commit_message
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
@@ -312,11 +361,16 @@ class HttpxGitHubPrClient:
                 json=body,
             )
         if resp.status_code == 200:
-            return resp.json().get("sha")
+            return MergeResult(sha=resp.json().get("sha"))
         if resp.status_code in (405, 409):
-            # Not mergeable yet (checks pending / behind base) — try again
-            # next poll, not an error.
-            return None
+            # 405 = GitHub REFUSED the merge, and NOT only for transient
+            # reasons: a merge_method the repo disabled (this repo is
+            # squash-only) refuses forever, as do draft PRs and unsatisfied
+            # branch protection. 409 = the head moved under us / conflict.
+            # Both are safe to retry next poll, so this is not a
+            # GitHubPrError — but the reason travels with it so the poller
+            # can put it on the card instead of retrying blind.
+            return MergeResult(blocked_reason=_github_message(resp))
         raise GitHubPrError(
             f"GitHub 拒绝合并 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
         )
@@ -486,7 +540,9 @@ class GitHubPRClient:
         return resp.json()
 
     async def merge_pr(self, number: int, *, title: str, message: str) -> dict:
-        """Merge the PR with a merge commit (matches the platform's history).
+        """Merge the PR using `settings.accept_pr_merge_method` — same reason
+        as the 两阶段采纳 client above: this used to hardcode a merge commit,
+        which a squash-only repo (ours) refuses with 405 forever.
 
         405 (not mergeable) raises GitHubPRMergeBlocked — the caller routes it
         to the existing conflict-resolution flow. Anything else is a plain
@@ -497,7 +553,7 @@ class GitHubPRClient:
             resp = await client.put(
                 self._url(f"/pulls/{number}/merge"),
                 json={
-                    "merge_method": "merge",
+                    "merge_method": settings.accept_pr_merge_method,
                     "commit_title": title,
                     "commit_message": message,
                 },
