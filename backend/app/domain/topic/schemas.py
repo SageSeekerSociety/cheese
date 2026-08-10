@@ -32,6 +32,11 @@ class TopicOut(BaseModel):
     accepted_at: datetime | None = None
     archived_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
+    # 本轮是否在跑 (TurnRunner, in-memory — separate from `status`/归档: a topic
+    # can be "active" and idle, or "active" and mid-turn). False unless the
+    # caller explicitly fills it in (see list_topics/get_topic) — the ORM model
+    # has no such attribute, so from_attributes just leaves the default.
+    running: bool = False
 
 
 class UpgradeBlockIn(BaseModel):

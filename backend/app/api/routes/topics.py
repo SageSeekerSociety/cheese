@@ -35,7 +35,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.team.repositories import TeamRepository
-from app.domain.topic.models import TopicStatus
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     ConclusionIn,
@@ -76,24 +76,39 @@ async def create_topic(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
+def _topic_out(topic: Topic, running_ids: set[uuid.UUID]) -> dict:
+    """TopicOut plus the in-memory turn-running signal (separate from
+    `status`/归档 — see TopicOut.running): a topic can be active-and-idle or
+    active-and-mid-turn, and only this tells them apart."""
+    data = TopicOut.model_validate(topic).model_dump(mode="json")
+    data["running"] = topic.id in running_ids
+    return data
+
+
 @router.get("")
 async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
 ) -> dict:
     topics, total = await TopicService(db).list_for_project(
         project_id, sort=sort, order=order
     )
-    items = [TopicOut.model_validate(t).model_dump(mode="json") for t in topics]
+    running_ids = runner.running_topic_ids()
+    items = [_topic_out(t, running_ids) for t in topics]
     return ok(page(items, total))
 
 
 @router.get("/{topic_id}")
-async def get_topic(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def get_topic(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+) -> dict:
     topic = await TopicService(db).get_or_404(topic_id)
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+    return ok(_topic_out(topic, runner.running_topic_ids()))
 
 
 @router.get("/{topic_id}/blocks")

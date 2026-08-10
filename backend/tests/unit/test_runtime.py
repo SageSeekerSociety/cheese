@@ -227,6 +227,40 @@ async def test_topic_turn_reports_the_rescheduled_ceiling():
 
 
 @pytest.mark.anyio
+async def test_running_topic_ids_reports_only_in_flight_turns():
+    # Bulk signal for the sidebar's「芝士还在跑」indicator: a topic whose turn
+    # already finished must drop out, one still mid-flight must show up.
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+
+    class _SlowTurn:
+        async def converse(self, **_):
+            await asyncio.sleep(0.2)
+            yield {"type": "done"}
+
+    finished_topic = uuid.uuid4()
+    running_topic = uuid.uuid4()
+
+    async with broker.subscribe(str(finished_topic)) as q:
+        runner.submit(
+            _FakeChat([{"type": "done"}]),
+            finished_topic,
+            author="u",
+            content="hi",
+            summon=True,
+        )
+        await asyncio.wait_for(q.get(), 1)
+    await asyncio.sleep(0.05)  # let the post-loop status flip to "done" land
+
+    runner.submit(_SlowTurn(), running_topic, author="u", content="hi", summon=True)
+    await asyncio.sleep(0.05)  # started, but its 0.2s sleep hasn't resolved yet
+
+    ids = runner.running_topic_ids()
+    assert running_topic in ids
+    assert finished_topic not in ids
+
+
+@pytest.mark.anyio
 async def test_runner_publishes_friendly_error_on_failure():
     broker = InProcessBroker()
     runner = TurnRunner(broker)

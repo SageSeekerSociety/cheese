@@ -42,6 +42,9 @@ export interface Topic {
   accepted_by?: string | null
   accepted_at?: string | null
   archived_at?: string | null
+  // 本轮是否在跑（TurnRunner, 内存态）——和 status/归档完全分开：一个话题可以
+  // 是 active 且空闲，也可以是 active 且正在跑一轮。只有 list/get 话题时才带。
+  running?: boolean
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
