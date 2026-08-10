@@ -29,4 +29,4 @@ description: PR 已开、采纳者 token 通道已打开——继续在本分支
 
 ## 一个已知限制
 
-**改动了 `.github/workflows/` 的卡走不了 PR 流程**——GitHub App 的 token 没有 `workflows` 权限，推不上去。这是已知限制，不是故障。碰上了就说出来，让人用别的方式落地。
+**改动了 `.github/workflows/` 的卡走不了 PR 流程**——推 workflow 文件需要额外的授权，这条路上的 token 没有。这是已知限制，不是故障。碰上了就说出来，让人用别的方式落地。
