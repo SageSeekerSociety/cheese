@@ -87,9 +87,6 @@ jobs:
     # migration-heads there for the full reasoning (why this path survives
     # actions/checkout and is immune to docker prune, and why it's keyed per
     # job rather than shared).
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/../cargo-target/e2e
-
     services:
       postgres:
         image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
@@ -116,6 +113,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Point Cargo at the persistent target dir
+        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/e2e" >> "$GITHUB_ENV"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4

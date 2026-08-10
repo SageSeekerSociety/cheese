@@ -122,10 +122,11 @@ jobs:
     # on the *same* physical runner — that would require multiple runner
     # processes registered against one disk, which isn't how this box is set
     # up today; flagging it here rather than assuming it away.
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/../cargo-target/migration-heads
     steps:
       - uses: actions/checkout@v4
+
+      - name: Point Cargo at the persistent target dir
+        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/migration-heads" >> "$GITHUB_ENV"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -161,9 +162,6 @@ jobs:
     # the migration-heads job above for the full reasoning (why this path,
     # why it's immune to docker prune, and why it's job-keyed rather than
     # shared with migration-heads/e2e).
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/../cargo-target/test
-
     services:
       postgres:
         image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
@@ -190,6 +188,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Point Cargo at the persistent target dir
+        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
