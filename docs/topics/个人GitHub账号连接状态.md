@@ -15,6 +15,19 @@
 
 <&frontend/src/router/account.ts> 下的 `/account` 整棵路由树是登录/注册/找回密码/两步验证/OAuth 登录回调这类独立鉴权流程（`meta: { hideAppBar: true }`），不是个人设置/资料页。把"连接 GitHub 账号"这种设置类面板塞进去，既没有合适的挂载点，也确实是"别的模块的地盘"，改动会外溢到无关的鉴权流程。按任务简报里的预案，评估不适合就只做第一部分、把原因回报，不硬塞。项目设置页里的这份保留（这里正是用户实际会遇到它的地方）。
 
+## 采纳后发现的真 bug：`me.value.id` 从来没被填过（2026-08-10，wangchangxin 截图带出）
+
+wangchangxin 采纳并合并到 main 后截图反馈：面板一直显示「未登录」，点「重试」没反应。查下来是真 bug，不是截图误会：
+
+- `Me.id`（`cx_types.ts`）类型上一直存在，但**全仓库只有 <&frontend/src/main.ts> 一处写 `cheesex.me`**（`user` → `cheesex.me` 的登录桥接），而那处代码从来没把 `id`字段带进去，只写了 `handle`/`name`/`token`。`<&frontend/src/lib/githubAccount.ts>` 依赖的 `me.value?.id` 因此**对所有用户永远是 `undefined`**——不是我这次改动引入的边界情况，是这个桥接自己从建立起就没填过这个字段，只是之前没有任何功能真的用到 `me.value.id`，一直没暴露。
+- 「重试」按钮本身是绑定了 `loadGithubAccountConnection` 的（不是死按钮），只是 `userId` 一直拿不到、每次都立刻回落到同一个「未登录」错误分支，视觉上跟没绑定一样。
+
+**已修复**：
+- <&frontend/src/main.ts>：登录桥接补上 `id: String(u.id)`。
+- <&frontend/src/me.ts>：`load()` 里"本次会话内刚登录、还没跑过桥接"那条兜底分支同样补上 `id`，保持两处构造 `Me` 的地方字段一致。
+- **已有会话的自愈**：原逻辑是`!localStorage.getItem('cheesex.me')`——只在完全没有这个 key 时才写一次，意味着像 wangchangxin 这样已经登录过、`cheesex.me` 里缺 `id` 的旧缓存永远不会被这行代码碰到，光加字段不够。改成"没有这个 key，或者有但缺 `id`"都会重新从 `user` 派生一次，让已经登录的浏览器刷新页面就能自愈，不需要用户手动登出登入。
+- 验证：lint / `vue-tsc --noEmit` / `pnpm test -- --run`（217/217）三项对这两个文件同样干净。
+
 ## 验证结果
 
 - `pnpm lint`：本卡改动的 5 个文件（`api.ts`/`cx_types.ts`/`lib/githubAccount.ts`/`lib/githubAccount.spec.ts`/`views/ProjectSettingsView.vue`）零告警零错误。仓库里另外 2 个 error + 286 个 warning 全部在没碰过的文件里（如 `AuditTask.vue`），是既有基线问题。

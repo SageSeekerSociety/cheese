@@ -17,7 +17,12 @@ function load(): Me | null {
     if (u) {
       const parsed = JSON.parse(u)
       if (parsed?.username) {
-        return { handle: parsed.username, name: parsed.nickname || parsed.username, token: '' } as Me
+        return {
+          id: String(parsed.id),
+          handle: parsed.username,
+          name: parsed.nickname || parsed.username,
+          token: '',
+        } as Me
       }
     }
     return null
