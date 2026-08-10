@@ -90,43 +90,6 @@ def _github_message(resp: httpx.Response) -> str:
     return f"HTTP {resp.status_code}：{detail[:300]}"
 
 
-def _is_pr_already_exists(resp: httpx.Response) -> bool:
-    """True only for GitHub's "a pull request already exists for X" 422.
-
-    Deliberately narrow. 422 is `POST /pulls`'s catch-all Validation Failed
-    and covers plenty of genuine, unrecoverable mistakes — a base branch that
-    doesn't exist, head == base, no commits between the two. Those must keep
-    degrading to the local merge path. Only the structured error entry
-    (`resource: "PullRequest"` + an "already exists" message) says the PR we
-    were about to open is already sitting there:
-
-        {"message": "Validation Failed",
-         "errors": [{"resource": "PullRequest", "code": "custom",
-                     "message": "A pull request already exists for owner:branch."}]}
-
-    Matching on the structured `errors[]` rather than a substring of the whole
-    body also keeps a branch or PR title that happens to contain the words
-    "already exists" from being read as this case.
-    """
-    if resp.status_code != 422:
-        return False
-    try:
-        payload = resp.json()
-    except ValueError:
-        return False
-    if not isinstance(payload, dict):
-        return False
-    errors = payload.get("errors")
-    if not isinstance(errors, list):
-        return False
-    return any(
-        isinstance(err, dict)
-        and err.get("resource") == "PullRequest"
-        and "already exist" in str(err.get("message") or "").lower()
-        for err in errors
-    )
-
-
 class GitHubPrClient(Protocol):
     async def open_pull_request(
         self,
@@ -206,6 +169,43 @@ class GitHubPrClient(Protocol):
 
 _FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "stale"}
 _OK_CONCLUSIONS = {"success", "neutral", "skipped"}
+
+
+def _is_pr_already_exists(resp: httpx.Response) -> bool:
+    """True only for GitHub's "a pull request already exists for X" 422.
+
+    Deliberately narrow. 422 is `POST /pulls`'s catch-all Validation Failed
+    and covers plenty of genuine, unrecoverable mistakes — a base branch that
+    doesn't exist, head == base, no commits between the two. Those must keep
+    degrading to the local merge path. Only the structured error entry
+    (`resource: "PullRequest"` + an "already exists" message) says the PR we
+    were about to open is already sitting there:
+
+        {"message": "Validation Failed",
+         "errors": [{"resource": "PullRequest", "code": "custom",
+                     "message": "A pull request already exists for owner:branch."}]}
+
+    Matching on the structured `errors[]` rather than a substring of the whole
+    body also keeps a branch or PR title that happens to contain the words
+    "already exists" from being read as this case.
+    """
+    if resp.status_code != 422:
+        return False
+    try:
+        payload = resp.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        return False
+    return any(
+        isinstance(err, dict)
+        and err.get("resource") == "PullRequest"
+        and "already exist" in str(err.get("message") or "").lower()
+        for err in errors
+    )
 
 
 #: How long a ref may sit at "zero check-runs, no github-actions check-suite
