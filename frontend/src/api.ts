@@ -313,8 +313,17 @@ export function getUserProfile(handle: string): Promise<UserProfile> {
   return request<UserProfile>(`/users/${encodeURIComponent(handle)}/profile`)
 }
 
-export function listTopics(projectId: string): Promise<ListPayload<Topic>> {
-  return request<ListPayload<Topic>>(`/topics?project_id=${encodeURIComponent(projectId)}`)
+export type TopicSortField = 'updated_at' | 'title'
+export type TopicSortOrder = 'asc' | 'desc'
+
+export function listTopics(
+  projectId: string,
+  opts?: { sort?: TopicSortField; order?: TopicSortOrder }
+): Promise<ListPayload<Topic>> {
+  const q = new URLSearchParams({ project_id: projectId })
+  if (opts?.sort) q.set('sort', opts.sort)
+  if (opts?.order) q.set('order', opts.order)
+  return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
 export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {

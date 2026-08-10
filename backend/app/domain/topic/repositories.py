@@ -2,12 +2,27 @@
 
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import UnaryExpression
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.topic.models import Topic, TopicKind, TopicReadState
+
+TopicSortField = Literal["updated_at", "title"]
+SortOrder = Literal["asc", "desc"]
+
+
+def _order_by(sort: TopicSortField | None, order: SortOrder) -> UnaryExpression:
+    if sort == "title":
+        column = Topic.title
+    elif sort == "updated_at":
+        column = Topic.updated_at
+    else:
+        column = Topic.created_at
+    return column.desc() if order == "desc" else column.asc()
 
 
 class TopicRepository:
@@ -40,12 +55,18 @@ class TopicRepository:
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
         return await self._session.get(Topic, topic_id)
 
-    async def list_for_project(self, project_id: uuid.UUID) -> list[Topic]:
+    async def list_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        sort: TopicSortField | None = None,
+        order: SortOrder = "asc",
+    ) -> list[Topic]:
         # Private chats are not part of the topic tree.
         stmt = (
             select(Topic)
             .where(Topic.project_id == project_id, Topic.is_private.is_(False))
-            .order_by(Topic.created_at)
+            .order_by(_order_by(sort, order))
         )
         return list((await self._session.scalars(stmt)).all())
 
