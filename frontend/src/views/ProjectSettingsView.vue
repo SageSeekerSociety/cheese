@@ -4,6 +4,7 @@ import type {
   ExecProfiles,
   ExpertRole,
   GithubConnection,
+  OAuthConnectionInfo,
   SandboxImageInfo,
   UpstreamSyncResult,
 } from '../cx_types'
@@ -14,6 +15,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   connectGithubRepo as apiConnectGithubRepo,
   createRole,
+  deleteOAuthConnection,
   getExecutionProfiles,
   getGithubAccountAuthorizeUrl,
   getGithubConnection,
@@ -21,6 +23,7 @@ import {
   getProject,
   getSandboxImage,
   getUpstream,
+  listOAuthConnections,
   listRoles,
   setExecutionProfile,
   setModelProfile,
@@ -29,7 +32,9 @@ import {
   setUpstream,
   syncUpstream,
 } from '../api'
-import { myHandle } from '../me'
+import { findGithubAccountConnection, isGithubAccountTokenExpired } from '../lib/githubAccount'
+import { relTime } from '../lib/relTime'
+import { me, myHandle } from '../me'
 
 // Project settings. Compute is intentionally absent: execution-architecture v4
 // places the pool/default on the team and the per-run choice on the topic.
@@ -62,6 +67,49 @@ const connectingGithubAccount = ref(false)
 // Set from ?github_install=/&github_account= on the redirect back from our
 // own callback routes (app/api/routes/github_install.py, github_account_link.py).
 const githubCallbackNotice = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
+
+// 连接 GitHub 账号 status: loaded independently from `load()` (its own
+// loading/error state) so a failure here can't be mistaken for "not
+// connected" — see the section's four-branch template below.
+type GithubAccountLoadState = 'loading' | 'loaded' | 'error'
+const githubAccountLoadState = ref<GithubAccountLoadState>('loading')
+const githubAccountLoadError = ref<string | null>(null)
+const githubAccountConn = ref<OAuthConnectionInfo | null>(null)
+const disconnectingGithubAccount = ref(false)
+
+async function loadGithubAccountConnection() {
+  const userId = me.value?.id
+  if (!userId) {
+    githubAccountLoadState.value = 'error'
+    githubAccountLoadError.value = '未登录'
+    return
+  }
+  githubAccountLoadState.value = 'loading'
+  githubAccountLoadError.value = null
+  try {
+    const { connections } = await listOAuthConnections(userId)
+    githubAccountConn.value = findGithubAccountConnection(connections)
+    githubAccountLoadState.value = 'loaded'
+  } catch (e) {
+    githubAccountLoadError.value = e instanceof Error ? e.message : '加载连接状态失败'
+    githubAccountLoadState.value = 'error'
+  }
+}
+
+async function disconnectGithubAccount() {
+  const userId = me.value?.id
+  const conn = githubAccountConn.value
+  if (!userId || !conn) return
+  disconnectingGithubAccount.value = true
+  try {
+    await deleteOAuthConnection(userId, conn.id)
+    githubAccountConn.value = null
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '断开 GitHub 账号失败'
+  } finally {
+    disconnectingGithubAccount.value = false
+  }
+}
 
 // 专家角色 (spec §8.2): which persona 芝士 loads for this project. The catalog
 // merges built-in library roles with custom ones; '' = generic 芝士.
@@ -311,6 +359,7 @@ function goBack() {
 onMounted(() => {
   consumeGithubCallbackNotice()
   load()
+  loadGithubAccountConnection()
 })
 watch(() => props.projectId, load)
 </script>
@@ -595,23 +644,76 @@ watch(() => props.projectId, load)
         </section>
 
         <!-- 连接 GitHub 账号 (#192): App 的 user-to-server 授权, 独立于经典
-             OAuth 登录 —— 只是记录"这个人是哪个 GitHub 账号", 供 credit 归属用 -->
+             OAuth 登录 —— 记录"这个人是哪个 GitHub 账号", 供 credit 归属 +
+             两阶段采纳代表身份开 PR 用 -->
         <section class="ln-section">
           <div class="ln-section-head">
             <v-icon size="18" class="me-1 c-muted">mdi-account-box-outline</v-icon>
             <span class="ln-section-title">连接 GitHub 账号</span>
           </div>
           <div class="ln-body">
-            <div class="d-flex align-center" style="gap: 8px">
+            <!-- 加载中 -->
+            <div v-if="githubAccountLoadState === 'loading'" class="d-flex align-center" style="gap: 8px">
+              <v-progress-circular indeterminate size="16" width="2" color="primary" />
+              <span class="t-body c-muted">正在加载连接状态…</span>
+            </div>
+
+            <!-- 请求失败: never fall through to the "未连接" look, that would lie -->
+            <div v-else-if="githubAccountLoadState === 'error'" class="d-flex align-center" style="gap: 8px">
+              <v-icon size="18" color="error">mdi-alert-circle-outline</v-icon>
+              <span class="t-body text-error">{{ githubAccountLoadError ?? '加载连接状态失败' }}</span>
+              <v-spacer />
+              <v-btn size="small" variant="text" @click="loadGithubAccountConnection">重试</v-btn>
+            </div>
+
+            <!-- 已连接 -->
+            <template v-else-if="githubAccountConn">
+              <div class="d-flex align-center" style="gap: 8px">
+                <v-icon size="18" color="success">mdi-check-circle</v-icon>
+                <span class="t-body">
+                  已连接 <strong>{{ githubAccountConn.login ?? githubAccountConn.providerUserId }}</strong>
+                  <span v-if="githubAccountConn.connectedAt" class="c-faint" style="font-size: 0.8rem">
+                    （{{ relTime(githubAccountConn.connectedAt) }}连接）
+                  </span>
+                </span>
+                <v-spacer />
+                <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
+                  重新连接
+                </v-btn>
+                <v-btn
+                  size="small"
+                  variant="text"
+                  color="error"
+                  :loading="disconnectingGithubAccount"
+                  @click="disconnectGithubAccount"
+                >
+                  断开
+                </v-btn>
+              </div>
+              <v-alert
+                v-if="isGithubAccountTokenExpired(githubAccountConn)"
+                type="warning"
+                density="comfortable"
+                variant="tonal"
+                class="mt-2"
+              >
+                GitHub 授权已过期：采纳你参与的话题时将无法用你的身份自动开 PR，会退回为直接合并到
+                main。请点击「重新连接」刷新授权。
+              </v-alert>
+            </template>
+
+            <!-- 未连接 -->
+            <div v-else class="d-flex align-center" style="gap: 8px">
               <span class="t-body c-muted">把你自己的 GitHub 账号和这个平台身份关联起来</span>
               <v-spacer />
               <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
                 连接 GitHub 账号
               </v-btn>
             </div>
+
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              用于把你 merge 的提交正确归到你名下（committer credit）。跟登录用的 GitHub 账号授权是两回事，可以是同一个
-              GitHub 账号，也可以不是。
+              用于把你 merge 的提交正确归到你名下（committer credit），也是两阶段采纳能代表你身份开 PR
+              的前提。跟登录用的 GitHub 账号授权是两回事，可以是同一个 GitHub 账号，也可以不是。
             </p>
           </div>
         </section>
