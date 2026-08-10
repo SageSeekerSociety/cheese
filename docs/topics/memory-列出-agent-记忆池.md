@@ -2,7 +2,7 @@
 
 `GET /api/memory` 只会列 `project` 和 `user` 两个 scope，`agent_project`（芝士自己的记忆池）完全列不出来。本卡把它补上，让"记忆可见"这个面板真的能审计芝士记了什么。
 
-## 状态：实现 + 测试已完成，验证中
+## 状态：已完工，验收卡已递
 
 改动只在 backend：
 
@@ -51,9 +51,30 @@
 
 **结论不变**：代码层面的缺口是真的（main 的 `list_memory` 根本没有 `agent_project` 这个分支），只是它今天还没在生产里咬人——等沙箱的 CLI 更新到 main 那版，每一条 `cheese remember` 就会立刻变得不可见。这张卡是在它咬人之前堵上。副作用是简报给的"拿现有 10 条验证"这条路走不通，改用本地真 Postgres 做改动前后对照。
 
-## 验证
+## 验证结果
 
-见下方「验证结果」小节（`task check` 跑完后补齐）。
+沙箱里没有 PG 也没有 Redis，所以自建了用户态的：Postgres 15（pgserver wheel 解出来的二进制，跑在 127.0.0.1:5433）+ Redis（redislite 自带的 `redis-server`，6379）。两个都在 `/tmp` 的 scratchpad 下，没进工作区。
+
+**改动前后对照（同一套新测试、同一个 PG）**
+
+| | 改动前（main 的 `memory.py`） | 改动后 |
+|---|---|---|
+| 4 个新功能测试 | 4 failed，`assert [] == ['部署脚本在 deploy/deploy.sh']`、`assert set() == {…}` | 4 passed |
+| `tests/integration/test_agent_identity.py` 全量 | — | 11 passed |
+| `tests/unit/test_memory_openviking.py` 全量 | — | 12 passed |
+
+`[]` / `set()` 就是"改动前一条 agent 记忆都列不出来"的直接读数。
+
+**`task check`（`--full`）**
+
+- ruff ✅ / pyright ✅ 0 errors / alembic 恰好一个 head ✅
+- pytest：**3539 passed, 31 skipped, 65 failed, 4 errors**（7 分 10 秒）
+
+**那 65+4 全部是沙箱环境缺件，跟本改动无关——用基线对照坐实的，不是靠眼力判断**：把 `memory.py` + `models.py` 换回 main 的版本，跑同样这 20 个文件，结果是 **65 failed / 4 errors，失败的测试 ID 集合逐条一致**（69 个 unique id，diff 只剩两条 ANSI 日志串行造成的字符差异）。根因分布：`ssh-keygen` 未安装（21 处）、`jj git failed … Cannot access .jj/repo/config-id: Permission denied`（14+ 处，就是父话题记过的 uid 属主问题）、`kill` 二进制缺失、tmux 缺失。集中在 workspace / accept / git_http / machine / attachments 这些区，`memory` 和 `agent_identity` 一条都没有。
+
+第一轮跑出 85 failed + 581 errors 是因为当时还没起 Redis（`Connect call failed 127.0.0.1:6379`），起了之后耗时也从 40 分钟降到 7 分钟。
+
+**线上探针（顺带做的，已清理）**：`GET /memory?project_id=<本项目>` 13 条 → `cheese remember` 一条 → 14 条且可见（`scope=project`）→ 删掉探针 → 回到 13 条。这就是上面「纠正简报证据」那一节的实测依据。
 
 ## 明确没做
 
