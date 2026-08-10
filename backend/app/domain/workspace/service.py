@@ -1033,6 +1033,177 @@ def pr_base_branch(project_id: uuid.UUID) -> str:
     return _base_branch(ensure_repo(project_id))
 
 
+def _github_push_url(owner: str, repo: str) -> str:
+    """The clone URL a topic's PR branch is pushed to. A seam, not indirection
+    for its own sake: the sync-and-retry below has to fetch from the SAME repo
+    it pushes to, and tests need both to point at a local repo."""
+    return f"https://github.com/{owner}/{repo}.git"
+
+
+def _is_workflow_permission_rejection(message: str) -> bool:
+    """Does this push failure look like GitHub refusing a workflow-file change
+    for lack of the `workflows` scope? Verbatim shape:
+
+        ! [remote rejected] topic/xxxx -> cheesex/xxxx (refusing to allow a
+          GitHub App to create or update workflow `.github/workflows/e2e.yml`
+          without `workflows` permission)
+
+    The wording varies by credential kind (GitHub App / OAuth App / Personal
+    Access Token) and names whichever workflow file differs, so match on the
+    two stable fragments rather than the whole sentence.
+
+    Why this rejection happens to cards that never touched a workflow file:
+    GitHub compares the pushed branch's `.github/workflows/` tree against the
+    target repo's DEFAULT BRANCH, not against this push's diff. A topic branch
+    forked from the platform's local base is rejected whenever that local base
+    lags GitHub's main in any workflow file — which is most of the time, since
+    the local base only advances on 同步上游."""
+    text = message.lower()
+    return "refusing to allow" in text and "workflow" in text
+
+
+def _remote_default_branch(repo: Path, url: str, env: dict[str, str]) -> str | None:
+    """The default branch of the repo we push to (what its HEAD symrefs to) —
+    the branch GitHub compares workflow files against."""
+    try:
+        out = _git(repo, "ls-remote", "--symref", url, "HEAD", timeout=60, env=env)
+    except ValidationError:
+        return None
+    for line in out.splitlines():
+        if not line.startswith("ref:"):
+            continue
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].startswith("refs/heads/"):
+            return parts[1][len("refs/heads/") :]
+    return None
+
+
+def _sync_remote_base_into_topic_branch(
+    project_id: uuid.UUID,
+    repo: Path,
+    branch: str,
+    *,
+    url: str,
+    env: dict[str, str],
+) -> dict:
+    """Merge the push target's default branch into the topic branch, so its
+    `.github/workflows/` tree matches what GitHub compares against and the push
+    stops looking like a workflow edit.
+
+    Never raises for an ordinary failure (conflict, nothing to sync, concurrent
+    branch move) — always returns a dict with a `synced` key and a
+    human-readable `reason`, because the caller's only options are "retry the
+    push" and "degrade with an explanation on the card".
+
+    The merge itself runs in a throwaway detached worktree and lands via a
+    compare-and-swap ref move, same as `_merge_ref_into_base` — but unlike that
+    one it must NOT call `_sync_shared_checkout`: this moves a topic branch, and
+    the shared repo directory belongs to the base branch."""
+    default = _remote_default_branch(repo, url, env) or _base_branch(repo)
+    base_ref = f"refs/cheesex/pr-base/{branch.rsplit('/', 1)[-1]}"
+    try:
+        _git(
+            repo,
+            "fetch",
+            "--no-tags",
+            "-q",
+            url,
+            f"+refs/heads/{default}:{base_ref}",
+            timeout=180,
+            env=env,
+        )
+    except ValidationError as exc:
+        return {"synced": False, "reason": f"拉取 GitHub {default} 失败：{exc}"[:300]}
+
+    old_sha = _git(repo, "rev-parse", branch).strip()
+    remote_tip = _git(repo, "rev-parse", base_ref).strip()
+    contained = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", remote_tip, old_sha],
+        cwd=repo,
+        capture_output=True,
+        timeout=20,
+    )
+    if contained.returncode == 0:
+        # Already up to date with GitHub's default branch, so the workflow files
+        # that GitHub objected to are this card's OWN edits. Syncing again would
+        # change nothing and re-pushing would be rejected identically.
+        return {
+            "synced": False,
+            "up_to_date": True,
+            "reason": (
+                f"话题分支已包含 GitHub {default} 的最新提交，"
+                "被拒的 workflow 改动来自这张卡本身"
+            ),
+        }
+
+    with _isolated_worktree(project_id, repo, old_sha) as wt:
+        try:
+            _git(
+                wt,
+                "-c",
+                "user.name=芝士",
+                "-c",
+                "user.email=cheese@zhishi.local",
+                "merge",
+                "--no-ff",
+                "-q",
+                "-m",
+                f"同步 GitHub {default} → {branch}（推 PR 分支前）",
+                base_ref,
+            )
+        except ValidationError as exc:
+            try:
+                conflicts = (
+                    _git(wt, "diff", "--name-only", "--diff-filter=U")
+                    .strip()
+                    .splitlines()
+                )
+            except ValidationError:
+                conflicts = []
+            try:
+                _git(wt, "merge", "--abort")
+            except ValidationError:
+                pass
+            reason = (
+                f"与 GitHub {default} 合并冲突：" + "、".join(conflicts[:20])
+                if conflicts
+                else f"与 GitHub {default} 合并失败：{exc}"
+            )
+            return {"synced": False, "reason": reason[:300], "conflicts": conflicts}
+        new_sha = _git(wt, "rev-parse", "HEAD").strip()
+
+    try:
+        _git(repo, "update-ref", f"refs/heads/{branch}", new_sha, old_sha)
+    except ValidationError:
+        return {"synced": False, "reason": "话题分支被并发更新，本次未同步"}
+    _catch_up_topic_workspace(project_id, branch)
+    return {"synced": True, "base": default, "head": new_sha}
+
+
+def _catch_up_topic_workspace(project_id: uuid.UUID, branch: str) -> None:
+    """Let the topic's jj workspace see a commit that reached its git branch
+    from outside (here: the sync merge above).
+
+    Not cosmetic. The workspace's bookmark would otherwise still point at the
+    pre-merge commit, and the next `snapshot_worktree` moves that bookmark to a
+    child of it with `--allow-backwards` — dropping the merge from the branch
+    and turning the following re-push into a rejected non-fast-forward. Purely
+    best-effort: the git ref is what gets pushed, so a jj hiccup must not fail
+    the push."""
+    wt = _worktree_path(project_id, branch)
+    if not (wt / ".jj").exists():
+        return  # no workspace yet — nothing to catch up
+    try:
+        _catch_up_with_branch(project_id, wt, branch)
+    except ValidationError as exc:
+        logger.warning(
+            "topic workspace %s could not catch up with %s after the PR-base sync: %s",
+            wt,
+            branch,
+            exc,
+        )
+
+
 def push_topic_branch_for_github_pr(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
@@ -1055,7 +1226,18 @@ def push_topic_branch_for_github_pr(
     rather than embedding the token in the push URL. Raises ValidationError on
     any git failure (bad/expired token, network, GitHub outage) — the caller
     treats that as "mechanism unavailable" and degrades to the old
-    direct-merge path, same contract as merge_topic()."""
+    direct-merge path, same contract as merge_topic().
+
+    One rejection is recoverable and gets exactly one retry: GitHub refusing
+    the push because the branch's `.github/workflows/` differs from the target
+    repo's default branch and the credential has no `workflows` scope (see
+    `_is_workflow_permission_rejection`). Nearly every card hit this — the
+    branch forks off the platform's local base, which lags GitHub's main — so
+    two-phase accept had degraded to direct-merge for essentially everything.
+    The recovery is to merge GitHub's default branch in and push once more;
+    anything else about the failure, and any second failure, still degrades as
+    before. Syncing only after a rejection keeps the happy path (including the
+    60s re-push poll) exactly as cheap as it was — no fetch, no extra commit."""
     repo_path = ensure_repo(project_id)
     try:
         snapshot_worktree(project_id, topic_id, "两阶段采纳前快照")
@@ -1064,15 +1246,25 @@ def push_topic_branch_for_github_pr(
     branch = branch_for_topic(topic_id)
     if not _branch_exists(repo_path, branch):
         raise ValidationError("话题还没有可推送的分支")
-    url = f"https://github.com/{owner}/{repo}.git"
-    _git(
-        repo_path,
-        "push",
-        url,
-        f"{branch}:refs/heads/{remote_branch}",
-        timeout=120,
-        env=_token_push_env(token),
-    )
+    url = _github_push_url(owner, repo)
+    env = _token_push_env(token)
+    refspec = f"{branch}:refs/heads/{remote_branch}"
+    try:
+        _git(repo_path, "push", url, refspec, timeout=120, env=env)
+    except ValidationError as exc:
+        if not _is_workflow_permission_rejection(str(exc)):
+            raise
+        synced = _sync_remote_base_into_topic_branch(
+            project_id, repo_path, branch, url=url, env=env
+        )
+        if not synced.get("synced"):
+            raise ValidationError(
+                "话题分支的 workflow 文件与 GitHub 默认分支不一致且无法同步"
+                f"（{synced.get('reason', '')}）"
+            ) from exc
+        # Exactly one retry, never a loop: if this is still rejected the card
+        # genuinely changes workflow files, and no amount of syncing helps.
+        _git(repo_path, "push", url, refspec, timeout=120, env=env)
     head_sha = _git(repo_path, "rev-parse", branch).strip()
     return {"head_sha": head_sha, "remote_branch": remote_branch}
 
