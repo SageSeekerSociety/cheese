@@ -57,6 +57,27 @@ stage 2 会拿一个任何分支上都不存在的 sha 去找 deploy run，卡�
 顺带评估「合并后还要不要继续重推」：**不需要单独改**——前置的 merged 判断 return 在重推之前，
 观察到合并的那一轮起重推就自然停了，噪声一并消失。
 
+## 改了什么
+
+- `backend/app/domain/review/github_pr.py`：新增 `PullRequestStatus` 数据类和轮询侧 Protocol 的
+  `pull_request_status()`；`merge_commit_sha` / `merged_at` **只在 `merged: true` 时才透出**，
+  未合并时一律置 None。时间戳统一解析成 aware UTC。
+- `backend/app/domain/review/services.py`：`_advance_pr_checks` 开头前置读 PR 状态 →
+  已合并走新的 `_settle_external_merge`（记 `pr_merged_at`、`pr_head_sha` 换成合并提交、进 stage 2、回房间一条消息）；
+  closed-unmerged 走 `_note_pr_closed_unmerged`（只写 note + 回房间一次，不自动合、不归档）。
+  `_repush_if_local_head_moved` 改为返回「这轮是否真推了」，没推就复用前置那次读到的 head。
+- 测试：`tests/integration/test_accept_pr.py` +6、`tests/unit/test_github_pr_httpx_client.py` +5。
+
+## 验证结果（沙箱真跑，非 SKIP）
+
+- `ruff check app tests`：All checks passed
+- `pyright app`：`0 errors, 0 warnings, 0 informations`
+- `pytest tests/unit/test_github_pr_httpx_client.py tests/integration/test_accept_pr.py`：**42 passed**
+- 全量 `pytest tests/ -n 4`：**3639 passed, 31 skipped, 23 failed**。23 条全部与本改动无关：
+  22 条是 CLAUDE.md 记录的沙箱无 procps（`test_machine_service.py` 21 + `test_tmux_control.py` 1）；
+  第 23 条 `test_market_api.py::test_market_lists_ai_and_compute_pools` 是沙箱没有 LLM 凭证
+  （`market.py:ai_listings` 的 `available = name in registry.selectable(...)`），同样与 review 域无关。
+
 ## 状态
 
 - [x] 核实两个 client / 调用链、`merge_commit_sha` 语义（实测）
