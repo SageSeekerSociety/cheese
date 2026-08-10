@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.usage.models import ComputeGrant, ResourceUsage
@@ -23,6 +23,8 @@ class UsageRepository:
         cost_usd: float,
         kind: str = "chat",
         metered: bool = True,
+        route: str = "",
+        turn_id: uuid.UUID | None = None,
     ) -> ResourceUsage:
         """Record a turn's spend.
 
@@ -39,24 +41,48 @@ class UsageRepository:
         row = ResourceUsage(
             project_id=project_id,
             topic_id=topic_id,
+            turn_id=turn_id,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
             cost_usd=cost_usd,
             kind=kind if metered else f"{kind}:unmetered",
+            route=route,
         )
         self._session.add(row)
         await self._session.flush()
         return row
 
     async def _agg(self, column, value) -> dict:
+        # 轮次 counts TURNS, not rows. One turn writes several rows — the
+        # metering proxy logs a row per /v1/messages call and the gateway lands
+        # a deferred backfill row for the same turn — which is how a 3-turn
+        # topic reported 43. Rows carrying a turn_id collapse to their turn;
+        # rows without one (pre-column history, unattributable proxy lines)
+        # still count one each rather than vanishing.
+        unattributed = func.sum(case((ResourceUsage.turn_id.is_(None), 1), else_=0))
+        # Tokens whose USD price is not knowable — a subscription is billed by
+        # the month, so its rows carry cost_usd = 0.0 meaning "no price", not
+        # "free". Reported separately so the UI can say 未知 instead of printing
+        # $0.0000 over millions of tokens ("未知冒充零").
+        unpriced = func.sum(
+            case(
+                (
+                    (ResourceUsage.cost_usd <= 0.0) & (ResourceUsage.total_tokens > 0),
+                    ResourceUsage.total_tokens,
+                ),
+                else_=0,
+            )
+        )
         stmt = select(
             func.coalesce(func.sum(ResourceUsage.input_tokens), 0),
             func.coalesce(func.sum(ResourceUsage.output_tokens), 0),
             func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
             func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
-            func.count(),
+            func.count(func.distinct(ResourceUsage.turn_id)),
+            func.coalesce(unattributed, 0),
+            func.coalesce(unpriced, 0),
         ).where(column == value)
         row = (await self._session.execute(stmt)).one()
         return {
@@ -64,7 +90,8 @@ class UsageRepository:
             "output_tokens": int(row[1]),
             "total_tokens": int(row[2]),
             "cost_usd": float(row[3]),
-            "turns": int(row[4]),
+            "turns": int(row[4]) + int(row[5]),
+            "unpriced_tokens": int(row[6]),
         }
 
     async def for_topic(self, topic_id: uuid.UUID) -> dict:

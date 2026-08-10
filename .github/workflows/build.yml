@@ -233,13 +233,18 @@ jobs:
   # deploy.sh can `docker pull` it — production has no repo checkout.
 
       # Building on the box that also SERVES dev means build layers land on the
-      # same 63GB disk the deployment lives on — it hit 100% twice on 2026-07-25.
-      # Reclaim build cache after each image (in-use images are never touched).
+      # deployment's own disk — at 63GB it hit 100% twice on 2026-07-25, which
+      # is where the original 6GB cap came from. The disk is 252GB now, and at
+      # 6GB the three images' layer caches evict each other (the cap is pruned
+      # to after EVERY image), so most builds ran semi-cold — backend's rust
+      # compile alone pushed a build to 32min against its 45min timeout on
+      # 2026-08-10. 20GB holds all three caches warm; --min-free-space still
+      # floors the disk independently. (In-use images are never touched.)
       - name: Reclaim build cache
         if: always()
         run: |
           docker buildx prune --builder cheese-box-builder -af \
-            --max-used-space 6GB --min-free-space 10GB >/dev/null 2>&1 || true
+            --max-used-space 20GB --min-free-space 10GB >/dev/null 2>&1 || true
           df -h / | tail -1
   build-sandbox:
     needs: plan
@@ -348,13 +353,18 @@ jobs:
           labels: ${{ steps.tmux_meta.outputs.labels }}
 
       # Building on the box that also SERVES dev means build layers land on the
-      # same 63GB disk the deployment lives on — it hit 100% twice on 2026-07-25.
-      # Reclaim build cache after each image (in-use images are never touched).
+      # deployment's own disk — at 63GB it hit 100% twice on 2026-07-25, which
+      # is where the original 6GB cap came from. The disk is 252GB now, and at
+      # 6GB the three images' layer caches evict each other (the cap is pruned
+      # to after EVERY image), so most builds ran semi-cold — backend's rust
+      # compile alone pushed a build to 32min against its 45min timeout on
+      # 2026-08-10. 20GB holds all three caches warm; --min-free-space still
+      # floors the disk independently. (In-use images are never touched.)
       - name: Reclaim build cache
         if: always()
         run: |
           docker buildx prune --builder cheese-box-builder -af \
-            --max-used-space 6GB --min-free-space 10GB >/dev/null 2>&1 || true
+            --max-used-space 20GB --min-free-space 10GB >/dev/null 2>&1 || true
           df -h / | tail -1
   build-frontend:
     needs: plan
@@ -428,11 +438,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       # Building on the box that also SERVES dev means build layers land on the
-      # same 63GB disk the deployment lives on — it hit 100% twice on 2026-07-25.
-      # Reclaim build cache after each image (in-use images are never touched).
+      # deployment's own disk — at 63GB it hit 100% twice on 2026-07-25, which
+      # is where the original 6GB cap came from. The disk is 252GB now, and at
+      # 6GB the three images' layer caches evict each other (the cap is pruned
+      # to after EVERY image), so most builds ran semi-cold — backend's rust
+      # compile alone pushed a build to 32min against its 45min timeout on
+      # 2026-08-10. 20GB holds all three caches warm; --min-free-space still
+      # floors the disk independently. (In-use images are never touched.)
       - name: Reclaim build cache
         if: always()
         run: |
           docker buildx prune --builder cheese-box-builder -af \
-            --max-used-space 6GB --min-free-space 10GB >/dev/null 2>&1 || true
+            --max-used-space 20GB --min-free-space 10GB >/dev/null 2>&1 || true
           df -h / | tail -1

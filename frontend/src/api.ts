@@ -652,8 +652,23 @@ export function sendFeedback(notificationId: string, feedback: 'up' | 'down'): P
 }
 
 // 机构看板 / Space 看板 (eval F3).
-export function listBlocks(topicId: string): Promise<ListPayload<Block>> {
-  return request<ListPayload<Block>>(`/topics/${encodeURIComponent(topicId)}/blocks`)
+//
+// Paging is opt-in on the server: no `limit` returns the WHOLE timeline, which
+// is 2.1 MB / 2226 rows on a long topic. The chat panel always passes a limit;
+// `has_more` + `oldest_id` walk backwards from there (a cursor, not an offset —
+// the tail keeps growing while you read history).
+export interface BlockPage extends ListPayload<Block> {
+  has_more: boolean
+  oldest_id: string | null
+}
+
+export function listBlocks(topicId: string, opts?: { limit?: number; before?: string }): Promise<BlockPage> {
+  const q = new URLSearchParams()
+  if (opts?.limit !== undefined) q.set('limit', String(opts.limit))
+  if (opts?.before) q.set('before', opts.before)
+  const qs = q.toString()
+  const query = qs ? `?${qs}` : ''
+  return request<BlockPage>(`/topics/${encodeURIComponent(topicId)}/blocks${query}`)
 }
 
 // Emoji reactions (Slack semantics): toggles (emoji, author) on a block and
@@ -784,13 +799,17 @@ export function getTerminal(topicId: string): Promise<TerminalInfo> {
   return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)
 }
 
-// Git: commit log + working-tree diff for the project repo.
-export function getGitLog(projectId: string): Promise<ListPayload<GitCommit>> {
-  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log`)
+// Git: commit log + diff. With `topicId` these are THIS topic's own commits and
+// the full diff its 采纳 would merge; without it, the project repo's. The 话题
+// panel must always pass it — the project-level answer is other topics' work.
+export function getGitLog(projectId: string, topicId?: string | null): Promise<ListPayload<GitCommit>> {
+  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)
 }
 
-export function getGitDiff(projectId: string): Promise<{ diff: string }> {
-  return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff`)
+export function getGitDiff(projectId: string, topicId?: string | null): Promise<{ diff: string }> {
+  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+  return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff${t}`)
 }
 
 // 文件: list workspace files; read one file's content.

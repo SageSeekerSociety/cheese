@@ -28,6 +28,16 @@ class MemoryScope(enum.StrEnum):
     agent_project = "agent_project"
 
 
+def agent_project_scope_prefix(project_id: str | uuid.UUID) -> str:
+    """The ``scope_id`` prefix shared by every agent pool of one project.
+
+    Listing "what did the 芝士 in this project remember" is a prefix scan over
+    this, which is why the composite key's shape lives here rather than being
+    re-spelled at each call site.
+    """
+    return f"{project_id}:"
+
+
 def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> str:
     """scope_id for :attr:`MemoryScope.agent_project`.
 
@@ -35,7 +45,7 @@ def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> st
     parts are joined rather than given columns of their own. A handle cannot
     contain ``:`` (it is a username), so the split is unambiguous.
     """
-    return f"{project_id}:{agent_handle}"
+    return f"{agent_project_scope_prefix(project_id)}{agent_handle}"
 
 
 class MemoryEntry(UuidPk, Timestamps, Base):

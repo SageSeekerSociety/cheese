@@ -25,6 +25,13 @@ services:
   backend:
     group_add:
       - "${DOCKER_GID:-989}"
+    environment:
+      # Where the metering proxy's usage log appears INSIDE this container —
+      # matches the mount below. Subscription turns are metered at the proxy;
+      # the backend tails this file into resource_usage + credits (issue #218).
+      SUBSCRIPTION_USAGE_LOG: /var/log/cheese-proxy/usage.jsonl
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}
+      # The proxy's log dir, read-only: the one place subscription spend exists.
+      - ${SUBSCRIPTION_PROXY_LOG_HOST:-/home/nictheboy/cheese-proxy/logs}:/var/log/cheese-proxy:ro

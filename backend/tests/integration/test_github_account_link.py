@@ -131,6 +131,44 @@ class TestAccountLinkTokenPersistence:
         assert decrypt_text(conn.refresh_token) == "gh-refresh-token"
         assert conn.token_expires is not None
 
+    def test_callback_persists_a_non_ascii_profile_name(self, client, monkeypatch):
+        """The first GitHub profile with a Chinese display name 500'd the
+        callback (#222): json.dumps defaults to \\uXXXX escapes, and PostgreSQL
+        rejects non-ASCII escapes in jsonb unless the server encoding is UTF8 —
+        the dev database was initdb'd SQL_ASCII. The engine must send raw
+        UTF-8. A UTF8-encoded CI database passes the round trip either way, so
+        also pin the serializer wiring itself.
+        """
+        from app.core.db import engine
+
+        serializer = engine.dialect._json_serializer  # type: ignore[attr-defined]
+        assert "马霄宇" in serializer({"name": "马霄宇"})  # raw, not \\u9a6c…
+
+        _enable_github_app_provider(monkeypatch)
+
+        async def fake_exchange_code(self, code):
+            return {"access_token": "gh-cn-token"}
+
+        async def fake_get_user_info(self, access_token):
+            return OAuthUserInfo(id="gh-uid-cn", email="cn@example.com", name="马霄宇")
+
+        monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
+        monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
+
+        token = seed_user(client, "judy_ghcn")
+        user_id = int(decode_token(token)["sub"])
+        r = client.get(
+            "/api/users/me/github-account/callback",
+            params={
+                "code": "x",
+                "state": mint_account_link_state(user_id, return_project_id=None),
+            },
+            follow_redirects=False,
+        )
+        assert "github_account=success" in r.headers["location"]
+        conn = _fetch_connection(client, user_id)
+        assert conn.raw_profile["name"] == "马霄宇"
+
     def test_relink_updates_existing_connection_in_place(self, client, monkeypatch):
         _enable_github_app_provider(monkeypatch)
 
@@ -198,6 +236,85 @@ class TestAccountLinkTokenPersistence:
         )
         assert "github_account=error" in r.headers["location"]
         assert "reason=oauth_failed" in r.headers["location"]
+
+    def test_already_linked_rejects_and_logs_all_three_parties(
+        self, client, monkeypatch, caplog
+    ):
+        """One GitHub account binds to exactly one platform user — and the
+        rejection must be diagnosable from the server log alone.
+
+        From the 2026-08-10 incident (#222): a user pasted her authorize URL
+        into a group chat, a teammate's browser followed it, and his
+        already-bound GitHub arrived under HER state. The callback silently
+        302'd; with no outcome log, reconstructing this took DB elimination.
+        The log line must name the state's uid, the arriving GitHub id, and
+        the id of the user who already owns it.
+        """
+        import logging
+
+        _enable_github_app_provider(monkeypatch)
+
+        async def fake_exchange_code(self, code):
+            return {"access_token": "gh-token-shared"}
+
+        async def fake_get_user_info(self, access_token):
+            return OAuthUserInfo(id="gh-uid-shared", email="s@example.com", name="S")
+
+        monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
+        monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
+
+        owner_token = seed_user(client, "henry_ghowner")
+        owner_id = int(decode_token(owner_token)["sub"])
+        victim_token = seed_user(client, "iris_ghvictim")
+        victim_id = int(decode_token(victim_token)["sub"])
+
+        route_logger = "app.api.routes.github_account_link"
+        with caplog.at_level(logging.INFO, logger=route_logger):
+            r1 = client.get(
+                "/api/users/me/github-account/callback",
+                params={
+                    "code": "x",
+                    "state": mint_account_link_state(owner_id, return_project_id=None),
+                },
+                follow_redirects=False,
+            )
+            assert "github_account=success" in r1.headers["location"]
+
+            r2 = client.get(
+                "/api/users/me/github-account/callback",
+                params={
+                    "code": "y",
+                    "state": mint_account_link_state(victim_id, return_project_id=None),
+                },
+                follow_redirects=False,
+            )
+
+        assert r2.status_code == 302
+        assert "github_account=error" in r2.headers["location"]
+        assert "reason=already_linked" in r2.headers["location"]
+
+        # The rejected user must have gained no connection row.
+        async def _fetch_victim_rows() -> list[UserOAuthConnection]:
+            async with client.test_factory() as session:  # type: ignore[attr-defined]
+                result = await session.execute(
+                    select(UserOAuthConnection).where(
+                        UserOAuthConnection.user_id == victim_id,
+                        UserOAuthConnection.provider_id == "github_app",
+                    )
+                )
+                return list(result.scalars())
+
+        assert asyncio.run(_fetch_victim_rows()) == []
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any(
+            f"created uid={owner_id} github_id=gh-uid-shared" in m for m in messages
+        ), messages
+        assert any(
+            f"already linked uid={victim_id} github_id=gh-uid-shared "
+            f"owner_uid={owner_id}" in m
+            for m in messages
+        ), messages
 
     def test_get_github_user_token_reads_back_and_refreshes(self, client, monkeypatch):
         """OAuthService.get_github_user_token against the real repository/DB:

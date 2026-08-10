@@ -101,6 +101,97 @@ CHEESE_USAGE_SCRIPT = """#!/bin/sh
 python3 "$HOME/.claude/cheese-usage.py" | cheese-hook >/dev/null 2>&1 || true
 """
 
+# Claude Code applies the `env` block of the machine user's own
+# ~/.claude/settings.json OVER the process environment, key by key — and it
+# reads that file from the LOGIN user's home, not from the isolated $HOME this
+# launcher exports. A provisioned machine ships one, so every routing variable
+# the platform injects is discarded and the turn goes wherever the image says.
+#
+# Measured on a real MicroCloud machine (2026-08-02), sink on loopback:
+#   file present, base URL injected as env  -> 0 requests to us, answered by the
+#                                              image's own endpoint
+#   file's env block pointing at the sink   -> 7 requests to us
+#   file's env block emptied, env injected  -> 7 requests to us
+# so the file is the control point, and agreeing with it is the only way an
+# injected route takes effect. (The first two rounds of that experiment were
+# wrong because the image also sets HTTP(S)_PROXY there: a loopback sink is
+# unreachable *through a proxy*, which looks exactly like "the route was
+# ignored". Controlling for it is what produced the numbers above.)
+#
+# Merge rather than overwrite: the proxy and CA entries are the image's own
+# supply route and destroying them would take the subscription path down with
+# it. The original `env` is kept beside the file, once.
+CHEESE_SETTINGS_RECONCILE = """import json, os, sys
+
+path = sys.argv[1]
+want_base = os.environ.get("ANTHROPIC_BASE_URL") or ""
+want_token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
+
+try:
+    with open(path) as fh:
+        data = json.load(fh)
+except FileNotFoundError:
+    # No image-supplied settings means nothing overrides us; the injected
+    # environment already decides, and writing a file here would only invent a
+    # new thing to keep in sync.
+    print("absent")
+    raise SystemExit(0)
+except Exception as exc:
+    print("unreadable %s" % exc)
+    raise SystemExit(0)
+
+if not isinstance(data, dict):
+    print("unreadable not-an-object")
+    raise SystemExit(0)
+
+env = data.get("env")
+if not isinstance(env, dict):
+    env = {}
+    data["env"] = env
+
+backup = path + ".cheese-orig"
+if not os.path.exists(backup):
+    with open(backup, "w") as fh:
+        json.dump({"env": dict(env)}, fh)
+
+if want_base:
+    env["ANTHROPIC_BASE_URL"] = want_base
+    env["ANTHROPIC_AUTH_TOKEN"] = want_token
+    # Reach our own gateway directly. Leaving the image's forward proxy in
+    # charge of it would route platform traffic through a third party for no
+    # reason, and a proxy that cannot resolve our host fails the whole turn.
+    host = want_base.split("//", 1)[-1].split("/")[0].split(":")[0]
+    if host:
+        env["NO_PROXY"] = host
+        env["no_proxy"] = host
+else:
+    # Subscription mode: we inject no base URL, so the image's has to go too —
+    # left in place it would send the session to the image's endpoint instead
+    # of the official one through the proxy.
+    for key in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "NO_PROXY", "no_proxy"):
+        env.pop(key, None)
+
+with open(path, "w") as fh:
+    json.dump(data, fh)
+
+# Report what the file SAYS, re-read from disk — not what we meant to write.
+# A write that silently did not take is the failure this whole block exists to
+# stop, so it must not be the one thing taken on trust.
+try:
+    with open(path) as fh:
+        effective = ((json.load(fh) or {}).get("env") or {}).get(
+            "ANTHROPIC_BASE_URL", ""
+        )
+except Exception as exc:
+    print("verify-failed %s" % exc)
+    raise SystemExit(0)
+
+if effective == want_base:
+    print("ok %s" % (effective or "(image default)"))
+else:
+    print("mismatch wanted=%s effective=%s" % (want_base or "(none)", effective))
+"""
+
 
 def build_launch_script(sync_on_stop: bool = False) -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
@@ -109,6 +200,7 @@ def build_launch_script(sync_on_stop: bool = False) -> str:
     and ``CLAUDE_MODEL`` (optional)."""
     usage_script = CHEESE_USAGE_SCRIPT
     usage_reader = CHEESE_USAGE_READER
+    settings_reconcile = CHEESE_SETTINGS_RECONCILE
     settings_json = json.dumps(
         hooks_settings(
             ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"]
@@ -209,6 +301,22 @@ if [ -n "$CHEESE_CLI_URL" ]; then
     && chmod +x "$HOME/.claude/cheese" || rm -f "$HOME/.claude/cheese"
 fi
 export PATH="$HOME/.claude:$PATH"
+# Make the injected route actually take effect. See CHEESE_SETTINGS_RECONCILE:
+# the machine user's own settings.json outranks the process environment, so
+# without this the turn silently bills whatever endpoint the image was built
+# with. Non-fatal — a machine we cannot reconcile still runs — but never
+# silent: the outcome is reported, and a mismatch is the interesting case.
+if [ -f "$REAL_HOME/.claude/settings.json" ]; then
+  cat > "$HOME/.claude/cheese-settings-reconcile.py" <<'RECONCILE'
+{settings_reconcile}RECONCILE
+  CHEESE_ROUTE="$(python3 "$HOME/.claude/cheese-settings-reconcile.py" \\
+    "$REAL_HOME/.claude/settings.json" 2>&1 || echo "reconcile-crashed")"
+  case "$CHEESE_ROUTE" in
+    ok\\ *|absent) ;;
+    *) printf '{{"hook_event_name":"CheeseRoute","status":"failed","detail":"%s"}}' \\
+         "$CHEESE_ROUTE" | cheese-hook >/dev/null 2>&1 || true ;;
+  esac
+fi
 # Durable event delivery on the device: cheese-hook spools every hook and (via
 # CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so this ONE background drainer is
 # the sole sender — it retries each spooled event until the backend DURABLY accepts

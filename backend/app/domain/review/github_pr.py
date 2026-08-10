@@ -28,10 +28,12 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 import httpx
 
+from app.core.config import settings
 from app.domain.agent.github_app import GitHubAppTokens
 
 CheckState = Literal["pending", "success", "failure"]
@@ -42,12 +44,86 @@ class PullRequest:
     number: int
     url: str
     head_sha: str
+    #: True when this PR was already open on the head branch and we adopted it
+    #: instead of creating one (GitHub 422 "a pull request already exists").
+    #: Callers use it for wording only — a claimed PR is this topic's PR and is
+    #: driven through CI/merge/deploy exactly like a freshly opened one.
+    already_existed: bool = False
+
+
+@dataclass
+class PullRequestStatus:
+    """One PR's live state, as the poller needs it.
+
+    `merge_commit_sha` is ONLY meaningful when `merged` is True. GitHub
+    populates it on OPEN pull requests too — with the sha of a throwaway
+    *test-merge* commit that exists on no branch at all (verified against
+    api.github.com on 2026-08-10: open PR astral-sh/ruff#27626 reports
+    `merged: false` and a non-null `merge_commit_sha` which
+    `compare <sha>...main` puts 2 commits AHEAD of main, i.e. not on it;
+    merged PR astral-sh/ruff#20000 reports `merged: true` and a
+    `merge_commit_sha` that compare puts squarely ON main). Trusting it
+    unconditionally would hand stage 2 a sha no deploy run can ever match,
+    and the card would wait for a deploy forever."""
+
+    head_sha: str
+    state: str  # "open" | "closed" — GitHub says "closed" for merged PRs too
+    merged: bool
+    merge_commit_sha: str | None = None
+    merged_at: datetime | None = None
+
+
+@dataclass
+class MergeResult:
+    """Outcome of one merge attempt.
+
+    Exactly one side is set: `sha` when GitHub actually merged, else
+    `blocked_reason` — a human-readable, secret-free explanation of why
+    GitHub refused (405/409). The refusal MUST carry a reason: returning a
+    bare None here is what hid the squash-only bug for half a day (405 on a
+    disabled merge_method never clears, so "just retry next tick" looped
+    forever with nothing written anywhere)."""
+
+    sha: str | None = None
+    blocked_reason: str | None = None
 
 
 class GitHubPrError(RuntimeError):
     """A GitHub API call failed outright (bad token, repo gone, rate limit,
     GitHub outage, ...). The caller treats this as "mechanism unavailable"
     and degrades — never as "the work is bad"."""
+
+
+def _github_message(resp: httpx.Response) -> str:
+    """`HTTP 405：Merge commits are not allowed on this repository` — GitHub's
+    own explanation, which is the whole point (the status code alone doesn't
+    tell you the merge_method is disabled). Falls back to the raw body when
+    the response isn't the usual `{"message": ...}` error shape."""
+    detail = ""
+    try:
+        payload = resp.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        detail = str(payload.get("message") or "")
+    if not detail:
+        detail = resp.text
+    if not detail:
+        return f"HTTP {resp.status_code}"
+    return f"HTTP {resp.status_code}：{detail[:300]}"
+
+
+def _parse_github_time(raw: object) -> datetime | None:
+    """GitHub's `2026-08-09T22:03:59Z` → an aware UTC datetime (项目约定:
+    never a naive one). Anything unparseable is None so the caller can fall
+    back to "now" rather than blow up a poll tick on a format surprise."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 class GitHubPrClient(Protocol):
@@ -61,7 +137,20 @@ class GitHubPrClient(Protocol):
         title: str,
         body: str,
         token: str,
-    ) -> PullRequest: ...
+    ) -> PullRequest:
+        """Open a PR for `head` — or adopt the one that is already open on it.
+
+        GitHub answers 422 "a pull request already exists for <owner>:<head>"
+        when the branch already has an open PR. That is NOT the mechanism
+        being unavailable: the head branch is derived from the topic id
+        (`pr_branch_name`), so the PR that exists IS this topic's PR, and the
+        caller degrading to a local merge + direct push over it is what
+        produces an orphan PR (open forever, CI burning, never merged, code
+        already on main by another route). Implementations must resolve that
+        case into the existing PR and set `already_existed=True`; every OTHER
+        failure — including every other 422 — still raises `GitHubPrError`
+        so the caller degrades as before."""
+        ...
 
     async def check_state(
         self, *, owner: str, repo: str, ref: str, token: str
@@ -82,9 +171,19 @@ class GitHubPrClient(Protocol):
     async def pull_request_head_sha(
         self, *, owner: str, repo: str, number: int, token: str
     ) -> str:
-        """The PR's CURRENT head commit — re-fetched every poll because 芝士
-        pushing a fix moves it; polling a sha frozen at PR-open time would
-        check the original (failing) commit forever."""
+        """The PR's CURRENT head commit — re-fetched after 芝士's fix is
+        pushed because that push moves it; polling a sha frozen at PR-open
+        time would check the original (failing) commit forever."""
+        ...
+
+    async def pull_request_status(
+        self, *, owner: str, repo: str, number: int, token: str
+    ) -> PullRequestStatus:
+        """The PR's live state — head, open/closed, and whether SOMEONE ELSE
+        already merged it. The poller reads this first thing every tick: a PR
+        merged by hand on GitHub is invisible to every other signal here (its
+        checks can be red, its branch unpushable), and without noticing it the
+        card sits at `pr_open` forever."""
         ...
 
     async def merge_pull_request(
@@ -94,11 +193,15 @@ class GitHubPrClient(Protocol):
         repo: str,
         number: int,
         token: str,
+        commit_title: str | None = None,
         commit_message: str | None = None,
-    ) -> str | None:
-        """The merge commit SHA once GitHub actually merged it, else None for
-        a recoverable "not mergeable yet" — the poller just tries again next
-        tick, not an error."""
+    ) -> MergeResult:
+        """Merge the PR. `commit_title`/`commit_message` are GitHub's two
+        squash-commit fields (title line / body) — see the caller in
+        `review/services.py` for why both are passed explicitly.
+
+        Returns the merge commit SHA on success, else a `blocked_reason` the
+        poller surfaces on the card — never a silent "try again later"."""
         ...
 
     async def workflow_run_state(
@@ -112,6 +215,43 @@ class GitHubPrClient(Protocol):
 
 _FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "stale"}
 _OK_CONCLUSIONS = {"success", "neutral", "skipped"}
+
+
+def _is_pr_already_exists(resp: httpx.Response) -> bool:
+    """True only for GitHub's "a pull request already exists for X" 422.
+
+    Deliberately narrow. 422 is `POST /pulls`'s catch-all Validation Failed
+    and covers plenty of genuine, unrecoverable mistakes — a base branch that
+    doesn't exist, head == base, no commits between the two. Those must keep
+    degrading to the local merge path. Only the structured error entry
+    (`resource: "PullRequest"` + an "already exists" message) says the PR we
+    were about to open is already sitting there:
+
+        {"message": "Validation Failed",
+         "errors": [{"resource": "PullRequest", "code": "custom",
+                     "message": "A pull request already exists for owner:branch."}]}
+
+    Matching on the structured `errors[]` rather than a substring of the whole
+    body also keeps a branch or PR title that happens to contain the words
+    "already exists" from being read as this case.
+    """
+    if resp.status_code != 422:
+        return False
+    try:
+        payload = resp.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        return False
+    return any(
+        isinstance(err, dict)
+        and err.get("resource") == "PullRequest"
+        and "already exist" in str(err.get("message") or "").lower()
+        for err in errors
+    )
 
 
 #: How long a ref may sit at "zero check-runs, no github-actions check-suite
@@ -136,9 +276,15 @@ class HttpxGitHubPrClient:
         transport: httpx.AsyncBaseTransport | None = None,
         zero_checks_grace_s: float = _ZERO_CHECKS_GRACE_SECONDS,
         clock: Callable[[], float] = time.monotonic,
+        merge_method: str | None = None,
     ) -> None:
         self._api_base = api_base.rstrip("/")
         self._transport = transport
+        # None → read `settings.accept_pr_merge_method` at merge time (not at
+        # construction): `default_client()` builds one process-wide singleton,
+        # so binding the value here would freeze whatever settings looked like
+        # at first use.
+        self._merge_method = merge_method
         self._zero_checks_grace_s = zero_checks_grace_s
         self._clock = clock
         # ref → monotonic time it was first seen with zero check-runs AND no
@@ -174,16 +320,77 @@ class HttpxGitHubPrClient:
                 headers=self._headers(token),
                 json={"title": title, "body": body, "head": head, "base": base},
             )
-        if resp.status_code != 201:
-            raise GitHubPrError(
-                f"GitHub 拒绝开 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
-        data = resp.json()
-        return PullRequest(
-            number=data["number"],
-            url=data["html_url"],
-            head_sha=data["head"]["sha"],
+            if resp.status_code == 201:
+                data = resp.json()
+                return PullRequest(
+                    number=data["number"],
+                    url=data["html_url"],
+                    head_sha=data["head"]["sha"],
+                )
+            if _is_pr_already_exists(resp):
+                claimed = await self._find_open_pull_request(
+                    client=client,
+                    owner=owner,
+                    repo=repo,
+                    head=head,
+                    base=base,
+                    token=token,
+                )
+                # Falls through to the raise when the listing can't confirm it
+                # (API hiccup, or the PR was closed between the two calls):
+                # degrading on an unverified guess is worse than degrading on
+                # the error GitHub actually gave us.
+                if claimed is not None:
+                    return claimed
+        raise GitHubPrError(
+            f"GitHub 拒绝开 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
         )
+
+    async def _find_open_pull_request(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        owner: str,
+        repo: str,
+        head: str,
+        base: str,
+        token: str,
+    ) -> PullRequest | None:
+        """The open PR on `owner:head`, or None if it can't be established.
+
+        Never raises: the only caller is already holding a GitHubPrError it
+        can raise instead, and a failure here must not turn a plain degrade
+        into a different-looking crash."""
+        try:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/pulls",
+                headers=self._headers(token),
+                params={"head": f"{owner}:{head}", "state": "open", "per_page": 100},
+            )
+            if resp.status_code != 200:
+                return None
+            items = resp.json()
+            if not isinstance(items, list) or not items:
+                return None
+            # One head branch can carry open PRs against several bases; prefer
+            # the one we were trying to open, fall back to the only/first one.
+            chosen = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and item.get("base", {}).get("ref") == base
+                ),
+                items[0],
+            )
+            return PullRequest(
+                number=chosen["number"],
+                url=chosen["html_url"],
+                head_sha=chosen["head"]["sha"],
+                already_existed=True,
+            )
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
+            return None
 
     async def check_state(
         self, *, owner: str, repo: str, ref: str, token: str
@@ -293,6 +500,30 @@ class HttpxGitHubPrClient:
             )
         return resp.json()["head"]["sha"]
 
+    async def pull_request_status(
+        self, *, owner: str, repo: str, number: int, token: str
+    ) -> PullRequestStatus:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}",
+                headers=self._headers(token),
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝查 PR 状态（HTTP {resp.status_code}）：{resp.text[:300]}"
+            )
+        data = resp.json()
+        merged = bool(data.get("merged"))
+        return PullRequestStatus(
+            head_sha=data["head"]["sha"],
+            state=str(data.get("state") or ""),
+            merged=merged,
+            # Gated on `merged` on purpose — see PullRequestStatus's docstring
+            # for what this field holds on an unmerged PR.
+            merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
+            merged_at=_parse_github_time(data.get("merged_at")) if merged else None,
+        )
+
     async def merge_pull_request(
         self,
         *,
@@ -300,9 +531,13 @@ class HttpxGitHubPrClient:
         repo: str,
         number: int,
         token: str,
+        commit_title: str | None = None,
         commit_message: str | None = None,
-    ) -> str | None:
-        body: dict = {"merge_method": "merge"}
+    ) -> MergeResult:
+        method = self._merge_method or settings.accept_pr_merge_method
+        body: dict = {"merge_method": method}
+        if commit_title:
+            body["commit_title"] = commit_title
         if commit_message:
             body["commit_message"] = commit_message
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
@@ -312,11 +547,16 @@ class HttpxGitHubPrClient:
                 json=body,
             )
         if resp.status_code == 200:
-            return resp.json().get("sha")
+            return MergeResult(sha=resp.json().get("sha"))
         if resp.status_code in (405, 409):
-            # Not mergeable yet (checks pending / behind base) — try again
-            # next poll, not an error.
-            return None
+            # 405 = GitHub REFUSED the merge, and NOT only for transient
+            # reasons: a merge_method the repo disabled (this repo is
+            # squash-only) refuses forever, as do draft PRs and unsatisfied
+            # branch protection. 409 = the head moved under us / conflict.
+            # Both are safe to retry next poll, so this is not a
+            # GitHubPrError — but the reason travels with it so the poller
+            # can put it on the card instead of retrying blind.
+            return MergeResult(blocked_reason=_github_message(resp))
         raise GitHubPrError(
             f"GitHub 拒绝合并 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
         )
@@ -486,7 +726,9 @@ class GitHubPRClient:
         return resp.json()
 
     async def merge_pr(self, number: int, *, title: str, message: str) -> dict:
-        """Merge the PR with a merge commit (matches the platform's history).
+        """Merge the PR using `settings.accept_pr_merge_method` — same reason
+        as the 两阶段采纳 client above: this used to hardcode a merge commit,
+        which a squash-only repo (ours) refuses with 405 forever.
 
         405 (not mergeable) raises GitHubPRMergeBlocked — the caller routes it
         to the existing conflict-resolution flow. Anything else is a plain
@@ -497,7 +739,7 @@ class GitHubPRClient:
             resp = await client.put(
                 self._url(f"/pulls/{number}/merge"),
                 json={
-                    "merge_method": "merge",
+                    "merge_method": settings.accept_pr_merge_method,
                     "commit_title": title,
                     "commit_message": message,
                 },

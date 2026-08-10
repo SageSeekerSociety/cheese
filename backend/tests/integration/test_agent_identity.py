@@ -242,3 +242,100 @@ def test_human_members_are_not_mistaken_for_agents(client):
     )
     _turn(client, topic_id)
     assert _ai_authors(client, topic_id) == {"cheese"}
+
+
+# --- 记忆可见: the agent's own pool has to be listable, not just searchable ---
+
+
+def _list_memory(client, project_id: str, **params) -> list[dict]:
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    url = f"/api/memory?project_id={project_id}" + (f"&{query}" if query else "")
+    return client.get(url).json()["data"]["data"]
+
+
+def test_listing_a_project_shows_what_its_agents_remembered(client):
+    """`cheese remember` always carries a topic, so every agent write lands in
+    an agent pool. If listing skipped those, the memory panel showed an empty
+    project while the live pool kept growing — unauditable by construction."""
+    project_id = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    topic_id = client.post(
+        "/api/topics",
+        json={"project_id": project_id, "title": "T", "created_by": "alice"},
+    ).json()["data"]["id"]
+
+    _remember(client, project_id, topic_id, "部署脚本在 deploy/deploy.sh")
+
+    entries = _list_memory(client, project_id)
+    assert [e["content"] for e in entries] == ["部署脚本在 deploy/deploy.sh"]
+    assert entries[0]["scope"] == "agent_project"
+    assert entries[0]["scope_id"] == f"{project_id}:cheese"
+
+
+def test_listing_covers_every_agent_pool_in_the_project(client):
+    """Two 芝士 keep separate pools; the project view must still see both, and
+    `agent_handle` narrows to one."""
+    project_id = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+
+    def _topic(title: str) -> str:
+        return client.post(
+            "/api/topics",
+            json={"project_id": project_id, "title": title, "created_by": "alice"},
+        ).json()["data"]["id"]
+
+    cheese_room, ops_room = _topic("A"), _topic("B")
+    _swap_agent(client, ops_room, "ops")
+    _remember(client, project_id, cheese_room, "部署脚本在 deploy/deploy.sh")
+    _remember(client, project_id, ops_room, "告警阈值是 p99 500ms")
+
+    everything = _list_memory(client, project_id)
+    assert {e["content"] for e in everything} == {
+        "部署脚本在 deploy/deploy.sh",
+        "告警阈值是 p99 500ms",
+    }
+    assert {e["scope_id"] for e in everything} == {
+        f"{project_id}:cheese",
+        f"{project_id}:ops",
+    }
+
+    only_ops = _list_memory(client, project_id, agent_handle="ops")
+    assert [e["content"] for e in only_ops] == ["告警阈值是 p99 500ms"]
+    assert [e["scope_id"] for e in only_ops] == [f"{project_id}:ops"]
+
+
+def test_one_projects_agent_pool_never_leaks_into_another(client):
+    """The prefix scan is keyed on this project — a sibling project's identical
+    agent handle must not come along."""
+    ids = [
+        client.post("/api/projects", json={"name": n}).json()["data"]["id"]
+        for n in ("P1", "P2")
+    ]
+    for pid, fact in zip(ids, ("P1 的事", "P2 的事"), strict=True):
+        topic_id = client.post(
+            "/api/topics",
+            json={"project_id": pid, "title": "T", "created_by": "alice"},
+        ).json()["data"]["id"]
+        _remember(client, pid, topic_id, fact)
+
+    assert [e["content"] for e in _list_memory(client, ids[0])] == ["P1 的事"]
+    assert [e["content"] for e in _list_memory(client, ids[1])] == ["P2 的事"]
+
+
+def test_include_agent_false_is_the_way_back_to_the_shared_pool(client):
+    """The escape hatch: callers that only want the pre-split project pool."""
+    project_id = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    topic_id = client.post(
+        "/api/topics",
+        json={"project_id": project_id, "title": "T", "created_by": "alice"},
+    ).json()["data"]["id"]
+
+    _remember(client, project_id, topic_id, "芝士自己记的")
+    # No topic → the legacy shared project pool.
+    client.post(f"/api/projects/{project_id}/memory", json={"content": "项目共享的"})
+
+    assert [
+        e["content"] for e in _list_memory(client, project_id, include_agent="false")
+    ] == ["项目共享的"]
+    shared = _list_memory(client, project_id, include_agent="false")[0]
+    assert shared["scope"] == "project"
+    assert shared["scope_id"] == project_id
+    assert len(_list_memory(client, project_id)) == 2
