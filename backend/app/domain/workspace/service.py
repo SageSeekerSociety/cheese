@@ -132,10 +132,6 @@ def _git(
     return result.stdout
 
 
-JJ_USER_NAME = "芝士"
-JJ_USER_EMAIL = "cheese@zhishi.local"
-
-
 def _jj_store(repo: Path) -> Path:
     """The jj store a repo's `.jj` points at: itself for a main repo (where
     `.jj/repo` is the store directory), or the shared main repo's store for a
@@ -146,21 +142,83 @@ def _jj_store(repo: Path) -> Path:
     return pointer
 
 
+def _repair_modes(root: Path, since: float) -> None:
+    """Add read bits under `root`, stat'ing FILES only in directories written at
+    or after `since`. jj ADDS metadata files rather than rewriting them in
+    place, so an untouched directory cannot hold a file whose mode needs fixing.
+    That prune is what keeps this off the hot path: at real repo size (17
+    directories, 6.7k files) stat'ing every file costs 66ms per jj call and
+    grows with the op log forever, against 10ms to walk the tree. `since=0`
+    repairs everything."""
+    try:
+        st = os.stat(root)
+        os.chmod(root, st.st_mode | 0o555)
+        entries = list(os.scandir(root))
+    except OSError:
+        return
+    fix_files = st.st_mtime >= since
+    for entry in entries:
+        if entry.is_dir(follow_symlinks=False):
+            _repair_modes(Path(entry.path), since)
+        elif fix_files:
+            try:
+                os.chmod(entry.path, entry.stat().st_mode | 0o444)
+            except OSError:
+                pass
+
+
+def _share_jj_modes(repo: Path, since: float = 0.0) -> None:
+    """jj (0.42) creates its metadata with a hardcoded 0600 — it ignores umask,
+    so no default ACL or umask setting on the host can prevent this. Every call
+    therefore leaves files the sandbox's user (a DIFFERENT uid, sharing no
+    group) cannot read, and `jj log` inside a sandbox dies with "Permission
+    denied" on the newest operation. `_make_world_writable` only runs when a
+    worktree is created, so it never covers what LATER calls write.
+
+    Repair both trees a call can touch: the repo's own `.jj`, and the shared
+    store it points at — a workspace's operations land in the MAIN repo's
+    op_store, not its own `.jj`.
+
+    Read-only (plus the store root, which jj needs to write a temp file into to
+    resolve its "secure config"). Deliberately NOT write on op_store/: a sandbox
+    reads history with `--ignore-working-copy`; granting it op-log writes would
+    let one topic's agent corrupt every other topic's history."""
+    store = _jj_store(repo)
+    own = repo / ".jj"
+    # A main repo's store lives INSIDE its own .jj; a workspace's is elsewhere —
+    # and then the `.jj` ABOVE that store needs its exec bit too, or the sandbox
+    # cannot traverse into the store it mounts.
+    roots = [own] if store.is_relative_to(own) else [own, store.parent]
+    for root in roots:
+        _repair_modes(root, since)
+    try:  # jj writes `<store>/.tmpXXXX` before every command it runs
+        os.chmod(store, os.stat(store).st_mode | 0o777)
+    except OSError:
+        pass
+
+
+JJ_USER_NAME = "芝士"
+JJ_USER_EMAIL = "cheese@zhishi.local"
+
+
 def _drop_repo_config_id(store: Path) -> None:
     """Delete the store's `config-id` if one exists — the file that took every
     topic on the platform down at 11:39.
 
-    jj's per-repo config does NOT live in the repo: `config-id` holds a 20-hex
-    id naming a directory under the CALLER's `~/.config/jj/repos/`. Run jj as a
-    user whose home has no entry for that id — every fresh sandbox container —
-    and jj rewrites `config-id` via tmp+rename, so it returns owned by whoever
-    ran jj, mode 0600 (hardcoded; jj ignores umask). The backend (uid 1001) then
-    cannot read a file the sandbox (uid 1000) owns, and EVERY jj call it makes
-    dies with "Internal error: Failed to determine the secure config for a repo"
-    — `jj workspace add` included, so no topic can start at all.
+    The mode repair above cannot cover this one, because the problem is not the
+    mode: jj's per-repo config does NOT live in the repo. `config-id` holds a
+    20-hex id naming a directory under the CALLER's `~/.config/jj/repos/`. Run
+    jj as a user whose home has no entry for that id — every fresh sandbox
+    container — and jj rewrites `config-id` via tmp+rename, so it returns owned
+    by whoever ran jj, mode 0600. The backend (uid 1001) then cannot read a file
+    the sandbox (uid 1000) owns, `_repair_modes`' chmod raises EPERM and is
+    swallowed, and EVERY jj call dies with "Internal error: Failed to determine
+    the secure config for a repo" — `jj workspace add` included, so no topic can
+    start at all.
 
-    Repairing modes cannot win that race: chmod requires being the file's owner,
-    and jj replaces the inode on the next rewrite regardless. Deleting can:
+    Repairing modes can never win that race: chmod requires being the file's
+    owner, and jj replaces the inode on the next rewrite regardless. Deleting
+    can:
 
     - it is possible — unlink needs write permission on the DIRECTORY (which the
       backend owns), not on the file;
@@ -197,6 +255,7 @@ def _jj_failure_message(command: str, detail: str, repo: Path) -> str:
 
 
 def _jj(repo: Path, *args: str) -> str:
+    started = time.time() - 1  # -1s: filesystem mtime vs clock granularity slack
     # Before every call, not once at setup: a jj run by any other uid (an agent
     # in a sandbox) recreates config-id and locks the backend out mid-flight.
     _drop_repo_config_id(_jj_store(repo))
@@ -210,6 +269,9 @@ def _jj(repo: Path, *args: str) -> str:
         # `--repo` is the one thing that creates config-id in the first place.
         env={**os.environ, "JJ_USER": JJ_USER_NAME, "JJ_EMAIL": JJ_USER_EMAIL},
     )
+    # Before the returncode check: a FAILED jj call still writes operations, and
+    # those unreadable files break the sandbox just as thoroughly.
+    _share_jj_modes(repo, since=started)
     if result.returncode != 0:
         raise ValidationError(_jj_failure_message(args[0], result.stderr.strip(), repo))
     return result.stdout
@@ -338,6 +400,12 @@ def sandbox_vcs_mounts(
     container's extra mounts change."""
     main = _repo(project_id)
     wt = _worktree_path(project_id, branch)
+    # Full (since=0) repair right before the store is handed to a container:
+    # _jj's per-call repair only covers what THAT call wrote, so a repo whose
+    # metadata predates this behaviour — every repo already on disk — would stay
+    # unreadable forever. Launching a sandbox is the moment it has to be right,
+    # and once per container start the cost does not matter.
+    _share_jj_modes(wt)
     rel_to_store = os.path.relpath(main / ".jj" / "repo", wt / ".jj")
     store_in_container = Path(
         os.path.normpath(os.path.join(container_workdir, ".jj", rel_to_store))
@@ -500,13 +568,40 @@ def write_file_bytes(
     target.write_bytes(data)
 
 
-def git_log(project_id: uuid.UUID, limit: int = 50) -> list[dict]:
+def git_log(
+    project_id: uuid.UUID, limit: int = 50, topic_id: uuid.UUID | None = None
+) -> list[dict]:
+    """Commit history. With ``topic_id``: THIS topic's own commits (its branch
+    minus the base), which is what the 话题 Git panel asks about.
+
+    Project-level history was the wrong answer twice over: before 采纳 the
+    topic's commits live only on its branch, so the panel showed none of them;
+    after 采纳 the base is full of OTHER topics' commits, so it showed those.
+    Once a topic is merged its own range is empty again — correctly, since the
+    commits are the base's now — and the panel says so rather than borrowing
+    someone else's history.
+    """
     repo = ensure_repo(project_id)
     # A fresh repo has no commits yet — `git log` would exit non-zero. Return an
     # empty history instead of erroring.
     if not _git(repo, "rev-list", "-n", "1", "--all").strip():
         return []
-    out = _git(repo, "log", f"-{limit}", "--pretty=format:%h\t%an\t%s")
+    if topic_id is not None:
+        branch = branch_for_topic(topic_id)
+        if not _branch_exists(repo, branch):
+            return []
+        base = _base_branch(repo)
+        if branch == base:
+            return []
+        out = _git(
+            repo,
+            "log",
+            f"-{limit}",
+            "--pretty=format:%h\t%an\t%s",
+            f"{base}..{branch}",
+        )
+    else:
+        out = _git(repo, "log", f"-{limit}", "--pretty=format:%h\t%an\t%s")
     rows = []
     for line in out.splitlines():
         parts = line.split("\t", 2)
