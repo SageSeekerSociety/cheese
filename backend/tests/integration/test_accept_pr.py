@@ -296,6 +296,52 @@ def test_poll_ci_pending_no_change(client, monkeypatch):
         _reset_client()
 
 
+def test_poll_token_gone_pauses_with_visible_reason(client, monkeypatch):
+    """轮询时批准人的 GitHub token 没了(过期/撤销/账号解绑)——之前只有
+    logger.warning，卡片永远停在原地不动，外部观感跟"一切正常只是 CI 还没跑
+    完"完全一样。现在卡片必须说清楚原因（不能泄漏 token 本身），且重复轮询同一
+    个持续失败不能刷屏。"""
+    _pr_ready(client, monkeypatch)
+    holder: dict = {"reason": None}
+
+    async def fake_token(_session, h, *, provider_id="github_app"):
+        if h == "alice" and holder["reason"] is None:
+            return "test-token", None
+        return None, holder["reason"] or "not_connected"
+
+    monkeypatch.setattr(
+        "app.domain.oauth.services.get_github_user_token_for_handle_with_reason",
+        fake_token,
+    )
+    try:
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)
+        client.post(
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=_auth("alice"),
+        )
+
+        # Token goes bad after the PR is already open (key rotated / expired
+        # with no refresh — same observable shape either way).
+        holder["reason"] = "undecryptable"
+
+        result = _poll(client)
+        assert result["errors"] == []  # transient — not a hard poller error
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"  # not permanently stuck/failed
+        assert "轮询暂停" in card["note"]
+        assert "无法解密" in card["note"]
+        assert "test-token" not in card["note"]
+
+        # Polling is every 60s — repeated failures must not spam the note.
+        _poll(client)
+        assert _cards_for_topic(client, tid)[0]["note"] == card["note"]
+    finally:
+        _reset_client()
+
+
 def test_poll_ci_green_merges_but_topic_stays_active_until_deploy(client, monkeypatch):
     fake = _pr_ready(client, monkeypatch)
     try:
@@ -574,12 +620,20 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
         assert card["status"] == "pr_open"  # not permanently failed
         assert card["pr_head_sha"] == first_head  # unchanged — push never landed
         assert _topic(client, tid)["status"] == "active"
+        # 可见性 (this card's whole point): 芝士 has no host SSH to read
+        # logger.warning — the failure and its cause must be on the card.
+        assert "重推失败" in card["note"]
+        assert "401 Bad credentials" in card["note"]
 
         # Retrying while still failing must stay just as graceful (no crash,
-        # no permanent-failure state) — not just tolerate one failure.
+        # no permanent-failure state) — not just tolerate one failure. And,
+        # since polling is every 60s, repeated failures must NOT spam the
+        # note with duplicate copies of the same message.
         result = _poll(client)
         assert result["errors"] == []
-        assert _cards_for_topic(client, tid)[0]["status"] == "pr_open"
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert card["note"].count("重推失败") == 1
 
         # Once the transient issue clears, the very next poll catches up.
         holder["fail"] = False
@@ -587,6 +641,7 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
         card = _cards_for_topic(client, tid)[0]
         assert card["pr_head_sha"] == _real_git_head(puid, tuid)
         assert card["pr_head_sha"] != first_head
+        assert "重推失败" not in card["note"]  # cleared once the push succeeds
     finally:
         _reset_client()
 
