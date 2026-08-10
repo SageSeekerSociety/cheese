@@ -36,6 +36,15 @@ import {
 // and "what the editor runs" can never drift apart. (History: TipTap without
 // the table extension silently DROPPED every GFM table on parse, and a later
 // save wrote the table-less doc back — data loss. 军规 1.)
+import {
+  autosavePaused,
+  docSaveStatus,
+  dropStash,
+  planExternalUpdate,
+  planSourceModeEntry,
+  popStash,
+  pushStash,
+} from '../lib/docEditState'
 import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
 import { relTime } from '../lib/relTime'
 import { isPlatformEvent, summarizeActions, toolLabel } from '../lib/toolLabels'
@@ -816,6 +825,43 @@ const lossyConfirmOpen = ref(false)
 // 源码模式: edit the raw markdown in Monaco — the lossless escape hatch.
 const sourceMode = ref(false)
 const sourceDraft = ref('')
+// 军规 1: unsaved edits that a mode switch could NOT carry over (see
+// planSourceModeEntry). Held here and offered back in the UI instead of being
+// dropped — the 「用源码模式」 button used to delete them outright. A stack, so
+// a second set-aside can't overwrite the first.
+const pendingEdits = ref<string[]>([])
+const hasPendingEdits = computed(() => pendingEdits.value.length > 0)
+// 军规 1: a newer version arrived from the server while we had unsaved local
+// edits. Neither side wins silently; both are held until the user picks.
+const externalDoc = ref<string | null>(null)
+
+// 军规 1: the header used to show 「编辑中…」 while a lossy doc's autosave was
+// paused — the edits were stranded in memory and would NEVER be written. The
+// status now names that state instead of impersonating a save in progress.
+const saveStatus = computed(() =>
+  docSaveStatus({
+    loading: loading.value,
+    saving: saving.value,
+    dirty: dirty.value,
+    lossy: lossy.value,
+    sourceMode: sourceMode.value,
+    editable: editable.value,
+    savedAt: savedAt.value,
+  })
+)
+const paused = computed(() =>
+  autosavePaused({
+    dirty: dirty.value,
+    lossy: lossy.value,
+    sourceMode: sourceMode.value,
+    editable: editable.value,
+  })
+)
+const pausedHint = computed(() =>
+  editable.value
+    ? '此文档含编辑器不完全支持的语法，自动保存已暂停；切到源码模式编辑即可保存'
+    : '只读模式下不会自动保存；切回编辑模式即可保存这些改动'
+)
 
 // Full markdown the file should contain if we saved right now.
 function currentFullMarkdown(): string {
@@ -1097,6 +1143,12 @@ if (import.meta.env.DEV) {
   ;(window as unknown as Record<string, unknown>).__docPanel = {
     getMarkdown: () => (editor.value ? serializeDoc(editor.value) : null),
     isDirty: () => dirty.value,
+    // 军规 1 state: probes assert that nothing was dropped, not that a class
+    // name happened to render.
+    saveStatus: () => saveStatus.value,
+    isAutosavePaused: () => paused.value,
+    pendingEdits: () => [...pendingEdits.value],
+    externalDoc: () => externalDoc.value,
     updates: 0,
   }
 }
@@ -1555,17 +1607,27 @@ async function loadDoc(topicId: string) {
   }
 }
 
-// Reload triggered by AI activity. Don't clobber unsaved local edits: only pull
-// the server version in if the user hasn't touched the doc since last save.
+// Reload triggered by AI activity. Don't clobber unsaved local edits — but
+// 军规 1: don't silently drop the server's version either. When both sides
+// moved, hold the incoming content and let the conflict bar decide.
 async function reloadFromActivity(topicId: string) {
-  if (dirty.value) return
+  // A save in flight makes any snapshot ambiguous: the server may or may not
+  // have our PUT yet, so a difference here proves nothing. Skip; the next
+  // activity tick compares against a settled rawDoc.
+  if (saving.value) return
   try {
     const block = await getDoc(topicId)
-    if (props.topic?.id !== topicId) return
+    if (props.topic?.id !== topicId || saving.value) return
     const full = block?.content ?? ''
-    if (full !== rawDoc.value) {
+    const plan = planExternalUpdate({ dirty: dirty.value, incoming: full, rawDoc: rawDoc.value })
+    if (plan === 'install') {
       installDoc(full)
+      externalDoc.value = null
       savedAt.value = null
+    } else if (plan === 'conflict') {
+      externalDoc.value = full
+    } else {
+      externalDoc.value = null
     }
     // A2 badges + 常驻评论区: refresh alongside the doc content.
     void loadComments(topicId).catch(() => {})
@@ -1629,6 +1691,8 @@ async function save(force = false) {
     }
     // A confirmed lossy overwrite: what's on disk now IS the editor's view.
     if (force) lossy.value = false
+    // Our version is the file now — the conflict (if any) is resolved.
+    externalDoc.value = null
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '保存失败'
   } finally {
@@ -1659,21 +1723,26 @@ function toggleEditable() {
 // ---- 源码模式: raw markdown in Monaco. Entering shows the exact file
 // content (or the current unsaved visual edits, serialized); leaving parses
 // the draft back into the visual editor and re-runs the fidelity check. ----
+// 军规 1: on a lossy doc the source view must show the FILE, never the degraded
+// serialization — otherwise the escape hatch itself corrupts the syntax it
+// exists to protect. But the user's unsaved visual edits live ONLY in that
+// serialization, so they are stashed (pendingEdits) and offered back by the
+// bar above the editor. Nothing is dropped; the user decides.
 function enterSourceMode() {
   lossyConfirmOpen.value = false
-  if (lossy.value) {
-    // 军规 1: on a lossy doc the source view must show the FILE, never the
-    // degraded serialization — otherwise the escape hatch itself corrupts.
-    // Unsaved visual edits (autosave was paused) are not carried over; say so.
-    if (dirty.value) {
-      errorMsg.value = '源码模式已载入磁盘原文；可视化模式下未保存的改动未带入'
-    }
-    sourceDraft.value = rawDoc.value
-    dirty.value = false
-  } else {
-    sourceDraft.value = dirty.value ? currentFullMarkdown() : rawDoc.value
-  }
+  const plan = planSourceModeEntry({
+    lossy: lossy.value,
+    dirty: dirty.value,
+    rawDoc: rawDoc.value,
+    visualMarkdown: currentFullMarkdown(),
+  })
+  if (plan.stashed !== null) pendingEdits.value = pushStash(pendingEdits.value, plan.stashed)
+  sourceDraft.value = plan.draft
+  dirty.value = plan.dirty
   sourceMode.value = true
+  // Source-mode autosave is never paused, so edits carried in here must not be
+  // left stranded waiting for the next keystroke.
+  if (dirty.value) queueAutosave()
 }
 
 function exitSourceMode() {
@@ -1684,6 +1753,52 @@ function exitSourceMode() {
   checkFidelity(body)
   dirty.value = sourceDraft.value !== rawDoc.value
   if (dirty.value) queueAutosave()
+}
+
+// 「恢复我的改动」: put the stashed edits back into whichever editor is showing.
+// A swap — what was on screen goes back onto the stash, so restoring can't be
+// the step that drops content either.
+function applyPendingEdits() {
+  const { restored, stack } = popStash(pendingEdits.value, currentFullMarkdown(), rawDoc.value)
+  if (restored === null) return
+  pendingEdits.value = stack
+  if (sourceMode.value) {
+    sourceDraft.value = restored
+  } else {
+    const { prefix, body } = splitDuplicateTitle(restored)
+    titlePrefix.value = prefix
+    setEditorMarkdown(body)
+  }
+  dirty.value = restored !== rawDoc.value
+  if (dirty.value) {
+    savedAt.value = null
+    queueAutosave()
+  }
+}
+
+function discardPendingEdits() {
+  pendingEdits.value = dropStash(pendingEdits.value)
+}
+
+// 冲突条「查看磁盘版本」: open the server's version in source mode and stash the
+// local edits so they stay recoverable — the same never-drop mechanism.
+function viewExternalDoc() {
+  const incoming = externalDoc.value
+  if (incoming === null) return
+  pendingEdits.value = pushStash(pendingEdits.value, currentFullMarkdown())
+  externalDoc.value = null
+  // The server version becomes the new base; the local edits sit in the stash,
+  // one click away, instead of being clobbered by the incoming content.
+  installDoc(incoming)
+  dirty.value = false
+  savedAt.value = null
+  sourceMode.value = true
+}
+
+// 冲突条「用我的版本覆盖」: an explicit overwrite, never an implicit one.
+function overwriteWithMine() {
+  externalDoc.value = null
+  void save(true)
 }
 
 function toggleSourceMode() {
@@ -1711,6 +1826,8 @@ watch(
     sourceMode.value = false
     lossy.value = false
     lossyConfirmOpen.value = false
+    pendingEdits.value = []
+    externalDoc.value = null
     codeCopy.value = null
     if (id) loadDoc(id)
     else {
@@ -1774,12 +1891,21 @@ onBeforeUnmount(() => {
         </v-toolbar-title>
         <v-spacer />
 
-        <span v-if="loading" class="t-meta me-2">加载中…</span>
-        <span v-else-if="saving" class="t-meta me-2">保存中…</span>
-        <span v-else-if="savedAt" class="d-inline-flex align-center ga-1 c-faint me-2" style="font-size: 12px">
+        <span v-if="saveStatus === 'loading'" class="t-meta me-2">加载中…</span>
+        <span v-else-if="saveStatus === 'saving'" class="t-meta me-2">保存中…</span>
+        <!-- 军规 1: autosave is paused — say so instead of faking progress. -->
+        <span v-else-if="saveStatus === 'paused'" class="doc-status-paused me-2" :title="pausedHint">
+          <v-icon size="13">mdi-pause-circle-outline</v-icon>
+          已暂停 · 改动未保存
+        </span>
+        <span
+          v-else-if="saveStatus === 'saved'"
+          class="d-inline-flex align-center ga-1 c-faint me-2"
+          style="font-size: 12px"
+        >
           <span class="status-dot status-dot--ok" />已保存
         </span>
-        <span v-else-if="dirty" class="t-meta me-2">编辑中…</span>
+        <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
 
         <v-btn size="small" variant="text" class="me-1 c-muted" :disabled="sourceMode" @click="toggleEditable">
           {{ editable ? '只读' : '编辑' }}
@@ -1821,6 +1947,26 @@ onBeforeUnmount(() => {
         />
       </v-toolbar>
 
+      <!-- 军规 1 notices. Above the stage so they show in BOTH visual and
+           source mode — the states they describe survive a mode switch. -->
+      <!-- Edits a mode switch could not carry over: held, not dropped. -->
+      <div v-if="hasPendingEdits" class="doc-notice">
+        <v-icon size="16" class="doc-notice__icon">mdi-content-save-alert-outline</v-icon>
+        <div class="doc-notice__text">
+          有未保存的改动没有带入当前编辑器（编辑器显示的是磁盘上的版本）。改动仍然保留着，可以随时取回。
+          <template v-if="pendingEdits.length > 1">共 {{ pendingEdits.length }} 份，先取回最近一份。</template>
+        </div>
+        <button type="button" class="doc-notice__btn" @click="applyPendingEdits">恢复我的改动</button>
+        <button type="button" class="doc-notice__btn doc-notice__btn--quiet" @click="discardPendingEdits">丢弃</button>
+      </div>
+      <!-- Server and local both moved: neither side wins silently. -->
+      <div v-if="externalDoc !== null" class="doc-notice doc-notice--conflict">
+        <v-icon size="16" class="doc-notice__icon">mdi-source-branch</v-icon>
+        <div class="doc-notice__text">芝士更新了磁盘上的这篇文档，而你有未保存的改动。两份都还在，选一份继续。</div>
+        <button type="button" class="doc-notice__btn" @click="viewExternalDoc">查看磁盘版本</button>
+        <button type="button" class="doc-notice__btn" @click="overwriteWithMine">用我的版本覆盖</button>
+      </div>
+
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
         <!-- 源码模式: the raw markdown file in Monaco. Full-bleed (no page
@@ -1852,7 +1998,7 @@ onBeforeUnmount(() => {
               <div class="doc-lossy-banner__text">
                 此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。 自动保存已暂停——建议用源码模式编辑。
               </div>
-              <button type="button" class="doc-lossy-banner__btn" @click="enterSourceMode">源码模式</button>
+              <button type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">源码模式</button>
             </div>
             <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
               <EditorContent v-if="editor" :editor="editor" class="doc-editor" />
@@ -2416,12 +2562,12 @@ onBeforeUnmount(() => {
           </v-card-title>
           <v-card-text class="text-body-2 pt-0">
             此文档包含可视化编辑器暂不完全支持的语法。直接保存会按编辑器的理解重写文件，
-            不支持的格式将丢失。用源码模式编辑可以完整保留原文。
+            不支持的格式将丢失。用源码模式编辑可以完整保留原文——你刚才的改动会被暂存， 切过去之后可以一键取回。
           </v-card-text>
           <v-card-actions>
             <v-spacer />
             <v-btn size="small" variant="text" @click="lossyConfirmOpen = false"> 取消 </v-btn>
-            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode"> 用源码模式 </v-btn>
+            <v-btn size="small" variant="tonal" color="primary" @click="enterSourceMode()"> 用源码模式 </v-btn>
             <v-btn size="small" variant="flat" color="warning" @click="confirmLossySave"> 仍要保存 </v-btn>
           </v-card-actions>
         </v-card>
@@ -3589,6 +3735,64 @@ onBeforeUnmount(() => {
 .doc-lossy-banner__btn:hover {
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
+/* Header status for the paused state — an honest, quiet warning, not the
+   「编辑中…」 that used to impersonate a save in progress. */
+.doc-status-paused {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--warn);
+  cursor: default;
+}
+
+/* 军规 1 notices: content held aside (stash) or in conflict. Full-width, above
+   the stage, so they follow the user across 可视化 ⇄ 源码. */
+.doc-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line-2);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.doc-notice--conflict {
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+}
+.doc-notice__icon {
+  flex: 0 0 auto;
+  color: var(--warn);
+}
+.doc-notice--conflict .doc-notice__icon {
+  color: var(--danger);
+}
+.doc-notice__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.doc-notice__btn {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.doc-notice__btn:hover {
+  background: color-mix(in srgb, var(--text) 6%, var(--surface));
+}
+.doc-notice__btn--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
 /* 源码模式: Monaco fills the stage (it scrolls itself). */
 .doc-source {
   flex: 1 1 auto;
