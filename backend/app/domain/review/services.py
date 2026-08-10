@@ -52,8 +52,21 @@ def _pr_body(topic: Topic, decided_by: str) -> str:
     )
 
 
+# The squash commit's title line. GitHub only auto-appends "(#N)" to the
+# DEFAULT title (the one derived from the repo's `squash_merge_commit_title`
+# setting); an explicit `commit_title` replaces that default wholesale, so the
+# PR number has to be appended here or the repo's "… (#213)" history style
+# breaks.
+def _pr_merge_commit_title(topic: Topic, number: int) -> str:
+    title = topic.title if len(topic.title) <= 60 else f"{topic.title[:59]}…"
+    return f"采纳 {title} (#{number})"
+
+
 def _pr_merge_commit_message(topic: Topic, decided_by: str) -> str:
-    return f"采纳 {topic.title}\n\n{_pr_trailers(topic, decided_by)}"
+    """The squash commit's BODY. Just the trailers — the "采纳 …" line lives in
+    `_pr_merge_commit_title` now, and repeating it here would put it in the
+    commit twice."""
+    return _pr_trailers(topic, decided_by)
 
 
 # 两阶段采纳 (PR迭代式) 降级原因可见性: TOKEN_UNAVAILABLE_* → 人能看懂的中文说明,
@@ -798,6 +811,9 @@ class AcceptService:
         runner,
     ) -> None:
         """Stage 1: the PR itself hasn't merged yet."""
+        number = card.pr_number
+        if number is None:  # already guaranteed by poll_open_pr_card's guard
+            return
         # 芝士 fixed something in its workspace — push it to the PR branch
         # before checking CI, or a fixed commit just sits local forever (see
         # _repush_if_local_head_moved's docstring for why 芝士 can't do this
@@ -837,17 +853,24 @@ class AcceptService:
             return
 
         # Green → merge now. Trailers go on the merge commit too, not just
-        # the PR description (2026-08-09 设计要点5: 标清芝士代表谁).
-        message = _pr_merge_commit_message(topic, card.decided_by or "")
-        merge_sha = await client.merge_pull_request(
+        # the PR description (2026-08-09 设计要点5: 标清芝士代表谁) — under
+        # squash that means the body field, with the title passed separately.
+        result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
             number=card.pr_number,
             token=token,
-            commit_message=message,
+            commit_title=_pr_merge_commit_title(topic, number),
+            commit_message=_pr_merge_commit_message(topic, card.decided_by or ""),
         )
-        if merge_sha is None:
-            return  # not mergeable yet (behind base etc.) — retry next tick
+        if result.sha is None:
+            # GitHub refused (405/409). NOT necessarily transient — a
+            # merge_method the repo disabled refuses on every poll forever —
+            # so the reason goes on the card rather than into the void.
+            self._note_merge_blocked(card=card, reason=result.blocked_reason or "")
+            await self._session.flush()
+            return
+        merge_sha = result.sha
         card.pr_merged_at = datetime.now(UTC)
         card.pr_head_sha = merge_sha  # now tracking the merge commit (stage 2)
         card.note = f"PR #{card.pr_number} 检查全绿，已自动合并，等部署也成功后才归档。"
@@ -893,6 +916,31 @@ class AcceptService:
             return
 
         await self._finish_pr_accept(card=card, topic=topic)
+
+    def _note_merge_blocked(self, *, card: AcceptCard, reason: str) -> None:
+        """Put GitHub's merge refusal on the card's `note` — the one surface
+        both 芝士 and the user actually read. Before this existed a refusal
+        left `note` empty, so a permanently-unmergeable PR looked exactly like
+        a healthy one still waiting on CI.
+
+        Two things the 60s poll makes mandatory:
+
+        - **No spam.** The note is rewritten only when the text actually
+          changes, so an unchanging reason costs one write, not one per poll.
+          (Stricter than `_nudge_pr_fix`'s prefix check, which can't notice a
+          405 turning into a 409.)
+        - **No clobbering.** `❌ 部署失败` outranks this and is never
+          overwritten — that note describes a merged PR whose deploy broke,
+          which is strictly more urgent than "not merged yet".
+        """
+        if card.note.startswith("❌"):
+            return
+        note = f"🚫 PR #{card.pr_number} 检查全绿，但 GitHub 拒绝合并（{reason}）"
+        note = note[:2000]
+        if card.note == note:
+            return
+        card.note = note
+        logger.warning("PR merge refused for card %s: %s", card.id, reason)
 
     def _nudge_pr_fix(
         self,
