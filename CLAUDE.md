@@ -2,11 +2,11 @@
 
 Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright). See `README.md` for setup and commands.
 
-Procedural guidance lives in `.claude/` (skills, path-scoped rules, agents, scripts — `ls .claude/` is the inventory), not in always-on prose here: review → `cheese-py-code-review` skill, post-pull → `post-pull` skill; area-specific pitfalls (migrations, backend tests, e2e) live in `.claude/rules/` and load automatically when you touch matching files. This file holds only the always-relevant conventions below.
+Procedural guidance lives in `.claude/` (skills, path-scoped rules, agents, scripts — `ls .claude/` is the inventory), not in always-on prose here: review → `cheese-py-code-review` skill, post-pull → `post-pull` skill, running tests where there is no docker → `.claude/scripts/dev-db.sh` (see Testing); area-specific pitfalls (migrations, backend tests, e2e) live in `.claude/rules/` and load automatically when you touch matching files. This file holds only the always-relevant conventions below.
 
 ## Development Commands
 
-Backend runs locally via `uv run` from `backend/`. Infrastructure (PG, Valkey) in Docker. Use Taskfile:
+Backend runs locally via `uv run` from `backend/`. Infrastructure (PG, Valkey) in Docker — where there is no docker (agent sandboxes), `.claude/scripts/dev-db.sh` stands the test servers up instead (see Testing). Use Taskfile:
 
 ```bash
 task check                # all checks (backend + frontend)
@@ -73,6 +73,29 @@ The root-level `reference/` directory (gitignored) contains original implementat
 - Locations: `backend/tests/unit/` (no DB), `backend/tests/integration/` (DB-backed), `backend/tests/contract/` (API contract).
 - Tests MUST pass before any commit. Pre-commit hook enforces this.
 - New features require tests (unit + integration as appropriate).
+
+### Running tests in a sandbox (no docker)
+
+An agent sandbox has neither Postgres nor docker, but the suite still runs — the
+DB-backed tests need a server, not docker. `.claude/scripts/dev-db.sh` starts
+Postgres + Redis from prebuilt wheels (`pgserver`, `redislite`) fetched by `uv`:
+
+```bash
+eval "$(bash .claude/scripts/dev-db.sh start)"   # exports TEST_PG_BASE + REDIS_URL
+cd backend && uv run pytest tests/ -n 4 -q
+bash .claude/scripts/dev-db.sh stop --purge      # stop + delete the data dir
+```
+
+- **Redis is required, not optional** — 2FA/login/session state lives there, so
+  the integration suite errors without it.
+- Those two wheels are deliberately NOT backend dependencies: `pgserver` ships no
+  cp313 wheel and this project is `requires-python >=3.13`, so declaring it would
+  break resolution. The script pins them and runs them on their own throwaway
+  3.12 interpreter; tests still run on 3.13.
+- `tests/unit/` needs no server at all (`conftest.py` provisions the schema only
+  for tests that ask for it). Everything outside `tests/unit/` is DB-backed.
+- `check.sh --no-tests` (what the quality gate uses) skips pytest entirely — use
+  the recipe above to actually exercise the suite.
 
 ## Linting & Type Checking
 
