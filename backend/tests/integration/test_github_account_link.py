@@ -131,6 +131,44 @@ class TestAccountLinkTokenPersistence:
         assert decrypt_text(conn.refresh_token) == "gh-refresh-token"
         assert conn.token_expires is not None
 
+    def test_callback_persists_a_non_ascii_profile_name(self, client, monkeypatch):
+        """The first GitHub profile with a Chinese display name 500'd the
+        callback (#222): json.dumps defaults to \\uXXXX escapes, and PostgreSQL
+        rejects non-ASCII escapes in jsonb unless the server encoding is UTF8 —
+        the dev database was initdb'd SQL_ASCII. The engine must send raw
+        UTF-8. A UTF8-encoded CI database passes the round trip either way, so
+        also pin the serializer wiring itself.
+        """
+        from app.core.db import engine
+
+        serializer = engine.dialect._json_serializer  # type: ignore[attr-defined]
+        assert "马霄宇" in serializer({"name": "马霄宇"})  # raw, not \\u9a6c…
+
+        _enable_github_app_provider(monkeypatch)
+
+        async def fake_exchange_code(self, code):
+            return {"access_token": "gh-cn-token"}
+
+        async def fake_get_user_info(self, access_token):
+            return OAuthUserInfo(id="gh-uid-cn", email="cn@example.com", name="马霄宇")
+
+        monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
+        monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
+
+        token = seed_user(client, "judy_ghcn")
+        user_id = int(decode_token(token)["sub"])
+        r = client.get(
+            "/api/users/me/github-account/callback",
+            params={
+                "code": "x",
+                "state": mint_account_link_state(user_id, return_project_id=None),
+            },
+            follow_redirects=False,
+        )
+        assert "github_account=success" in r.headers["location"]
+        conn = _fetch_connection(client, user_id)
+        assert conn.raw_profile["name"] == "马霄宇"
+
     def test_relink_updates_existing_connection_in_place(self, client, monkeypatch):
         _enable_github_app_provider(monkeypatch)
 

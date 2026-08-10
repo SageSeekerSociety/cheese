@@ -28,7 +28,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { answerOptions, attachmentRawUrl, chatWsUrl, listBlocks, toggleReaction as apiToggleReaction } from '../api'
 import { usePendingAttachments } from '../lib/attachments'
-import { blockCache } from '../lib/blockCache'
+import { cachedWindow, setCachedWindow } from '../lib/blockCache'
+import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { platformErrorPresentation } from '../lib/platformEvents'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -317,6 +318,65 @@ function rememberScroll() {
   if (!el || !props.topic) return
   atBottom.value = isAtBottom(el)
   scrollMemory.set(props.topic.id, { top: el.scrollTop, atBottom: atBottom.value })
+  // Scrolling near the top is the request for the previous page.
+  if (shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value })) {
+    void loadOlder()
+  }
+}
+
+// --- paging back through history --------------------------------------------
+// The panel holds a WINDOW of the timeline (newest PAGE_SIZE blocks), not the
+// whole thing: a long topic was 2.1 MB / 2226 rows in one response, and the
+// browser choked on all three of transfer, JSON parse, and 2226 live DOM nodes.
+const hasMore = ref(false)
+const loadingOlder = ref(false)
+
+// A page of very short messages can be shorter than the pane. Then there is
+// nothing to scroll, no scroll event fires, and the remaining history would be
+// unreachable — so top up until the pane actually scrolls.
+async function fillViewportIfNeeded() {
+  await nextTick()
+  const el = scrollRef.value
+  if (!el || !hasMore.value || loadingOlder.value) return
+  if (el.scrollHeight > el.clientHeight) return
+  await loadOlder()
+}
+
+async function loadOlder() {
+  const el = scrollRef.value
+  const topic = props.topic
+  if (!el || !topic || loadingOlder.value || !hasMore.value) return
+  const oldest = messages.value[0]
+  if (!oldest) return
+  loadingOlder.value = true
+  // Measure BEFORE the rows go in: prepending grows the content above the
+  // viewport, so scrollTop has to be pushed down by exactly that much or the
+  // timeline jumps out from under the reader (and re-triggers this loader).
+  const before = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight }
+  let failed = false
+  try {
+    const payload = await listBlocks(topic.id, { limit: PAGE_SIZE, before: oldest.id })
+    // The user may have switched topics while this was in flight.
+    if (props.topic?.id !== topic.id) return
+    const next = prependOlder({ blocks: messages.value, hasMore: hasMore.value }, payload.data, payload.has_more)
+    messages.value = next.blocks
+    hasMore.value = next.hasMore
+    setCachedWindow(topic.id, next)
+    await nextTick()
+    const sc = scrollRef.value
+    if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
+  } catch (e) {
+    failed = true
+    errorMsg.value = e instanceof Error ? e.message : '加载更早的消息失败'
+  } finally {
+    // Unconditional: a topic switch mid-flight must not leave the flag stuck,
+    // or the new topic could never page back.
+    loadingOlder.value = false
+  }
+  // Only now that the flag is clear can another page be pulled, if the pane
+  // still isn't tall enough to scroll. Not after a failure — that would retry
+  // a broken request in a tight loop.
+  if (!failed) await fillViewportIfNeeded()
 }
 
 // Restore a topic's saved scroll position. "At the bottom" (and no memory at
@@ -494,27 +554,41 @@ async function loadTopic(topic: Topic) {
   reactionPickerFor.value = null
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
-  const cached = blockCache.get(topic.id)
+  loadingOlder.value = false
+  const cached = cachedWindow(topic.id)
   if (cached) {
-    messages.value = cached
+    messages.value = cached.blocks
+    hasMore.value = cached.hasMore
     restoreScroll(topic.id)
   } else {
     messages.value = []
+    hasMore.value = false
     loadingHistory.value = true
   }
   try {
-    const payload = await listBlocks(topic.id)
+    // One screenful, not the whole timeline — older blocks arrive when the
+    // user scrolls up to them (loadOlder).
+    const payload = await listBlocks(topic.id, { limit: PAGE_SIZE })
     // Only apply if still the active topic (avoid race on fast switching).
     if (props.topic?.id !== topic.id) return
     // Blocks that landed while we were away append at the tail; if the user
     // was parked at the bottom, follow them so the newest message is visible
-    // without a manual scroll.
-    const grew = cached !== undefined && payload.data.length > cached.length
-    messages.value = payload.data
-    blockCache.set(topic.id, payload.data)
+    // without a manual scroll. Compared on the LAST id, not on length: the
+    // cached window and this page can be different sizes (the user may have
+    // paged back), so a length comparison says nothing about the tail.
+    const grew = cached !== null && cached.blocks.at(-1)?.id !== payload.data.at(-1)?.id
+    // Merge rather than replace, so scrollback the user already loaded (and
+    // that restoreScroll's saved offset refers to) does not vanish under them.
+    const merged = cached
+      ? mergeRefreshedTail(cached, { blocks: payload.data, hasMore: payload.has_more })
+      : { blocks: payload.data, hasMore: payload.has_more }
+    messages.value = merged.blocks
+    hasMore.value = merged.hasMore
+    setCachedWindow(topic.id, merged)
     if (!cached) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
     openSocket(topic.id)
+    void fillViewportIfNeeded()
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
   } finally {
@@ -868,6 +942,19 @@ onBeforeUnmount(() => {
              content height (rows + streaming bubble + timeline-end slot). -->
         <div ref="contentRef">
           <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载历史…</div>
+
+          <!-- Paging back through history. The row is always rendered while
+               older blocks exist so the timeline's top edge does not change
+               height when a fetch starts — that height change would move the
+               reader mid-scroll, which is the very thing loadOlder compensates
+               for. -->
+          <div
+            v-else-if="hasMore"
+            class="text-medium-emphasis text-body-2 px-4 py-2 text-center"
+            data-testid="chat-older-loader"
+          >
+            {{ loadingOlder ? '加载更早的消息…' : '向上滚动查看更早的消息' }}
+          </div>
 
           <template v-for="(m, i) in visible" :key="m.id">
             <!-- Infrastructure incidents are facts in the conversation, but they

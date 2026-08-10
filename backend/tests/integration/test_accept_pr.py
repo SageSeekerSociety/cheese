@@ -18,6 +18,8 @@ import subprocess
 import uuid as _uuid
 from datetime import UTC, datetime
 
+import httpx
+
 from app.core.errors import ValidationError
 from app.core.tokens import mint_session_token
 from app.domain.project.repositories import ProjectGitInstallationRepository
@@ -733,6 +735,153 @@ def test_accept_without_token_or_repo_degrades_to_direct_merge(client):
     assert "未走 PR 采纳" in card["note"]
     assert "批准人未连接 GitHub 账号" in card["note"]
     assert "token" not in card["note"].lower()
+
+
+# ---- 422「PR 已存在」→ 认领，不降级 (2026-08-10) --------------------------
+#
+# These two drive the REAL HttpxGitHubPrClient over a mocked HTTP transport
+# instead of FakeGitHubPrClient: the whole behaviour under test is how the
+# client reads GitHub's 422 body, which a fake client would define away. The
+# incident: accepting `0bbc3403` twice raced two PR-open calls, the loser read
+# 422 already-exists as "mechanism unavailable", degraded to a local merge +
+# direct push to main, and left PR #234 open forever on code that had already
+# landed — plus two contradictory room messages.
+
+
+def _real_client_over(handler) -> None:
+    from app.domain.review.github_pr import HttpxGitHubPrClient
+
+    github_pr.set_default_client(
+        HttpxGitHubPrClient(transport=httpx.MockTransport(handler))
+    )
+
+
+def _pushed_sha(topic_id: str) -> str:
+    """What `_pr_ready`'s fake push reports as the branch head — the value the
+    already-open PR's head must line up with."""
+    return f"sha-{github_pr.pr_branch_name(_uuid.UUID(topic_id))}-1"
+
+
+def test_accept_claims_the_pr_that_already_exists_on_the_branch(client, monkeypatch):
+    """422 already-exists → adopt PR #234 and stay on the PR path: card fields
+    match the real PR, status is pr_open, topic stays active. No degrade, so no
+    orphan."""
+    _pr_ready(client, monkeypatch)
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.method} {request.url.path}")
+        if request.method == "POST":
+            return httpx.Response(
+                422,
+                json={
+                    "message": "Validation Failed",
+                    "errors": [
+                        {
+                            "resource": "PullRequest",
+                            "code": "custom",
+                            "message": (
+                                "A pull request already exists for "
+                                "acme:cheesex/0bbc3403."
+                            ),
+                        }
+                    ],
+                },
+            )
+        branch = request.url.params["head"].split(":", 1)[1]
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 234,
+                    "html_url": "https://github.com/acme/widgets/pull/234",
+                    "head": {"ref": branch, "sha": f"sha-{branch}-1"},
+                    "base": {"ref": "main"},
+                }
+            ],
+        )
+
+    _real_client_over(handler)
+    try:
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)
+
+        r = client.post(
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=_auth("alice"),
+        )
+        assert r.status_code == 200
+        card = r.json()["data"]
+
+        assert card["status"] == "pr_open"
+        assert card["pr_number"] == 234
+        assert card["pr_url"] == "https://github.com/acme/widgets/pull/234"
+        assert card["pr_repo"] == "acme/widgets"
+        # Same head the existing PR reports — the branch was (re)pushed just
+        # before the claim, so the card and GitHub agree on what's being tested.
+        assert card["pr_head_sha"] == _pushed_sha(tid)
+        assert card["pr_merged_at"] is None
+        assert "未走 PR 采纳" not in (card["note"] or "")
+        assert "已认领" in card["note"]
+
+        assert _topic(client, tid)["status"] == "active"
+        assert seen == [
+            "POST /repos/acme/widgets/pulls",
+            "GET /repos/acme/widgets/pulls",
+        ]
+    finally:
+        _reset_client()
+
+
+def test_accept_still_degrades_on_a_422_that_is_not_already_exists(client, monkeypatch):
+    """The other half: a genuine validation failure must keep degrading to the
+    direct-merge path exactly as before, and must never go looking for a PR to
+    adopt."""
+    _pr_ready(client, monkeypatch)
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.method)
+        assert request.method == "POST", "must not list PRs for a non-existence 422"
+        return httpx.Response(
+            422,
+            json={
+                "message": "Validation Failed",
+                "errors": [
+                    {
+                        "resource": "PullRequest",
+                        "field": "base",
+                        "code": "invalid",
+                        "message": "Base ref must be a branch",
+                    }
+                ],
+            },
+        )
+
+    _real_client_over(handler)
+    try:
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)
+
+        r = client.post(
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=_auth("alice"),
+        )
+        assert r.status_code == 200
+        card = r.json()["data"]
+
+        assert card["status"] == "accepted"
+        assert card["pr_number"] is None
+        assert "未走 PR 采纳" in card["note"]
+        assert "Base ref must be a branch" in card["note"]
+        assert _topic(client, tid)["status"] == "archived"
+        assert seen == ["POST"]
+    finally:
+        _reset_client()
 
 
 def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):
