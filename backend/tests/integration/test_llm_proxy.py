@@ -169,3 +169,42 @@ def test_upstream_failure_surfaces_as_gateway_error(client, monkeypatch, _projec
         content=b"{}",
     )
     assert r.status_code >= 400
+
+
+@pytest.mark.anyio
+async def test_admission_requires_a_scoped_token(client):
+    r = client.post("/llm/admission")
+    assert r.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_admission_answers_from_the_grant_balance(client):
+    """One budget, two enforcement points: the same compute grants the gateway
+    prices into max_budget answer the subscription proxy's yes/no here."""
+    pid = _make_project(client)
+    token = mint_scoped_token(project_id=pid)
+
+    # No grants at all = 自治项目: never refused.
+    r = client.post("/llm/admission", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    assert r.json()["data"] == {"allow": True, "reason": "unlimited"}
+
+    from app.domain.usage.repositories import ComputeGrantRepository
+
+    async with client.test_factory() as session:
+        await ComputeGrantRepository(session).grant(
+            project_id=uuid.UUID(pid), source_task_id=None, credits_total=5.0
+        )
+        await session.commit()
+
+    r = client.post("/llm/admission", headers={"Authorization": f"Bearer {token}"})
+    assert r.json()["data"]["allow"] is True
+
+    async with client.test_factory() as session:
+        await ComputeGrantRepository(session).consume(uuid.UUID(pid), 5.0)
+        await session.commit()
+
+    r = client.post("/llm/admission", headers={"Authorization": f"Bearer {token}"})
+    body = r.json()["data"]
+    assert body["allow"] is False
+    assert "5.0000" in body["reason"]

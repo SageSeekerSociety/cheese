@@ -93,16 +93,29 @@ class ProjectMachineRepository:
         ip: str | None,
         ai_mode: str | None = None,
         ai_status: AiStatus | None = None,
+        seen_at: datetime | None = None,
     ) -> ProjectMachine:
         machine.status = status
         if ai_mode is not None:
             machine.ai_mode = ai_mode
         if ai_status is not None:
             machine.ai_status = ai_status
+        if seen_at is not None:
+            machine.last_seen_at = seen_at
         # Never blank an IP we already learned: a transient read that omits it
         # would otherwise erase the only way back into a running machine.
         if ip:
             machine.ip = ip
+        await self._session.flush()
+        return machine
+
+    async def touch_seen(
+        self, machine: ProjectMachine, *, when: datetime
+    ) -> ProjectMachine:
+        """Record that MicroCloud was asked, without claiming to have learned
+        anything. Used when the provider was unreachable and the machine's last
+        known state is still the best answer we have."""
+        machine.last_seen_at = when
         await self._session.flush()
         return machine
 

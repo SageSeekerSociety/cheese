@@ -20,6 +20,8 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import awaited_tasks
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
 from app.domain.agent.market import (
     compute_default_name,
@@ -38,6 +40,8 @@ from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
+    BackgroundTaskDoneIn,
+    BackgroundTaskIn,
     ConclusionIn,
     DocEditIn,
     SplitIn,
@@ -522,6 +526,68 @@ async def mint_webhook_token(topic_id: uuid.UUID, db: DbSession) -> dict:
     )
     await db.commit()
     return ok({"token": token})
+
+
+@router.post("/{topic_id}/background-task")
+async def register_background_task(
+    topic_id: uuid.UUID, body: BackgroundTaskIn, db: DbSession
+) -> dict:
+    """`cheese await` announces a command it is about to run in its own sandbox.
+
+    Returns the task id plus a wake token that outlives the container's own
+    CHEESE_TOKEN (1h) — these tasks routinely run longer than that, and a result
+    that 401s at the finish line is exactly the frozen topic this path exists to
+    prevent."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    if topic.status == TopicStatus.archived:
+        raise ValidationError("话题已归档，不再受理后台任务")
+    task = awaited_tasks.register(
+        project_id=topic.project_id,
+        topic_id=topic_id,
+        command=body.command,
+        label=body.label,
+        timeout_s=body.timeout_s,
+        log_path=body.log_path,
+    )
+    return ok(
+        {
+            "task_id": str(task.id),
+            "wake_token": mint_scoped_token(
+                project_id=str(topic.project_id),
+                topic_id=str(topic_id),
+                # Cover the whole run plus an hour of slack for a slow report.
+                ttl_s=task.timeout_s + 3600,
+            ),
+            "label": task.label,
+        }
+    )
+
+
+@router.post("/{topic_id}/background-task/{task_id}/done")
+async def finish_background_task(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: BackgroundTaskDoneIn,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+) -> dict:
+    """The backgrounded command exited — land its result and (guards permitting)
+    wake the topic. Reached by the detached child `cheese await` forked, carrying
+    the wake token from registration."""
+    task = awaited_tasks.get(task_id)
+    if task is None or task.topic_id != topic_id:
+        raise NotFoundError("这个后台任务不存在或已经回报过了")
+    return ok(
+        await awaited_tasks.report(
+            chat.session_factory,
+            chat,
+            runner,
+            task=task,
+            exit_code=body.exit_code,
+            tail=body.tail,
+            duration_s=body.duration_s,
+        )
+    )
 
 
 @router.post("/{topic_id}/decision")

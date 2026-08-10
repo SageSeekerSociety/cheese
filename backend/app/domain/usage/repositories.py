@@ -23,6 +23,7 @@ class UsageRepository:
         cost_usd: float,
         kind: str = "chat",
         metered: bool = True,
+        route: str = "",
     ) -> ResourceUsage:
         """Record a turn's spend.
 
@@ -45,6 +46,7 @@ class UsageRepository:
             total_tokens=input_tokens + output_tokens,
             cost_usd=cost_usd,
             kind=kind if metered else f"{kind}:unmetered",
+            route=route,
         )
         self._session.add(row)
         await self._session.flush()

@@ -359,14 +359,54 @@ def _create_and_migrate(db_name: str, db_url: str) -> None:
 _TEMPLATE_READY = False
 
 
-@pytest.fixture(scope="session", autouse=True)
+# tests/unit/ is the only tree allowed to run without a Postgres; everything
+# else is DB-backed by construction. Trailing sep so a sibling like
+# "tests/unittools/" can't match by prefix.
+_UNIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "unit") + os.sep
+
+
+def _needs_db(request: pytest.FixtureRequest) -> bool:
+    """Whether this test requires the Postgres schema to be provisioned.
+
+    Two independent reasons, because fixture names alone aren't enough: the
+    integration harness binds ``settings.database_url`` directly (module import
+    time), so a test there can touch the DB without naming a DB fixture. Hence
+    anything outside ``tests/unit/`` is assumed DB-backed. Inside ``tests/unit/``
+    we go by the fixture closure — ``request.fixturenames`` is transitive, and
+    every DB-bound fixture (``client``, ``python_client``, integration's
+    ``db_connection``/``db_session``…) chains to ``_pg_schema``, so requesting any
+    of them shows up here.
+    """
+    return (
+        not str(request.path).startswith(_UNIT_DIR)
+        or "_pg_schema" in request.fixturenames
+    )
+
+
+@pytest.fixture(autouse=True)
+def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
+    """Provision the DB schema for the tests that need it — and only those.
+
+    ``_pg_schema`` used to be ``autouse=True`` at session scope, which meant a
+    host with no Postgres could not run *any* test, including the ~132 unit files
+    that never touch a database: the session fixture errored during setup and took
+    the whole run down with it. Gating it per-test keeps behaviour identical for
+    DB-backed tests (still built once per session — ``_pg_schema`` is still
+    session-scoped) while letting ``tests/unit/`` run with no server at all.
+    """
+    if _needs_db(request):
+        request.getfixturevalue("_pg_schema")
+
+
+@pytest.fixture(scope="session")
 def _pg_schema():
     """Create + migrate THIS worker's two dedicated databases once per session:
     the integration DB (settings.database_url, bound by the app engines) and the
-    client/python_client DB (TEST_DATABASE_URL). autouse so the integration harness
-    — which binds to settings.database_url — always finds a ready schema too. Both
-    are per-worker, so nothing races across xdist workers. Talks to the Postgres
-    server at TEST_PG_BASE (local docker pg :5433 by default; CI overrides it).
+    client/python_client DB (TEST_DATABASE_URL). Reached via the ``_pg_schema_gate``
+    autouse fixture above so the integration harness — which binds to
+    settings.database_url — always finds a ready schema too. Both are per-worker,
+    so nothing races across xdist workers. Talks to the Postgres server at
+    TEST_PG_BASE (local docker pg :5433 by default; CI overrides it).
     """
     global _TEMPLATE_READY
     _TEMPLATE_READY = _ensure_template()

@@ -15,6 +15,7 @@ from app.auth.core import (
 )
 from app.common.auth import get_optional_user_id
 from app.core.errors import AccessDeniedError
+from app.core.obs import bind_context
 from app.db.session import get_db
 
 DomainRoleProvider = Callable[[AsyncSession, int, str, int], Awaitable[set[Role]]]
@@ -129,6 +130,12 @@ async def get_auth_user(
 ) -> AuthUserInfo:
     if user_id is None:
         return AuthUserInfo(user_id=0, system_roles={SystemRole.GUEST})
+    # Every authenticated request funnels through here, so this is the one
+    # place to attribute the request to a user: request.state feeds the
+    # middleware's final "req" line, bind_context stamps every log line
+    # emitted while handling it (the binding dies with the request task).
+    request.state.auth_user_id = user_id
+    bind_context(user=user_id)
     return AuthUserInfo(user_id=user_id, system_roles={SystemRole.USER})
 
 

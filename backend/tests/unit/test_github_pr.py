@@ -10,6 +10,7 @@ from typing import cast
 import httpx
 import pytest
 
+from app.core.config import settings
 from app.domain.agent.github_app import GitHubAppTokens
 from app.domain.review.github_pr import (
     GitHubPRClient,
@@ -113,7 +114,9 @@ async def test_open_pr_surfaces_other_refusals():
 
 
 @pytest.mark.anyio
-async def test_merge_pr_sends_merge_commit_shape():
+async def test_merge_pr_sends_the_configured_merge_method():
+    """Was pinned to "merge" — which this squash-only repo refuses with 405 on
+    every attempt (docs/infrastructure.md §Merge policy)."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -128,10 +131,11 @@ async def test_merge_pr_sends_merge_commit_shape():
     [request] = seen
     assert request.url.path == "/repos/acme/widgets/pulls/7/merge"
     assert json.loads(request.content) == {
-        "merge_method": "merge",
+        "merge_method": settings.accept_pr_merge_method,
         "commit_title": "采纳 topic/abcd1234 → main (#7)",
         "commit_message": "验收人：alice",
     }
+    assert settings.accept_pr_merge_method == "squash"  # the repo's policy
 
 
 @pytest.mark.anyio
