@@ -28,12 +28,15 @@ Protocol 签名 `check_state(...) -> tuple[CheckState, str]` 不变，`_advance_
 - 零检查 + 无 suite（含"只有 codecov suite"这个 #209 的真实形状）→ 宽限期内 `pending`，过后才 `success`。
 - 另有回归测试确认非空 check-runs 时的 pending/failure/success 三态判断未变。
 
-## 验证状态
+## 验证状态（已完成）
 
-- ruff：全仓库绿。
-- pyright：全仓库绿（0 errors）。
-- pytest：沙箱本身无 Postgres/无 docker/无 sudo，用户态起了一个真实 Postgres（`pgserver` 提供的二进制，Python 3.12 隔离环境启动，TCP 监听 127.0.0.1:5433，`cheesex` 角色）来跑测试，不是伪造 SKIP。新增的 10 个测试 + 现有 `test_github_pr.py` 9 个全部通过；`test_accept_pr.py`/`test_accept_pr_publish.py` 里跟本次改动相关的轮询测试（`test_poll_ci_*`、`test_poll_deploy_*`、`test_poll_open_prs_*`）全部通过。全量 backend 套件正在跑，会有一批因为沙箱 `jj` 权限问题（`.jj/repo/config-id` 0600，简报环境提示里已知的沙箱限制）导致的失败，这些测试都是走本地 git/jj merge 路径的（跟 `github_pr.py`/`check_state` 无关），不是本次改动引入的回归。
+- ruff：全仓库绿（`uv run ruff check .`）。
+- pyright：全仓库绿，0 errors（`uv run pyright`）。
+- pytest：沙箱本身无 Postgres/无 docker/无 sudo，用户态起了一个真实 Postgres（`pgserver` 提供的二进制，Python 3.12 隔离环境下载启动，不影响项目本身锁定的 3.13 环境，TCP 监听 127.0.0.1:5433，建了 `cheesex` 角色）来跑测试，不是伪造 SKIP：
+  - `test_github_pr_httpx_client.py`（新增 10 个）+ `test_github_pr.py`（现有 9 个）：19/19 全过。
+  - `test_accept_pr.py` + `test_accept_pr_publish.py`：12/15 + 5/5 过；跟本次改动直接相关的轮询测试（`test_poll_ci_pending_no_change`、`test_poll_ci_green_merges_but_topic_stays_active_until_deploy`、`test_poll_ci_failure_nudges_cheese_once`、`test_poll_deploy_success_finally_archives`、`test_poll_deploy_failure_keeps_topic_active_no_retry`、`test_poll_open_prs_ignores_non_pr_open_cards` 等）全部通过。剩下 3 个失败（`test_repush_*`、`test_accept_without_token_or_repo_degrades_to_direct_merge`）是简报环境提示里已知的沙箱 `jj` 权限问题（`.jj/repo/config-id` 0600），走的是本地 git/jj merge 路径，跟 `github_pr.py`/`check_state` 无关，不是本次改动引入的。
+  - 跑过一次全量 backend 套件（2915 passed / 84 failed / 581 errored）核实没有藏着别的回归：failed 列表里 `test_accept_pr.py` 只有上述已知的 3 个，没有新增；其余大量 failed/errored 是这个沙箱压根没起 Redis（`ConnectionError: ... connecting to localhost:6379`）导致的，遍布 teams/materials/avatars/auth 等跟 review 域完全无关的模块，是预先存在的沙箱基础设施缺口，不在这张卡范围内、也不是这次改动造成的。
 
-## 下一步
+## 结论
 
-等全量 pytest 跑完，确认没有本次改动导致的新增失败（区别于已知的 jj 沙箱失败），递验收卡。递卡前如实说明：需要人工介入合并（`claude-review` 那个已知 workflow 在所有 PR 上失败，跟改动内容无关），不会去修那个 workflow 或绕过它。
+改动已完成并验证，等待递验收卡。递卡时会如实说明：这个 PR 改的是 `backend/`，会触发 `claude-review`，而那个 workflow 目前在所有 PR 上都失败（跟改动内容无关的已知问题），需要人工介入合并——不会去修那个 workflow 或想办法绕过它。
