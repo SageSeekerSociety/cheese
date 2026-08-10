@@ -25,6 +25,12 @@ jobs:
   # could not be selected on any deployment, whatever the code allowed.
   build-tmux-sandbox:
     runs-on: [self-hosted, cheese-dev]
+    # Bounded because this genuinely needs the box (warm layer cache) and the box
+    # has ONE runner slot: an unbounded job here inherits GitHub's 6h default and
+    # can block every deploy, heartbeat and backup check behind it. That is not
+    # hypothetical — a wedged `plan` job held this slot for 8h11m on 2026-08-07.
+    # 30m against a measured 4.8m build leaves generous headroom.
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write

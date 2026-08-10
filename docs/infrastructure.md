@@ -108,7 +108,23 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   machines = ask Lg for capacity.
 - One runner slot per machine is deliberate: the workflows bind host ports
   5432/6379 for service containers, so two heavy jobs on one machine would
-  collide (`port is already allocated`).
+  collide (`port is already allocated`). Lifting this (常驻 PG/Valkey + drop the
+  host port bindings) would double the pool to 6 slots on the same three
+  machines — the open follow-up from the CI plan's P2.
+- Liveness (alerting): `box-heartbeat.yml`'s `ci-pool` job proves **at least
+  one** of the three is alive; `box-uptime.yml` alerts when it stays queued. It
+  cannot see a partial outage, because `provision.sh` gives every machine the
+  same single `cheese-ci` label. **Open ops step**: re-register each runner with
+  `--labels cheese-ci,<name>` (`config.sh --replace`), then fan the heartbeat
+  out to a matrix over the per-machine labels. Until that lands, a single dead
+  pool machine shows up only as slower CI.
+- Liveness (on demand): `box-diag.yml`'s `ci-pool` job **does** cover all three
+  today — three concurrent jobs on the one shared label cannot land on the same
+  machine, since each VM has a single slot. It prints hostname, disk, and
+  dangling-volume count per machine; a job left **Queued** means the pool is
+  short a machine. This trick is fine for a manual probe (it saturates the pool
+  for ~20s) but not for the hourly heartbeat, which would then false-alarm
+  whenever a merge burst holds the slots — hence the ops step above.
 
 ## Box ops runbook — changing backend env on a box
 
@@ -162,9 +178,12 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
-  if last backup > 26h), `box-uptime.yml` (hourly, fails if a box's runner goes
-  offline), `backup-restore-test.yml` (weekly, restores the newest dump into a
-  throwaway postgres and fails if it doesn't come back).
+  if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
+  the last **two** heartbeats both failed to complete — dev box, prod box, or
+  the cheese-ci pool; one queued heartbeat is ordinary contention, not an
+  outage, so it does not alert),
+  `backup-restore-test.yml` (weekly, restores the newest dump into a throwaway
+  postgres and fails if it doesn't come back).
 
 The backup scripts are version-controlled, but **installing them on a box**
 (copying to `~/ops/`, systemd timers, the R2 credential in `~/ops/r2.env`) is a
@@ -251,6 +270,17 @@ keep the old name **on purpose** because changing them breaks or loses data:
 
 ## Known gaps / follow-ups
 
+- **The dev box has one runner slot serving 11 workflows.** Since the heavy jobs
+  moved to the cheese-ci pool this is the binding constraint on CI: measured over
+  2026-08-10..11, `test.yml` finishes in 4.5m median / 5.1m p75 and `e2e.yml` in
+  3.4m / 4.4m, while `build.yml` — whose three build jobs are still on
+  `cheese-dev` — takes 9.9m median / 17.2m p75 / 20.7m p90, with `build-backend`
+  queueing 14.1m at p75 and `build-frontend` 10.3m at the median. The box is not
+  busy (15% utilisation over 19h, and 0 overlapping jobs, confirming the single
+  slot) — it is serialised. It is also what every box-monitoring false alarm has
+  been about, and a wedged job here held the slot for 8h on 2026-08-07. Adding a
+  second labelled slot on the box is the cheapest fix; see
+  `docs/topics/CI提速B-plan-job-挪-hosted.md`.
 - **PITR** (second-level RPO) needs OS access to the PG hosts — blocked.
 - **Off-site immutability**: R2 has no object-lock/versioning, and the box's
   token can delete objects, so a compromised box could wipe the off-site copies.
