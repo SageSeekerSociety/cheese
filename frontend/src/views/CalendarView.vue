@@ -2,12 +2,14 @@
 import type { MilestoneFull } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { getCalendar, getProject, listMilestones } from '../api'
 
 // 时间维度 (spec §7.2): a clean deadline list with countdowns, plus the done
 // milestones shown faded.
 const props = defineProps<{ projectId: string }>()
+const router = useRouter()
 
 const projectName = ref<string>('')
 const upcoming = ref<MilestoneFull[]>([])
@@ -69,6 +71,14 @@ async function load() {
   }
 }
 
+// Back to wherever you came from (the workspace, via a notification/action
+// card or the rail), with a workspace fallback for a deep link — same pattern
+// as the settings and member pages.
+function goBack() {
+  if (window.history.state?.back != null) router.back()
+  else router.push({ name: 'workspace-project', params: { projectId: props.projectId } })
+}
+
 watch(() => props.projectId, load)
 onMounted(load)
 </script>
@@ -84,6 +94,10 @@ onMounted(load)
       </v-alert>
 
       <template v-else>
+        <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="mb-3 px-1" @click="goBack">
+          返回
+        </v-btn>
+
         <div class="mb-6">
           <div class="t-eyebrow mb-1">日历 · 时间维度</div>
           <h1 class="t-page-title">{{ projectName || '项目日历' }}</h1>
