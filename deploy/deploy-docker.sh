@@ -346,6 +346,18 @@ fi
 
 log_disk "after pull"
 
+# The backend now runs as the same uid as the sandbox's `node` (1000) so the two
+# stop locking each other out of the shared jj store — see
+# fix-workspace-ownership.sh. Files the old uid (1001) left behind have to change
+# hands once, BEFORE the new backend starts and finds it cannot read them.
+# Idempotent: a marker in each path makes later deploys a no-op.
+log "checking workspace/uploads ownership…"
+"$HERE/fix-workspace-ownership.sh" \
+  "${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}" \
+  "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}" \
+  "${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}" \
+  || fail "workspace ownership migration failed — aborting before swap"
+
 log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"

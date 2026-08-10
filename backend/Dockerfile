@@ -143,9 +143,27 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/dock
       | tar xz --strip-components=1 -C /usr/local/bin docker/docker \
     && docker --version
 
-# Create non-root user
-RUN addgroup --system --gid 1001 python \
-    && adduser --system --uid 1001 --gid 1001 cheese \
+# Create non-root user.
+#
+# The uid/gid are NOT free to pick: this process and the agent sandbox share one
+# jj store on disk (ws.sandbox_vcs_mounts bind-mounts the project's main-repo
+# .jj/.git into every sandbox container, read-write). jj writes its store objects
+# — and `.jj/repo/config-id` in particular — with a hardcoded 0600, so whichever
+# uid touches the store first locks the other one out of EVERY jj command
+# ("Failed to determine the secure config for a repo … Permission denied").
+# Backend-side that surfaced as a project-wide 422 on the file panel; sandbox-side
+# as jj being unusable in every container. umask/group/ACL cannot fix a mode the
+# writer sets explicitly, so the two identities have to BE the same identity.
+#
+# 1000 rather than some other number because the sandbox side is the one we do
+# not fully control: it is `node:22` + `USER node` (= 1000), the tmux provider
+# starts it with `--user node`, and a project may point `sandbox_image` at any
+# other node-based image. See backend/sandbox/Dockerfile and
+# app.domain.workspace.service.AGENT_UID (which tests pin against this line).
+RUN addgroup --system --gid 1000 python \
+    && adduser --system --uid 1000 --gid 1000 cheese \
+    && test "$(id -u cheese)" = 1000 \
+    && test "$(id -g cheese)" = 1000 \
     && mkdir -p /app/uploads \
     && chown -R cheese:python /app
 

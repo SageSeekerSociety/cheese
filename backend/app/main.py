@@ -72,6 +72,19 @@ async def lifespan(_: FastAPI):
             "agent-user seed skipped", reason=str(exc)[:120]
         )
 
+    # The backend and the in-container agent share one jj store and must run as
+    # the same uid (ws.AGENT_UID). When they don't, nothing here fails — the file
+    # panel just 422s for every topic in the project. Say it out loud at boot.
+    try:
+        from app.domain.workspace import service as _ws
+
+        for problem in _ws.audit_workspace_ownership():
+            get_logger("cheesex.runtime").error(
+                "workspace_ownership", problem=problem, uid=_ws.AGENT_UID
+            )
+    except Exception:  # noqa: BLE001 — a diagnostic must never block boot
+        get_logger("cheesex.runtime").exception("workspace ownership audit failed")
+
     try:
         n = await get_turn_runner().resume_orphans(get_chat_service())
         if n:
