@@ -36,7 +36,18 @@ concurrency:
 
 jobs:
   plan:
-    runs-on: [self-hosted, cheese-dev]
+    # Hosted, not the box: gh api calls + a planning script + registry-side
+    # `buildx imagetools` manifest copies — no docker builds, no local layer
+    # cache, nothing box-local. It is the job that gates all three heavy build
+    # jobs, so leaving it on the box meant even "does this need building?"
+    # queued behind whatever else the single runner was doing (measured over
+    # 63 runs: median 0.3m queue, but p90 5.9m and max 16.8m) before the jobs
+    # it gates could start. Hosted picks it up in ~0s (p90 3s). Same reason
+    # `scope` in test.yml/e2e.yml is hosted. The fetch-depth: 0 checkout does
+    # cost more without the box's warm git dir — measured 11s median hosted
+    # (claude-review.yml does the same full-history checkout on ubuntu-latest)
+    # vs 4s on the box — which the queue saving repays many times over.
+    runs-on: ubuntu-latest
     # gh api calls + a planning script, no docker builds; still bounded well
     # under the jobs it gates.
     timeout-minutes: 10
