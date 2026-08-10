@@ -351,11 +351,16 @@ log_disk "after pull"
 # fix-workspace-ownership.sh. Files the old uid (1001) left behind have to change
 # hands once, BEFORE the new backend starts and finds it cannot read them.
 # Idempotent: a marker in each path makes later deploys a no-op.
+# APPHOME matters as much as the workspaces themselves: it is the backend's HOME,
+# and jj keeps its per-repo secure config there (the other half of the
+# `.jj/repo/config-id` pointer).
 log "checking workspace/uploads ownership…"
+VERIFY_READABLE_PATHS="${GIT_CREDENTIALS_FILE:-/dev/null}" \
 "$HERE/fix-workspace-ownership.sh" \
   "${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}" \
   "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}" \
   "${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}" \
+  "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}" \
   || fail "workspace ownership migration failed — aborting before swap"
 
 log "running DB migrations (alembic upgrade head)…"

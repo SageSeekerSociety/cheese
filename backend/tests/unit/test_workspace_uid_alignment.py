@@ -30,9 +30,7 @@ from app.core.config import settings
 from app.domain.workspace import service as ws
 
 BACKEND_DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
-SANDBOX_DOCKERFILE = (
-    Path(__file__).resolve().parents[2] / "sandbox" / "Dockerfile"
-)
+SANDBOX_DOCKERFILE = Path(__file__).resolve().parents[2] / "sandbox" / "Dockerfile"
 
 needs_jj = pytest.mark.skipif(
     shutil.which("jj") is None, reason="jj is not installed in this environment"
@@ -67,7 +65,7 @@ def test_backend_image_runs_as_the_agent_uid():
     adduser = re.search(r"adduser\s+[^\n]*?--uid\s+(\d+)\s+--gid\s+(\d+)", text)
     addgroup = re.search(r"addgroup\s+[^\n]*?--gid\s+(\d+)", text)
     assert adduser, "backend/Dockerfile stopped creating its user with an explicit uid"
-    assert addgroup, "backend/Dockerfile stopped creating its group with an explicit gid"
+    assert addgroup, "backend/Dockerfile stopped pinning its group's gid"
     assert int(adduser.group(1)) == ws.AGENT_UID
     assert int(adduser.group(2)) == ws.AGENT_GID
     assert int(addgroup.group(1)) == ws.AGENT_GID

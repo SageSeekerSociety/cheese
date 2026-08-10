@@ -198,12 +198,21 @@ writer sets explicitly. The only fix is that both sides ARE the same uid:
   against both Dockerfiles by `tests/unit/test_workspace_uid_alignment.py`.
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
-`UPLOADS_HOST_PATH`) hold files written by the pre-2026-08 backend as uid 1001.
-`deploy/deploy-docker.sh` hands them over once via
-`deploy/fix-workspace-ownership.sh` before the swap — idempotent, marker-guarded,
-and it runs the chown in a throwaway root container (no sudo on the box). If a
-backend ever boots onto an unmigrated path it logs `workspace_ownership` at ERROR
-naming the offending file; the fix is to run that script and restart.
+`UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
+where jj keeps the per-repo secure config that `config-id` points at) hold files
+written by the pre-2026-08 backend as uid 1001. `deploy/deploy-docker.sh` hands
+them over once via `deploy/fix-workspace-ownership.sh` before the swap —
+idempotent, marker-guarded, and it runs the chown in a throwaway root container
+(no sudo on the box). If a backend ever boots onto an unmigrated path it logs
+`workspace_ownership` at ERROR naming the offending file; the fix is to run that
+script and restart.
+
+`GIT_CREDENTIALS_FILE` is deliberately **not** chowned — it is an operator-owned
+secret (chmod 600, outside git), so the script only checks that uid 1000 can read
+it and fails the deploy with the exact `chown` to run if not. Silently losing
+private-repo push to the "git prompts fail cleanly" fallback is precisely the
+disguised failure this change exists to stop. The default `/dev/null` (feature
+off) passes the check.
 
 ## Gotchas — things that look renameable but are NOT
 

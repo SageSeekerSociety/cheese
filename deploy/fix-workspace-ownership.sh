@@ -25,6 +25,9 @@
 #   AGENT_UID / AGENT_GID   target ownership (default 1000, must match
 #                           app.domain.workspace.service.AGENT_UID)
 #   FORCE_OWNERSHIP_FIX     set to 1 to ignore the marker and re-walk
+#   VERIFY_READABLE_PATHS   space-separated operator-owned files that are only
+#                           CHECKED (never chowned) — e.g. the git credential
+#                           store. Unreadable = a loud deploy failure.
 set -euo pipefail
 
 AGENT_UID="${AGENT_UID:-1000}"
@@ -60,6 +63,26 @@ for path in "$@"; do
       chown $AGENT_UID:$AGENT_GID /target/$MARKER
       echo \"\$changed entries re-owned\"
     " || { log "ERROR: ownership handover failed for $path"; exit 1; }
+done
+
+# Operator-owned secrets are NOT handed over — chowning somebody's private
+# credential file out from under them is not this script's call. But a file the
+# new uid cannot read means a silently dead feature (private-repo push falling
+# back to "git prompts fail cleanly"), and this whole change exists because a
+# disguised failure is worse than a loud one. So: check, and say exactly what to
+# run. /dev/null (the "feature off" default) reads fine and passes.
+for path in ${VERIFY_READABLE_PATHS:-}; do
+  [ -e "$path" ] || { log "skip readability check for $path (absent)"; continue; }
+  if docker run --rm --user "$AGENT_UID:$AGENT_GID" --entrypoint sh \
+      -v "$path:/probe:ro" "$IMAGE" -c 'head -c 1 /probe >/dev/null 2>&1 || test ! -s /probe' \
+      >/dev/null 2>&1; then
+    log "ok: $path is readable as $AGENT_UID"
+  else
+    log "ERROR: $path is not readable as uid $AGENT_UID — the backend would"
+    log "       silently lose whatever it configures. Fix with:"
+    log "           sudo chown $AGENT_UID:$AGENT_GID $path"
+    exit 1
+  fi
 done
 
 log "done"
