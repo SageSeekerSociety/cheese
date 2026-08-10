@@ -14,6 +14,7 @@ import { Suggestion } from '@tiptap/suggestion'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
 import {
+  ApiError,
   BASE as API_BASE,
   getComments,
   getDoc,
@@ -501,6 +502,18 @@ const fileSaved = ref<string>('') // last loaded/saved content, for the dirty fl
 const fileSaving = ref(false)
 const fileListOpen = ref(true) // the ☰ toggle hides the list for a wider editor
 const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
+// Version of the open file as it was read; echoed back on save so a write that
+// lost a race to 芝士 is rejected instead of silently erasing their edits.
+const fileVersion = ref<string | null>(null)
+// Files that must not be edited as text: binary (a text round-trip destroys
+// them) or too large to send. They open read-only, with no 保存 button.
+const fileBinary = ref(false)
+const fileTooLarge = ref(false)
+const fileBytes = ref(0)
+const fileReadOnly = computed(() => fileBinary.value || fileTooLarge.value || openIsImage.value)
+// Set when the backend rejected a save as a conflict. Nobody wins by default —
+// the human sees it and picks.
+const fileConflict = ref(false)
 
 // 文件树: the backend returns a flat list of full relative paths; build a
 // nested tree out of it (folders first, each level sorted by name), then
@@ -644,7 +657,11 @@ async function loadTool(key: string) {
       gitCommits.value = log.data
       gitDiff.value = diff.diff
     } else if (key === 'files') {
-      files.value = (await listFiles(pid, tid)).data
+      const listed = (await listFiles(pid, tid)).data
+      // Guard against a topic switch mid-flight, like every other tool does —
+      // without it the previous topic's listing repopulates the new panel.
+      if (props.topic?.id !== tid) return
+      files.value = listed
       // Keep the open file if it still exists; otherwise open the first file.
       if (!openPath.value || !files.value.some((f) => f.path === openPath.value)) {
         openPath.value = null
@@ -691,46 +708,112 @@ function isImagePath(path: string): boolean {
   return IMAGE_EXT.has(path.split('.').pop()?.toLowerCase() ?? '')
 }
 const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.value))
-const openImageUrl = computed(() =>
+// Raw bytes of the open file: what <img> renders for an image, and what the
+// download button hands over for anything else that can't be shown as text.
+const openRawUrl = computed(() =>
   openPath.value && projectId.value ? workspaceFileRawUrl(projectId.value, openPath.value, props.topic?.id) : ''
 )
 
+// 文件 panel state is per-topic. openPath/fileDraft describe a file in the
+// CURRENT topic's worktree, so a topic switch must drop them: carrying them over
+// meant the next 保存 wrote topic A's draft into topic B's tree, at A's path.
+function resetFilePanel() {
+  files.value = []
+  openPath.value = null
+  fileDraft.value = ''
+  fileSaved.value = ''
+  fileVersion.value = null
+  fileBinary.value = false
+  fileTooLarge.value = false
+  fileBytes.value = 0
+  fileConflict.value = false
+  expandedDirs.value = new Set()
+}
+
 async function selectFile(path: string) {
   const pid = projectId.value
+  const tid = props.topic?.id
   if (!pid) return
   toolError.value = null
+  fileConflict.value = false
+  const listed = files.value.find((f) => f.path === path)?.bytes ?? 0
   // Images render as images — Monaco would show mangled bytes.
   if (isImagePath(path)) {
     openPath.value = path
     fileDraft.value = ''
     fileSaved.value = ''
+    fileVersion.value = null
+    fileBinary.value = false
+    fileTooLarge.value = false
+    fileBytes.value = listed
     revealInTree(path)
     return
   }
   try {
-    const f = await readFile(pid, path, props.topic?.id)
+    const f = await readFile(pid, path, tid)
+    // A topic switch mid-flight must not land the previous topic's file — and
+    // its draft — in the new topic's panel.
+    if (props.topic?.id !== tid) return
     openPath.value = path
-    fileDraft.value = f.content
-    fileSaved.value = f.content
+    // Binary and oversized files arrive with no content: they open read-only,
+    // so the draft stays empty and there is nothing to write back.
+    fileDraft.value = f.content ?? ''
+    fileSaved.value = f.content ?? ''
+    fileVersion.value = f.version
+    fileBinary.value = f.binary
+    fileTooLarge.value = f.too_large
+    fileBytes.value = f.bytes ?? listed
     revealInTree(path)
   } catch (e) {
+    if (props.topic?.id !== tid) return
     toolError.value = e instanceof Error ? e.message : '读取文件失败'
   }
 }
 
-async function saveFile() {
+// One write path. `expected` is the version this save is based on; null means
+// the human explicitly chose to overwrite after being shown the conflict.
+async function writeOpenFile(expected: string | null) {
   const pid = projectId.value
-  if (!pid || !openPath.value || !fileDirty.value || fileSaving.value) return
+  const tid = props.topic?.id
+  const path = openPath.value
+  if (!pid || !path || fileReadOnly.value || !fileDirty.value || fileSaving.value) return
+  const draft = fileDraft.value
   fileSaving.value = true
   toolError.value = null
   try {
-    await writeFile(pid, openPath.value, fileDraft.value, props.topic?.id)
-    fileSaved.value = fileDraft.value
+    const res = await writeFile(pid, path, draft, tid, expected)
+    // The answer is only about the file that was open in the topic that was
+    // open — anything else finished after a switch and must be dropped.
+    if (props.topic?.id !== tid || openPath.value !== path) return
+    fileSaved.value = draft
+    fileVersion.value = res.version
+    fileConflict.value = false
   } catch (e) {
-    toolError.value = e instanceof Error ? e.message : '保存失败'
+    if (props.topic?.id !== tid || openPath.value !== path) return
+    if (e instanceof ApiError && e.status === 409) {
+      // 芝士 wrote this file since it was read. Neither side wins by default:
+      // show the conflict and let the human reload or overwrite on purpose.
+      fileConflict.value = true
+    } else {
+      toolError.value = e instanceof Error ? e.message : '保存失败'
+    }
   } finally {
-    fileSaving.value = false
+    if (props.topic?.id === tid) fileSaving.value = false
   }
+}
+
+function saveFile() {
+  void writeOpenFile(fileVersion.value)
+}
+
+// 冲突后的两条出路,都由人点：丢掉自己的改动看最新的，或者明知有冲突仍然覆盖。
+function overwriteFile() {
+  void writeOpenFile(null)
+}
+
+function reloadOpenFile() {
+  const path = openPath.value
+  if (path) void selectFile(path)
 }
 
 function toggleTool(key: string) {
@@ -1726,6 +1809,9 @@ watch(
     drawerOpen.value = false
     // Drop the previous topic's terminal so it can't flash in the new 现场.
     terminalUrl.value = null
+    // …and the previous topic's file + draft, which would otherwise be saved
+    // into THIS topic's worktree the next time 保存 is pressed.
+    resetFilePanel()
   },
   { immediate: true }
 )
@@ -2210,7 +2296,11 @@ onBeforeUnmount(() => {
                     </span>
                     <span v-if="fileDirty" class="file-bar__dot" title="未保存" />
                     <v-spacer />
+                    <!-- Read-only files (binary / oversized / images) get no 保存
+                     button at all: saving one is what corrupted them. -->
+                    <span v-if="fileReadOnly && openPath" class="file-bar__ro">只读</span>
                     <v-btn
+                      v-else
                       size="x-small"
                       variant="flat"
                       color="primary"
@@ -2219,6 +2309,18 @@ onBeforeUnmount(() => {
                       @click="saveFile"
                     >
                       保存
+                    </v-btn>
+                  </div>
+                  <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and
+                   let the human choose — a silent winner is how edits vanished. -->
+                  <div v-if="fileConflict" class="file-conflict">
+                    <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
+                    <span class="file-conflict__text">
+                      这个文件在你编辑期间被改过（多半是芝士写的）。直接保存会盖掉那些改动。
+                    </span>
+                    <v-btn size="x-small" variant="text" @click="reloadOpenFile">放弃我的修改，看最新的</v-btn>
+                    <v-btn size="x-small" variant="text" color="error" :loading="fileSaving" @click="overwriteFile">
+                      仍然覆盖保存
                     </v-btn>
                   </div>
                   <div class="file-body">
@@ -2261,7 +2363,33 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="file-editor">
                       <div v-if="openPath && openIsImage" class="file-image-view">
-                        <img :src="openImageUrl" :alt="openPath" />
+                        <img :src="openRawUrl" :alt="openPath" />
+                      </div>
+                      <!-- Binary / oversized: no editor. Opening one in Monaco
+                       meant every byte utf-8 could not decode came back as
+                       U+FFFD, and 保存 wrote the damage to disk. -->
+                      <div v-else-if="openPath && fileReadOnly" class="file-blob">
+                        <v-icon size="30" class="c-faint mb-2">
+                          {{ fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
+                        </v-icon>
+                        <div class="file-blob__title">
+                          {{ fileTooLarge ? '文件太大，不在浏览器里打开' : '二进制文件，不能当文本编辑' }}
+                        </div>
+                        <div class="file-blob__note">
+                          {{ openPath }} · {{ fmtBytes(fileBytes) }}
+                          <template v-if="!fileTooLarge"> —— 按文本打开会改坏它，所以这里只读。 </template>
+                        </div>
+                        <v-btn
+                          size="small"
+                          variant="tonal"
+                          class="mt-3"
+                          :href="openRawUrl || undefined"
+                          target="_blank"
+                          rel="noopener"
+                        >
+                          <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
+                          下载原文件
+                        </v-btn>
                       </div>
                       <CodeEditor v-else-if="openPath" v-model="fileDraft" :filename="openPath" @save="saveFile" />
                       <div
@@ -2357,7 +2485,7 @@ onBeforeUnmount(() => {
                   <!-- allow-scripts WITHOUT allow-same-origin (Claude Artifacts
                    posture): interactive artifacts run their JS, but in an
                    opaque origin that cannot touch the platform page. -->
-                  <iframe class="preview-frame" :srcdoc="previewFile.content" sandbox="allow-scripts" />
+                  <iframe class="preview-frame" :srcdoc="previewFile.content ?? ''" sandbox="allow-scripts" />
                 </div>
                 <div v-else class="text-center text-medium-emphasis py-8">
                   <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
@@ -2401,7 +2529,7 @@ onBeforeUnmount(() => {
           <iframe
             v-else-if="previewFile"
             class="preview-full__frame"
-            :srcdoc="previewFile.content"
+            :srcdoc="previewFile.content ?? ''"
             sandbox="allow-scripts"
           />
         </div>
@@ -2827,6 +2955,49 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: var(--accent);
   flex: 0 0 auto;
+}
+.file-bar__ro {
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid rgba(var(--v-border-color), 0.6);
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex: 0 0 auto;
+}
+.file-conflict {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  font-size: 0.76rem;
+  color: rgb(var(--v-theme-error));
+  background: rgba(var(--v-theme-error), 0.07);
+  border-bottom: 1px solid rgba(var(--v-theme-error), 0.25);
+  flex: 0 0 auto;
+}
+.file-conflict__text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.file-blob {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  text-align: center;
+}
+.file-blob__title {
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.file-blob__note {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 4px;
+  word-break: break-all;
 }
 .file-body {
   display: flex;

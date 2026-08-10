@@ -98,6 +98,19 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+// A failed request still carries its HTTP status. Callers that must tell one
+// failure from another — a save rejected as a conflict (409) vs. anything else —
+// would otherwise be left substring-matching the message.
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
   for (let attempt = 0; ; attempt += 1) {
@@ -123,7 +136,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue
       }
-      throw new Error(`HTTP ${res.status} for ${path}`)
+      throw new ApiError(res.status, `HTTP ${res.status} for ${path}`)
     }
     const envelope = (await res.json()) as ApiEnvelope<T>
     if (envelope.code !== 200) {
@@ -813,16 +826,21 @@ export function readFile(projectId: string, path: string, topicId?: string | nul
 
 // Save an edited workspace file (人改文件即指令). The agent reads the latest on
 // its next turn, like 改文档即指令.
+//
+// `version` is the one readFile returned. Sending it makes the write
+// conditional: if 芝士 wrote the same file in between, the backend answers 409
+// instead of letting this save erase their edits without a trace.
 export function writeFile(
   projectId: string,
   path: string,
   content: string,
-  topicId?: string | null
-): Promise<{ path: string }> {
+  topicId?: string | null,
+  version?: string | null
+): Promise<{ path: string; version: string }> {
   const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
   return request(`/projects/${encodeURIComponent(projectId)}/file${t}`, {
     method: 'PUT',
-    body: JSON.stringify({ path, content }),
+    body: JSON.stringify({ path, content, version: version ?? null }),
   })
 }
 

@@ -12,7 +12,7 @@ from app.api.response import ok, page
 from app.auth.caller import may_access_project
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.domain.project.services import ProjectService
 from app.domain.workspace import service as ws
@@ -75,14 +75,20 @@ async def list_files(
 async def read_file(
     project_id: uuid.UUID, path: str, db: DbSession, topic: uuid.UUID | None = None
 ) -> dict:
+    """Read a worktree file for the 文件 panel.
+
+    The payload carries more than the text: `binary` / `too_large` tell the panel
+    to render a read-only view (a text editor would corrupt the file on save, and
+    a 52MB file would never have made it through the browser anyway), and
+    `version` is what a later write echoes back so a lost race is caught.
+    """
     await ProjectService(db).get_or_404(project_id)
     if _remote() and topic is not None:
         url = f"{settings.cheesed_url.rstrip('/')}/file/{project_id}/{topic}"
         async with httpx.AsyncClient(timeout=15) as client:
-            content = (await client.get(url, params={"path": path})).json().get("data")
-    else:
-        content = ws.read_file(project_id, path, topic_id=topic)
-    return ok({"path": path, "content": content})
+            data = (await client.get(url, params={"path": path})).json().get("data")
+        return ok(data)
+    return ok(ws.read_text_file(project_id, path, topic_id=topic))
 
 
 @router.get("/{project_id}/file/raw", dependencies=[Depends(require_project_access)])
@@ -105,19 +111,46 @@ async def write_file(
     topic: uuid.UUID | None = None,
 ) -> dict:
     """Save an edited workspace file (人改文件即指令). Writes to the topic's
-    worktree, or proxies to the cheesed node when compute runs remotely."""
+    worktree, or proxies to the cheesed node when compute runs remotely.
+
+    `version` is the one the caller read. Sending it makes the write conditional:
+    if 芝士 (or anyone else) wrote the file in between, the save is rejected with
+    409 instead of silently erasing their work, and the panel shows the conflict.
+    """
     await ProjectService(db).get_or_404(project_id)
     path = (body.get("path") or "").strip()
     content = body.get("content") or ""
+    version = body.get("version") or None
     if not path:
         raise ValidationError("path is required")
     if _remote() and topic is not None:
         url = f"{settings.cheesed_url.rstrip('/')}/file/{project_id}/{topic}"
         async with httpx.AsyncClient(timeout=15) as client:
-            await client.put(url, json={"path": path, "content": content})
-    else:
-        ws.write_file(project_id, path, content, topic_id=topic)
-    return ok({"path": path})
+            res = await client.put(
+                url, json={"path": path, "content": content, "version": version}
+            )
+        payload = res.json()
+        if not payload.get("ok"):
+            raise _remote_write_error(payload)
+        return ok({"path": path, "version": payload.get("version")})
+    new_version = ws.write_file(
+        project_id, path, content, topic_id=topic, expected_version=version
+    )
+    return ok({"path": path, "version": new_version})
+
+
+def _remote_write_error(payload: dict) -> Exception:
+    """Turn the node's refusal into the same error the local path would raise —
+    a conflict on the node must not reach the panel as a generic 200/500."""
+    reason = payload.get("reason")
+    if reason == "conflict":
+        return ConflictError(
+            "文件已被改动（芝士或其他人写过），你的版本是基于旧内容的",
+            data={"version": payload.get("version")},
+        )
+    if reason == "binary":
+        return ValidationError("这是二进制文件，不能以文本保存")
+    return ValidationError("保存失败")
 
 
 @router.get("/{project_id}/git/log", dependencies=[Depends(require_project_access)])

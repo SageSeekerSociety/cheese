@@ -20,8 +20,14 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.errors import ValidationError
+from app.core.errors import ConflictError, ValidationError
 from app.domain.workspace.dogfood_notices import watch_dogfood_push
+from app.domain.workspace.textfile import (
+    MAX_TEXT_BYTES,
+    content_version,
+    decode_text,
+    looks_binary,
+)
 
 DEFAULT_BRANCH = "main"
 # 沙箱镜像：芝士分身在容器里跑代码/测试，碰不到宿主机 (spec §9.1).
@@ -380,7 +386,15 @@ def list_files(project_id: uuid.UUID, topic_id: uuid.UUID | None = None) -> list
         for name in sorted(filenames):
             p = Path(root) / name
             rel = p.relative_to(tree)
-            files.append({"path": str(rel), "bytes": p.stat().st_size})
+            # lstat, not stat: a symlink pointing at something that no longer
+            # exists is an ordinary thing to find in a worktree, and stat() on it
+            # raised FileNotFoundError — one dangling link took the whole file
+            # list down with a 500. It is listed, at the link's own size.
+            try:
+                size = p.lstat().st_size
+            except OSError:
+                size = 0
+            files.append({"path": str(rel), "bytes": size})
     files.sort(key=lambda f: f["path"])
     return files
 
@@ -395,15 +409,77 @@ def read_file(
     return target.read_text(encoding="utf-8", errors="replace")
 
 
-def write_file(
-    project_id: uuid.UUID, path: str, content: str, topic_id: uuid.UUID | None = None
-) -> None:
-    """Write a file in the topic's worktree (人改文件即指令 — the agent reads the
-    latest on its next turn, like 改文档即指令). _safe_path guards traversal + .git."""
+def read_text_file(
+    project_id: uuid.UUID, path: str, topic_id: uuid.UUID | None = None
+) -> dict:
+    """Read a worktree file *for editing* — the shape the 文件 panel needs.
+
+    Unlike :func:`read_file` this never pretends binary is text. ``content`` is
+    None when the file cannot be edited safely (``binary``) or is too big to send
+    at all (``too_large``); the panel renders a read-only view for those instead
+    of loading mangled bytes into Monaco and offering a 保存 button. ``version``
+    is the token to echo back on save so a lost race is caught (see
+    :mod:`app.domain.workspace.textfile`).
+    """
     tree = _tree(project_id, topic_id)
     target = _safe_path(tree, path)
+    if not target.is_file():
+        raise ValidationError("file not found")
+    size = target.stat().st_size
+    meta = {"path": path, "bytes": size, "binary": False, "too_large": False}
+    if size > MAX_TEXT_BYTES:
+        # Deliberately not read: the point is to not build the giant body.
+        return {**meta, "content": None, "version": None, "too_large": True}
+    data = target.read_bytes()
+    text = decode_text(data)
+    if text is None:
+        return {
+            **meta,
+            "content": None,
+            "version": content_version(data),
+            "binary": True,
+        }
+    return {**meta, "content": text, "version": content_version(data)}
+
+
+def write_file(
+    project_id: uuid.UUID,
+    path: str,
+    content: str,
+    topic_id: uuid.UUID | None = None,
+    expected_version: str | None = None,
+) -> str:
+    """Write a file in the topic's worktree (人改文件即指令 — the agent reads the
+    latest on its next turn, like 改文档即指令). _safe_path guards traversal + .git.
+
+    Refuses to overwrite a file that is not text: the only way to reach here with
+    a binary target is a client that decoded it lossily, and writing the result
+    back destroys the original.
+
+    ``expected_version`` is the version the caller last read. When given, a write
+    whose target has changed since is rejected with a conflict rather than
+    winning silently — the human's 保存 used to erase 芝士's edits with no hint
+    that anything was lost. Callers that legitimately have no read to base a
+    write on (the agent writing its own output) omit it and still write through.
+
+    Returns the new version, so a client can keep saving without a re-read.
+    """
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
+    current = target.read_bytes() if target.is_file() else None
+    if current is not None and looks_binary(current):
+        raise ValidationError("这是二进制文件，不能以文本保存")
+    if expected_version is not None:
+        actual = content_version(current) if current is not None else None
+        if actual != expected_version:
+            raise ConflictError(
+                "文件已被改动（芝士或其他人写过），你的版本是基于旧内容的",
+                data={"path": path, "version": actual},
+            )
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    data = content.encode("utf-8")
+    target.write_bytes(data)
+    return content_version(data)
 
 
 def read_file_bytes(
