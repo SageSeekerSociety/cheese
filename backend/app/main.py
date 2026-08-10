@@ -103,9 +103,20 @@ async def lifespan(_: FastAPI):
         async_session_factory, settings.machine_enroll_interval_seconds
     )
     machines.start()
+    # Subscription turns are metered at the proxy; this tails its log into
+    # resource_usage + credits (issue #218). No-op unless the log path is set.
+    from app.domain.usage.subscription_ingest import SubscriptionUsageIngestRunner
+
+    usage_ingest = SubscriptionUsageIngestRunner(
+        async_session_factory,
+        settings.subscription_usage_log,
+        settings.subscription_ingest_interval_s,
+    )
+    usage_ingest.start()
     try:
         yield
     finally:
+        await usage_ingest.stop()
         await machines.stop()
         await pr_poller.stop()
         await reaper.stop()

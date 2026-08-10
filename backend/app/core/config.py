@@ -174,6 +174,12 @@ class Settings(BaseSettings):
     # Enforced BEFORE forwarding: a cap that only reports the overspend is not a cap.
     subscription_token_cap: int = 0
     subscription_cap_window_s: int = 5 * 3600
+    # The metering proxy's usage.jsonl as mounted in THIS container (issue #218):
+    # subscription turns are metered there, and this is the one place the numbers
+    # exist. Empty = no ingestion (deployments without the proxy). The compose
+    # subscription overlay mounts the proxy's log dir read-only and sets this.
+    subscription_usage_log: str = ""
+    subscription_ingest_interval_s: int = 30
 
     # --- Self-hosted / BYO device compute (P3, fusion-design §5) ---
     # Public base URL a device reaches the backend at: the enrolled machine's
