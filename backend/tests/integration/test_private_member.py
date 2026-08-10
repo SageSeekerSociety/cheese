@@ -40,9 +40,13 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     assert "assistant_block" in frames
 
 
-def test_member_summary(client):
+def test_member_summary(client, bearer):
     pid = _project(client)
-    client.post(f"/api/projects/{pid}/members", json={"user_handle": "user-1"})
+    client.post(
+        f"/api/projects/{pid}/members",
+        json={"user_handle": "user-1"},
+        headers=bearer("user-1"),  # the project owner
+    )
     client.post(
         "/api/topics",
         json={"project_id": pid, "title": "我开的话题", "created_by": "user-1"},
