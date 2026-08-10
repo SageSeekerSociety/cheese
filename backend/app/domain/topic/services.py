@@ -22,7 +22,7 @@ from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
-from app.domain.topic.repositories import TopicRepository
+from app.domain.topic.repositories import SortOrder, TopicRepository, TopicSortField
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
 
@@ -151,9 +151,15 @@ class TopicService:
             raise NotFoundError("Topic not found")
         return topic
 
-    async def list_for_project(self, project_id: uuid.UUID) -> tuple[list[Topic], int]:
+    async def list_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        sort: TopicSortField | None = None,
+        order: SortOrder = "asc",
+    ) -> tuple[list[Topic], int]:
         return (
-            await self._repo.list_for_project(project_id),
+            await self._repo.list_for_project(project_id, sort=sort, order=order),
             await self._repo.count_for_project(project_id),
         )
 

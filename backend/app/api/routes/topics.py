@@ -36,6 +36,7 @@ from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicStatus
+from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     ConclusionIn,
     DocEditIn,
@@ -76,8 +77,15 @@ async def create_topic(
 
 
 @router.get("")
-async def list_topics(project_id: uuid.UUID, db: DbSession) -> dict:
-    topics, total = await TopicService(db).list_for_project(project_id)
+async def list_topics(
+    project_id: uuid.UUID,
+    db: DbSession,
+    sort: TopicSortField | None = None,
+    order: SortOrder = "asc",
+) -> dict:
+    topics, total = await TopicService(db).list_for_project(
+        project_id, sort=sort, order=order
+    )
     items = [TopicOut.model_validate(t).model_dump(mode="json") for t in topics]
     return ok(page(items, total))
 
