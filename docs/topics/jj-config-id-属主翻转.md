@@ -211,9 +211,28 @@ ls -l <workspace_root>/<project_id>/.jj/repo/config-id   # 期望：仍然不存
 - 起 DB 之前另有 3 条 ERROR（`test_idle_reap`、`test_task_ai_advice_routes`），是连不上 5433 导致的；**起了 PG 之后全部消失**，所以确认是环境不是代码。
 - 本卡新增的 11 条测试全绿。
 
-`check.sh --full` 的前三段已经出结果：**ruff PASS、pyright PASS（0 errors）、alembic 只有一个 head**。第四段（整套 pytest，含 integration/contract）跑得慢——它带 `--reruns 2 --reruns-delay 3`，而沙箱里那些**必然失败**的用例每条都要额外重试两次，结果出来后补在这里。
+`bash .claude/scripts/check.sh --full`（起了 PG+Redis 之后跑的完整一轮）：
 
-按 CLAUDE.md 的记录，沙箱里预期还会有约 43 条因**没有 git identity** 而失败的用例（凡是要建真 worktree 的：`test_workspace.py`、`test_upstream.py`、`test_accept*.py`、`test_git_http.py`…），加上上面那 22 条缺宿主机命令的，**都不是本卡引入的**。递卡时闸门跑的是 `check.sh --no-tests`（只有 ruff+pyright），这两项已经绿。
+```
+PASS: ruff
+PASS: pyright
+PASS: exactly one migration head
+FAIL: pytest     23 failed, 3639 passed, 31 skipped, 46 rerun in 431.66s
+Result: 3/4 passed
+```
+
+**四项里三项绿，红的只有 pytest，且没有一条 SKIP**（`Result` 行是 `3/4 passed`，不是"假绿"——这次 pyright/pytest 都真的跑了）。check.sh 只打印了最后 19 条失败，所以我把 23 条**逐条查清了**，分两次单独跑、看完整输出：
+
+| 单独跑 | 结果 | 失败明细 |
+|---|---|---|
+| `tests/unit`（起了 PG+Redis） | 2543 passed / **22 failed** | 21 条 `test_machine_service.py` + 1 条 `test_tmux_control.py`，全是 `FileNotFoundError: 'ssh-keygen'` / `'kill'`——沙箱缺宿主机命令 |
+| `tests/integration` + `tests/contract` | 1093 passed / **1 failed** | 只有 `test_market_api.py::test_market_lists_ai_and_compute_pools`，断在 `ai_default["available"]`（市场目录里默认 AI 池在本环境未部署），与本卡无关 |
+
+22 + 1 = 23，**和全量跑的数字对得上，没有第 24 条**。这三个文件都跟 jj / 工作区 / 错误分类毫无关系，本卡改的 4 个文件相关的用例全绿。
+
+> 顺带一条对 CLAUDE.md 的更正：那里记着沙箱里还会有约 43 条因**没有 git identity** 而失败的用例（`test_workspace.py`/`test_upstream.py`/`test_accept*.py`/`test_git_http.py`…）。这次**没有出现**——全量 3639 passed，说明那条环境缺口已经不存在了。
+
+递卡时闸门跑的是 `check.sh --no-tests`（只有 ruff+pyright），这两项都绿。
 
 ## 现状（已拍板：不动盒子）
 
