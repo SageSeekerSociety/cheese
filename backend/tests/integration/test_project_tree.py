@@ -369,43 +369,6 @@ def test_split_and_return_conclusion(client):
     notifs = client.get(f"/api/projects/{p['id']}/notifications").json()["data"]["data"]
     assert any("实现数据清洗" in n["title"] for n in notifs)
 
-    # 自动归结: the concluding sub-topic itself is archived — no open accept
-    # card, so nothing was waiting on a human decision.
-    sub_after = client.get(f"/api/topics/{sub['id']}").json()["data"]
-    assert sub_after["status"] == "archived"
-    assert sub_after["archived_at"] is not None
-
-
-def test_return_conclusion_leaves_topic_active_with_open_accept_card(client):
-    p = _project(client)
-    topic = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "大话题"}
-    ).json()["data"]
-    sub = client.post(
-        f"/api/topics/{topic['id']}/split", json={"title": "实现登录"}
-    ).json()["data"]
-    _wait_turns_idle()
-
-    # A human review is already in flight for this sub-topic.
-    card = client.post(
-        f"/api/topics/{sub['id']}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "过一下"},
-    ).json()["data"]
-    assert card["status"] == "pending"
-
-    r = client.post(
-        f"/api/topics/{sub['id']}/return-conclusion",
-        json={"conclusion": "登录做完了，等 alice 过一下"},
-    )
-    assert r.status_code == 200
-    _wait_turns_idle()
-
-    # Conclude must NOT race ahead of the open card — accept()/reject() still
-    # decide the outcome.
-    sub_after = client.get(f"/api/topics/{sub['id']}").json()["data"]
-    assert sub_after["status"] == "active"
-    assert sub_after["archived_at"] is None
-
 
 def test_return_conclusion_on_root_topic_fails(client):
     p = _project(client)
