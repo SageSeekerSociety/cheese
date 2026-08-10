@@ -267,6 +267,11 @@ class TestAccountLinkTokenPersistence:
                 assert result == "refreshed-token"
                 await session.commit()
 
+                # The refresh persists in its OWN session/transaction (by
+                # design — see _refresh_and_persist_token). This session's
+                # identity-mapped entity still holds the pre-refresh values
+                # (expire_on_commit=False), so expire before reading back.
+                session.expire_all()
                 refreshed = await repo.get_by_user_and_provider(user_id, "github_app")
                 assert refreshed is not None
                 assert decrypt_text(refreshed.access_token) == "refreshed-token"
