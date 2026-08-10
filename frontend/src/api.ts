@@ -19,6 +19,7 @@ import type {
   MarketTask,
   MemberSummary,
   MilestoneFull,
+  OAuthConnectionInfo,
   PrChecks,
   PreviewInfo,
   Project,
@@ -155,6 +156,29 @@ async function connectorRequest<T>(path: string, init?: RequestInit): Promise<T>
     throw new Error(message)
   }
   return (await res.json()) as T
+}
+
+// 知是 1.0 routers are bare (`/users`, `/spaces`, …) and reach the backend
+// through exactly one `/api` prefix — see BASE's comment above for why that's
+// different from 2.0's doubled `/api/api`. Mirrors `request`'s envelope unwrap
+// and auth header, minus the 2.0-specific GET retry.
+async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
+  })
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} for ${path}`)
+  }
+  const envelope = (await res.json()) as ApiEnvelope<T>
+  if (envelope.code !== 200) {
+    throw new Error(envelope.message || `API error code ${envelope.code}`)
+  }
+  return envelope.data
 }
 
 // The name the cli proposed for a pending code (this machine's hostname), so the
@@ -585,6 +609,18 @@ export function connectGithubRepo(
 }
 export function getGithubAccountAuthorizeUrl(projectId: string): Promise<{ url: string }> {
   return request(`/users/me/github-account/authorize-url?return_project_id=${encodeURIComponent(projectId)}`)
+}
+
+// Personal OAuth/App connections (1.0 router, single `/api` prefix — see
+// legacyRequest). Includes every provider the user has linked, not just
+// github_app; callers filter by providerId.
+export function listOAuthConnections(userId: string): Promise<{ connections: OAuthConnectionInfo[] }> {
+  return legacyRequest(`/users/${encodeURIComponent(userId)}/oauth/connections`)
+}
+export function deleteOAuthConnection(userId: string, connectionId: number): Promise<void> {
+  return legacyRequest(`/users/${encodeURIComponent(userId)}/oauth/connections/${connectionId}`, {
+    method: 'DELETE',
+  })
 }
 
 // 项目总览 / 收件箱 (eval G2/G3).

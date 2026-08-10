@@ -650,6 +650,20 @@ export interface GithubConnection {
   account?: string
 }
 
+// A user's OAuth/App connections — GET /users/{userId}/oauth/connections
+// (list_user_connections). login/tokenExpires/hasRefreshToken (2026-08-09) are
+// token-health metadata only; the raw access token is never sent to the client.
+export interface OAuthConnectionInfo {
+  id: number
+  providerId: string
+  providerName: string
+  providerUserId: string
+  connectedAt: string | null
+  login: string | null
+  tokenExpires: string | null
+  hasRefreshToken: boolean
+}
+
 // ---- self-hosted 设备连接器 (P3 Phase B) ----
 
 // One agent (a screen) currently running on an enrolled device — a live 现场 the
