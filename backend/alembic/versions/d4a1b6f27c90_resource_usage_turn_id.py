@@ -1,7 +1,7 @@
 """resource_usage.turn_id — group a turn's rows so 轮次 counts turns, not rows
 
 Revision ID: d4a1b6f27c90
-Revises: c4e8f19b0d73
+Revises: b91c4d7e2a05
 Create Date: 2026-08-10 18:40:00.000000
 
 """
@@ -14,7 +14,10 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d4a1b6f27c90"
-down_revision: str | Sequence[str] | None = "c4e8f19b0d73"
+# Rechained off c4e8f19b0d73 onto b91c4d7e2a05: main landed that one on the same
+# parent while this branch was open, and two children of one revision are two
+# heads (single-head discipline, .claude/rules/migrations.md).
+down_revision: str | Sequence[str] | None = "b91c4d7e2a05"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

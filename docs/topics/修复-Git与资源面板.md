@@ -27,7 +27,7 @@
 **后端**
 
 - <&backend/app/domain/usage/tokens.py>（新）：cache token 折算收成一处，三条供给（sdk / hooks / 订阅代理）各自的字段方言在这里登记。<&backend/app/domain/agent/service.py>、<&backend/app/domain/agent/hook_events.py>、<&backend/app/domain/usage/subscription_ingest.py> 全部改调它，sdk 那条漏掉的两个 cache 桶补上。
-- <&backend/app/domain/usage/models.py> + <&backend/alembic/versions/d4a1b6f27c90_resource_usage_turn_id.py>：`resource_usage.turn_id`（可空 + 索引，down_revision `c4e8f19b0d73`，`alembic heads` 保持单头）。
+- <&backend/app/domain/usage/models.py> + <&backend/alembic/versions/d4a1b6f27c90_resource_usage_turn_id.py>：`resource_usage.turn_id`（可空 + 索引）。**down_revision 已从 `c4e8f19b0d73` 改挂到 `b91c4d7e2a05`**——本分支开着的时候主干落了 `b91c4d7e2a05_machine_last_seen_at`，它和我这条挂在同一个父节点上，合并后就是两个头，PR #246 的 `migration-heads` 因此红了。按 `.claude/rules/migrations.md` 的规矩重挂到新头（不动主干上那条），已按「本工作区 + 主干新增那条」的合并后拓扑验证：单头、无悬空 down_revision。
 - <&backend/app/domain/agent/chat.py>：5 处 usage 写入（含 gateway 延迟补账）都带上本轮 turn_id。
 - <&backend/app/domain/usage/subscription_ingest.py>：`TurnIndex` 用代理日志自带的 `ts` 把每行归属到该话题当时在跑的那一轮；超出 6 小时窗口不归属（宁可算独立一轮，也不硬套到别人头上）。
 - <&backend/app/domain/usage/repositories.py>：`turns = count(distinct turn_id) + 无 turn_id 的行数`；新增 `unpriced_tokens`（有 token 却无单价的量）。
