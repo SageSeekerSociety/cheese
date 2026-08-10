@@ -24,10 +24,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class BudgetState:
-    """What a project has spent and what it was allowed, in USD."""
+    """What a project has spent and what it was allowed, in the caller's
+    metering unit — the gateway brake prices grants in USD, the subscription
+    admission endpoint counts the same grants in credits. The decision only
+    compares the two numbers, so it owns no unit."""
 
-    spent_usd: float
-    limit_usd: float | None  # None = unlimited (自治项目, spec §9.1)
+    spent: float
+    limit: float | None  # None = unlimited (自治项目, spec §9.1)
 
 
 @dataclass(frozen=True)
@@ -44,14 +47,14 @@ def decide(state: BudgetState) -> Decision:
     keeps producing, where the work happens, the money goes, and everything
     reports success.
     """
-    if state.limit_usd is None:
+    if state.limit is None:
         return Decision(True, "unlimited")
-    if state.spent_usd < state.limit_usd:
-        remaining = state.limit_usd - state.spent_usd
-        return Decision(True, f"${remaining:.4f} of budget remaining")
+    if state.spent < state.limit:
+        remaining = state.limit - state.spent
+        return Decision(True, f"{remaining:.4f} of budget remaining")
     return Decision(
         False,
-        f"budget spent: ${state.spent_usd:.4f} of ${state.limit_usd:.4f}",
+        f"budget spent: {state.spent:.4f} of {state.limit:.4f}",
     )
 
 

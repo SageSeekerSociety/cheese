@@ -200,3 +200,149 @@ def test_format_status_renders_near_ceiling_state():
         _status_payload({"status": "running", "near_ceiling": True, "activity": None})
     )
     assert "接近硬顶" in out
+
+
+# --- cheese await: 后台跑长任务，跑完平台叫醒本话题 ---------------------------
+
+
+def test_await_registers_then_forks_and_returns_immediately(monkeypatch, tmp_path):
+    """`cheese await` must not block — that's the whole point. It registers the
+    command, hands the wake token to a detached child, and returns."""
+    import subprocess
+
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "topic-1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        cli,
+        "_call",
+        lambda m, p, b=None, **kw: (
+            calls.append((m, p, b)),
+            {
+                "data": {
+                    "task_id": "task-9",
+                    "wake_token": "wake-tok",
+                    "label": "全量检查",
+                }
+            },
+        )[1],
+    )
+    spawned: dict = {}
+
+    def fake_popen(argv, **kw):
+        spawned["argv"] = argv
+        spawned["kw"] = kw
+        return object()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["cheese", "await", "bash check.sh", "--label", "全量检查", "--timeout", "900"],
+    )
+    cli.main()
+
+    method, path, body = calls[0]
+    assert (method, path) == ("POST", "/topics/topic-1/background-task")
+    assert body["command"] == "bash check.sh"
+    assert body["label"] == "全量检查"
+    assert body["timeout_s"] == 900
+
+    assert spawned["argv"][2] == "__await-child"
+    assert spawned["argv"][3] == "task-9"
+    assert spawned["argv"][4] == "bash check.sh"
+    # The wake token rides in the env, never on a world-readable argv.
+    assert spawned["kw"]["env"]["CHEESE_AWAIT_TOKEN"] == "wake-tok"
+    assert "wake-tok" not in " ".join(str(x) for x in spawned["argv"])
+    # Detached, so it outlives the shell AND the turn that spawned it.
+    assert spawned["kw"]["start_new_session"] is True
+
+
+def test_await_log_lives_outside_the_worktree(monkeypatch, tmp_path):
+    """These logs must never be committed with the topic's work."""
+    cli = _load()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = cli._await_log_path("run-1")
+    assert path.startswith(str(tmp_path))
+    assert path.endswith("run-1.log")
+
+
+def test_await_child_reports_exit_code_and_output_tail(monkeypatch, tmp_path):
+    cli = _load()
+    log = str(tmp_path / "run.log")
+    reported: dict = {}
+    monkeypatch.setattr(
+        cli, "_await_report", lambda task_id, **kw: reported.update(id=task_id, **kw)
+    )
+
+    cli._await_child("task-9", "echo 'hello from the build'; exit 7", log, 30)
+
+    assert reported["id"] == "task-9"
+    assert reported["exit_code"] == 7
+    assert "hello from the build" in reported["tail"]
+    assert reported["duration_s"] >= 0
+    # The full output is on disk for the agent to go read.
+    assert "hello from the build" in open(log, encoding="utf-8").read()
+
+
+def test_await_child_kills_and_reports_124_on_timeout(monkeypatch, tmp_path):
+    cli = _load()
+    log = str(tmp_path / "run.log")
+    reported: dict = {}
+    monkeypatch.setattr(
+        cli, "_await_report", lambda task_id, **kw: reported.update(**kw)
+    )
+
+    cli._await_child("task-9", "sleep 30", log, 1)
+
+    assert reported["exit_code"] == 124
+    assert reported["duration_s"] < 15  # killed at the ceiling, not waited out
+
+
+def test_await_child_reports_even_when_the_command_cannot_run(monkeypatch, tmp_path):
+    """A child that dies quietly is a topic that never wakes up — the exact bug
+    this path exists to remove. Report something, always."""
+    cli = _load()
+    log = str(tmp_path / "run.log")
+    reported: dict = {}
+    monkeypatch.setattr(
+        cli, "_await_report", lambda task_id, **kw: reported.update(**kw)
+    )
+
+    cli._await_child("task-9", "definitely-not-a-real-command-xyz", log, 30)
+
+    assert reported["exit_code"] != 0
+    assert reported["tail"]
+
+
+def test_await_report_retries_before_giving_up(monkeypatch, tmp_path):
+    cli = _load()
+    monkeypatch.setattr(cli, "_AWAIT_RETRY_DELAYS", (0, 0, 0))
+    attempts = []
+
+    def flaky(req, timeout=None):
+        attempts.append(req)
+        if len(attempts) < 3:
+            raise OSError("backend restarting")
+
+        class _R:
+            def read(self):
+                return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        return _R()
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", flaky)
+    monkeypatch.setenv("CHEESE_TOPIC", "topic-1")
+    monkeypatch.setenv("CHEESE_AWAIT_TOKEN", "wake-tok")
+
+    cli._await_report("task-9", exit_code=0, tail="ok", duration_s=1.0)
+
+    assert len(attempts) == 3
+    assert attempts[-1].get_header("X-cheese-token") == "wake-tok"

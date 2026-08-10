@@ -19,6 +19,7 @@
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
   cheese milestone "中期汇报" --due 2026-06-20
+  cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
   cheese serve "Vue dev server"             # 应用跑在 0.0.0.0:$CHEESE_APP_PORT 后,设为预览
@@ -47,13 +48,16 @@ MEMORY_SCOPE = os.environ.get("CHEESE_MEMORY_SCOPE", "project")
 OWNER = os.environ.get("CHEESE_OWNER", "")
 
 
-def _call(method: str, path: str, body: dict | None = None) -> dict:
+def _call(
+    method: str, path: str, body: dict | None = None, *, token: str | None = None
+) -> dict:
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Content-Type", "application/json")
-    if TOKEN:
-        req.add_header("X-Cheese-Token", TOKEN)
+    auth = token if token is not None else TOKEN
+    if auth:
+        req.add_header("X-Cheese-Token", auth)
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
@@ -177,6 +181,161 @@ def _format_status(d: dict) -> str:
     return "\n".join(lines)
 
 
+# --- await: 后台跑长任务，跑完平台自动叫醒本话题 -------------------------------
+#
+# Why this exists: ending a turn to "wait for" a background command used to
+# freeze the topic — nothing on the platform starts a new turn when a detached
+# process exits. `cheese await` registers the command with the platform, runs it
+# in a detached child here in the sandbox (where the venv/toolchain is warm), and
+# the child reports the exit code + output tail back when it finishes; the
+# platform lands that in the timeline and wakes the topic.
+#
+# The reporting token comes from registration, NOT from CHEESE_TOKEN: the
+# container's own token expires in an hour and these tasks are longer than that.
+
+_AWAIT_TAIL_BYTES = 4000
+# Same cadence the backend uses for its own at-least-once deliveries.
+_AWAIT_RETRY_DELAYS = (0, 5, 30)
+
+
+def _await_log_path(run_id: str) -> str:
+    """Where a backgrounded command's full output goes. Deliberately OUTSIDE the
+    worktree: these logs would otherwise be committed with the topic's work."""
+    home = os.environ.get("HOME") or "/tmp"
+    log_dir = os.path.join(home, ".cheese", "await")
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, f"{run_id}.log")
+
+
+def _await_start(command: str, label: str, timeout_s: int) -> None:
+    """Register the command, fork the detached runner, and return immediately."""
+    import subprocess
+    import time
+
+    topic = _need("CHEESE_TOPIC", TOPIC)
+    run_id = f"{int(time.time())}-{os.getpid()}"
+    log_path = _await_log_path(run_id)
+    data = _call(
+        "POST",
+        f"/topics/{topic}/background-task",
+        {
+            "command": command,
+            "label": label,
+            "timeout_s": timeout_s,
+            "log_path": log_path,
+        },
+    ).get("data", {})
+    task_id = data.get("task_id", "")
+
+    child_env = dict(os.environ)
+    # Via env, not argv: the wake token has a long life and `ps` is world-readable.
+    child_env["CHEESE_AWAIT_TOKEN"] = data.get("wake_token", "")
+    subprocess.Popen(  # noqa: S603 — our own script, fixed argv
+        [
+            sys.executable,
+            os.path.abspath(__file__),
+            "__await-child",
+            task_id,
+            command,
+            log_path,
+            str(timeout_s),
+        ],
+        env=child_env,
+        cwd=os.getcwd(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        # Its own session, so it outlives this shell AND the turn that spawned it.
+        start_new_session=True,
+    )
+    print(
+        f"[cheese] 已在后台开跑：{data.get('label') or command}\n"
+        f"  完整输出: {log_path}\n"
+        f"  跑完平台会自动叫醒本话题，并带上退出码和输出尾巴——"
+        f"你可以安心结束本轮，不用干等（上限 {timeout_s}s）。"
+    )
+
+
+def _await_child(task_id: str, command: str, log_path: str, timeout_s: int) -> None:
+    """The detached runner: run the command, then report how it ended.
+
+    Never raises past this frame — a crash here is a topic that never wakes up,
+    which is the exact failure this whole path exists to remove."""
+    import signal
+    import subprocess
+    import time
+
+    started = time.time()
+    exit_code = -1
+    try:
+        with open(log_path, "wb") as log:
+            proc = subprocess.Popen(  # noqa: S602 — the agent's own command, by design
+                ["bash", "-lc", command],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            try:
+                exit_code = proc.wait(timeout=timeout_s)
+            except subprocess.TimeoutExpired:
+                # Kill the whole process group: a build/test runner's children
+                # would otherwise survive and keep writing to the log.
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+                proc.wait()
+                exit_code = 124  # `timeout(1)`'s convention
+    except Exception as e:  # noqa: BLE001 — report the failure, never vanish
+        with open(log_path, "a", encoding="utf-8") as log:
+            log.write(f"\n[cheese await] 命令无法执行: {e}\n")
+
+    _await_report(
+        task_id,
+        exit_code=exit_code,
+        tail=_await_tail(log_path),
+        duration_s=time.time() - started,
+    )
+
+
+def _await_tail(log_path: str) -> str:
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - _AWAIT_TAIL_BYTES))
+            return f.read().decode(errors="replace")
+    except OSError as e:
+        return f"（读不到输出日志 {log_path}: {e}）"
+
+
+def _await_report(
+    task_id: str, *, exit_code: int, tail: str, duration_s: float
+) -> None:
+    """POST the result, retrying — a dropped report is a frozen topic."""
+    import time
+
+    topic = os.environ.get("CHEESE_TOPIC", "")
+    token = os.environ.get("CHEESE_AWAIT_TOKEN", "")
+    url = f"{API}/topics/{topic}/background-task/{task_id}/done"
+    body = json.dumps(
+        {"exit_code": exit_code, "tail": tail, "duration_s": duration_s}
+    ).encode()
+    for delay in _AWAIT_RETRY_DELAYS:
+        if delay:
+            time.sleep(delay)
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        if token:
+            req.add_header("X-Cheese-Token", token)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                r.read()
+            return
+        except Exception:  # noqa: BLE001 — retry, then give up quietly
+            continue
+
+
 def _print_api_index() -> None:
     """List available operations from our FastAPI /openapi.json (like Restish,
     but built from OUR live spec). Lets `cheese api` self-describe what raw calls
@@ -215,6 +374,23 @@ def main() -> None:
         default=None,
         help="任务简报：这个子话题要干什么/约束/验收标准。会预置成分身的活文档，分身开工全靠它——尽量写",
     )
+
+    paw = sub.add_parser(
+        "await",
+        help="把长命令丢到后台跑；跑完平台自动叫醒本话题并带上退出码+输出尾巴",
+    )
+    paw.add_argument("command", help="要跑的命令，如 'bash .claude/scripts/check.sh'")
+    paw.add_argument("--label", default="", help="一句话说明在跑什么（唤醒时会显示）")
+    paw.add_argument(
+        "--timeout", type=int, default=3600, help="秒，超时会被杀掉并按退出码 124 回报"
+    )
+
+    # Internal: the detached child _await_start forks. Not for humans/agents.
+    pawc = sub.add_parser("__await-child")
+    pawc.add_argument("task_id")
+    pawc.add_argument("command")
+    pawc.add_argument("log_path")
+    pawc.add_argument("timeout_s", type=int)
 
     pdec = sub.add_parser("decision", help="记录一条决策")
     pdec.add_argument("text")
@@ -297,6 +473,10 @@ def main() -> None:
             body["brief"] = a.brief
         r = _call("POST", f"/topics/{topic}/split", body)
         print(f"已拆出子话题：{r['data']['title']}（id={r['data']['id']}），分身已带简报自动开工")
+    elif a.cmd == "await":
+        _await_start(a.command, a.label, a.timeout)
+    elif a.cmd == "__await-child":
+        _await_child(a.task_id, a.command, a.log_path, a.timeout_s)
     elif a.cmd == "decision":
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/decision", {"decision": a.text})

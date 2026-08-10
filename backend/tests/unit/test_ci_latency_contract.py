@@ -78,7 +78,7 @@ def test_buildkit_uses_the_mirror_and_keeps_cache_on_the_persistent_runner():
         assert "BUILDKIT_IMAGE" in setup["with"]["driver-opts"]
         assert "cheese-buildkit-image-retainer" in retain["run"]
         assert "docker buildx prune" in reclaim["run"]
-        assert "--max-used-space 6GB" in reclaim["run"]
+        assert "--max-used-space 20GB" in reclaim["run"]
         assert "--min-free-space 10GB" in reclaim["run"]
 
 

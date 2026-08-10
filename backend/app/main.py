@@ -103,9 +103,20 @@ async def lifespan(_: FastAPI):
         async_session_factory, settings.machine_enroll_interval_seconds
     )
     machines.start()
+    # Subscription turns are metered at the proxy; this tails its log into
+    # resource_usage + credits (issue #218). No-op unless the log path is set.
+    from app.domain.usage.subscription_ingest import SubscriptionUsageIngestRunner
+
+    usage_ingest = SubscriptionUsageIngestRunner(
+        async_session_factory,
+        settings.subscription_usage_log,
+        settings.subscription_ingest_interval_s,
+    )
+    usage_ingest.start()
     try:
         yield
     finally:
+        await usage_ingest.stop()
         await machines.stop()
         await pr_poller.stop()
         await reaper.stop()
@@ -186,6 +197,11 @@ register_all_permissions()
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/webhook-token$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/decision$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/background-task$")),
+    (
+        "POST",
+        re.compile(r"^/api/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
+    ),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/return-conclusion$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/accept-card$")),
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),
@@ -220,6 +236,21 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     ms = round((time.perf_counter() - t0) * 1000, 1)
     # WS upgrades and health probes are logged by their own layers; skip noise.
     if request.url.path != "/health":
+        # Who and from where, when known. `auth_user_id` is set by
+        # get_auth_user (request.state rides scope, so it survives the
+        # middleware task boundary). XFF/UA are recorded verbatim, no trust
+        # decisions — behind the edge proxy the peer address is useless for
+        # telling two clients apart (all traffic arrives from the proxy).
+        who: dict[str, object] = {}
+        user_id = request.scope.get("state", {}).get("auth_user_id")
+        if user_id is not None:
+            who["user"] = user_id
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            who["client"] = xff
+        ua = request.headers.get("user-agent")
+        if ua:
+            who["ua"] = ua
         _http_log.info(
             "req",
             method=request.method,
@@ -227,6 +258,7 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
             status=response.status_code,
             ms=ms,
             req=rid,
+            **who,
         )
     response.headers["X-Request-ID"] = rid
     return response
