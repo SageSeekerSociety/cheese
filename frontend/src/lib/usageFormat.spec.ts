@@ -1,5 +1,7 @@
 import type { UsageStats } from '../cx_types'
+
 import { describe, expect, it } from 'vitest'
+
 import { costLabel, costNote, fmtCost, fmtNum } from './usageFormat'
 
 function stats(over: Partial<UsageStats> = {}): UsageStats {
