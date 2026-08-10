@@ -28,6 +28,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 import httpx
@@ -43,6 +44,28 @@ class PullRequest:
     number: int
     url: str
     head_sha: str
+
+
+@dataclass
+class PullRequestStatus:
+    """One PR's live state, as the poller needs it.
+
+    `merge_commit_sha` is ONLY meaningful when `merged` is True. GitHub
+    populates it on OPEN pull requests too — with the sha of a throwaway
+    *test-merge* commit that exists on no branch at all (verified against
+    api.github.com on 2026-08-10: open PR astral-sh/ruff#27626 reports
+    `merged: false` and a non-null `merge_commit_sha` which
+    `compare <sha>...main` puts 2 commits AHEAD of main, i.e. not on it;
+    merged PR astral-sh/ruff#20000 reports `merged: true` and a
+    `merge_commit_sha` that compare puts squarely ON main). Trusting it
+    unconditionally would hand stage 2 a sha no deploy run can ever match,
+    and the card would wait for a deploy forever."""
+
+    head_sha: str
+    state: str  # "open" | "closed" — GitHub says "closed" for merged PRs too
+    merged: bool
+    merge_commit_sha: str | None = None
+    merged_at: datetime | None = None
 
 
 @dataclass
@@ -85,6 +108,19 @@ def _github_message(resp: httpx.Response) -> str:
     return f"HTTP {resp.status_code}：{detail[:300]}"
 
 
+def _parse_github_time(raw: object) -> datetime | None:
+    """GitHub's `2026-08-09T22:03:59Z` → an aware UTC datetime (项目约定:
+    never a naive one). Anything unparseable is None so the caller can fall
+    back to "now" rather than blow up a poll tick on a format surprise."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 class GitHubPrClient(Protocol):
     async def open_pull_request(
         self,
@@ -117,9 +153,19 @@ class GitHubPrClient(Protocol):
     async def pull_request_head_sha(
         self, *, owner: str, repo: str, number: int, token: str
     ) -> str:
-        """The PR's CURRENT head commit — re-fetched every poll because 芝士
-        pushing a fix moves it; polling a sha frozen at PR-open time would
-        check the original (failing) commit forever."""
+        """The PR's CURRENT head commit — re-fetched after 芝士's fix is
+        pushed because that push moves it; polling a sha frozen at PR-open
+        time would check the original (failing) commit forever."""
+        ...
+
+    async def pull_request_status(
+        self, *, owner: str, repo: str, number: int, token: str
+    ) -> PullRequestStatus:
+        """The PR's live state — head, open/closed, and whether SOMEONE ELSE
+        already merged it. The poller reads this first thing every tick: a PR
+        merged by hand on GitHub is invisible to every other signal here (its
+        checks can be red, its branch unpushable), and without noticing it the
+        card sits at `pr_open` forever."""
         ...
 
     async def merge_pull_request(
@@ -337,6 +383,30 @@ class HttpxGitHubPrClient:
                 f"GitHub 拒绝查 PR 状态（HTTP {resp.status_code}）：{resp.text[:300]}"
             )
         return resp.json()["head"]["sha"]
+
+    async def pull_request_status(
+        self, *, owner: str, repo: str, number: int, token: str
+    ) -> PullRequestStatus:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}",
+                headers=self._headers(token),
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝查 PR 状态（HTTP {resp.status_code}）：{resp.text[:300]}"
+            )
+        data = resp.json()
+        merged = bool(data.get("merged"))
+        return PullRequestStatus(
+            head_sha=data["head"]["sha"],
+            state=str(data.get("state") or ""),
+            merged=merged,
+            # Gated on `merged` on purpose — see PullRequestStatus's docstring
+            # for what this field holds on an unmerged PR.
+            merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
+            merged_at=_parse_github_time(data.get("merged_at")) if merged else None,
+        )
 
     async def merge_pull_request(
         self,
