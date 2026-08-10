@@ -1134,35 +1134,59 @@ class ChatService:
         except Exception:  # noqa: BLE001 — reconcile is best-effort, never fail a turn
             logger.exception("spool reconcile failed for topic %s", topic_id)
 
-    async def _model_kwargs(self, project_id: uuid.UUID) -> tuple[dict, bool]:
+    async def _model_kwargs(
+        self, project_id: uuid.UUID, provider_name: str
+    ) -> tuple[dict, str]:
         """Per-turn overrides for the agent call, resolved from project.settings:
         the ExecutionProfile → model+env (design §2), and the sandbox image (spec
         §9.1 environment — a project can run on cheesex-dev for dogfooding). model
         is skipped when no registry is configured (the agent uses its default); the
         image is resolved regardless (it's independent of the AI profile).
 
-        Also returns whether the turn is GATEWAY-ROUTED (pool profile through the
-        LiteLLM gateway): those turns are metered by the gateway spend log — the
-        caller must NOT also bill provider-reported usage (double count)."""
+        Also returns the turn's supply ROUTE — where its model traffic actually
+        goes, which names the ONE authoritative meter (issue #218):
+
+          "gateway"      LiteLLM, directly or via /llm from a machine; metered by
+                         the gateway spend log, never by provider-reported
+                         numbers (double count).
+          "subscription" the metering proxy; metered by its usage log.
+          "native"       profile-pinned credentials; the SDK's own usage report
+                         is all there is.
+
+        The route is a fact about the PROVIDER executing the turn, not about the
+        deployment. `subscription_enabled` used to force every turn onto the
+        subscription branch, which mis-labeled device turns — their traffic goes
+        through /llm → gateway regardless — so their spend sat in the gateway
+        log and was never drained into the books."""
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
         kwargs: dict = {}
         image = (project.settings or {}).get("sandbox_image") if project else None
         if image:
             kwargs["sandbox_image"] = image
-        pool_route = True
-        if settings.subscription_enabled:
+        if provider_name == "device":
+            # A machine's credentials are the device provider's own affair: it
+            # gets the backend's /llm route + its scoped token, and the backend
+            # swaps in the project's virtual key per request (routes/llm_proxy).
+            # Handing it this box's profile env would put a box-local URL and a
+            # raw provider key on hardware the platform does not control.
+            return kwargs, "gateway"
+        if settings.subscription_enabled and provider_name == "tmux-hooks":
             # The subscription path doesn't route through the gateway or a
             # profile: the tmux provider points Claude Code at the metering proxy
             # and the model is the project's own pick (Sonnet 5 by default, Opus 5
             # opt-in). Pass the --model alias ("" = default, no flag); the sandbox
-            # env is set by the provider, not a profile.
+            # env is set by the provider, not a profile. Only tmux implements
+            # that env — the sdk provider under this flag used to fall through
+            # with no env at all and run on whatever the backend process itself
+            # inherited.
             choice = (
                 (project.settings or {}).get("subscription_model") if project else None
             )
             kwargs["model"] = subscription_model_alias(choice)
-            pool_route = False
-        elif self._profiles is not None:
+            return kwargs, "subscription"
+        pool_route = True
+        if self._profiles is not None:
             profile = self._profiles.resolve(
                 project.settings if project else None,
                 project.owner_handle if project else None,
@@ -1183,7 +1207,7 @@ class ChatService:
                     "no model call was made"
                 )
             kwargs["env"] = {**kwargs.get("env", {}), **override}
-        return kwargs, routed
+        return kwargs, "gateway" if routed else "native"
 
     _GW_KEY = "llm_gateway_key"
     _GW_CKPT = "llm_gateway_usage_ckpt"
@@ -1259,6 +1283,7 @@ class ChatService:
                     input_tokens=usage.input_tokens,
                     output_tokens=usage.output_tokens,
                     cost_usd=usage.cost_usd,
+                    route="gateway",
                 )
                 await ComputeGrantRepository(session).consume(
                     project_id, usage_to_credits(usage, spend_priced=True)
@@ -1565,7 +1590,7 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        model_kwargs, gateway_routed = await self._model_kwargs(project_id)
+        model_kwargs, route = await self._model_kwargs(project_id, provider.name)
 
         # Backfill any 现场 events the live hook path missed (backend down / no
         # listener during a prior turn) from the durable spool WAL — idempotent by
@@ -1680,12 +1705,22 @@ class ChatService:
                 )
             raise
 
+        # An all-zero usage report is "unknown", not "free": interactive Claude
+        # Code (the hooks backends) reports no usage, and its Stop hook payload
+        # decodes to zeros. Recording that as a metered zero-token turn is a lie
+        # the table then repeats — normalize to None so the row says unmetered.
+        if usage is not None and not (
+            usage.input_tokens or usage.output_tokens or usage.cost_usd
+        ):
+            usage = None
+
         # L1 (docs/llm-gateway.md): for gateway-routed turns the gateway spend
         # log is the SOLE metering source — hooks backends report no usage at
         # all, and provider-reported numbers for the same tokens would double-
         # bill on the next drain (daily cumulative deltas are exactly-once).
-        # Non-routed turns (native-Claude testing profiles) keep SDK usage.
-        if self._gateway is not None and gateway_routed:
+        # Subscription turns are metered by the proxy's own log (ingested
+        # separately); native turns keep the SDK's report.
+        if self._gateway is not None and route == "gateway":
             usage = await self._drain_gateway_usage(project_id)
             if usage is None:
                 # LiteLLM batch-writes spend logs (~10s); the settle retry can
@@ -1790,6 +1825,7 @@ class ChatService:
                         output_tokens=0,
                         cost_usd=0.0,
                         metered=False,
+                        route=route,
                     )
                 if usage is not None:
                     await UsageRepository(session).add(
@@ -1799,12 +1835,13 @@ class ChatService:
                         input_tokens=usage.input_tokens,
                         output_tokens=usage.output_tokens,
                         cost_usd=usage.cost_usd,
+                        route=route,
                     )
                     # Even a failed turn burned tokens: fold them into credits
                     # and deduct from the project's grants (spec §9.1).
                     await ComputeGrantRepository(session).consume(
                         project_id,
-                        usage_to_credits(usage, spend_priced=gateway_routed),
+                        usage_to_credits(usage, spend_priced=route == "gateway"),
                     )
                 fail_block = await blocks.add(
                     project_id=project_id,
@@ -1859,6 +1896,7 @@ class ChatService:
                     output_tokens=0,
                     cost_usd=0.0,
                     metered=False,
+                    route=route,
                 )
             if usage is not None:
                 await UsageRepository(session).add(
@@ -1868,13 +1906,14 @@ class ChatService:
                     input_tokens=usage.input_tokens,
                     output_tokens=usage.output_tokens,
                     cost_usd=usage.cost_usd,
+                    route=route,
                 )
                 # 用量扣减 (spec §9.1): fold this turn's tokens into credits and
                 # deduct from the project's grants, oldest first. A project with
                 # no grants (自治项目) deducts nothing — unlimited.
                 await ComputeGrantRepository(session).consume(
                     project_id,
-                    usage_to_credits(usage, spend_priced=gateway_routed),
+                    usage_to_credits(usage, spend_priced=route == "gateway"),
                 )
 
             topic = await topics.get(topic_id)
@@ -2095,7 +2134,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id))[0],
+            **(await self._model_kwargs(project_id, provider.name))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -2206,7 +2245,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id))[0],
+            **(await self._model_kwargs(project_id, provider.name))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -2290,7 +2329,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id))[0],
+            **(await self._model_kwargs(project_id, provider.name))[0],
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text
