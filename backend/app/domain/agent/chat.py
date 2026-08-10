@@ -1352,6 +1352,9 @@ class ChatService:
                     output_tokens=usage.output_tokens,
                     cost_usd=usage.cost_usd,
                     route="gateway",
+                    # Same turn as the row tx2 already wrote — this is the late
+                    # half of ONE turn's spend, not a second turn.
+                    turn_id=turn_id,
                 )
                 await ComputeGrantRepository(session).consume(
                     project_id, usage_to_credits(usage, spend_priced=True)
@@ -1914,6 +1917,7 @@ class ChatService:
                         cost_usd=0.0,
                         metered=False,
                         route=route,
+                        turn_id=turn_id,
                     )
                 if usage is not None:
                     await UsageRepository(session).add(
@@ -1924,6 +1928,7 @@ class ChatService:
                         output_tokens=usage.output_tokens,
                         cost_usd=usage.cost_usd,
                         route=route,
+                        turn_id=turn_id,
                     )
                     # Even a failed turn burned tokens: fold them into credits
                     # and deduct from the project's grants (spec §9.1).
@@ -1985,6 +1990,7 @@ class ChatService:
                     cost_usd=0.0,
                     metered=False,
                     route=route,
+                    turn_id=turn_id,
                 )
             if usage is not None:
                 await UsageRepository(session).add(
@@ -1995,6 +2001,7 @@ class ChatService:
                     output_tokens=usage.output_tokens,
                     cost_usd=usage.cost_usd,
                     route=route,
+                    turn_id=turn_id,
                 )
                 # 用量扣减 (spec §9.1): fold this turn's tokens into credits and
                 # deduct from the project's grants, oldest first. A project with

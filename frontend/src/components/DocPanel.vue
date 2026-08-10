@@ -48,6 +48,7 @@ import {
 import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
 import { relTime } from '../lib/relTime'
 import { isPlatformEvent, summarizeActions, toolLabel } from '../lib/toolLabels'
+import { costLabel, costNote, fmtNum } from '../lib/usageFormat'
 import { myHandle } from '../me'
 
 import CheeseAvatar from './CheeseAvatar.vue'
@@ -422,6 +423,8 @@ const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
 
 // ---- Per-tool data (lazy-loaded when its drawer opens) ----
 const toolLoading = ref(false)
+// A background re-fetch: spins only the 刷新 button, never replaces the panel.
+const toolRefreshing = ref(false)
 const toolError = ref<string | null>(null)
 
 // 评论 (B4): inline comments anchored to doc nodes. anchorNodes lists the doc's
@@ -620,15 +623,18 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function fmtCost(n: number): string {
-  return `$${n.toFixed(4)}`
-}
+// 资源面板的数字格式 (lib/usageFormat): grouping, magnitude-aware precision, and
+// the 未知-not-zero rule for subscription usage that carries no per-token price.
 
-async function loadTool(key: string) {
+// `silent`: a background re-fetch (auto-refresh / the 刷新 button). It must not
+// blank the panel behind a spinner — the point is that what you are reading
+// gets newer, not that it disappears and comes back.
+async function loadTool(key: string, opts: { silent?: boolean } = {}) {
   const tid = props.topic?.id
   const pid = projectId.value
   if (!tid || !pid) return
-  toolLoading.value = true
+  if (opts.silent) toolRefreshing.value = true
+  else toolLoading.value = true
   toolError.value = null
   try {
     if (key === 'site') {
@@ -644,9 +650,12 @@ async function loadTool(key: string) {
     } else if (key === 'git') {
       // A fresh repo with no commits makes git log fail (422); tolerate it so
       // the diff still renders instead of the whole drawer showing an error.
+      // Always topic-scoped: the project-level answer is OTHER topics' commits
+      // (before 采纳 this topic's commits live only on its branch; after, the
+      // base is everyone's).
       const [log, diff] = await Promise.all([
-        getGitLog(pid).catch(() => ({ data: [] as GitCommit[], total: 0 })),
-        getGitDiff(pid),
+        getGitLog(pid, tid).catch(() => ({ data: [] as GitCommit[], total: 0 })),
+        getGitDiff(pid, tid),
       ])
       // Guard against a topic switch mid-flight.
       if (props.topic?.id !== tid) return
@@ -691,9 +700,55 @@ async function loadTool(key: string) {
   } catch (e) {
     toolError.value = e instanceof Error ? e.message : '加载失败'
   } finally {
-    if (props.topic?.id === tid) toolLoading.value = false
+    if (props.topic?.id === tid) {
+      toolLoading.value = false
+      toolRefreshing.value = false
+    }
   }
 }
+
+// Panels that go stale while you watch them: 芝士 commits mid-look and the Git
+// panel still shows the moment it was opened; a turn finishes and 资源 still
+// shows the count from before. Both re-fetch on a timer, and immediately when a
+// turn ends (the moment their numbers actually change).
+const REFRESHABLE = new Set(['git', 'resources'])
+const TOOL_REFRESH_MS = 20_000
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+function stopAutoRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer)
+  refreshTimer = null
+}
+
+function refreshTool() {
+  const key = openTool.value
+  if (!key || !drawerOpen.value || !REFRESHABLE.has(key)) return
+  loadTool(key, { silent: true })
+}
+
+watch(
+  [drawerOpen, openTool],
+  ([open, key]) => {
+    stopAutoRefresh()
+    if (!open || !key || !REFRESHABLE.has(key)) return
+    refreshTimer = setInterval(() => {
+      // A hidden tab polling forever is pure waste — it re-fetches on the next
+      // tick after it comes back anyway.
+      if (typeof document !== 'undefined' && document.hidden) return
+      refreshTool()
+    }, TOOL_REFRESH_MS)
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.working,
+  (now, before) => {
+    if (before && !now) refreshTool()
+  }
+)
+
+onBeforeUnmount(stopAutoRefresh)
 
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif'])
 function isImagePath(path: string): boolean {
@@ -2210,6 +2265,16 @@ onBeforeUnmount(() => {
                 />
               </template>
               <v-btn
+                v-if="openTool && REFRESHABLE.has(openTool)"
+                icon="mdi-refresh"
+                size="small"
+                variant="text"
+                class="c-muted"
+                title="刷新"
+                :loading="toolRefreshing"
+                @click="refreshTool"
+              />
+              <v-btn
                 :icon="pinned ? 'mdi-pin' : 'mdi-pin-outline'"
                 size="small"
                 variant="text"
@@ -2309,11 +2374,15 @@ onBeforeUnmount(() => {
                 </div>
               </template>
 
-              <!-- Git: commit log + working-tree diff -->
+              <!-- Git: this topic's own commits + the diff its 采纳 would merge.
+               Both are topic-scoped; the project-level view is other topics'
+               work and was what made this panel lie. -->
               <template v-else-if="openTool === 'git'">
                 <div class="pa-3">
-                  <div class="t-eyebrow mb-2">提交记录</div>
-                  <div v-if="gitCommits.length === 0" class="text-medium-emphasis text-body-2 mb-3">暂无提交</div>
+                  <div class="t-eyebrow mb-2">本话题提交</div>
+                  <div v-if="gitCommits.length === 0" class="text-medium-emphasis text-body-2 mb-3">
+                    本话题还没有自己的提交（采纳后它们会并入主干）
+                  </div>
                   <v-list v-else density="compact" class="py-0 mb-3">
                     <v-list-item v-for="c in gitCommits" :key="c.hash" class="px-0">
                       <template #prepend>
@@ -2329,9 +2398,9 @@ onBeforeUnmount(() => {
                   </v-list>
 
                   <v-divider class="mb-3" />
-                  <div class="t-eyebrow mb-2">改动 diff</div>
+                  <div class="t-eyebrow mb-2">本话题改动（相对主干）</div>
                   <pre v-if="gitDiff.trim()" class="code-pre">{{ gitDiff }}</pre>
-                  <div v-else class="text-medium-emphasis text-body-2">工作区干净，无未提交改动</div>
+                  <div v-else class="text-medium-emphasis text-body-2">本话题还没有改动</div>
                 </div>
               </template>
 
@@ -2438,25 +2507,28 @@ onBeforeUnmount(() => {
                     </div>
                     <div v-if="row.u" class="usage-grid">
                       <div class="usage-cell">
-                        <div class="usage-num">{{ row.u.turns }}</div>
+                        <div class="usage-num">{{ fmtNum(row.u.turns) }}</div>
                         <div class="t-meta">轮次</div>
                       </div>
                       <div class="usage-cell">
-                        <div class="usage-num">{{ row.u.total_tokens }}</div>
+                        <div class="usage-num">{{ fmtNum(row.u.total_tokens) }}</div>
                         <div class="t-meta">总 token</div>
                       </div>
                       <div class="usage-cell">
-                        <div class="usage-num">{{ row.u.input_tokens }}</div>
+                        <div class="usage-num">{{ fmtNum(row.u.input_tokens) }}</div>
                         <div class="t-meta">输入</div>
                       </div>
                       <div class="usage-cell">
-                        <div class="usage-num">{{ row.u.output_tokens }}</div>
+                        <div class="usage-num">{{ fmtNum(row.u.output_tokens) }}</div>
                         <div class="t-meta">输出</div>
                       </div>
                       <div class="usage-cell">
-                        <div class="usage-num">{{ fmtCost(row.u.cost_usd) }}</div>
+                        <div class="usage-num" :title="costNote(row.u)">{{ costLabel(row.u) }}</div>
                         <div class="t-meta">费用</div>
                       </div>
+                    </div>
+                    <div v-if="row.u && costNote(row.u)" class="t-meta mt-1">
+                      {{ costNote(row.u) }}
                     </div>
                   </div>
                 </div>

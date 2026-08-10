@@ -504,13 +504,40 @@ def write_file_bytes(
     target.write_bytes(data)
 
 
-def git_log(project_id: uuid.UUID, limit: int = 50) -> list[dict]:
+def git_log(
+    project_id: uuid.UUID, limit: int = 50, topic_id: uuid.UUID | None = None
+) -> list[dict]:
+    """Commit history. With ``topic_id``: THIS topic's own commits (its branch
+    minus the base), which is what the 话题 Git panel asks about.
+
+    Project-level history was the wrong answer twice over: before 采纳 the
+    topic's commits live only on its branch, so the panel showed none of them;
+    after 采纳 the base is full of OTHER topics' commits, so it showed those.
+    Once a topic is merged its own range is empty again — correctly, since the
+    commits are the base's now — and the panel says so rather than borrowing
+    someone else's history.
+    """
     repo = ensure_repo(project_id)
     # A fresh repo has no commits yet — `git log` would exit non-zero. Return an
     # empty history instead of erroring.
     if not _git(repo, "rev-list", "-n", "1", "--all").strip():
         return []
-    out = _git(repo, "log", f"-{limit}", "--pretty=format:%h\t%an\t%s")
+    if topic_id is not None:
+        branch = branch_for_topic(topic_id)
+        if not _branch_exists(repo, branch):
+            return []
+        base = _base_branch(repo)
+        if branch == base:
+            return []
+        out = _git(
+            repo,
+            "log",
+            f"-{limit}",
+            "--pretty=format:%h\t%an\t%s",
+            f"{base}..{branch}",
+        )
+    else:
+        out = _git(repo, "log", f"-{limit}", "--pretty=format:%h\t%an\t%s")
     rows = []
     for line in out.splitlines():
         parts = line.split("\t", 2)

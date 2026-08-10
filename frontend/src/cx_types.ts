@@ -349,6 +349,10 @@ export interface UsageStats {
   total_tokens: number
   cost_usd: number
   turns: number
+  // Tokens that burned real capacity but carry NO USD price (subscription
+  // routing is billed by the month). Non-zero means the cost figure is
+  // incomplete — the panel says 未知 rather than printing $0.0000.
+  unpriced_tokens: number
 }
 
 // ---- 采纳卡 / 验收 (eval C5/A3) ----

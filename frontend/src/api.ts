@@ -799,13 +799,17 @@ export function getTerminal(topicId: string): Promise<TerminalInfo> {
   return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)
 }
 
-// Git: commit log + working-tree diff for the project repo.
-export function getGitLog(projectId: string): Promise<ListPayload<GitCommit>> {
-  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log`)
+// Git: commit log + diff. With `topicId` these are THIS topic's own commits and
+// the full diff its 采纳 would merge; without it, the project repo's. The 话题
+// panel must always pass it — the project-level answer is other topics' work.
+export function getGitLog(projectId: string, topicId?: string | null): Promise<ListPayload<GitCommit>> {
+  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)
 }
 
-export function getGitDiff(projectId: string): Promise<{ diff: string }> {
-  return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff`)
+export function getGitDiff(projectId: string, topicId?: string | null): Promise<{ diff: string }> {
+  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+  return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff${t}`)
 }
 
 // 文件: list workspace files; read one file's content.
