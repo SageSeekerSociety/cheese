@@ -14,7 +14,10 @@ tmp_backend.log
 tmp_frontend.log
 
 # ---- Tooling / local agent config ----
-.claude/
+# .claude/ IS tracked (skills/rules/scripts are team-shared specs); only the
+# machine-local pieces are ignored. A blanket `.claude/` here silently blocked
+# new tracked files while modifications to already-tracked ones still staged.
+.claude/settings.local.json
 
 # ---- Python ----
 __pycache__/
