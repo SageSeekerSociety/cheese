@@ -97,15 +97,50 @@ def _describe_token_unavailable(reason: str | None) -> str:
     )
 
 
+# 两阶段采纳: the one degrade that is a KNOWN, PERMANENT limitation instead of a
+# failure — this card really does change `.github/workflows/`, and the platform's
+# credential has no `workflows` scope, so no retry or sync can ever make the PR
+# path work for it. Carried as an exact sentinel string (not a substring match)
+# so a combined reason — an existing-PR degrade AND this one — deliberately
+# falls back to the ⚠️ wording: that combination does need a human.
+_WORKFLOW_SCOPE_DEGRADE_REASON = (
+    "本卡改动了 .github/workflows/ 下的文件，平台的 GitHub App 没有 workflows "
+    "权限，按已知限制无法走 PR（不是故障）"
+)
+
+
+def _is_known_workflow_scope_degrade(exc: BaseException) -> bool:
+    """Did the two-phase push fail because this card genuinely changes workflow
+    files? `push_topic_branch_for_github_pr` already absorbs the FIRST such
+    rejection (it syncs GitHub's default branch in and pushes exactly once
+    more), so a workflow-permission rejection that reaches this caller is the
+    SECOND one — a precise signal, no file-tree diff needed. A sync that could
+    not complete raises a different message ("…无法同步"), which does not match
+    and stays in the ⚠️ bucket, correctly: that one does need a human."""
+    from app.domain.workspace.service import _is_workflow_permission_rejection
+
+    return isinstance(exc, ValidationError) and _is_workflow_permission_rejection(
+        str(exc)
+    )
+
+
 def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
     """Prefix a local-merge accept note with WHY the two-phase PR path was
     skipped, so a card that fell back reads as "两阶段采纳没走成，原因是 X；
     然后走了老路径，结果是 Y" instead of looking identical to a topic that
     was never eligible for the PR path at all. No-op when the PR path never
-    even attempted a degrade for this accept (`pr_degrade_reason` empty)."""
+    even attempted a degrade for this accept (`pr_degrade_reason` empty).
+
+    Two shapes, so a reader can tell 正常 from 需要处理 at a glance: the known
+    workflow-scope limitation gets a calm ℹ️ sentence and no git output (the
+    300-char rejection tail is pure noise for a card whose whole point is that
+    it edits workflow files), everything else keeps the ⚠️ + raw-error form."""
     if not pr_degrade_reason:
         return base
-    prefix = f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）"
+    if pr_degrade_reason == _WORKFLOW_SCOPE_DEGRADE_REASON:
+        prefix = f"ℹ️ {pr_degrade_reason}"
+    else:
+        prefix = f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）"
     return (f"{prefix}；{base}" if base else prefix)[:2000]
 
 
@@ -423,13 +458,18 @@ class AcceptService:
                     topic.id,
                     exc,
                 )
-                # exc is either GitHubPrError (GitHub's own response body,
-                # capped at 300 chars) or a ValidationError from a git push
-                # failure (the token travels via an env-var credential
-                # helper, never argv/URL — see _token_push_env — so git's
-                # stderr can't contain it either); safe to surface verbatim,
-                # same as the existing push_back() failure note below.
-                two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
+                if _is_known_workflow_scope_degrade(exc):
+                    # Known limitation, not a failure — say so plainly and drop
+                    # the raw git rejection entirely (see the sentinel above).
+                    two_phase_degrade_reason = _WORKFLOW_SCOPE_DEGRADE_REASON
+                else:
+                    # exc is either GitHubPrError (GitHub's own response body,
+                    # capped at 300 chars) or a ValidationError from a git push
+                    # failure (the token travels via an env-var credential
+                    # helper, never argv/URL — see _token_push_env — so git's
+                    # stderr can't contain it either); safe to surface verbatim,
+                    # same as the existing push_back() failure note below.
+                    two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
         # Combine rather than overwrite: an existing-PR degrade (closed
         # unmerged / merge-call failure, see `_accept_via_pr`) must not be
         # silently dropped just because the two-phase attempt that follows it
