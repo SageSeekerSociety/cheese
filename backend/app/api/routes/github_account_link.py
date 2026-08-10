@@ -74,8 +74,15 @@ async def github_account_link_callback(
     state: str = Query(...),
     oauth_service: OAuthService = Depends(_oauth_service),
 ) -> RedirectResponse:
+    # Every exit below logs its outcome with the state's uid and (once known)
+    # the arriving GitHub id. The callback 302s on success AND failure, and
+    # the redirect lands in whichever browser followed the link — which may
+    # not be the uid's own (states travel when users paste the authorize URL
+    # into a chat). This log line is the only server-side record of what
+    # actually happened; a real incident was undiagnosable without it.
     claims = verify_account_link_state(state)
     if claims is None:
+        logger.info("github account link: invalid state")
         return _link_redirect(None, github_account="error", reason="invalid_state")
 
     try:
@@ -86,7 +93,9 @@ async def github_account_link_callback(
             raise ValueError("provider response missing access_token")
         user_info = await provider.get_user_info(access_token)
     except Exception:
-        logger.exception("github account link: token exchange failed")
+        logger.exception(
+            "github account link: token exchange failed uid=%s", claims.user_id
+        )
         return _link_redirect(
             claims.return_project_id, github_account="error", reason="oauth_failed"
         )
@@ -104,6 +113,12 @@ async def github_account_link_callback(
         provider_id=_PROVIDER_ID, provider_user_id=user_info.id
     )
     if existing and existing["userId"] != claims.user_id:
+        logger.info(
+            "github account link: already linked uid=%s github_id=%s owner_uid=%s",
+            claims.user_id,
+            user_info.id,
+            existing["userId"],
+        )
         return _link_redirect(
             claims.return_project_id, github_account="error", reason="already_linked"
         )
@@ -114,6 +129,11 @@ async def github_account_link_callback(
             refresh_token=refresh_token,
             token_expires=token_expires,
         )
+        logger.info(
+            "github account link: updated uid=%s github_id=%s",
+            claims.user_id,
+            user_info.id,
+        )
     else:
         await oauth_service.create_connection(
             user_id=claims.user_id,
@@ -123,6 +143,11 @@ async def github_account_link_callback(
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,
+        )
+        logger.info(
+            "github account link: created uid=%s github_id=%s",
+            claims.user_id,
+            user_info.id,
         )
 
     return _link_redirect(claims.return_project_id, github_account="success")

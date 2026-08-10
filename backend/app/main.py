@@ -220,6 +220,21 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     ms = round((time.perf_counter() - t0) * 1000, 1)
     # WS upgrades and health probes are logged by their own layers; skip noise.
     if request.url.path != "/health":
+        # Who and from where, when known. `auth_user_id` is set by
+        # get_auth_user (request.state rides scope, so it survives the
+        # middleware task boundary). XFF/UA are recorded verbatim, no trust
+        # decisions — behind the edge proxy the peer address is useless for
+        # telling two clients apart (all traffic arrives from the proxy).
+        who: dict[str, object] = {}
+        user_id = request.scope.get("state", {}).get("auth_user_id")
+        if user_id is not None:
+            who["user"] = user_id
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            who["client"] = xff
+        ua = request.headers.get("user-agent")
+        if ua:
+            who["ua"] = ua
         _http_log.info(
             "req",
             method=request.method,
@@ -227,6 +242,7 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
             status=response.status_code,
             ms=ms,
             req=rid,
+            **who,
         )
     response.headers["X-Request-ID"] = rid
     return response

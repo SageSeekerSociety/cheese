@@ -86,6 +86,59 @@ def test_the_filter_covers_records_from_other_libraries():
     assert "SECRETVALUE" not in record.getMessage()
 
 
+def test_the_request_line_names_the_user_and_forwarded_client(client, caplog):
+    """The "req" line must say WHO, not just what.
+
+    From the 2026-08-10 account-link incident (#222): every request logged the
+    edge proxy's address as its peer, and the request line carried no user id —
+    so telling two people's browsers apart took correlating adjacent requests
+    by hand. The line must carry the authenticated user id and the verbatim
+    X-Forwarded-For / User-Agent whenever they are present.
+    """
+    from app.common.auth import decode_token
+    from tests.conftest import seed_user
+
+    token = seed_user(client, "log_attrib_user")
+    user_id = int(decode_token(token)["sub"])
+
+    with caplog.at_level(logging.INFO, logger="http"):
+        r = client.get(
+            "/notifications/unread-count",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Forwarded-For": "10.9.8.7",
+                "User-Agent": "test-agent/1.0",
+            },
+        )
+    assert r.status_code == 200
+
+    req_lines = [
+        rec.msg
+        for rec in caplog.records
+        if isinstance(rec.msg, dict) and rec.msg.get("event") == "req"
+    ]
+    line = next(
+        ln for ln in req_lines if ln.get("path") == "/notifications/unread-count"
+    )
+    assert line.get("user") == user_id
+    assert line.get("client") == "10.9.8.7"
+    assert line.get("ua") == "test-agent/1.0"
+
+
+def test_an_anonymous_request_line_has_no_user_field(client, caplog):
+    """No auth → no attribution: the field is absent, not user=0/None."""
+    with caplog.at_level(logging.INFO, logger="http"):
+        client.get("/api/version")
+
+    req_lines = [
+        rec.msg
+        for rec in caplog.records
+        if isinstance(rec.msg, dict) and rec.msg.get("event") == "req"
+    ]
+    line = next(ln for ln in req_lines if ln.get("path") == "/api/version")
+    assert "user" not in line
+
+
 def test_a_refused_handshake_names_the_path(client, caplog):
     """A path that matches no route must say so, with the path attached."""
     with caplog.at_level(logging.WARNING, logger="app.ws"):
