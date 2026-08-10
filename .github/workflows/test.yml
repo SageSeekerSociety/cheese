@@ -86,7 +86,7 @@ jobs:
   # CI before, so this must run on every push and PR. ~seconds with a warm uv
   # cache; reads the migration graph only, no database needed.
   migration-heads:
-    runs-on: [self-hosted, cheese-dev]
+    runs-on: [self-hosted, cheese-ci]
     # Measured median 1.8m (uv sync + a graph read, no DB); generous margin for
     # a cold uv cache without leaving a stuck run to sit for hours.
     timeout-minutes: 10
@@ -116,7 +116,7 @@ jobs:
   test:
     needs: scope
     if: needs.scope.outputs.run_heavy == 'true'
-    runs-on: [self-hosted, cheese-dev]
+    runs-on: [self-hosted, cheese-ci]
     # Measured median 5.1m; 20m covers a cold uv/docker cache without letting
     # a wedged run sit on the box's single runner for hours.
     timeout-minutes: 20
