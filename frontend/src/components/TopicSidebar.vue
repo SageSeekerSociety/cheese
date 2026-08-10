@@ -131,8 +131,7 @@ const SORT_OPTIONS: Array<{ sort: TopicSortField; order: TopicSortOrder; label: 
 ]
 const sortMenuOpen = ref(false)
 const currentSortLabel = computed(
-  () =>
-    SORT_OPTIONS.find((o) => o.sort === props.topicSort && o.order === props.topicOrder)?.label ?? '排序'
+  () => SORT_OPTIONS.find((o) => o.sort === props.topicSort && o.order === props.topicOrder)?.label ?? '排序'
 )
 function pickSort(opt: { sort: TopicSortField; order: TopicSortOrder }) {
   sortMenuOpen.value = false
@@ -356,7 +355,14 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                   </v-list-item>
                 </v-list>
               </v-menu>
-              <v-btn icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" @click="newTopic" />
+              <v-btn
+                icon="mdi-plus"
+                size="x-small"
+                variant="tonal"
+                color="primary"
+                title="新建话题"
+                @click="newTopic"
+              />
             </div>
           </div>
 
