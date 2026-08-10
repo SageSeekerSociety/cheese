@@ -24,7 +24,9 @@ approver's own token instead, so `GitHubAppTokens`'s write-mint stays solely
 """
 
 import re
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -65,9 +67,16 @@ class GitHubPrClient(Protocol):
         self, *, owner: str, repo: str, ref: str, token: str
     ) -> tuple[CheckState, str]:
         """(state, human-readable tail) for every check-run on `ref` (a commit
-        SHA). Empty/all-queued → pending; any real failure → failure (even
-        with others still running — no point waiting out a doomed run);
-        all completed + none failed → success."""
+        SHA). All-queued → pending; any real failure → failure (even with
+        others still running — no point waiting out a doomed run); all
+        completed + none failed → success.
+
+        Zero check-runs is ambiguous on its own — it means either "nothing
+        will ever check this ref" (e.g. a docs-only change every workflow's
+        paths-ignore skips) or "GitHub hasn't created the check-runs yet"
+        (freshly pushed/re-pushed, still racing the webhook). Implementations
+        must resolve that ambiguity themselves rather than always returning
+        one side — see `HttpxGitHubPrClient` for how."""
         ...
 
     async def pull_request_head_sha(
@@ -105,11 +114,41 @@ _FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "
 _OK_CONCLUSIONS = {"success", "neutral", "skipped"}
 
 
+#: How long a ref may sit at "zero check-runs, no github-actions check-suite
+#: either" before we trust that as "genuinely nothing will ever check this"
+#: rather than "GitHub hasn't caught up with a fresh push yet". See
+#: `HttpxGitHubPrClient._resolve_zero_checks` for the reasoning — this is a
+#: defense-in-depth backstop on top of the check-suites signal, which is
+#: already fast (observed same-second as the triggering push in practice),
+#: not the primary mechanism.
+_ZERO_CHECKS_GRACE_SECONDS = 120.0
+
+_GITHUB_ACTIONS_APP_SLUG = "github-actions"
+
+
 class HttpxGitHubPrClient:
     """Real implementation — plain REST calls against api.github.com."""
 
-    def __init__(self, api_base: str = "https://api.github.com") -> None:
+    def __init__(
+        self,
+        api_base: str = "https://api.github.com",
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        zero_checks_grace_s: float = _ZERO_CHECKS_GRACE_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._api_base = api_base.rstrip("/")
+        self._transport = transport
+        self._zero_checks_grace_s = zero_checks_grace_s
+        self._clock = clock
+        # ref → monotonic time it was first seen with zero check-runs AND no
+        # github-actions check-suite. Instance-scoped (not persisted): the
+        # process-wide singleton from `default_client()` lives for the whole
+        # poller's lifetime, so this survives across polls the same way a DB
+        # column would — losing it on restart only ever makes the grace
+        # period start over, never shortens it, so it can't cause a
+        # premature "success".
+        self._zero_checks_first_seen: dict[tuple[str, str, str], float] = {}
 
     def _headers(self, token: str) -> dict[str, str]:
         return {
@@ -129,7 +168,7 @@ class HttpxGitHubPrClient:
         body: str,
         token: str,
     ) -> PullRequest:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
             resp = await client.post(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls",
                 headers=self._headers(token),
@@ -149,7 +188,7 @@ class HttpxGitHubPrClient:
     async def check_state(
         self, *, owner: str, repo: str, ref: str, token: str
     ) -> tuple[CheckState, str]:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
                 headers=self._headers(token),
@@ -160,12 +199,90 @@ class HttpxGitHubPrClient:
                 f"GitHub 拒绝查检查状态（HTTP {resp.status_code}）：{resp.text[:300]}"
             )
         runs = resp.json().get("check_runs", [])
-        return _summarize_runs(runs)
+        if runs:
+            # Real check-runs showed up — whatever ambiguity there was about
+            # this ref is resolved, forget any grace-period bookkeeping.
+            self._zero_checks_first_seen.pop((owner, repo, ref), None)
+            return _summarize_runs(runs)
+        return await self._resolve_zero_checks(
+            owner=owner, repo=repo, ref=ref, token=token
+        )
+
+    async def _resolve_zero_checks(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> tuple[CheckState, str]:
+        """Zero check-runs is ambiguous — this ref may genuinely never get one
+        (e.g. a docs-only push every workflow's `paths-ignore` skips), or
+        GitHub may simply not have created them yet (a push/re-push race:
+        the poller can query within moments of a push, before GitHub has
+        caught up).
+
+        The two cases are told apart with the check-suites API
+        (`GET .../commits/{ref}/check-suites`), not check-runs: GitHub
+        creates a check-suite for the "github-actions" app as soon as a push
+        matches ANY workflow's trigger — observed in this repo landing in
+        the same second as the triggering push, well before that workflow's
+        individual check-runs exist. So:
+
+        - a "github-actions" suite present (any status) → a workflow *did*
+          match → runs are on the way → stay pending, no matter how long
+          check-runs stays empty.
+        - no "github-actions" suite at all → nothing matched (paths-ignore
+          skipped every workflow) → check-runs will stay empty forever.
+
+        Other apps' suites (e.g. codecov) are ignored for this decision —
+        they don't run our CI and can sit "queued" indefinitely on their own
+        (observed on a real docs-only PR), which would make "any suite at
+        all" the wrong signal to use here.
+
+        Because check-suite creation, while fast, isn't provably
+        instantaneous, "no github-actions suite" alone isn't trusted
+        immediately either — it must hold for `_zero_checks_grace_s`
+        (default 120s, two poll rounds at the default 60s interval) before
+        this returns "success", as a backstop against the residual sliver of
+        race between "we just pushed" and "GitHub has processed the push far
+        enough to create even the check-suite". Losing this bookkeeping
+        (process restart) only restarts the grace period — it can never
+        shorten it, so it can't turn into a false "success".
+        """
+        suites = await self._check_suites(owner=owner, repo=repo, ref=ref, token=token)
+        key = (owner, repo, ref)
+        if any(
+            s.get("app", {}).get("slug") == _GITHUB_ACTIONS_APP_SLUG for s in suites
+        ):
+            self._zero_checks_first_seen.pop(key, None)
+            return "pending", "workflow 已被触发，检查还在准备中"
+
+        first_seen = self._zero_checks_first_seen.get(key)
+        now = self._clock()
+        if first_seen is None:
+            self._zero_checks_first_seen[key] = now
+            return "pending", "还没有检查报告"
+        if now - first_seen < self._zero_checks_grace_s:
+            return "pending", "还没有检查报告"
+        self._zero_checks_first_seen.pop(key, None)
+        return "success", "没有任何 workflow 会对这次改动触发检查，判定为通过"
+
+    async def _check_suites(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> list[dict]:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-suites",
+                headers=self._headers(token),
+                params={"per_page": 100},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝查 check-suites"
+                f"（HTTP {resp.status_code}）：{resp.text[:300]}"
+            )
+        return resp.json().get("check_suites", [])
 
     async def pull_request_head_sha(
         self, *, owner: str, repo: str, number: int, token: str
     ) -> str:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}",
                 headers=self._headers(token),
@@ -188,7 +305,7 @@ class HttpxGitHubPrClient:
         body: dict = {"merge_method": "merge"}
         if commit_message:
             body["commit_message"] = commit_message
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
             resp = await client.put(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}/merge",
                 headers=self._headers(token),
@@ -207,7 +324,7 @@ class HttpxGitHubPrClient:
     async def workflow_run_state(
         self, *, owner: str, repo: str, workflow_file: str, head_sha: str, token: str
     ) -> tuple[CheckState, str]:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/actions/workflows/"
                 f"{workflow_file}/runs",
