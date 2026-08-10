@@ -16,6 +16,7 @@ Exercises both accept() branches:
 
 import subprocess
 import uuid as _uuid
+from datetime import UTC, datetime
 
 from app.core.errors import ValidationError
 from app.core.tokens import mint_session_token
@@ -72,9 +73,13 @@ class FakeGitHubPrClient:
         self.prs: dict[int, dict] = {}
         self.check_state_by_sha: dict[str, tuple[str, str]] = {}
         self.merge_sha_by_number: dict[int, str | None] = {}
+        # number → GitHub's refusal reason (405/409); wins over a sha.
+        self.merge_blocked_by_number: dict[int, str] = {}
         self.workflow_state_by_sha: dict[str, tuple[str, str]] = {}
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
+        self.status_calls: list[int] = []
+        self.head_sha_calls: list[int] = []
 
     async def open_pull_request(
         self, *, owner, repo, head, base, title, body, token
@@ -82,7 +87,15 @@ class FakeGitHubPrClient:
         self._next_number += 1
         number = self._next_number
         head_sha = f"sha-{head}-1"
-        self.prs[number] = {"head": head, "base": base, "head_sha": head_sha}
+        self.prs[number] = {
+            "head": head,
+            "base": base,
+            "head_sha": head_sha,
+            "state": "open",
+            "merged": False,
+            "merge_commit_sha": None,
+            "merged_at": None,
+        }
         self.opened.append(
             {
                 "owner": owner,
@@ -101,7 +114,42 @@ class FakeGitHubPrClient:
         )
 
     async def pull_request_head_sha(self, *, owner, repo, number, token) -> str:
+        self.head_sha_calls.append(number)
         return self.prs[number]["head_sha"]
+
+    async def pull_request_status(
+        self, *, owner, repo, number, token
+    ) -> github_pr.PullRequestStatus:
+        pr = self.prs[number]
+        self.status_calls.append(number)
+        return github_pr.PullRequestStatus(
+            head_sha=pr["head_sha"],
+            state=pr["state"],
+            merged=pr["merged"],
+            merge_commit_sha=pr["merge_commit_sha"],
+            merged_at=pr["merged_at"],
+        )
+
+    def merge_externally(
+        self,
+        number: int,
+        *,
+        merge_commit_sha: str | None = "human-merge-sha",
+        merged_at: datetime | None = None,
+    ) -> None:
+        """Test helper: someone merged this PR on GitHub themselves — the
+        platform never called merge. GitHub reports a merged PR as
+        `state: closed` + `merged: true`."""
+        self.prs[number].update(
+            state="closed",
+            merged=True,
+            merge_commit_sha=merge_commit_sha,
+            merged_at=merged_at,
+        )
+
+    def close_unmerged(self, number: int) -> None:
+        """Test helper: someone closed the PR on GitHub without merging it."""
+        self.prs[number].update(state="closed", merged=False)
 
     def push_new_commit(self, number: int) -> str:
         """Test helper: simulate 芝士 pushing a fix — moves the PR's head."""
@@ -113,10 +161,21 @@ class FakeGitHubPrClient:
         return self.check_state_by_sha.get(ref, ("pending", "还没跑"))
 
     async def merge_pull_request(
-        self, *, owner, repo, number, token, commit_message=None
-    ) -> str | None:
-        self.merge_calls.append({"number": number, "commit_message": commit_message})
-        return self.merge_sha_by_number.get(number, "merge-sha-default")
+        self, *, owner, repo, number, token, commit_title=None, commit_message=None
+    ) -> github_pr.MergeResult:
+        self.merge_calls.append(
+            {
+                "number": number,
+                "commit_title": commit_title,
+                "commit_message": commit_message,
+            }
+        )
+        blocked = self.merge_blocked_by_number.get(number)
+        if blocked is not None:
+            return github_pr.MergeResult(blocked_reason=blocked)
+        return github_pr.MergeResult(
+            sha=self.merge_sha_by_number.get(number, "merge-sha-default")
+        )
 
     async def workflow_run_state(
         self, *, owner, repo, workflow_file, head_sha, token
@@ -366,7 +425,11 @@ def test_poll_ci_green_merges_but_topic_stays_active_until_deploy(client, monkey
         # 归档时机测试的核心：PR merge 成功了，但部署还没完成——topic 必须还是 active.
         assert _topic(client, tid)["status"] == "active"
         assert fake.merge_calls[0]["number"] == number
+        # Trailers ride the squash commit's BODY (2026-08-09 设计要点5)...
         assert "Reviewed-by: alice" in fake.merge_calls[0]["commit_message"]
+        # ...and its title carries "(#N)", which GitHub only auto-appends to
+        # the default title — an explicit commit_title replaces that default.
+        assert fake.merge_calls[0]["commit_title"] == f"采纳 做一个东西 (#{number})"
     finally:
         _reset_client()
 
@@ -686,3 +749,289 @@ def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):
     result = _poll(client)
     assert result["cards_checked"] == 0
     assert result["errors"] == []
+
+
+def test_poll_merge_refused_puts_the_reason_on_the_card(client, monkeypatch):
+    """A 405 used to vanish: the card sat at pr_open with an empty note while
+    the poller retried forever. Outside, that looked identical to a healthy PR
+    still waiting on CI — which is how the squash-only bug hid for half a day."""
+    fake = _pr_ready(client, monkeypatch)
+    try:
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)
+        accepted = client.post(
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=_auth("alice"),
+        ).json()["data"]
+        number = accepted["pr_number"]
+        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
+        fake.merge_blocked_by_number[number] = (
+            "HTTP 405：Merge commits are not allowed on this repository"
+        )
+
+        result = _poll(client)
+        assert result["errors"] == []  # retryable — not a hard poller error
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert card["pr_merged_at"] is None
+        assert "405" in card["note"]
+        assert "Merge commits are not allowed" in card["note"]
+        assert _topic(client, tid)["status"] == "active"
+
+        # Polling is every 60s — an unchanging reason must not rewrite the note.
+        _poll(client)
+        assert _cards_for_topic(client, tid)[0]["note"] == card["note"]
+        assert len(fake.merge_calls) == 2  # …but it does keep retrying the merge
+    finally:
+        _reset_client()
+
+
+def test_poll_merge_refusal_reason_updates_when_it_changes(client, monkeypatch):
+    """Dedup must not freeze the FIRST reason forever: a 405 that becomes a 409
+    is new information."""
+    fake = _pr_ready(client, monkeypatch)
+    try:
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)
+        accepted = client.post(
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=_auth("alice"),
+        ).json()["data"]
+        number = accepted["pr_number"]
+        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
+        fake.merge_blocked_by_number[number] = "HTTP 405：merge method disabled"
+        _poll(client)
+
+        fake.merge_blocked_by_number[number] = "HTTP 409：Head branch was modified"
+        _poll(client)
+
+        note = _cards_for_topic(client, tid)[0]["note"]
+        assert "409" in note
+        assert "Head branch was modified" in note
+    finally:
+        _reset_client()
+
+
+def test_poll_merge_refusal_replaces_a_stale_ci_failure_note(client, monkeypatch):
+    """The ⚠️ CI note describes checks that have since turned green — the merge
+    refusal is the current truth and must take the note over.
+
+    (`_note_merge_blocked` also refuses to overwrite a `❌ 部署失败` note. That
+    one is unreachable by construction — a deploy note only exists after the PR
+    merged, and a merged card never re-enters the merge path — so it is a guard,
+    not a scenario this test can drive.)"""
+    fake = _pr_ready(client, monkeypatch)
+    try:
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)
+        accepted = client.post(
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=_auth("alice"),
+        ).json()["data"]
+        number = accepted["pr_number"]
+        head_sha = fake.prs[number]["head_sha"]
+        fake.check_state_by_sha[head_sha] = ("failure", "lint 挂了")
+        _poll(client)
+        assert _cards_for_topic(client, tid)[0]["note"].startswith("⚠️")
+
+        fake.check_state_by_sha[head_sha] = ("success", "全部通过")
+        fake.merge_blocked_by_number[number] = "HTTP 405：merge method disabled"
+        _poll(client)
+
+        note = _cards_for_topic(client, tid)[0]["note"]
+        assert "405" in note
+        assert not note.startswith("⚠️")
+    finally:
+        _reset_client()
+
+
+# --- PR 被外部（人工）处理掉的情况 (2026-08-10) ------------------------------
+#
+# 病灶：a PR merged by hand on GitHub was invisible to the poller, so its card
+# sat at `pr_open` forever and the topic never archived (cards 1c7016e3 / #210
+# and ceb1b9b9 / #211). These drive the poller through the same public
+# endpoint every other test here uses; nothing inspects source.
+
+
+def _accept_to_pr_open(client, monkeypatch) -> tuple[FakeGitHubPrClient, str, int]:
+    """Common setup: a card accepted onto a real (fake-GitHub) PR."""
+    fake = _pr_ready(client, monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    accepted = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    ).json()["data"]
+    assert accepted["status"] == "pr_open"
+    return fake, tid, accepted["pr_number"]
+
+
+def test_poll_externally_merged_pr_settles_into_the_deploy_stage(client, monkeypatch):
+    """Someone merged the PR on GitHub themselves. The card must book it like
+    our own merge — merged-at recorded, head moved to the MERGE COMMIT — and
+    then archive on the deploy that merge triggered.
+
+    The PR's checks are left RED on purpose: #210 was human-merged while an
+    auto-review was still failing, and a red gate makes the poller return
+    before it ever calls merge. Detecting the merge only from the merge call's
+    405 would leave exactly this card stuck."""
+    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
+    try:
+        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("failure", "lint 挂了")
+        merged_at = datetime(2026, 8, 9, 22, 3, 59, tzinfo=UTC)
+        fake.merge_externally(number, merge_commit_sha="a34b8e12", merged_at=merged_at)
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["pr_merged_at"] is not None  # stage 2 now, not stage 1
+        assert card["status"] == "pr_open"  # merge alone never archives
+        assert _topic(client, tid)["status"] == "active"
+        assert "人工合并" in card["note"]
+        # The platform must NOT have tried to merge an already-merged PR.
+        assert fake.merge_calls == []
+
+        # Proof the card is tracking the merge commit and not the branch head:
+        # the deploy gate is keyed by sha, so only a run on `a34b8e12` archives.
+        fake.workflow_state_by_sha[fake.prs[number]["head_sha"]] = (
+            "success",
+            "分支 head 上的部署——不该被采信",
+        )
+        _poll(client)
+        assert _topic(client, tid)["status"] == "active"
+
+        fake.workflow_state_by_sha["a34b8e12"] = ("success", "部署成功")
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "accepted"
+        topic = _topic(client, tid)
+        assert topic["status"] == "archived"
+        assert topic["accepted_by"] == "alice"
+    finally:
+        _reset_client()
+
+
+def test_poll_externally_merged_pr_uses_githubs_merged_at(client, monkeypatch):
+    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
+    try:
+        fake.merge_externally(
+            number, merged_at=datetime(2026, 8, 9, 22, 3, 59, tzinfo=UTC)
+        )
+        _poll(client)
+        merged_at = _cards_for_topic(client, tid)[0]["pr_merged_at"]
+        assert merged_at is not None
+        assert "2026-08-09T22:03:59" in merged_at
+    finally:
+        _reset_client()
+
+
+def test_poll_externally_merged_without_a_merge_sha_does_not_settle(
+    client, monkeypatch
+):
+    """`merged: true` but no merge-commit sha: the stage-2 deploy gate is keyed
+    BY that sha, so settling on a guess means waiting for a deploy run that can
+    never exist. Stay in stage 1, say why, retry next tick."""
+    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
+    try:
+        fake.merge_externally(number, merge_commit_sha=None)
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["pr_merged_at"] is None
+        assert card["status"] == "pr_open"
+        assert "合并提交 sha" in card["note"]
+        assert _topic(client, tid)["status"] == "active"
+
+        # It recovers by itself once GitHub reports the sha.
+        fake.merge_externally(number, merge_commit_sha="late-sha")
+        _poll(client)
+        assert _cards_for_topic(client, tid)[0]["pr_merged_at"] is not None
+        fake.workflow_state_by_sha["late-sha"] = ("success", "部署成功")
+        _poll(client)
+        assert _topic(client, tid)["status"] == "archived"
+    finally:
+        _reset_client()
+
+
+def test_poll_merge_blocked_still_only_notes_and_never_settles(client, monkeypatch):
+    """The other side of the same coin: GitHub genuinely REFUSING the merge
+    (405/409) must not be mistaken for "already merged" — no merged-at, no
+    stage 2, no archive, just the reason on the card."""
+    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
+    try:
+        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
+        fake.merge_blocked_by_number[number] = (
+            "HTTP 405：Merge commits are not allowed on this repository"
+        )
+
+        _poll(client)
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["pr_merged_at"] is None
+        assert card["status"] == "pr_open"
+        assert "GitHub 拒绝合并" in card["note"]
+        assert "405" in card["note"]
+        assert _topic(client, tid)["status"] == "active"
+        assert len(fake.merge_calls) == 2  # kept retrying, as before
+    finally:
+        _reset_client()
+
+
+def test_poll_pr_closed_unmerged_says_so_and_stops_merging(client, monkeypatch):
+    """Closed WITHOUT merging is a human saying "not this". The platform must
+    not merge it anyway, must not archive, and must say what happened instead
+    of the misleading "checks green but GitHub refused"."""
+    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
+    try:
+        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
+        fake.close_unmerged(number)
+
+        result = _poll(client)
+        assert result["errors"] == []
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert card["pr_merged_at"] is None
+        assert "关闭" in card["note"] and "没有合并" in card["note"]
+        assert _topic(client, tid)["status"] == "active"
+        assert fake.merge_calls == []
+
+        # 60s polling: the note is stated once, not rewritten every tick.
+        note = card["note"]
+        _poll(client)
+        assert _cards_for_topic(client, tid)[0]["note"] == note
+        assert fake.merge_calls == []
+
+        # Reopened on GitHub -> the poller picks up where it left off.
+        fake.prs[number].update(state="open")
+        fake.merge_sha_by_number[number] = "merge-sha-after-reopen"
+        _poll(client)
+        assert len(fake.merge_calls) == 1
+        assert _cards_for_topic(client, tid)[0]["pr_merged_at"] is not None
+    finally:
+        _reset_client()
+
+
+def test_poll_steady_state_costs_no_extra_pr_read(client, monkeypatch):
+    """The merged-check reuses the PR read the poller already did every tick —
+    a quiet card must not double its GitHub API calls."""
+    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
+    try:
+        _poll(client)
+        _poll(client)
+        assert fake.status_calls == [number, number]
+        assert fake.head_sha_calls == []  # nothing pushed -> no second read
+    finally:
+        _reset_client()

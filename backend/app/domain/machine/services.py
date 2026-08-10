@@ -263,18 +263,33 @@ class MachineService:
     async def refresh(self, machine: ProjectMachine) -> ProjectMachine:
         """Bring one row in line with MicroCloud. Never raises for a provider
         problem: a machine we can't reach is reported `unknown`, not lost."""
+        settled_before = not _still_moving(machine)
         try:
             remote = await self._client.get_machine(machine.machine_id)
         except MicroCloudError:
+            # An unreachable provider is not news about the machine. For one
+            # still moving, `unknown` is the honest answer — we were waiting on
+            # a state that may since have changed. For a settled one it is a
+            # downgrade on a blip: it would report a healthy machine as broken.
+            # Keep what we last knew; `last_seen_at` says how old that is, and
+            # recording the attempt is also what stops a provider outage from
+            # putting a 30s timeout on every read.
+            now = datetime.now(UTC)
+            if settled_before:
+                return await self._repo.touch_seen(machine, when=now)
             return await self._repo.set_state(
                 machine,
                 status=MachineStatus.unknown,
                 ip=None,
                 ai_status=AiStatus.unknown,
+                seen_at=now,
             )
         if remote is None:
             return await self._repo.set_state(
-                machine, status=MachineStatus.deleted, ip=None
+                machine,
+                status=MachineStatus.deleted,
+                ip=None,
+                seen_at=datetime.now(UTC),
             )
         return await self._repo.set_state(
             machine,
@@ -282,13 +297,14 @@ class MachineService:
             ip=remote.get("ip"),
             ai_mode=str(remote.get("aiMode") or machine.ai_mode),
             ai_status=_as_ai_status(remote.get("aiStatus")),
+            seen_at=datetime.now(UTC),
         )
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         machines = await self._repo.list_for_project(project_id)
         alive: list[ProjectMachine] = []
         for machine in machines:
-            if _still_moving(machine):
+            if _still_moving(machine) or _stale(machine):
                 await self.refresh(machine)
             if machine.status in GONE:
                 # MicroCloud has forgotten it, so there is nothing left to
@@ -430,6 +446,28 @@ class MachineService:
                     machine.hostname,
                 )
         await self._repo.delete(machine)
+
+
+def _stale(machine: ProjectMachine) -> bool:
+    """Whether a SETTLED machine is due to be re-checked against MicroCloud.
+
+    Settled used to mean "never asked again", which made this table unable to
+    notice a machine the provider had destroyed. Observed live on 2026-08-02:
+    three machines reported `running` and enrolled here while MicroCloud 404'd
+    every one of them. That is not only a wrong reading — `provision()` counts
+    those rows against the per-project limit, so a project whose machines are
+    gone upstream can never get another one.
+
+    Bounded rather than every-read: this sits on a request path, and a provider
+    round-trip per machine per page load is its own outage waiting to happen.
+    """
+    seen = machine.last_seen_at
+    if seen is None:
+        return True
+    if seen.tzinfo is None:  # rows written before the column existed
+        seen = seen.replace(tzinfo=UTC)
+    age = (datetime.now(UTC) - seen).total_seconds()
+    return age >= settings.microcloud_reconcile_interval_s
 
 
 def _still_moving(machine: ProjectMachine) -> bool:

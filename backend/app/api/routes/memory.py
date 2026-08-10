@@ -24,7 +24,12 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.memory.models import MemoryEntry, MemoryScope
+from app.domain.memory.models import (
+    MemoryEntry,
+    MemoryScope,
+    agent_project_scope_id,
+    agent_project_scope_prefix,
+)
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 
@@ -57,14 +62,34 @@ def _decode_uri(entry_id: str) -> str:
 
 
 async def _list_openviking(
-    project_id: uuid.UUID | None, user_handle: str | None
+    project_id: uuid.UUID | None,
+    user_handle: str | None,
+    agent_handle: str | None,
 ) -> list[dict]:
+    """OpenViking listing.
+
+    Known gap vs the db backend: a named ``agent_handle`` is listable (its pool
+    is one more scope space), but "every agent pool in this project" is NOT.
+    Each scope gets an isolated ``viking://user/{uid}`` tree and the store has
+    no cross-space enumeration primitive, so the handle set would have to be
+    guessed from the current rosters — which loses exactly the pools this
+    endpoint exists to surface (an agent that wrote memory and later left the
+    roster). A wrong list is worse than a documented gap, so the sweep is left
+    to the db backend and this is stated rather than silently half-done.
+    """
     from app.domain.memory.openviking_store import OpenVikingMemoryStore
 
     store = OpenVikingMemoryStore()
     wanted: list[tuple[MemoryScope, str]] = []
     if project_id is not None:
         wanted.append((MemoryScope.project, str(project_id)))
+        if agent_handle:
+            wanted.append(
+                (
+                    MemoryScope.agent_project,
+                    agent_project_scope_id(project_id, agent_handle),
+                )
+            )
     if user_handle:
         wanted.append((MemoryScope.user, user_handle))
     items: list[dict] = []
@@ -88,10 +113,24 @@ async def list_memory(
     db: DbSession,
     project_id: uuid.UUID | None = None,
     user_handle: str | None = None,
+    agent_handle: str | None = None,
+    include_agent: bool = True,
 ) -> dict:
-    """Memory entries for a project and/or a user, newest first."""
+    """Memory entries for a project and/or a user, newest first.
+
+    A project's memory includes what its 芝士 remembered: `cheese remember`
+    always carries a topic, so in practice every agent write lands in an
+    ``agent_project`` pool keyed ``{project_id}:{handle}``. Leaving those out
+    made this endpoint blind to the whole live pool, so ``project_id`` sweeps
+    them in by default; ``scope``/``scope_id`` on each entry say where it came
+    from. ``agent_handle`` narrows to one agent's pool, ``include_agent=false``
+    is the escape hatch back to the shared project pool alone (it wins over
+    ``agent_handle`` if both are given).
+    """
     if settings.memory_backend == "openviking":
-        items = await _list_openviking(project_id, user_handle)
+        items = await _list_openviking(
+            project_id, user_handle, agent_handle if include_agent else None
+        )
         return ok(page(items, len(items)))
 
     conds = []
@@ -100,6 +139,27 @@ async def list_memory(
             (MemoryEntry.scope == MemoryScope.project)
             & (MemoryEntry.scope_id == str(project_id))
         )
+        if include_agent:
+            agent_cond = MemoryEntry.scope == MemoryScope.agent_project
+            if agent_handle:
+                conds.append(
+                    agent_cond
+                    & (
+                        MemoryEntry.scope_id
+                        == agent_project_scope_id(project_id, agent_handle)
+                    )
+                )
+            else:
+                # Every agent that ever wrote here, including ones no longer on
+                # a roster — a prefix scan is the only listing that can't go
+                # silently blind. `project_id` is a parsed UUID, so it carries
+                # no LIKE wildcards; autoescape guards the general case anyway.
+                conds.append(
+                    agent_cond
+                    & MemoryEntry.scope_id.startswith(
+                        agent_project_scope_prefix(project_id), autoescape=True
+                    )
+                )
     if user_handle:
         conds.append(
             (MemoryEntry.scope == MemoryScope.user)

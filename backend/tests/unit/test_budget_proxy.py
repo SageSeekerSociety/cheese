@@ -16,7 +16,7 @@ from app.domain.agent.budget_proxy import (
 
 
 def test_a_project_within_budget_proceeds():
-    d = decide(BudgetState(spent_usd=1.0, limit_usd=5.0))
+    d = decide(BudgetState(spent=1.0, limit=5.0))
 
     assert d.allow
     assert "4.0000" in d.reason, d.reason
@@ -25,19 +25,19 @@ def test_a_project_within_budget_proceeds():
 def test_a_spent_budget_is_refused_and_says_so():
     """A refusal must be legible: 'over budget' with no numbers sends someone
     to guess at a dashboard that does not exist yet."""
-    d = decide(BudgetState(spent_usd=5.0, limit_usd=5.0))
+    d = decide(BudgetState(spent=5.0, limit=5.0))
 
     assert not d.allow
     assert "5.0000" in d.reason, d.reason
-    assert should_refuse_connection(BudgetState(spent_usd=5.0, limit_usd=5.0))
+    assert should_refuse_connection(BudgetState(spent=5.0, limit=5.0))
 
 
 def test_an_unlimited_project_is_never_refused():
     """自治项目 have no grant and must not be throttled by a brake meant for
     metered ones — a guard that stops legitimate work is its own outage, and
     this repo has already shipped that mistake twice this week."""
-    assert decide(BudgetState(spent_usd=10_000.0, limit_usd=None)).allow
-    assert not should_refuse_connection(BudgetState(spent_usd=10_000.0, limit_usd=None))
+    assert decide(BudgetState(spent=10_000.0, limit=None)).allow
+    assert not should_refuse_connection(BudgetState(spent=10_000.0, limit=None))
 
 
 @pytest.mark.parametrize(
@@ -49,4 +49,4 @@ def test_an_unlimited_project_is_never_refused():
     ],
 )
 def test_the_boundary_is_where_it_says_it_is(spent, limit, allowed):
-    assert decide(BudgetState(spent_usd=spent, limit_usd=limit)).allow is allowed
+    assert decide(BudgetState(spent=spent, limit=limit)).allow is allowed
