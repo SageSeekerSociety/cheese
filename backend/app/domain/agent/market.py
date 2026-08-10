@@ -183,8 +183,8 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool]] = [
     (
         "opus-4.8",
         "Claude Opus 4.8",
-        "上一代 Opus：Fable 被降级时实际落到的模型；想省 Opus 5 额度"
-        "或复现降级后水平时可显式选它。",
+        "上一代 Opus（仍在售，1M 上下文）：Fable 被降级时实际落到的模型；"
+        "需要复现或对齐降级后行为时可显式选它。",
         "claude-opus-4-8",
         False,
     ),
