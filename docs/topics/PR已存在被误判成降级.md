@@ -79,7 +79,15 @@ ORDER BY decided_at DESC;
 - `ruff check .` → All checks passed；`ruff format --check .` → 691 files already formatted。
 - `pyright` → **0 errors, 0 warnings, 0 informations**。
 - 本卡相关测试 `test_github_pr_open_pull_request.py` + `test_review_pr_claim_existing.py` + `test_accept_pr.py` → **29 passed**。
-- 全量 `pytest tests/ -n 4` 结果见下方"全量结果"一节。
+- 全量 `pytest tests/ -n 4` → **23 failed, 3642 passed, 31 skipped**（349s）。
+
+**SKIP 项：0**——ruff / ruff format / pyright / pytest 四项全部真跑，没有一项被跳过。31 个 skipped 是测试自身的 skip 标记，不是检查项被跳过。
+
+23 个失败逐条核对，全是沙箱缺工具、无一与本卡相关：
+
+- **22 个是 CLAUDE.md 已记载的「无 procps」缺口**：`test_machine_service.py` 21 个 + `test_tmux_control.py` 1 个，`FileNotFoundError: 'kill'`。
+- **1 个是清单上没有的新缺口**：`test_market_api.py::test_market_lists_ai_and_compute_pools`，断言 `ai_default["available"]` 失败。原因是 `agent/market.py:69` 的 `available = name in selectable`，而 `selectable` 由 AI pool 凭据决定——沙箱没配凭据，默认 pool 就不可选。属于环境缺凭据，`app/domain/agent/` 与本卡改的 `app/domain/review/` 之间没有任何引用关系。
+- CLAUDE.md 提到的另一类「无 git identity → 43 个 worktree 测试失败」这次**没有出现**，`test_workspace.py`/`test_upstream.py`/`test_accept*.py` 全绿——本卡的集成测试 `test_accept_pr.py` 正是这批里的，等于是在真实 worktree 上跑通的。
 
 ## 明确没做
 
