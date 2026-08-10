@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api import proxy
 from app.api.auth import ActorResolverDep
 from app.api.deps import (
     get_broker,
@@ -779,14 +780,22 @@ async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
         return ok(None)
     if art.mime_type == _ARTIFACT_MIME["app"]:
         # Resolve the container's published port LIVE — the mapping only exists
-        # while the topic's container is up.
-        url = ws.app_preview_url(topic_id)
+        # while the topic's container is up — and then ACTUALLY KNOCK on it. A
+        # published port with a dead server behind it renders as a white iframe,
+        # which is why the two states are reported separately: `container_up`
+        # without a `url` is "容器还在，应用没在跑", and the panel can say so
+        # instead of showing an empty frame.
+        endpoint = ws.app_endpoint(topic_id)
+        alive = endpoint is not None and await proxy.probe(endpoint)
         return ok(
             {
                 "kind": "app",
                 "path": art.content,
                 "mime": art.mime_type,
-                "url": url,
+                # Root-relative: the backend's reverse proxy, reachable from any
+                # browser. NOT the container's 127.0.0.1 host port (server-local).
+                "url": f"/api/topics/{topic_id}/app/" if alive else None,
+                "container_up": endpoint is not None,
             }
         )
     return ok({"kind": "file", "path": art.content, "mime": art.mime_type})
