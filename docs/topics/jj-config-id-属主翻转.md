@@ -234,6 +234,23 @@ Result: 3/4 passed
 
 递卡时闸门跑的是 `check.sh --no-tests`（只有 ruff+pyright），这两项都绿。
 
+## PR #242 的合并冲突（已解）
+
+平台在"合并冲突"这条路径上只写卡片 note、不 summon，所以我一直没被叫醒；父话题手动来叫了。冲突文件是 `backend/app/domain/workspace/service.py`，处理过程：
+
+1. **先把真正的 main 拿到手**。本地共享仓库的 `main` 和 `upstream/main` 都还停在 `5fbf903c`（10:40），沙箱里也没有 GitHub 凭据（`git ls-remote` 直接 `could not read Username`）。所以走平台自己的通道触发了一次上游同步（`POST /projects/{id}/upstream/sync`，用的是后端的凭据，不是我去 fetch），拉进来 **12 个提交**，`main` 现在到 `a2691f2a`，`#237`(`8f68eed3`)、`#240`、`#241`、`#244`~`#246`、`#249` 都在里面了。
+2. **解法不是"逐块挑冲突标记"，而是以 main 为底重贴**：把 `service.py` 整份换成 main 的版本，再把本卡的三处改动重新贴上去。这样**不可能**误伤别人刚落地的东西。
+3. **机器核对过"只多不少"**：`diff main版 我的版` 里只有 **3 行被删**，正是本卡有意要删的那 3 行（`_ensure_jj` 里两行 `jj config set --repo`，以及被换成 `_jj_failure_message()` 的那行 `raise`）；其余全是新增。#237 的 `_jj_store`/`_repair_modes`/`_share_jj_modes` 一行没动，`_jj()` 里 `_share_jj_modes(repo, since=started)` 仍在原位（我的 `_drop_repo_config_id()` 加在**调用之前**，两者各司其职：它补读位，我防属主翻转），`sandbox_vcs_mounts` 里那句 `_share_jj_modes(wt)` 也还在。#246 给 `git_log` 加的 `topic_id` 分支同样完整保留。
+4. 我碰过的另外两个非新增文件（`platform_failures.py`、`test_platform_failures.py`）**main 从我的基点之后一行都没改过**，机器核对丢行数 = 0。
+
+> 为什么这样解之后 GitHub 那边就不冲突了：三方合并里，main 和我这边对 #237/#246 那些块做的是**完全相同**的修改，git 对"两边改得一样"不判冲突；我额外新增的行只在我这边，直接落进去。
+
+## 顺带更正一条：#240 的根因和简报猜的不一样
+
+父话题让我写明白——**`a0b3c789` 查出来的根因不是"镜像节奏 vs 后端节奏"**：部署环境里的 `cheese` 根本不是从沙箱镜像来的，而是宿主机 `/home/nictheboy/cheese-proxy/sandbox/cheese` 的只读 bind-mount，停在 8 月 7 日 18:37、没有任何流水线更新它；SKILL.md 却是后端从自己镜像里读的。它的修法是不再挂载、改成每轮 `docker cp` 从后端镜像推进容器。顺带它还否掉了简报的候选方案 B（"让镜像构建在 `backend/sandbox/cheese` 变化时必然触发"——那**已经是现状**）。
+
+对本卡的直接影响：我这个容器里的 `cheese` 仍是那份 8/7 的副本、**没有 `await`**，所以长任务只能同步等；另外 `a0b3c789` 正是本卡时间线里 11:53「起不来」的那个子话题，它是这次停摆的受害者之一。
+
 ## 现状（已拍板：不动盒子）
 
 - 共享仓库的 `config-id` 现在是 `node:node 0666`（我 13:03 误触发后立刻修回的），**平台可用，但仍然靠这个手工权限撑着**——任何 agent 的下一条 jj 命令都会再打回 0600。
