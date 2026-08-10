@@ -47,11 +47,16 @@ import AccountService from '@/services/account'
 
 try {
   const raw = localStorage.getItem('user')
-  if (raw && !localStorage.getItem('cheesex.me')) {
+  const existingMe = localStorage.getItem('cheesex.me')
+  // Re-derive whenever there's no mirror yet, or a mirror written before `id`
+  // was added to it (2026-08-10) — those stale entries never self-heal
+  // otherwise, since this bridge only runs once per fresh 'user' write.
+  const needsId = existingMe ? !JSON.parse(existingMe)?.id : false
+  if (raw && (!existingMe || needsId)) {
     const u = JSON.parse(raw)
     localStorage.setItem(
       'cheesex.me',
-      JSON.stringify({ handle: u.username, name: u.nickname || u.username, token: '' })
+      JSON.stringify({ id: String(u.id), handle: u.username, name: u.nickname || u.username, token: '' })
     )
   }
 } catch {
