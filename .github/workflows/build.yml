@@ -21,9 +21,17 @@ env:
   BUILDKIT_IMAGE: mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
 
 # A single self-hosted runner serves this repo, so superseded runs must not
-# queue behind each other (deploys share the same runner).
+# queue behind each other (deploys share the same runner). On main, every
+# push shares one ref, so a plain ref-keyed group would let each merge cancel
+# the previous commit's still-running build — GitHub cancels not just the
+# in-progress run but any run still pending in the group, so even
+# cancel-in-progress: false wouldn't save a pending one queued behind it.
+# Keying the group by commit sha on main gives every commit its own group, so
+# there is never a same-group collision to cancel in the first place. Other
+# refs (tags, workflow_dispatch on non-main) keep the original ref-only
+# grouping, so repeated pushes to the same tag/branch still cancel each other.
 concurrency:
-  group: ci-build-${{ github.ref }}
+  group: ci-build-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: true
 
 jobs:
