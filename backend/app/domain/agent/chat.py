@@ -15,6 +15,7 @@ import logging
 import re
 import shutil
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -54,7 +55,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.team.repositories import TeamRepository
-from app.domain.topic.models import TopicKind
+from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -430,7 +431,13 @@ def _build_system_prompt(
         lines = "\n".join(f"- {t['title']}" for t in topics)
         parts.append(
             "## 项目话题（交叉引用某个话题/它的文档时，在标题前加 @，如 "
-            "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n" + lines
+            "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n"
+            "下面**只列当前活跃的话题**。项目里还有已归档的话题，它们照常存在、"
+            "内容也照常可读，只是不在这里列出来；**没列出来 ≠ 不存在**。需要找"
+            "它们时自己查（返回全部话题，含 archived 的标题和 id）：\n"
+            '`cheese api GET "/topics?project_id=$CHEESE_PROJECT"`\n'
+            "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
+            + lines
         )
     if roster:
         lines = "\n".join(
@@ -477,6 +484,48 @@ _TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
 # it via `cheese title` (titles are AI-generated, never deterministically derived
 # from human input or the agent's output — see CLAUDE.md).
 PLACEHOLDER_TITLE = "新话题"
+
+
+def _topic_ref_lists(
+    topics: list[Topic], *, exclude_id: uuid.UUID
+) -> tuple[list[dict], list[dict]]:
+    """一次推导出两份话题列表：`(全量解析表, 渲染进 prompt 的子集)`。
+
+    故意成对返回：这两份**必须**从同一批话题推导，且**必须**保持不同。全量那份
+    喂给 `expand_mention_names`（`@标题` → `<#id>` 的解析表，含已归档话题）；子集
+    那份只喂给 `_build_system_prompt`。合成一份就会把"少注入"变成"少了引用能力"
+    ——用户自己打 `@某个已归档话题` 会不再变成链接。
+    """
+    visible = [t for t in topics if t.id != exclude_id and t.kind != TopicKind.root]
+    return [{"id": str(t.id), "title": t.title} for t in visible], _prompt_topic_refs(
+        visible
+    )
+
+
+def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
+    """渐进式披露：从全量话题里挑出**值得渲染进 system prompt** 的那一小撮。
+
+    只影响 prompt 里列出来的那一段；`expand_mention_names` 拿到的仍是全量列表，
+    所以过滤掉的话题（含已归档的）用 `@标题` 照样解析得出 <#id> 链接——少注入是
+    纯赚的，不损失任何引用能力。
+
+    剔除三类：
+    - 已归档：本项目实测占注入量的 74%，而引用一个几周前归档的话题几乎没有价值；
+      需要时 agent 自己查（prompt 那段里给了查法）。
+    - 未命名（标题就是占位符）：按标题根本引用不了。
+    - 同名：`expand_mention_names` 对同名标题只解析第一个（mentions.py 的 `seen`
+      去重），其余会**静默指向错的那一个**。所以同名的**全部剔除**而不是留一个
+      ——留一个等于在 prompt 里推荐一个会指错的引用；全部不列，它们仍可通过查询
+      拿到 id 后用 <#id> 精确引用。
+    """
+    live = [
+        t
+        for t in topics
+        if t.status != TopicStatus.archived and t.title != PLACEHOLDER_TITLE
+    ]
+    titles = Counter(t.title for t in live)
+    return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
+
 
 # 分身开工首轮的内部指令 (split auto-kickoff)。Prompt-only: it never appears as a
 # message; what the humans see is the 分身's own opening, generated from the task
@@ -1485,13 +1534,16 @@ class ChatService:
                 [] if is_private else await projects_repo.list_members(topic.project_id)
             )
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
+            # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
+            # ——用户自己打 @某个归档话题也必须还能变成链接）；
+            # `topic_refs_for_prompt` 只是**渲染**进 system prompt 的子集。
             topic_refs = []
+            topic_refs_for_prompt = []
             if not is_private:
-                topic_refs = [
-                    {"id": str(t.id), "title": t.title}
-                    for t in await topics.list_for_project(topic.project_id)
-                    if t.id != topic.id and t.kind != TopicKind.root
-                ]
+                topic_refs, topic_refs_for_prompt = _topic_ref_lists(
+                    await topics.list_for_project(topic.project_id),
+                    exclude_id=topic.id,
+                )
             project_id = topic.project_id
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
@@ -1544,7 +1596,7 @@ class ChatService:
             memories,
             role,
             roster,
-            topic_refs,
+            topic_refs_for_prompt,
             untitled,
             turn_meta=_turn_meta_lines(
                 budget_s=settings.agent_turn_timeout_s,
