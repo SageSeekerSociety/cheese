@@ -43,6 +43,11 @@ class PullRequest:
     number: int
     url: str
     head_sha: str
+    #: True when this PR was already open on the head branch and we adopted it
+    #: instead of creating one (GitHub 422 "a pull request already exists").
+    #: Callers use it for wording only — a claimed PR is this topic's PR and is
+    #: driven through CI/merge/deploy exactly like a freshly opened one.
+    already_existed: bool = False
 
 
 @dataclass
@@ -85,6 +90,43 @@ def _github_message(resp: httpx.Response) -> str:
     return f"HTTP {resp.status_code}：{detail[:300]}"
 
 
+def _is_pr_already_exists(resp: httpx.Response) -> bool:
+    """True only for GitHub's "a pull request already exists for X" 422.
+
+    Deliberately narrow. 422 is `POST /pulls`'s catch-all Validation Failed
+    and covers plenty of genuine, unrecoverable mistakes — a base branch that
+    doesn't exist, head == base, no commits between the two. Those must keep
+    degrading to the local merge path. Only the structured error entry
+    (`resource: "PullRequest"` + an "already exists" message) says the PR we
+    were about to open is already sitting there:
+
+        {"message": "Validation Failed",
+         "errors": [{"resource": "PullRequest", "code": "custom",
+                     "message": "A pull request already exists for owner:branch."}]}
+
+    Matching on the structured `errors[]` rather than a substring of the whole
+    body also keeps a branch or PR title that happens to contain the words
+    "already exists" from being read as this case.
+    """
+    if resp.status_code != 422:
+        return False
+    try:
+        payload = resp.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        return False
+    return any(
+        isinstance(err, dict)
+        and err.get("resource") == "PullRequest"
+        and "already exist" in str(err.get("message") or "").lower()
+        for err in errors
+    )
+
+
 class GitHubPrClient(Protocol):
     async def open_pull_request(
         self,
@@ -96,7 +138,20 @@ class GitHubPrClient(Protocol):
         title: str,
         body: str,
         token: str,
-    ) -> PullRequest: ...
+    ) -> PullRequest:
+        """Open a PR for `head` — or adopt the one that is already open on it.
+
+        GitHub answers 422 "a pull request already exists for <owner>:<head>"
+        when the branch already has an open PR. That is NOT the mechanism
+        being unavailable: the head branch is derived from the topic id
+        (`pr_branch_name`), so the PR that exists IS this topic's PR, and the
+        caller degrading to a local merge + direct push over it is what
+        produces an orphan PR (open forever, CI burning, never merged, code
+        already on main by another route). Implementations must resolve that
+        case into the existing PR and set `already_existed=True`; every OTHER
+        failure — including every other 422 — still raises `GitHubPrError`
+        so the caller degrades as before."""
+        ...
 
     async def check_state(
         self, *, owner: str, repo: str, ref: str, token: str
@@ -219,16 +274,77 @@ class HttpxGitHubPrClient:
                 headers=self._headers(token),
                 json={"title": title, "body": body, "head": head, "base": base},
             )
-        if resp.status_code != 201:
-            raise GitHubPrError(
-                f"GitHub 拒绝开 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
-            )
-        data = resp.json()
-        return PullRequest(
-            number=data["number"],
-            url=data["html_url"],
-            head_sha=data["head"]["sha"],
+            if resp.status_code == 201:
+                data = resp.json()
+                return PullRequest(
+                    number=data["number"],
+                    url=data["html_url"],
+                    head_sha=data["head"]["sha"],
+                )
+            if _is_pr_already_exists(resp):
+                claimed = await self._find_open_pull_request(
+                    client=client,
+                    owner=owner,
+                    repo=repo,
+                    head=head,
+                    base=base,
+                    token=token,
+                )
+                # Falls through to the raise when the listing can't confirm it
+                # (API hiccup, or the PR was closed between the two calls):
+                # degrading on an unverified guess is worse than degrading on
+                # the error GitHub actually gave us.
+                if claimed is not None:
+                    return claimed
+        raise GitHubPrError(
+            f"GitHub 拒绝开 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
         )
+
+    async def _find_open_pull_request(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        owner: str,
+        repo: str,
+        head: str,
+        base: str,
+        token: str,
+    ) -> PullRequest | None:
+        """The open PR on `owner:head`, or None if it can't be established.
+
+        Never raises: the only caller is already holding a GitHubPrError it
+        can raise instead, and a failure here must not turn a plain degrade
+        into a different-looking crash."""
+        try:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/pulls",
+                headers=self._headers(token),
+                params={"head": f"{owner}:{head}", "state": "open", "per_page": 100},
+            )
+            if resp.status_code != 200:
+                return None
+            items = resp.json()
+            if not isinstance(items, list) or not items:
+                return None
+            # One head branch can carry open PRs against several bases; prefer
+            # the one we were trying to open, fall back to the only/first one.
+            chosen = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and item.get("base", {}).get("ref") == base
+                ),
+                items[0],
+            )
+            return PullRequest(
+                number=chosen["number"],
+                url=chosen["html_url"],
+                head_sha=chosen["head"]["sha"],
+                already_existed=True,
+            )
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
+            return None
 
     async def check_state(
         self, *, owner: str, repo: str, ref: str, token: str

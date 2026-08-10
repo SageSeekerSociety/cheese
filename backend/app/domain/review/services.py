@@ -756,12 +756,21 @@ class AcceptService:
         card.pr_url = pr.url
         card.pr_head_sha = pushed["head_sha"]
         card.pr_merged_at = None
-        card.note = f"已开 PR #{pr.number}，等 CI 转绿后自动合并：{pr.url}"
+        # A PR GitHub reports as already open on this head branch IS this
+        # topic's PR (the branch name is derived from the topic id), so it is
+        # adopted rather than opened — and saying "已开" for it would misreport
+        # the one thing the timeline exists to record.
+        pr_phrase = (
+            f"已认领该分支上已存在的 PR #{pr.number}"
+            if pr.already_existed
+            else f"已开 PR #{pr.number}"
+        )
+        card.note = f"{pr_phrase}，等 CI 转绿后自动合并：{pr.url}"
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(
             topic,
-            f"🔁 {decided_by} 采纳了这个话题，已开 PR #{pr.number} 等待 CI：{pr.url}\n"
+            f"🔁 {decided_by} 采纳了这个话题，{pr_phrase} 等待 CI：{pr.url}\n"
             "话题保持 active（容器不停），PR 合并且部署也成功后才会归档。",
         )
         return card
