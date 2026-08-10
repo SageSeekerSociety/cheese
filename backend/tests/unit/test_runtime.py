@@ -227,6 +227,78 @@ async def test_topic_turn_reports_the_rescheduled_ceiling():
 
 
 @pytest.mark.anyio
+async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
+    """F: the timeline message a timed-out turn posts used to drop the actual
+    timeout value entirely ("⚠️ 芝士这轮超时被中断了..." with no number) —
+    only logger.warning had it, and agent has no host SSH to read logger. The
+    message must carry the SAME effective ceiling `topic_turn()`/`cheese
+    status` report, plus roughly how long it actually ran."""
+    broker = InProcessBroker()
+    runner = TurnRunner(broker, turn_timeout_s=1.0)
+
+    class _Hang:
+        def __init__(self) -> None:
+            self.posted: str | None = None
+
+        async def converse(self, **_):
+            yield {"type": "user_block"}
+            await asyncio.sleep(10)  # wedge, well past the 1s ceiling
+            yield {"type": "done"}  # pragma: no cover
+
+        async def post_system_event(self, topic_id, content, turn_id=None):
+            self.posted = content
+            return {"id": "b1", "kind": "event", "content": content}
+
+    svc = _Hang()
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(svc, topic, author="u", content="hi", summon=True)
+        for _ in range(3):
+            frame = await asyncio.wait_for(q.get(), 3)
+            if frame["type"] == "event_block":
+                break
+    assert svc.posted is not None
+    assert "1秒的上限" in svc.posted
+    assert "实际跑了约" in svc.posted
+
+
+@pytest.mark.anyio
+async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_default():
+    """A turn that rescheduled its ceiling via `turn_ceiling` (turn 活跃度检测,
+    e.g. the tmux backend) must have its timeout message report THAT ceiling,
+    not the generic outer default — otherwise "was this the generic safety
+    net or the backend's real, much longer ceiling" is unanswerable without
+    host SSH."""
+    broker = InProcessBroker()
+    runner = TurnRunner(broker, turn_timeout_s=0.05)  # tiny generic default
+
+    class _Hang:
+        def __init__(self) -> None:
+            self.posted: str | None = None
+
+        async def converse(self, **_):
+            yield {"type": "turn_ceiling", "seconds": 2.0}
+            await asyncio.sleep(10)  # wedge, well past the rescheduled 2s
+            yield {"type": "done"}  # pragma: no cover
+
+        async def post_system_event(self, topic_id, content, turn_id=None):
+            self.posted = content
+            return {"id": "b1", "kind": "event", "content": content}
+
+    svc = _Hang()
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(svc, topic, author="u", content="hi", summon=True)
+        for _ in range(3):
+            frame = await asyncio.wait_for(q.get(), 5)
+            if frame["type"] == "event_block":
+                break
+    assert svc.posted is not None
+    assert "2秒的上限" in svc.posted
+    assert "0.05" not in svc.posted
+
+
+@pytest.mark.anyio
 async def test_running_topic_ids_reports_only_in_flight_turns():
     # Bulk signal for the sidebar's「芝士还在跑」indicator: a topic whose turn
     # already finished must drop out, one still mid-flight must show up.

@@ -655,15 +655,24 @@ class TurnRunner:
         except TimeoutError:
             rec["status"] = "timeout"
             rec["duration_s"] = round(time.monotonic() - t0, 1)
+            # The actual ceiling this turn ran against — `topic_turn()` reads
+            # the same `ceiling_s or self._timeout` fallback for `cheese
+            # status` (see its docstring above); a backend that emitted a
+            # `turn_ceiling` frame may have raised this well above
+            # `self._timeout`, so logging the base default here would be
+            # misleading about what actually elapsed before the cut.
+            effective_ceiling_s = round(rec.get("ceiling_s") or self._timeout)
             logger.warning(
-                "turn %s timed out (>%ss) for topic %s; interrupted",
+                "turn %s timed out (>%ss, elapsed %ss) for topic %s; interrupted",
                 turn_id,
-                self._timeout,
+                effective_ceiling_s,
+                rec["duration_s"],
                 topic_id,
             )
             text = (
-                "⚠️ 芝士这轮超时被中断了（可能卡在某步）。已完成的改动都在；"
-                "马上自动接着跑一次。"
+                f"⚠️ 芝士这轮超时被中断了（{effective_ceiling_s}秒的上限，"
+                f"实际跑了约{rec['duration_s']}秒，可能卡在某步）。"
+                "已完成的改动都在；马上自动接着跑一次。"
             )
             block = None
             try:

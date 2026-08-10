@@ -356,10 +356,14 @@ class AcceptService:
         # through to the local path when GitHub is unreachable (availability
         # must never regress) — the merge commit landing on main closes the
         # PR anyway.
+        pr_degrade_reason = ""
         if card.pr_number is not None:
-            settled = await self._accept_via_pr(card, topic, decided_by)
+            settled, existing_pr_degrade_reason = await self._accept_via_pr(
+                card, topic, decided_by
+            )
             if settled is not None:
                 return settled
+            pr_degrade_reason = existing_pr_degrade_reason
 
         # 两阶段采纳 (PR迭代式, 2026-08-09): no PR yet — try opening a NEW one via
         # the approver's own connected GitHub token. Any missing prerequisite
@@ -376,7 +380,7 @@ class AcceptService:
         # not connected" and "账号连了但密文坏了" are no longer
         # indistinguishable in the UI.
         try:
-            pr_prereqs, pr_degrade_reason = await self._resolve_pr_prerequisites(
+            pr_prereqs, two_phase_degrade_reason = await self._resolve_pr_prerequisites(
                 topic, decided_by
             )
         except Exception as exc:  # noqa: BLE001 — degrade, don't fail the accept
@@ -387,7 +391,7 @@ class AcceptService:
                 exc,
             )
             pr_prereqs = None
-            pr_degrade_reason = f"检查 PR 前提条件时出错（{type(exc).__name__}）"
+            two_phase_degrade_reason = f"检查 PR 前提条件时出错（{type(exc).__name__}）"
         if pr_prereqs is not None:
             token, pr_owner, pr_repo = pr_prereqs
             try:
@@ -412,7 +416,17 @@ class AcceptService:
                 # helper, never argv/URL — see _token_push_env — so git's
                 # stderr can't contain it either); safe to surface verbatim,
                 # same as the existing push_back() failure note below.
-                pr_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
+                two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
+        # Combine rather than overwrite: an existing-PR degrade (closed
+        # unmerged / merge-call failure, see `_accept_via_pr`) must not be
+        # silently dropped just because the two-phase attempt that follows it
+        # also had something to say.
+        if two_phase_degrade_reason:
+            pr_degrade_reason = (
+                f"{pr_degrade_reason}；{two_phase_degrade_reason}"
+                if pr_degrade_reason
+                else two_phase_degrade_reason
+            )
         # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
         # conflict must never silently archive the topic while the work is
         # stranded on its branch (that shipped a lie once): the card moves to
@@ -597,6 +611,13 @@ class AcceptService:
                 local_head,
                 exc,
             )
+            # Visible on the card, not just logger (agent has no host SSH):
+            # otherwise 芝士 believes its fix was pushed and just waits forever.
+            # Dedup by prefix — this fires every 60s poll tick until the push
+            # succeeds, and must not spam the note each time.
+            if not card.note.startswith("⚠️ 平台自动重推失败"):
+                card.note = (f"⚠️ 平台自动重推失败（下一轮还会重试）：{exc}")[:2000]
+                await self._session.flush()
             return
         card.pr_head_sha = pushed["head_sha"]
         card.note = ""
@@ -709,17 +730,28 @@ class AcceptService:
         topic = await self._topic_or_404(card.topic_id)
         owner, _, repo = card.pr_repo.partition("/")
 
-        from app.domain.oauth.services import get_github_user_token_for_handle
+        from app.domain.oauth.services import (
+            get_github_user_token_for_handle_with_reason,
+        )
 
-        token = await get_github_user_token_for_handle(
+        token, reason = await get_github_user_token_for_handle_with_reason(
             self._session, card.decided_by or ""
         )
         if not token:
             logger.warning(
-                "pr_open card %s has no usable GitHub token anymore; skipping "
-                "this poll (will retry next tick)",
+                "pr_open card %s has no usable GitHub token anymore (%s); "
+                "skipping this poll (will retry next tick)",
                 card.id,
+                reason,
             )
+            # Without this the card just sits at `pr_open` forever and looks
+            # identical to "CI still running" — no signal anyone's token died.
+            if not card.note.startswith("⚠️ 轮询暂停"):
+                card.note = (
+                    f"⚠️ 轮询暂停（下一轮还会重试）："
+                    f"{_describe_token_unavailable(reason)}"
+                )[:2000]
+                await self._session.flush()
             return
 
         from app.domain.review import github_pr
@@ -913,14 +945,19 @@ class AcceptService:
 
     async def _accept_via_pr(
         self, card: AcceptCard, topic: Topic, decided_by: str
-    ) -> AcceptCard | None:
+    ) -> tuple[AcceptCard | None, str]:
         """Accept by merging the card's EXISTING GitHub PR (#188 §5.1) —
         distinct from `_open_pr_for_accept` above (两阶段采纳), which opens a
         NEW PR rather than merging one already recorded on the card.
 
-        Returns the settled card (accepted or conflict), or None to fall back
-        to the local merge path — config drift and GitHub outages must leave
-        accept exactly as available as before PR-based accept existed.
+        Returns (settled card, "") when the PR path finished the accept
+        (accepted or conflict), or (None, reason) to fall back to the local
+        merge path — config drift and GitHub outages must leave accept
+        exactly as available as before PR-based accept existed. `reason` is
+        a human-readable, secret-free explanation of WHY it fell back (empty
+        when there's nothing worth surfacing, e.g. the App simply isn't
+        configured for this project) — the caller folds it into the same
+        `pr_degrade_reason` that ends up on the card's note.
         """
         from app.domain.agent.github_app import github_app_tokens_for_project
         from app.domain.review.github_pr import (
@@ -937,7 +974,7 @@ class AcceptService:
         upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
         parsed = parse_github_repo(upstream)
         if tokens is None or parsed is None:
-            return None  # App unconfigured / upstream changed since the PR opened
+            return None, ""  # App unconfigured / upstream changed since PR opened
         client = GitHubPRClient(*parsed, tokens)
         branch = ws.branch_for_topic(topic.id)
 
@@ -945,9 +982,10 @@ class AcceptService:
             # Someone may have handled the PR on GitHub directly — respect it.
             view = await client.pr_view(number)
             if view.get("merged"):
-                return await self._settle_pr_accept(
+                settled = await self._settle_pr_accept(
                     card, topic, decided_by, note=f"PR #{number} 已在 GitHub 合并"
                 )
+                return settled, ""
             if view.get("state") == "closed":
                 logger.warning(
                     "PR #%s for card %s was closed unmerged — falling back "
@@ -955,7 +993,7 @@ class AcceptService:
                     number,
                     card.id,
                 )
-                return None
+                return None, f"PR #{number} 已在 GitHub 被关闭但未合并"
 
             # Re-push first: last-minute worktree edits and conflict fixes must
             # be what actually merges.
@@ -973,20 +1011,28 @@ class AcceptService:
             # Same contract as a local merge conflict: card → conflict, 芝士 is
             # dispatched (routes/accept.py), human retries. Sync the local base
             # first so the materialized conflict matches what GitHub sees.
+            sync_failure_note = ""
             try:
                 await asyncio.to_thread(ws.sync_upstream, topic.project_id)
-            except Exception:  # noqa: BLE001 — the conflict flow still works on a stale base
+            except Exception as sync_exc:  # noqa: BLE001 — conflict flow still works on a stale base
                 logger.exception(
                     "sync_upstream after merge refusal failed for %s", topic.id
                 )
+                # Visible on the card: a materialized conflict built on a
+                # stale base can show paths that no longer actually conflict.
+                sync_failure_note = (
+                    f"；同步上游失败，冲突可能基于陈旧的 base：{sync_exc}"
+                )[:300]
             await self._repo.add_approval(card.id, decided_by)
             card.status = AcceptStatus.conflict
             card.decided_by = decided_by
             card.decided_at = datetime.now(UTC)
-            card.note = f"PR #{number} 合并冲突，已派芝士解决"
+            card.note = (f"PR #{number} 合并冲突，已派芝士解决{sync_failure_note}")[
+                :2000
+            ]
             await self._session.flush()
             await self._session.refresh(card)
-            return card
+            return card, ""
         except Exception as exc:  # noqa: BLE001 — any non-conflict failure falls back
             logger.exception(
                 "PR accept failed for card %s (PR #%s): %s — falling back "
@@ -995,11 +1041,12 @@ class AcceptService:
                 number,
                 exc,
             )
-            return None
+            return None, f"PR #{number} 采纳失败：{exc}"[:300]
 
-        return await self._settle_pr_accept(
+        settled = await self._settle_pr_accept(
             card, topic, decided_by, note=f"已通过 PR #{number} 合并到上游"
         )
+        return settled, ""
 
     async def _settle_pr_accept(
         self, card: AcceptCard, topic: Topic, decided_by: str, *, note: str

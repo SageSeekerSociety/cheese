@@ -226,9 +226,77 @@ def test_github_down_falls_back_to_the_local_path(client, pr_world):
     )
     assert r.status_code == 200
     # Availability parity: the accept still completes, via the local path.
-    assert r.json()["data"]["status"] == "accepted"
+    card = r.json()["data"]
+    assert card["status"] == "accepted"
     assert pr_world["local_merges"] != []
     assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+    # 可见性: 之前这个降级只有 logger.exception，卡片上完全看不出走过 PR
+    # 路径又失败了——现在原因(哪个PR、GitHub报了什么)必须留在 note 上。
+    assert "未走 PR 采纳" in card["note"]
+    assert "PR #9" in card["note"]
+    assert "GitHub unreachable" in card["note"]
+
+
+def test_pr_closed_unmerged_falls_back_with_visible_reason(client, pr_world):
+    """PR 在 GitHub 上被直接关闭但没合并（人手动关的，或别的自动化关的）：
+    之前只有 logger.warning，卡片降级到本地合并后完全看不出"其实本来有个
+    PR，只是被关掉了"——跟"这张卡从来没走过 PR 路径"外部观感一样。"""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=11)
+    _FakeClient.view = {"merged": False, "state": "closed"}
+
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
+    assert r.status_code == 200
+    card = r.json()["data"]
+    assert card["status"] == "accepted"  # degraded to the local merge path
+    assert "未走 PR 采纳" in card["note"]
+    assert "PR #11" in card["note"]
+    assert "关闭" in card["note"]
+    assert "未合并" in card["note"]
+    # No merge/push attempted against a PR that's already closed.
+    assert [c for c in _FakeClient.calls if c[0] == "merge"] == []
+    assert pr_world["local_merges"] != []
+
+
+def test_pr_conflict_sync_upstream_failure_visible_in_note(
+    client, pr_world, monkeypatch
+):
+    """合并冲突后平台会同步上游 main 好让materialize出来的冲突匹配 GitHub
+    的真实状态——这一步失败之前只有 logger.exception，冲突提示看起来跟
+    正常冲突一模一样，没人知道冲突可能建立在陈旧的 base 上。"""
+    from app.domain.workspace import service as ws
+
+    def failing_sync(_project_id):
+        raise RuntimeError("network unreachable")
+
+    monkeypatch.setattr(ws, "sync_upstream", failing_sync)
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=12)
+    _FakeClient.merge_error = GitHubPRMergeBlocked("PR #12 is not mergeable")
+
+    r = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=_auth("alice"),
+    )
+    assert r.status_code == 200
+    card = r.json()["data"]
+    assert card["status"] == "conflict"
+    assert "PR #12" in card["note"]
+    assert "合并冲突" in card["note"]
+    assert "同步上游失败" in card["note"]
+    assert "network unreachable" in card["note"]
+    # Same contract as any other merge conflict — topic stays active either way.
+    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_pr_already_merged_on_github_is_respected(client, pr_world):
