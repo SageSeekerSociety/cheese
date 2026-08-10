@@ -916,7 +916,10 @@ if (activityBump) {
 
 // 实时性 (前端体验优化 C, MVP): poll unread badges so messages landing in
 // OTHER topics light up without a manual refresh. 30s keeps it fresher than
-// "only when I click around" without hammering the backend.
+// "only when I click around" without hammering the backend. Same tick also
+// refreshes the topic list, so the sidebar's「芝士还在跑」呼吸点 (running,
+// piggybacked onto TopicOut) fades out for topics you're not watching too —
+// the topic you have open already gets an instant refresh via handleTurnDone.
 let unreadTimer: number | undefined
 
 onMounted(async () => {
@@ -931,6 +934,7 @@ onMounted(async () => {
   }
   unreadTimer = window.setInterval(() => {
     refreshUnread()
+    refreshTopics()
   }, 30_000)
 })
 

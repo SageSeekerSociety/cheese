@@ -334,20 +334,25 @@ const onMemory = computed(() => props.activeDocs === 'memory')
               <!-- 干净行 + 前置图标做身份锚（混合版）：图标未读变琥珀，
                    种类标签仍不要（缩进表达层级），操作 hover 才浮现。 -->
               <template #prepend>
-                <v-icon
-                  v-if="row.depth === 0"
-                  size="16"
-                  class="row-glyph"
-                  :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
-                  icon="mdi-message-text-outline"
-                />
-                <!-- 分身不用钩子箭头：树的结构交给缩进 + 竖向引导线，
-                     行内只留一个小圆点做锚（未读转琥珀）。 -->
-                <span
-                  v-else
-                  class="row-glyph row-glyph--dot"
-                  :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
-                />
+                <span class="row-glyph-wrap">
+                  <v-icon
+                    v-if="row.depth === 0"
+                    size="16"
+                    class="row-glyph"
+                    :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
+                    icon="mdi-message-text-outline"
+                  />
+                  <!-- 分身不用钩子箭头：树的结构交给缩进 + 竖向引导线，
+                       行内只留一个小圆点做锚（未读转琥珀）。 -->
+                  <span
+                    v-else
+                    class="row-glyph row-glyph--dot"
+                    :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
+                  />
+                  <!-- 芝士还在这个话题里跑这一轮：呼吸点，人凭它判断啥时候
+                       该派下一个任务——和归档/采纳状态无关，只是本轮有没有跑完。 -->
+                  <span v-if="row.topic.running" class="running-dot" title="芝士正在这个话题里工作" />
+                </span>
               </template>
               <v-list-item-title class="d-flex align-center topic-title">
                 <v-text-field
@@ -868,6 +873,34 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 }
 .row-glyph--unread {
   color: var(--accent, #f57f17);
+}
+.row-glyph-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+/* 呼吸点：芝士还在这一轮里工作，跟归档/采纳状态无关。 */
+.running-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok, #1f9d55);
+  box-shadow: 0 0 0 1.5px var(--surface, #fff);
+  animation: running-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes running-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.7);
+  }
 }
 /* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。 */
 .topic-row.is-sub::before {

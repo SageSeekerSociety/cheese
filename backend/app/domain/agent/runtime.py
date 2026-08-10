@@ -196,6 +196,22 @@ class TurnRunner:
             return out
         return None
 
+    def running_topic_ids(self) -> set[uuid.UUID]:
+        """Every topic with a turn currently in flight — for bulk UI signals
+        (e.g. the sidebar's "还在说话" indicator) that can't afford one
+        `topic_turn()` lookup per row. Same "newest record per topic wins"
+        rule as `topic_turn()`, just collected across all topics at once."""
+        seen: set[str] = set()
+        running: set[uuid.UUID] = set()
+        for rec in reversed(self._recent):
+            key = rec["topic_id"]
+            if key in seen:
+                continue
+            seen.add(key)
+            if rec["status"] == "running":
+                running.add(uuid.UUID(key))
+        return running
+
     def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
         """Turns currently waiting on this project's concurrency semaphore."""
         return self._project_waiting.get(str(project_id), 0)
