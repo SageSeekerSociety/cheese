@@ -373,9 +373,7 @@ async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(
-    client, tmp_path
-):
+async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(client, tmp_path):
     """Interactive Claude Code's Stop hook decodes to an all-zero usage — that
     is 'unknown', not 'this turn was free'. Without a meter for the route, the
     row must say unmetered."""
