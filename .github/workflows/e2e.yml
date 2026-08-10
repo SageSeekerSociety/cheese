@@ -82,6 +82,13 @@ jobs:
     # long-term — see the scope job above, which is cheap enough to run there.)
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 15
+    # Persists backend/srp_rs's Cargo build cache outside the checkout, same
+    # as test.yml's migration-heads/test jobs — see the comment on
+    # migration-heads there for the full reasoning (why this path survives
+    # actions/checkout and is immune to docker prune, and why it's keyed per
+    # job rather than shared).
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/../cargo-target/e2e
 
     services:
       postgres:
@@ -133,6 +140,9 @@ jobs:
       - name: Install backend deps
         working-directory: backend
         run: uv sync --all-extras
+
+      - name: Report Cargo target cache size
+        run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
       - name: Run migrations
         working-directory: backend
