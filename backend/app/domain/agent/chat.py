@@ -40,7 +40,8 @@ from app.domain.agent.service import (
     AgentToolUse,
     AgentUsage,
 )
-from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_skills
+from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
+from app.domain.agent.stages import resolve_stage, stage_scenario
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -323,6 +324,10 @@ _OPEN_CARD_STATUSES = (
     AcceptStatus.pending_gate,
     AcceptStatus.gate_failed,
     AcceptStatus.conflict,
+    # 两阶段采纳: `pr_open` 是 open 状态里最容易被漏掉的一个 —— 卡被采纳了但
+    # 话题没归档、容器没停、活还没干完。不在这里就等于芝士在 PR 迭代期间
+    # 完全收不到"你现在有一条通往 GitHub 的通道"这个事实。
+    AcceptStatus.pr_open,
 )
 
 _OPEN_CARD_HINTS = {
@@ -332,6 +337,10 @@ _OPEN_CARD_HINTS = {
         "闸门检查未过——用 `cheese status` 看失败输出，修复后重新递卡"
     ),
     AcceptStatus.conflict: "采纳时发现合并冲突，待处理",
+    AcceptStatus.pr_open: (
+        "已被 {reviewer} 采纳并开出 PR，正在等 CI——继续在本分支提交即可，"
+        "平台会自动重推到 PR"
+    ),
 }
 
 
@@ -408,6 +417,7 @@ def _build_system_prompt(
     topics: list[dict] | None = None,
     untitled: bool = False,
     turn_meta: list[str] | None = None,
+    stage_guide: str | None = None,
 ) -> str:
     parts = [base]
     if untitled:
@@ -426,6 +436,15 @@ def _build_system_prompt(
         parts.append(f"## 你的专家角色\n{role}")
     if skills:
         parts.append(skills)
+    if stage_guide:
+        # 按阶段渐进式披露: the flow knowledge for THIS point in the topic's
+        # lifecycle only. Statically injected (like every other skill) — the
+        # model never gets to decide whether to load it, which is the whole
+        # reason this isn't a lazily-read Agent Skill (see stages.py).
+        parts.append(
+            "## 当前阶段的操作说明（平台按本话题所处的流程阶段自动选出，"
+            "只给你这一段）\n" + stage_guide
+        )
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         parts.append(
@@ -1507,6 +1526,18 @@ class ChatService:
                     )
                     if c.status in _OPEN_CARD_STATUSES
                 ]
+            # 按阶段渐进式披露: which段 of the flow this topic is in. Derived
+            # entirely from facts already in hand (kind/status + the open cards
+            # just queried above for 盲飞防护) — no extra query.
+            topic_stage = (
+                None
+                if is_private
+                else resolve_stage(
+                    kind=topic.kind,
+                    status=topic.status,
+                    card_statuses=[c.status for c in open_cards],
+                )
+            )
             # Which compute this topic runs on (v4): topic → project sticky → team.
             compute_id = _resolve_compute_id(
                 project.settings if project else None,
@@ -1552,6 +1583,11 @@ class ChatService:
                 is_resume=is_resume,
                 disk=_workspace_disk(self._workspace_root),
                 open_cards=open_cards,
+            ),
+            stage_guide=(
+                load_scenario(stage_scenario(topic_stage))
+                if topic_stage is not None
+                else None
             ),
         )
         final_text = ""
