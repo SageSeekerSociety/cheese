@@ -92,7 +92,12 @@ function buildSubmitData(values: Record<string, unknown>, descriptionText: strin
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeValidFormValues(overrides: Record<string, unknown> = {}) {
+// Return type is widened deliberately: the two "field is absent" tests below
+// `delete` a key, which TS rejects on an inferred literal type where every
+// property is required. Both consumers (taskFormSchema.safeParse and
+// buildSubmitData) already take unknown / Record<string, unknown>, so nothing
+// is lost — this mirrors vee-validate handing over untyped form values.
+function makeValidFormValues(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     name: 'Test Task',
     submitterType: 'USER',

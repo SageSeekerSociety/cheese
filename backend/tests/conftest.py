@@ -17,7 +17,7 @@ A stub agent keeps tests off the live model.
 import asyncio
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -135,6 +135,24 @@ class StubAgent(AgentService):
 @pytest.fixture
 def stub_agent() -> StubAgent:
     return StubAgent()
+
+
+@pytest.fixture
+def bearer() -> Callable[[str], dict[str, str]]:
+    """``Authorization`` headers proving the caller is ``handle``.
+
+    Most 2.0 routes still accept a handle named in the body (Phase-0), but the
+    ones that decide who may reach the project — writing the project roster —
+    read the actor from the verified token only. Those tests need a real token.
+    """
+
+    def _headers(handle: str) -> dict[str, str]:
+        from app.core.tokens import mint_session_token
+
+        token = mint_session_token(handle=handle, user_id=None)
+        return {"Authorization": f"Bearer {token}"}
+
+    return _headers
 
 
 @pytest.fixture

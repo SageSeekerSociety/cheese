@@ -78,6 +78,13 @@ class FakeGitHubPrClient:
         # number → GitHub's refusal reason (405/409); wins over a sha.
         self.merge_blocked_by_number: dict[int, str] = {}
         self.workflow_state_by_sha: dict[str, tuple[str, str]] = {}
+        # 人类授权动作前移: sha → the PR diff at that sha, as [(status, path)].
+        # None models GitHub's oversized-compare response (no `files` key).
+        # Unset shas answer with an empty diff, which is what every test that
+        # never pushes a second commit wants (授权时的 head == 现在的 head, so
+        # the poller doesn't even ask).
+        self.files_by_sha: dict[str, list[tuple[str, str]] | None] = {}
+        self.compare_calls: list[tuple[str, str]] = []
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -161,6 +168,12 @@ class FakeGitHubPrClient:
 
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
         return self.check_state_by_sha.get(ref, ("pending", "还没跑"))
+
+    async def compare_files(
+        self, *, owner, repo, base, head, token
+    ) -> list[tuple[str, str]] | None:
+        self.compare_calls.append((base, head))
+        return self.files_by_sha.get(head, [])
 
     async def merge_pull_request(
         self, *, owner, repo, number, token, commit_title=None, commit_message=None
@@ -892,7 +905,7 @@ def test_accept_still_degrades_on_a_422_that_is_not_already_exists(client, monke
 
 def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):
     """A plain (degrade-path) accepted card must not be touched by the poller
-    — regression guard for list_by_status filtering correctly."""
+    — regression guard for list_pr_open_on_active_topics filtering correctly."""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
@@ -940,6 +953,60 @@ def test_poll_merge_refused_puts_the_reason_on_the_card(client, monkeypatch):
         _poll(client)
         assert _cards_for_topic(client, tid)[0]["note"] == card["note"]
         assert len(fake.merge_calls) == 2  # …but it does keep retrying the merge
+    finally:
+        _reset_client()
+
+
+def test_poll_merge_refusal_summons_cheese_once_per_reason(client, monkeypatch):
+    """A note nobody is looking at is not a notification (2026-08-11): a PR the
+    platform can't merge — typically merge conflicts, which 芝士 can fix in its
+    own workspace — must wake 芝士 up, or the card sits at pr_open forever
+    (真实案例: PR #242). The 60s poll means it must wake it exactly once per
+    reason."""
+    fake = _pr_ready(client, monkeypatch)
+    try:
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)
+        accepted = client.post(
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=_auth("alice"),
+        ).json()["data"]
+        number = accepted["pr_number"]
+        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
+        fake.merge_blocked_by_number[number] = (
+            "HTTP 405：Pull Request has merge conflicts"
+        )
+
+        _poll(client)
+        wait_turns_idle()
+        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        contents = "\n".join(b.get("content") or "" for b in blocks)
+        assert "Pull Request has merge conflicts" in contents
+        # Must be actionable from inside the sandbox: 芝士 has no GitHub
+        # credentials, so the same promise the CI nudge makes has to hold here.
+        assert "平台会自动把新提交同步到这个 PR" in contents
+        first_count = contents.count("Pull Request has merge conflicts")
+        assert first_count == 1
+
+        # Same refusal next tick → no second summon.
+        _poll(client)
+        wait_turns_idle()
+        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        contents = "\n".join(b.get("content") or "" for b in blocks)
+        assert contents.count("Pull Request has merge conflicts") == first_count
+
+        # A DIFFERENT refusal is new information — summon again.
+        fake.merge_blocked_by_number[number] = "HTTP 409：Head branch was modified"
+        _poll(client)
+        wait_turns_idle()
+        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        contents = "\n".join(b.get("content") or "" for b in blocks)
+        assert "Head branch was modified" in contents
+
+        assert _cards_for_topic(client, tid)[0]["status"] == "pr_open"
+        assert _topic(client, tid)["status"] == "active"
     finally:
         _reset_client()
 

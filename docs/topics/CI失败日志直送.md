@@ -55,6 +55,21 @@ CI 红了之后，芝士**不需要人转述、不需要自己再跑一趟 GitHu
 
 `backend/tests/integration/test_accept_pr.py` 补断言：CI 失败的推进消息里必须同时含 `cheese gh-token` 和 `repos/acme/widgets/actions/jobs/`——两半都要有，缺仓库名的命令是跑不通的。
 
+## 递卡之后：冲突、零检查、以及我的一处错误结论
+
+递卡后 PR #263 停在 `pr_open`，卡片 note 是「✋ 没有任何 CI 真的跑过这次改动」。查清楚了，**冲突和零检查是同一件事**：
+
+- 分支 `cheesex/50766c66` head `7f2a594f` 推于 08:45:31。这个 commit 上 check-runs **0 条**，check-suites 只有 codecov 一条（永久 `queued`），**没有 `github-actions` 的 suite**。
+- 原因不是路径过滤没匹配。GitHub 对 `pull_request` 事件跑的是 merge ref（`refs/pull/263/merge`）；PR 有冲突时这个 ref 建不出来，于是一个 workflow 都不触发——根本没走到评估 `paths` 那一步。codecov 有 suite 是因为它反应的是 head commit 的 push，不需要 merge ref。
+- 冲突对象正是简报预警过的那张卡：**`806d30d2` = 采纳「405拒绝合并要叫人」(#262)**，08:45:46 进 main，比我的分支推上去晚 15 秒。碰头点也正是预警的 `_nudge_pr_fix`。
+
+**我错了的地方**（上一轮我说"沙箱里取不到当前 main、只能等平台同步"）：本地 `.jj` 里**本来就有完整主线**——`main` bookmark 指向 `b9dd6de6`，而它是 `806d30d2` 的后代。我当时看到它的描述是「采纳 topic/75e4a080 → main」就当成旧的了，没去查祖先关系，然后一路去试联网 fetch（`jj git fetch` 因容器里 git 是 2.39.5 而失败，`git ls-remote` 因只读 token 没有 `contents` 权限而被拒），把两个**无关的**失败当成了"取不到 main"的证据。实际上一次 `jj rebase -s <change> -d main` 就够，全程不需要网络。
+
+### 冲突怎么解的
+
+- <&backend/app/domain/review/github_pr.py>：main 给 `CheckState` 加了 `no_checks`，我在同一处加了 `logger`。两边都保留。`no_checks` 由 `_resolve_zero_checks` 产出，而 `_failure_detail` 只在 `failure` 分支触发，互不影响。
+- <&backend/app/domain/review/services.py>：main 把 note 去重从 `startswith("⚠️")` 收紧成 `_nudge_note_prefix(stage)` + `_REPUSH_FAILED_PREFIX`（避免 `⚠️ 轮询暂停` 吞掉后续 CI 失败）。**完整采用 main 的去重逻辑**，只把它那行 note 赋值里的 `tail` 换成我的 `headline`——两边的意图正交，合起来没有折衷。
+
 ## 验证状态
 
 - `ruff check .`：全绿。`ruff format --check .`：全绿。

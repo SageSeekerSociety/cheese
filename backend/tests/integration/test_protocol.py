@@ -3,6 +3,8 @@
 from app.core.tokens import mint_session_token
 from tests.conftest import seed_space
 
+OWNER = "owner-1"
+
 
 def _auth(handle: str) -> dict[str, str]:
     return {
@@ -24,14 +26,22 @@ def _setup_with_mentor_condition(client) -> tuple[str, str]:
     task = client.post(
         f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
     ).json()["data"]
-    p = client.post("/api/projects", json={"name": "团队"}).json()["data"]
+    p = client.post(
+        "/api/projects", json={"name": "团队", "owner_handle": OWNER}
+    ).json()["data"]
     pid = p["id"]
     client.post(f"/api/projects/{pid}/tasks", json={"task_id": task["id"]})
+    # Roster writes are authorized against a token — go out as the project owner.
     client.post(
         f"/api/projects/{pid}/members",
         json={"user_handle": "mentor-1", "role": "mentor"},
+        headers=_auth(OWNER),
     )
-    client.post(f"/api/projects/{pid}/members", json={"user_handle": "user-1"})
+    client.post(
+        f"/api/projects/{pid}/members",
+        json={"user_handle": "user-1"},
+        headers=_auth(OWNER),
+    )
     topic = client.post(
         "/api/topics", json={"project_id": pid, "title": "结题答辩"}
     ).json()["data"]

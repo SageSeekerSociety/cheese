@@ -43,9 +43,19 @@ tasks:
     deps: [install]
     cmds:
       - pnpm run test -- --run
-  check:
-    desc: Run all frontend checks (lint + typecheck + build)
+  # `lint` above autofixes, which is right at a keyboard and wrong in a gate:
+  # it can rewrite the file and exit 0 on a violation that CI (which never
+  # passes --fix) still reports. Keeping the two apart is what makes
+  # `task fe:check` and .github/workflows/frontend.yml agree.
+  lint:check:
+    desc: Run ESLint without autofix (what CI runs)
+    deps: [install]
     cmds:
-      - task: lint
+      - pnpm exec eslint .
+  check:
+    desc: Run all frontend checks (lint + typecheck + test + build)
+    cmds:
+      - task: lint:check
       - task: typecheck
+      - task: test
       - task: build
