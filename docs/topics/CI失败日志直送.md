@@ -65,6 +65,20 @@ CI 红了之后，芝士**不需要人转述、不需要自己再跑一趟 GitHu
 
 **我错了的地方**（上一轮我说"沙箱里取不到当前 main、只能等平台同步"）：本地 `.jj` 里**本来就有完整主线**——`main` bookmark 指向 `b9dd6de6`，而它是 `806d30d2` 的后代。我当时看到它的描述是「采纳 topic/75e4a080 → main」就当成旧的了，没去查祖先关系，然后一路去试联网 fetch（`jj git fetch` 因容器里 git 是 2.39.5 而失败，`git ls-remote` 因只读 token 没有 `contents` 权限而被拒），把两个**无关的**失败当成了"取不到 main"的证据。实际上一次 `jj rebase -s <change> -d main` 就够，全程不需要网络。
 
+### 又一个坑：话题分支不能 rebase，只能 merge
+
+第一次我是用 `jj rebase -s <change> -d main` 解的，本地干干净净。然后平台的自动重推**失败**了：
+
+```
+! [rejected] topic/50766c66 -> cheesex/50766c66 (non-fast-forward)
+```
+
+`_repush_if_local_head_moved` 用的是**普通 push，没有 force**（这是对的——force 会覆盖别人的推送）。rebase 重写了历史，新头不再是已推送头 `7f2a594f` 的后代，于是永远推不上去，卡片挂上「⚠️ 平台自动重推失败」。
+
+**正确做法是把 main 合并进来，而不是 rebase。** 平台自己的惯用法就摆在历史里：满仓库的「同步 GitHub main → topic/xxxx（推 PR 分支前）」都是**合并提交**。改法：以已推送头 `7f2a594f` 和 `main` 为双亲建一个合并提交，树直接取已解好的那份，然后把 bookmark 指过去、丢掉 rebase 出来的那条线。这样已推送头仍是祖先，push 是快进。
+
+（顺带：容器重启会**同时**清掉 `jj config` 和 `git config --global` 的身份，提交会带空的 committer 而无法推送。CLAUDE.md 已经记了 git 那半边，jj 这半边同理，重启后要一起重设。）
+
 ### 冲突怎么解的
 
 - <&backend/app/domain/review/github_pr.py>：main 给 `CheckState` 加了 `no_checks`，我在同一处加了 `logger`。两边都保留。`no_checks` 由 `_resolve_zero_checks` 产出，而 `_failure_detail` 只在 `failure` 分支触发，互不影响。
