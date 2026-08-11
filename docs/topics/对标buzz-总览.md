@@ -225,7 +225,20 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 | 7 | authz 策略表 | 3–5 人日 | 收敛两个宽松档；与 3.5 同属 authz 改造，宜连做 |
 | — | 其余（事件日志 / crate 切法 / Host 租户 / Nostr 密钥 / M1 公理 / 同室模型 / 多端发布 / canary / Renovate / Hermit / VISION 进仓） | **不做** | 理由见上 |
 
-分两拨走：**0–3 动 CI + `check.sh`，合成一个 PR**；**3.5 + 7 动 authz，合成另一个 PR**（先铺身份，再拆 `is_agent` 短路、扩策略表，顺序不能反）。
+### 分工（2026-08-11 起）
+
+**外部 agent 负责**（见交接简报 <&docs/topics/CI补洞-交接简报.md>）：事项 0–3，即补前端 CI、迁移 lint 单测、`check-branch-skew.sh`、三条 grep 守卫，外加 `check.sh` 按路径分流、`CLAUDE.md` 不实断言。**动 `.github/workflows/` 和 <&.claude/scripts/check.sh> 的只有他一个。**
+
+**本话题负责**，已拆四个子话题并行：
+
+| 子话题 | 对应清单项 | 性质 |
+|---|---|---|
+| @分身独立身份与 authz 收敛 | 3.5 + 7 | 漏洞级，风险最高，三阶段严格顺序 |
+| @领域包解环与 import 守卫 | 4 | 守卫做成 `backend/tests/` 下的测试，绕开 `check.sh` |
+| @测试规则还债与 _auth 去重 | 5 + 9 个 `_auth` 去重 | 小而实 |
+| @分身高风险动作的护栏调研 | 4.5 + 4.6 + 计时器排查 | **只出提案，不改行为** |
+
+**防撞车约定**：四个子话题都被明令不碰 `.github/workflows/` 和 `check.sh`；需要加守卫的一律实现成 `backend/tests/` 下的测试（`check.sh` 本来就跑 pytest，效果等价）。
 
 ## 五路进展
 
