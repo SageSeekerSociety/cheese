@@ -358,8 +358,13 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     # then stopped, because the prompt only described what acceptance WOULD do
     # and never asked for the card. With no card there is nothing to accept, so
     # a correct resolution sat in the workspace and the sync stayed stuck.
-    blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-    assert any("验收卡" in str(b.get("content") or "") for b in blocks)
+    #
+    # Asserted on the prompt itself, NOT on the block it eventually becomes:
+    # `runner.submit` is fire-and-forget, so reading the topic's blocks here is
+    # a race — it passed locally and failed in CI on the very first run.
+    from app.domain.workspace.upstream_conflict import _prompt
+
+    assert "验收卡" in _prompt(["hello.txt"])
 
 
 def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
