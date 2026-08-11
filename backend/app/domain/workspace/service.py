@@ -950,6 +950,43 @@ _SHARED_CHECKOUT_ATTEMPTS = 5
 _SHARED_CHECKOUT_RETRY_DELAY_S = 0.2
 
 
+def _warn_about_discarded_changes(repo: Path) -> None:
+    """Name whatever the shared-tree sync is about to throw away.
+
+    Discarding is the sync's whole point — the shared directory mirrors the
+    base tip and is not where work is kept. But it is not read-only either:
+    `write_file` and `exec_in_sandbox` both write straight into it when called
+    with `topic_id=None`, and nothing ever commits those writes (the only
+    snapshot path, `snapshot_worktree`, requires a topic and runs in that
+    topic's own jj worktree). So a discard here can silently destroy something
+    a human typed in the 文件 panel. Failing loudly was at least visible;
+    deleting silently would be a net loss, since it is the harder of the two
+    to diagnose after the fact.
+
+    Best-effort by construction: a status that fails must never become the
+    thing that wedges the sync, so every error is swallowed. Tracked
+    modifications only (`-uno`) — untracked files survive both the forced
+    checkout and the `reset --hard`, so naming them would be a false alarm.
+    `--no-optional-locks` keeps this from taking `index.lock` itself, which
+    the retry loop right below exists to wait out.
+    """
+    try:
+        dirty = _git(
+            repo, "--no-optional-locks", "status", "--porcelain", "-uno", timeout=10
+        ).strip()
+    except (ValidationError, OSError):
+        return
+    if dirty:
+        logger.warning(
+            "shared checkout sync in %s is discarding uncommitted local "
+            "changes to tracked files (the shared tree is a mirror of the "
+            "base tip, not storage — but write_file/exec_in_sandbox with "
+            "topic_id=None can write here):\n%s",
+            repo,
+            dirty,
+        )
+
+
 def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
     """The ONE piece of a merge that must still touch the shared repo
     directory: point its own working tree at the new base tip, since
@@ -972,6 +1009,7 @@ def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
     any process on the host — and only then cleared, with a retry loop for
     the (much more likely) case of two accepts landing here within
     milliseconds of each other, which needs a brief wait, not a lock clear."""
+    _warn_about_discarded_changes(repo)
     last_exc: ValidationError | None = None
     for attempt in range(_SHARED_CHECKOUT_ATTEMPTS):
         lock = repo / ".git" / "index.lock"
