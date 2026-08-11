@@ -261,6 +261,26 @@ _BUILTIN_TOOLS = [
 ]
 
 
+# Native tools that have NO way out of this platform, denied on every backend.
+#
+# AskUserQuestion ("向用户提问") is the one that bites: on the hooks backends the
+# interactive `claude` draws its option picker INSIDE the tmux pane, where no
+# user can ever reach it — the model then waits for a keypress that will never
+# come and the turn hangs until the wedged-turn safety net kills it. `cheese ask`
+# is the platform's equivalent (real buttons in the conversation, the answer
+# arrives on the next turn), so the native tool is denied outright rather than
+# left as a trap.
+DISALLOWED_TOOLS = ["AskUserQuestion"]
+
+# The interactive `claude` both hooks backends (tmux, device) launch. Kept here
+# so the two launchers can't drift, and so the deny travels WITH the command:
+# --dangerously-skip-permissions waves through permission prompts, and an
+# explicit --disallowedTools is what keeps this tool out regardless.
+CLAUDE_BASE_CMD = "claude --dangerously-skip-permissions --disallowedTools " + " ".join(
+    DISALLOWED_TOOLS
+)
+
+
 class AgentService:
     """Runs one streaming turn against the Claude Agent SDK."""
 
@@ -318,6 +338,10 @@ class AgentService:
                 include_partial_messages=True,
                 permission_mode="bypassPermissions",
                 allowed_tools=[*sandbox["allowed_tools"], "Skill"],
+                # bypassPermissions means the allowlist above does NOT restrict
+                # anything — a tool left out of it is still callable. Keeping
+                # AskUserQuestion out of the model's reach takes an explicit deny.
+                disallowed_tools=list(DISALLOWED_TOOLS),
                 cli_path=sandbox["cli_path"],
                 # The cheese skill lives in the mounted ~/.claude/skills (=user
                 # source). "user" reads only the isolated per-topic session dir
@@ -338,7 +362,7 @@ class AgentService:
                 include_partial_messages=True,
                 permission_mode="bypassPermissions",
                 allowed_tools=[],
-                disallowed_tools=_BUILTIN_TOOLS,
+                disallowed_tools=[*_BUILTIN_TOOLS, *DISALLOWED_TOOLS],
                 setting_sources=[],  # isolate from the host's ~/.claude settings
                 env=eff_env,
             )

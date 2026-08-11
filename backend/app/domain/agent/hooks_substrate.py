@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
 from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
-from app.domain.agent.service import AgentEvent, AgentResult
+from app.domain.agent.service import DISALLOWED_TOOLS, AgentEvent, AgentResult
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,11 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
     ]
     return {
         "skipDangerousModePermissionPrompt": True,
+        # Tools with no way out of this platform (AskUserQuestion — see
+        # service.DISALLOWED_TOOLS). Also passed as --disallowedTools on the
+        # launch line; a deny rule that only lives in one of the two is a deny
+        # rule that a future launcher tweak can silently drop.
+        "permissions": {"deny": list(DISALLOWED_TOOLS)},
         "hooks": {
             "SessionStart": plain,
             # The delivery receipt. We inject a prompt by typing it into the

@@ -11,6 +11,9 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
     for event in events:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
+    # The picker AskUserQuestion draws in the screen's terminal is unreachable
+    # for a remote user too — denied in settings as well as on the launch line.
+    assert s["permissions"]["deny"] == ["AskUserQuestion"]
 
 
 def test_build_screen_launch_shapes_command_and_env():
@@ -29,6 +32,9 @@ def test_build_screen_launch_shapes_command_and_env():
     assert 'cat > "$HOME/.claude/settings.json"' in script
     assert "cheese-hook" in script
     assert "claude --dangerously-skip-permissions" in script
+    # A remote screen is just as unreachable for AskUserQuestion's in-terminal
+    # picker as the local pane is — same deny, carried on the launch line.
+    assert "--disallowedTools AskUserQuestion" in script
     # Session name is derived from the work dir (per-topic isolation; a stale
     # session can't serve a different topic's tree).
     assert 'SESSION="cheese_$(printf' in script
