@@ -43,13 +43,27 @@ Buzz 和我们**产品域高度重合、技术栈完全不搭**。所以值得�
 
 <&.claude/scripts/check.sh> 开头就 `cd "$REPO_ROOT/backend"`——所以改前端也要等 60s 的 pytest，而前端本身一个检查都不跑。更麻烦的是这个 hook **在仓库里搜不到任何安装入口**（全仓 grep `pre-commit` 只命中文档），而 <&CLAUDE.md> 却断言「Tests MUST pass before any commit. Pre-commit hook enforces this.」——这条断言目前没有事实支撑。
 
+### 分身身份塌缩：不可追责，且撤权只能等过期
+
+来自 @Agent 一等公民机制对比，三条证据我逐条复核确认：
+
+- <&backend/app/core/sandbox_auth.py>：`mint_scoped_token` 的 payload 只有 `{"p": project_id, "t": topic_id, "exp": ...}`——**没有任何身份信息**，token 说的是「哪个话题」，不是「谁」
+- <&backend/app/domain/authz/policy.py>:45：`if not actor.authenticated or actor.is_agent: return True`——agent 直接短路，鉴权只剩 token 的作用域
+- 所有分身折叠成同一个 `cheese` user row
+
+后果：**出了事查不到是哪个分身干的；要撤一个分身的权，只能等 `_SCOPED_TTL_S = 3600` 那一小时过期。**
+
+好消息是解法已经在仓库里跑着了：<&backend/app/api/auth.py>:126 的设备屏幕 agent 已经是「每个屏幕一个独立 agent-user」的形态（`resolve_screen_actor` 返回自己的 `agent_handle` / `agent_user_id`）。把这个形态铺到话题分身上即可，**不需要引入任何密码学**。
+
 ### 规则靠自觉 = 规则会烂：本仓反证
 
 <&.claude/rules/backend-tests.md> 白纸黑字写着「别加第九个 `_auth()`」——现在有 9 个。这正好从反面印证了下面第 1 条。
 
-## 贯穿三路的一条主线
+## 两条贯穿主线
 
-三个子话题各读各的源码，最后指向同一件事：**Buzz 把架构铁律写成机器能执行的检查，我们把它写成给人和 agent 看的散文。**
+### 主线一：规矩该长在机器上，不是长在散文里
+
+四个子话题各读各的源码，最后指向同一件事：**Buzz 把架构铁律写成机器能执行的检查，我们把它写成给人和 agent 看的散文。**
 
 | 同一条规矩 | Buzz | 我们 |
 |---|---|---|
@@ -58,9 +72,19 @@ Buzz 和我们**产品域高度重合、技术栈完全不搭**。所以值得�
 | 迁移链不许分叉 | `check-branch-skew.sh`（约 30 行） | <&.claude/rules/migrations.md> 里的一段话 |
 | 分层不许被穿透 | Cargo 编译期禁环 | <&CLAUDE.md> 里的一段话 |
 
-**反证就在本仓**：<&.claude/rules/backend-tests.md> 白纸黑字写着「别加第九个 `_auth()`」——现在有 9 个。
+**反证就在本仓**：<&.claude/rules/backend-tests.md> 白纸黑字写着「别加第九个 `_auth()`」——现在有 9 个一模一样的 `def _auth(handle: str) -> dict[str, str]`。
 
-下面「值得学的」几乎全是这条主线的具体落点。
+### 主线二：给 agent 走旁路，就得为 agent 单独设计一套权限模型
+
+来自 @Agent 一等公民机制对比，一句话说清：
+
+> **Buzz 让 agent 用和人一样的身份、走和人一样的检查，所以它根本不需要为 agent 设计权限模型；我们让 agent 走一条绕过检查的专用旁路，所以权限模型退化成了一个 bearer token 的作用域。**
+
+有意思的是，README 那句 "Scoped by identity, not by permission flags" **字面成立，但原因很朴素**：它 `buzz-auth` 里那 16 个权限 Scope 是**死代码**（`require_scope` 在 crate 之外零调用点，relay 直接发全量 scope），真正拦人的只有「relay 成员 + channel 成员」两层。它不是设计了一套更好的权限系统，而是**没有另设一套**。
+
+它的 agent 有独立密钥对，靠 owner 的 NIP-OA 签名背书准入：owner 是成员 → 名下 agent 全放行；移除 owner → **全部秒失权**。且规范硬性禁止 relay 改写作者身份——背书 ≠ 冒充。
+
+下面「值得学的」几乎全是这两条主线的具体落点。
 
 ## 值得学的（随子话题回流累积，按 ROI 排）
 
@@ -119,6 +143,27 @@ Buzz 用两个**普通 Rust 单测**（`buzz-db/src/migration.rs:1038` 和 `:105
 
 注意**不要**照搬 Buzz 的「所有写入过同一个 `ingest` 入口」——我们是 REST 语义，强行统一写入口是倒退。可学的只是「鉴权决策集中在一处、可穷举、可测试」。
 
+### 1.8 给每个话题分身独立的 agent-user 身份 ⭐ 主线二的落点
+
+对应上方「分身身份塌缩」那条漏洞。收益三样：
+
+1. **可追责**——日志里能看出是哪个分身干的
+2. **撤权从「等 1 小时过期」变成「删一行」**
+3. **能拆掉 <&backend/app/domain/authz/policy.py> 里的 `is_agent` 短路**，让分身走和人一样的检查（这正是主线二说的事）
+
+不需要引入密码学，形态在设备屏幕 agent 上已经跑通，属于铺开而非新建。
+
+### 1.9 提案式高风险动作
+
+Buzz 的 agent 编辑画布只能 **draft**，owner 点保存才生效，**响应里明写 `saved:false`**——不让 agent 误以为自己已经落盘了。
+
+我们的分身直接写活文档、直接推 PR。哪些动作该降级成「提案 + 人确认」值得单独过一遍。
+
+### 1.10 两个小而实的机制
+
+- **`_Stop` 钩子**：还有未完成 todo 就劝阻结束回合。我们的分身「自认为做完了」时没有任何拦截。
+- **「facts decide, timers are a last-resort backstop」**：它那篇 welcome-kickoff 静默失败复盘值得当规范读——用事实判定状态，计时器只做兜底。**注意：我们这侧还没有系统排查过「让计时器做决定」的代码，所以这条目前只有方法论、没有落点。**
+
 ### 2. Gotcha 该写成「症状 → 会被误判成什么 → 真因」
 
 它 `AGENTS.md` 的 Common Gotchas 一节不写「应该怎么做」，而是从症状倒推。这个写法对 agent 更有用——agent 遇到的是症状，不是规范。
@@ -149,7 +194,16 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 - **28 个 crate 的切法**：它边界不腐化的真正原因是 **Cargo 编译期禁环**，不是切得细（体量差 150 倍：relay 6.4 万行 vs search 429 行）。Python 抄不到禁环，抄形状只会多一堆包。
 - **Host → 租户的多租户模型**：它是「一个 URL = 一个社区」，community 从 Host 解析，四层保障（类型 / schema 复合主键 / CI lint / 不可变触发器）+ TLA+ 规约。我们的 space/team/project 不是租户、是授权域，**跨 space 协作是我们的产品特性**，那套会直接把它挡死。隔离强度我们结构性弱于它，但这是选择不是缺陷——只学它第 1.5 条那个 lint 机制。
 
-**顺便戳破一个说法**：Buzz 并不是纯事件溯源。`channels` / `users` / `thread_metadata` 都是**派生投影表**，由 `side_effects.rs` 手工维护（19 处 db 写），删除是 soft delete（置 `deleted_at`）。所以「不可变审计链」是打过折的——别把它当成我们该追赶的标杆。
+- **Nostr 密钥体系**：它干净的前提是「自托管 + 用户自持私钥」。我们是托管平台，照搬只会得到伪去中心化。
+- **「不留管理通道」的 M1 公理**：那是 agent 跑在**用户自己的 k8s 上**逼出来的。我们的自托管沙箱直连控制是**资产**，不是债。
+- **消息即事件的同室模型**：代价是它至今没修的 A→B→A 回复循环。我们的话题/子话题拓扑**用结构消灭了这类循环**，是更强的保证——这一条我们领先。
+- **110 个 CLI 子命令的堆法**：它的动作面长在**内容**上（发消息、编画布、开频道），我们的该长在**协作过程**上（拆活、验收、回流、钉里程碑）。方向不同，不是数量差距。
+
+**顺便戳破两个说法**：
+
+其一，README 宣称的 8 项 agent 能力，逐条核实下来：开仓库 / 发补丁 / 审 PR / 跑工作流**为真**；编画布为真但只有 `get`/`set` 两个命令；「编排其他 agent」**打折**（只能提案）；「进语音 huddle」在 agent CLI 里**根本没有入口**。
+
+其二，Buzz 并不是纯事件溯源。`channels` / `users` / `thread_metadata` 都是**派生投影表**，由 `side_effects.rs` 手工维护（19 处 db 写），删除是 soft delete（置 `deleted_at`）。所以「不可变审计链」是打过折的——别把它当成我们该追赶的标杆。
 
 **腐烂实证**（这条值得记住）：它 28 个 crate 里有 5 个（`buzz-voice`、`buzz-relay-mesh`、`buzz-conformance`、`buzz-push-gateway`、`buzz-backend-kubernetes`）在 `AGENTS.md` 和 `ARCHITECTURE.md` 里**一次都没出现过**。所以「大文件 = 更完整」是假的——我们把知识拆进按路径自动加载的小规则，在防过期这件事上并不输它。
 
@@ -161,20 +215,24 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 | 1 | 迁移 SQL 的 lint 单测（TIMESTAMPTZ / 外键索引 / 软删命名） | 1 人日 | 62 个存量迁移白名单豁免 |
 | 2 | 抄 `check-branch-skew.sh` 防 alembic 链分叉 | 约 30 行 | 命中反复踩的坑 |
 | 3 | 三条 grep 守卫（`tzinfo=None` / 遮蔽内建 / 裸 `HTTPException`） | 小 | |
+| 3.5 | **给每个话题分身独立 agent-user 身份** | 中 | 漏洞级。形态已在设备屏幕 agent 跑通，铺开即可；做完才能拆 `is_agent` 短路 |
 | 4 | `repositories` 跨域 import lint | 0.5 人日 + 还债 | 20 对双向依赖要还 |
+| 4.5 | 高风险动作降级成「提案 + 人确认」 | 中 | 先过一遍哪些动作该降级 |
+| 4.6 | `_Stop` 钩子：有未完成 todo 就劝阻结束回合 | 小 | |
 | 5 | <&.claude/rules/backend-tests.md> 改成「症状→误判→真因」写法 | 极小 | |
 | 6 | <&CLAUDE.md> 里没有事实支撑的断言改成实话 | 极小 | 「pre-commit enforces this」等 |
 | 7 | authz 策略表 | 3–5 人日 | 收敛两个宽松档 |
-| — | 其余（事件日志 / crate 切法 / Host 租户 / 多端发布 / canary / Renovate / Hermit / VISION 进仓） | **不做** | 理由见上 |
+| 7 | authz 策略表 | 3–5 人日 | 收敛两个宽松档；与 3.5 同属 authz 改造，宜连做 |
+| — | 其余（事件日志 / crate 切法 / Host 租户 / Nostr 密钥 / M1 公理 / 同室模型 / 多端发布 / canary / Renovate / Hermit / VISION 进仓） | **不做** | 理由见上 |
 
-0–3 动的是同一批文件（CI + `check.sh`），建议合成一个 PR。
+分两拨走：**0–3 动 CI + `check.sh`，合成一个 PR**；**3.5 + 7 动 authz，合成另一个 PR**（先铺身份，再拆 `is_agent` 短路、扩策略表，顺序不能反）。
 
 ## 五路进展
 
 | 子话题 | 状态 |
 |---|---|
 | @架构与领域模型对比 | ✅ 已回流（详见 `docs/topics/对标buzz-架构与领域模型.md`）。**贡献了单点价值最高的迁移 lint** |
-| @Agent 一等公民机制对比 | 进行中（五面里与我们产品最相关） |
+| @Agent 一等公民机制对比 | ✅ 已回流（详见 <&docs/topics/对标buzz-agent机制.md>）。**挖出分身身份塌缩这个第二处漏洞** |
 | @质量闸门与 CI/CD 对比 | ✅ 已回流，结论已并入上方（详见 `docs/topics/对标buzz-质量闸门.md`）。**顺带挖出前端 CI 零检查这个真漏洞** |
 | @测试策略与可运行性对比 | 进行中（针对沙箱无 docker 的真痛点） |
 | @仓库自解释能力对比 | ✅ 已回流，结论已并入上方 |
@@ -196,4 +254,5 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 - jj 环境下 git hooks 到底触没触发，没验证。
 - 前端**存量**类型错误有多少个，没跑过 `vue-tsc` —— 补 CI 之前得先跑一次摸底，否则可能一上来就是红的。
 - Buzz 的 4 个 canary workflow 没有逐个读。
-- Buzz 的 `buzz-acp`（4.1 万行）/ `buzz-agent`（2.1 万行）/ `buzz-cli`（1.8 万行）内部实现、mesh / push-gateway / voice 三条子系统、pubsub 投递语义、TLA+ 规约本身都**没读**——所以对它的**实时投递可靠性、mesh 一致性、agent 运行时设计不下结论**。其中 agent 运行时那部分正由 @Agent 一等公民机制对比 在读。
+- Buzz 的 relay 事件摄取主路径、`buzz-acp` 会话池/队列调度、`llm.rs` 模型适配层、整个桌面端都**没读**；mesh / push-gateway / voice 三条子系统、pubsub 投递语义、TLA+ 规约本身也没读。所以对它的**实时投递可靠性、mesh 一致性、ACP 运行时调度不下结论**。
+- 我们这侧**没有系统排查过「让计时器做决定」的代码**，所以「facts decide, timers are backstop」那条建议目前只有方法论、没有落点。
