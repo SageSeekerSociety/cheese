@@ -5,6 +5,8 @@ one-off dogfooding seed."""
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def _owner(client, handle: str = "alice") -> dict[str, str]:
     """The file routes return the source, so they need a caller with a claim on
@@ -399,3 +401,75 @@ def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
     ]["dispatched"]
     assert second["topic_id"] == first["topic_id"] and second["reused"] is True
     assert (wt / "hello.txt").read_text() == "half-resolved by 芝士\n"
+
+
+@pytest.mark.anyio
+async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
+    client, tmp_path
+):
+    """自动同步上游: the platform pulls upstream on its own interval.
+
+    Falling behind is not a cosmetic problem — it is what makes accepting unable
+    to push (a branch whose `.github/workflows/` differs from the default branch
+    is rejected without the `workflows` permission), and 同步上游 has only ever
+    been a button someone had to remember to press."""
+    import uuid as _uuid
+
+    from app.domain.agent.chat import ChatService
+    from app.domain.agent.service import AgentService
+    from app.domain.scheduler.service import SchedulerService
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+
+    chat = ChatService(
+        session_factory=client.test_factory,
+        agent=AgentService(model="stub"),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    result = await SchedulerService(chat_service=chat).sync_upstreams()
+
+    assert result["errors"] == []
+    assert result["synced"] >= 1
+    # Not just a status: the upstream's content is really on the project's base.
+    assert ws.read_file(_uuid.UUID(pid), "hello.txt") == "hi from upstream\n"
+
+
+@pytest.mark.anyio
+async def test_scheduler_hands_a_conflicting_sync_to_cheese(client, tmp_path):
+    """A conflict on the unattended path takes the same exit as the manual
+    button: it becomes a task in the project owner's room with 芝士, rather than
+    an error nobody sees. Without this the loop would just fail forever."""
+    import uuid as _uuid
+
+    from app.domain.agent.chat import ChatService
+    from app.domain.agent.service import AgentService
+    from app.domain.scheduler.service import SchedulerService
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    puid = _uuid.UUID(pid)
+    repo = ws.ensure_repo(puid)
+    (repo / "hello.txt").write_text("local version\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
+    )
+    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+
+    chat = ChatService(
+        session_factory=client.test_factory,
+        agent=AgentService(model="stub"),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    result = await SchedulerService(chat_service=chat).sync_upstreams()
+
+    assert result["dispatched"] == 1
+    # The shared repo is untouched — an unattended sync must not half-merge.
+    assert (repo / "hello.txt").read_text() == "local version\n"
+    assert not (repo / ".git" / "MERGE_HEAD").exists()
