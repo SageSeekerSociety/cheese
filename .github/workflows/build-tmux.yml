@@ -25,6 +25,10 @@ jobs:
   # could not be selected on any deployment, whatever the code allowed.
   build-tmux-sandbox:
     runs-on: [self-hosted, cheese-dev]
+    # Bounded because this holds the box's SINGLE runner slot: an unbounded
+    # hang here blocks every build and deploy behind it until someone notices.
+    # 60m matches build.yml's build-sandbox, the closest comparable job.
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
