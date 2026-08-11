@@ -6,6 +6,7 @@ answering, a machine that vanished, and the cross-project addressing guard.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -118,6 +119,7 @@ class FakeRepo:
         self.rows: list[SimpleNamespace] = []
 
     async def add(self, **kwargs):
+        kwargs.setdefault("last_seen_at", None)
         row = SimpleNamespace(id=uuid.uuid4(), device_id=None, **kwargs)
         self.rows.append(row)
         return row
@@ -137,7 +139,9 @@ class FakeRepo:
             and r.ai_mode != desired
         ][:limit]
 
-    async def set_state(self, machine, *, status, ip, ai_mode=None, ai_status=None):
+    async def set_state(
+        self, machine, *, status, ip, ai_mode=None, ai_status=None, seen_at=None
+    ):
         machine.status = status
         if ip:
             machine.ip = ip
@@ -145,6 +149,12 @@ class FakeRepo:
             machine.ai_mode = ai_mode
         if ai_status is not None:
             machine.ai_status = ai_status
+        if seen_at is not None:
+            machine.last_seen_at = seen_at
+        return machine
+
+    async def touch_seen(self, machine, *, when):
+        machine.last_seen_at = when
         return machine
 
     async def delete(self, machine):
@@ -400,6 +410,15 @@ async def test_polling_stops_once_both_lifecycles_settle():
     settled = client.reads
     await service.list_for_project(project_id)
     assert client.reads == settled
+
+    # …but "settled" is not "never asked again". It used to be, and that is how
+    # three machines destroyed upstream stayed `running` in this table while
+    # MicroCloud 404'd every one of them — and kept occupying the project's
+    # slots. Once the last answer is old enough, it is re-checked.
+    for row in service._repo.rows:  # type: ignore[attr-defined]
+        row.last_seen_at = datetime.now(UTC) - timedelta(hours=1)
+    await service.list_for_project(project_id)
+    assert client.reads > settled
 
 
 async def test_ai_accounts_are_named_rather_than_left_to_the_default():

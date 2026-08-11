@@ -23,7 +23,7 @@ left alone, which also makes this idempotent: re-running matches nothing.
 record who authorised the PR, and overwriting that would erase the audit trail.
 
 Revision ID: b8e1d4c70a92
-Revises: c4e8f19b0d73
+Revises: d4a1b6f27c90
 Create Date: 2026-08-10 00:00:00.000000
 
 """
@@ -37,7 +37,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b8e1d4c70a92"
-down_revision: str | Sequence[str] | None = "c4e8f19b0d73"
+down_revision: str | Sequence[str] | None = "d4a1b6f27c90"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
