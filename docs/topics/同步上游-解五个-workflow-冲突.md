@@ -2,7 +2,7 @@
 
 把上游 `SageSeekerSociety/cheese` 领先的三个提交（#264 前端闸门 / #265 Go CLI 闸门 + 并发键 / #266 全量 action SHA 固定）合进本地 main，逐文件解掉 `.github/workflows/` 下的五个冲突。merge-base `806d30d2`，已核实。
 
-**状态：五个冲突全部解完，静态验证全绿；两项真跑验证在跑（见下）。**
+**状态：做完了，已递验收卡。五个冲突全部解完，静态与实跑验证全绿。**
 
 ## 开工时先纠正的一件事
 
@@ -52,9 +52,34 @@
 - **repo rules 闸门**：PASS。
 - **迁移链**：本次合并对 `backend/alembic/versions/` 零改动（与 main 文件集合完全一致），不存在合并叉链。
 
-## 在跑
+## 实跑验证（不只静态检查）
 
-- `frontend.yml` 的五个步骤在本地真跑一遍（install → lint → test:ratchet → typecheck → **vitest run**）。这是唯一一处我加了新 gating 步骤、静态看不出来结果的地方，必须实跑确认。
-- 后端 `check.sh --no-tests`（ruff + pyright），递卡前先自己跑绿。
+**后端闸门** `check.sh --no-tests`：**5/5 通过**。其中三条正是这次合并该被盯住的——`exactly one migration head`、`actions pinned to a commit SHA`、`merging would not fork the alembic chain`。ruff 被环境跳过了，我另外单独跑了一遍：`All checks passed!`。
 
-两项都出结果后递验收卡。若 vitest 在这棵树上不绿，我不会硬塞——会带着失败输出回来说明，由人决定是先修还是这张卡先不带这一步。
+**`frontend.yml` 的每一个步骤照原样真跑了一遍**（这是本卡唯一新增的 gating 步骤，静态看不出结果，必须实跑）：
+
+| 步骤 | 结果 |
+|---|---|
+| `pnpm install --frozen-lockfile` | PASS（corepack 按 `packageManager` 解析出 pnpm 9.15.3） |
+| `pnpm run lint` | PASS |
+| `pnpm run test:ratchet` | PASS（9/9） |
+| `pnpm run typecheck` | PASS（0 error，baseline 允许 31） |
+| `pnpm exec vitest run --dir src` | PASS（**29 文件 / 299 测试全过**） |
+
+## 实跑挖出来的一个真问题（两边单独都不会出现）
+
+第一次跑 `pnpm exec vitest run` 是**红的**，但不是应用测试的问题——299 个应用测试全过，失败的是 vitest 把上游新加的 `frontend/scripts/tsc-ratchet-core.test.mjs` 也收了进去：那个文件是给 `node --test` 写的，不是 vitest 套件，于是 `No test suite found in file`。
+
+**这是纯粹的合并产物**：上游有那个文件但 CI 里从不跑 vitest，所以在上游是隐形的；本地会跑 vitest 但还没有那个文件。合起来才撞上。
+
+本卡内的处理：`Unit tests` 步骤限定成 `--dir src`，语义也更准——这一步的意思本来就是"跑应用自己的套件"，ratchet 自己的测试上面已经有专属步骤、用它该用的 runner 跑。
+
+**但根因还在**：裸的 `pnpm exec vitest run`、以及开发者本地的 `pnpm run test`，仍然会撞同一个坑。真正的修法是在 vitest 配置里加 `exclude: ['scripts/**']`——那要动第 6 个文件，超出本卡范围，已在注释里写明，建议单独开一张。
+
+## 附带发现（未处理）
+
+typecheck 的 ratchet 报了一处**改进**：`src/views/spaces/detail/__tests__/PublishTask.test.ts` 从 1 个错误降到 0，可以跑 `pnpm run typecheck:update` 收紧基线。不是失败（这一步是 PASS），与本次合并无关，同样没动——basline 文件也在这五个文件之外。
+
+## 本卡改了哪些文件
+
+`.github/workflows/` 下的五个冲突文件，加上本活文档 `docs/topics/同步上游-解五个-workflow-冲突.md`（平台要求活文档落在工作区）。除此之外**没有任何手工改动**——其余 50 个新增 / 91 个修改文件全部是上游三个提交的自动合并结果，一个字没碰。
