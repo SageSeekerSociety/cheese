@@ -20,7 +20,7 @@ class Gauge:
     labels: dict[str, str] = field(default_factory=dict)
     value: float = 0.0
 
-    def set(self, value: float) -> None:
+    def set(self, value: float) -> None:  # allow-builtin-shadow: Gauge.set is the metrics API's own name
         self.value = value
 
     def inc(self, amount: float = 1.0) -> None:

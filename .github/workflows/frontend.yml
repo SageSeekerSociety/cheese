@@ -1,0 +1,89 @@
+name: Frontend Test
+
+# The frontend had NO check in CI. `grep -rn 'vue-tsc\|eslint' .github/workflows/`
+# returned nothing: test.yml is scoped to `backend/**`, e2e.yml runs Playwright
+# but no type check, and the only thing that touched frontend/ was build.yml's
+# `docker build` — whose `vite build` does not type-check. A type error or an
+# undefined variable could be merged to main and deployed to the box as long as
+# the bundler survived it. One had been: `} catch {` referencing `error` in
+# AuditTask.vue, a guaranteed ReferenceError on the reject path.
+#
+# Hosted, not the box: this is pnpm + eslint + vue-tsc with no service
+# containers and no docker, so it must not queue behind builds and deploys on
+# the box's single self-hosted runner.
+#
+# DELIBERATE DEVIATION from frontend/Dockerfile, which builds on node:21-slim:
+# this job runs node 22 (21 is end-of-life and gets no security updates). The
+# difference is safe HERE because this job only lints and type-checks — it never
+# produces the bundle that ships. If a job that builds the deployable artifact is
+# ever added, it must match the Dockerfile instead.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # pnpm comes from package.json's `packageManager` field, so the version is
+      # pinned by the repo rather than by this workflow.
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # A missing binary must not read as a passing check. `pnpm exec <missing>`
+      # has been observed to exit 0 with no output when node_modules is empty,
+      # which is how "vue-tsc reports 0 errors" can mean "vue-tsc never ran".
+      - name: Verify the toolchain is actually installed
+        run: |
+          test -x node_modules/.bin/eslint || { echo "::error::eslint not installed"; exit 1; }
+          test -x node_modules/.bin/vue-tsc || { echo "::error::vue-tsc not installed"; exit 1; }
+          node_modules/.bin/vue-tsc --version
+
+      # Errors block; the 288 pre-existing warnings do not. `--max-warnings=0`
+      # would have meant leaving the whole gate off, and errors are where the
+      # real defects were.
+      - name: ESLint
+        run: pnpm run lint
+
+      - name: Ratchet unit tests
+        run: node --test scripts/
+
+      # Not a plain `vue-tsc --noEmit`: 31 pre-existing errors are frozen in
+      # tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
+      - name: Type check (ratchet)
+        run: pnpm run typecheck

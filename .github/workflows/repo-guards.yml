@@ -1,0 +1,62 @@
+name: Repo Guards
+
+# Machine-enforced versions of rules this repo already states as absolute.
+#
+# The motivating evidence is in the repo itself: .claude/rules/backend-tests.md
+# says "Eight files already carry a copy-pasted _auth() helper — don't add a
+# ninth", and there are now nine. A rule that only an agent's diligence enforces
+# is a rule that decays. Nothing here changes what is allowed; it changes who
+# notices.
+#
+# Hosted and dependency-free (bash + python3 stdlib, no uv, no database, no
+# docker) so it reds in seconds and never queues behind the box's single
+# self-hosted runner. Deliberately NOT behind test.yml's `scope` gate — that
+# gate skips the suite for a squash merge whose tree already passed PR CI, which
+# is exactly the path a cross-PR migration fork travels.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.claude/scripts/**'
+      - '.github/workflows/repo-guards.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.claude/scripts/**'
+      - '.github/workflows/repo-guards.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repo-guards-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Each guard proves itself before it is trusted to judge the tree: a guard
+      # that silently stopped matching would otherwise look identical to a clean
+      # repo, which is the failure mode these guards exist to prevent.
+      - name: Guards self-test
+        run: |
+          bash .claude/scripts/check-repo-rules.sh --self-test
+          python3 .claude/scripts/check-migration-fork.py --self-test
+
+      - name: CLAUDE.md rules (naive datetime, builtin shadowing, raw HTTPException)
+        run: bash .claude/scripts/check-repo-rules.sh
+
+      # The remote-tracking ref has to exist for the comparison; a PR checkout
+      # does not create it. Shallow is enough — only the tree at main's tip is
+      # read, never its history.
+      - name: Fetch main for comparison
+        run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Alembic chain would not fork on merge
+        run: python3 .claude/scripts/check-migration-fork.py --base origin/main
