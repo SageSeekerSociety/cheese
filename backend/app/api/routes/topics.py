@@ -33,6 +33,8 @@ from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.idempotency import store as idem
+from app.domain.idempotency.keys import action_key
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard
@@ -658,6 +660,17 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
     decision = await canonicalize_refs(
         db, topic.project_id, decision, exclude_topic_id=topic_id
     )
+    # 自动续跑幂等 (④): inside an automatic turn, the same decision text is the
+    # same decision — a resumed 芝士 re-recording it must not stack a second
+    # 决策记录 row. Outside a turn (a human in the UI) there is no continuation
+    # and no dedup: pressing the button twice means it twice.
+    continuation = get_turn_runner().continuation_for(topic_id)
+    key = action_key(continuation, "decision", decision) if continuation else None
+    if key is not None and not await idem.claim(
+        db, key, action="decision", scope_id=str(topic_id)
+    ):
+        prior = await idem.stored_result(db, key)
+        return ok(prior or {"skipped": True})
     block = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
@@ -667,7 +680,10 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
         kind=BlockKind.decision,
         refs=[str(topic_id)],
     )
-    return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+    out = BlockOut.model_validate(block).model_dump(mode="json")
+    if key is not None:
+        await idem.record_result(db, key, out)
+    return ok(out)
 
 
 @router.post("/{topic_id}/title")
@@ -745,6 +761,22 @@ async def split_topic(
     await resolver.authorize_topic(
         actor, project_id=parent.project_id, topic_id=topic_id
     )
+    # 自动续跑幂等 (④) — the costliest of the five to repeat: a duplicate split
+    # does not just write a row, it spawns a second 分身 that starts working.
+    # `split 是唯一会生出另一个 agent 的动作` (cheese CLI help), so a resumed
+    # turn re-splitting doubles the agents on the same brief.
+    runner = get_turn_runner()
+    continuation = runner.continuation_for(topic_id)
+    key = (
+        action_key(continuation, "split", topic_id, body.title)
+        if continuation
+        else None
+    )
+    if key is not None and not await idem.claim(
+        db, key, action="split", scope_id=str(topic_id)
+    ):
+        prior = await idem.stored_result(db, key)
+        return ok(prior or {"skipped": True})
     topic = await service.split_to_subtopic(
         parent_topic_id=topic_id,
         title=body.title,
@@ -752,10 +784,14 @@ async def split_topic(
         brief=body.brief,
     )
     out = TopicOut.model_validate(topic).model_dump(mode="json")
+    if key is not None:
+        await idem.record_result(db, key, out)
     # Commit BEFORE kicking off: the 分身's first turn runs in the background
-    # with its own session and must see the sub-topic + its brief doc.
+    # with its own session and must see the sub-topic + its brief doc. The
+    # idempotency key commits in this same transaction, so a crash between the
+    # commit and the kickoff cannot produce a SECOND child on resume.
     await db.commit()
-    get_turn_runner().submit_kickoff(chat, topic.id)
+    runner.submit_kickoff(chat, topic.id)
     return ok(out)
 
 
