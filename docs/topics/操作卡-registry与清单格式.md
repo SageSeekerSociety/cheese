@@ -64,6 +64,13 @@
 15 个文件、全部新建（另加 `pyproject.toml` / `uv.lock` 各一行：pyyaml）。
 没有 alembic 迁移，没有触碰 `backend/app/domain/review/` 与 `topic/`。
 
+## 已落地
+
+2026-08-11 12:57 采纳进 main（`采纳 topic/b2bcbe11 → main`）。落地后复核过：
+`ops/` 与 `backend/app/domain/ops/` 全在 main，五个 workflow 无残留冲突标记，
+下面两处「标记之外」的修复也都跟着进去了（`catch (error)` 完好、并发键是
+`event_name` 形状而不是那个杂交体）。
+
 ## 采纳时的合并冲突（两轮，已解）
 
 同一批 CI 改动在主分支上有另一条并行线，采纳时撞了两轮。
