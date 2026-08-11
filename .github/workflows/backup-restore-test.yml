@@ -21,7 +21,7 @@ jobs:
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Prove restore failures fail the drill
         run: bash deploy/tests/test-db-restore-test.sh
       - name: Restore latest backup into a throwaway postgres

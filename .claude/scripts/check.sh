@@ -172,6 +172,15 @@ else
     ((++FAIL))
 fi
 
+if bash "$REPO_ROOT/.claude/scripts/check-action-pins.sh" >/dev/null 2>&1; then
+    echo "  PASS: actions pinned to a commit SHA"
+    ((++PASS))
+else
+    bash "$REPO_ROOT/.claude/scripts/check-action-pins.sh" 2>&1 | sed 's/^/    /'
+    echo "  FAIL: unpinned GitHub Action"
+    ((++FAIL))
+fi
+
 echo "==> migration fork (vs origin/main)"
 FORK_OUT="$(cd "$REPO_ROOT" && python3 .claude/scripts/check-migration-fork.py 2>&1)" && FORK_RC=0 || FORK_RC=$?
 if [ "$FORK_RC" = 0 ]; then
