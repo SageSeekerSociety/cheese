@@ -899,7 +899,7 @@ def test_accept_still_degrades_on_a_422_that_is_not_already_exists(client, monke
 
 def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):
     """A plain (degrade-path) accepted card must not be touched by the poller
-    — regression guard for list_by_status filtering correctly."""
+    — regression guard for list_pr_open_on_active_topics filtering correctly."""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
