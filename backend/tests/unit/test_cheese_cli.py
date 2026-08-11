@@ -346,3 +346,76 @@ def test_await_report_retries_before_giving_up(monkeypatch, tmp_path):
 
     assert len(attempts) == 3
     assert attempts[-1].get_header("X-cheese-token") == "wake-tok"
+
+
+# --- the self-describing layer -------------------------------------------
+#
+# CLAUDE.md's rule is "prose documents only what --help cannot tell you". That
+# only holds if --help actually tells you something: the layer that can never go
+# stale (it is generated from this code) used to be empty at the subcommand
+# level, so every semantic lived in prose that drifted. These two tests keep it
+# from emptying out again.
+
+
+def _subparsers(parser):
+    """(name, parser) for every subcommand, minus the internal `__`-prefixed ones."""
+    import argparse
+
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return [
+                (name, sub)
+                for name, sub in action.choices.items()
+                if not name.startswith("__")
+            ]
+    raise AssertionError("no subparsers on this parser")
+
+
+def test_every_subcommand_says_what_it_is_for():
+    """`cheese <cmd> --help` must be worth reading on its own.
+
+    `help=` only shows up in the parent's listing; `description=` is what a
+    reader of `cheese <cmd> --help` actually gets. A subcommand with neither is
+    a bare list of argument names.
+    """
+    cli = _load()
+    bare = [
+        name
+        for name, sub in _subparsers(cli.build_parser())
+        if not (sub.description or "").strip()
+    ]
+    assert not bare, f"subcommands with no --help description: {bare}"
+
+
+def test_every_argument_says_what_it_takes():
+    """Positionals are the easiest thing to leave unexplained — `title`, `fact`,
+    `reviewer` name a slot without saying what belongs in it."""
+    cli = _load()
+    parser = cli.build_parser()
+    undocumented = []
+    for name, sub in _subparsers(parser):
+        targets = [(name, sub)]
+        # `doc` nests another level (doc set / doc get).
+        targets += [(f"{name} {n}", s) for n, s in _subparsers_or_empty(sub)]
+        for label, p in targets:
+            for action in p._actions:
+                if action.dest in ("help", "version") or action.dest == "==SUPPRESS==":
+                    continue
+                if _is_subparsers(action):
+                    continue
+                if not (action.help or "").strip():
+                    undocumented.append(f"{label}:{action.dest}")
+    assert not undocumented, f"arguments with no help=: {undocumented}"
+
+
+def _is_subparsers(action):
+    import argparse
+
+    return isinstance(action, argparse._SubParsersAction)
+
+
+def _subparsers_or_empty(parser):
+    try:
+        return _subparsers(parser)
+    except AssertionError:
+        return []
