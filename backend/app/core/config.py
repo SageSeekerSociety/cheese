@@ -326,6 +326,10 @@ class Settings(BaseSettings):
     # finds a killed turn, and its whole purpose is catching the case where
     # nothing else will ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # How long a registered turn may produce nothing — no block, no frame —
+    # before the sweep calls it wedged and tears it down. See
+    # TurnRunner.SILENT_TURN_S for why 30 minutes and not less.
+    turn_silence_timeout_s: float = 1800.0
 
     # --- Memory backend (spec §8.4 / §15 Q9) ---
     # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).

@@ -9,6 +9,7 @@ heartbeat (该催谁/该拆什么/风险). Per-topic serialization lives in Chat
 import asyncio
 import contextlib
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
@@ -60,8 +61,42 @@ class SchedulerService:
         child, sandbox image swap). Nothing re-read the registry in that case, so
         the topic stayed `active` forever — see TurnRunner.sweep_orphans."""
         from app.api.deps import get_turn_runner
+        from app.core.config import settings
 
-        return await get_turn_runner().sweep_orphans(self._chat)
+        return await get_turn_runner().sweep_orphans(
+            self._chat,
+            last_activity=self.last_block_at,
+            silence_s=settings.turn_silence_timeout_s,
+        )
+
+    async def last_block_at(
+        self, topic_ids: set[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        """Newest block timestamp per topic — the liveness probe the orphan sweep
+        judges silence on. Lives here rather than in TurnRunner because the runner
+        has no DB binding, and it is the same signal a human reads off the topic
+        (「最后一块是几点」), which is what makes a sweep verdict checkable."""
+        if not topic_ids:
+            return {}
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(Block.topic_id, func.max(Block.created_at))
+                    .where(Block.topic_id.in_(topic_ids))
+                    .group_by(Block.topic_id)
+                )
+            ).all()
+        out: dict[uuid.UUID, datetime] = {}
+        for topic_id, last in rows:
+            if last is None:
+                continue
+            # Same normalization as reap_idle_containers: the column is TIMESTAMPTZ
+            # but some drivers hand back a naive value, and a naive one would blow
+            # up the subtraction rather than merely being wrong.
+            out[topic_id] = (
+                last if last.tzinfo is not None else last.replace(tzinfo=UTC)
+            )
+        return out
 
     async def reap_idle_containers(self, idle_hours: float = IDLE_REAP_HOURS) -> int:
         """Remove sandbox containers whose topic has had NO block activity for

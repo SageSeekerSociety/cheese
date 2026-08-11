@@ -19,7 +19,8 @@ import logging
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from datetime import datetime
 from functools import lru_cache
 
 from app.core.errors import AppError
@@ -162,13 +163,21 @@ class TurnRunner:
         # queued state is visible as a system event in the topic.
         self._project_sems: dict[str, asyncio.Semaphore] = {}
         self._project_waiting: dict[str, int] = {}
-        # Turn ids THIS process is actually executing right now. The durable
-        # registry on disk cannot answer that question — it records every turn
-        # that ever started and was not cleaned up, whether by this generation
-        # of the process or a dead one. The difference (registry - live) is
-        # exactly the orphan set, which is what makes a periodic sweep possible
-        # at all (see sweep_orphans).
-        self._live: set[str] = set()
+        # Turn ids THIS process is actually executing right now → the task
+        # running them. The durable registry on disk cannot answer that question
+        # — it records every turn that ever started and was not cleaned up,
+        # whether by this generation of the process or a dead one.
+        #
+        # It holds the TASK, not just the id, because "not running it" is only
+        # half the orphan set: a turn can also be in here and wedged (the child
+        # container died, the stream never ends). Claiming one of those means
+        # cancelling it — a resume would otherwise queue behind the zombie on
+        # ChatService's per-topic lock and never run. See sweep_orphans.
+        self._live: dict[str, asyncio.Task] = {}
+        # Monotonic timestamp of the last frame each live turn published. Frames
+        # include tool calls, which persist no Block — so this sees activity the
+        # DB cannot, and keeps a long tool-only stretch from looking dead.
+        self._last_frame_at: dict[str, float] = {}
 
     def recent_turns(self) -> list[dict]:
         """Newest-first lifecycle summaries for /debug/turns."""
@@ -305,6 +314,74 @@ class TurnRunner:
     # because the cost of getting it wrong is running a live turn twice.
     SWEEP_MIN_AGE_S = 60.0
 
+    # How long a registered turn may emit NOTHING — no Block, no frame — before
+    # the sweep calls it wedged. The floor is set by the longest a healthy turn
+    # can legitimately stay quiet: one blocking tool call, whose own ceiling is
+    # 10 minutes. 30 gives that 3x headroom, because the expensive mistake here
+    # is the false positive (cancelling work that was fine), not the slow catch
+    # — the incident this guards against ran for EIGHT HOURS.
+    SILENT_TURN_S = 1800.0
+
+    async def _wedged_turns(
+        self,
+        reg: dict,
+        last_activity: (
+            Callable[[set[uuid.UUID]], Awaitable[dict[uuid.UUID, datetime]]] | None
+        ),
+        silence_s: float,
+        now: float,
+    ) -> set[str]:
+        """Of the turns this process believes it is running, which have gone
+        quiet on BOTH signals? Startup passes no `last_activity` — there is
+        nothing in `_live` to judge then, so the probe is skipped entirely."""
+        candidates = {tid for tid in reg if tid in self._live}
+        if not candidates or last_activity is None:
+            return set()
+        topics = {uuid.UUID(reg[tid]["topic_id"]) for tid in candidates}
+        try:
+            blocks_at = await last_activity(topics)
+        except Exception:  # noqa: BLE001 — a failed probe must not cancel turns
+            logger.exception("orphan sweep: last-activity probe failed")
+            return set()
+        mono = time.monotonic()
+        wedged: set[str] = set()
+        for tid in candidates:
+            info = reg[tid]
+            # Wall-clock age of the newest Block in the topic...
+            last_block = blocks_at.get(uuid.UUID(info["topic_id"]))
+            block_quiet_s = (
+                (now - last_block.timestamp())
+                if last_block is not None
+                else (now - float(info.get("started_at", 0)))
+            )
+            # ...versus the newest frame this process published for this turn.
+            # A turn we are running always has an entry (set at start), so a
+            # missing one means the bookkeeping is off — treat it as fresh and
+            # let the not-in-`_live` branch handle it instead of guessing.
+            frame_at = self._last_frame_at.get(tid)
+            if frame_at is None:
+                continue
+            frame_quiet_s = mono - frame_at
+            if min(block_quiet_s, frame_quiet_s) > silence_s:
+                wedged.add(tid)
+                logger.warning(
+                    "turn %s is wedged: no block for %ss, no frame for %ss",
+                    tid,
+                    round(block_quiet_s),
+                    round(frame_quiet_s),
+                )
+        return wedged
+
+    def _cancel_wedged(self, turn_id: str, topic_id: uuid.UUID) -> None:
+        """Tear down a turn whose task is alive but producing nothing. Its own
+        `finally` does the rest of the cleanup (gate release, `_live` removal)
+        once the cancellation lands at its next await point."""
+        task = self._live.get(turn_id)
+        if task is None or task.done():
+            return
+        task.cancel()
+        logger.warning("cancelled wedged turn %s on topic %s", turn_id, topic_id)
+
     async def resume_orphans(self, chat_service) -> int:
         """Startup sweep. `_live` is empty at boot, so every registry entry is
         by definition an orphan of the previous process generation — which makes
@@ -313,10 +390,17 @@ class TurnRunner:
         return await self.sweep_orphans(chat_service, min_age_s=0.0)
 
     async def sweep_orphans(
-        self, chat_service, *, min_age_s: float | None = None
+        self,
+        chat_service,
+        *,
+        min_age_s: float | None = None,
+        last_activity: (
+            Callable[[set[uuid.UUID]], Awaitable[dict[uuid.UUID, datetime]]] | None
+        ) = None,
+        silence_s: float | None = None,
     ) -> int:
-        """Claim every registered turn this process is not actually running, and
-        make its fate VISIBLE in the topic. Returns how many were auto-resumed.
+        """Claim every registered turn that is not actually progressing, and make
+        its fate VISIBLE in the topic. Returns how many were auto-resumed.
 
         Why this is not startup-only (the 101/173-minute incident, 2026-08-11):
         a turn dying does not imply the platform restarted. A container recreate,
@@ -325,6 +409,27 @@ class TurnRunner:
         entry sits there and the topic keeps reporting `active` with a last block
         that is a command which never returned. That is indistinguishable, to a
         human reading the platform, from a slow test run.
+
+        A turn is dead in one of two ways, and BOTH must be caught — the second
+        is what let three topics lie silent for 8 hours on 2026-08-11 while this
+        process was up the whole time:
+
+        1. Not in `_live` — a previous generation of the process started it and
+           died. The registry outlives the process; `_live` does not.
+        2. In `_live` but SILENT — the task is still parked in the event loop,
+           but nothing is coming out of it. What died is the thing it was driving
+           (the sandbox container, the provider stream), not the task. The wall
+           clock ceiling does not save us here: a backend that signalled a large
+           `turn_ceiling` can legitimately hold the deadline open for hours.
+
+        Silence is judged on two signals, taking the more recent — a turn is only
+        dead if BOTH are cold. `last_activity` is the topic's newest Block (the
+        signal a human can verify from the UI, and the one that survives a wrong
+        `_live`); `_last_frame_at` is the newest frame this process published,
+        which also counts tool calls — those persist no Block, so a long
+        tool-only stretch is alive but invisible to the DB alone. Erring toward
+        "still alive" is deliberate: resuming a live turn is worse than noticing
+        a dead one late.
 
         Every branch below ends in a system event. A turn we do not resume is a
         turn someone has to pick up by hand, and they can only do that if the
@@ -336,12 +441,19 @@ class TurnRunner:
             return 0
         if min_age_s is None:
             min_age_s = self.SWEEP_MIN_AGE_S
+        if silence_s is None:
+            silence_s = self.SILENT_TURN_S
         now = _time.time()
-        orphans = {
+        old_enough = {
             tid: info
             for tid, info in reg.items()
-            if tid not in self._live
-            and now - float(info.get("started_at", 0)) >= min_age_s
+            if now - float(info.get("started_at", 0)) >= min_age_s
+        }
+        wedged = await self._wedged_turns(old_enough, last_activity, silence_s, now)
+        orphans = {
+            tid: info
+            for tid, info in old_enough.items()
+            if tid not in self._live or tid in wedged
         }
         if not orphans:
             return 0
@@ -354,6 +466,19 @@ class TurnRunner:
             age_s = now - float(info.get("started_at", 0))
             stale = age_s > self.ORPHAN_STALE_S
             chained = bool(info.get("is_resume"))
+            # A wedged turn still owns the topic lock. Cancelling is not tidiness
+            # — a resume would queue behind it forever, and even a turn we refuse
+            # to resume must let the next human message through.
+            if turn_id in wedged:
+                self._cancel_wedged(turn_id, topic_id)
+            # Same verdict either way, but say which one actually happened —
+            # "it was killed" and "it sat there producing nothing" send whoever
+            # reads this to different places.
+            how = (
+                f"卡死了：{round(age_s / 60)} 分钟里一个字都没输出，已强制结束"
+                if turn_id in wedged
+                else "被强制中断了（进程或沙箱被杀，没有走到收尾）"
+            )
             if stale or chained:
                 # The two "we are NOT resuming this" branches. They used to be a
                 # bare `continue`, which is what let a dead topic look identical
@@ -366,7 +491,7 @@ class TurnRunner:
                 await self._post_orphan_event(
                     chat_service,
                     topic_id,
-                    f"⚠️ 芝士上一轮被强制中断了（进程或沙箱被杀，没有走到收尾），{why}。"
+                    f"⚠️ 芝士上一轮{how}，{why}。"
                     "已完成的改动都还在工作区里 —— 需要继续的话 @ 芝士，"
                     "它会从断点接着做。",
                 )
@@ -381,11 +506,16 @@ class TurnRunner:
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
-                "⚠️ 上一轮被强制中断了（平台重启，或者沙箱被杀）。"
-                "已完成的进度都在；马上自动接着跑。",
+                f"⚠️ 上一轮{how}。已完成的进度都在；马上自动接着跑。",
             )
+            # A cancelled turn needs a moment to unwind before it lets go of the
+            # topic lock; a dead process holds no lock at all. The resume would
+            # queue rather than fail either way — this just avoids the queue.
             self._schedule_resume(
-                chat_service, topic_id, 3.0, "上一轮被强制中断，接着跑"
+                chat_service,
+                topic_id,
+                10.0 if turn_id in wedged else 3.0,
+                "上一轮被强制中断，接着跑",
             )
             resumed += 1
             logger.info("orphan turn %s scheduled for resume", turn_id)
@@ -617,7 +747,8 @@ class TurnRunner:
             # every `except` inside `_execute`, including the registry cleanup)
             # must stop counting as live, so the next sweep can claim it. The
             # on-disk entry deliberately survives — that is what gets it resumed.
-            self._live.discard(str(turn_id))
+            self._live.pop(str(turn_id), None)
+            self._last_frame_at.pop(str(turn_id), None)
             if gate is not None:
                 gate.release()
 
@@ -670,7 +801,10 @@ class TurnRunner:
         _save_inflight(reg)
         # Same instant, no await in between: a sweep can never observe this turn
         # on disk but not in `_live` and mistake a just-started turn for a corpse.
-        self._live.add(str(turn_id))
+        current = asyncio.current_task()
+        if current is not None:
+            self._live[str(turn_id)] = current
+        self._last_frame_at[str(turn_id)] = time.monotonic()
         logger.info(
             "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
         )
@@ -711,6 +845,11 @@ class TurnRunner:
                 )
                 async for frame in turn_frames:
                     kind = frame.get("type")
+                    # Proof of life for the silence check in sweep_orphans, taken
+                    # before the `continue`s below so EVERY frame counts. A tool
+                    # call persists no Block, so without this a turn legitimately
+                    # grinding through tools looks identical to a wedged one.
+                    self._last_frame_at[str(turn_id)] = time.monotonic()
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
                         turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
