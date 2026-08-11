@@ -530,14 +530,151 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
     )
 
     class _Chat:
+        def __init__(self):
+            self.events: list[tuple[uuid.UUID, str]] = []
+
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            self.events.append((topic_id, text))
+            return {"id": "b1", "content": text}
+
+    chat = _Chat()
+    n = await runner.resume_orphans(chat)
+    assert n == 1
+    assert [s[0] for s in scheduled] == [topic]
+    # 宁可吵，不可静默: all three get an event — the resumed one AND the two we
+    # refuse to resume. A dropped turn that says nothing is what made a dead
+    # topic look exactly like a working one.
+    assert len(chat.events) == 3
+    dropped = [text for tid, text in chat.events if tid != topic]
+    assert len(dropped) == 2
+    assert all("@ 芝士" in text for text in dropped)
+    # registry cleared: a second sweep is a no-op
+    assert await runner.resume_orphans(_Chat()) == 0
+
+
+@pytest.mark.anyio
+async def test_periodic_sweep_claims_turn_killed_without_a_restart(
+    tmp_path, monkeypatch
+):
+    """The 101/173-minute hole: a turn can be killed (container recreate, OOM,
+    sandbox swap) while the PROCESS lives on. Nothing then re-reads the registry
+    on the startup path, so the sweep must also run periodically — and it must
+    tell the live turns apart from the corpses."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    dead_topic = uuid.uuid4()
+    live_topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "dead": {
+                "topic_id": str(dead_topic),
+                "started_at": _time.time() - 600,
+                "is_resume": False,
+            },
+            "live": {
+                "topic_id": str(live_topic),
+                "started_at": _time.time() - 600,
+                "is_resume": False,
+            },
+        }
+    )
+
+    runner = TurnRunner(InProcessBroker())
+    runner._live.add("live")  # this process really is running it
+    scheduled: list[uuid.UUID] = []
+    monkeypatch.setattr(
+        runner,
+        "_schedule_resume",
+        lambda _chat, tid, after, why: scheduled.append(tid),
+    )
+
+    class _Chat:
         async def post_system_event(self, topic_id, text, turn_id=None):
             return {"id": "b1", "content": text}
 
-    n = await runner.resume_orphans(_Chat())
-    assert n == 1
-    assert [s[0] for s in scheduled] == [topic]
-    # registry cleared: a second sweep is a no-op
-    assert await runner.resume_orphans(_Chat()) == 0
+    assert await runner.sweep_orphans(_Chat()) == 1
+    assert scheduled == [dead_topic]
+    # The live turn keeps its registry entry — its own completion path owns it.
+    assert list(rt._load_inflight()) == ["live"]
+    # And a second sweep does not double-resume the one already claimed.
+    assert await runner.sweep_orphans(_Chat()) == 0
+
+
+@pytest.mark.anyio
+async def test_periodic_sweep_ignores_a_just_started_turn(tmp_path, monkeypatch):
+    """Belt-and-braces against resuming a live turn: an entry younger than
+    SWEEP_MIN_AGE_S is never claimed, even if `_live` somehow missed it."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    rt._save_inflight(
+        {
+            "fresh": {
+                "topic_id": str(uuid.uuid4()),
+                "started_at": _time.time() - 2,
+                "is_resume": False,
+            }
+        }
+    )
+    runner = TurnRunner(InProcessBroker())
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            raise AssertionError("a just-started turn must not be touched")
+
+    assert await runner.sweep_orphans(_Chat()) == 0
+    assert list(rt._load_inflight()) == ["fresh"]
+
+
+@pytest.mark.anyio
+async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
+    """Crossing the 2h line must not be a silent `continue`. We still don't
+    auto-resume (that part was right) — but the topic has to say so, because a
+    human is now the only thing that can move it."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "old": {
+                "topic_id": str(topic),
+                "started_at": _time.time() - 10380,  # 173 min, the real incident
+                "is_resume": False,
+            }
+        }
+    )
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+    seen: list[dict] = []
+
+    async def _capture(channel, frame):
+        seen.append(frame)
+
+    monkeypatch.setattr(broker, "publish", _capture)
+
+    class _Chat:
+        def __init__(self):
+            self.texts: list[str] = []
+
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            self.texts.append(text)
+            return {"id": "b1", "content": text}
+
+    chat = _Chat()
+    assert await runner.sweep_orphans(chat) == 0  # not resumed...
+    assert len(chat.texts) == 1  # ...but not silent either
+    assert "173" in chat.texts[0]  # says how long it has been dead
+    assert "@ 芝士" in chat.texts[0]  # says what the human can do
+    assert rt._load_inflight() == {}  # claimed, so it is not re-announced
+    assert [f["type"] for f in seen] == ["event_block"]  # pushed to the UI live
 
 
 @pytest.mark.anyio

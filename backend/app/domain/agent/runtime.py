@@ -162,6 +162,13 @@ class TurnRunner:
         # queued state is visible as a system event in the topic.
         self._project_sems: dict[str, asyncio.Semaphore] = {}
         self._project_waiting: dict[str, int] = {}
+        # Turn ids THIS process is actually executing right now. The durable
+        # registry on disk cannot answer that question — it records every turn
+        # that ever started and was not cleaned up, whether by this generation
+        # of the process or a dead one. The difference (registry - live) is
+        # exactly the orphan set, which is what makes a periodic sweep possible
+        # at all (see sweep_orphans).
+        self._live: set[str] = set()
 
     def recent_turns(self) -> list[dict]:
         """Newest-first lifecycle summaries for /debug/turns."""
@@ -285,41 +292,119 @@ class TurnRunner:
         "请从断点接着完成原任务；如果其实已经完成了，就直接收尾汇报。"
     )
 
+    # Past this age an orphan is not auto-resumed: continuing a conversation
+    # from hours ago is usually not what anyone still wants. Do NOT reach for
+    # this number when an orphan goes unnoticed — the bug was never where the
+    # line sits, it was that crossing it did nothing at all. Raising it only
+    # makes the silence last longer.
+    ORPHAN_STALE_S = 7200
+
+    # A periodic sweep ignores registry entries younger than this. `_execute`
+    # writes the disk registry and `_live` with no await between them, so there
+    # is no window today — this is insurance against a refactor introducing one,
+    # because the cost of getting it wrong is running a live turn twice.
+    SWEEP_MIN_AGE_S = 60.0
+
     async def resume_orphans(self, chat_service) -> int:
-        """Startup sweep: turns that were RUNNING when the previous process
-        died (deploy past the drain ceiling, crash) get a ⚠️ event and one
-        auto-resume — their sessions were checkpointed, so they continue
-        instead of silently vanishing. Stale entries (>2h) are dropped."""
+        """Startup sweep. `_live` is empty at boot, so every registry entry is
+        by definition an orphan of the previous process generation — which makes
+        this exactly `sweep_orphans` with the young-entry guard switched off
+        (nothing can be racing us: lifespan runs before the app serves)."""
+        return await self.sweep_orphans(chat_service, min_age_s=0.0)
+
+    async def sweep_orphans(
+        self, chat_service, *, min_age_s: float | None = None
+    ) -> int:
+        """Claim every registered turn this process is not actually running, and
+        make its fate VISIBLE in the topic. Returns how many were auto-resumed.
+
+        Why this is not startup-only (the 101/173-minute incident, 2026-08-11):
+        a turn dying does not imply the platform restarted. A container recreate,
+        an OOM-killed child, a sandbox image swap — each kills a turn while the
+        process lives happily on. Nothing then ever re-reads the registry, so the
+        entry sits there and the topic keeps reporting `active` with a last block
+        that is a command which never returned. That is indistinguishable, to a
+        human reading the platform, from a slow test run.
+
+        Every branch below ends in a system event. A turn we do not resume is a
+        turn someone has to pick up by hand, and they can only do that if the
+        topic says so — silence is the failure mode, not the loud recovery."""
         import time as _time
 
         reg = _load_inflight()
         if not reg:
             return 0
-        _save_inflight({})
+        if min_age_s is None:
+            min_age_s = self.SWEEP_MIN_AGE_S
+        now = _time.time()
+        orphans = {
+            tid: info
+            for tid, info in reg.items()
+            if tid not in self._live
+            and now - float(info.get("started_at", 0)) >= min_age_s
+        }
+        if not orphans:
+            return 0
+        # Keep what we did not claim (live turns, entries too young to judge);
+        # their own completion path removes them.
+        _save_inflight({k: v for k, v in reg.items() if k not in orphans})
         resumed = 0
-        for turn_id, info in reg.items():
-            if _time.time() - float(info.get("started_at", 0)) > 7200:
-                continue
-            if info.get("is_resume"):
-                continue  # never chain resumes, even across restarts
+        for turn_id, info in orphans.items():
             topic_id = uuid.UUID(info["topic_id"])
-            try:
-                block = await chat_service.post_system_event(
-                    topic_id,
-                    "⚠️ 上一轮在平台重启时被打断。已完成的进度都在；马上自动接着跑。",
+            age_s = now - float(info.get("started_at", 0))
+            stale = age_s > self.ORPHAN_STALE_S
+            chained = bool(info.get("is_resume"))
+            if stale or chained:
+                # The two "we are NOT resuming this" branches. They used to be a
+                # bare `continue`, which is what let a dead topic look identical
+                # to a working one for 173 minutes.
+                why = (
+                    f"已经中断 {round(age_s / 60)} 分钟了，太久，不自动接着跑"
+                    if stale
+                    else "这轮本身就是一次自动续跑，不再连着自动续跑"
                 )
-                if block is not None:
-                    await self._broker.publish(
-                        str(topic_id), {"type": "event_block", "block": block}
-                    )
-            except Exception:  # noqa: BLE001 — the resume matters more
-                logger.exception("orphan event failed for %s", topic_id)
+                await self._post_orphan_event(
+                    chat_service,
+                    topic_id,
+                    f"⚠️ 芝士上一轮被强制中断了（进程或沙箱被杀，没有走到收尾），{why}。"
+                    "已完成的改动都还在工作区里 —— 需要继续的话 @ 芝士，"
+                    "它会从断点接着做。",
+                )
+                logger.info(
+                    "orphan turn %s dropped (stale=%s chained=%s, age=%ss)",
+                    turn_id,
+                    stale,
+                    chained,
+                    round(age_s),
+                )
+                continue
+            await self._post_orphan_event(
+                chat_service,
+                topic_id,
+                "⚠️ 上一轮被强制中断了（平台重启，或者沙箱被杀）。"
+                "已完成的进度都在；马上自动接着跑。",
+            )
             self._schedule_resume(
-                chat_service, topic_id, 3.0, "上一轮被平台重启打断，接着跑"
+                chat_service, topic_id, 3.0, "上一轮被强制中断，接着跑"
             )
             resumed += 1
             logger.info("orphan turn %s scheduled for resume", turn_id)
         return resumed
+
+    async def _post_orphan_event(
+        self, chat_service, topic_id: uuid.UUID, text: str
+    ) -> None:
+        """Persist + broadcast an orphan verdict. Best-effort by design: for a
+        resumed orphan the resume matters more than the notice, and for a dropped
+        one there is nothing left to fail into."""
+        try:
+            block = await chat_service.post_system_event(topic_id, text)
+            if block is not None:
+                await self._broker.publish(
+                    str(topic_id), {"type": "event_block", "block": block}
+                )
+        except Exception:  # noqa: BLE001 — a notice must never break the sweep
+            logger.exception("orphan event failed for %s", topic_id)
 
     def _schedule_resume(
         self,
@@ -527,6 +612,12 @@ class TurnRunner:
                 frames=frames,
             )
         finally:
+            # Drop the liveness mark here, not in `_execute`: a turn killed by
+            # task cancellation (CancelledError is a BaseException — it misses
+            # every `except` inside `_execute`, including the registry cleanup)
+            # must stop counting as live, so the next sweep can claim it. The
+            # on-disk entry deliberately survives — that is what gets it resumed.
+            self._live.discard(str(turn_id))
             if gate is not None:
                 gate.release()
 
@@ -577,6 +668,9 @@ class TurnRunner:
             "is_resume": is_resume,
         }
         _save_inflight(reg)
+        # Same instant, no await in between: a sweep can never observe this turn
+        # on disk but not in `_live` and mistake a just-started turn for a corpse.
+        self._live.add(str(turn_id))
         logger.info(
             "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
         )

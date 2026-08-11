@@ -321,6 +321,11 @@ class Settings(BaseSettings):
     # its transcript anyway.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
+    # Seconds between orphan sweeps (TurnRunner.sweep_orphans). On by default,
+    # unlike the heartbeat above: it consumes no model calls unless it actually
+    # finds a killed turn, and its whole purpose is catching the case where
+    # nothing else will ever look — a turn dying without the process dying.
+    orphan_sweep_interval_s: int = 300
 
     # --- Memory backend (spec §8.4 / §15 Q9) ---
     # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).
