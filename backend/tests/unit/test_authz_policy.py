@@ -4,8 +4,13 @@ import uuid
 
 import pytest
 
-from app.domain.authz.policy import authorize_topic_access, can_manage_roster
+from app.domain.authz.policy import (
+    authorize_topic_access,
+    can_manage_project_members,
+    can_manage_roster,
+)
 from app.domain.identity.actor import Actor
+from app.domain.project.models import ProjectRole
 from app.domain.topic.models import TopicRole
 
 pytestmark = pytest.mark.anyio
@@ -91,4 +96,73 @@ async def test_can_manage_roster_owner_admin_only():
     assert (
         await can_manage_roster(_actor("handle"), topic_id=TID, topic_role=role_member)
         is True
+    )
+
+
+# --- Project roster (who may add/remove members, change project roles) -------
+#
+# The project roster is the floor of topic access control (a project member
+# reaches every topic above), so unlike every other judgment here it refuses the
+# Phase-0 handle fallback outright.
+
+OWNER = "alice"
+
+
+def _project_adapters(*, owner: str | None = OWNER, roles: dict | None = None):
+    async def project_owner(_pid):
+        return owner
+
+    async def project_role(_pid, handle):
+        return (roles or {}).get(handle)
+
+    return dict(project_owner=project_owner, project_role=project_role)
+
+
+async def _may_manage(actor, **adapters):
+    return await can_manage_project_members(
+        actor, project_id=PID, **_project_adapters(**adapters)
+    )
+
+
+async def test_project_owner_may_manage_members():
+    assert await _may_manage(_actor("token", OWNER)) is True
+
+
+async def test_project_lead_may_manage_members():
+    assert await _may_manage(_actor("token", "bob"), roles={"bob": ProjectRole.lead})
+
+
+async def test_project_lead_may_manage_when_owner_is_null():
+    # owner_handle is nullable in practice; without leads counting, an owner-less
+    # project's roster would be frozen with no way to recover.
+    assert await _may_manage(
+        _actor("token", "bob"), owner=None, roles={"bob": ProjectRole.lead}
+    )
+
+
+async def test_project_member_and_mentor_may_not_manage_members():
+    assert not await _may_manage(
+        _actor("token", "bob"), roles={"bob": ProjectRole.member}
+    )
+    assert not await _may_manage(
+        _actor("token", "carol"), roles={"carol": ProjectRole.mentor}
+    )
+
+
+async def test_project_outsider_with_a_token_may_not_manage_members():
+    assert await _may_manage(_actor("token", "mallory")) is False
+
+
+async def test_claimed_handle_may_not_manage_members():
+    # Claiming to be the owner proves nothing — a claim being enough WAS the hole.
+    assert await _may_manage(_actor("handle", OWNER)) is False
+    assert await _may_manage(_actor("handle", "anonymous")) is False
+
+
+async def test_agent_may_not_manage_members():
+    # 芝士 promoting a member to lead through this surface is what exposed the
+    # missing check; a 分身 asks a human instead — even holding a lead role.
+    assert await _may_manage(_actor("cheese", "cheese", is_agent=True)) is False
+    assert not await _may_manage(
+        _actor("token", "cheese", is_agent=True), roles={"cheese": ProjectRole.lead}
     )

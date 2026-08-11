@@ -18,15 +18,25 @@ on:
       - 'backend/**'
       - '.github/workflows/test.yml'
 
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: backend
 
 # A single self-hosted runner serves this repo, so superseded runs must not
 # queue behind each other (deploys share the same runner).
+# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
+# each merge in its own group: with a shared `github.ref` key, a second merge
+# cancelled the first one's run and main was left with no result for that
+# commit. build.yml already keyed on sha for main; these did not.
 concurrency:
-  group: ci-test-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # A squash merge produces a new main commit whose tree was already checked on
@@ -123,7 +133,7 @@ jobs:
     # processes registered against one disk, which isn't how this box is set
     # up today; flagging it here rather than assuming it away.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/migration-heads" >> "$GITHUB_ENV"
@@ -134,7 +144,7 @@ jobs:
         run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/migration-heads" >> "$GITHUB_ENV"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
 
@@ -168,10 +178,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
           enable-cache: true
@@ -228,7 +238,7 @@ jobs:
           - 6379:6379
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
@@ -241,7 +251,7 @@ jobs:
         run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/test" >> "$GITHUB_ENV"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
 

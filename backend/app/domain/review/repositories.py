@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
+from app.domain.topic.models import Topic, TopicStatus
 
 
 class AcceptCardRepository:
@@ -59,7 +60,23 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_by_status(self, status: AcceptStatus) -> list[AcceptCard]:
-        """两阶段采纳 (PR迭代式): every card the PR/deploy poller must advance."""
-        stmt = select(AcceptCard).where(AcceptCard.status == status)
+    async def list_pr_open_on_active_topics(self) -> list[AcceptCard]:
+        """两阶段采纳 (PR迭代式): every card the PR/deploy poller may advance.
+
+        孤儿卡修复 (2026-08-10): the topic's status is part of the predicate, not
+        just the card's. Without the join this returned cards on ARCHIVED topics
+        too, and the poller kept driving them every 60s with the approver's
+        GitHub token — pushing branches and merging PRs for work nobody is
+        tracking any more. `TopicService._archive_one` now closes those cards at
+        archive time; this join is the second lock, covering rows that predate
+        the fix or arrive by some future archive path.
+        """
+        stmt = (
+            select(AcceptCard)
+            .join(Topic, Topic.id == AcceptCard.topic_id)
+            .where(
+                AcceptCard.status == AcceptStatus.pr_open,
+                Topic.status != TopicStatus.archived,
+            )
+        )
         return list((await self._session.scalars(stmt)).all())
