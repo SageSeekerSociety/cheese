@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -156,10 +157,15 @@ def _format_status(d: dict) -> str:
             row += f"；note: {c['note']}"
         lines.append(row)
         if c.get("pr_url"):
-            lines.append(
-                f"  PR: #{c.get('pr_number')} {c['pr_url']}"
-                "（CI 状态: GH_TOKEN=$(cheese gh-token) 后用 gh 查）"
-            )
+            lines.append(f"  PR: #{c.get('pr_number')} {c['pr_url']}")
+            # The repo name is already sitting in the PR url — spell the CI
+            # lookup out rather than leaving "用 gh 查" as an exercise.
+            m = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/", c["pr_url"])
+            if m:
+                lines.append(
+                    f"  查 CI: export GH_TOKEN=$(cheese gh-token); "
+                    f"gh api repos/{m.group(1)}/commits/<head_sha>/check-runs"
+                )
         if c.get("status") == "gate_failed" and c.get("gate_output_tail"):
             lines.append("  闸门输出（尾部）:")
             lines.extend(
@@ -430,7 +436,11 @@ def main() -> None:
 
     sub.add_parser("members", help="列出项目成员(名字+handle+角色)")
 
-    sub.add_parser("gh-token", help="铸一个只读 GitHub token(看 CI/CD 用,约1小时过期)")
+    sub.add_parser(
+        "gh-token",
+        help="铸一个只读 GitHub token(约1小时过期); stderr 会带上仓库名和"
+             "看 Actions run/job/日志的具体命令",
+    )
 
     sub.add_parser(
         "status",
@@ -560,10 +570,18 @@ def main() -> None:
             print(f"[cheese] gh-token 失败 HTTP {e.code}: {detail}", file=sys.stderr)
             sys.exit(1)
         print(data.get("token", ""))
+        # stderr, not stdout: `GH_TOKEN=$(cheese gh-token)` must keep working.
+        # The repo name rides along because without it the token is useless —
+        # `gh api repos/:owner/:repo/...` needs a name the workspace (not a
+        # checkout of the repo) can't supply.
+        repo = data.get("repo") or "<owner>/<repo>"
         print(
-            f"[cheese] 只读(actions/checks), 过期 {data.get('expires_at', '?')} — "
-            "用法: GH_TOKEN=$(cheese gh-token) 然后 "
-            'curl -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/...',
+            f"[cheese] 只读(actions/checks/metadata), 仓库 {repo}, "
+            f"过期 {data.get('expires_at', '?')}\n"
+            "[cheese] 看 CI: export GH_TOKEN=$(cheese gh-token) 然后\n"
+            f"[cheese]   gh api repos/{repo}/commits/<sha>/check-runs  # 哪些检查挂了\n"
+            f"[cheese]   gh api repos/{repo}/actions/jobs/<job_id>/logs  # 完整日志\n"
+            "[cheese]   (<job_id> = check-run 的 html_url 里 /job/ 后面那串数字)",
             file=sys.stderr,
         )
     elif a.cmd == "members":

@@ -23,6 +23,7 @@ approver's own token instead, so `GitHubAppTokens`'s write-mint stays solely
 `GitHubPRClient`'s concern.
 """
 
+import logging
 import re
 import time
 import uuid
@@ -35,6 +36,8 @@ import httpx
 
 from app.core.config import settings
 from app.domain.agent.github_app import GitHubAppTokens
+
+logger = logging.getLogger(__name__)
 
 CheckState = Literal["pending", "success", "failure"]
 
@@ -265,6 +268,41 @@ _ZERO_CHECKS_GRACE_SECONDS = 120.0
 
 _GITHUB_ACTIONS_APP_SLUG = "github-actions"
 
+# --- 失败详情 (CI失败要把日志送到芝士眼前) ------------------------------------
+#
+# A red check used to reach 芝士 as `"shell-tests: failure"` and nothing else,
+# so every CI failure cost a round trip: read the useless line, go dig the log
+# out of GitHub by hand, only then start fixing. The backend already holds a
+# token that can read both, so it digs once and puts the answer in the message.
+#
+# How many failed jobs get their log pulled. Beyond this only the headline
+# survives — a PR that reddens ten jobs is one root cause repeated, not ten
+# investigations, and every extra job is another GitHub round trip per poll.
+_FAILURE_DETAIL_MAX_JOBS = 3
+#: Hard stop on how much of one job's log is downloaded before giving up.
+_LOG_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
+#: How much of the download is KEPT — the tail, because that's where a failing
+#: run ends up. A log longer than this streams past a sliding window rather
+#: than being cut at the front, so the end is always the part we hold.
+_LOG_TAIL_BYTES = 256 * 1024
+#: Lines of run-up kept before the error marker. See `_error_excerpt`.
+_LOG_CONTEXT_LINES = 15
+_LOG_EXCERPT_MAX_CHARS = 1200
+_LOG_LINE_MAX_CHARS = 200
+_LOG_OUTPUT_FIELD_MAX_CHARS = 400
+
+#: Every Actions log line is prefixed `2026-08-11T07:44:58.9065765Z `.
+_LOG_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z ")
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+#: Actions masks its own secrets as `***`, but a log can still echo a token
+#: that the runner never knew was one (a curl of our API, a `gh auth status`).
+#: Redact the shapes GitHub itself hands out before any of this enters a topic.
+_TOKEN_SHAPE_RE = re.compile(
+    r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,})"
+)
+#: An Actions check-run's html_url: `.../actions/runs/<run>/job/<job>`.
+_ACTIONS_JOB_URL_RE = re.compile(r"/actions/runs/\d+/job/(?P<job>\d+)")
+
 
 class HttpxGitHubPrClient:
     """Real implementation — plain REST calls against api.github.com."""
@@ -410,10 +448,85 @@ class HttpxGitHubPrClient:
             # Real check-runs showed up — whatever ambiguity there was about
             # this ref is resolved, forget any grace-period bookkeeping.
             self._zero_checks_first_seen.pop((owner, repo, ref), None)
-            return _summarize_runs(runs)
+            state, tail = _summarize_runs(runs)
+            if state == "failure":
+                # The headline stays the first line (it is what lands on the
+                # card's one-line note); everything the reader actually needs
+                # to start fixing is appended below it.
+                tail += await self._failure_detail(
+                    owner=owner, repo=repo, token=token, runs=runs
+                )
+            return state, tail
         return await self._resolve_zero_checks(
             owner=owner, repo=repo, ref=ref, token=token
         )
+
+    async def _failure_detail(
+        self, *, owner: str, repo: str, token: str, runs: list[dict]
+    ) -> str:
+        """Everything beyond `"job: failure"` — per failed job, its Actions
+        page link, whatever the check-run's own `output` carries, and the
+        error slice of its log.
+
+        Never raises and never returns a partial-looking failure: a poll tick
+        that can't reach the logs must still deliver the headline it already
+        has, so every fetch degrades to "" rather than propagating.
+        """
+        failed = [
+            run
+            for run in runs
+            if run.get("status") == "completed"
+            and run.get("conclusion") in _FAILED_CONCLUSIONS
+        ]
+        blocks: list[str] = []
+        for run in failed[:_FAILURE_DETAIL_MAX_JOBS]:
+            block = _failure_headline(run)
+            job_id = _actions_job_id(run)
+            if job_id is not None:
+                excerpt = await self._job_log_excerpt(
+                    owner=owner, repo=repo, job_id=job_id, token=token
+                )
+                if excerpt:
+                    block += "\n" + "\n".join(
+                        f"  {line}" for line in excerpt.splitlines()
+                    )
+            blocks.append(block)
+        hidden = len(failed) - len(blocks)
+        if hidden > 0:
+            blocks.append(f"（另有 {hidden} 个失败的 job 未展开）")
+        return "\n\n" + "\n\n".join(blocks) if blocks else ""
+
+    async def _job_log_excerpt(
+        self, *, owner: str, repo: str, job_id: int, token: str
+    ) -> str:
+        """The error slice of one Actions job's log, or "" if unreachable."""
+        try:
+            async with httpx.AsyncClient(
+                transport=self._transport, timeout=30.0
+            ) as client:
+                resp = await client.get(
+                    f"{self._api_base}/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
+                    headers=self._headers(token),
+                )
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    # GitHub answers with a 302 to a pre-signed blob URL on a
+                    # THIRD-PARTY host (`*.blob.core.windows.net`). The
+                    # redirect is followed by hand, with the headers dropped,
+                    # precisely because httpx would otherwise replay
+                    # `Authorization: Bearer <installation token>` to that
+                    # host. The pre-signed URL needs no auth of ours.
+                    location = resp.headers.get("location", "")
+                    if not location:
+                        return ""
+                    text = await _download_log_tail(client, location)
+                elif resp.status_code == 200:
+                    text = resp.text[-_LOG_TAIL_BYTES:]
+                else:
+                    return ""
+        except (httpx.HTTPError, ValueError, OSError) as exc:
+            logger.info("could not read job %s log: %s", job_id, exc)
+            return ""
+        return _error_excerpt([_clean_log_line(ln) for ln in text.splitlines()])
 
     async def _resolve_zero_checks(
         self, *, owner: str, repo: str, ref: str, token: str
@@ -608,6 +721,100 @@ def _summarize_runs(runs: list[dict]) -> tuple[CheckState, str]:
     if pending_names:
         return "pending", "等待中：" + "、".join(pending_names[:10])
     return "success", f"全部 {len(runs)} 项检查通过"
+
+
+def _actions_job_id(run: dict) -> int | None:
+    """The Actions job id behind a check-run, or None when it isn't one.
+
+    Read out of the `/actions/runs/<run>/job/<job>` URL rather than the
+    check-run's own `id`. The two are equal today (verified against this
+    repo's check-runs on 2026-08-11), but only the URL shape *says* the
+    check-run is an Actions job — other apps publish check-runs too (codecov
+    and friends), and handing one of their ids to the jobs API just 404s.
+    """
+    for key in ("html_url", "details_url"):
+        match = _ACTIONS_JOB_URL_RE.search(str(run.get(key) or ""))
+        if match:
+            return int(match.group("job"))
+    return None
+
+
+def _failure_headline(run: dict) -> str:
+    """One failed check-run's name, conclusion, link, and `output` text.
+
+    `output.title`/`output.summary` are where GitHub's docs say the failure
+    summary lives, and where the odd non-Actions check-run does put it — but
+    Actions itself leaves both null and files the detail as annotations
+    instead (verified 2026-08-11), which is why the log excerpt below is the
+    part that actually carries the error. Included when present, skipped
+    silently when not.
+    """
+    lines = [f"▸ {run.get('name', '?')}（{run.get('conclusion')}）"]
+    url = run.get("html_url") or run.get("details_url")
+    if url:
+        lines.append(f"  {url}")
+    output = run.get("output") or {}
+    for key in ("title", "summary"):
+        value = output.get(key)
+        if isinstance(value, str) and value.strip():
+            text = _redact(value.strip())[:_LOG_OUTPUT_FIELD_MAX_CHARS]
+            lines.extend(f"  {ln}" for ln in text.splitlines())
+    return "\n".join(lines)
+
+
+def _redact(text: str) -> str:
+    return _TOKEN_SHAPE_RE.sub("<已脱敏>", text)
+
+
+def _clean_log_line(raw: str) -> str:
+    line = _LOG_TIMESTAMP_RE.sub("", raw.rstrip("\r\n"))
+    line = _ANSI_RE.sub("", line)
+    return _redact(line)[:_LOG_LINE_MAX_CHARS]
+
+
+def _error_excerpt(lines: list[str]) -> str:
+    """The interesting slice of a failed job's log.
+
+    Grepping `##[error]` on its own is close to useless: what a failed shell
+    step actually emits is `##[error]Process completed with exit code 1.`,
+    and the line that says WHAT broke (`FAIL: the secret file was not handed
+    over`) is the one right above it — verified against this repo's
+    shell-tests job on 2026-08-11. So the excerpt is the LAST error marker
+    plus its run-up, and a log with no marker at all (a cancelled or
+    timed-out job) falls back to its tail.
+    """
+    if not lines:
+        return ""
+    marks = [i for i, line in enumerate(lines) if "##[error]" in line]
+    end = marks[-1] + 1 if marks else len(lines)
+    start = max(0, end - _LOG_CONTEXT_LINES - 1)
+    text = "\n".join(line for line in lines[start:end] if line.strip())
+    if len(text) > _LOG_EXCERPT_MAX_CHARS:
+        text = "…" + text[-_LOG_EXCERPT_MAX_CHARS:]
+    return text
+
+
+async def _download_log_tail(client: httpx.AsyncClient, url: str) -> str:
+    """Stream `url` keeping only its last `_LOG_TAIL_BYTES`.
+
+    A sliding window rather than a read-then-cut: an Actions log has no size
+    ceiling, the part worth reading is at the END, and a naive
+    `resp.text[:cap]` would faithfully deliver the setup steps of a job that
+    failed twenty minutes later.
+    """
+    window = bytearray()
+    downloaded = 0
+    async with client.stream("GET", url, headers={}) as resp:
+        if resp.status_code != 200:
+            return ""
+        async for chunk in resp.aiter_bytes():
+            downloaded += len(chunk)
+            window.extend(chunk)
+            if len(window) > _LOG_TAIL_BYTES:
+                del window[: len(window) - _LOG_TAIL_BYTES]
+            if downloaded >= _LOG_DOWNLOAD_MAX_BYTES:
+                break
+    return window.decode("utf-8", errors="replace")
 
 
 _default_client: GitHubPrClient | None = None

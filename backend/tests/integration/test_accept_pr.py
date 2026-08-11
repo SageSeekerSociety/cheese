@@ -495,6 +495,12 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch):
         # instruction (see docs/topics for the incident this caused).
         assert "推送新 commit" not in contents
         assert "平台会自动把新提交同步到这个 PR" in contents
+        # CI失败要把日志送到芝士眼前: the nudge must also say how to read the
+        # rest. Both halves matter — the token path was documented nowhere 芝士
+        # can read, and `gh api repos/:owner/:repo/...` needs a repo name the
+        # workspace (not a checkout of the repo) has no way to supply.
+        assert "cheese gh-token" in contents
+        assert "repos/acme/widgets/actions/jobs/" in contents
         nudge_count = contents.count("pytest: 3 failed")
 
         # Polling again with the SAME failing commit must not spam a second nudge.
