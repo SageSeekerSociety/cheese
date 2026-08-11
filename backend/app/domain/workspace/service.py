@@ -1224,6 +1224,47 @@ def prepare_conflict_resolution(
     return files
 
 
+def prepare_upstream_conflict_resolution(
+    project_id: uuid.UUID, topic_id: uuid.UUID
+) -> list[str]:
+    """同步上游冲突 → 派芝士解决的前置。Same contract as
+    `prepare_conflict_resolution`, but the side being merged in is the UPSTREAM
+    branch rather than a topic branch: the workspace ends up holding a
+    base×upstream merge with the conflicts materialized as <<<<<<< markers.
+
+    Why this exists at all: `sync_upstream` aborts cleanly on conflict and
+    reports — which is the right thing for the shared repo, but on its own it is
+    a dead end. Accepting a topic had an exit (routes/accept.py dispatches 芝士
+    at the materialized conflict); syncing did not, so a project whose upstream
+    had diverged simply could not pull, and every later sync hit the same wall.
+
+    Accepting the resulting topic finishes the sync: the merge commit carries
+    upstream as a parent, so `merge_topic` folding it into base brings the
+    upstream history along with the resolution."""
+    repo = ensure_repo(project_id)
+    # Resolve upstream to a commit id rather than a ref name: jj addresses git
+    # remote branches as `main@upstream`, git as `upstream/main`, and a raw sha
+    # is unambiguous in both — no name translation to get wrong.
+    _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
+    upstream_sha = _git(repo, "rev-parse", _upstream_ref(repo)).strip()
+    base = _base_branch(repo)
+    branch = branch_for_topic(topic_id)
+    wt = _ensure_worktree(project_id, branch)
+    # The workspace's jj view lags the git side — import first, or the merge
+    # would run against a stale base (and possibly see no conflict at all).
+    try:
+        _jj(wt, "git", "import")
+    except ValidationError:
+        pass
+    _jj(wt, "new", base, upstream_sha)
+    out = _jj(wt, "resolve", "--list")
+    files = [line.split()[0] for line in out.splitlines() if line.strip()]
+    # Move the bookmark onto the (conflicted) merge so the snapshot/export path
+    # keeps working; the resolution edits amend this same commit.
+    _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
+    return files
+
+
 def upstream_default_branch(repo: Path) -> str | None:
     """The upstream's own default branch (what its HEAD points at), so a push
     lands where that repo actually keeps its trunk instead of a guessed name."""
