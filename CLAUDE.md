@@ -17,14 +17,28 @@ yourself restating a flag list in prose, delete the prose instead.
 There is no `.git` in a workspace — only `.jj`. This is the one thing your
 environment actively lies to you about, so it lives here rather than in a
 path-scoped rule: the misleading signal reaches you on turn 1, before you have
-touched any file that a rule could key off.
+touched any file that a rule could key off. The second reason is worse — you
+find out you cannot see the remote only at the moment you first try to check it,
+which is *after* a round of work, one sentence before you report it done. Path
+triggering is too late for both.
 
 | Symptom | What it looks like | Actual cause |
 |---|---|---|
 | `Is a git repository: false` in your environment block | "this checkout has no version control" | It has jj. Only the `.git` probe fails. |
 | `git status` / `gh pr list` → `fatal: not a git repository` | broken checkout | Same. `gh` needs an explicit `-R <owner>/<repo>`; it cannot infer the remote without `.git`. |
-| `jj git fetch` → `Git does not recognize required option: porcelain` | the fetch is broken, retry it | The sandbox ships git 2.39 and jj wants ≥ 2.41. **You cannot fetch from inside the box** — the platform syncs `main@upstream` for you on the host. Read that ref, don't repair git. |
+| `jj git fetch` → `Git does not recognize required option: porcelain` | the fetch is broken, retry it | The sandbox ships git 2.39 and jj wants ≥ 2.41. **No `jj git` remote traffic works from inside the box** — the platform syncs `main@upstream` for you on the host. Read that ref, don't repair git. |
+| `gh api repos/<o>/<r>/pulls/<n>` → 403, but `repos/<o>/<r>` → 200 | the token expired, or the PR doesn't exist | The token is scoped to repo metadata + actions/checks. **PRs and refs are 403.** Measured 2026-08-11. |
 | `jj rebase -d main@upstream` → `Commit ... is immutable` | you lack permission | You aimed at shared history. Rebase *your own* change only: `jj rebase -s <your-change-id> -d main@upstream`. |
+
+**You cannot observe the remote, so never report on it.** Fetch fails and the
+token cannot read a ref or a PR — no command in this box will tell you what a
+branch tip actually is, and pushing happens on the platform's side, not yours.
+Real incident (2026-08-11, PR #267): an agent reported "the change went to the PR
+branch with the snapshot"; the tip had not moved and the conflict was still
+there. It was not lying — it had no way to look. So anything about remote state
+(pushed, merged, conflict resolved, CI green) is a **claim, not an observation**:
+label it unverified and let a human confirm. What you *can* verify is local —
+`jj log`, `jj status`, and `jj diff` against `main@upstream`.
 
 Command mapping — `jj log`, `jj status`, `jj diff`, `jj file show -r <rev> <path>`,
 `jj bookmark list`. Two habits do not carry over: there is **no staging area**
