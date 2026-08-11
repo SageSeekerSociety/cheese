@@ -203,7 +203,21 @@ Buzz 用两个**普通 Rust 单测**（`buzz-db/src/migration.rs:1038` 和 `:105
 | **jj 从来没写过** | <&CLAUDE.md> 零命中、<&.claude/rules/> 零命中。更糟：环境给 agent 的信号是 `Is a git repository: false`，它收到的是「这儿没有版本控制」 |
 | **cheese CLI 的 `--help` 是反过来的** | 顶层很好（每个子命令都有中文描述），**子命令层几乎是裸的**：`split --help` 不说 `--brief` 该写什么、分身在什么环境跑；`conclude`/`remember`/`recall`/`milestone`/`ask` 全是裸参数名 |
 
-**一句话**：能永不过期的那一层（`--help`）是空的，容易过期的那一层（散文）在扛所有事。已拆 @agent 能力发现：补 jj 与 CLI 自描述 去补。
+**一句话**：能永不过期的那一层（`--help`）是空的，容易过期的那一层（散文）在扛所有事。
+
+#### ✅ 已做（@agent 能力发现：补 jj 与 CLI 自描述，待采纳）
+
+补了三层：
+
+1. **cheese CLI**：18 个子命令原本**全无 description**，`--help` 只有裸参数名。现在每个都写了语义 / 坑 / 什么时候**不**该用。重点是 `split`——分身看不到对话历史、工作区是从 main 新建的、gitignored 的东西不跟过去、简报不必重复父话题文档（平台自动附快照）。
+2. **jj 进 <&CLAUDE.md> 而非 <&.claude/rules/>**，理由站得住：rules 按路径触发，而 `Is a git repository: false` 这个误导信号**在碰任何文件之前就到了**，路径触发太晚。写成「症状 → 误判 → 真因」的紧凑表。
+3. **立了分界**：散文只写 `--help` 说不了的。
+
+**守卫**：`backend/tests/unit/test_cheese_cli.py` 加两个测试（每个对外子命令必须有 description、每个参数必须有 `help=`）。**拿改动前的文件跑同一断言，18 个全部命中——绿是修出来的，不是本来就绿。** 这个验证姿势值得当范本。
+
+简报里我标「没验证过」的那条有结论了：**CLI 源码在 `backend/sandbox/cheese`，能改**，不用降级成建议文案。
+
+**故意没补的**（判断合理，记下来）：`.agents/skills/lark-*` 的漂移隐患（另见下方待拍板）、「Pre-commit hook enforces this」不实断言（在外部 agent 手上）、以及一堆「知道了更好但不知道也不会做错事」的（比如 Taskfile 有哪些 task）——**不写进去是对的，那是大文件膨胀的起点**。
 
 ### 2. Gotcha 该写成「症状 → 会被误判成什么 → 真因」
 
@@ -281,7 +295,7 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 | @领域包解环与 import 守卫 | 4 | 守卫做成 `backend/tests/` 下的测试，绕开 `check.sh` |
 | @测试规则还债与 _auth 去重 | 5 + 9 个 `_auth` 去重 | 小而实 |
 | @分身高风险动作的护栏调研 | 4.5 + 4.6 + 计时器排查 | ✅ **已回流**。给了否定结论 + 挖出活文档 P0 |
-| @agent 能力发现：补 jj 与 CLI 自描述 | 1.11 | 补 jj、补 CLI 子命令 help、立「散文只写 --help 说不了的」这条界 |
+| @agent 能力发现：补 jj 与 CLI 自描述 | 1.11 | ✅ **已回流，待采纳**。18 个子命令补齐 description + 两个守卫测试 |
 
 **防撞车约定**：四个子话题都被明令不碰 `.github/workflows/` 和 `check.sh`；需要加守卫的一律实现成 `backend/tests/` 下的测试（`check.sh` 本来就跑 pytest，效果等价）。
 
@@ -310,6 +324,12 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 `docs/` 下有 7 个受版本控制的商业材料文件：`bp.md` / `bp-v2.md` / `bp-brief.md` / `bp.docx` / `bp-v2.docx` / `bp.pdf` / `gen-bp.js`。
 
 这与 <&CLAUDE.md> 的约定直接冲突——「`docs/` 严格只放工程文档，非工程内容（商业计划、市场文案、运营方案、竞赛材料）**绝不可提交**，应暂存 `tmp/` 后上传飞书 wiki」。已发决策请求，未擅自动手。
+
+### 我们自己也有一份 Buzz 式的 skill 漂移隐患
+
+已核实：`.agents/skills/` 下 5 个 `lark-*` 目录与 `.claude/skills/` 下的**逐字节相同**（`diff -rq` 全部无差异），**零同步脚本、零 CI 校验**——和我们批评 Buzz 的那条一模一样。
+
+**为什么没直接删**：删哪一份取决于我们到底在用哪套 agent 工具链，这是人的决定不是技术判断。需要拍板后单开一路。
 
 ---
 
