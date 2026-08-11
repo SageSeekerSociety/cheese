@@ -18,6 +18,13 @@ fail() {
   exit 1
 }
 
+# The suite runs unprivileged, so "a file somebody else owns" has to be
+# expressed as a target uid this process is not. Derived, never hardcoded: a
+# literal 1001 is the runner's own uid on GitHub's ubuntu images, which turns
+# every handover assertion into a silent "already owned, nothing to do".
+OTHER_UID="$(( $(id -u) + 1 ))"
+OTHER_GID="$(( $(id -g) + 1 ))"
+
 new_run_dir() {
   mkdir -p "$ROOT/tmp"
   local dir
@@ -44,10 +51,8 @@ test_secret_file_is_handed_over() {
   printf 'https://x:y@github.com\n' > "$secret"
   chmod 600 "$secret"
 
-  # The test runs unprivileged, so "owned by somebody else" is expressed as a
-  # target uid this process is not: the file is 1000, the backend wants 1001.
   run_ownership "$run_dir" \
-    env AGENT_UID=1001 AGENT_GID=1001 SECRET_FILE_PATHS="$secret" \
+    env AGENT_UID="$OTHER_UID" AGENT_GID="$OTHER_GID" SECRET_FILE_PATHS="$secret" \
     "$SCRIPT" fake/image "$run_dir/absent-tree" >/dev/null \
     || fail "handover of a readable secret should succeed"
 
@@ -64,7 +69,7 @@ test_dev_null_is_never_chowned() {
   # AGENT_UID is deliberately not root's: /dev/null is 0:0, so the only thing
   # standing between it and a chown is the regular-file guard.
   run_ownership "$run_dir" \
-    env AGENT_UID=1001 AGENT_GID=1001 SECRET_FILE_PATHS=/dev/null \
+    env AGENT_UID="$OTHER_UID" AGENT_GID="$OTHER_GID" SECRET_FILE_PATHS=/dev/null \
     "$SCRIPT" fake/image "$run_dir/absent-tree" >/dev/null \
     || fail "the feature-off default (/dev/null) must pass"
 
