@@ -63,6 +63,8 @@ CI 红了之后，芝士**不需要人转述、不需要自己再跑一趟 GitHu
 - 原因不是路径过滤没匹配。GitHub 对 `pull_request` 事件跑的是 merge ref（`refs/pull/263/merge`）；PR 有冲突时这个 ref 建不出来，于是一个 workflow 都不触发——根本没走到评估 `paths` 那一步。codecov 有 suite 是因为它反应的是 head commit 的 push，不需要 merge ref。
 - 冲突对象正是简报预警过的那张卡：**`806d30d2` = 采纳「405拒绝合并要叫人」(#262)**，08:45:46 进 main，比我的分支推上去晚 15 秒。碰头点也正是预警的 `_nudge_pr_fix`。
 
+这个判断后来被 wangchangxin 在本地核实确认：冲突解掉推上去，CI 就会跑起来，死锁自解。
+
 **我错了的地方**（上一轮我说"沙箱里取不到当前 main、只能等平台同步"）：本地 `.jj` 里**本来就有完整主线**——`main` bookmark 指向 `b9dd6de6`，而它是 `806d30d2` 的后代。我当时看到它的描述是「采纳 topic/75e4a080 → main」就当成旧的了，没去查祖先关系，然后一路去试联网 fetch（`jj git fetch` 因容器里 git 是 2.39.5 而失败，`git ls-remote` 因只读 token 没有 `contents` 权限而被拒），把两个**无关的**失败当成了"取不到 main"的证据。实际上一次 `jj rebase -s <change> -d main` 就够，全程不需要网络。
 
 ### 又一个坑：话题分支不能 rebase，只能 merge
@@ -93,6 +95,35 @@ CI 红了之后，芝士**不需要人转述、不需要自己再跑一趟 GitHu
 根因不在我的改动——**本卡一个 workflow 文件都没碰**。是我合并本地 `main` 时把它的 workflow 文件带上了分支，而**本地 main 和 GitHub main 是两条平行历史**（本地是 `采纳 topic/xxx → main` 合并提交，GitHub 那边是 squash 过的 PR），同一个 `frontend.yml` 两边各自新增、没有共同祖先 → add/add 必冲突。推送头 `7f2a594f` 当初能推上去，正是因为它压根没有这些文件。
 
 修法：把 `.github/` 恢复成 `7f2a594f` 那份，分支上 workflow 差异归零。**推送随即成功**（卡片的重推失败 note 被清空，远程头跟着我的提交一路前进）。
+
+### 第四个坑：workflow 目录不能"恢复成推送头那份"，要恢复成合并基点那份
+
+上一步把 `.github/` 恢复成 `7f2a594f` 那份，push 通了——但**冲突并没有消失，只是换了两个文件**。wangchangxin 在本地对 `origin/main` 跑 `git merge-tree` 拿到了真清单（沙箱只读 token 没有 `contents`，这个我确实拿不到）：
+
+```
+CONFLICT (modify/delete): .github/workflows/box-diag.yml — deleted in pr263, modified in origin/main
+CONFLICT (modify/delete): .github/workflows/deploy-scripts-test.yml — deleted in pr263, modified in origin/main
+```
+
+只有这两个。分支相对合并基点 `806d30d2`（#262）对 `.github/workflows/` 的改动是**纯删除、零新增**：
+
+```
+.github/workflows/box-diag.yml            | 124 ------------------
+.github/workflows/deploy-scripts-test.yml |  61 ---------------
+2 files changed, 185 deletions(-)
+```
+
+成因还是同一个：平台那份 workflow 目录缺这两个文件（它们在 GitHub main 上由 #265 / #266 维护，本地 main 没跟上），我把它整个带上分支，等于在分支侧**删掉**了它们；main 侧又改过 → modify/delete。`deploy-scripts-test.yml` 是部署脚本测试的闸门，删掉等于把闸门摘了。本卡不碰 workflow，纯属误伤。
+
+正确的修法不是"恢复成推送头那份"，而是**恢复成合并基点那份**：
+
+```
+jj restore --from 806d30d2 .github/workflows/box-diag.yml .github/workflows/deploy-scripts-test.yml
+```
+
+这样分支相对基点对 `.github/` 的改动归零，合并时 git 直接取 main 一侧（保留两个文件、保留 main 的修改），不再有任何 workflow 冲突。
+
+**教训**：话题分支要"不碰 workflow"，判据是**相对合并基点差异为零**，不是"和某个历史提交一样"。
 
 ### 冲突怎么解的
 
