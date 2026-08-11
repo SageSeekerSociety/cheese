@@ -1,9 +1,0 @@
-# CheeseX Disk Pressure Guard Design
-
-## Incident and goal
-
-On 2026-08-05 the dev box filled its 63 GB root filesystem. The immediate failure was an `ENOSPC` while the backend copied the Cheese skill into a tmux session, but the same pressure also prevented the in-flight turn registry from being persisted. Inodes, the database, and project data were healthy. The largest short-lived consumers were writable layers in long-lived `cheesex-tmux-*` containers and stale test virtual environments under the production backend container's `/tmp`.
-
-The guard must recover before writes fail without deleting durable project state. Expanding the disk only postpones recurrence, and a hard per-container quota can abort a live turn. The selected design is a host systemd timer with a conservative pressure gate. Every five minutes it reads root filesystem utilization. Below 85% it exits without touching Docker. At or above 85%, it reads `/health` twice and proceeds only when both responses report zero active turns. It then removes containers carrying the explicit `cheesex-tmux=1` label and deletes only backend `/tmp/tmp.*` or `/tmp/pytest-of-*` directories older than six hours. Worktrees, session mounts, uploads, images, volumes, databases, and application containers are outside its deletion scope.
-
-The timer is defense in depth alongside the application idle reaper. The app reaper optimizes normal three-day lifecycle retention; the host guard handles rapid writable-layer growth and remains available when application scheduling is disabled. Cleanup is logged to journald, health parse failures fail closed, and a final disk reading records whether operator intervention is still needed. Shell regression tests fake `df`, `curl`, and `docker` to prove the below-threshold, active-turn, and safe-cleanup branches.

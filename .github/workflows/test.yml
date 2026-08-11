@@ -30,27 +30,22 @@ defaults:
 
 # Superseded runs must not occupy the finite self-hosted capacity (three
 # cheese-ci slots, one per pool machine), so they are cancelled rather than
-# left to queue ahead of the commit that replaced them. Keyed by commit sha
-# on main for exactly the reason build.yml already is (see the long comment
-# there): every main push shares the one ref, so a ref-only group let each
-# merge cancel the previous commit's still-running suite. That is worse here
-# than it is for a build, because a cancelled run is not a red run — main can
-# end up carrying code this workflow never finished checking with nothing on
-# the commit to say so. It is also precisely the wrong run to cancel: the
-# scope job below already skips main pushes whose tree passed on the PR, so
-# anything that reaches these jobs is a commit CI has NOT seen. Non-main refs
-# (PR merge refs) keep the ref-only key, so repeated pushes to one PR still
-# supersede each other the way they always did.
+# left to queue ahead of the commit that replaced them.
 #
-# The key is `ref`-based rather than `event_name`-based on purpose. Both shapes
-# protect main and both supersede within a PR, but branching on the event name
-# gives every push to a NON-main branch its own sha group and so never cancels
-# anything — which spends the scarce capacity this comment is about. build.yml,
-# e2e.yml and frontend.yml all carry this identical expression, so the four
-# cannot drift apart again.
+# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
+# each merge in its own group, for exactly the reason build.yml already is (see
+# the long comment there): every main push shares the one ref, so a ref-only
+# key let a second merge cancel the previous commit's still-running suite and
+# left main with no result for that commit. That is worse here than it is for a
+# build, because a cancelled run is not a red run — main can end up carrying
+# code this workflow never finished checking with nothing on the commit to say
+# so. It is also precisely the wrong run to cancel: the scope job below already
+# skips main pushes whose tree passed on the PR, so anything that reaches these
+# jobs is a commit CI has NOT seen. PR refs keep the ref key, so repeated pushes
+# to one PR still supersede each other the way they always did.
 concurrency:
-  group: ci-test-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
-  cancel-in-progress: true
+  group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # A squash merge produces a new main commit whose tree was already checked on

@@ -30,10 +30,14 @@ jobs:
     # can block every deploy, heartbeat and backup check behind it. That is not
     # hypothetical — a wedged `plan` job held this slot for 8h11m on 2026-08-07.
     #
-    # 30m, not build.yml's build-sandbox 60m: that job builds the sandbox base
-    # from scratch, whereas this one starts FROM the finished base and only adds
-    # tmux + ttyd — measured at 4.8m. Copying 60m would have bounded the wrong
-    # job's worst case and left the slot hostage twice as long for no gain.
+    # 30m against a measured 4.8m build leaves generous headroom. The other
+    # candidate was 60m, to match build.yml's build-sandbox as the closest
+    # comparable job; 30m wins because it is the number with a measurement
+    # behind it, and the whole point of the bound is to cut a wedged job loose
+    # sooner than the box can be starved. Revisit against the 4.8m figure, not
+    # against build.yml, if this ever starts timing out legitimately. (The two
+    # jobs are not comparable anyway: build-sandbox builds the base from
+    # scratch, this one starts FROM the finished base and only adds tmux+ttyd.)
     timeout-minutes: 30
     permissions:
       contents: read
