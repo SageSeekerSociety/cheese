@@ -5,6 +5,7 @@ topic's jj workspace; the platform snapshots them with ``snapshot_worktree``.
 These tests simulate that by writing into the workspace dir then snapshotting.
 """
 
+import subprocess
 import uuid
 
 import pytest
@@ -84,6 +85,54 @@ def test_parallel_topics_isolated(client):
     n2 = {f["path"] for f in ws.list_files(pid, topic_id=t2)}
     assert "a.txt" in n1 and "b.txt" not in n1
     assert "b.txt" in n2 and "a.txt" not in n2
+
+
+def test_file_endpoints_survive_the_agent_using_jj(client):
+    """The file panel's 422 outage, at the level the user saw it.
+
+    芝士 running jj in its workspace writes into the project's SHARED main-repo
+    store (mounted into every sandbox container), and every backend file read
+    goes back through jj. While the backend ran as a different uid than the
+    sandbox, jj's 0600 store objects made that one command 422 the file list,
+    the file body, and the raw bytes — for every topic in the project, not just
+    this one. Same uid on both sides → the endpoints keep answering.
+    """
+    pid = _mkproject(client)
+    tid = uuid.uuid4()
+    _native_edit(pid, tid, "note.md", "hello\n")
+
+    wt = ws.topic_worktree(pid, tid)
+    subprocess.run(
+        ["jj", "--no-pager", "config", "set", "--repo", "user.name", "芝士"],
+        cwd=wt,
+        check=True,
+        capture_output=True,
+    )
+
+    listed = client.get(
+        f"/api/projects/{pid}/files", params={"topic": str(tid)}, headers=_owner(client)
+    )
+    assert listed.status_code == 200
+    assert any(f["path"] == "note.md" for f in listed.json()["data"]["data"])
+
+    body = client.get(
+        f"/api/projects/{pid}/file",
+        params={"topic": str(tid), "path": "note.md"},
+        headers=_owner(client),
+    )
+    assert body.status_code == 200
+
+    # A second topic in the same project — the blast radius that made this a P0.
+    other = uuid.uuid4()
+    _native_edit(pid, other, "other.md", "still fine\n")
+    assert (
+        client.get(
+            f"/api/projects/{pid}/files",
+            params={"topic": str(other)},
+            headers=_owner(client),
+        ).status_code
+        == 200
+    )
 
 
 def test_read_missing_file_raises(client):

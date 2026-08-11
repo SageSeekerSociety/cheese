@@ -33,6 +33,27 @@ DEFAULT_BRANCH = "main"
 # 沙箱镜像：芝士分身在容器里跑代码/测试，碰不到宿主机 (spec §9.1).
 SANDBOX_IMAGE = "python:3.12-slim"
 
+# The ONE uid/gid that may touch a project's jj store.
+#
+# `sandbox_vcs_mounts` below bind-mounts the project's main-repo `.jj`/`.git`
+# into every sandbox container read-write, so the backend process and the
+# in-container agent operate on the same store. jj creates its store objects
+# (op_store/, index/, store/extra/, workspace_store/index, working_copy/*) and
+# `.jj/repo/config-id` with a hardcoded 0600 — a tempfile that gets persisted,
+# NOT `0666 & ~umask` — so the first writer owns the store and every later jj
+# command from the other uid dies with "Failed to determine the secure config
+# for a repo … Permission denied". No umask, shared group, or default ACL can
+# widen a mode the writer sets explicitly; the only fix is for both sides to be
+# the same uid.
+#
+# 1000 = `node` in the sandbox image (node:22 + USER node, started with
+# `--user node`), which is the side we do not fully control — a project can
+# point `sandbox_image` at any other node-based image. The backend image is
+# built to match (backend/Dockerfile); tests/unit/test_workspace_uid_alignment.py
+# pins all three together.
+AGENT_UID = 1000
+AGENT_GID = 1000
+
 logger = logging.getLogger("cheesex.workspace")
 
 
@@ -134,8 +155,39 @@ def _git(
         # git reports merge conflicts on stdout with an empty stderr — fall back
         # so the caller's error isn't blank.
         detail = result.stderr.strip() or result.stdout.strip()
+        # The main repo's `.git` is shared with the sandbox exactly like `.jj`
+        # (sandbox_vcs_mounts mounts both), so it can fail the same way.
+        if _permission_denied(detail):
+            raise WorkspacePermissionError(_uid_split_hint(f"git {args[0]}: {detail}"))
         raise ValidationError(f"git {args[0]} failed: {detail}")
     return result.stdout
+
+
+class WorkspacePermissionError(ValidationError):
+    """A workspace operation failed because the on-disk repo is owned by another
+    uid. Distinct from a generic ValidationError so the failure names its own
+    cause: this is the shape a uid split takes, and it used to reach the file
+    panel as a bare `jj diff failed: Internal error…` — indistinguishable from
+    "the file is missing", which is why it went undiagnosed for a whole project.
+    """
+
+
+# jj reports an unreadable store as an internal error whose *cause* is the EACCES
+# — match the OS error rather than the wording of any one jj message.
+_PERMISSION_SIGNS = ("Permission denied", "os error 13", "Operation not permitted")
+
+
+def _permission_denied(text: str) -> bool:
+    return any(sign in text for sign in _PERMISSION_SIGNS)
+
+
+def _uid_split_hint(detail: str) -> str:
+    return (
+        f"工作区仓库里有当前进程（uid={os.getuid()}）无权访问的文件。"
+        f"后端与沙箱容器必须跑在同一个 uid（应为 {AGENT_UID}）——"
+        f"jj 的 store 文件是 0600，uid 不一致时先写的一方会把另一方锁死。"
+        f"原始报错：{detail}"
+    )
 
 
 def _jj_store(repo: Path) -> Path:
@@ -279,7 +331,13 @@ def _jj(repo: Path, *args: str) -> str:
     # those unreadable files break the sandbox just as thoroughly.
     _share_jj_modes(repo, since=started)
     if result.returncode != 0:
-        raise ValidationError(_jj_failure_message(args[0], result.stderr.strip(), repo))
+        detail = result.stderr.strip()
+        # config-id has its own remedy (dropped before every call, and named by
+        # _jj_failure_message when even deleting fails) — leave that path alone.
+        # Every OTHER permission failure in the shared store is the uid split.
+        if _permission_denied(detail) and _SECURE_CONFIG_FAILURE not in detail.lower():
+            raise WorkspacePermissionError(_uid_split_hint(f"jj {args[0]}: {detail}"))
+        raise ValidationError(_jj_failure_message(args[0], detail, repo))
     return result.stdout
 
 
@@ -425,6 +483,45 @@ def sandbox_vcs_mounts(
     ]
 
 
+def audit_workspace_ownership() -> list[str]:
+    """Boot-time check that this process can actually use the workspace it was
+    handed — one problem string per finding, empty when healthy.
+
+    A uid split does not announce itself: the backend keeps booting and only the
+    file panel dies, project-wide, with a 422 that reads like "file not found".
+    So state it at startup instead. Deliberately cheap (the project dirs plus
+    each store's `config-id`, not a walk of the whole store): `config-id` is the
+    one file whose unreadability fails EVERY jj command, so it is both the
+    likeliest and the most damaging finding.
+
+    Non-fatal by design — one stray file must not keep the platform from
+    booting, and an operator who sees this in the log has the fix in hand
+    (deploy/fix-workspace-ownership.sh).
+    """
+    problems: list[str] = []
+    root = Path(settings.workspace_root)
+    if not root.exists():
+        return problems
+    me = os.getuid()
+    if not os.access(root, os.R_OK | os.W_OK | os.X_OK):
+        problems.append(
+            f"{root} 当前进程（uid={me}）不可读写（属主 uid={root.stat().st_uid}）"
+        )
+    for entry in sorted(root.iterdir()):
+        config_id = entry / ".jj" / "repo" / "config-id"
+        try:
+            if not config_id.is_file() or os.access(config_id, os.R_OK):
+                continue
+            owner = config_id.stat().st_uid
+        except OSError:
+            continue
+        problems.append(
+            f"{config_id} 属主 uid={owner}，当前进程 uid={me} 读不了"
+            f"——该项目的所有 jj 操作都会失败"
+        )
+    return problems
+
+
 def _make_world_writable(root: Path) -> None:
     """The sandbox's non-root user must be able to edit a worktree the backend
     (possibly root) materialized — found live when 芝士 hit Permission denied on
@@ -545,7 +642,10 @@ def read_file(
     target = _safe_path(tree, path)
     if not target.is_file():
         raise ValidationError("file not found")
-    return target.read_text(encoding="utf-8", errors="replace")
+    try:
+        return target.read_text(encoding="utf-8", errors="replace")
+    except PermissionError as exc:
+        raise WorkspacePermissionError(_uid_split_hint(f"读 {path}: {exc}")) from exc
 
 
 def read_text_file(
@@ -617,7 +717,11 @@ def write_file(
             )
     target.parent.mkdir(parents=True, exist_ok=True)
     data = content.encode("utf-8")
-    target.write_bytes(data)
+    try:
+        target.write_bytes(data)
+    except PermissionError as exc:
+        # 人在文件面板保存芝士刚建的文件时，这里曾经是一个未捕获的 OSError → 500.
+        raise WorkspacePermissionError(_uid_split_hint(f"写 {path}: {exc}")) from exc
     return content_version(data)
 
 
@@ -630,7 +734,10 @@ def read_file_bytes(
     target = _safe_path(tree, path)
     if not target.is_file():
         raise ValidationError("file not found")
-    return target.read_bytes()
+    try:
+        return target.read_bytes()
+    except PermissionError as exc:
+        raise WorkspacePermissionError(_uid_split_hint(f"读 {path}: {exc}")) from exc
 
 
 def write_file_bytes(
@@ -641,7 +748,10 @@ def write_file_bytes(
     tree = _tree(project_id, topic_id)
     target = _safe_path(tree, path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
+    try:
+        target.write_bytes(data)
+    except PermissionError as exc:
+        raise WorkspacePermissionError(_uid_split_hint(f"写 {path}: {exc}")) from exc
 
 
 def git_log(

@@ -177,6 +177,43 @@ manual runbook, not automated provisioning — see `deploy/README-backup.md`.
 - **etrip**: SSH target (`ssh etrip`); GitHub Actions reaches it over Tailscale.
 - Self-hosted runners pull outbound, so no public inbound is needed on the boxes.
 
+## The backend runs as uid 1000 — and must keep doing so
+
+The backend process and the agent inside a sandbox container share one jj store:
+`ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.jj`/`.git` into every
+sandbox container, read-write. jj writes its store objects — `.jj/repo/config-id`
+above all — with a **hardcoded 0600**, so if the two sides run as different uids,
+whichever writes first locks the other out of every jj command
+(`Failed to determine the secure config for a repo … Permission denied`). That is
+not a theoretical risk: both directions have hit production — the file panel
+422ing for every topic in a project, and jj being unusable inside sandboxes.
+
+umask, a shared group, and default ACLs are all powerless against a mode the
+writer sets explicitly. The only fix is that both sides ARE the same uid:
+
+- sandbox: `node:22` + `USER node` = **1000**, started with `--user node`;
+  `backend/sandbox/Dockerfile` asserts the uid at build time.
+- backend: `backend/Dockerfile` creates its user with uid/gid **1000** to match.
+- single source of truth: `app.domain.workspace.service.AGENT_UID`, pinned
+  against both Dockerfiles by `tests/unit/test_workspace_uid_alignment.py`.
+
+**Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
+`UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
+where jj keeps the per-repo secure config that `config-id` points at) hold files
+written by the pre-2026-08 backend as uid 1001. `deploy/deploy-docker.sh` hands
+them over once via `deploy/fix-workspace-ownership.sh` before the swap —
+idempotent, marker-guarded, and it runs the chown in a throwaway root container
+(no sudo on the box). If a backend ever boots onto an unmigrated path it logs
+`workspace_ownership` at ERROR naming the offending file; the fix is to run that
+script and restart.
+
+`GIT_CREDENTIALS_FILE` is deliberately **not** chowned — it is an operator-owned
+secret (chmod 600, outside git), so the script only checks that uid 1000 can read
+it and fails the deploy with the exact `chown` to run if not. Silently losing
+private-repo push to the "git prompts fail cleanly" fallback is precisely the
+disguised failure this change exists to stop. The default `/dev/null` (feature
+off) passes the check.
+
 ## Gotchas — things that look renameable but are NOT
 
 The GitHub repo was renamed `cheese-backend-py` → `cheese`. Several identifiers
