@@ -1,0 +1,13 @@
+[Unit]
+Description=Monitor CheeseX local backend health
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30s
+RandomizedDelaySec=5s
+AccuracySec=5s
+Persistent=true
+Unit=cheesex-healthcheck.service
+
+[Install]
+WantedBy=timers.target

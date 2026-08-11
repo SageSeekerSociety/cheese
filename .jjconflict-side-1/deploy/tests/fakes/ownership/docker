@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Fake `docker` for fix-workspace-ownership.sh.
+#
+# Unlike the app-tier fake, this one EXECUTES the container's shell snippet
+# against the real host path instead of just recording it: the marker bookkeeping
+# (drop every other uid's marker, leave exactly one) is the behaviour under test,
+# and asserting on a command string would only prove the string was composed, not
+# that it does the right thing.
+#
+# `chown` is stubbed inside that execution — the test runs unprivileged, so a
+# real handover to another uid is impossible. Each call is logged instead, which
+# is what the tests assert against.
+set -euo pipefail
+
+LOG="${OWNERSHIP_DOCKER_LOG:?OWNERSHIP_DOCKER_LOG must be set}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+printf '%s\n' "$*" >> "$LOG"
+[ "${1:-}" = run ] || exit 0
+
+host="" mount="" script="" user=""
+args=("$@")
+i=0
+while [ "$i" -lt "${#args[@]}" ]; do
+  case "${args[$i]}" in
+    -v)
+      spec="${args[$((i + 1))]}"
+      host="${spec%%:*}"
+      rest="${spec#*:}"
+      mount="${rest%%:*}"
+      i=$((i + 2))
+      ;;
+    --user)
+      user="${args[$((i + 1))]}"
+      i=$((i + 2))
+      ;;
+    -c)
+      script="${args[$((i + 1))]}"
+      i=$((i + 2))
+      ;;
+    *)
+      i=$((i + 1))
+      ;;
+  esac
+done
+
+case "$mount" in
+  /target)
+    printf 'HANDOVER user=%s path=%s\n' "$user" "$host" >> "$LOG"
+    OWNERSHIP_CHOWN_LOG="$LOG" PATH="$HERE/inner:$PATH" \
+      sh -c "${script//\/target/$host}"
+    ;;
+  /secret)
+    # A real chown needs root; record the intent so a test can prove the secret
+    # was (or was not) handed over, and that its mode was never touched.
+    printf 'SECRET-CHOWN user=%s path=%s\n' "$user" "$host" >> "$LOG"
+    ;;
+  /probe)
+    printf 'PROBE user=%s path=%s\n' "$user" "$host" >> "$LOG"
+    if [ "${OWNERSHIP_PROBE_FAILS:-0}" = 1 ]; then exit 1; fi
+    [ -r "$host" ] || exit 1
+    ;;
+esac
+exit 0

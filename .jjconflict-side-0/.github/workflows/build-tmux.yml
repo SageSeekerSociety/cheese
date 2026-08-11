@@ -1,0 +1,102 @@
+name: Build tmux agent image
+
+# Manual recovery path. Normal main builds now publish this image in build.yml
+# and deployment is gated on it, because every local tmux turn consumes it.
+on:
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: "Exact sandbox image to build FROM"
+        required: true
+        default: "ghcr.io/sageseekersociety/cheese/sandbox:main"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: build-tmux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The tmux agent image: the sandbox base + tmux + ttyd + pre-accepted
+  # first-launch gates. It is the LOCAL transport of the hooks substrate
+  # (fusion-design §8.6), and until now nothing built it — so AGENT_BACKEND=tmux
+  # could not be selected on any deployment, whatever the code allowed.
+  build-tmux-sandbox:
+    runs-on: [self-hosted, cheese-dev]
+    # Bounded because this genuinely needs the box (warm layer cache) and the box
+    # has ONE runner slot: an unbounded job here inherits GitHub's 6h default and
+    # can block every deploy, heartbeat and backup check behind it. That is not
+    # hypothetical — a wedged `plan` job held this slot for 8h11m on 2026-08-07.
+    #
+    # 30m against a measured 4.8m build leaves generous headroom. The other
+    # candidate was 60m, to match build.yml's build-sandbox as the closest
+    # comparable job; 30m wins because it is the number with a measurement
+    # behind it, and the whole point of the bound is to cut a wedged job loose
+    # sooner than the box can be starved. Revisit against the 4.8m figure, not
+    # against build.yml, if this ever starts timing out legitimately. (The two
+    # jobs are not comparable anyway: build-sandbox builds the base from
+    # scratch, this one starts FROM the finished base and only adds tmux+ttyd.)
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          name: cheese-box-builder
+
+      - name: Log in to Container Registry
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox-tmux
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      # github.repository carries the org's capitals and a registry
+      # reference must be lowercase; metadata-action lowercases its own output,
+      # a hand-written ref does not.
+      - name: Resolve the requested base image
+        id: base
+        run: |
+          echo "ref=${BASE_IMAGE}" >> "$GITHUB_OUTPUT"
+        env:
+          BASE_IMAGE: ${{ inputs.base_image }}
+
+      - name: Build and push tmux sandbox image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./backend/sandbox
+          file: ./backend/sandbox/tmux.Dockerfile
+          push: true
+          # Built on the base this same run just pushed, so they cannot drift.
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.ref }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Reclaim build cache
+        if: always()
+        run: |
+          docker builder prune -af --keep-storage 10GB >/dev/null 2>&1 || true
+          df -h / | tail -1

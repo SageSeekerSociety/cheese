@@ -1,0 +1,585 @@
+import type { User } from '@/types'
+import type {
+  AuthMethodsResponse,
+  FollowUserResponse,
+  GetAnswerListResponse,
+  GetOAuthConnectionsResponse,
+  GetOAuthProvidersResponse,
+  GetOAuthStateResponse,
+  GetPasskeysResponse,
+  GetQuestionListResponse,
+  GetRealNameInfoResponse,
+  GetUserInfoResponse,
+  InitOAuthBindingResponse,
+  OAuthBindUserRequest,
+  OAuthBindUserResponse,
+  OAuthCreateUserRequest,
+  OAuthCreateUserResponse,
+  OAuthSrpBindInitRequest,
+  OAuthSrpBindInitResponse,
+  OAuthSrpBindVerifyRequest,
+  Page,
+  RealNameInfo,
+  SrpInitResponse,
+  SrpVerifyResponse,
+  UnbindOAuthConnectionResponse,
+  UpdateRealNameInfoResponse,
+  UserIdentityAccessLog,
+  UserList,
+} from './types'
+
+import { API_BASE_URL } from '../../utils'
+import ApiInstance, { NewApiInstance } from '../index'
+
+export namespace UserApi {
+  export interface AuthResponseDataType {
+    user?: User
+    accessToken?: string
+    requires2FA?: boolean
+    tempToken?: string
+  }
+
+  export type RegisterResponseDataType = {
+    user: User
+  }
+
+  export type RegistrationConfigDataType = {
+    requireInviteCode: boolean
+  }
+
+  export const register = (data: {
+    username: string
+    nickname: string
+    srpSalt: string
+    srpVerifier: string
+    email: string
+    emailCode: string
+    inviteCode?: string
+  }) =>
+    ApiInstance.request<RegisterResponseDataType>({
+      url: '/users',
+      method: 'POST',
+      data,
+      withCredentials: true,
+    })
+
+  export const getRegistrationConfig = () =>
+    ApiInstance.request<RegistrationConfigDataType>({
+      url: '/users/registration-config',
+      method: 'GET',
+    })
+
+  export const login = (data: { username: string; password: string }) =>
+    ApiInstance.request<AuthResponseDataType>({
+      url: '/users/auth/login',
+      method: 'POST',
+      data,
+      withCredentials: true,
+    })
+
+  export const sendEmailCode = (email: string, inviteCode?: string) =>
+    ApiInstance.request({
+      url: '/users/verify/email',
+      method: 'POST',
+      data: { email, ...(inviteCode ? { inviteCode } : {}) },
+    })
+
+  export const refreshAccessToken = () =>
+    ApiInstance.request<AuthResponseDataType>({
+      url: '/users/auth/refresh-token',
+      method: 'POST',
+      withCredentials: true,
+    })
+
+  export const recoverPasswordRequest = (email: string) =>
+    ApiInstance.request({
+      url: '/users/recover/password/request',
+      method: 'POST',
+      data: { email },
+    })
+
+  export const recoverPasswordVerify = (data: { token: string; srpSalt: string; srpVerifier: string }) =>
+    ApiInstance.request({
+      url: '/users/recover/password/verify',
+      method: 'POST',
+      data,
+    })
+
+  export const getCurrentUser = () =>
+    ApiInstance.request<GetUserInfoResponse>({
+      url: '/users/me',
+      method: 'GET',
+    })
+
+  export const getUserInfo = (userid: number) =>
+    ApiInstance.request<GetUserInfoResponse>({
+      // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}`,
+      url: `/users/${userid}`,
+      method: 'GET',
+    })
+
+  export const updateUserInfo = (userid: number, data: { nickname: string; intro: string; avatarId: number }) =>
+    ApiInstance.request({
+      url: `/users/${userid}`,
+      method: 'PUT',
+      data,
+    })
+
+  export const getUserFollower = (userid: number, data: { pageStart: number; pageSize: number }) =>
+    ApiInstance.request<UserList>({
+      // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}/followers`,
+      url: `/users/${userid}/followers`,
+      method: 'GET',
+      data: {
+        pageStart: data.pageStart,
+        pageSize: data.pageSize,
+      },
+    })
+
+  export const getUserFollowing = (userid: number, data: { pageStart: number; pageSize: number }) =>
+    ApiInstance.request<UserList>({
+      // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}/follow/users`,
+      url: `/users/${userid}/follow/users`,
+      method: 'GET',
+      data: {
+        pageStart: data.pageStart,
+        pageSize: data.pageSize,
+      },
+    })
+
+  export const getQuestionList = (userId: number, pageStart?: number, pageSize: number = 20) =>
+    ApiInstance.request<GetQuestionListResponse>({
+      // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}/questions`,
+      url: `/users/${userId}/questions`,
+      method: 'GET',
+      data: {
+        pageStart: pageStart,
+        pageSize: pageSize,
+      },
+    })
+
+  export const getAnswerList = (userid: number, data: { pageStart: number; pageSize: number }) =>
+    ApiInstance.request<GetAnswerListResponse>({
+      // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}/answers`,
+      url: `/users/${userid}/answers`,
+      method: 'GET',
+      data: {
+        pageStart: data.pageStart,
+        pageSize: data.pageSize,
+      },
+    })
+
+  export const followUser = (userId: number) =>
+    ApiInstance.request<FollowUserResponse>({
+      url: `/users/${userId}/followers`,
+      method: 'POST',
+    })
+
+  export const unfollowUser = (userId: number) =>
+    ApiInstance.request<FollowUserResponse>({
+      url: `/users/${userId}/followers`,
+      method: 'DELETE',
+    })
+
+  // Passkey 注册相关
+  export const getPasskeyRegistrationOptions = (userId: number) =>
+    ApiInstance.request<{ options: any }>({
+      url: `/users/${userId}/passkeys/options`,
+      method: 'POST',
+      withCredentials: true,
+    })
+
+  export const verifyPasskeyRegistration = (userId: number, response: any) =>
+    ApiInstance.request({
+      url: `/users/${userId}/passkeys`,
+      method: 'POST',
+      data: { response },
+      withCredentials: true,
+    })
+
+  // Passkey 认证相关
+  export const getPasskeyAuthenticationOptions = (userId?: number) =>
+    ApiInstance.request<{ options: any }>({
+      url: '/users/auth/passkey/options',
+      method: 'POST',
+      data: { userId },
+      withCredentials: true,
+    })
+
+  export const verifyPasskeyAuthentication = (response: any) =>
+    ApiInstance.request<AuthResponseDataType>({
+      url: '/users/auth/passkey/verify',
+      method: 'POST',
+      data: { response },
+      withCredentials: true,
+    })
+
+  // Passkey 管理相关
+  export const getUserPasskeys = (userId: number) =>
+    ApiInstance.request<GetPasskeysResponse>({
+      url: `/users/${userId}/passkeys`,
+      method: 'GET',
+    })
+
+  export const deletePasskey = (userId: number, credentialId: string) =>
+    ApiInstance.request({
+      url: `/users/${userId}/passkeys/${credentialId}`,
+      method: 'DELETE',
+    })
+
+  export type VerifySudoResponse = {
+    accessToken: string
+  }
+
+  export const verifySudoPassword = (password: string) =>
+    ApiInstance.request<VerifySudoResponse & { srpUpgraded?: boolean }>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: {
+        method: 'password',
+        credentials: { password },
+      },
+    })
+
+  export const verifySudoPasskey = (response: any) =>
+    ApiInstance.request<VerifySudoResponse>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: {
+        method: 'passkey',
+        credentials: { passkeyResponse: response },
+      },
+      withCredentials: true,
+    })
+
+  export const logout = () =>
+    ApiInstance.request({
+      url: '/users/auth/logout',
+      method: 'POST',
+      withCredentials: true,
+    })
+
+  export interface TOTPAuthResponseDataType extends AuthResponseDataType {
+    requires2FA: boolean
+    usedBackupCode: boolean
+  }
+
+  export interface Enable2FAResponseDataType {
+    secret: string
+    otpauth_url: string
+    qrcode: string
+    backup_codes: string[]
+  }
+
+  export interface GenerateBackupCodesResponseDataType {
+    backup_codes: string[]
+  }
+
+  // TOTP 验证相关
+  export const verify2FA = (data: { temp_token: string; code: string }) =>
+    ApiInstance.request<TOTPAuthResponseDataType>({
+      url: '/users/auth/verify-2fa',
+      method: 'POST',
+      data,
+      withCredentials: true,
+    })
+
+  // TOTP 管理相关
+  export const initializeTOTP = (userId: number) =>
+    ApiInstance.request<Enable2FAResponseDataType>({
+      url: `/users/${userId}/2fa/enable`,
+      method: 'POST',
+    })
+
+  export const enableTOTP = (userId: number, data: { code: string; secret: string }) =>
+    ApiInstance.request<Enable2FAResponseDataType>({
+      url: `/users/${userId}/2fa/enable`,
+      method: 'POST',
+      data,
+    })
+
+  export const disableTOTP = (userId: number) =>
+    ApiInstance.request({
+      url: `/users/${userId}/2fa/disable`,
+      method: 'POST',
+    })
+
+  export const generateBackupCodes = (userId: number) =>
+    ApiInstance.request<GenerateBackupCodesResponseDataType>({
+      url: `/users/${userId}/2fa/backup-codes`,
+      method: 'POST',
+    })
+
+  export interface Get2FAStatusResponseDataType {
+    enabled: boolean
+    has_passkey: boolean
+    always_required: boolean
+  }
+
+  export interface Update2FASettingsResponseDataType {
+    success: boolean
+    always_required: boolean
+  }
+
+  // 获取 2FA 状态
+  export const get2FAStatus = (userId: number) =>
+    ApiInstance.request<Get2FAStatusResponseDataType>({
+      url: `/users/${userId}/2fa/status`,
+      method: 'GET',
+    })
+
+  // 添加更新 2FA 设置的方法
+  export const update2FASettings = (userId: number, alwaysRequired: boolean) =>
+    ApiInstance.request<Update2FASettingsResponseDataType>({
+      url: `/users/${userId}/2fa/settings`,
+      method: 'PUT',
+      data: { always_required: alwaysRequired },
+    })
+
+  export const verifySudoTOTP = (code: string) =>
+    ApiInstance.request<VerifySudoResponse>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: {
+        method: 'totp',
+        credentials: { code },
+      },
+    })
+
+  // 获取认证方法
+  export const getAuthMethods = (username: string) =>
+    ApiInstance.request<AuthMethodsResponse>({
+      url: `/users/auth/methods/${username}`,
+      method: 'GET',
+    })
+
+  // SRP 初始化
+  export const srpInit = (data: { username: string; clientPublicEphemeral?: string }) =>
+    ApiInstance.request<SrpInitResponse>({
+      url: '/users/auth/srp/init',
+      method: 'POST',
+      data,
+      withCredentials: true,
+    })
+
+  // SRP 验证
+  export const srpVerify = (data: { username: string; clientPublicEphemeral: string; clientProof: string }) =>
+    ApiInstance.request<SrpVerifyResponse>({
+      url: '/users/auth/srp/verify',
+      method: 'POST',
+      data,
+      withCredentials: true,
+    })
+
+  export const changePassword = (
+    userId: number,
+    data: {
+      srpSalt: string
+      srpVerifier: string
+    }
+  ) =>
+    ApiInstance.request({
+      url: `/users/${userId}/password`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const verifySudoSrpInit = () =>
+    ApiInstance.request<{
+      salt: string
+      serverPublicEphemeral: string
+    }>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: {
+        method: 'srp',
+        credentials: {},
+      },
+      withCredentials: true,
+    })
+
+  export const verifySudoSrpVerify = (data: { clientPublicEphemeral: string; clientProof: string }) =>
+    ApiInstance.request<{
+      serverProof: string
+      accessToken: string
+    }>({
+      url: '/users/auth/sudo',
+      method: 'POST',
+      data: {
+        method: 'srp',
+        credentials: data,
+      },
+      withCredentials: true,
+    })
+
+  // 实名信息 API
+  export const getRealNameInfo = (userId: number, precise: boolean = false) =>
+    NewApiInstance.request<GetRealNameInfoResponse>({
+      url: `/users/${userId}/identity`,
+      method: 'GET',
+      params: {
+        precise,
+      },
+    })
+
+  export const updateRealNameInfo = (userId: number, data: RealNameInfo) =>
+    NewApiInstance.request<UpdateRealNameInfoResponse>({
+      url: `/users/${userId}/identity`,
+      method: 'PUT',
+      data,
+    })
+
+  export const patchRealNameInfo = (userId: number, data: Partial<RealNameInfo>) =>
+    NewApiInstance.request<UpdateRealNameInfoResponse>({
+      url: `/users/${userId}/identity`,
+      method: 'PATCH',
+      data,
+    })
+
+  // 获取实名信息访问日志
+  export const getRealNameAccessLogs = (userId: number, pageStart?: number, pageSize: number = 20) =>
+    NewApiInstance.request<{
+      logs: UserIdentityAccessLog[]
+      page: Page
+    }>({
+      url: `/users/${userId}/identity/access-logs`,
+      method: 'GET',
+      params: {
+        pageStart: pageStart,
+        pageSize: pageSize,
+      },
+    })
+
+  // OAuth 相关 API
+  export const getOAuthProviders = () =>
+    ApiInstance.request<GetOAuthProvidersResponse>({
+      url: '/users/auth/oauth/providers',
+      method: 'GET',
+    })
+
+  export const redirectToOAuthLogin = (providerId: string, state?: string, accessType?: string) => {
+    const params = new URLSearchParams()
+    if (state) params.append('state', state)
+    if (accessType) params.append('access_type', accessType)
+
+    const queryString = params.toString()
+    const url = `/users/auth/oauth/login/${providerId}${queryString ? `?${queryString}` : ''}`
+
+    // 直接跳转到后端 OAuth 登录 URL
+    window.location.href = `${API_BASE_URL}${url}`
+  }
+
+  // OAuth 验证 API
+  export const verifyOAuth = (data: {
+    sessionId: string
+    password?: string
+    clientPublicEphemeral?: string
+    clientProof?: string
+  }) =>
+    ApiInstance.request({
+      url: '/users/auth/oauth/verify',
+      method: 'POST',
+      data,
+    })
+
+  // 获取 OAuth 状态信息 (决策页面使用)
+  export const getOAuthState = (stateToken: string) =>
+    ApiInstance.request<GetOAuthStateResponse>({
+      url: `/users/auth/oauth/state?token=${encodeURIComponent(stateToken)}`,
+      method: 'GET',
+    })
+
+  // 从 OAuth 创建新用户 (通过表单提交，会重定向)
+  export const createUserFromOAuth = (data: OAuthCreateUserRequest) => {
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = `${API_BASE_URL}/users/oauth/create`
+    form.style.display = 'none'
+
+    Object.entries(data).forEach(([key, value]) => {
+      const input = document.createElement('input')
+      input.type = 'hidden'
+      input.name = key
+      input.value = value
+      form.appendChild(input)
+    })
+
+    document.body.appendChild(form)
+    form.submit()
+  }
+
+  // 绑定 OAuth 到现有用户 (通过表单提交，会重定向)
+  export const bindOAuthToUser = (data: OAuthBindUserRequest) => {
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = `${API_BASE_URL}/users/oauth/bind`
+    form.style.display = 'none'
+
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        const input = document.createElement('input')
+        input.type = 'hidden'
+        input.name = key
+        input.value = value
+        form.appendChild(input)
+      }
+    })
+
+    document.body.appendChild(form)
+    form.submit()
+  }
+
+  // SRP 绑定初始化
+  export const initOAuthSrpBinding = (data: OAuthSrpBindInitRequest) =>
+    ApiInstance.request<OAuthSrpBindInitResponse>({
+      url: '/users/oauth/bind/srp/init',
+      method: 'POST',
+      data,
+    })
+
+  // SRP 绑定验证 (通过表单提交，会重定向)
+  export const verifyOAuthSrpBinding = (data: OAuthSrpBindVerifyRequest) => {
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = `${API_BASE_URL}/users/oauth/bind/srp/verify`
+    form.style.display = 'none'
+
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        const input = document.createElement('input')
+        input.type = 'hidden'
+        input.name = key
+        input.value = value
+        form.appendChild(input)
+      }
+    })
+
+    document.body.appendChild(form)
+    form.submit()
+  }
+
+  // 初始化 OAuth 绑定 (已登录用户)
+  export const initOAuthBinding = (userId: number, providerId: string, state?: string, accessType?: string) =>
+    ApiInstance.request<InitOAuthBindingResponse>({
+      url: `/users/${userId}/oauth/bind/${providerId}`,
+      method: 'POST',
+      data: {
+        state,
+        accessType,
+      },
+    })
+
+  // 获取用户 OAuth 连接列表
+  export const getOAuthConnections = (userId: number) =>
+    ApiInstance.request<GetOAuthConnectionsResponse>({
+      url: `/users/${userId}/oauth/connections`,
+      method: 'GET',
+    })
+
+  // 解除 OAuth 绑定
+  export const unbindOAuthConnection = (userId: number, connectionId: number) =>
+    ApiInstance.request<UnbindOAuthConnectionResponse>({
+      url: `/users/${userId}/oauth/connections/${connectionId}`,
+      method: 'DELETE',
+    })
+}

@@ -1,0 +1,490 @@
+# Question Domain Paths
+
+/questions:
+  get:
+    summary: Search questions
+    operationId: searchQuestions
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: q
+        in: query
+        description: Search keyword
+        schema:
+          type: string
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Questions list
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    questions:
+                      type: array
+                      items:
+                        $ref: './schemas.yaml#/Question'
+                    page:
+                      $ref: '../../common/responses.yaml#/Page'
+  post:
+    summary: Create question
+    operationId: createQuestion
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/CreateQuestionRequest'
+    responses:
+      '201':
+        description: Question created
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                      format: int64
+
+/questions/trending:
+  get:
+    summary: Get trending questions
+    operationId: getTrendingQuestions
+    tags: [Questions]
+    parameters:
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 50
+      - name: days
+        in: query
+        schema:
+          type: integer
+          default: 7
+          minimum: 1
+          maximum: 30
+    responses:
+      '200':
+        description: Trending questions
+
+/questions/stats:
+  get:
+    summary: Get question statistics
+    operationId: getQuestionStats
+    tags: [Questions]
+    responses:
+      '200':
+        description: Question statistics
+
+/questions/{questionId}:
+  get:
+    summary: Get question details
+    operationId: getQuestion
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    responses:
+      '200':
+        description: Question details
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    question:
+                      $ref: './schemas.yaml#/Question'
+  put:
+    summary: Update question
+    operationId: updateQuestion
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/UpdateQuestionRequest'
+    responses:
+      '200':
+        description: Question updated
+  delete:
+    summary: Delete question
+    operationId: deleteQuestion
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    responses:
+      '204':
+        description: Question deleted
+
+/questions/{questionId}/followers:
+  get:
+    summary: List question followers
+    operationId: listQuestionFollowers
+    tags: [Questions]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Followers list
+  post:
+    summary: Follow question
+    operationId: followQuestion
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    responses:
+      '201':
+        description: Followed successfully
+  put:
+    summary: Follow question (PUT)
+    operationId: followQuestionPut
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    responses:
+      '200':
+        description: Followed successfully
+  delete:
+    summary: Unfollow question
+    operationId: unfollowQuestion
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    responses:
+      '200':
+        description: Unfollowed successfully
+
+/questions/{questionId}/attitudes:
+  post:
+    summary: Vote on question
+    operationId: voteQuestion
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              attitude_type:
+                $ref: '../../common/responses.yaml#/AttitudeType'
+    responses:
+      '200':
+        description: Vote recorded
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    attitudes:
+                      $ref: '../../common/responses.yaml#/AttitudeStats'
+
+/questions/{questionId}/vote:
+  get:
+    summary: Get question votes
+    operationId: getQuestionVotes
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    responses:
+      '200':
+        description: Vote information
+  post:
+    summary: Vote on question
+    operationId: voteQuestionPost
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              voteType:
+                type: string
+                enum: [UPVOTE, DOWNVOTE]
+    responses:
+      '200':
+        description: Vote recorded
+  delete:
+    summary: Remove vote from question
+    operationId: removeQuestionVote
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    responses:
+      '200':
+        description: Vote removed
+
+/questions/{questionId}/bounty:
+  put:
+    summary: Set question bounty
+    operationId: setQuestionBounty
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              bounty:
+                type: integer
+                minimum: 0
+                maximum: 20
+    responses:
+      '200':
+        description: Bounty set
+
+/questions/{questionId}/acceptance:
+  put:
+    summary: Accept an answer
+    operationId: acceptAnswer
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+      - name: answer_id
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '200':
+        description: Answer accepted
+
+/questions/{questionId}/accept:
+  delete:
+    summary: Unaccept answer
+    operationId: unacceptAnswer
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    responses:
+      '200':
+        description: Answer unaccepted
+
+/questions/{questionId}/invitations:
+  get:
+    summary: List question invitations
+    operationId: listQuestionInvitations
+    tags: [Questions]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Invitations list
+  post:
+    summary: Invite user to answer
+    operationId: inviteUserToAnswer
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              user_id:
+                type: integer
+                format: int64
+            required:
+              - user_id
+    responses:
+      '201':
+        description: Invitation created
+
+/questions/{questionId}/invitations/recommendations:
+  get:
+    summary: Get invitation recommendations
+    operationId: getInvitationRecommendations
+    tags: [Questions]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 50
+    responses:
+      '200':
+        description: Recommended users
+
+/questions/{questionId}/invitations/{invitationId}:
+  get:
+    summary: Get invitation detail
+    operationId: getInvitationDetail
+    tags: [Questions]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+      - name: invitationId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '200':
+        description: Invitation detail
+  delete:
+    summary: Delete invitation
+    operationId: deleteInvitation
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+      - name: invitationId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '200':
+        description: Invitation deleted
+
+/questions/{questionId}/comments:
+  get:
+    summary: List question comments
+    operationId: listQuestionComments
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+      - name: sort_by
+        in: query
+        schema:
+          type: string
+          default: createdAt
+      - name: sort_order
+        in: query
+        schema:
+          type: string
+          default: asc
+          enum: [asc, desc]
+    responses:
+      '200':
+        description: Comments list
+  post:
+    summary: Create question comment
+    operationId: createQuestionComment
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              content:
+                type: string
+              parentId:
+                type: integer
+                format: int64
+              mentionedUserIds:
+                type: array
+                items:
+                  type: integer
+                  format: int64
+            required:
+              - content
+    responses:
+      '201':
+        description: Comment created
+
+/questions/{questionId}/comments/{commentId}:
+  delete:
+    summary: Delete question comment
+    operationId: deleteQuestionComment
+    tags: [Questions]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/QuestionId'
+      - $ref: '../../common/parameters.yaml#/CommentId'
+    responses:
+      '200':
+        description: Comment deleted

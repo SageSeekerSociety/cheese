@@ -1,0 +1,116 @@
+# Common Response Schemas
+# Shared response structures used across all domains
+
+CommonResponse:
+  type: object
+  properties:
+    code:
+      type: integer
+      format: int32
+      default: 0
+      description: Error code, 0 means success
+    message:
+      type: string
+      default: ""
+      description: Error message, empty string on success
+  required:
+    - code
+    - message
+
+Page:
+  type: object
+  description: Pagination information
+  properties:
+    page_start:
+      type: integer
+      format: int64
+      description: ID of the first item on this page
+    page_size:
+      type: integer
+      format: int64
+      description: Number of items per page
+    has_prev:
+      type: boolean
+      description: Whether there is a previous page
+    prev_start:
+      type: integer
+      format: int64
+      description: ID of the first item on the previous page
+    has_more:
+      type: boolean
+      description: Whether there is a next page
+    next_start:
+      type: integer
+      format: int64
+      description: ID of the first item on the next page
+
+AttitudeType:
+  type: string
+  description: Attitude type, UNDEFINED means no action taken
+  enum:
+    - POSITIVE
+    - NEGATIVE
+    - UNDEFINED
+
+AttitudeStats:
+  type: object
+  properties:
+    positive_count:
+      type: integer
+      description: Number of positive attitudes
+      format: int64
+    negative_count:
+      type: integer
+      description: Number of negative attitudes
+      format: int64
+    difference:
+      type: integer
+      description: Positive count minus negative count
+      format: int64
+    user_attitude:
+      $ref: '#/AttitudeType'
+      description: Current user's attitude
+
+ErrorResponse:
+  allOf:
+    - $ref: '#/CommonResponse'
+    - type: object
+      properties:
+        error:
+          type: string
+          description: Error type identifier
+        details:
+          type: object
+          description: Additional error details
+
+NotFoundError:
+  allOf:
+    - $ref: '#/ErrorResponse'
+    - type: object
+      properties:
+        code:
+          example: 404
+
+UnauthorizedError:
+  allOf:
+    - $ref: '#/ErrorResponse'
+    - type: object
+      properties:
+        code:
+          example: 401
+
+ForbiddenError:
+  allOf:
+    - $ref: '#/ErrorResponse'
+    - type: object
+      properties:
+        code:
+          example: 403
+
+BadRequestError:
+  allOf:
+    - $ref: '#/ErrorResponse'
+    - type: object
+      properties:
+        code:
+          example: 400

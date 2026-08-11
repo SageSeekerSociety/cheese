@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash .claude/scripts/check.sh *)",
+      "Bash(bash .claude/scripts/post-pull.sh *)",
+      "Bash(task *)",
+      "Bash(uv run *)",
+      "Bash(uv sync *)",
+      "Bash(docker compose up *)",
+      "Bash(docker compose down *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose ps *)",
+      "Bash(jj status *)",
+      "Bash(jj log *)",
+      "Bash(jj diff *)",
+      "Bash(jj file show *)",
+      "Bash(jj bookmark list *)",
+      "Bash(git diff *)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git config *)",
+      "Bash(curl -sf http://localhost:8081 *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)"
+    ]
+  }
+}

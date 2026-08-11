@@ -1,0 +1,111 @@
+name: Device self-hosting smoke
+
+# Drives ONE real device-backed turn on the dev box and asserts the three
+# properties self-hosting depends on (#94 real worktree, #95 the agent files its
+# own accept card, #96 the chat WS relays frames).
+#
+# It runs on the dev box's OWN runner and talks to the backend over localhost, so
+# it needs no VPN and no operator on the private network — the box verifies
+# itself. Manual: this drives a live agent turn (spends model budget), so it is
+# not on a schedule.
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "Project uuid (wins over the name; use when a name is ambiguous)"
+        default: ""
+      project_name:
+        description: "Device-backed project to drive a turn in"
+        default: "cheese 自建"
+      user_handle:
+        description: "Actor whose token drives the turn (must exist on dev)"
+        default: "andy"
+      prompt:
+        description: "Override the turn's prompt (empty = the built-in marker+card check)"
+        default: ""
+      accept:
+        description: "Accept the resulting card afterwards — lands the work on the upstream trunk"
+        type: boolean
+        default: false
+
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run the smoke test inside the backend container
+        id: turn
+        env:
+          PROMPT: ${{ inputs.prompt }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          PROJECT_NAME: ${{ inputs.project_name }}
+          USER_HANDLE: ${{ inputs.user_handle }}
+        run: |
+          set -o pipefail
+          docker cp backend/scripts/device_selfhost_smoke.py \
+            cheese-backend-1:/tmp/device_selfhost_smoke.py
+          # -w / PYTHONPATH: the script is copied to /tmp but imports the app
+          # package, which is only importable from the container's /app root.
+          docker exec \
+            -w /app \
+            -e PYTHONPATH=/app \
+            -e PROJECT_ID="$PROJECT_ID" \
+            -e PROJECT_NAME="$PROJECT_NAME" \
+            -e USER_HANDLE="$USER_HANDLE" \
+            -e PROMPT="$PROMPT" \
+            cheese-backend-1 python /tmp/device_selfhost_smoke.py | tee /tmp/smoke.out
+          grep -oE '^topic=[0-9a-f-]+' /tmp/smoke.out | cut -d= -f2 \
+            > /tmp/smoke_topic || true
+          echo "topic=$(cat /tmp/smoke_topic 2>/dev/null)" >> "$GITHUB_OUTPUT"
+
+      # Sessions are named per work dir now, so a hardcoded `-t cheese` dumps the
+      # WRONG (legacy) pane — walk every session instead, plus the bits that
+      # explain a silent turn: did the CLI land, is the work dir writable by the
+      # device user, is the connector up.
+      # 采纳 IS the merge: this is the last leg of the loop — the accepted work
+      # fast-forwards the UPSTREAM's own trunk, with no cheese-specific workflow
+      # in that repo. The recorded note says exactly where it landed.
+      - name: Accept the card (lands the work upstream)
+        if: ${{ inputs.accept && success() }}
+        run: |
+          set -uo pipefail
+          TOPIC="$(cat /tmp/smoke_topic)"
+          [ -n "$TOPIC" ] || { echo "no topic recorded"; exit 1; }
+          docker cp backend/scripts/accept_topic_card.py cheese-backend-1:/tmp/ >/dev/null
+          docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
+            python /tmp/accept_topic_card.py "$TOPIC"
+
+      - name: Device screen state (on failure — what the box's claude was doing)
+        if: failure()
+        run: |
+          echo "=== sessions ==="
+          tmux ls 2>/dev/null || echo "no user tmux sessions"
+          for s in $(tmux ls -F '#{session_name}' 2>/dev/null); do
+            echo "--- pane: $s ---"
+            tmux capture-pane -p -t "$s" 2>/dev/null | grep -v '^\s*$' | tail -25 || true
+          done
+          echo "=== isolated homes (cheese CLI fetched? settings written?) ==="
+          for h in "$HOME"/.cheese/home/*/; do
+            echo "--- $h"; ls -la "$h.claude" 2>/dev/null | head -12
+          done
+          echo "=== newest topic worktrees (owner/mode as the device user sees them) ==="
+          ls -ld /home/nictheboy/cheese-workspaces/.worktrees/*/* 2>/dev/null | tail -5
+          echo "=== connector ==="
+          systemctl is-active cheese.service || true
+          journalctl -u cheese.service --since "20 minutes ago" --no-pager 2>/dev/null | tail -15 || true
+
+      # The pre-#102 launcher created ONE session literally named `cheese` that
+      # outlived every config change; the current launcher never uses that name,
+      # so retiring it is safe and stops it holding a stale claude forever.
+      - name: Retire the legacy shared session
+        if: always()
+        run: tmux kill-session -t cheese 2>/dev/null && echo "killed legacy 'cheese' session" || echo "no legacy session"

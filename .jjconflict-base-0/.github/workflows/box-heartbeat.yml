@@ -1,0 +1,73 @@
+name: Box heartbeat
+
+# The PROBE half of box monitoring: an hourly no-op job ON each box's
+# self-hosted runner. A box that is up completes its job in seconds; a box that
+# is down leaves the job queued. box-uptime.yml (the CHECK half, on a
+# GitHub-hosted runner) alerts when the latest heartbeat is stale or red.
+#
+# Why this shape: GITHUB_TOKEN can NEVER read the runners API (administration
+# isn't a grantable workflow permission — the old runner-status check 403'd on
+# every run since birth), but it CAN read workflow runs. So the boxes prove
+# liveness by RUNNING something instead of being polled.
+
+on:
+  schedule:
+    - cron: '0 * * * *' # hourly on the hour
+  workflow_dispatch: {}
+
+# A new heartbeat replaces a stuck one (box down → queued job) so dead
+# heartbeats don't pile up in the queue.
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
+concurrency:
+  group: box-heartbeat
+  cancel-in-progress: true
+
+jobs:
+  dev-box:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 5
+    steps:
+      - run: echo "dev box (192.168.16.5) alive — $(hostname) $(date -Iseconds)"
+
+  prod-box:
+    runs-on: [self-hosted, cheese-prod]
+    timeout-minutes: 5
+    steps:
+      - run: echo "prod box (192.168.16.8) alive — $(hostname) $(date -Iseconds)"
+
+  # The cheese-ci pool had NO liveness probe at all, even though every heavy job
+  # (test, migration-heads, e2e) moved onto it — a silently dead pool leaves
+  # those jobs queued, and `timeout-minutes` does not bound queueing (it bounds
+  # execution), so they would sit until GitHub's 24h limit. This is the exact
+  # failure the heartbeat exists for: the dev-box runner once died silently for
+  # 25h after an OOM kill, and these VMs run `pytest -n auto` on 8G with
+  # OOMPolicy=continue.
+  #
+  # This proves AT LEAST ONE of cheese-ci-runner-{1..3} is alive, not all three:
+  # provision.sh registers every machine with the single shared label
+  # `cheese-ci` (see deploy/ci-runner/provision.sh), so there is no way to
+  # address one machine from here. Catching a partial outage from an ALERT needs
+  # per-machine labels (`--labels cheese-ci,<name>`) plus a matrix job — that is
+  # an ops step on the machines, deliberately NOT done blind from a sandbox;
+  # until then the total-outage case (all heavy CI wedged) is the one that
+  # actually stops work, and it is now covered. For an on-demand look at all
+  # three, box-diag.yml's `ci-pool` job already does it: three concurrent jobs on
+  # the one shared label cannot land on the same machine, since each VM has a
+  # single slot.
+  #
+  # Deliberately NOT that same three-way fan-out here: this workflow runs hourly
+  # and feeds an alert, so it must never need more of the pool than a merge burst
+  # leaves free — a heartbeat job queued behind test + migration-heads + e2e is
+  # indistinguishable from death. box-uptime.yml only alerts after TWO
+  # consecutive heartbeats fail, which a burst does not survive, but there is no
+  # reason to spend the pool to find that out. One job needs one free slot.
+  ci-pool:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 5
+    steps:
+      - run: echo "cheese-ci pool alive — $(hostname) $(date -Iseconds)"
