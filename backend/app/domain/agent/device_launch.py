@@ -26,6 +26,7 @@ from pathlib import Path
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
 from app.domain.agent.hooks_substrate import CHEESE_HOOK_SCRIPT, hooks_settings
+from app.domain.agent.service import CLAUDE_BASE_CMD
 
 # First-launch gates (Claude Code 2.1.x) for $HOME/.claude.json, kept here as the
 # readable statement of what the launch script writes inline. Without the
@@ -343,7 +344,7 @@ cd "$CHEESE_WORK"
 # session keeps running on the device and re-opening the screen re-attaches to it
 # (same hosting as the local tmux backend; the PTY mirrors the pane for the human
 # viewer and the cheeselet types into it). Direct exec if tmux isn't installed.
-CLAUDE="claude --dangerously-skip-permissions"
+CLAUDE="{CLAUDE_BASE_CMD}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 if command -v tmux >/dev/null 2>&1; then
   # The screen runs inside the connector's own tmux, so $TMUX points at ITS
