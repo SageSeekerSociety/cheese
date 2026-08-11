@@ -64,6 +64,35 @@
 15 个文件、全部新建（另加 `pyproject.toml` / `uv.lock` 各一行：pyyaml）。
 没有 alembic 迁移，没有触碰 `backend/app/domain/review/` 与 `topic/`。
 
+## 采纳时的合并冲突（已解）
+
+主分支上另一条线同时在改 CI，5 个 workflow 撞车。逐个语义化合并，不是二选一：
+
+- <&.github/workflows/test.yml> / <&.github/workflows/e2e.yml> —— 并发键统一成
+  `ci-*-${{ github.ref }}-${{ ref == main && sha || '' }}`（build.yml 早就是这个形状）。
+  按 `event_name` 分支的写法保护 main 的效果一样，但会让**非 main 分支的每次 push 各自成组、永不取消**，
+  白占那三个 cheese-ci 槽——而这段注释本身讲的就是省这几个槽。e2e 另外保留了本卡加的
+  顶层 `permissions: contents: read`（主分支那边没有）。
+- <&.github/workflows/build-tmux.yml> —— 取 30m。build-sandbox 的 60m 是**从零构建 sandbox 基底**的上限，
+  而这个 job 是 FROM 已完成的基底再叠 tmux+ttyd，实测 4.8m；照抄 60m 等于按错误的 job 定界，
+  还让那个单槽多被扣一倍时间。
+- <&.github/workflows/deploy-dev.yml> —— `ubuntu-latest`。上面那段（已合并的）注释写着这个 job
+  "只打印再退出，所以跑 hosted"，还记了它 2026-08-07 为送一行报错排了 1h45m 的队；
+  留 self-hosted 会跟注释自相矛盾。timeout 5 两边一致，保留。
+- <&.github/workflows/frontend.yml> —— 两边各写了一份，取并集：
+  本卡的 SHA 钉版 + 工具链存在性校验 + ratchet typecheck + ratchet 自测，
+  主分支的 `persist-credentials: false` + vue-tsc 堆内存上调 + **vitest 全量套件**（本卡漏了）。
+  pnpm 走 corepack 认 `packageManager`（9.15.3），不用 `pnpm/action-setup` 硬钉 11——
+  那会盖掉仓库钉的版本，正是 `--frozen-lockfile` 要防的漂移。
+
+合并暴露了两个真问题，一并修了：
+
+1. <&frontend/vite.config.ts> —— 两份意图凑到一起才会炸：`scripts/*.test.mjs` 是 node:test 文件，
+   却落在 vitest 默认 include 里，vitest 以 "No test suite found" 把整轮判红。
+   给 `test.exclude` 加了 `scripts/**`（保留 `configDefaults.exclude`）。
+2. <&.github/workflows/ops-guard.yml> —— 主分支新加了「Action 必须钉 commit SHA」这条仓库守卫，
+   本卡的 workflow 早于该规则，`@v4` 被判红。已钉成仓库里既有的那两个 SHA。
+
 ## 下一步
 
 第 4 步（`pull_request_review` 触发执行，从 device-smoke 只读起步）不在本卡范围内。

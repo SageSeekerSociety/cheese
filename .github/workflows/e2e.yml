@@ -16,26 +16,34 @@ on:
       - 'e2e/**'
       - '.github/workflows/e2e.yml'
 
-# A single self-hosted runner serves this repo, so superseded runs must not
-# queue behind each other (deploys share the same runner). test.yml and
-# build.yml already do this; e2e.yml was the one workflow still missing it —
-# any backend/frontend change triggers all three at once, and without this an
-# e2e run for a superseded commit keeps running to completion instead of
-# being cancelled (measured: only ~1.7% of e2e runs were ever cancelled, vs
-# 15%/33% for test/build).
-# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
-# each merge in its own group: with a shared `github.ref` key, a second merge
-# cancelled the first one's run and main was left with no result for that
-# commit. build.yml already keyed on sha for main; these did not.
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to. Jobs that DO need more (the
-# `scope` gh-api jobs) declare it at job level, which overrides this.
+# `scope` gh-api job) declare it at job level, which overrides this. test.yml
+# carries the same block.
 permissions:
   contents: read
 
+# Superseded runs must not occupy the finite self-hosted capacity (three
+# cheese-ci slots, one per pool machine). test.yml and build.yml already do
+# this; e2e.yml was the one workflow still missing it — any backend/frontend
+# change triggers all three at once, and without this an e2e run for a
+# superseded commit keeps running to completion instead of being cancelled
+# (measured: only ~1.7% of e2e runs were ever cancelled, vs 15%/33% for
+# test/build).
+#
+# Keyed by commit sha on main, same as build.yml and test.yml — a ref-only key
+# lets each merge cancel the previous commit's still-running suite, and a
+# cancelled run is not a red run, so main can carry code this workflow never
+# finished checking with nothing on the commit to say so. The scope job below
+# already skips main pushes whose tree passed on the PR, so anything reaching
+# the e2e job is a commit CI has not seen. Non-main refs (PR merge refs) keep
+# the ref-only key, so repeated pushes to one PR still supersede each other —
+# which is why the key branches on the ref and not on the event name: an
+# event-name key would give every non-main push its own group and cancel
+# nothing, spending the very capacity this comment is about.
 concurrency:
-  group: ci-e2e-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-e2e-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: true
 
 jobs:
   # See test.yml: merged squash commits contain the exact PR tree already gated.
@@ -187,7 +195,11 @@ jobs:
         working-directory: e2e
         run: pnpm exec playwright install --with-deps chromium
 
-      # The runner is the dev box, which already serves the deployment on 8081.
+      # Non-default ports: this job used to run on the dev box, which serves the
+      # dev deployment on 8081, and Playwright died with "8081 is already used"
+      # before a single test ran. It now runs on the cheese-ci pool where
+      # nothing else listens, but the overrides stay — they cost nothing and the
+      # config's defaults (8081/3000) still collide with a local dev stack.
       - name: Run E2E tests
         working-directory: e2e
         env:
@@ -207,3 +219,19 @@ jobs:
           name: playwright-report
           path: e2e/playwright-report/
           retention-days: 7
+
+      # Same reclaim test.yml does, and for the same reason: every run's
+      # postgres service container leaves an anonymous volume behind. This job
+      # had no reclaim at all, and nothing else on a pool machine removes them
+      # — deploy-docker.sh never runs here, and ci-runner/deps.sh's weekly cron
+      # is `docker system prune -af` WITHOUT `--volumes`, which does not touch
+      # volumes. So e2e's volumes only ever got swept when a test job happened
+      # to land on the same machine afterwards. On the dev box this exact leak
+      # reached 57 volumes / 19GB and failed a run with "No space left on
+      # device"; these pool VMs have 40G. Only volumes no container references
+      # are removed.
+      - name: Reclaim the service containers' volumes
+        if: always()
+        run: |
+          docker volume prune -f >/dev/null 2>&1 || true
+          df -h / | tail -1

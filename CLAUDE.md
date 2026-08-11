@@ -112,12 +112,19 @@ work here — conftest strips them on purpose (see the comment at the top of the
 file) — but it never touches global config, which is why the `git config` route
 does. Verified: with the identity set the whole batch goes green.
 
-One sandbox gap is left, and it is **missing host tooling, not a code defect**.
-Don't spend time re-diagnosing it:
+Two sandbox gaps are left, and both are **missing host setup, not code defects**.
+Don't spend time re-diagnosing them:
 
 - **No procps** (`ps`/`pgrep`/`kill` binaries absent; bash's `kill` is a builtin
   only) → 22 failures in `test_machine_service.py`, `test_tmux_control.py` with
   `FileNotFoundError: 'kill'`.
+- **No provider credentials** → 1 failure,
+  `test_market_api.py::test_market_lists_ai_and_compute_pools`. A profile's
+  `available` is `bool(auth_token or oauth_token)` (`app/domain/agent/profiles.py`),
+  so with `settings.anthropic_auth_token` unset the default AI pool honestly
+  reports unavailable. Any non-empty value clears it —
+  `ANTHROPIC_AUTH_TOKEN=dummy-for-test uv run pytest tests/integration/test_market_api.py`
+  goes green; nothing calls the provider.
 
 ## Linting & Type Checking
 

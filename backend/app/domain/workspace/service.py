@@ -994,7 +994,18 @@ def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
                 except OSError:
                     pass
         try:
-            _git(repo, "checkout", "-q", base)
+            # `--force` is what makes the "no conflict possible" above true.
+            # Without it `git checkout` REFUSES whenever the shared tree holds a
+            # local modification to a file that differs between the current HEAD
+            # and `base` ("Your local changes ... would be overwritten by
+            # checkout ... Aborting"), which is precisely the state this function
+            # exists to clean up. The `reset --hard` on the very next line
+            # discards those modifications anyway, so refusing protects nothing —
+            # it only wedges the sync. Observed 2026-08-11: an accept failed here
+            # with a file list spanning several unrelated topics, and because
+            # this runs AFTER the ref move (see the caller) the merge had already
+            # landed while the user was told "采纳未完成：合并出错".
+            _git(repo, "checkout", "-q", "--force", base)
             _git(repo, "reset", "-q", "--hard", sha)
             return
         except ValidationError as exc:
@@ -1070,7 +1081,30 @@ def _merge_ref_into_base(
             _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
         except ValidationError:
             continue  # base moved concurrently (another accept landed) — retry
-        _sync_shared_checkout(repo, base, new_sha)
+        # Past this point the merge is DURABLE: the CAS above already advanced
+        # `base` to new_sha. Syncing the shared working tree is housekeeping for
+        # the readers of that directory (list_files/read_file/exec_in_sandbox
+        # with topic_id=None, and the sandbox bind-mount) — a failure there
+        # leaves them reading stale files, which is worth shouting about, but it
+        # is NOT a failed merge. Letting it raise told the user "采纳未完成：
+        # 合并出错" about work that was already on the base branch, and invited a
+        # re-accept of an already-merged topic (observed 2026-08-11).
+        try:
+            _sync_shared_checkout(repo, base, new_sha)
+        except ValidationError as exc:
+            logger.exception(
+                "merge landed (%s -> %s) but the shared checkout could not be "
+                "synced; the shared directory is stale until the next accept "
+                "or sync touches it",
+                base,
+                new_sha,
+            )
+            return {
+                "merged": True,
+                "branch": merge_ref,
+                "into": base,
+                "sync_failed": str(exc),
+            }
         return {"merged": True, "branch": merge_ref, "into": base}
     return {
         "merged": False,
