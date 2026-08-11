@@ -40,6 +40,9 @@ def _child_kind(parent: Topic) -> TopicKind:
     split into sub-tasks, which is the same call Claude Code's agent teams make
     (a teammate cannot spawn teammates). Splitting work further means another
     task in the same room, not a deeper tree.
+
+    Enforcing that is `_placement`'s job, not this function's: this only names
+    what a child of a given kind IS.
     """
     return TopicKind.topic if parent.kind == TopicKind.root else TopicKind.task
 
@@ -94,6 +97,29 @@ class TopicService:
         self._blocks = BlockRepository(session)
         self._members = TopicMemberService(session)
 
+    async def _placement(self, parent: Topic) -> tuple[uuid.UUID, TopicKind]:
+        """Where a new child actually lands in the tree, and what it is.
+
+        `_child_kind` says a child of a room is work; this says work has no
+        children. A split requested from INSIDE a task (a 分身 that finds its
+        job needs to be two jobs) becomes another task in the same room, placed
+        beside its requester instead of below it — the tree stays 本体 > 房间 >
+        事, and the room keeps listing every piece of work it holds.
+
+        Nothing else about the request changes: the requesting task still
+        supplies the roster and the doc snapshot the child is born with, since
+        that is the context the work actually came from.
+        """
+        if parent.kind in (TopicKind.task, TopicKind.subtopic):
+            room_id = parent.parent_id
+            if room_id is None:
+                # A parentless task shouldn't exist; if one does, 本体 holds the
+                # sibling rather than letting the tree grow a second level here.
+                project = await self._projects.get(parent.project_id)
+                room_id = (project.root_topic_id if project else None) or parent.id
+            return room_id, TopicKind.task
+        return parent.id, _child_kind(parent)
+
     async def create(
         self,
         *,
@@ -114,7 +140,7 @@ class TopicService:
             parent = await self._repo.get(parent_id)
             if parent is None:
                 raise NotFoundError("Parent topic not found")
-            kind = _child_kind(parent)
+            parent_id, kind = await self._placement(parent)
         topic = await self._repo.add(
             project_id=project_id,
             title=title,
@@ -231,17 +257,27 @@ class TopicService:
         if topic.status == TopicStatus.archived:
             return topic
         await self._archive_one(topic, by=by)
-        await self._archive_children(topic, by=by)
+        await self.archive_children(topic, by=by)
         await self._session.flush()
         return topic
 
-    async def _archive_children(self, topic: Topic, *, by: str) -> None:
+    async def archive_children(self, topic: Topic, *, by: str) -> list[Topic]:
+        """Archive a topic's still-active descendants; returns the ones it took.
+
+        Public because 采纳即归档 needs the same cascade (review/services.py):
+        accepting a room used to archive only the room and leave the work inside
+        it running — active tasks with no parent context and no way back, the
+        exact orphans this cascade exists to prevent.
+        """
+        taken: list[Topic] = []
         children = await self._repo.list_children(topic.id)
         for child in children:
             if child.status == TopicStatus.archived:
                 continue
             await self._archive_one(child, by=by, cascaded_from=topic.title)
-            await self._archive_children(child, by=by)
+            taken.append(child)
+            taken += await self.archive_children(child, by=by)
+        return taken
 
     async def _archive_one(
         self, topic: Topic, *, by: str, cascaded_from: str | None = None
@@ -326,8 +362,7 @@ class TopicService:
         # 私聊不是话题树的父节点 (spec §1): upgrading a block out of a private
         # chat lands a real topic under the project root, not under the chat
         # (which list_for_project hides → would be an invisible orphan).
-        parent_id = parent.id
-        kind = _child_kind(parent)
+        parent_id, kind = await self._placement(parent)
         if parent.is_private:
             project = await self._projects.get(block.project_id)
             root_id = project.root_topic_id if project else None
@@ -397,11 +432,15 @@ class TopicService:
         # follow-up work starts a new topic from the conclusion (升级), not here.
         if parent.status == TopicStatus.archived:
             raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
+        # 拆 from inside a task lands the new task BESIDE it in the same room
+        # (work doesn't nest) — the roster and doc snapshot below still come
+        # from `parent`, the task this work was actually split out of.
+        placed_under, kind = await self._placement(parent)
         new_topic = await self._repo.add(
             project_id=parent.project_id,
             title=title,
-            parent_id=parent.id,
-            kind=_child_kind(parent),
+            parent_id=placed_under,
+            kind=kind,
             created_by=created_by,
         )
         # Inherit the parent's roster (not just the requested owner): a 分身-

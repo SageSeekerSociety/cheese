@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -86,6 +87,17 @@ class Topic(UuidPk, Timestamps, Base):
     compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # git branch backing this topic (spec §6.3); sub-topics branch from parent.
     branch_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # 进度层: the checklist 芝士 keeps while working, folded from Claude Code's
+    # Task tool events. A `task` "carries the branch, the accept card and the
+    # progress" (see TopicKind) — the branch and the card had a row, the progress
+    # did not: it lived only in the container's session file, which dies with the
+    # machine and is freed at accept. Hence "换了机器不知道做到哪".
+    #   {"session_id": str | None,   # whose ids the items are (Claude numbers
+    #                                #  tasks per session; a new session restarts)
+    #    "items": [{"id", "subject", "status"}],
+    #    "eids": [str]}              # folded hook event-ids, so a spool replay
+    #                                #  can't fold the same TaskCreate twice
+    progress: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the

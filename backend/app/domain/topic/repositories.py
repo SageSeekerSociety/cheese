@@ -138,6 +138,25 @@ class TopicRepository:
         topic.session_id = session_id
         await self._session.flush()
 
+    async def set_progress(
+        self,
+        topic: Topic,
+        *,
+        items: list[dict],
+        eids: list[str],
+        session_id: str | None,
+    ) -> None:
+        """Replace the topic's checklist (进度层). Whole-list write, which is safe
+        precisely because there is one writer: the turn holding this topic's lock.
+        Stamped with the Claude session the item ids came from — a later turn can
+        only keep folding into these ids if it resumes THAT session."""
+        topic.progress = {
+            "session_id": session_id,
+            "items": items,
+            "eids": eids,
+        }
+        await self._session.flush()
+
     # ---- 话题级未读 (Feishu-style badges) -------------------------------
 
     async def unread_counts(

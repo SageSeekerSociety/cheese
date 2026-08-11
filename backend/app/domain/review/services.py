@@ -298,6 +298,40 @@ class AcceptService:
             raise NotFoundError("Topic not found")
         return topic
 
+    async def _archive_accepted(
+        self, topic: Topic, *, decided_by: str | None, now: datetime
+    ) -> None:
+        """采纳即归档 (spec §6.3) — CASCADING, exactly like manual 归档.
+
+        Accepting used to archive the accepted topic alone. Manual 归档 has
+        always taken the work inside with it (归档整件事，分身是这件事的一部分);
+        accept, which is how a topic normally ends, did not — so accepting a
+        room left its tasks running with an archived parent, and each one kept
+        a sandbox container alive for work nobody could deliver anymore.
+
+        Containers are freed for every topic archived here, the accepted one and
+        the cascaded ones alike; they are recreated on demand if anything is
+        ever un-archived and resumed.
+        """
+        from app.domain.topic.services import TopicService
+        from app.domain.workspace import service as ws
+
+        topic.status = TopicStatus.archived
+        topic.accepted_by = decided_by
+        topic.accepted_at = now
+        topic.archived_at = now
+        # The cascade's event blocks read 「随父话题…一同归档」 and name the
+        # accepter as their author; an auto-finished PR accept has no human in
+        # hand, so the platform signs those.
+        cascaded = await TopicService(self._session).archive_children(
+            topic, by=decided_by or "cheese"
+        )
+        for freed in (topic, *cascaded):
+            try:
+                ws.stop_topic_container(freed.id)
+            except Exception:  # noqa: BLE001 — best effort, never fatal
+                pass
+
     async def _card_or_404(self, card_id: uuid.UUID) -> AcceptCard:
         card = await self._repo.get(card_id)
         if card is None:
@@ -706,18 +740,9 @@ class AcceptService:
             # and fell back, even though there's no push outcome to report.
             card.note = _with_pr_degrade_note("", pr_degrade_reason)
 
-        # Topic is done → free its long-lived sandbox container (it would be
-        # recreated on demand if the archived topic is ever resumed).
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
-
-        # 采纳即归档 (spec §6.3).
-        topic.status = TopicStatus.archived
-        topic.accepted_by = decided_by
-        topic.accepted_at = now
-        topic.archived_at = now
+        # Topic is done → archive it (with anything unfinished inside it) and
+        # free the sandbox containers that were serving it.
+        await self._archive_accepted(topic, decided_by=decided_by, now=now)
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -1839,8 +1864,6 @@ class AcceptService:
         did not succeed, but a later successful one already carried this commit.
         Same archive either way; the wording must not claim the card's own
         deploy went green when it didn't."""
-        from app.domain.workspace import service as ws
-
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
         if landed_via is None:
@@ -1865,14 +1888,7 @@ class AcceptService:
                 "所以代码确实已经上线，闸门满足。\n"
                 f"{landed_via.url or ''}\n{card.pr_url}"
             )
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
-        topic.status = TopicStatus.archived
-        topic.accepted_by = card.decided_by
-        topic.accepted_at = now
-        topic.archived_at = now
+        await self._archive_accepted(topic, decided_by=card.decided_by, now=now)
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(topic, message)
@@ -2010,16 +2026,7 @@ class AcceptService:
         card.decided_at = now
         card.note = note[:2000]
 
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
-
-        # 采纳即归档 (spec §6.3).
-        topic.status = TopicStatus.archived
-        topic.accepted_by = decided_by
-        topic.accepted_at = now
-        topic.archived_at = now
+        await self._archive_accepted(topic, decided_by=decided_by, now=now)
 
         await self._session.flush()
         await self._session.refresh(card)
