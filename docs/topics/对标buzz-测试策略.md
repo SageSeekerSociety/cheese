@@ -125,12 +125,22 @@ buzz 的 `AGENTS.md`（就是它的 `CLAUDE.md`）比我们的 <&CLAUDE.md> 长�
 
 ## 落到行动上
 
-值得做的只有三条，都很小，**本轮按约束没有动代码**：
+值得做的只有三条，都很小，**已全部落地**：
 
 | 建议 | 落点 | 理由 |
 |---|---|---|
-| 端口占用时校验身份，不匹配就报错退出 | <&.claude/scripts/dev-db.sh> | 现在会静默复用别人的 PG，把"端口冲突"伪装成一堆测试失败 |
-| 加 `--only-changed=origin/main` 的预推送入口 | Taskfile / <&e2e/playwright.config.ts> 旁 | 一行命令换一个短得多的反馈环 |
+| 端口占用时校验身份，不匹配就报错退出 | <&.claude/scripts/dev-db.sh> | 原来会静默复用别人的实例，把"端口冲突"伪装成一堆测试失败 |
+| 加 `--only-changed=origin/main` 的预推送入口 | <&e2e/Taskfile.yml>（`test:changed`） | 一行命令换一个短得多的反馈环 |
 | `video: 'retain-on-failure'` | <&e2e/playwright.config.ts> | 一行配置；CI runner 就是 dev box，失败现场难复现 |
+
+### 落地时发现：真正静默的那条是 Redis，不是 Postgres
+
+写第一条时才看清楚风险的分布，和上面第 2 节的判断有出入，记在这里：
+
+- **Postgres 其实不会静默复用。** `pg_running()` 查的是我们自己 `$PGDATA` 里的 postmaster，端口被外人占着时它返回 false，接着 `pg_ctl start` 会因为 bind 失败而报错退出——响是响的，只是错误被埋在 log tail 里。真正会错的是**端口对不上**：同一个数据目录用不同的 `CHEESEX_DEV_PG_PORT` 再起一次，会打印 "already running on port 5433" 然后导出另一个端口的连接串。
+- **Redis 才是真的静默。** `redis_running()` 只是往端口上 `ping` 一下，**任何** Redis 都能满足它；而默认端口 6379 正是标准端口，dev box 上一定有真的 Valkey 在跑。也就是说：在门禁 runner（就是 dev box）上跑 dev-db.sh，测试会直接连到线上开发环境那个 Valkey 上去，限流锁定和会话状态双向串。
+- **`stop` 比 `start` 更危险。** 旧的 `cmd_stop` 只要 ping 得通就 `shutdown nosave`——那会**关掉别人的 Redis**。
+
+身份判据用的是"数据目录"而不是版本号：Redis 比 `CONFIG GET dir`（服务端自己的 cwd），Postgres 读 `postmaster.pid` 第 4 行的端口。拒绝的方向取安全侧——`CONFIG GET` 被改名或禁用导致问不出来，也算"不是我们的"，因为我们自己起的那个从不拒答。
 
 明确**不做**的：不建 conformance 层（缺形式化规约这个前提）、不建 `benchmarks/` 或性能 CI job（buzz 自己也没有，且我们的 runner 环境会让时延断言变噪声）、不学枚举登记制（新测试默认要能跑）。
