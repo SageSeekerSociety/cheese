@@ -297,6 +297,14 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 | @测试策略与可运行性对比 | 进行中（针对沙箱无 docker 的真痛点） |
 | @仓库自解释能力对比 | ✅ 已回流，结论已并入上方 |
 
+## 衍生设计：并行话题冲突预警（待拍板，未开工）
+
+起因是 wangchangxin 反馈「conflict 现在经常遇到」。查 Buzz 怎么做的，答案是 **它没有登记表，它从 git 算**——`check-branch-skew.sh` 取「main 改过的文件」∩「本分支改过的文件」，非空就拦 push。
+
+完整设计、对「登记表」方案的四条保留意见、以及三条局限，见 <&docs/topics/并行话题冲突预警设计.md>。
+
+一句话：**同样的目的，算出来而不是报上来。** 地基（`branch_for_topic`、`merge_topic` 单一入口、同项目共仓、`summon` 通路）全部已存在。
+
 ## 顺带发现（与 Buzz 无关，但需要拍板）
 
 `docs/` 下有 7 个受版本控制的商业材料文件：`bp.md` / `bp-v2.md` / `bp-brief.md` / `bp.docx` / `bp-v2.docx` / `bp.pdf` / `gen-bp.js`。
