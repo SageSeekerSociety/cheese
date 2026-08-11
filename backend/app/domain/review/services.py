@@ -964,7 +964,13 @@ class AcceptService:
             # GitHub refused (405/409). NOT necessarily transient — a
             # merge_method the repo disabled refuses on every poll forever —
             # so the reason goes on the card rather than into the void.
-            self._note_merge_blocked(card=card, reason=result.blocked_reason or "")
+            self._note_merge_blocked(
+                card=card,
+                topic=topic,
+                reason=result.blocked_reason or "",
+                chat_service=chat_service,
+                runner=runner,
+            )
             await self._session.flush()
             return
         merge_sha = result.sha
@@ -1094,21 +1100,41 @@ class AcceptService:
             "话题保持 active，需要人决定：重开 PR，或撤销这次采纳。",
         )
 
-    def _note_merge_blocked(self, *, card: AcceptCard, reason: str) -> None:
-        """Put GitHub's merge refusal on the card's `note` — the one surface
-        both 芝士 and the user actually read. Before this existed a refusal
-        left `note` empty, so a permanently-unmergeable PR looked exactly like
-        a healthy one still waiting on CI.
+    def _note_merge_blocked(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        reason: str,
+        chat_service,
+        runner,
+    ) -> None:
+        """Put GitHub's merge refusal on the card's `note` AND wake 芝士 up.
+        Before this existed a refusal left `note` empty, so a permanently-
+        unmergeable PR looked exactly like a healthy one still waiting on CI.
 
-        Two things the 60s poll makes mandatory:
+        The note alone was still not enough (2026-08-11): a note is something
+        you have to be looking at. The most common refusal — merge conflicts —
+        is exactly the kind 芝士 can fix in its own workspace, so this summons
+        it the same way `_nudge_pr_fix` does for a red check. Without the
+        summon nobody is working the card and the topic just sits at `pr_open`
+        forever (真实案例: PR #242). Note that the conflict dispatch in
+        `routes/accept.py` never covers this — that one only runs for the
+        synchronous merge at the moment a human clicks 采纳, not for the poll.
+
+        Three things the 60s poll makes mandatory:
 
         - **No spam.** The note is rewritten only when the text actually
           changes, so an unchanging reason costs one write, not one per poll.
           (Stricter than `_nudge_pr_fix`'s prefix check, which can't notice a
           405 turning into a 409.)
+        - **One summon per reason.** The dispatch hangs off that same "the note
+          really changed" test rather than a prefix check, so a 405 that turns
+          into a 409 gets a fresh nudge while an unchanging one stays quiet.
         - **No clobbering.** `❌ 部署失败` outranks this and is never
           overwritten — that note describes a merged PR whose deploy broke,
-          which is strictly more urgent than "not merged yet".
+          which is strictly more urgent than "not merged yet" — and, since it
+          returns before the write, never summons either.
         """
         if card.note.startswith("❌"):
             return
@@ -1118,6 +1144,22 @@ class AcceptService:
             return
         card.note = note
         logger.warning("PR merge refused for card %s: %s", card.id, reason)
+        runner.submit(
+            chat_service,
+            topic.id,
+            author="system",
+            content=(
+                f"PR #{card.pr_number}（{card.pr_url}）的检查全绿，"
+                "但 GitHub 拒绝合并：\n"
+                f"```\n{reason[:1500]}\n```\n"
+                "最常见的原因是这个分支和主分支冲突了。请在这个话题的工作区里把主分支"
+                "合并进来、解决冲突后提交（不需要、也没法自己推到 GitHub），平台会自动"
+                "把新提交同步到这个 PR，检查会自动重新跑，能合并时平台会自动合并。\n"
+                "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
+                "请在话题里说清楚卡在哪、需要谁做什么。"
+            ),
+            summon=True,
+        )
 
     def _nudge_pr_fix(
         self,
