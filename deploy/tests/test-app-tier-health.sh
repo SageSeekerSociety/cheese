@@ -332,6 +332,112 @@ test_rollback_restores_exact_previous_images() {
   echo "PASS: rollback restores exact previous image references"
 }
 
+# Handing the bind mounts to another uid is the one step of a deploy that
+# outlives a failure: everything before it can abort and leave the box exactly as
+# it was, nothing after it can. On 2026-08-11 it ran third of five and the fourth
+# step aborted, so dev sat on a 1001 backend with a 1000 workspace tree — a
+# project-wide 422 until the next deploy (run 31466502982). These three tests pin
+# the ordering and the undo.
+ownership_run() {
+  local run_dir="$1" scenario="$2"
+  shift 2
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO="$scenario" \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
+    BACKEND_IMAGE=repo/backend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha \
+    DEPLOY_APP_IMAGE_SOURCE=local \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    WORKSPACES_HOST_PATH="$run_dir/workspaces" \
+    UPLOADS_HOST_PATH="$run_dir/uploads" \
+    APPHOME_HOST_PATH="$run_dir/apphome" \
+    HOME="$run_dir" \
+    "$@"
+}
+
+# Line number of the first log line matching a pattern, or "" if absent. The
+# `|| true` is load-bearing: this file runs under `set -e -o pipefail`, so a
+# no-match grep would kill the run silently and a regression would read as a
+# crash with no message instead of a named failure.
+log_line() { grep -n -- "$2" "$1" 2>/dev/null | head -n 1 | cut -d: -f1 || true; }
+
+new_ownership_run_dir() {
+  mkdir -p "$ROOT/tmp"
+  local dir
+  dir="$(mktemp -d "$ROOT/tmp/ownership-order.XXXXXX")"
+  mkdir -p "$dir/workspaces" "$dir/uploads" "$dir/apphome"
+  : > "$dir/docker.log"
+  printf '%s' "$dir"
+}
+
+test_ownership_handover_is_the_last_step_before_up() {
+  run_dir="$(new_ownership_run_dir)"
+  log="$run_dir/docker.log"
+  ownership_run "$run_dir" healthy \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+    "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1 \
+    || { rm -rf "$run_dir"; fail "healthy deploy failed"; }
+
+  migrate="$(log_line "$log" 'run --rm backend')"
+  handover="$(log_line "$log" ":/target")"
+  up="$(log_line "$log" 'up -d backend frontend')"
+  [ -n "$migrate" ] && [ -n "$handover" ] && [ -n "$up" ] \
+    || { rm -rf "$run_dir"; fail "expected migrate/handover/up in the log"; }
+  [ "$migrate" -lt "$handover" ] \
+    || { rm -rf "$run_dir"; fail "the handover still runs before the migration — a failed migration would strand the box"; }
+  [ "$handover" -lt "$up" ] \
+    || { rm -rf "$run_dir"; fail "the handover must precede the swap"; }
+  rm -rf "$run_dir"
+  echo "PASS: ownership changes hands after the migration, right before the swap"
+}
+
+test_rollback_hands_the_mounts_back() {
+  run_dir="$(new_ownership_run_dir)"
+  log="$run_dir/docker.log"
+  if ownership_run "$run_dir" rollback \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+    "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "rollback scenario unexpectedly passed health checks"
+  fi
+
+  handback="$(log_line "$log" 'chown -h 1001:1001')"
+  rollback_up="$(log_line "$log" 'compose-up-env .*IMAGE_TAG=oldsha')"
+  [ -n "$handback" ] \
+    || { rm -rf "$run_dir"; fail "rolled the images back but not the ownership — the old backend cannot read the tree"; }
+  [ -n "$rollback_up" ] && [ "$handback" -lt "$rollback_up" ] \
+    || { rm -rf "$run_dir"; fail "the hand-back must finish before the old image starts"; }
+  rm -rf "$run_dir"
+  echo "PASS: a rollback hands the bind mounts back before starting the old image"
+}
+
+test_rollback_leaves_an_already_migrated_box_alone() {
+  run_dir="$(new_ownership_run_dir)"
+  log="$run_dir/docker.log"
+  # Markers say the trees already belong to the current uid, so this deploy moved
+  # nothing and the previous image shares that uid. Handing anything back here
+  # would be the change that breaks the rollback.
+  for dir in workspaces uploads apphome; do : > "$run_dir/$dir/.cheese-uid-1000"; done
+
+  if ownership_run "$run_dir" rollback \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+    "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "rollback scenario unexpectedly passed health checks"
+  fi
+
+  if grep -q '1001:1001' "$log"; then
+    rm -rf "$run_dir"
+    fail "handed a migrated tree back to 1001 — that is what would break it"
+  fi
+  grep -q 'compose-up-env .*IMAGE_TAG=oldsha' "$log" \
+    || { rm -rf "$run_dir"; fail "the rollback itself did not happen"; }
+  rm -rf "$run_dir"
+  echo "PASS: a rollback on an already-migrated box touches no ownership"
+}
+
 test_operator_rejects_stale_frontend() {
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=frontend_stale \
@@ -353,10 +459,16 @@ test_operator_uses_registry_sha_width() {
   echo "PASS: operator drift check uses the registry's 7-character SHA tag"
 }
 
+# The only step in this suite that needs Python at all — it reads one `run:`
+# block out of a workflow file. Plain python3 is tried first and `uv run` is the
+# fallback: everything else here is bash against fakes, so the suite has to be
+# runnable where the backend venv does not exist, which is exactly the hosted CI
+# job that gates deploy/ changes.
 workflow_script() {
-  (
-    cd "$ROOT/backend"
-    uv run python - "$ROOT/.github/workflows/deploy-drift.yml" <<'PY'
+  local parser
+  mkdir -p "$ROOT/tmp"
+  parser="$(mktemp "$ROOT/tmp/drift-step.XXXXXX.py")"
+  cat > "$parser" <<'PY'
 import sys
 from pathlib import Path
 
@@ -372,7 +484,15 @@ for step in workflow["jobs"]["drift"]["steps"]:
 else:
     raise SystemExit("workflow drift step not found")
 PY
-  )
+  if python3 -c 'import yaml' >/dev/null 2>&1; then
+    python3 "$parser" "$ROOT/.github/workflows/deploy-drift.yml"
+  elif command -v uv >/dev/null 2>&1; then
+    (cd "$ROOT/backend" && uv run python "$parser" "$ROOT/.github/workflows/deploy-drift.yml")
+  else
+    rm -f "$parser"
+    fail "no python3 with PyYAML and no uv — cannot read the drift workflow"
+  fi
+  rm -f "$parser"
 }
 
 test_workflow_rejects_stale_frontend() {
@@ -405,6 +525,9 @@ case "$CASE" in
   local-images) test_local_app_images_skip_registry_pull ;;
   local-images-missing) test_local_app_images_must_exist ;;
   rollback-images) test_rollback_restores_exact_previous_images ;;
+  ownership-order) test_ownership_handover_is_the_last_step_before_up ;;
+  ownership-rollback) test_rollback_hands_the_mounts_back ;;
+  ownership-rollback-noop) test_rollback_leaves_an_already_migrated_box_alone ;;
   pull-retry) test_pull_retries_transient_failure ;;
   pull-exhausted) test_exhausted_pull_retries_still_fail_the_deploy ;;
   failed-reclaim) test_failed_deploy_reclaims_disk ;;
@@ -422,6 +545,9 @@ case "$CASE" in
     test_local_app_images_skip_registry_pull
     test_local_app_images_must_exist
     test_rollback_restores_exact_previous_images
+    test_ownership_handover_is_the_last_step_before_up
+    test_rollback_hands_the_mounts_back
+    test_rollback_leaves_an_already_migrated_box_alone
     test_pull_retries_transient_failure
     test_exhausted_pull_retries_still_fail_the_deploy
     test_failed_deploy_reclaims_disk

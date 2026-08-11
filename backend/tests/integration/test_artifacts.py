@@ -81,7 +81,14 @@ def test_artifact_requires_path(client):
 def test_app_artifact_and_preview(client, monkeypatch):
     """运行环境预览: `cheese serve` declares a RUNNING app; the preview resolves
     the container's published port live and returns kind=app + url."""
+    from app.api.routes import topics as topics_routes
     from app.domain.workspace import service as ws
+
+    def _answers(alive: bool):
+        async def _probe(_endpoint, **_kw):
+            return alive
+
+        return _probe
 
     pr = client.post("/api/projects", json={"name": "P"})
     pid = pr.json()["data"]["id"]
@@ -93,16 +100,28 @@ def test_app_artifact_and_preview(client, monkeypatch):
     )
     assert r.status_code == 200
 
-    # Container up → live URL.
-    monkeypatch.setattr(ws, "app_preview_url", lambda t: "http://127.0.0.1:55007")
+    # App up → a url a BROWSER can actually fetch: the backend's reverse proxy,
+    # NOT the container's published host port. That port is bound to the server's
+    # own loopback, so handing it out (the old behavior) rendered a white frame
+    # for everyone except someone running the whole platform locally.
+    monkeypatch.setattr(ws, "app_endpoint", lambda t: "127.0.0.1:55007")
+    monkeypatch.setattr(topics_routes.proxy, "probe", _answers(True))
     d = client.get(f"/api/topics/{tid}/preview").json()["data"]
-    assert d["kind"] == "app" and d["url"] == "http://127.0.0.1:55007"
-    assert d["path"] == "Vue dev server"
+    assert d["url"] == f"/api/topics/{tid}/app/", d
+    assert "127.0.0.1" not in (d["url"] or ""), "host loopback leaked to the browser"
+    assert d["kind"] == "app" and d["path"] == "Vue dev server"
+    assert d["container_up"] is True
+
+    # Container up but the server inside it died → no url, but say so distinctly:
+    # a published port with nothing answering is exactly the white-frame case.
+    monkeypatch.setattr(topics_routes.proxy, "probe", _answers(False))
+    d = client.get(f"/api/topics/{tid}/preview").json()["data"]
+    assert d["kind"] == "app" and d["url"] is None and d["container_up"] is True
 
     # Container down → declared but offline (url null), never a crash.
-    monkeypatch.setattr(ws, "app_preview_url", lambda t: None)
+    monkeypatch.setattr(ws, "app_endpoint", lambda t: None)
     d = client.get(f"/api/topics/{tid}/preview").json()["data"]
-    assert d["kind"] == "app" and d["url"] is None
+    assert d["kind"] == "app" and d["url"] is None and d["container_up"] is False
 
     # A later file artifact supersedes the app as the current preview.
     wt = ws.topic_worktree(__import__("uuid").UUID(pid), __import__("uuid").UUID(tid))

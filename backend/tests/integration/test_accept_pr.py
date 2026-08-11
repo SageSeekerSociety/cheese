@@ -78,6 +78,13 @@ class FakeGitHubPrClient:
         # number → GitHub's refusal reason (405/409); wins over a sha.
         self.merge_blocked_by_number: dict[int, str] = {}
         self.workflow_state_by_sha: dict[str, tuple[str, str]] = {}
+        # 人类授权动作前移: sha → the PR diff at that sha, as [(status, path)].
+        # None models GitHub's oversized-compare response (no `files` key).
+        # Unset shas answer with an empty diff, which is what every test that
+        # never pushes a second commit wants (授权时的 head == 现在的 head, so
+        # the poller doesn't even ask).
+        self.files_by_sha: dict[str, list[tuple[str, str]] | None] = {}
+        self.compare_calls: list[tuple[str, str]] = []
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -161,6 +168,12 @@ class FakeGitHubPrClient:
 
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
         return self.check_state_by_sha.get(ref, ("pending", "还没跑"))
+
+    async def compare_files(
+        self, *, owner, repo, base, head, token
+    ) -> list[tuple[str, str]] | None:
+        self.compare_calls.append((base, head))
+        return self.files_by_sha.get(head, [])
 
     async def merge_pull_request(
         self, *, owner, repo, number, token, commit_title=None, commit_message=None
@@ -886,7 +899,7 @@ def test_accept_still_degrades_on_a_422_that_is_not_already_exists(client, monke
 
 def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):
     """A plain (degrade-path) accepted card must not be touched by the poller
-    — regression guard for list_by_status filtering correctly."""
+    — regression guard for list_pr_open_on_active_topics filtering correctly."""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
