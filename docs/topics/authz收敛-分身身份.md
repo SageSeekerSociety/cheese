@@ -73,6 +73,15 @@ return not await roster_exists(topic_id)   # 无 roster → 放行
 - `can_manage_roster` **目前全仓没有任何调用点**，是死代码。它注释里「服务层自己还会查 role」只对 `TopicMemberService._require_manager` 成立，那条路确实查了，所以现在没有实际漏洞——但这个函数一旦被接上就直接开洞。建议：要么删，要么接上时同批去掉 fallback。
 - `authorize_topic_access` 的 fallback 是真在跑的。收法：先给这条分支加计数日志，确认线上没有真实流量走它，再改成拒绝。**顺序依赖**：必须等阶段二（拆 `is_agent` 短路）之前先确认存量话题的分身座位全部迁移完，否则分身立刻失去访问权。
 
+## 采纳受阻（需要有远端权限的人看一眼）
+
+验收卡处于 `conflict` 状态，平台拒绝再递新卡（「上一张验收卡卡在合并冲突上，解决冲突后由人重试采纳，不要再递一张」）——**所以这里没有"递卡"这个动作，只有人重新点采纳**。
+
+平台那次失败的说明里有**两条**原因，不是一条：
+
+1. `backend/app/domain/topic/services.py` 合并冲突 —— **已解**，语义合并保留双方意图。
+2. 「话题分支的 workflow 文件与 GitHub 默认分支不一致且无法同步」—— **没人处理过**。本地实测 `jj diff --from main@upstream -- .github/` 是 0 files changed，即相对**本机** main 无差异。但平台报的是与 **GitHub** main 的差异，而远端在这个沙箱里不可观测（fetch 不可用、gh token 对 refs/branches/pulls 全 403），且 `.github/workflows/` 被明确要求不许碰。若重试仍卡在这条，需要有远端权限的人处理。
+
 ## 交接：做到 X / 卡在 Y / 下一步 Z
 
 **做到 X** —— 阶段一全部完成并可验收：per-topic 分身身份（`cheese-<topic hex>`）、token 带 `a=` 声明、actor 落地、三处硬编码 handle 改成认 `looks_like_agent_handle`；外加本轮两个真 bug：@ 提及的空名单误判 + 跨话题 token 身份塌缩成 anonymous。
