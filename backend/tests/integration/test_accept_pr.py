@@ -16,7 +16,7 @@ Exercises both accept() branches:
 
 import subprocess
 import uuid as _uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -79,6 +79,13 @@ class FakeGitHubPrClient:
         # the poller doesn't even ask).
         self.files_by_sha: dict[str, list[tuple[str, str]] | None] = {}
         self.compare_calls: list[tuple[str, str]] = []
+        # 被顶替判定 (2026-08-11): the deploy workflow's run history (newest
+        # first, like GitHub's) and commit ancestry as compare reports it,
+        # keyed (base, head) → status. Unset pairs answer None ("GitHub gave
+        # nothing usable"), which must never read as "contained".
+        self.workflow_runs: list[github_pr.WorkflowRun] = []
+        self.compare_status_by_pair: dict[tuple[str, str], str] = {}
+        self.compare_status_calls: list[tuple[str, str]] = []
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -190,6 +197,15 @@ class FakeGitHubPrClient:
         self, *, owner, repo, workflow_file, head_sha, token
     ) -> tuple[str, str]:
         return self.workflow_state_by_sha.get(head_sha, ("pending", "还没触发"))
+
+    async def recent_workflow_runs(
+        self, *, owner, repo, workflow_file, token, limit: int = 30
+    ) -> list[github_pr.WorkflowRun]:
+        return self.workflow_runs[:limit]
+
+    async def compare_status(self, *, owner, repo, base, head, token) -> str | None:
+        self.compare_status_calls.append((base, head))
+        return self.compare_status_by_pair.get((base, head))
 
 
 def _fake_installation(repo: str = "acme/widgets"):
@@ -566,6 +582,154 @@ def test_poll_deploy_failure_keeps_topic_active_no_retry(client, monkeypatch):
         # A second poll (no retry configured) must not merge/archive on its own.
         _poll(client)
         assert _topic(client, tid)["status"] == "active"
+    finally:
+        _reset_client()
+
+
+def _merged_awaiting_deploy(client, monkeypatch) -> tuple[FakeGitHubPrClient, str]:
+    """Drive a card to exactly the state the 被顶替 tests below care about:
+    PR merged as `merge-sha-1`, topic still active, waiting on that commit's
+    deploy run. Returns (fake client, topic id)."""
+    fake = _pr_ready(client, monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    accepted = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    number = accepted["pr_number"]
+    fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
+    fake.merge_sha_by_number[number] = "merge-sha-1"
+    _poll(client)  # merges; the card now waits on merge-sha-1's deploy
+    assert _topic(client, tid)["status"] == "active"
+    return fake, tid
+
+
+def _deploy_run(
+    sha: str, *, conclusion: str, minutes: int, status: str = "completed"
+) -> github_pr.WorkflowRun:
+    """A deploy run `minutes` after "now" (i.e. after the merge the helper
+    above just made) — negative means before it."""
+    return github_pr.WorkflowRun(
+        head_sha=sha,
+        status=status,
+        conclusion=conclusion,
+        created_at=datetime.now(UTC) + timedelta(minutes=minutes),
+        url=f"https://github.com/acme/widgets/actions/runs/{sha}",
+        branch="main",
+    )
+
+
+def test_poll_deploy_cancelled_but_superseded_by_later_success_archives(
+    client, monkeypatch
+):
+    """2026-08-11, PR #251 的真实事故：这张卡自己那次部署是 `cancelled`（被后一次
+    部署顶替，concurrency 组的正常行为），平台却判成「需要人」，话题白白搁浅 4 小时
+    ——代码其实早就上线了。更晚的那次成功部署包含这个合并提交，就该正常归档。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        fake.workflow_state_by_sha["merge-sha-1"] = (
+            "failure",
+            "部署 workflow 失败：cancelled",
+        )
+        fake.workflow_runs = [_deploy_run("8470ac05", conclusion="success", minutes=5)]
+        # base = 那次成功部署的 commit, head = 我们的合并提交 → behind = 它包含我们.
+        fake.compare_status_by_pair[("8470ac05", "merge-sha-1")] = "behind"
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "accepted"
+        topic = _topic(client, tid)
+        assert topic["status"] == "archived"
+        assert topic["accepted_by"] == "alice"
+        assert fake.compare_status_calls == [("8470ac05", "merge-sha-1")]
+        # 归档理由必须写清楚：不是「本次部署成功了」，而是被更晚的成功部署带上线。
+        assert not card["note"].startswith("❌")
+        assert "cancelled" in card["note"]
+        assert "8470ac05" in card["note"]
+    finally:
+        _reset_client()
+
+
+def test_poll_deploy_cancelled_without_any_later_success_still_asks_a_human(
+    client, monkeypatch
+):
+    """现状不回退：没有任何更晚的成功部署时，仍然保持 active 并把判断交给人。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        fake.workflow_state_by_sha["merge-sha-1"] = (
+            "failure",
+            "部署 workflow 失败：cancelled",
+        )
+        # 部署历史里只有这次被取消的、和一次也失败了的 —— 一次成功都没有。
+        fake.workflow_runs = [
+            _deploy_run("merge-sha-1", conclusion="cancelled", minutes=1),
+            _deploy_run("older-sha", conclusion="failure", minutes=-30),
+        ]
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert card["note"].startswith("❌")
+        assert _topic(client, tid)["status"] == "active"
+        # 一次成功的都没有 → 根本不必去问 GitHub 包含关系.
+        assert fake.compare_status_calls == []
+    finally:
+        _reset_client()
+
+
+def test_poll_deploy_later_success_that_does_not_contain_the_commit_does_not_count(
+    client, monkeypatch
+):
+    """更晚 + 成功还不够，必须**包含**这个提交：compare 说 diverged（比如那次部署
+    跑在另一条线上）时，代码并没有上线，闸门不满足。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        fake.workflow_state_by_sha["merge-sha-1"] = (
+            "failure",
+            "部署 workflow 失败：cancelled",
+        )
+        fake.workflow_runs = [
+            _deploy_run("other-line", conclusion="success", minutes=5)
+        ]
+        fake.compare_status_by_pair[("other-line", "merge-sha-1")] = "diverged"
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert card["note"].startswith("❌")
+        assert _topic(client, tid)["status"] == "active"
+        assert fake.compare_status_calls == [("other-line", "merge-sha-1")]
+    finally:
+        _reset_client()
+
+
+def test_poll_deploy_earlier_success_never_counts(client, monkeypatch):
+    """边界：只认更晚的成功部署。早于这次合并的部署即便报 behind 也不算数
+    ——它跑的时候这个提交还不存在，不可能把它带上线。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        fake.workflow_state_by_sha["merge-sha-1"] = (
+            "failure",
+            "部署 workflow 失败：cancelled",
+        )
+        fake.workflow_runs = [
+            _deploy_run("stale-sha", conclusion="success", minutes=-60)
+        ]
+        fake.compare_status_by_pair[("stale-sha", "merge-sha-1")] = "behind"
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert card["note"].startswith("❌")
+        assert _topic(client, tid)["status"] == "active"
+        assert fake.compare_status_calls == []
     finally:
         _reset_client()
 

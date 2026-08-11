@@ -27,7 +27,7 @@ from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
-    from app.domain.review.github_pr import PullRequestStatus
+    from app.domain.review.github_pr import PullRequestStatus, WorkflowRun
 
 logger = logging.getLogger("cheesex.review")
 
@@ -37,6 +37,11 @@ logger = logging.getLogger("cheesex.review")
 # 失败", 把真正的 CI 失败通知整个吞掉, 见 _nudge_pr_fix).
 _REPUSH_FAILED_PREFIX = "⚠️ 平台自动重推失败"
 _POLL_PAUSED_PREFIX = "⚠️ 轮询暂停"
+
+#: 一次轮询里最多问 GitHub 多少次「这次成功部署包含我的提交吗」
+#: (`_later_successful_deploy`)。顶替我们的那次部署必然是合并之后最近的几次之一，
+#: 而这段代码每 60 秒跑一次 —— 无上限地遍历会把一次误报变成持续的 API 消耗。
+_MAX_SUPERSEDE_COMPARES = 5
 
 
 def _nudge_note_prefix(stage: str) -> str:
@@ -1269,6 +1274,16 @@ class AcceptService:
         if state == "pending":
             return
         if state == "failure":
+            # 这次部署没成功 ≠ 这段代码没上线 (2026-08-11, PR #251 的真实事故)。
+            # 问一句「有没有更晚的成功部署已经把这个提交带上去了」再下结论。
+            landed = await self._later_successful_deploy(
+                card=card, owner=owner, repo=repo, token=token, client=client
+            )
+            if landed is not None:
+                await self._finish_pr_accept(
+                    card=card, topic=topic, landed_via=landed, failed_tail=tail
+                )
+                return
             # wangchangxin 建议的默认值，评估后采纳为最终方案：topic 保持
             # active，复用卡5 webhook 通知房间，不自动重试，交给人判断。
             if not card.note.startswith("❌"):
@@ -1282,6 +1297,113 @@ class AcceptService:
             return
 
         await self._finish_pr_accept(card=card, topic=topic)
+
+    async def _later_successful_deploy(
+        self,
+        *,
+        card: AcceptCard,
+        owner: str,
+        repo: str,
+        token: str,
+        client,
+    ) -> "WorkflowRun | None":
+        """The deploy run that shipped this merge commit ANYWAY, or None.
+
+        2026-08-11, PR #251: the card's own deploy run came back `cancelled`,
+        so the poller stopped and asked for a human — but the code was already
+        live. `cancelled` is what GitHub does to a *pending* run when a newer
+        one enters the same concurrency group (`deploy-dev`), i.e. the most
+        common cause of a non-success deploy here is 被顶替, not breakage. The
+        run that superseded it deployed a commit that CONTAINS ours, so the
+        gate ("这段代码上线了没有") is satisfied and the topic must archive.
+        Applies to `failure` too: someone re-running the deploy successfully
+        ships the same commit just as thoroughly.
+
+        Two things this must NOT do, both of which would archive a topic whose
+        code never shipped:
+
+        - **完成 ≠ 成功.** Only the literal conclusion `success` counts —
+          `cancelled`/`skipped`/`neutral` are all "completed".
+        - **更晚才算.** A deploy that ran BEFORE this merge cannot contain it.
+          Runs come back newest-first, so scanning stops at the merge time
+          rather than walking the whole history.
+
+        Containment is decided by GitHub's compare API (`base...head` with
+        `base` = the successful run's commit, `head` = ours → `behind` or
+        `identical` means ours is in it). Deliberately not by cloning the repo
+        platform-side: the answer is one API call, and the platform holds no
+        checkout of the project's GitHub repo to run git in.
+
+        Best-effort by construction: every GitHub hiccup here returns None,
+        which lands back on the old "保持 active、告诉人" path. This check can
+        only ever turn a false alarm into an archive, never the reverse.
+        """
+        from app.domain.review.github_pr import GitHubPrError
+
+        merge_sha = card.pr_head_sha
+        merged_at = card.pr_merged_at
+        if not merge_sha:
+            return None
+        try:
+            runs = await client.recent_workflow_runs(
+                owner=owner,
+                repo=repo,
+                workflow_file=settings.accept_deploy_workflow_file,
+                token=token,
+            )
+        except GitHubPrError as exc:
+            logger.warning(
+                "card %s: cannot list deploy runs (%s) — treating the failed "
+                "deploy as final for this tick",
+                card.id,
+                exc,
+            )
+            return None
+
+        compares = 0
+        for run in runs:
+            # 只有 success 算数：completed 里还躺着 cancelled / skipped / neutral。
+            if run.conclusion != "success":
+                continue
+            # 认不出这次部署是什么时候跑的，就不敢拿它当「更晚」的证据。
+            if run.created_at is None:
+                continue
+            if merged_at is not None and run.created_at < merged_at:
+                # 列表是新→旧，再往下只会更早，没必要继续问 GitHub。
+                break
+            if run.head_sha == merge_sha:
+                return run  # 同一个 commit 上后来重跑成功了 —— identical，不必比较
+            if compares >= _MAX_SUPERSEDE_COMPARES:
+                logger.info(
+                    "card %s: stopped after %d containment checks — a still "
+                    "older successful deploy (if any) was not examined",
+                    card.id,
+                    compares,
+                )
+                break
+            compares += 1
+            try:
+                status = await client.compare_status(
+                    owner=owner,
+                    repo=repo,
+                    base=run.head_sha,
+                    head=merge_sha,
+                    token=token,
+                )
+            except GitHubPrError as exc:
+                logger.warning(
+                    "card %s: cannot compare %s...%s (%s) — not counting that deploy",
+                    card.id,
+                    run.head_sha,
+                    merge_sha,
+                    exc,
+                )
+                continue
+            # base = 那次成功部署的 commit, head = 我们的合并提交:
+            # behind = 我们在它后面（它包含我们）, identical = 同一个提交。
+            if status in ("behind", "identical"):
+                return run
+        return None
 
     async def _settle_external_merge(
         self, *, card: AcceptCard, topic: Topic, status: "PullRequestStatus"
@@ -1471,12 +1593,45 @@ class AcceptService:
             summon=True,
         )
 
-    async def _finish_pr_accept(self, *, card: AcceptCard, topic: Topic) -> None:
+    async def _finish_pr_accept(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        landed_via: "WorkflowRun | None" = None,
+        failed_tail: str = "",
+    ) -> None:
+        """Archive the topic: merged AND on the box. `landed_via` is set on the
+        被顶替 path (see `_later_successful_deploy`) — the card's own deploy run
+        did not succeed, but a later successful one already carried this commit.
+        Same archive either way; the wording must not claim the card's own
+        deploy went green when it didn't."""
         from app.domain.workspace import service as ws
 
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
-        card.note = f"PR #{card.pr_number} 已合并且部署成功：{card.pr_url}"
+        if landed_via is None:
+            card.note = f"PR #{card.pr_number} 已合并且部署成功：{card.pr_url}"
+            message = (
+                f"✅ 话题已被 {card.decided_by} 采纳：PR #{card.pr_number} 合并且部署"
+                f"成功，话题归档。\n{card.pr_url}"
+            )
+        else:
+            short = landed_via.head_sha[:8]
+            card.note = (
+                f"PR #{card.pr_number} 已合并；它自己那次部署没成功"
+                f"（{failed_tail or '非 success'}），但更晚的一次成功部署"
+                f"（{short}）已经包含这个提交，代码确实上线了：{card.pr_url}"
+            )[:2000]
+            message = (
+                f"✅ 话题已被 {card.decided_by} 采纳并归档："
+                f"PR #{card.pr_number} 已合并。\n"
+                f"它自己触发的那次部署没有成功（{failed_tail or '非 success'}），"
+                "最常见的原因是被后一次部署顶替（concurrency 组的正常行为）——"
+                f"平台查过了：更晚的一次**成功**部署 {short} 的提交包含这次合并，"
+                "所以代码确实已经上线，闸门满足。\n"
+                f"{landed_via.url or ''}\n{card.pr_url}"
+            )
         try:
             ws.stop_topic_container(topic.id)
         except Exception:  # noqa: BLE001 — best effort, never fatal
@@ -1487,11 +1642,7 @@ class AcceptService:
         topic.archived_at = now
         await self._session.flush()
         await self._session.refresh(card)
-        self._notify_merge_result(
-            topic,
-            f"✅ 话题已被 {card.decided_by} 采纳：PR #{card.pr_number} 合并且部署成功，"
-            f"话题归档。\n{card.pr_url}",
-        )
+        self._notify_merge_result(topic, message)
 
     async def _accept_via_pr(
         self, card: AcceptCard, topic: Topic, decided_by: str
