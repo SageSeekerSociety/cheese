@@ -3,6 +3,7 @@
 </template>
 
 <script setup lang="ts">
+import type { AnyExtension } from '@tiptap/core'
 import type { JSONContent } from 'vuetify-pro-tiptap'
 
 import { onUnmounted, toRefs, watch } from 'vue'
@@ -49,6 +50,21 @@ const props = defineProps<{
 
 const { value } = toRefs(props)
 
+// The `as AnyExtension[]` below is a version bridge, not a shortcut.
+//
+// vuetify-pro-tiptap 2.6.0 depends on tiptap v2 while this app is on v3, so
+// pnpm keeps both copies installed (@tiptap/core@2.26.1 and @3.27.3). The
+// extensions imported from vuetify-pro-tiptap above are therefore v2 `Mark` /
+// `Node` / `Extension` instances, and useEditor here is v3's — structurally the
+// same objects, nominally incompatible types, 16 identical errors.
+//
+// Casting the array once keeps the extensions in their original order (tiptap
+// applies them by position, so reordering to segregate v2 from v3 would be a
+// real behaviour change) and keeps the cast in one annotated place. The real
+// fix is to stop having two tiptaps: upgrade vuetify-pro-tiptap to a
+// v3-compatible release, or replace it with the plain @tiptap/* packages the
+// app already depends on. Same bridge appears in src/plugins/tiptap/index.ts
+// and src/plugins/tiptap/extensions/image/ImageActionButton.vue.
 const editor = useEditor({
   content: value.value,
   extensions: [
@@ -88,7 +104,7 @@ const editor = useEditor({
     Code,
     CodeBlock,
     AttachmentImage,
-  ],
+  ] as AnyExtension[],
   editable: false,
 })
 

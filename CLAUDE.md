@@ -4,6 +4,53 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright
 
 Procedural guidance lives in `.claude/` (skills, path-scoped rules, agents, scripts — `ls .claude/` is the inventory), not in always-on prose here: review → `cheese-py-code-review` skill, post-pull → `post-pull` skill, running tests where there is no docker → `.claude/scripts/dev-db.sh` (see Testing); area-specific pitfalls (migrations, backend tests, e2e) live in `.claude/rules/` and load automatically when you touch matching files. This file holds only the always-relevant conventions below.
 
+**Where a tool can describe itself, let it.** Run any bundled CLI (`cheese`,
+`task`, `.claude/scripts/*.sh`) with `--help` to discover its flags, arguments
+and usage — that layer is generated from the code, so it cannot go stale. Prose
+here and in `.claude/` documents **only what `--help` cannot tell you**: why a
+thing exists, the pitfalls, the output contract, and when *not* to reach for it.
+Adding a flag should never oblige anyone to edit a markdown file; if you catch
+yourself restating a flag list in prose, delete the prose instead.
+
+## Version control is jj, not git
+
+There is no `.git` in a workspace — only `.jj`. This is the one thing your
+environment actively lies to you about, so it lives here rather than in a
+path-scoped rule: the misleading signal reaches you on turn 1, before you have
+touched any file that a rule could key off. The second reason is worse — you
+find out you cannot see the remote only at the moment you first try to check it,
+which is *after* a round of work, one sentence before you report it done. Path
+triggering is too late for both.
+
+| Symptom | What it looks like | Actual cause |
+|---|---|---|
+| `Is a git repository: false` in your environment block | "this checkout has no version control" | It has jj. Only the `.git` probe fails. |
+| `git status` / `gh pr list` → `fatal: not a git repository` | broken checkout | Same. `gh` needs an explicit `-R <owner>/<repo>`; it cannot infer the remote without `.git`. |
+| `jj git fetch` → `Git does not recognize required option: porcelain` | the fetch is broken, retry it | The sandbox ships git 2.39 and jj wants ≥ 2.41. **No `jj git` remote traffic works from inside the box** — the platform syncs `main@upstream` for you on the host. Read that ref, don't repair git. |
+| `gh api repos/<o>/<r>/pulls/<n>` → 403, but `repos/<o>/<r>` → 200 | the token expired, or the PR doesn't exist | The token is scoped to repo metadata + actions/checks. **PRs and refs are 403.** Measured 2026-08-11. |
+| `jj rebase -d main@upstream` → `Commit ... is immutable` | you lack permission | You aimed at shared history. Rebase *your own* change only: `jj rebase -s <your-change-id> -d main@upstream`. |
+
+**You cannot observe the remote, so never report on it.** Fetch fails and the
+token cannot read a ref or a PR — no command in this box will tell you what a
+branch tip actually is, and pushing happens on the platform's side, not yours.
+Real incident (2026-08-11, PR #267): an agent reported "the change went to the PR
+branch with the snapshot"; the tip had not moved and the conflict was still
+there. It was not lying — it had no way to look. So anything about remote state
+(pushed, merged, conflict resolved, CI green) is a **claim, not an observation**:
+label it unverified and let a human confirm. What you *can* verify is local —
+`jj log`, `jj status`, and `jj diff` against `main@upstream`.
+
+Command mapping — `jj log`, `jj status`, `jj diff`, `jj file show -r <rev> <path>`,
+`jj bookmark list`. Two habits do not carry over: there is **no staging area**
+(the working copy already *is* a commit, so `git add` has no equivalent and
+nothing needs committing by hand), and a fresh sandbox has **no jj identity**
+configured, so anything you would push must go through the platform.
+
+Your workspace can be **behind `main@upstream`** — sub-topic workspaces are cut
+when the topic is split, and main moves. Before editing a file other agents also
+touch, diff it against `main@upstream` and rebase; editing on a stale base is how
+you silently revert someone's merged PR.
+
 ## Development Commands
 
 Backend runs locally via `uv run` from `backend/`. Infrastructure (PG, Valkey) in Docker — where there is no docker (agent sandboxes), `.claude/scripts/dev-db.sh` stands the test servers up instead (see Testing). Use Taskfile:
@@ -71,7 +118,7 @@ The root-level `reference/` directory (gitignored) contains original implementat
 - Write **functional tests** that test actual behavior. Do NOT inspect source code.
 - `pytest.mark.anyio` for async tests. `SimpleNamespace` + `AsyncMock`/`MagicMock` for fakes.
 - Locations: `backend/tests/unit/` (no DB), `backend/tests/integration/` (DB-backed), `backend/tests/contract/` (API contract).
-- Tests MUST pass before any commit. Pre-commit hook enforces this.
+- Tests MUST pass before any commit. A pre-commit hook enforces this **once you install it** — a fresh clone has no hook. Run `task hooks` (or `bash .claude/scripts/install-hooks.sh`). Committing through `jj` bypasses git hooks entirely; on that path CI is the only gate.
 - New features require tests (unit + integration as appropriate).
 
 ### Running tests in a sandbox (no docker)
@@ -97,24 +144,41 @@ bash .claude/scripts/dev-db.sh stop --purge      # stop + delete the data dir
 - `check.sh --no-tests` (what the quality gate uses) skips pytest entirely — use
   the recipe above to actually exercise the suite.
 
-Two sandbox gaps still fail ~65 tests with the servers up. Both are **missing
-host tooling, not code defects** — verified by running the suite with and without
-the `conftest.py` change above and getting byte-identical failure sets. Don't
-spend time re-diagnosing them:
+**Set a git identity before you run the suite** — a fresh sandbox has none, and a
+container rebuild wipes it again, so re-run this whenever the failures reappear:
+
+```bash
+git config --global user.email "you@example.com"
+git config --global user.name  "Your Name"
+```
+
+Without it `git commit` refuses, and ~43 tests fail wherever one builds a real
+worktree (`test_workspace.py`, `test_upstream.py`, `test_accept*.py`,
+`test_git_http.py`, `test_attachments.py` and friends). `GIT_*` env vars do *not*
+work here — conftest strips them on purpose (see the comment at the top of the
+file) — but it never touches global config, which is why the `git config` route
+does. Verified: with the identity set the whole batch goes green.
+
+Two sandbox gaps are left, and both are **missing host setup, not code defects**.
+Don't spend time re-diagnosing them:
 
 - **No procps** (`ps`/`pgrep`/`kill` binaries absent; bash's `kill` is a builtin
   only) → 22 failures in `test_machine_service.py`, `test_tmux_control.py` with
   `FileNotFoundError: 'kill'`.
-- **No git identity** (`user.email`/`user.name` unset, so `git commit` refuses) →
-  43 failures wherever a test builds a real worktree: `test_workspace.py`,
-  `test_upstream.py`, `test_accept*.py`, `test_git_http.py`, `test_attachments.py`
-  and friends. Note `GIT_*` env vars can't fix this — conftest strips them on
-  purpose (see the comment at the top of the file).
+- **No provider credentials** → 1 failure,
+  `test_market_api.py::test_market_lists_ai_and_compute_pools`. A profile's
+  `available` is `bool(auth_token or oauth_token)` (`app/domain/agent/profiles.py`),
+  so with `settings.anthropic_auth_token` unset the default AI pool honestly
+  reports unavailable. Any non-empty value clears it —
+  `ANTHROPIC_AUTH_TOKEN=dummy-for-test uv run pytest tests/integration/test_market_api.py`
+  goes green; nothing calls the provider.
 
 ## Linting & Type Checking
 
 - **ruff**: zero errors. **pyright**: zero errors in app code.
 - Config in `backend/pyproject.toml` under `[tool.ruff]` and `[tool.pyright]`.
+- **Frontend**: `pnpm run lint` (ESLint — zero errors; the 288 existing warnings do not block) and `pnpm run typecheck` (`vue-tsc` behind a ratchet: `frontend/tsc-baseline.json` freezes the pre-existing errors, any NEW one fails). Fixed some? `pnpm run typecheck:update` and commit the baseline — it only ever goes down. `pnpm run lint` never writes; use `lint:fix` for that.
+- Rules in this file that a linter cannot express are enforced by `.claude/scripts/check-repo-rules.sh` (naive datetime, builtin-shadowing method names, raw `HTTPException` in the domain layer) and `.claude/scripts/check-migration-fork.py` (a merge that would fork the alembic chain). Both run in `task check` and in CI's Repo Guards workflow; both carry `--self-test`.
 
 ## Workflow Preferences
 
@@ -124,7 +188,7 @@ spend time re-diagnosing them:
 - After making changes, always run `task check` to verify.
 - After `git pull`, run `bash .claude/scripts/post-pull.sh`.
 - **All commits go through PR**: never commit directly to main.
-- **Multiple agents work this repo concurrently.** Before starting a fix, check open PRs and recent main commits for the same problem; before `git add`/`commit` in a shared checkout, check for another session's activity (or use a separate worktree). Never `git add -A` — review the staged list; a cache directory in it (43k files once) is a stop sign.
+- **Multiple agents work this repo concurrently.** Before starting a fix, check open PRs and recent main commits for the same problem. In a jj workspace there is nothing to stage — the working copy is the commit — so the equivalent discipline is to run `jj status` before you hand work off and review every path in it. A cache directory in that list (43k files once) is a stop sign.
 - Box operations (env changes, container recreation) go through `deploy/deploy-docker.sh` only — see the runbook in `docs/infrastructure.md`. Hand-rolled `docker compose up` drops the deploy script's image-pin exports and has broken dev before.
 
 ## Documentation Map

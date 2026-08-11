@@ -17,81 +17,57 @@ ttyd's client builds its WebSocket/token URLs RELATIVE to ``location.pathname``
 on this proxy with no rewriting. The frontend iframes ``…/terminal/live/`` and
 Vite (or the reverse proxy) forwards both HTTP and the WS upgrade to us.
 
+**This path must reach us un-rewritten.** Both gateways front the API by stripping
+one ``/api`` (nginx ``proxy_pass http://backend:8081/``), which would turn the
+iframe's URL into ``/topics/…`` and 404 it — so ``frontend/nginx.conf`` and
+``vite.config.ts`` each carry an explicit no-strip exception for this prefix. Move
+the routes and those two must move with them.
+
 Read-only: ttyd runs with ``-R``, so the pane is a pure mirror — keystrokes in
 the browser never reach the container.
 
-Authorization: there is no browser user-auth in this MVP (the whole read API is
-open), so the gate is the same as every other topic route — the topic must exist
-— PLUS the proxy is scoped to THIS topic's container (the ``docker port`` lookup
-uses the topic id), so a token/URL for one topic can never reach another's pane.
+Authorization: a member/owner of the topic's project (``proxy.may_view_topic``).
+The credential rides as ``?token=`` because a browser can set no header on an
+iframe or a WebSocket, and the page load re-issues it as a path-scoped cookie so
+ttyd's own sub-requests authenticate too. The proxy is additionally scoped to THIS
+topic's container (the ``docker port`` lookup uses the topic id), so a token/URL
+for one topic can never reach another's pane.
 """
 
 import uuid
 from typing import Annotated
 
-import httpx
 import websockets
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocket
 
+from app.api import proxy
 from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.tokens import verify_session_token
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.tmux_provider import ttyd_endpoint
-from app.domain.membership.repositories import MemberRepository
-from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/api/topics", tags=["terminal"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
-# Hop-by-hop headers a proxy must not forward (RFC 7230 §6.1) plus length/type,
-# which the Response recomputes from the body it actually sends.
-_DROP_HEADERS = {
-    "connection",
-    "keep-alive",
-    "transfer-encoding",
-    "content-encoding",
-    "content-length",
-    "te",
-    "trailer",
-    "upgrade",
-}
+# Sub-request credential for the iframe's own fetches (ttyd's ``/token``, assets).
+# Scoped to this topic's ``…/terminal`` path — see app.api.proxy.
+COOKIE_NAME = "cheesex_proxy"
 
 
-async def _may_view_topic(
-    session: AsyncSession, topic_id: uuid.UUID, token: str | None
-) -> bool:
-    """Whether this caller may open the topic's pane.
-
-    Both proxy routes took only a topic id, so an unauthenticated request with a
-    topic UUID was served the live terminal — the pane shows whatever the agent
-    echoes, so that is a read of the project's contents by anyone who learns an
-    id. A UUID is obscurity, not authorization.
-
-    Same shape as the device viewer's check (``_may_view_screen``): a logged-in
-    member or owner of the topic's project. The credential rides as ``?token=``
-    because a browser cannot set a header on an iframe or a WebSocket.
-    """
-    if not token:
-        return False
-    claims = verify_session_token(token)
-    if claims is None:
-        return False
-    handle = claims["handle"] or claims["sub"]
-    topic = await TopicService(session).get_or_404(topic_id)
-    project_id = topic.project_id
-    if project_id is None:
-        return False
-    if await MemberRepository(session).get(project_id=project_id, user_handle=handle):
-        return True
-    project = await ProjectRepository(session).get(project_id)
-    return project is not None and project.owner_handle == handle
+def _cookie_path(request: Request) -> str:
+    """The browser-visible ``…/terminal`` prefix of this request, so the cookie
+    covers the pane's sub-requests and nothing else. Derived from the live path
+    rather than hard-coded, so it stays right behind any external prefix."""
+    path = request.url.path
+    marker = "/terminal"
+    idx = path.find(marker)
+    return path[: idx + len(marker)] if idx != -1 else path
 
 
 def _device_screen_id(topic_id: uuid.UUID) -> str | None:
@@ -116,15 +92,25 @@ def _live_endpoint(topic_id: uuid.UUID) -> str | None:
 
 
 @router.get("/{topic_id}/terminal")
-async def terminal_status(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def terminal_status(topic_id: uuid.UUID, request: Request, db: DbSession) -> dict:
     """Whether this topic has an embeddable live terminal, and where to load it.
 
-    ``available`` is true only under the tmux backend with the topic's container
-    up and 7681 published; otherwise the frontend falls back to the worklog view.
-    ``url`` is the iframe source — the proxy base below (trailing slash matters:
-    ttyd derives ``/ws`` from the page path)."""
+    ``available`` must answer "will an iframe of ``url`` actually show a pane?",
+    because that is the only question the frontend asks it — a true here means the
+    drawer replaces the 施工记录 timeline with the embed. So it takes all three
+    reasons the embed could fail, not just the easy one:
+
+      * the caller has no credential → the proxy would 404 the iframe;
+      * the wrong backend / the container is down → no endpoint at all;
+      * the port is published but nothing answers on it → a white box.
+
+    Reporting availability off the port mapping alone (the old behavior) is what
+    left users staring at a blank frame with no way back to the timeline.
+    """
     await TopicService(db).get_or_404(topic_id)  # topic 访问校验
     backend = settings.agent_backend
+    if not await proxy.may_view_topic(db, topic_id, request, COOKIE_NAME):
+        return ok({"available": False, "backend": backend})
     sid = _device_screen_id(topic_id)
     if sid is not None:
         return ok(
@@ -136,7 +122,7 @@ async def terminal_status(topic_id: uuid.UUID, db: DbSession) -> dict:
             }
         )
     endpoint = _live_endpoint(topic_id)
-    if endpoint is None:
+    if endpoint is None or not await proxy.probe(endpoint):
         return ok({"available": False, "backend": backend})
     return ok(
         {
@@ -157,22 +143,14 @@ async def terminal_proxy_http(
     Scoped to the topic's own container, so it can't reach another topic."""
     # 404 rather than 403: an unauthorized caller learns nothing about whether
     # the topic or its terminal exists.
-    if not await _may_view_topic(db, topic_id, request.query_params.get("token")):
+    if not await proxy.may_view_topic(db, topic_id, request, COOKIE_NAME):
         return Response(status_code=404, content=b"terminal unavailable")
     endpoint = _live_endpoint(topic_id)
     if endpoint is None:
         return Response(status_code=404, content=b"terminal unavailable")
-    url = f"http://{endpoint}/{path}"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        upstream = await client.get(url, params=request.query_params)
-    headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_HEADERS
-    }
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        headers=headers,
-        media_type=upstream.headers.get("content-type"),
+    response = await proxy.forward(endpoint, path, request)
+    return proxy.attach_cookie(
+        response, request, cookie_name=COOKIE_NAME, cookie_path=_cookie_path(request)
     )
 
 
@@ -184,7 +162,7 @@ async def terminal_proxy_ws(
     negotiate it on both legs and pump frames transparently (binary pane output
     upstream→browser, control/resize JSON browser→upstream). Read-only pane, so
     browser input is inert, but we still forward it (harmless ttyd control)."""
-    if not await _may_view_topic(db, topic_id, websocket.query_params.get("token")):
+    if not await proxy.may_view_topic(db, topic_id, websocket, COOKIE_NAME):
         await websocket.close(code=1008)
         return
     endpoint = _live_endpoint(topic_id)
@@ -203,52 +181,10 @@ async def terminal_proxy_ws(
             # `new WebSocket(url, ["tty"])` handshake completes.
             sub = upstream.subprotocol or "tty"
             await websocket.accept(subprotocol=sub)
-            await _pump(websocket, upstream)
+            await proxy.pump(websocket, upstream)
     except (OSError, websockets.WebSocketException):
         # Container gone / ttyd not up yet — close cleanly if we ever accepted.
         try:
             await websocket.close(code=1011)
         except RuntimeError:
             pass
-
-
-async def _pump(browser: WebSocket, upstream: "websockets.ClientConnection") -> None:
-    """Run both directions until either side closes, then tear the other down."""
-    import asyncio
-
-    async def browser_to_upstream() -> None:
-        try:
-            while True:
-                msg = await browser.receive()
-                if msg["type"] == "websocket.disconnect":
-                    return
-                data = msg.get("bytes")
-                if data is not None:
-                    await upstream.send(data)
-                    continue
-                text = msg.get("text")
-                if text is not None:
-                    await upstream.send(text)
-        except (WebSocketDisconnect, websockets.WebSocketException):
-            return
-
-    async def upstream_to_browser() -> None:
-        try:
-            async for frame in upstream:
-                if isinstance(frame, bytes):
-                    await browser.send_bytes(frame)
-                else:
-                    await browser.send_text(frame)
-        except (WebSocketDisconnect, websockets.WebSocketException, RuntimeError):
-            return
-
-    t_up = asyncio.create_task(browser_to_upstream())
-    t_down = asyncio.create_task(upstream_to_browser())
-    _, pending = await asyncio.wait({t_up, t_down}, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await upstream.close()
-    try:
-        await browser.close()
-    except RuntimeError:
-        pass

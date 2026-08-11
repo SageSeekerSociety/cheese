@@ -69,11 +69,14 @@ export function deliveryStageOf(card: Pick<AcceptCard, 'pr_merged_at'>): Deliver
 }
 
 // 后端把交付途中的阶段信息写在卡的 `note` 上，并用 emoji 前缀区分严重程度
-// （services.py: `⚠️` 检查未通过/轮询暂停、`❌` 部署失败、`🚫` GitHub 拒绝合并）。
+// （services.py: `⚠️` 检查未通过/轮询暂停、`❌` 部署失败、`🚫` GitHub 拒绝合并、
+// `✋` 三个例外之一命中、平台拒绝免人自动合并）。
 // 这里只是把那个前缀翻成一个颜色，不解析文案。
 export function deliveryNoteTone(note: string): 'error' | 'info' | null {
   const text = note.trim()
   if (!text) return null
-  if (text.startsWith('⚠️') || text.startsWith('❌') || text.startsWith('🚫')) return 'error'
+  // `✋` 不是故障，但它跟前三个一样是"停住了、等人动手"，按能见度算同一档——
+  // 划到 info 里就会跟"CI 还在跑"长得一模一样，那正是这条安全阀要避免的事。
+  if (['⚠️', '❌', '🚫', '✋'].some((p) => text.startsWith(p))) return 'error'
   return 'info'
 }

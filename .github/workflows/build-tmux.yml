@@ -25,20 +25,34 @@ jobs:
   # could not be selected on any deployment, whatever the code allowed.
   build-tmux-sandbox:
     runs-on: [self-hosted, cheese-dev]
+    # Bounded because this genuinely needs the box (warm layer cache) and the box
+    # has ONE runner slot: an unbounded job here inherits GitHub's 6h default and
+    # can block every deploy, heartbeat and backup check behind it. That is not
+    # hypothetical — a wedged `plan` job held this slot for 8h11m on 2026-08-07.
+    #
+    # 30m against a measured 4.8m build leaves generous headroom. The other
+    # candidate was 60m, to match build.yml's build-sandbox as the closest
+    # comparable job; 30m wins because it is the number with a measurement
+    # behind it, and the whole point of the bound is to cut a wedged job loose
+    # sooner than the box can be starved. Revisit against the 4.8m figure, not
+    # against build.yml, if this ever starts timing out legitimately. (The two
+    # jobs are not comparable anyway: build-sandbox builds the base from
+    # scratch, this one starts FROM the finished base and only adds tmux+ttyd.)
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           name: cheese-box-builder
 
       - name: Log in to Container Registry
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
           max_attempts: 4
@@ -49,7 +63,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox-tmux
           tags: |
@@ -70,7 +84,7 @@ jobs:
           BASE_IMAGE: ${{ inputs.base_image }}
 
       - name: Build and push tmux sandbox image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./backend/sandbox
           file: ./backend/sandbox/tmux.Dockerfile

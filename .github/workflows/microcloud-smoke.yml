@@ -19,6 +19,12 @@ on:
       offering:
         description: "offering id (54=lxc, 55=vm); blank = first active"
 
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
 concurrency:
   group: microcloud-smoke
   cancel-in-progress: false
@@ -28,7 +34,7 @@ jobs:
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Run
         env:
@@ -63,7 +69,7 @@ jobs:
 
       - name: Upload log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: microcloud-smoke-log
           path: backend/logs/microcloud-smoke.log
