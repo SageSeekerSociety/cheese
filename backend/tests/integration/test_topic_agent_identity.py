@@ -16,8 +16,8 @@ grants it access — which is what the follow-up authz work will enforce on.
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.core.tokens import mint_session_token
 from app.domain.identity.handles import CHEESE_HANDLE, topic_agent_handle
+from tests.integration.conftest import session_auth_headers
 
 
 def _project_topic(client, owner: str = "alice") -> tuple[str, str]:
@@ -138,10 +138,15 @@ def test_the_project_roster_marks_an_agent_without_matching_its_handle(client):
     ``cheese-<hex>`` and drop its Agent badge."""
     pid, tid = _project_topic(client)
     handle = topic_agent_handle(uuid.UUID(tid))
+    # The project-member write routes take the actor from the credential only —
+    # a handle in the body is the forgery they exist to refuse — so act as the
+    # project's owner rather than posting bare.
     for who in (handle, "alice"):
         assert (
             client.post(
-                f"/api/projects/{pid}/members", json={"user_handle": who}
+                f"/api/projects/{pid}/members",
+                json={"user_handle": who},
+                headers=session_auth_headers("alice"),
             ).status_code
             == 200
         )
@@ -168,10 +173,9 @@ def test_one_agents_seat_can_be_dropped_without_touching_the_others(client):
     ).json()["data"]["id"]
     doomed = _agents(client, first)[0]["member_handle"]
 
-    token = mint_session_token(handle="alice", user_id=None)
     r = client.delete(
         f"/api/topics/{first}/members/{doomed}?actor=alice",
-        headers={"Authorization": f"Bearer {token}"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
 
