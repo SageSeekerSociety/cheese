@@ -125,6 +125,20 @@ jj restore --from 806d30d2 .github/workflows/box-diag.yml .github/workflows/depl
 
 **教训**：话题分支要"不碰 workflow"，判据是**相对合并基点差异为零**，不是"和某个历史提交一样"。
 
+### 结局：死锁自解，CI 全绿
+
+最终把冲突彻底解掉的不是我，是平台自己：它在 `814ef833` 做了「同步 GitHub main → topic/50766c66（推 PR 分支前）」，把 GitHub main 的 tip `888293a0`（#268）整个合进了分支。合完之后分支相对 GitHub main 对 `.github/` 是 **0 files changed**——既没删也没改，两个 workflow 文件都是 main 那一版。
+
+冲突一消失，`refs/pull/263/merge` 就建得出来，`pull_request` workflow 立刻触发。分支上从「只有一条永久 `queued` 的 codecov」变成 8 条 check-run，**全部 success**：
+
+```
+check  e2e  guards  lint  migration-heads  scope  scope  test     failed=0
+```
+
+这实测验证了前面那条推断：冲突和零检查是同一件事，解掉冲突死锁自解。
+
+**顺带一个观察（未处理，留给人定）**：`_sync_remote_base_into_topic_branch` 只在 push 被 GitHub 拒绝时触发。这次能救回来，是因为分支带着 workflow 改动、push 确实被拒了。如果一个话题分支**不碰** workflow，push 永远不会被拒，这条同步路径就永远不跑——那么「分支和 GitHub main 冲突」就没有任何自动机制去解，卡片只会写 note、不叫醒人。这正是本卡要修的「CI 失败要叫醒芝士」的近邻问题：冲突/零检查同样不叫醒。
+
 ### 冲突怎么解的
 
 - <&backend/app/domain/review/github_pr.py>：main 给 `CheckState` 加了 `no_checks`，我在同一处加了 `logger`。两边都保留。`no_checks` 由 `_resolve_zero_checks` 产出，而 `_failure_detail` 只在 `failure` 分支触发，互不影响。
