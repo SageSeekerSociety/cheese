@@ -8,14 +8,12 @@ AI cannot vote (collaborative mode, same rule as "AI 不能验收自己").
 
 import pytest
 
-from app.core.tokens import mint_session_token
+from tests.integration.conftest import session_auth_headers
 
 
 @pytest.fixture(autouse=True)
 def _authenticated_project_owner(client):
-    client.headers["Authorization"] = (
-        f"Bearer {mint_session_token(handle='alice', user_id=None)}"
-    )
+    client.headers.update(session_auth_headers("alice"))
     yield
     client.headers.pop("Authorization", None)
 
@@ -54,9 +52,7 @@ def _approve(client, card_id: str, handle: str):
     return client.post(
         f"/api/accept-cards/{card_id}/approve",
         json={"approver_handle": handle},
-        headers={
-            "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
-        },
+        headers=session_auth_headers(handle),
     )
 
 

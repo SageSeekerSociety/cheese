@@ -15,11 +15,11 @@ import asyncio
 import uuid
 
 from tests.conftest import wait_turns_idle
+from tests.integration.conftest import session_auth_headers
 
-# Reuse the 两阶段采纳 harness instead of rebuilding it (and instead of adding
-# a ninth copy of `_auth` — see .claude/rules/backend-tests.md).
+# Reuse the 两阶段采纳 harness instead of rebuilding it — see
+# .claude/rules/backend-tests.md.
 from tests.integration.test_accept_pr import (
-    _auth,
     _pr_ready,
     _reset_client,
 )
@@ -66,7 +66,7 @@ def _accept(client, card_id: str, handle: str = "alice") -> dict:
     r = client.post(
         f"/api/accept-cards/{card_id}/accept",
         json={"decided_by": handle},
-        headers=_auth(handle),
+        headers=session_auth_headers(handle),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]
@@ -223,7 +223,7 @@ def test_archiving_does_not_touch_already_settled_cards(client):
     r = client.post(
         f"/api/accept-cards/{cid}/reject",
         json={"decided_by": "alice", "note": "先不收"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
 
@@ -434,7 +434,7 @@ def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, monkey
     r = client.post(
         f"/api/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
     assert _cards(client, tid)[0]["status"] == "conflict"
