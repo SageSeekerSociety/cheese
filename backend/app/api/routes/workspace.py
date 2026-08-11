@@ -130,7 +130,9 @@ async def git_log(
         async with httpx.AsyncClient(timeout=15) as client:
             rows = (await client.get(url)).json().get("data", [])
     else:
-        rows = ws.git_log(project_id)
+        # A topic asks about ITS commits (its branch minus the base), never the
+        # project's — the project log is other topics' work.
+        rows = ws.git_log(project_id, topic_id=topic)
     return ok(page(rows, len(rows)))
 
 

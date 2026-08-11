@@ -46,6 +46,13 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # The agent turn this spend belongs to. A turn writes MORE than one row —
+    # the metering proxy logs every /v1/messages call, the gateway lands a
+    # deferred backfill row later — so counting rows counted 43 "turns" for a
+    # 3-turn topic. NULL where the supply cannot be attributed (rows predating
+    # this column, or proxy lines outside any known turn); those still count as
+    # one turn each, which is the old behaviour and the honest floor.
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     model: Mapped[str] = mapped_column(String(64), default="")
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)

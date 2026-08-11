@@ -26,6 +26,15 @@ def _parse(path: Path) -> tuple[dict[str, str], str]:
     return meta, body.strip()
 
 
+def _parse_tags(value: str) -> list[str]:
+    """`scenarios: [accept, stage:working]` → `["accept", "stage:working"]`.
+
+    Brackets optional, so both the existing `[accept]` style and a bare
+    comma-separated list work.
+    """
+    return [tag.strip() for tag in value.strip().strip("[]").split(",") if tag.strip()]
+
+
 def available_skills() -> dict[str, Path]:
     """Map skill `name` (from frontmatter) → file path."""
     result: dict[str, Path] = {}
@@ -33,6 +42,38 @@ def available_skills() -> dict[str, Path]:
         meta, _ = _parse(path)
         result[meta.get("name", path.stem)] = path
     return result
+
+
+def skills_for_scenario(scenario: str) -> list[str]:
+    """Skill names whose frontmatter `scenarios:` lists `scenario`, in filename
+    order.
+
+    The `scenarios:` field has existed on every skill since the library was
+    written but nothing ever read it — `load_skills` only ever took explicit
+    names. This makes it the real selector, so one skill can serve several
+    scenarios (e.g. the 递卡/token guidance applies to more than one stage)
+    without duplicating it into several hardcoded name lists.
+    """
+    return [name for name, _ in _matching(scenario)]
+
+
+def load_scenario(scenario: str) -> str:
+    """Concatenated bodies of every skill tagged with `scenario` (may be "").
+
+    Runs on every chat turn, so it reads the library in ONE pass rather than
+    resolving names and then re-parsing the files to get their bodies.
+    """
+    return "\n\n---\n\n".join(body for _, body in _matching(scenario))
+
+
+def _matching(scenario: str) -> list[tuple[str, str]]:
+    """[(name, body)] for the skills tagged with `scenario`, in filename order."""
+    hits: list[tuple[str, str]] = []
+    for path in sorted(_SKILL_DIR.glob("*.md")):
+        meta, body = _parse(path)
+        if scenario in _parse_tags(meta.get("scenarios", "")):
+            hits.append((meta.get("name", path.stem), body))
+    return hits
 
 
 def load_skills(names: list[str]) -> str:
