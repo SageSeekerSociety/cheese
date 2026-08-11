@@ -275,12 +275,15 @@ class TestMergeSurvivesSharedCheckoutFailure:
         assert "sync_failed" in result
         after = _rev_parse(repo, "main")
         assert after != before, "base branch must actually have advanced"
-        assert "topic work" in subprocess.run(  # noqa: S607
-            ["git", "log", "--oneline", "main"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-        ).stdout
+        assert (
+            "topic work"
+            in subprocess.run(  # noqa: S607
+                ["git", "log", "--oneline", "main"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            ).stdout
+        )
 
     def test_successful_sync_reports_no_failure_key(self, tmp_path, monkeypatch):
         repo = self._project_repo(tmp_path, monkeypatch)
