@@ -71,7 +71,7 @@ The root-level `reference/` directory (gitignored) contains original implementat
 - Write **functional tests** that test actual behavior. Do NOT inspect source code.
 - `pytest.mark.anyio` for async tests. `SimpleNamespace` + `AsyncMock`/`MagicMock` for fakes.
 - Locations: `backend/tests/unit/` (no DB), `backend/tests/integration/` (DB-backed), `backend/tests/contract/` (API contract).
-- Tests MUST pass before any commit. Pre-commit hook enforces this.
+- Tests MUST pass before any commit. A pre-commit hook enforces this **once you install it** — a fresh clone has no hook. Run `task hooks` (or `bash .claude/scripts/install-hooks.sh`). Committing through `jj` bypasses git hooks entirely; on that path CI is the only gate.
 - New features require tests (unit + integration as appropriate).
 
 ### Running tests in a sandbox (no docker)
@@ -123,6 +123,8 @@ Don't spend time re-diagnosing it:
 
 - **ruff**: zero errors. **pyright**: zero errors in app code.
 - Config in `backend/pyproject.toml` under `[tool.ruff]` and `[tool.pyright]`.
+- **Frontend**: `pnpm run lint` (ESLint — zero errors; the 288 existing warnings do not block) and `pnpm run typecheck` (`vue-tsc` behind a ratchet: `frontend/tsc-baseline.json` freezes the pre-existing errors, any NEW one fails). Fixed some? `pnpm run typecheck:update` and commit the baseline — it only ever goes down. `pnpm run lint` never writes; use `lint:fix` for that.
+- Rules in this file that a linter cannot express are enforced by `.claude/scripts/check-repo-rules.sh` (naive datetime, builtin-shadowing method names, raw `HTTPException` in the domain layer) and `.claude/scripts/check-migration-fork.py` (a merge that would fork the alembic chain). Both run in `task check` and in CI's Repo Guards workflow; both carry `--self-test`.
 
 ## Workflow Preferences
 

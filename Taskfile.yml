@@ -76,6 +76,11 @@ tasks:
     cmds:
       - task: be:check:full
 
+  hooks:
+    desc: Install the pre-commit hook (a fresh clone has none)
+    cmds:
+      - bash .claude/scripts/install-hooks.sh
+
   infra:
     desc: Start infrastructure services (PG, Valkey)
     cmds:

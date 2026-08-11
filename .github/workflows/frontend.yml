@@ -1,18 +1,31 @@
 name: Frontend Test
 
-# Until this file existed, nothing in CI ever ran the frontend's own tests.
-# `frontend/src` holds 27 vitest files / 289 assertions — including the ones
-# added by #244, #246 and #249 — and the only frontend job in CI was build.yml
-# compiling the Docker image, which runs `vite build` (no type check, no
-# tests) and only on pushes to main. So a frontend PR could go green with its
-# own new tests failing, and did.
+# The frontend had NO check in CI. `grep -rn 'vue-tsc\|eslint' .github/workflows/`
+# returned nothing: test.yml is scoped to `backend/**`, e2e.yml runs Playwright
+# but no type check, and the only thing that touched frontend/ was build.yml's
+# `docker build` — whose `vite build` does not type-check. A type error or an
+# undefined variable could be merged to main and deployed to the box as long as
+# the bundler survived it. One had been: `} catch {` referencing `error` in
+# AuditTask.vue, a guaranteed ReferenceError on the reject path.
 #
-# Everything here runs GitHub-hosted, unlike test.yml/e2e.yml's heavy jobs.
-# That is deliberate: this job needs no service containers, no native amd64
-# Docker and nothing box-local, and the box's single self-hosted slot is also
-# the deploy target — parking a multi-minute frontend check on it would queue
-# ahead of deploys for no gain. test.yml already puts its `scope` and `lint`
-# jobs on hosted for the same reason.
+# The frontend's own unit tests were unrun for the same reason: `frontend/src`
+# holds 27 vitest files / 289 assertions — including the ones added by #244,
+# #246 and #249 — and build.yml only runs on pushes to main anyway. So a
+# frontend PR could go green with its own new tests failing, and did. That is
+# what the `Unit tests` step below exists for; it is a separate gap from the
+# type/lint one and neither covers the other.
+#
+# Hosted, not the box: this is pnpm + eslint + vue-tsc with no service
+# containers and no docker, so it must not queue behind builds and deploys on
+# the box's single self-hosted runner — parking a multi-minute frontend check
+# there would delay deploys for no gain. test.yml already puts its `scope` and
+# `lint` jobs on hosted for the same reason.
+#
+# DELIBERATE DEVIATION from frontend/Dockerfile, which builds on node:21-slim:
+# this job runs node 22 (21 is end-of-life and gets no security updates). The
+# difference is safe HERE because this job only lints and type-checks — it never
+# produces the bundle that ships. If a job that builds the deployable artifact is
+# ever added, it must match the Dockerfile instead.
 on:
   push:
     branches: [main]
@@ -31,16 +44,16 @@ on:
 permissions:
   contents: read
 
-# Keyed by commit sha on main, the same way build.yml, test.yml and e2e.yml
-# are (build.yml carries the long version of this comment): every main push
-# shares the one ref, so a ref-only key lets each merge cancel the previous
-# commit's still-running check — and a cancelled run is not a red run, so main
-# quietly loses the coverage with nothing on the commit to show for it. Other
-# refs (PR merge refs) keep the ref-only key, so repeated pushes to a single
-# PR still supersede each other.
+# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
+# each merge in its own group: with a shared `github.ref` key, a second merge
+# cancelled the first one's run and main was left with no result for that
+# commit — and a cancelled run is not a red run, so main quietly loses the
+# coverage with nothing on the commit to show for it. build.yml already keyed
+# on sha for main; these did not. PR refs keep the ref key, so repeated pushes
+# to a single PR still supersede each other.
 concurrency:
-  group: ci-frontend-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
-  cancel-in-progress: true
+  group: frontend-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -53,60 +66,94 @@ jobs:
     # covers a cold pnpm store without letting a wedged run bill for an hour.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # Nothing below pushes, and the lockfile has zero git: specifiers,
-          # so there is no reason to leave the token in .git/config while
-          # third-party postinstall scripts run.
+          # Nothing below pushes, and the lockfile has zero git: specifiers, so
+          # there is no reason to leave the token in .git/config while
+          # third-party postinstall scripts run — and package.json does have
+          # one (`postinstall: husky install`).
           persist-credentials: false
 
-      # Must precede setup-node: `cache: pnpm` shells out to pnpm to locate
-      # its store, so pnpm has to exist first. The version is pinned here
-      # rather than inferred from a `packageManager` field because the repo
-      # root has no package.json for the action to read — identical to the
-      # setup e2e.yml already uses.
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: 'pnpm'
-          # Resolved from the workspace root — defaults.run.working-directory
-          # applies to `run:` steps only, never to an action's inputs.
-          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # pnpm comes from package.json's `packageManager` field, so the version is
+      # pinned by the repo rather than by this workflow.
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Deliberately NOT `pnpm run lint`: that script is `eslint . --fix`,
-      # which rewrites the checkout and can exit 0 on a violation it silently
-      # repaired. A gate has to be the read-only form. `task fe:lint:check`
-      # runs this exact command locally so the two cannot drift.
-      #
-      # No --max-warnings: the tree carries 288 warnings today (mostly
-      # no-explicit-any and unused vars) and only errors fail this step.
-      # Tightening that is a separate cleanup, not a prerequisite for having
-      # any lint gate at all.
-      - name: Lint
-        run: pnpm exec eslint .
+      # A missing binary must not read as a passing check. `pnpm exec <missing>`
+      # has been observed to exit 0 with no output when node_modules is empty,
+      # which is how "vue-tsc reports 0 errors" can mean "vue-tsc never ran".
+      - name: Verify the toolchain is actually installed
+        run: |
+          test -x node_modules/.bin/eslint || { echo "::error::eslint not installed"; exit 1; }
+          test -x node_modules/.bin/vue-tsc || { echo "::error::vue-tsc not installed"; exit 1; }
+          test -x node_modules/.bin/vitest || { echo "::error::vitest not installed"; exit 1; }
+          node_modules/.bin/vue-tsc --version
 
-      # Identical to `task fe:typecheck`. `pnpm build` does NOT do this —
-      # the build script is a bare `vite build`, which strips types without
-      # checking them, so until this step existed a type error could only be
-      # caught by someone running vue-tsc by hand.
-      - name: Type check
+      # Errors block; the 288 pre-existing warnings do not. `--max-warnings=0`
+      # would have meant leaving the whole gate off, and errors are where the
+      # real defects were.
+      #
+      # `pnpm run lint` is safe to gate on ONLY because that script is the
+      # read-only `eslint .`; the writing form lives in `lint:fix`. Keep it that
+      # way — an `--fix` gate rewrites the checkout and can exit 0 on a
+      # violation it silently repaired.
+      - name: ESLint
+        run: pnpm run lint
+
+      # Via the package script, not a bare `node --test scripts/`: passing a
+      # DIRECTORY resolves as a module entry point on node 22 while node 20
+      # treated it as a search path, so the two disagreed and CI failed on
+      # something that passed locally. An explicit file glob behaves the same
+      # everywhere, and going through package.json keeps local and CI on one
+      # command instead of two that can drift.
+      #
+      # This covers the ratchet's OWN tests (frontend/scripts/*.test.mjs), not
+      # the application's — those are the `Unit tests` step further down.
+      - name: Ratchet unit tests
+        run: pnpm run test:ratchet
+
+      # Not a plain `vue-tsc --noEmit`: 31 pre-existing errors are frozen in
+      # tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
+      - name: Type check (ratchet)
         env:
           # Private-repo hosted runners are 2-core/7GB, where Node's default
           # heap lands around 2GB; vue-tsc on this tree peaks near 1.7GB, which
           # is too close to the edge to leave to chance. Physical memory is
-          # nowhere near the limit, so this only removes a cliff.
+          # nowhere near the limit, so this only removes a cliff. Inherited by
+          # the vue-tsc child process the ratchet spawns.
           NODE_OPTIONS: --max-old-space-size=4096
-        run: pnpm exec vue-tsc --noEmit
+        run: pnpm run typecheck
 
+      # The application's own vitest suite — the gap the header describes.
+      # `pnpm run test` is the watch-mode `vitest`, which never exits, so CI
+      # needs the one-shot form. Measured on this tree: 29 files, 299 tests.
+      #
+      # `--dir src` is load-bearing, not tidiness. Vitest's default include glob
+      # sweeps the whole package, so it also collects `scripts/*.test.mjs` — the
+      # ratchet's own tests, which are written for node:test, not vitest, and
+      # fail collection outright with "No test suite found in file". Scoping to
+      # src/ says what this step actually means: the application suite. The
+      # ratchet's tests have their own step above, under the runner they were
+      # written for.
+      #
+      # A plain `pnpm exec vitest run` (and `pnpm run test` locally) still hits
+      # that collision — the real fix is an `exclude: ['scripts/**']` in the
+      # vitest config, which is out of scope for this merge.
       - name: Unit tests
-        run: pnpm exec vitest run
+        run: pnpm exec vitest run --dir src
 
       # One check that belongs here is deliberately absent, so that nobody
       # reads a green tick as covering it:
