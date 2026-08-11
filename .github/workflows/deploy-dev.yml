@@ -38,21 +38,12 @@ jobs:
   # A failed build used to leave this workflow SKIPPED, which reads exactly like
   # "nothing to do" — so main could sit ahead of the box with nothing red to
   # show it, and a merged fix looked shipped when it was not. This job turns that
-  # case red instead. It touches nothing on the box — it only prints and exits —
-  # so it runs HOSTED.
-  #
-  # It was on `[self-hosted, cheese-dev]` until 2026-08-11, which contradicted
-  # the "costs nothing" it was written with: the box has ONE runner slot, so this
-  # notifier queued behind whatever held it, exactly when fast feedback matters
-  # most. On 2026-08-07 it sat from 13:44 to 15:29 waiting for a slot held by a
-  # wedged build job — 1h45m to deliver a one-line error. Execution itself has
-  # never exceeded 0.0m over its last 8 runs.
+  # case red instead. It runs nowhere near the box, so it costs nothing.
   build-did-not-produce-images:
     if: >-
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion != 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    runs-on: [self-hosted, cheese-dev]
     steps:
       - name: Say why nothing was deployed
         run: |

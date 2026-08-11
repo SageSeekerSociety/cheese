@@ -20,10 +20,8 @@ env:
   # frontend/base-image resolution through the same cache.
   BUILDKIT_IMAGE: mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
 
-# The build jobs below stay on the dev box, whose single runner slot is also
-# what deploys use, so superseded runs must not queue behind each other. (The
-# heavy test/e2e jobs moved off to the cheese-ci pool; these did not — see the
-# header comment on why they need the box's warm layer cache.) On main, every
+# A single self-hosted runner serves this repo, so superseded runs must not
+# queue behind each other (deploys share the same runner). On main, every
 # push shares one ref, so a plain ref-keyed group would let each merge cancel
 # the previous commit's still-running build — GitHub cancels not just the
 # in-progress run but any run still pending in the group, so even
