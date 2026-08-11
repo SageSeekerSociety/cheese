@@ -79,6 +79,21 @@ CI 红了之后，芝士**不需要人转述、不需要自己再跑一趟 GitHu
 
 （顺带：容器重启会**同时**清掉 `jj config` 和 `git config --global` 的身份，提交会带空的 committer 而无法推送。CLAUDE.md 已经记了 git 那半边，jj 这半边同理，重启后要一起重设。）
 
+### 第三个坑：分支不该带 workflow 文件
+
+改成合并后，重推失败的原因变了：
+
+```
+⚠️ 平台自动重推失败：话题分支的 workflow 文件与 GitHub 默认分支不一致且无法同步
+（与 GitHub main 合并冲突：.github/workflows/frontend.yml）
+```
+
+机制在 `workspace/service.py::push_topic_branch_for_github_pr`：GitHub 会因为分支改了 `.github/workflows/` 而拒绝（审批人的 token 没有 `workflows` scope），平台的补救是把 GitHub 默认分支合进来再推一次；这次那个合并在 `frontend.yml` 上冲突了。
+
+根因不在我的改动——**本卡一个 workflow 文件都没碰**。是我合并本地 `main` 时把它的 workflow 文件带上了分支，而**本地 main 和 GitHub main 是两条平行历史**（本地是 `采纳 topic/xxx → main` 合并提交，GitHub 那边是 squash 过的 PR），同一个 `frontend.yml` 两边各自新增、没有共同祖先 → add/add 必冲突。推送头 `7f2a594f` 当初能推上去，正是因为它压根没有这些文件。
+
+修法：把 `.github/` 恢复成 `7f2a594f` 那份，分支上 workflow 差异归零。**推送随即成功**（卡片的重推失败 note 被清空，远程头跟着我的提交一路前进）。
+
 ### 冲突怎么解的
 
 - <&backend/app/domain/review/github_pr.py>：main 给 `CheckState` 加了 `no_checks`，我在同一处加了 `logger`。两边都保留。`no_checks` 由 `_resolve_zero_checks` 产出，而 `_failure_detail` 只在 `failure` 分支触发，互不影响。
