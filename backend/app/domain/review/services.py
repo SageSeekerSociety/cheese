@@ -27,6 +27,18 @@ from app.domain.webhook import service as webhook_service
 
 logger = logging.getLogger("cheesex.review")
 
+# note 前缀家族 (docs/topics/诊断信息搬上验收卡.md). 多个写入方共用一条 `note`,
+# 靠前缀互相识别 —— 所以每个前缀都必须是**具名常量**, 不能靠 "⚠️" 这个共同的
+# 表情去粗判 (2026-08-10 修的就是这个: 用 "⚠️" 粗判会让"轮询暂停"冒充"重推
+# 失败", 把真正的 CI 失败通知整个吞掉, 见 _nudge_pr_fix).
+_REPUSH_FAILED_PREFIX = "⚠️ 平台自动重推失败"
+_POLL_PAUSED_PREFIX = "⚠️ 轮询暂停"
+
+
+def _nudge_note_prefix(stage: str) -> str:
+    return f"⚠️ {stage} 检查未通过："
+
+
 _MERGE_FAILED_MESSAGE = (
     "Acceptance could not complete because the topic could not be merged. "
     "The card remains pending and the topic stays active; repair the workspace "
@@ -144,6 +156,23 @@ def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
     return (f"{prefix}；{base}" if base else prefix)[:2000]
 
 
+# 递卡互斥 (2026-08-10): a topic may have at most one card that is still
+# "live" — awaiting a decision, mid-delivery, or blocked mid-accept. Each gets
+# its own message because the way OUT differs (改验收人 / 等交付 / 解冲突).
+_BLOCKED_BY_CARD_MESSAGES = {
+    AcceptStatus.pending: "已有待处理的验收卡，请改验收人而不是再递一张",
+    AcceptStatus.pending_gate: "已有待处理的验收卡，请改验收人而不是再递一张",
+    AcceptStatus.pr_open: (
+        "这个话题的验收卡已经在交付中（PR 正在跑 CI / 等部署），"
+        "不能再递一张；要改动就提交到工作区，平台会自动同步到那个 PR"
+    ),
+    AcceptStatus.conflict: (
+        "上一张验收卡卡在合并冲突上，解决冲突后由人重试采纳，不要再递一张"
+    ),
+}
+_CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
+
+
 def approvals_required_of(project: Project | None) -> int:
     """主分支保护 (spec §4.4): distinct approvals an accept needs. Default 1 —
     the accepter's own accept counts, so unconfigured projects are unchanged."""
@@ -193,15 +222,22 @@ class AcceptService:
         # 采纳是一次性交付 (spec §6.3): a frozen topic can't be re-submitted.
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能再递验收卡")
-        # One reviewer at a time, not a broadcast (spec §4.4): if a card is
-        # already pending (or still behind the gate), re-route / wait instead
-        # of stacking a new one.
+        # One card at a time, not a broadcast (spec §4.4): re-route / wait
+        # instead of stacking a new one.
+        #
+        # 2026-08-10: the guard used to cover only pending/pending_gate, so a
+        # card mid-DELIVERY (`pr_open`, a real PR running CI) or stuck on a
+        # merge `conflict` did not block a second card. The frontend only ever
+        # renders the NEWEST card, so the older one — and the PR it was
+        # driving — vanished from the UI while the poller kept advancing it.
+        # Every non-terminal status blocks now; `gate_failed` deliberately does
+        # not (a red gate voids the card, and re-递卡 after fixing IS the flow).
         existing = await self._repo.list_for_topic(topic_id)
-        if any(
-            c.status in (AcceptStatus.pending, AcceptStatus.pending_gate)
-            for c in existing
-        ):
-            raise ValidationError("已有待处理的验收卡，请改验收人而不是再递一张")
+        blocking = next(
+            (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
+        )
+        if blocking is not None:
+            raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
         # 机器闸门 (spec §4.4/§9, eval C2): with a check_command configured the
         # card is born pending_gate; the platform runs the check in the topic's
         # workspace and only a green result promotes it to pending. The check
@@ -668,8 +704,8 @@ class AcceptService:
             # otherwise 芝士 believes its fix was pushed and just waits forever.
             # Dedup by prefix — this fires every 60s poll tick until the push
             # succeeds, and must not spam the note each time.
-            if not card.note.startswith("⚠️ 平台自动重推失败"):
-                card.note = (f"⚠️ 平台自动重推失败（下一轮还会重试）：{exc}")[:2000]
+            if not card.note.startswith(_REPUSH_FAILED_PREFIX):
+                card.note = (f"{_REPUSH_FAILED_PREFIX}（下一轮还会重试）：{exc}")[:2000]
                 await self._session.flush()
             return
         card.pr_head_sha = pushed["head_sha"]
@@ -799,13 +835,23 @@ class AcceptService:
             )
             # Without this the card just sits at `pr_open` forever and looks
             # identical to "CI still running" — no signal anyone's token died.
-            if not card.note.startswith("⚠️ 轮询暂停"):
+            if not card.note.startswith(_POLL_PAUSED_PREFIX):
                 card.note = (
-                    f"⚠️ 轮询暂停（下一轮还会重试）："
+                    f"{_POLL_PAUSED_PREFIX}（下一轮还会重试）："
                     f"{_describe_token_unavailable(reason)}"
                 )[:2000]
                 await self._session.flush()
             return
+
+        # Token is usable again → the pause note is stale. Clearing it here is
+        # what makes the pause self-healing: it stops describing a condition
+        # that no longer holds, AND it can no longer sit in front of a real CI
+        # failure (which is how "轮询暂停" used to swallow CI 失败 notifications
+        # — see _nudge_pr_fix). Only this exact prefix is cleared; 重推失败 /
+        # 部署失败 / 拒绝合并 notes describe live conditions and stay put.
+        if card.note.startswith(_POLL_PAUSED_PREFIX):
+            card.note = ""
+            await self._session.flush()
 
         from app.domain.review import github_pr
 
@@ -992,9 +1038,21 @@ class AcceptService:
         chat_service,
         runner,
     ) -> None:
-        if card.note.startswith("⚠️"):
-            return  # already nudged for this exact commit — don't spam every poll
-        card.note = f"⚠️ {stage} 检查未通过：{tail}"[:2000]
+        # Dedup, precisely (2026-08-10). This used to be `startswith("⚠️")`,
+        # which treats the whole ⚠️ family as "already nudged" — so a
+        # `⚠️ 轮询暂停` note left behind by a dead token silently swallowed
+        # every subsequent CI failure: no message, no note, no trace, and the
+        # only escape (pr_head_sha moving) needs a human to push first. Two
+        # separate reasons to stay quiet, spelled out:
+        #   1. we already nudged for THIS stage on this commit — don't spam;
+        #   2. 重推失败 outranks a CI failure and must not be overwritten —
+        #      it means 芝士's fix never reached GitHub, so the red CI on
+        #      record is stale (docs/topics/诊断信息搬上验收卡.md, 优先级说明).
+        if card.note.startswith(_nudge_note_prefix(stage)) or card.note.startswith(
+            _REPUSH_FAILED_PREFIX
+        ):
+            return
+        card.note = f"{_nudge_note_prefix(stage)}{tail}"[:2000]
         runner.submit(
             chat_service,
             topic.id,

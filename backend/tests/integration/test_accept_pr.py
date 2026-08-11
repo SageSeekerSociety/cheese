@@ -691,7 +691,7 @@ def test_accept_without_token_or_repo_degrades_to_direct_merge(client):
 
 def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):
     """A plain (degrade-path) accepted card must not be touched by the poller
-    — regression guard for list_by_status filtering correctly."""
+    — regression guard for list_pr_open_on_active_topics filtering correctly."""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
