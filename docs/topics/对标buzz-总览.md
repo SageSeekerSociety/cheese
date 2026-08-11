@@ -476,6 +476,47 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 
 > **催办本身撞出一条新证据**：父话题用自己的 scoped token 往子话题发评论，后端把作者记成了 **`anonymous`**。这是 @Agent 一等公民机制对比 说的「分身身份塌缩」的**活样本**——不是理论推演，是刚才在这条留言上直接观察到的。已同步给那一路写进结论。
 
+## 收口判定表（2026-08-11，wangchangxin 指派）
+
+判据一律是**工作区实际 diff**，不是印象。所有话题分支都在同一个 git 仓库里，所以父话题能直接算：
+
+```bash
+jj diff --stat --from "fork_point(main | topic/<hex8>)" --to "topic/<hex8>"
+```
+
+| 子话题 | 实际 diff | 结局 |
+|---|---|---|
+| `f7a66e89` 架构与领域模型 | 1 file，`docs/` 277+ | **纯调研，不递卡** |
+| `5afbd67a` Agent 一等公民 | 1 file，`docs/` 164+ | **纯调研，不递卡**（wangchangxin 已定案） |
+| `d8990b22` 仓库自解释 | 1 file，`docs/` 179+ | **纯调研，不递卡** |
+| `a6e422c7` 高风险护栏调研 | 1 file，`docs/` 200+ | **纯调研，不递卡** |
+| `4d158f8c` 质量闸门与 CI/CD | **`CLAUDE.md` 1 行** + `docs/` 356+ | **递卡**——见下 |
+| `5e2249e5` 测试策略 | `dev-db.sh` / `e2e/` 共 4 files | ✅ 已采纳 → **PR #270** |
+| `9dbf90ee` authz 收敛 | **26 files, 980+/91-** | **递卡**，冲突已消 |
+| `fbea1a5e` 领域包解环 | 12 files, 937+/26- | ⛔ 卡在 `pending_gate` 锁死，另有专线处理，本话题不碰 |
+
+**`4d158f8c` 那 1 行不是可有可无的**：它把 `CLAUDE.md` 首行的语言面从「backend + frontend + e2e」改成「backend + frontend + **`cli/` (Go)** + e2e + **`evals/`**」，并加了一句「要完整清单请在仓库根 `ls`，别信这一行」。**这正是 Go 代码此前零 CI 的根因写照**——清单漏了它，谁去审计 CI 覆盖都审计不到。只进文档没用，必须落到 main。
+
+**`9dbf90ee` 的冲突已经没了**（核实：`jj log -r 'main::topic/9dbf90ee'` 同时返回 main 与其尖端 → 它已是 main 的后代；尖端 `edd6673a` 坐在当前 main `2e72632e` 之上）。
+
+> ⚠️ **核实边界**：以上全部是对**本机可见的 main**（28 分钟前，含当天采纳）算的。**远端 main 未验证**——`jj git fetch` 不可用（git 2.39.5 < 2.41），`gh` token 只有 actions/checks 权限，`git/refs`、`branches`、`pulls` 三条读路径实测全部 **403**。
+
+### 母话题不再递卡（已记入决策记录）
+
+母话题的职责是组织与收口，不是交付。本次的卡 `14a2f2d3` 带的是 `CLAUDE.md` 新增 Sandbox Capability Boundaries 一节（40 行）+ 3 份话题文档，**无 backend/frontend/e2e 代码，也未混入任何子任务的代码**。此后这类跨子话题的公共约定改动，应单开一个子话题承载并由它递卡。
+
+### 由此浮出的一条平台级观察
+
+wangchangxin 盘出来的数是「27 个活着的话题只有 4 张卡在流转」，瓶颈**不在状态机怎么变，而在大量做完的活压根没进入流程**。
+
+而我这一轮做的事说明：**这个状态是机器可判的，而且用的是已经存在的原语。**
+
+> **分支对 main 的 diff 非空 + 无验收卡 = 做完了没交。** 一条 `jj diff --stat` 就够。
+
+这和 <&docs/topics/并行话题冲突预警设计.md> 的 P0 是**同一个函数的两种用法**：那边遍历开着的话题算「文件重叠」，这边遍历开着的话题算「diff 是否非空」。`touched_files(repo, ref, base)` 一次实现，两处受益。
+
+**建议合并成一件事做**，别当两个需求排期。
+
 ## 衍生设计：并行话题冲突预警（待拍板，未开工）
 
 起因是 wangchangxin 反馈「conflict 现在经常遇到」。查 Buzz 怎么做的，答案是 **它没有登记表，它从 git 算**——`check-branch-skew.sh` 取「main 改过的文件」∩「本分支改过的文件」，非空就拦 push。
