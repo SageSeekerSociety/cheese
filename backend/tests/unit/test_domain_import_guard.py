@@ -151,8 +151,8 @@ def _domain_of(module: str) -> str | None:
     return parts[2]
 
 
-def _module_name(path: Path) -> str:
-    rel = path.relative_to(DOMAIN_ROOT.parents[1])  # backend/app 的上一级
+def _module_name(path: Path, root: Path) -> str:
+    rel = path.relative_to(root.parents[1])  # <root>/app/domain 的上两级
     return ".".join(rel.with_suffix("").parts)
 
 
@@ -164,11 +164,14 @@ def _resolve(node: ast.ImportFrom, current: str) -> str | None:
     return ".".join(base + (node.module.split(".") if node.module else []))
 
 
-def _scan() -> list[tuple[str, str, int]]:
-    """返回全部跨领域 repository import：(发起方模块, 目标模块, 行号)。"""
+def _scan(root: Path = DOMAIN_ROOT) -> list[tuple[str, str, int]]:
+    """返回全部跨领域 repository import：(发起方模块, 目标模块, 行号)。
+
+    ``root`` 指向 ``<某处>/app/domain``。默认扫真树；自检用它扫 tmp 里的假树。
+    """
     found: list[tuple[str, str, int]] = []
-    for py in sorted(DOMAIN_ROOT.rglob("*.py")):
-        src_mod = _module_name(py)
+    for py in sorted(root.rglob("*.py")):
+        src_mod = _module_name(py, root)
         src_dom = _domain_of(src_mod)
         if src_dom is None:
             continue  # domain/common.py 这类顶层文件，不属于任何领域包
@@ -195,9 +198,23 @@ def _scan() -> list[tuple[str, str, int]]:
     return found
 
 
+def _violations(
+    root: Path = DOMAIN_ROOT, exempt: frozenset[tuple[str, str]] = _EXEMPT
+) -> list[tuple[str, str]]:
+    """白名单之外的违规。"""
+    return sorted({(src, dst) for src, dst, _ in _scan(root)} - exempt)
+
+
+def _stale_exemptions(
+    root: Path = DOMAIN_ROOT, exempt: frozenset[tuple[str, str]] = _EXEMPT
+) -> list[tuple[str, str]]:
+    """白名单里已经没有对应违规的行。"""
+    return sorted(exempt - {(src, dst) for src, dst, _ in _scan(root)})
+
+
 def test_no_cross_domain_repository_imports() -> None:
     """跨领域 import 别人的 repository：白名单之外一律不许。"""
-    violations = sorted({(src, dst) for src, dst, _ in _scan()} - _EXEMPT)
+    violations = _violations()
     if violations:
         lines = "\n".join(f"  {src} → {dst}" for src, dst in violations)
         pytest.fail(
@@ -211,8 +228,7 @@ def test_no_cross_domain_repository_imports() -> None:
 
 def test_exemptions_are_all_still_needed() -> None:
     """白名单是棘轮：还完债必须把行删掉，不许留着虚胖。"""
-    actual = {(src, dst) for src, dst, _ in _scan()}
-    stale = sorted(_EXEMPT - actual)
+    stale = _stale_exemptions()
     if stale:
         lines = "\n".join(f"  {src} → {dst}" for src, dst in stale)
         pytest.fail(
@@ -220,3 +236,120 @@ def test_exemptions_are_all_still_needed() -> None:
             f"{lines}\n\n"
             "（债还完了忘删白名单，下一个人就会以为这条依赖还在。）"
         )
+
+
+# ---------------------------------------------------------------------------
+# 自检：先证明这道守卫会红，再让它去判真树
+#
+# 抄 #264 的 .claude/scripts/check-repo-rules.sh --self-test。一道永远绿的守卫
+# 和没有守卫是一回事，而且更糟——它会让人以为这条约束有人守着。上面两个测试当前
+# 全绿，绿本身不构成"它能抓到东西"的证据；下面这组在 tmp 里搭假树，逐个形状证明
+# 它会红、以及不该红的地方不红。
+# ---------------------------------------------------------------------------
+
+
+def _fake_tree(tmp_path: Path, files: dict[str, str]) -> Path:
+    """在 tmp 里搭一棵 ``<tmp>/app/domain/...`` 的假领域树，返回 domain 根。
+
+    路径形状必须和真树一致：``_module_name`` 是按 ``app/domain`` 上两级取相对
+    路径算模块名的，假树跟着这个形状走，自检才测的是真代码路径。
+    """
+    domain = tmp_path / "app" / "domain"
+    for rel, src in files.items():
+        path = domain / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(src, encoding="utf-8")
+    return domain
+
+
+#: 每一条都必须被抓到。key 是 pytest 的用例名，value 是 alpha/services.py 的内容。
+_MUST_FAIL = {
+    "from-x-repositories-import": "from app.domain.beta.repositories import BetaRepo\n",
+    "from-x-import-repositories": "from app.domain.beta import repositories\n",
+    "plain-import": "import app.domain.beta.repositories\n",
+    "relative-import": "from ..beta.repositories import BetaRepo\n",
+    "renamed-sql_repository": (
+        "from app.domain.beta.sql_repository import SqlBetaRepo\n"
+    ),
+    "renamed-_repositories-suffix": (
+        "from app.domain.beta.recruitment_repositories import RecruitRepo\n"
+    ),
+    "hidden-in-a-function-body": (
+        "def f():\n"
+        "    from app.domain.beta.repositories import BetaRepo\n"
+        "    return BetaRepo\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("source", _MUST_FAIL.values(), ids=list(_MUST_FAIL))
+def test_self_test_guard_goes_red_on(tmp_path: Path, source: str) -> None:
+    """每种 import 写法都得抓到——改个名或者塞进函数体就绕过去的守卫不算守卫。"""
+    root = _fake_tree(tmp_path, {"alpha/services.py": source})
+    found = _violations(root, frozenset())
+    assert found, f"没抓到：{source!r}"
+    src, dst = found[0]
+    assert src == "app.domain.alpha.services"
+    assert dst.startswith("app.domain.beta.")
+
+
+def test_self_test_whitelist_actually_suppresses(tmp_path: Path) -> None:
+    """白名单能压住违规——不然存量违规会把守卫直接淹掉。"""
+    root = _fake_tree(
+        tmp_path, {"alpha/services.py": "from app.domain.beta.repositories import R\n"}
+    )
+    pair = ("app.domain.alpha.services", "app.domain.beta.repositories")
+    assert _violations(root, frozenset()) == [pair]
+    assert _violations(root, frozenset({pair})) == []
+
+
+def test_self_test_ratchet_catches_a_stale_exemption(tmp_path: Path) -> None:
+    """棘轮的另一半：债还完了白名单没删，也得红。"""
+    root = _fake_tree(
+        tmp_path, {"alpha/services.py": "from app.domain.beta import x\n"}
+    )
+    pair = ("app.domain.alpha.services", "app.domain.beta.repositories")
+    assert _stale_exemptions(root, frozenset({pair})) == [pair]
+    assert _stale_exemptions(root, frozenset()) == []
+
+
+#: 每一条都**不许**被抓到——守卫判过头比判不到更难发现。
+_MUST_PASS = {
+    "same-domain-repository": "from app.domain.alpha.repositories import AlphaRepo\n",
+    "cross-domain-service": "from app.domain.beta.services import BetaService\n",
+    "cross-domain-models": "from app.domain.beta.models import Beta\n",
+    "not-a-repository-module": "from app.domain.beta.wiring import beta_service\n",
+    "outside-app-domain": "from app.core.errors import ValidationError\n",
+    "relative-same-domain": "from .repositories import AlphaRepo\n",
+}
+
+
+@pytest.mark.parametrize("source", _MUST_PASS.values(), ids=list(_MUST_PASS))
+def test_self_test_guard_stays_green_on(tmp_path: Path, source: str) -> None:
+    root = _fake_tree(tmp_path, {"alpha/services.py": source})
+    assert _violations(root, frozenset()) == [], f"误判：{source!r}"
+
+
+def test_self_test_top_level_files_are_out_of_scope(tmp_path: Path) -> None:
+    """``app/domain/common.py`` 这类不属于任何领域包的文件不在管辖范围内。
+
+    这是设计取舍，不是漏网：它没有"自己的领域"，跨域的概念套不上去。
+    """
+    root = _fake_tree(
+        tmp_path, {"common.py": "from app.domain.beta.repositories import BetaRepo\n"}
+    )
+    assert _violations(root, frozenset()) == []
+
+
+def test_self_test_clean_tree_passes(tmp_path: Path) -> None:
+    """干净的树必须绿——证明上面那些红不是因为扫描本身炸了。"""
+    root = _fake_tree(
+        tmp_path,
+        {
+            "alpha/services.py": "from app.domain.beta.services import BetaService\n",
+            "alpha/repositories.py": "class AlphaRepo: ...\n",
+            "beta/services.py": "from .repositories import BetaRepo\n",
+            "beta/repositories.py": "class BetaRepo: ...\n",
+        },
+    )
+    assert _violations(root, frozenset()) == []
