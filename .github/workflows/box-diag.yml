@@ -9,6 +9,11 @@ name: Box diagnostics
 # Born from #233: the dev database turned out to be SQL_ASCII (Chinese in
 # jsonb crashes), and there was no way to check prod's encoding short of
 # asking someone with a key.
+#
+# The encoding probe deliberately imports NO application code: prod deploys by
+# release and can run a much older layout (the first version imported
+# app.core.db and crashed on prod). It reads DATABASE_URL and talks to the
+# driver directly, asyncpg first, psycopg2 as fallback.
 
 on:
   workflow_dispatch: {}
@@ -21,22 +26,45 @@ jobs:
       - name: Database encoding
         run: |
           docker exec cheese-backend-1 python -c '
-          import asyncio, sys
-          sys.path.insert(0, "/app")
-          from sqlalchemy import text
-          from app.core.db import async_session_factory
+          import os
 
-          async def main():
-              async with async_session_factory() as s:
-                  r = (await s.execute(text(
-                      "SELECT current_database(), pg_encoding_to_char(encoding), "
-                      "datcollate, version() "
-                      "FROM pg_database WHERE datname = current_database()"
-                  ))).fetchone()
-                  print(f"db={r[0]} encoding={r[1]} collate={r[2]}")
-                  print("server:", r[3][:60])
+          Q = (
+              "SELECT current_database(), pg_encoding_to_char(encoding), "
+              "datcollate, version() "
+              "FROM pg_database WHERE datname = current_database()"
+          )
+          url = os.environ.get("DATABASE_URL", "")
+          if not url:
+              cand = [k for k in os.environ if "DATABASE" in k or "POSTGRES" in k]
+              raise SystemExit(f"no DATABASE_URL; candidates: {cand}")
+          dsn = (
+              url.replace("postgresql+asyncpg://", "postgresql://")
+              .replace("postgresql+psycopg2://", "postgresql://")
+          )
+          print("db_host:", dsn.rsplit("@", 1)[-1])
 
-          asyncio.run(main())
+          def show(row):
+              print(f"db={row[0]} encoding={row[1]} collate={row[2]}")
+              print("server:", row[3][:60])
+
+          try:
+              import asyncio
+
+              import asyncpg
+
+              async def main():
+                  c = await asyncpg.connect(dsn)
+                  show(await c.fetchrow(Q))
+                  await c.close()
+
+              asyncio.run(main())
+          except ModuleNotFoundError:
+              import psycopg2
+
+              with psycopg2.connect(dsn) as conn:
+                  with conn.cursor() as cur:
+                      cur.execute(Q)
+                      show(cur.fetchone())
           '
       - name: Deployed images and disk
         run: |
@@ -50,22 +78,45 @@ jobs:
       - name: Database encoding
         run: |
           docker exec cheese-backend-1 python -c '
-          import asyncio, sys
-          sys.path.insert(0, "/app")
-          from sqlalchemy import text
-          from app.core.db import async_session_factory
+          import os
 
-          async def main():
-              async with async_session_factory() as s:
-                  r = (await s.execute(text(
-                      "SELECT current_database(), pg_encoding_to_char(encoding), "
-                      "datcollate, version() "
-                      "FROM pg_database WHERE datname = current_database()"
-                  ))).fetchone()
-                  print(f"db={r[0]} encoding={r[1]} collate={r[2]}")
-                  print("server:", r[3][:60])
+          Q = (
+              "SELECT current_database(), pg_encoding_to_char(encoding), "
+              "datcollate, version() "
+              "FROM pg_database WHERE datname = current_database()"
+          )
+          url = os.environ.get("DATABASE_URL", "")
+          if not url:
+              cand = [k for k in os.environ if "DATABASE" in k or "POSTGRES" in k]
+              raise SystemExit(f"no DATABASE_URL; candidates: {cand}")
+          dsn = (
+              url.replace("postgresql+asyncpg://", "postgresql://")
+              .replace("postgresql+psycopg2://", "postgresql://")
+          )
+          print("db_host:", dsn.rsplit("@", 1)[-1])
 
-          asyncio.run(main())
+          def show(row):
+              print(f"db={row[0]} encoding={row[1]} collate={row[2]}")
+              print("server:", row[3][:60])
+
+          try:
+              import asyncio
+
+              import asyncpg
+
+              async def main():
+                  c = await asyncpg.connect(dsn)
+                  show(await c.fetchrow(Q))
+                  await c.close()
+
+              asyncio.run(main())
+          except ModuleNotFoundError:
+              import psycopg2
+
+              with psycopg2.connect(dsn) as conn:
+                  with conn.cursor() as cur:
+                      cur.execute(Q)
+                      show(cur.fetchone())
           '
       - name: Deployed images and disk
         run: |
