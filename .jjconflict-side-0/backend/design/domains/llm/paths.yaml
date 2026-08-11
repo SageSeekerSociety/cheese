@@ -1,0 +1,142 @@
+# LLM/AI Domain Paths
+
+/ai/quota:
+  get:
+    summary: Get AI quota
+    operationId: getAiQuota
+    tags: [AI]
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: AI quota information
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  $ref: './schemas.yaml#/AiQuota'
+
+/ai/models:
+  get:
+    summary: List available AI models
+    operationId: listAiModels
+    tags: [AI]
+    responses:
+      '200':
+        description: Available AI models
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    models:
+                      type: array
+                      items:
+                        $ref: './schemas.yaml#/AiModel'
+
+/ai/conversations:
+  get:
+    summary: List AI conversations
+    operationId: listAiConversations
+    tags: [AI]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: AI conversations list
+  post:
+    summary: Create AI conversation
+    operationId: createAiConversation
+    tags: [AI]
+    security:
+      - BearerAuth: []
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              title:
+                type: string
+              modelId:
+                type: string
+    responses:
+      '201':
+        description: Conversation created
+
+/ai/conversations/{conversationId}:
+  get:
+    summary: Get AI conversation
+    operationId: getAiConversation
+    tags: [AI]
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: conversationId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '200':
+        description: Conversation details
+  delete:
+    summary: Delete AI conversation
+    operationId: deleteAiConversation
+    tags: [AI]
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: conversationId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '204':
+        description: Conversation deleted
+
+/ai/chat:
+  post:
+    summary: Chat with AI
+    operationId: chatWithAi
+    tags: [AI]
+    security:
+      - BearerAuth: []
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/ChatRequest'
+    responses:
+      '200':
+        description: AI response
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  $ref: './schemas.yaml#/ChatResponse'

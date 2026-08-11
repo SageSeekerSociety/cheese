@@ -1,0 +1,80 @@
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: paradedb/paradedb:v0.18.8-pg16
+    command: ["-c", "shared_preload_libraries=pg_cron,pg_search"]
+    container_name: cheese_py_postgres
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=cheese
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - cheese_py_network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  postgres_test:
+    image: paradedb/paradedb:v0.18.8-pg16
+    command: ["-c", "shared_preload_libraries=pg_cron,pg_search"]
+    container_name: cheese_py_postgres_test
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=cheese_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "127.0.0.1:5433:5432"
+    networks:
+      - cheese_py_network
+    volumes:
+      - postgres_data_test:/var/lib/postgresql/data
+
+  # Redis (Valkey) for caching and sessions
+  valkey:
+    image: valkey/valkey:8.0.2
+    container_name: cheese_py_valkey
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - cheese_py_network
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  valkey_test:
+    image: valkey/valkey:8.0.2
+    container_name: cheese_py_valkey_test
+    ports:
+      - "127.0.0.1:6380:6379"
+    networks:
+      - cheese_py_network
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  cheese_py_network:
+    name: cheese_py_network
+
+volumes:
+  postgres_data:
+  postgres_data_test:

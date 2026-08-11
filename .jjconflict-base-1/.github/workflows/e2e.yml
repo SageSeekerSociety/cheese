@@ -1,0 +1,209 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'e2e/**'
+      - '.github/workflows/e2e.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'e2e/**'
+      - '.github/workflows/e2e.yml'
+
+# A single self-hosted runner serves this repo, so superseded runs must not
+# queue behind each other (deploys share the same runner). test.yml and
+# build.yml already do this; e2e.yml was the one workflow still missing it —
+# any backend/frontend change triggers all three at once, and without this an
+# e2e run for a superseded commit keeps running to completion instead of
+# being cancelled (measured: only ~1.7% of e2e runs were ever cancelled, vs
+# 15%/33% for test/build).
+# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
+# each merge in its own group: with a shared `github.ref` key, a second merge
+# cancelled the first one's run and main was left with no result for that
+# commit. build.yml already keyed on sha for main; these did not.
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-e2e-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # See test.yml: merged squash commits contain the exact PR tree already gated.
+  # The cheap API decision preserves full CI for direct main pushes.
+  scope:
+    # Hosted, not the box: identical zero-dependency `gh api` job as
+    # test.yml's scope (no checkout, no box-local network/files), moved for
+    # the same reason — avoid queueing behind other work on the box's single
+    # runner before the jobs it gates.
+    runs-on: ubuntu-latest
+    # Same job as test.yml's scope: measured median 0.2m, wide margin.
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      run_heavy: ${{ steps.decide.outputs.run_heavy }}
+    steps:
+      - name: Decide whether this commit already passed PR CI
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: e2e.yml
+        run: |
+          run_heavy=true
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            if pr_head="$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '.[] | select(.merged_at != null and .merge_commit_sha == env.GITHUB_SHA) | .head.sha')"; then
+              if [ -n "$pr_head" ] && passed="$(gh api --method GET \
+                "/repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW_FILE/runs" \
+                -f head_sha="$pr_head" -f event=pull_request -f status=success \
+                --jq '.workflow_runs | length')"; then
+                if [ "$passed" -gt 0 ]; then
+                  run_heavy=false
+                  echo "::notice::Exact squash-merge tree already passed this PR workflow; skipping duplicate main suite"
+                fi
+              fi
+            else
+              echo "::warning::Could not inspect associated PRs; running the suite (safe fallback)"
+            fi
+          fi
+          echo "run_heavy=$run_heavy" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: scope
+    if: needs.scope.outputs.run_heavy == 'true'
+    # Not ubuntu-latest: this is a private repo, so hosted minutes are billed
+    # per-minute, and this job needs native amd64 Docker plus the Playwright
+    # browser install. Runs on the cheese-ci pool (MicroCloud VMs, one runner
+    # slot each — see docs/infrastructure.md), NOT on the dev box: the box is
+    # the deploy target and its single slot serialized every heavy job.
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 15
+    # Persists backend/srp_rs's Cargo build cache outside the checkout, same
+    # as test.yml's migration-heads/test jobs — see the comment on
+    # migration-heads there for the full reasoning (why this path survives
+    # actions/checkout and is immune to docker prune, and why it's keyed per
+    # job rather than shared).
+    services:
+      postgres:
+        image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cheese
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+        options: >-
+          --health-cmd="valkey-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Point Cargo at the persistent target dir
+        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/e2e" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          version: "0.12.1"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: |
+            frontend/pnpm-lock.yaml
+            e2e/pnpm-lock.yaml
+
+      # Persistent venv (same trick as test.yml): checkout wipes the workspace
+      # every run; an out-of-workspace venv turns the measured ~93s uv sync
+      # into a no-op re-check.
+      - name: Point uv at a persistent venv
+        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/e2e" >> "$GITHUB_ENV"
+
+      - name: Install backend deps
+        working-directory: backend
+        run: uv sync --all-extras
+
+      - name: Report Cargo target cache size
+        run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
+
+      - name: Run migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
+        run: uv run alembic upgrade head
+
+      # alice (seeded by the migration above) owns no project until this runs;
+      # the app-shell / topic / chat specs need her to land on a real project
+      # rail tile. This is the same fusion demo the dev box is seeded with.
+      - name: Seed fusion demo data
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
+        run: uv run python -m scripts.seed_fusion_demo
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install E2E deps
+        working-directory: e2e
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: pnpm exec playwright install --with-deps chromium
+
+      # The runner is the dev box, which already serves the deployment on 8081.
+      - name: Run E2E tests
+        working-directory: e2e
+        env:
+          E2E_BACKEND_PORT: '8791'
+          E2E_FRONTEND_PORT: '3100'
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: test-secret
+          ENVIRONMENT: test
+          CI: true
+        run: pnpm exec playwright test
+
+      - name: Upload test report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

@@ -1,0 +1,78 @@
+version: '3'
+
+vars:
+  PYTEST_WORKERS: 4
+
+tasks:
+  dev:
+    desc: Start backend dev server
+    cmds:
+      - uv run uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
+  lint:
+    desc: Run ruff linter
+    cmds:
+      - uv run ruff check .
+    sources:
+      - app/**/*.py
+      - tests/**/*.py
+      - pyproject.toml
+  lint:fix:
+    desc: Run ruff with auto-fix
+    cmds:
+      - uv run ruff check . --fix
+  fmt:
+    desc: Format code with ruff
+    cmds:
+      - uv run ruff format .
+  typecheck:
+    desc: Run pyright type checker
+    cmds:
+      - uv run pyright
+    sources:
+      - app/**/*.py
+      - pyproject.toml
+  test:
+    desc: Run tests (incremental via testmon)
+    cmds:
+      - uv run pytest tests/ -n {{.PYTEST_WORKERS}} --reruns 2 -q
+  test:full:
+    desc: Run full test suite (no testmon)
+    cmds:
+      - uv run pytest tests/ -n {{.PYTEST_WORKERS}} --reruns 2 -q
+  test:failed:
+    desc: Re-run only last-failed tests
+    cmds:
+      - uv run pytest tests/ --lf -n {{.PYTEST_WORKERS}} -q
+  check:
+    desc: Run all checks (ruff + pyright + pytest)
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+  check:full:
+    desc: Run all checks with full test suite
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test:full
+  db:migrate:
+    desc: Run alembic migrations
+    cmds:
+      - uv run alembic upgrade head
+  db:revision:
+    desc: Create a new migration (set MSG="description")
+    cmds:
+      - uv run alembic revision --autogenerate -m "{{.MSG}}"
+    requires:
+      vars: [MSG]
+  db:downgrade:
+    desc: Downgrade one migration step
+    cmds:
+      - uv run alembic downgrade -1
+  deps:sync:
+    desc: Sync Python dependencies
+    cmds:
+      - uv sync
+    sources:
+      - pyproject.toml
+      - uv.lock

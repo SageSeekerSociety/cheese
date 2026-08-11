@@ -1,0 +1,142 @@
+# Space Domain Schemas
+
+Space:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    name:
+      type: string
+    intro:
+      type: string
+    description:
+      type: string
+    avatarId:
+      type: integer
+      format: int64
+    enableRank:
+      type: boolean
+    defaultCategoryId:
+      type: integer
+      format: int64
+    announcements:
+      type: string
+      description: |
+        JSON-encoded array of SpaceAnnouncement objects, e.g. `"[]"` or
+        `'[{"title":"...","content":"...","createdAt":...,"updatedAt":...,"publisher":"..."}]'`.
+        Stored as JSONB internally; serialized as a JSON string on the wire to
+        match the NT contract and the Vue frontend (which calls JSON.parse on it).
+    taskTemplates:
+      type: string
+      description: |
+        JSON-encoded array of SpaceTaskTemplate objects. Same wire format as
+        announcements (JSON string of an array).
+    createdAt:
+      type: integer
+      format: int64
+    updatedAt:
+      type: integer
+      format: int64
+
+SpaceCategory:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    name:
+      type: string
+    description:
+      type: string
+    space_id:
+      type: integer
+      format: int64
+    is_archived:
+      type: boolean
+    created_at:
+      type: integer
+      format: int64
+
+SpaceManager:
+  type: object
+  properties:
+    user:
+      $ref: '../user/schemas.yaml#/User'
+    added_at:
+      type: integer
+      format: int64
+
+CreateSpaceRequest:
+  type: object
+  properties:
+    name:
+      type: string
+    intro:
+      type: string
+    description:
+      type: string
+    avatarId:
+      type: integer
+      format: int64
+    enableRank:
+      type: boolean
+    announcements:
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            type: object
+      description: |
+        Either a JSON-encoded string (NT-compatible form, what the Vue frontend
+        sends via JSON.stringify) or a raw JSON array. The server normalizes
+        both to a list before storing.
+    taskTemplates:
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            type: object
+      description: Same shape as announcements.
+  required:
+    - name
+
+UpdateSpaceRequest:
+  type: object
+  properties:
+    name:
+      type: string
+    intro:
+      type: string
+    description:
+      type: string
+    avatarId:
+      type: integer
+      format: int64
+    enableRank:
+      type: boolean
+    announcements:
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            type: object
+    taskTemplates:
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            type: object
+    defaultCategoryId:
+      type: integer
+      format: int64
+
+CreateCategoryRequest:
+  type: object
+  properties:
+    name:
+      type: string
+    description:
+      type: string
+  required:
+    - name

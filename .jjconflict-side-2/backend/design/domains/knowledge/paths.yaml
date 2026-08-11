@@ -1,0 +1,132 @@
+# Knowledge Domain Paths
+
+/knowledge:
+  get:
+    summary: List knowledge items
+    operationId: listKnowledge
+    tags: [Knowledge]
+    parameters:
+      - name: q
+        in: query
+        description: Search keyword
+        schema:
+          type: string
+      - name: labelId
+        in: query
+        description: Filter by label ID
+        schema:
+          type: integer
+          format: int64
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Knowledge items list
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    knowledge:
+                      type: array
+                      items:
+                        $ref: './schemas.yaml#/Knowledge'
+                    page:
+                      $ref: '../../common/responses.yaml#/Page'
+  post:
+    summary: Create knowledge item
+    operationId: createKnowledge
+    tags: [Knowledge]
+    security:
+      - BearerAuth: []
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/CreateKnowledgeRequest'
+    responses:
+      '201':
+        description: Knowledge item created
+
+/knowledge/{knowledgeId}:
+  get:
+    summary: Get knowledge item details
+    operationId: getKnowledge
+    tags: [Knowledge]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/KnowledgeId'
+    responses:
+      '200':
+        description: Knowledge item details
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    knowledge:
+                      $ref: './schemas.yaml#/Knowledge'
+  put:
+    summary: Update knowledge item
+    operationId: updateKnowledge
+    tags: [Knowledge]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/KnowledgeId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/UpdateKnowledgeRequest'
+    responses:
+      '200':
+        description: Knowledge item updated
+  delete:
+    summary: Delete knowledge item
+    operationId: deleteKnowledge
+    tags: [Knowledge]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/KnowledgeId'
+    responses:
+      '204':
+        description: Knowledge item deleted
+
+/knowledge/{knowledgeId}/upvote:
+  post:
+    summary: Upvote knowledge item
+    operationId: upvoteKnowledge
+    tags: [Knowledge]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/KnowledgeId'
+    responses:
+      '200':
+        description: Upvoted successfully
+  delete:
+    summary: Remove upvote from knowledge item
+    operationId: removeKnowledgeUpvote
+    tags: [Knowledge]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/KnowledgeId'
+    responses:
+      '200':
+        description: Upvote removed

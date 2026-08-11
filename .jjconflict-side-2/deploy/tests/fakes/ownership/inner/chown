@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Stub for the `chown` the handover runs as root inside the container. The tests
+# are unprivileged, so the call is recorded rather than performed.
+set -euo pipefail
+if [ -n "${OWNERSHIP_CHOWN_LOG:-}" ]; then
+  printf 'CHOWN %s\n' "$*" >> "$OWNERSHIP_CHOWN_LOG"
+fi
+exit 0

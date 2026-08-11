@@ -1,0 +1,113 @@
+services:
+  postgres:
+    image: paradedb/paradedb:v0.18.8-pg16
+    command: ["-c", "shared_preload_libraries=pg_cron,pg_search"]
+    container_name: cheese_prod_postgres
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=cheese
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  valkey:
+    image: valkey/valkey:8.0.2
+    container_name: cheese_prod_valkey
+    command: ["valkey-server", "--requirepass", "${REDIS_PASSWORD}"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    image: ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}
+    container_name: cheese_prod_backend
+    ports:
+      - "127.0.0.1:8081:8081"
+    env_file:
+      - .env.prod
+    environment:
+      # Agent sandbox turns run as SIBLING containers on the host dockerd
+      # (docker.sock below): `docker run -v` resolves paths HOST-side, so the
+      # workspace root must be the same absolute path inside this container
+      # and on the host — hence the twin bind mount.
+      - WORKSPACE_ROOT=/opt/cheese-data/workspaces
+      - SANDBOX_IMAGE=ghcr.io/sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/cheese-data/workspaces:/opt/cheese-data/workspaces
+    # Host docker group's gid so the non-root app user may use docker.sock:
+    #   getent group docker | cut -d: -f3   → set DOCKER_GID in .env.prod
+    group_add:
+      - "${DOCKER_GID:-999}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}
+    container_name: cheese_prod_frontend
+    ports:
+      - "127.0.0.1:80:80"
+    env_file:
+      - .env.prod
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /usr/local/bin/check-static-assets /usr/share/nginx/html >/dev/null &&
+          curl -fsS http://127.0.0.1:80/ >/dev/null
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data:

@@ -1,0 +1,91 @@
+#!/bin/sh
+# SDK cli_path shim: the Claude Agent SDK spawns this and talks stream-json over
+# stdio; we pipe that into `claude` running INSIDE a LONG-LIVED per-topic sandbox
+# container (one container per topic, reused across turns — faster than a fresh
+# `docker run` each turn, and closer to "每话题一个 VM"). The SDK keeps streaming
+# + session management; the agent (and its native Bash/Read/Write/Edit) runs
+# jailed in the container.
+#
+# Per-turn env (set by AgentService):
+#   SBX_CONTAINER  deterministic container name for this topic
+#   SBX_WORKTREE   host path of the topic's git worktree → mounted at /work
+#   SBX_VCS_MOUNTS extra `-v host:container` pairs (space-joined) so the jj
+#                  workspace at SBX_WORKTREE — whose .jj/repo pointer is a path
+#                  relative to the host tree — can still reach the project's
+#                  main repo store once remapped to /work (see
+#                  ws.sandbox_vcs_mounts); empty/unset is a no-op
+#   SBX_SESSION    host path of the topic's persistent ~/.claude → session/--resume
+#   ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN  → GLM gateway
+#   CHEESE_API / CHEESE_PROJECT / CHEESE_TOPIC / CHEESE_AUTHOR / CHEESE_TOKEN → cheese CLI
+SBX_IMAGE="${SBX_IMAGE:-cheesex-agent-sandbox:latest}"
+NAME="${SBX_CONTAINER:?SBX_CONTAINER not set}"
+
+# Ensure the topic's container exists, runs the CURRENT image, and is running.
+# Mounts are fixed at creation (the worktree + session dirs are stable per
+# topic); it idles on `sleep infinity`. Containers survive backend restarts and
+# are only recreated when the project's env image changed.
+# 运行环境预览: publish the conventional app port (random host port, localhost
+# only). The agent starts the project's server on 0.0.0.0:$CHEESE_APP_PORT and
+# declares it with `cheese serve`; the platform reads the mapping via
+# `docker port` and proxies the preview iframe straight to it.
+APP_PORT=3000
+# The cheese CLI is MOUNTED from the host (not baked): CLI changes reach every
+# container instantly — no image rebuild, no stale-binary class of bugs. The
+# source is the copy the backend stages into this topic's session dir
+# (ws.session_dir → bin/cheese), NOT the shim's own directory: when the backend
+# runs in a container, that is an in-image path the host daemon cannot see, and
+# docker would silently create an empty DIRECTORY there instead.
+CHEESE_CLI="${SBX_SESSION}/bin/cheese"
+create_container() {
+  docker run -d --name "$NAME" --user node \
+    -e HOME=/home/node \
+    -e CHEESE_APP_PORT="$APP_PORT" \
+    -p "127.0.0.1:0:$APP_PORT" \
+    --add-host host.docker.internal:host-gateway \
+    -v "${SBX_SESSION}":/home/node/.claude \
+    -v "${SBX_WORKTREE}":/work -w /work \
+    ${SBX_VCS_MOUNTS:-} \
+    -v "$CHEESE_CLI":/usr/local/bin/cheese:ro \
+    --network bridge \
+    --memory 2g --cpus 2 --pids-limit 512 \
+    --label cheesex-sandbox=1 \
+    "$SBX_IMAGE" sleep infinity >/dev/null
+}
+
+CUR_IMAGE="$(docker inspect -f '{{.Config.Image}}' "$NAME" 2>/dev/null || true)"
+if [ -z "$CUR_IMAGE" ]; then
+  create_container
+elif [ "$CUR_IMAGE" != "$SBX_IMAGE" ]; then
+  # 环境镜像 changed in project settings → rebuild this topic's box on the spot.
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  create_container
+elif ! docker port "$NAME" "$APP_PORT" >/dev/null 2>&1; then
+  # Pre-app-port container (no published port) → recreate with the mapping.
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  create_container
+elif ! docker inspect \
+    -f '{{range .Mounts}}{{.Source}}->{{.Destination}}{{"\n"}}{{end}}' "$NAME" \
+    | grep -qxF "$CHEESE_CLI->/usr/local/bin/cheese"; then
+  # No CLI mount (baked cheese), or one still sourced from the retired host
+  # checkout → recreate so this turn runs the CLI the backend actually shipped.
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  create_container
+elif [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" != "true" ]; then
+  docker start "$NAME" >/dev/null
+fi
+
+# Forensics: snapshot what each invocation actually received (models/urls only,
+# no secrets) — ground truth for "which model did the turn ask for".
+{
+  echo "=== $(date '+%F %T') args: $*"
+  env | grep -E '^ANTHROPIC_(BASE_URL|DEFAULT_[A-Z]+_MODEL)=' | sort
+} >> "$(dirname "$0")/../../logs/sbx-debug.log" 2>/dev/null || true
+
+# Per-turn env is passed on the exec (it can vary turn to turn, e.g. token rotation).
+exec docker exec -i \
+  -e ANTHROPIC_BASE_URL -e ANTHROPIC_AUTH_TOKEN -e CLAUDE_CODE_OAUTH_TOKEN \
+  -e ANTHROPIC_DEFAULT_HAIKU_MODEL -e ANTHROPIC_DEFAULT_SONNET_MODEL \
+  -e ANTHROPIC_DEFAULT_OPUS_MODEL \
+  -e CHEESE_API -e CHEESE_PROJECT -e CHEESE_TOPIC -e CHEESE_AUTHOR -e CHEESE_TOKEN \
+  -e CHEESE_MEMORY_SCOPE -e CHEESE_OWNER -e CHEESE_TURN \
+  "$NAME" claude "$@"

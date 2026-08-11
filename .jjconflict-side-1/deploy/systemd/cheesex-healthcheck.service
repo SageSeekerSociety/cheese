@@ -1,0 +1,12 @@
+[Unit]
+Description=Check CheeseX local backend health
+After=cheesex.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cheesex-healthcheck
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run
