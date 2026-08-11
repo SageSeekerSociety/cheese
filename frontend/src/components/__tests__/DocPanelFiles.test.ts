@@ -14,8 +14,8 @@ import type { FileContent, Topic } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render } from '@testing-library/vue'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Monaco does not load under happy-dom (and is not what is under test): stand in
 // a textarea that speaks the same v-model / @save contract.
@@ -57,8 +57,6 @@ vi.mock('../../api', async () => {
 
 import DocPanel from '../DocPanel.vue'
 
-const vuetify = createVuetify({ components, directives })
-
 function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
 }
@@ -67,14 +65,12 @@ function textFile(path: string, content: string, version = 'v1'): FileContent {
   return { path, content, version, bytes: content.length, binary: false, too_large: false }
 }
 
-async function mountPanel(id: string) {
-  const wrapper = mount(DocPanel, {
+function mountPanel(id: string) {
+  const vuetify = createVuetify({ components, directives })
+  return render(DocPanel, {
     props: { topic: topic(id), activityTick: 0 },
-    global: { plugins: [vuetify], stubs: { teleport: true } },
-    attachTo: document.body,
+    global: { plugins: [vuetify] },
   })
-  await flush()
-  return wrapper
 }
 
 /** Let the panel's chained awaits (list → read) settle. */
@@ -82,13 +78,34 @@ async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
+function buttons(container: Element): HTMLButtonElement[] {
+  return Array.from(container.querySelectorAll('button'))
+}
+function buttonByText(container: Element, text: string): HTMLButtonElement | undefined {
+  return buttons(container).find((b) => b.textContent?.trim() === text)
+}
+function editor(container: Element): HTMLTextAreaElement | null {
+  return container.querySelector('.stub-editor')
+}
+
 /** Open the 文件 drawer. */
-async function openFilesTool(wrapper: ReturnType<typeof mount>) {
-  const btn = wrapper.findAll('button').find((b) => b.attributes('title')?.includes('文件'))
+async function openFilesTool(container: Element) {
+  const btn = buttons(container).find((b) => b.getAttribute('title')?.includes('文件'))
   expect(btn, '找不到 文件 工具按钮').toBeTruthy()
-  await btn!.trigger('click')
+  await fireEvent.click(btn!)
   await flush()
 }
+
+beforeAll(() => {
+  // Vuetify 的 layout/overlay 会摸这两个浏览器 API，happy-dom 没有。
+  if (!('ResizeObserver' in globalThis)) {
+    ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  }
+})
 
 describe('文件面板', () => {
   beforeEach(() => {
@@ -103,41 +120,43 @@ describe('文件面板', () => {
   // path was still valid in the new topic, so nothing forced a re-read, and the
   // editor kept showing — and 保存 kept writing — the other topic's content.
   it('切到别的话题后，编辑器显示的是新话题的文件，不是上个话题的草稿', async () => {
-    const wrapper = await mountPanel('topic-A')
-    await openFilesTool(wrapper)
+    const { container, rerender } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
 
     // Edit A's copy of a.py but do not save.
-    await wrapper.find('.stub-editor').setValue('我在 A 话题里改的\n')
+    await fireEvent.update(editor(container)!, '我在 A 话题里改的\n')
     await flush()
 
     // Switch to B, which has its own a.py.
     readFile.mockResolvedValue(textFile('a.py', 'B 话题的内容\n', 'vB'))
-    await wrapper.setProps({ topic: topic('topic-B') })
+    await rerender({ topic: topic('topic-B'), activityTick: 0 })
     await flush()
-    await openFilesTool(wrapper) // the drawer closed with the switch
+    await openFilesTool(container) // the drawer closed with the switch
 
-    expect(wrapper.find('.stub-editor').element).toHaveProperty('value', 'B 话题的内容\n')
+    expect(editor(container)!.value).toBe('B 话题的内容\n')
   })
 
   it('切话题后按保存，写的是新话题的内容和版本，不会把上个话题的草稿写进来', async () => {
-    const wrapper = await mountPanel('topic-A')
-    await openFilesTool(wrapper)
-    await wrapper.find('.stub-editor').setValue('我在 A 话题里改的\n')
+    const { container, rerender } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
+    await fireEvent.update(editor(container)!, '我在 A 话题里改的\n')
     await flush()
 
     readFile.mockResolvedValue(textFile('a.py', 'B 话题的内容\n', 'vB'))
-    await wrapper.setProps({ topic: topic('topic-B') })
+    await rerender({ topic: topic('topic-B'), activityTick: 0 })
     await flush()
-    await openFilesTool(wrapper)
+    await openFilesTool(container)
 
     // Nothing has been edited in B, so 保存 is disabled — there is no unsaved
     // work here, and the draft from A must not have become B's unsaved work.
-    const save = wrapper.findAll('button').find((b) => b.text() === '保存')
-    expect(save!.attributes('disabled')).toBeDefined()
+    const save = buttonByText(container, '保存')!
+    expect(save.disabled).toBe(true)
 
-    await wrapper.find('.stub-editor').setValue('在 B 里改的\n')
+    await fireEvent.update(editor(container)!, '在 B 里改的\n')
     await flush()
-    await save!.trigger('click')
+    await fireEvent.click(save)
     await flush()
 
     expect(writeFile).toHaveBeenCalledTimes(1)
@@ -145,13 +164,13 @@ describe('文件面板', () => {
   })
 
   it('保存时带上读到的版本，好让后端拦住抢跑的写', async () => {
-    const wrapper = await mountPanel('topic-A')
-    await openFilesTool(wrapper)
-
-    await wrapper.find('.stub-editor').setValue('人改过的\n')
+    const { container } = mountPanel('topic-A')
     await flush()
-    const save = wrapper.findAll('button').find((b) => b.text() === '保存')
-    await save!.trigger('click')
+    await openFilesTool(container)
+
+    await fireEvent.update(editor(container)!, '人改过的\n')
+    await flush()
+    await fireEvent.click(buttonByText(container, '保存')!)
     await flush()
 
     expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', 'v1')
@@ -167,12 +186,13 @@ describe('文件面板', () => {
       too_large: false,
     })
 
-    const wrapper = await mountPanel('topic-A')
-    await openFilesTool(wrapper)
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
 
-    expect(wrapper.find('.stub-editor').exists()).toBe(false)
-    expect(wrapper.text()).toContain('二进制文件，不能当文本编辑')
-    expect(wrapper.findAll('button').some((b) => b.text() === '保存')).toBe(false)
+    expect(editor(container)).toBeNull()
+    expect(container.textContent).toContain('二进制文件，不能当文本编辑')
+    expect(buttonByText(container, '保存')).toBeUndefined()
   })
 
   it('过大的文件不进编辑器，给下载入口', async () => {
@@ -185,35 +205,34 @@ describe('文件面板', () => {
       too_large: true,
     })
 
-    const wrapper = await mountPanel('topic-A')
-    await openFilesTool(wrapper)
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
 
-    expect(wrapper.find('.stub-editor').exists()).toBe(false)
-    expect(wrapper.text()).toContain('文件太大')
-    expect(wrapper.findAll('button').some((b) => b.text() === '保存')).toBe(false)
+    expect(editor(container)).toBeNull()
+    expect(container.textContent).toContain('文件太大')
+    expect(buttonByText(container, '保存')).toBeUndefined()
   })
 
   it('保存冲突时不静默胜出，把冲突亮给人并给两条出路', async () => {
     const { ApiError } = await vi.importActual<typeof import('../../api')>('../../api')
     writeFile.mockRejectedValue(new ApiError(409, 'HTTP 409'))
 
-    const wrapper = await mountPanel('topic-A')
-    await openFilesTool(wrapper)
-    await wrapper.find('.stub-editor').setValue('人改过的\n')
+    const { container } = mountPanel('topic-A')
     await flush()
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === '保存')!
-      .trigger('click')
+    await openFilesTool(container)
+    await fireEvent.update(editor(container)!, '人改过的\n')
+    await flush()
+    await fireEvent.click(buttonByText(container, '保存')!)
     await flush()
 
-    expect(wrapper.text()).toContain('这个文件在你编辑期间被改过')
-    const overwrite = wrapper.findAll('button').find((b) => b.text().includes('仍然覆盖保存'))
+    expect(container.textContent).toContain('这个文件在你编辑期间被改过')
+    const overwrite = buttons(container).find((b) => b.textContent?.includes('仍然覆盖保存'))
     expect(overwrite).toBeTruthy()
 
     // 覆盖 is the human's explicit choice — it goes out with no version.
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v3' })
-    await overwrite!.trigger('click')
+    await fireEvent.click(overwrite!)
     await flush()
     expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', null)
   })

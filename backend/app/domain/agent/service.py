@@ -29,6 +29,7 @@ from claude_agent_sdk import (
 )
 
 from app.domain.agent.skills import load_cheese_cli_rules
+from app.domain.usage.tokens import input_output_tokens
 
 # The cheese CLI rules, injected into every sandbox turn's system prompt (the
 # cheese Agent Skill is lazy-loaded and weak models don't self-load it). Read
@@ -433,8 +434,12 @@ class AgentService:
                             usage.cost_usd = message.total_cost_usd
                         u = message.usage or {}
                         if isinstance(u, dict):
-                            usage.input_tokens = int(u.get("input_tokens", 0) or 0)
-                            usage.output_tokens = int(u.get("output_tokens", 0) or 0)
+                            # Cache buckets fold into input like every other
+                            # supply (app.domain.usage.tokens) — omitting them
+                            # here under-reported sdk turns by ~10x.
+                            usage.input_tokens, usage.output_tokens = (
+                                input_output_tokens(u)
+                            )
             except Exception:
                 # A provider failure before result/tool must not erase prose the
                 # user already saw streaming. Yield it once so the orchestration

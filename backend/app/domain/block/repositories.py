@@ -1,12 +1,25 @@
 """Block data access."""
 
 import uuid
+from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.turn_context import current_turn_id
 from app.domain.block.models import AuthorType, Block, BlockKind, BlockReaction
+
+
+@dataclass(frozen=True)
+class BlockPage:
+    """One bottom-anchored window of a topic's timeline.
+
+    `has_more` is about OLDER blocks only — the window always ends at the
+    newest block the cursor allows, so "more" can only lie above it.
+    """
+
+    items: list[Block]
+    has_more: bool
 
 
 class BlockRepository:
@@ -111,6 +124,10 @@ class BlockRepository:
 
         Excludes doc_node tree blocks and inline comments — those belong to the
         document view, not the conversation timeline.
+
+        Ties on created_at break by id, the same total order `page_for_topic`
+        walks — otherwise the full view and the paged view could disagree about
+        the order of blocks stamped in the same instant.
         """
         stmt = (
             select(Block)
@@ -118,9 +135,50 @@ class BlockRepository:
                 Block.topic_id == topic_id,
                 Block.kind.not_in(self._NON_TIMELINE),
             )
-            .order_by(Block.created_at)
+            .order_by(Block.created_at, Block.id)
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def page_for_topic(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        limit: int,
+        before: Block | None = None,
+    ) -> BlockPage:
+        """A bottom-anchored slice of the timeline: the newest `limit` blocks,
+        or — with `before` — the `limit` blocks immediately OLDER than it.
+
+        Cursor, not offset, because chat grows at the tail while you read it: an
+        offset window slides every time a message lands, so page 2 re-serves or
+        skips rows. A cursor anchored on a real block is immune to tail inserts.
+
+        The order key is the (created_at, id) pair, not created_at alone —
+        created_at is stamped in Python, so a burst of streamed blocks can share
+        a timestamp and single-column ordering wouldn't be a total order (the
+        cursor could then skip or repeat the tied rows).
+        """
+        stmt = select(Block).where(
+            Block.topic_id == topic_id,
+            Block.kind.not_in(self._NON_TIMELINE),
+        )
+        if before is not None:
+            # Row-value comparison: `(created_at, id) < (:ts, :id)` in one go,
+            # so the cursor test matches the ORDER BY key exactly. There is no
+            # composite index on (topic_id, created_at, id) today — the topic_id
+            # index narrows to one topic's rows and Postgres sorts those (a few
+            # thousand at worst). Paging's win is the payload, not the scan.
+            stmt = stmt.where(
+                tuple_(Block.created_at, Block.id) < (before.created_at, before.id)
+            )
+        # One row past the window tells us whether older blocks remain, without
+        # a second COUNT query.
+        stmt = stmt.order_by(Block.created_at.desc(), Block.id.desc()).limit(limit + 1)
+        rows = list((await self._session.scalars(stmt)).all())
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        rows.reverse()  # callers render oldest-first, same as list_for_topic
+        return BlockPage(items=rows, has_more=has_more)
 
     async def count_for_topic(self, topic_id: uuid.UUID) -> int:
         stmt = (

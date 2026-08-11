@@ -357,6 +357,10 @@ export interface UsageStats {
   total_tokens: number
   cost_usd: number
   turns: number
+  // Tokens that burned real capacity but carry NO USD price (subscription
+  // routing is billed by the month). Non-zero means the cost figure is
+  // incomplete — the panel says 未知 rather than printing $0.0000.
+  unpriced_tokens: number
 }
 
 // ---- 采纳卡 / 验收 (eval C5/A3) ----
@@ -370,6 +374,9 @@ export type AcceptStatus =
   // 机器闸门 (eval C2): the project's check_command is running / failed.
   | 'pending_gate'
   | 'gate_failed'
+  // 两阶段采纳 (PR迭代式, 2026-08-09): the human already accepted; the PR is
+  // open and the machine stretch (CI → merge → deploy) is still running.
+  | 'pr_open'
   | string
 
 // GET /topics/{id}/accept-card (list, newest first).
@@ -393,6 +400,12 @@ export interface AcceptCard {
   // platform opened one (flag-gated, best-effort).
   pr_number: number | null
   pr_url: string | null
+  // 两阶段采纳 (PR迭代式) only: which repo the PR lives in, the commit CI is
+  // being queried against, and — see lib/deliveryStage.ts — the one value the
+  // backend uses to tell 「等 CI」 from 「等部署」 inside `pr_open`.
+  pr_repo: string | null
+  pr_head_sha: string | null
+  pr_merged_at: string | null
 }
 
 // GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).

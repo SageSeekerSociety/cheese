@@ -154,12 +154,10 @@ export default defineConfig({
     // 使用 happy-dom 模拟 DOM
     // 这需要你安装 happy-dom 作为对等依赖（peer dependency）
     environment: 'happy-dom',
-    server: {
-      // Vuetify ships per-component CSS that Node cannot import on its own —
-      // inlining it lets Vite transform it, which is what mounting a component
-      // that uses v-btn/v-icon in a test needs.
-      deps: { inline: ['vuetify'] },
-    },
+    // Vuetify 的组件包自带 .css 副作用导入，被 externalize 掉就会以
+    // "Unknown file extension .css" 崩在收集阶段——挂真实组件的测试需要它走
+    // Vite 的 transform 管线。
+    server: { deps: { inline: ['vuetify'] } },
   },
   optimizeDeps: {
     include: ['editorjs-parser'],

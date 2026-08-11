@@ -30,6 +30,7 @@ from app.domain.agent.service import (
     AgentToolUse,
     AgentUsage,
 )
+from app.domain.usage.tokens import input_output_tokens
 
 
 def _hook_event_name(hook: dict) -> str:
@@ -45,10 +46,12 @@ def _usage_from_hook(hook: dict) -> AgentUsage:
     usage = hook.get("usage")
     if not isinstance(usage, dict):
         return AgentUsage()
+    # Anthropic-shaped payload: cache buckets fold into input (usage.tokens).
+    input_tokens, output_tokens = input_output_tokens(usage)
     return AgentUsage(
         model=str(usage.get("model") or ""),
-        input_tokens=int(usage.get("input_tokens") or 0),
-        output_tokens=int(usage.get("output_tokens") or 0),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         cost_usd=float(usage.get("cost_usd") or 0.0),
     )
 
@@ -188,22 +191,14 @@ def usage_from_hook(hook: dict) -> AgentUsage | None:
     # a usage block per assistant message and the transcript dies with the
     # host. Carrying them back is what turns "300 RMB went somewhere" into a
     # per-project, per-turn figure.
-    total = sum(
-        int(hook.get(k) or 0) for k in ("input", "output", "cache_read", "cache_write")
-    )
-    if total <= 0:
+    # Cache reads are NOT free and they dominate; AgentUsage has no cache field,
+    # so they fold into the input count (app.domain.usage.tokens — the same
+    # arithmetic every supply uses).
+    input_tokens, output_tokens = input_output_tokens(hook, dialect="hook")
+    if input_tokens + output_tokens <= 0:
         return None
     return AgentUsage(
         model=str(hook.get("model") or "unknown"),
-        # Cache reads are NOT free and they dominate: one document-writing
-        # task read 2.9M cached tokens against 141k of fresh input — 20x, and
-        # half its cost. AgentUsage has no cache field, so they are folded
-        # into the input count; leaving them out would under-report a turn by
-        # more than it reports.
-        input_tokens=(
-            int(hook.get("input") or 0)
-            + int(hook.get("cache_read") or 0)
-            + int(hook.get("cache_write") or 0)
-        ),
-        output_tokens=int(hook.get("output") or 0),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )

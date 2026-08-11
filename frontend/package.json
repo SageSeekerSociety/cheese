@@ -126,7 +126,6 @@
     "@vitejs/plugin-vue-jsx": "^4.2.0",
     "@vue/eslint-config-prettier": "^10.2.0",
     "@vue/eslint-config-typescript": "^14.6.0",
-    "@vue/test-utils": "^2.4.11",
     "@vue/tsconfig": "^0.9.1",
     "cors": "^2.8.5",
     "cz-conventional-changelog": "^3.3.0",

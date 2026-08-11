@@ -97,19 +97,27 @@ bash .claude/scripts/dev-db.sh stop --purge      # stop + delete the data dir
 - `check.sh --no-tests` (what the quality gate uses) skips pytest entirely — use
   the recipe above to actually exercise the suite.
 
-Two sandbox gaps still fail ~65 tests with the servers up. Both are **missing
-host tooling, not code defects** — verified by running the suite with and without
-the `conftest.py` change above and getting byte-identical failure sets. Don't
-spend time re-diagnosing them:
+**Set a git identity before you run the suite** — a fresh sandbox has none, and a
+container rebuild wipes it again, so re-run this whenever the failures reappear:
+
+```bash
+git config --global user.email "you@example.com"
+git config --global user.name  "Your Name"
+```
+
+Without it `git commit` refuses, and ~43 tests fail wherever one builds a real
+worktree (`test_workspace.py`, `test_upstream.py`, `test_accept*.py`,
+`test_git_http.py`, `test_attachments.py` and friends). `GIT_*` env vars do *not*
+work here — conftest strips them on purpose (see the comment at the top of the
+file) — but it never touches global config, which is why the `git config` route
+does. Verified: with the identity set the whole batch goes green.
+
+One sandbox gap is left, and it is **missing host tooling, not a code defect**.
+Don't spend time re-diagnosing it:
 
 - **No procps** (`ps`/`pgrep`/`kill` binaries absent; bash's `kill` is a builtin
   only) → 22 failures in `test_machine_service.py`, `test_tmux_control.py` with
   `FileNotFoundError: 'kill'`.
-- **No git identity** (`user.email`/`user.name` unset, so `git commit` refuses) →
-  43 failures wherever a test builds a real worktree: `test_workspace.py`,
-  `test_upstream.py`, `test_accept*.py`, `test_git_http.py`, `test_attachments.py`
-  and friends. Note `GIT_*` env vars can't fix this — conftest strips them on
-  purpose (see the comment at the top of the file).
 
 ## Linting & Type Checking
 

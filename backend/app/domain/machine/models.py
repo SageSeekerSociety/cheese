@@ -125,3 +125,11 @@ class ProjectMachine(UuidPk, Timestamps, Base):
     # solely so the platform can perform the one-time bootstrap. Erased the
     # moment enrollment succeeds — it is a means, not an access path we keep.
     bootstrap_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # When MicroCloud last answered about this machine at all. `updated_at` is
+    # not a substitute: it only moves when a field actually changes, so a
+    # machine reconciled repeatedly with the same answer would look permanently
+    # stale and be re-fetched on every read.
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
