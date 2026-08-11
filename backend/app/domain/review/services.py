@@ -85,6 +85,36 @@ def _pr_merge_commit_message(topic: Topic, decided_by: str) -> str:
     return _pr_trailers(topic, decided_by)
 
 
+#: How much of the failure detail rides in the nudge message. The detail is
+#: already bounded per job upstream (`github_pr._failure_detail`); this is the
+#: backstop that keeps a pathological payload from flooding the topic.
+_NUDGE_TAIL_LIMIT = 4000
+
+
+def _ci_log_howto(repo_full_name: str) -> str:
+    """The "where do I read the rest" paragraph of a CI-failure nudge.
+
+    The excerpt above it is deliberately short, so the message has to say how
+    to get the whole thing — and that path was undocumented everywhere 芝士
+    can read (not in `.claude/`, not in `CLAUDE.md`): the read-only token is
+    a `cheese gh-token` away, but nothing told it so, and nothing told it the
+    repo's name either, which `gh api repos/:owner/:repo/...` needs. Both are
+    in hand right here, at the one moment they're wanted.
+    """
+    repo = repo_full_name or "<owner>/<repo>"
+    return (
+        "上面是失败 job 的名字、Actions 页面链接，以及日志里错误行附近的片段。"
+        "要看完整日志，在本话题的工作区里跑：\n"
+        "```bash\n"
+        "export GH_TOKEN=$(cheese gh-token)   # 只读 token，约 1 小时过期\n"
+        f"gh api repos/{repo}/actions/jobs/<job_id>/logs\n"
+        "```\n"
+        "（`<job_id>` 就是上面 Actions 链接里 `/job/` 后面那串数字；"
+        f"要重新列出这次提交的所有检查：`gh api "
+        f"repos/{repo}/commits/<head_sha>/check-runs`。）\n"
+    )
+
+
 # 两阶段采纳 (PR迭代式) 降级原因可见性: TOKEN_UNAVAILABLE_* → 人能看懂的中文说明,
 # 绝不包含 token/密文本身 —— 这些常量只是"哪个前提没满足"的分类标签.
 _TOKEN_UNAVAILABLE_MESSAGES = {
@@ -1059,6 +1089,7 @@ class AcceptService:
                 stage="CI",
                 chat_service=chat_service,
                 runner=runner,
+                repo_full_name=f"{owner}/{repo}",
             )
             await self._session.flush()
             return
@@ -1402,6 +1433,7 @@ class AcceptService:
         stage: str,
         chat_service,
         runner,
+        repo_full_name: str = "",
     ) -> None:
         # Dedup, precisely (2026-08-10). This used to be `startswith("⚠️")`,
         # which treats the whole ⚠️ family as "already nudged" — so a
@@ -1417,14 +1449,21 @@ class AcceptService:
             _REPUSH_FAILED_PREFIX
         ):
             return
-        card.note = f"{_nudge_note_prefix(stage)}{tail}"[:2000]
+        # `tail` is now a headline PLUS per-job links and log excerpts (see
+        # `github_pr._failure_detail`). The card's note is a one-line field in
+        # the UI, so only the headline goes there — the detail is exactly what
+        # the message is for, and duplicating it into a 2000-char column would
+        # cost the note its glanceability for no reader's benefit.
+        headline = tail.splitlines()[0] if tail else ""
+        card.note = f"{_nudge_note_prefix(stage)}{headline}"[:2000]
         runner.submit(
             chat_service,
             topic.id,
             author="system",
             content=(
                 f"PR #{card.pr_number}（{card.pr_url}）的{stage}检查没通过：\n"
-                f"```\n{tail[:1500]}\n```\n"
+                f"```\n{tail[:_NUDGE_TAIL_LIMIT]}\n```\n"
+                f"{_ci_log_howto(repo_full_name)}"
                 "请在这个话题的工作区里修复问题并提交（不需要、也没法自己推到 "
                 "GitHub），平台会自动把新提交同步到这个 PR，检查会自动重新跑；"
                 "转绿后平台会自动合并 PR。"

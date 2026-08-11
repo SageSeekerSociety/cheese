@@ -58,10 +58,10 @@
             ></v-textarea>
 
             <div class="text-subtitle-2 mb-2">{{ t('spaces.domainGroups.domains') }}</div>
-            <v-row v-for="(_, index) in domains" :key="index" align="center" class="mb-1">
+            <v-row v-for="(_, index) in domainList" :key="index" align="center" class="mb-1">
               <v-col cols="10">
                 <v-text-field
-                  :model-value="domains[index]"
+                  :model-value="domainList[index]"
                   :placeholder="t('spaces.domainGroups.domainPlaceholder')"
                   density="compact"
                   hide-details="auto"
@@ -73,7 +73,7 @@
                   icon="mdi-close"
                   variant="text"
                   size="small"
-                  :disabled="domains.length <= 1"
+                  :disabled="domainList.length <= 1"
                   @click="removeDomain(index)"
                 ></v-btn>
               </v-col>
@@ -101,7 +101,7 @@
 <script setup lang="ts">
 import type { DomainGroup } from '@/types'
 
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -149,22 +149,29 @@ const { handleSubmit, defineField, isSubmitting, resetForm } = useForm({
 const [name, nameProps] = defineField('name', vuetifyConfig)
 const [domains, domainAllProps] = defineField('domains', vuetifyConfig)
 
+// defineField types every field as possibly-undefined (a form can be rendered
+// before resetForm supplies initialValues). Every write below replaces the whole
+// array, so reads are what need narrowing — do it once here instead of at each
+// of the six use sites, and keep writes going through `domains` so vee-validate
+// still sees them.
+const domainList = computed(() => domains.value ?? [])
+
 const formData = reactive({
   name,
   description: '' as string | null,
 })
 
 function updateDomain(index: number, value: string) {
-  domains.value = domains.value.map((d, i) => (i === index ? value : d))
+  domains.value = domainList.value.map((d, i) => (i === index ? value : d))
 }
 
 function addDomain() {
-  domains.value = [...domains.value, '']
+  domains.value = [...domainList.value, '']
 }
 
 function removeDomain(index: number) {
-  if (domains.value.length > 1) {
-    domains.value = domains.value.filter((_, i) => i !== index)
+  if (domainList.value.length > 1) {
+    domains.value = domainList.value.filter((_, i) => i !== index)
   }
 }
 

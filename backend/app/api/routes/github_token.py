@@ -23,6 +23,7 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.github_app import GitHubAppError, github_app_tokens_for_project
+from app.domain.project.repositories import ProjectGitInstallationRepository
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
@@ -48,6 +49,12 @@ async def sandbox_github_token(
     if not claims or not claims.get("p"):
         raise AuthenticationRequiredError("A scoped cheese token is required")
     project_id = uuid.UUID(claims["p"])
+    # The repo's full name comes from the SAME installation row the minter is
+    # resolved from, so a token and the repo it works on can never disagree.
+    # Without it the caller holds a credential and no idea what to point it
+    # at: `gh api repos/:owner/:repo/...` needs a name the sandbox has no
+    # other way to learn (the workspace is not a git checkout of the repo).
+    installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
     minter = await github_app_tokens_for_project(project_id, db)
     if minter is None:
         raise GatewayUnavailableError(
@@ -65,5 +72,7 @@ async def sandbox_github_token(
             # So an agent reading the payload knows what it can and cannot do
             # with this credential without trial-and-error.
             "permissions": "read-only: actions, checks, metadata",
+            #: "owner/repo" this token is scoped to.
+            "repo": installation.repo if installation else None,
         }
     )
