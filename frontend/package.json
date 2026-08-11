@@ -8,6 +8,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "node scripts/tsc-ratchet.mjs",
+    "test:ratchet": "node --test scripts/*.test.mjs",
     "typecheck:update": "node scripts/tsc-ratchet.mjs --update",
     "typecheck:raw": "vue-tsc --noEmit",
     "lint:fix": "eslint . --fix",

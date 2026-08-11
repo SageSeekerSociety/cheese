@@ -80,8 +80,14 @@ jobs:
       - name: ESLint
         run: pnpm run lint
 
+      # Via the package script, not a bare `node --test scripts/`: passing a
+      # DIRECTORY resolves as a module entry point on node 22 while node 20
+      # treated it as a search path, so the two disagreed and CI failed on
+      # something that passed locally. An explicit file glob behaves the same
+      # everywhere, and going through package.json keeps local and CI on one
+      # command instead of two that can drift.
       - name: Ratchet unit tests
-        run: node --test scripts/
+        run: pnpm run test:ratchet
 
       # Not a plain `vue-tsc --noEmit`: 31 pre-existing errors are frozen in
       # tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.

@@ -44,16 +44,29 @@ check_naive_datetime() {
 
 # Rule 2 — CLAUDE.md, Python Conventions: "Do NOT name methods list, set, dict,
 # type — they shadow builtins." A method whose name genuinely IS the domain term
-# (prometheus's Gauge.set) may opt out on the line itself, which keeps the
-# exception visible at the call site rather than buried in this script.
+# (prometheus's Gauge.set) may opt out with a marker comment, which keeps the
+# exception visible at the definition rather than buried in this script.
+#
+# The marker counts on the def line OR the line above it. Same-line only would
+# make this rule fight ruff's 88-column limit: any honest justification pushes
+# the def past E501, and a guard whose escape hatch trips another gate just
+# teaches people to delete the guard.
 check_builtin_shadowing() {
   local hits
-  hits="$(grep -rnE --include='*.py' '^[[:space:]]+(async )?def (list|set|dict|type)\(' \
-    "$ROOT/backend/app" 2>/dev/null | grep -v 'allow-builtin-shadow' || true)"
+  hits="$(find "$ROOT/backend/app" -name '*.py' -type f -print0 2>/dev/null \
+    | xargs -0 -r awk '
+        FNR == 1 { prev = "" }
+        {
+          if ($0 ~ /^[[:space:]]+(async )?def (list|set|dict|type)\(/ &&
+              $0 !~ /allow-builtin-shadow/ && prev !~ /allow-builtin-shadow/)
+            printf "%s:%d:%s\n", FILENAME, FNR, $0
+          prev = $0
+        }
+      ' || true)"
   [ -z "$hits" ] && return 0
   echo "FAIL: method name shadows a builtin"
   report "method name shadows a builtin (list/set/dict/type)" \
-    "rename it, or append '# allow-builtin-shadow: <reason>' if the name is the domain's own" \
+    "rename it, or add '# allow-builtin-shadow: <reason>' on that line or the one above" \
     "$hits"
 }
 
@@ -99,7 +112,16 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a builtin-shadowing method must fail"
   printf 'class C:\n    def set(self, v):  # allow-builtin-shadow: gauge API\n        pass\n' \
     > "$tmp/backend/app/core/bad_name.py"
-  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "the opt-out marker must be honoured"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a same-line opt-out marker must be honoured"
+  # The line above counts too, so a long justification does not have to collide
+  # with ruff's 88-column limit.
+  printf 'class C:\n    # allow-builtin-shadow: gauge API\n    def set(self, v):\n        pass\n' \
+    > "$tmp/backend/app/core/bad_name.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a previous-line opt-out marker must be honoured"
+  # But only the line immediately above — a marker two lines up is not consent.
+  printf 'class C:\n    # allow-builtin-shadow: gauge API\n\n    def set(self, v):\n        pass\n' \
+    > "$tmp/backend/app/core/bad_name.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a marker two lines up must not count"
   rm "$tmp/backend/app/core/bad_name.py"
 
   printf 'raise HTTPException(404)\n' > "$tmp/backend/app/domain/bad_err.py"
