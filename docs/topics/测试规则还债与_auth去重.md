@@ -14,7 +14,9 @@
 | 同一份复制粘贴、改名叫 `def _login(...)` | 3 |
 | 直接把 `mint_session_token(...)` 内联进 `client.headers` | 2 |
 
-**所以守卫不能按名字做。** 简报里设想的「禁止在 `tests/integration` 下新增本地 `_auth` 定义」这个形态，按上表只能抓到 14 份里的 9 份——躲过散文规则的那 5 份，恰恰是**已经改了名或者根本没起名**的。改名是这条规则要拦的东西本身，拿名字当特征等于拿被规避的那一面当锚点。
+表里的单位是**文件**。按「helper 定义」数会多出一份 `_login_real`，但那不是同一件东西——`test_connector_viewer.py` 的 `_login_real` 和 `test_connector_device_flow.py` 的 `_login` 都是 `seed_user()`（真 DB 用户 + 数字 id token），压根不铸 session token；反过来 `_authenticated_project_owner` 顶着 `_auth` 前缀，也是另一回事。**名字不携带「它是不是在铸 token」这个信息**——这既是守卫不能按名字做的原因，也是按名字数会数错的原因。
+
+**所以守卫不能按名字做。** 简报里设想的「禁止在 `tests/integration` 下新增本地 `_auth` 定义」这个形态，按上表只能抓到 14 个文件里的 9 个——躲过散文规则的那 5 份，恰恰是**已经改了名或者根本没起名**的。改名是这条规则要拦的东西本身，拿名字当特征等于拿被规避的那一面当锚点。
 
 守卫因此盯的是**稀缺资源**而不是名字：`app.core.tokens.mint_session_token`。用 `ast` 走一遍 `backend/tests/` 的每个文件，`from ... import mint_session_token`（含 `as` 别名）和 `tokens.mint_session_token` 属性访问都算命中。三个文件在白名单里，每个都写了理由（conftest 自己、`test_tokens.py` 测的就是它、`test_actor_numeric_handle.py` 需要带数字 id 的 token）；另有一个测试专门检查白名单里没有已被删除/改名的死条目——每条烂掉的白名单都是守卫上的一个洞。
 
@@ -48,5 +50,5 @@
 
 本分支基于**今天早些时候的 main**，`check-repo-rules.sh` 那次合并之后 main 又动过。两件事要在采纳前后处理：
 
-1. 需要 rebase 到新 main。
-2. `check-repo-rules.sh` 的头部注释把「`_auth()` 现在有九份」当作**现行**证据引用。本分支落地后这句话就不再成立（守卫会保证是零份）。那句话该改成指向 `test_no_adhoc_auth_helpers.py`——**证据从「现在有九份」变成「曾经涨到十四份，现在有测试拦着」**，论点更强而不是更弱。该文件属于另一个 agent 今天的工作范围，等确认后再动。
+1. **rebase 到新 main——归本话题**。注意沙箱里 `jj git fetch` 不可用（git 2.39.5 < jj 要求的 2.41），别按常规同步套路做计划。
+2. `check-repo-rules.sh` 的头部注释把「`_auth()` 现在有九份」当作**现行**证据引用。本分支落地后这句话就不再成立（守卫会保证是零份）。那句话该改成指向 `test_no_adhoc_auth_helpers.py`——**证据从「现在有九份」变成「曾经涨到十四个文件，现在有测试拦着」**，论点更强而不是更弱。**该文件归外部 CI agent，本话题一系禁碰**，已按此归属移交。

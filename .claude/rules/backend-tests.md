@@ -60,8 +60,11 @@ seed 好的平台 agent 用户（id=1，`cheese`）——不走登录，也就�
 **真因**：这条守卫**不认名字，只认 `mint_session_token`**——因为改名正是它要拦的
 东西。原来那条规矩是散文写的（「已经有八份复制粘贴的 `_auth()`，别加第九个」），
 结果第九份照样出现了，另外还长出三份叫 `_login` 的、两份直接把 mint 调用写进
-`client.headers` 的——一共十四份。按名字 grep `_auth` 只能抓到其中九份。所以它现在
-是一个测试，不是一句话。
+`client.headers` 的——一共十四个文件。按名字 grep `_auth` 只能抓到其中九个；反过来
+按名字数还会数错人：`test_connector_device_flow.py` 的 `_login` 和
+`test_connector_viewer.py` 的 `_login_real` 根本不是这东西（它们 seed 真用户拿
+数字 id token），`_authenticated_project_owner` 顶着 `_auth` 前缀也是另一回事。
+**名字不携带「它是不是在铸 token」这个信息**，所以它现在是一个测试，不是一句话。
 
 **正确做法**：
 

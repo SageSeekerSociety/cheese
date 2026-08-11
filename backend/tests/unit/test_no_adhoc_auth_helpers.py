@@ -6,11 +6,18 @@ tested IS a property of the source tree.
 
 Why it exists: ``.claude/rules/backend-tests.md`` used to carry the sentence
 "eight files already carry a copy-pasted ``_auth()`` helper — don't add a
-ninth". When this guard was written, 14 files under ``tests/integration``
+ninth". When this guard was written, 14 *files* under ``tests/integration``
 minted their own session token: 9 through a local ``def _auth(...)`` (the
 ninth arrived while the prose rule was in force), 3 through the same copy named
-``_login``, and 2 with the mint call inlined into ``client.headers``. A rule
+``_login``, and 2 with the mint call inlined into ``client.headers``.  A rule
 that only lives in prose gets broken silently; this test makes it fail loudly.
+
+Counting by name does not even measure the right thing, in either direction:
+``_login`` in ``test_connector_device_flow.py`` and ``_login_real`` in
+``test_connector_viewer.py`` are *not* copies of this — they seed a real DB user
+for a numeric-sub token — and ``_authenticated_project_owner`` is an ``_auth``
+prefix that is also something else. The name says nothing about whether the
+file is minting.
 
 Banning the *name* ``_auth`` would have caught 9 of those 14 — every copy that
 dodged the rule had already been renamed or inlined. So the guard sits on the
