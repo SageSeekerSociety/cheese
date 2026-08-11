@@ -197,20 +197,83 @@ def _share_jj_modes(repo: Path, since: float = 0.0) -> None:
         pass
 
 
+JJ_USER_NAME = "芝士"
+JJ_USER_EMAIL = "cheese@zhishi.local"
+
+
+def _drop_repo_config_id(store: Path) -> None:
+    """Delete the store's `config-id` if one exists — the file that took every
+    topic on the platform down at 11:39.
+
+    The mode repair above cannot cover this one, because the problem is not the
+    mode: jj's per-repo config does NOT live in the repo. `config-id` holds a
+    20-hex id naming a directory under the CALLER's `~/.config/jj/repos/`. Run
+    jj as a user whose home has no entry for that id — every fresh sandbox
+    container — and jj rewrites `config-id` via tmp+rename, so it returns owned
+    by whoever ran jj, mode 0600. The backend (uid 1001) then cannot read a file
+    the sandbox (uid 1000) owns, `_repair_modes`' chmod raises EPERM and is
+    swallowed, and EVERY jj call dies with "Internal error: Failed to determine
+    the secure config for a repo" — `jj workspace add` included, so no topic can
+    start at all.
+
+    Repairing modes can never win that race: chmod requires being the file's
+    owner, and jj replaces the inode on the next rewrite regardless. Deleting
+    can:
+
+    - it is possible — unlink needs write permission on the DIRECTORY (which the
+      backend owns), not on the file;
+    - it is safe — the file is not merely regenerable, it is optional. With it
+      absent jj runs normally and does not recreate it; only `jj config set
+      --repo` does. It holds no repo data (that is store/, op_store/, index/,
+      none of which this touches), only a binding to a per-user config dir. The
+      one thing that binding provided — the 芝士 identity — comes from
+      JJ_USER/JJ_EMAIL below instead, which is why `_ensure_jj` no longer sets
+      per-repo config.
+    """
+    try:
+        (store / "config-id").unlink()
+    except OSError:
+        pass  # absent (the normal case), or a store we cannot write — _jj reports it
+
+
+_SECURE_CONFIG_FAILURE = "failed to determine the secure config"
+
+
+def _jj_failure_message(command: str, detail: str, repo: Path) -> str:
+    """Name the real cause. This failure is a file permission problem in the
+    workspace, but it reaches the user through a generic wrapper that renders it
+    as 「AI 服务返回错误」 — which sent people looking at the model provider for
+    what is a chmod."""
+    if _SECURE_CONFIG_FAILURE in detail.lower():
+        return (
+            f"工作区版本库权限异常：{_jj_store(repo) / 'config-id'} "
+            "的属主不是后端进程，既读不了、也删不掉（删除需要它所在目录的写权限）。"
+            "这不是 AI 服务故障。修法：删掉该文件即可——它是指向 per-user 配置目录的"
+            f"索引，可再生，不含任何版本历史。原始报错：{detail}"
+        )
+    return f"jj {command} failed: {detail}"
+
+
 def _jj(repo: Path, *args: str) -> str:
     started = time.time() - 1  # -1s: filesystem mtime vs clock granularity slack
+    # Before every call, not once at setup: a jj run by any other uid (an agent
+    # in a sandbox) recreates config-id and locks the backend out mid-flight.
+    _drop_repo_config_id(_jj_store(repo))
     result = subprocess.run(
         ["jj", "--no-pager", *args],
         cwd=repo,
         capture_output=True,
         text=True,
         timeout=30,
+        # Identity per call rather than as per-repo config: setting it with
+        # `--repo` is the one thing that creates config-id in the first place.
+        env={**os.environ, "JJ_USER": JJ_USER_NAME, "JJ_EMAIL": JJ_USER_EMAIL},
     )
     # Before the returncode check: a FAILED jj call still writes operations, and
     # those unreadable files break the sandbox just as thoroughly.
     _share_jj_modes(repo, since=started)
     if result.returncode != 0:
-        raise ValidationError(f"jj {args[0]} failed: {result.stderr.strip()}")
+        raise ValidationError(_jj_failure_message(args[0], result.stderr.strip(), repo))
     return result.stdout
 
 
@@ -220,8 +283,9 @@ def _ensure_jj(repo: Path) -> None:
     if (repo / ".jj").exists():
         return
     _jj(repo, "git", "init", "--colocate")
-    _jj(repo, "config", "set", "--repo", "user.name", "芝士")
-    _jj(repo, "config", "set", "--repo", "user.email", "cheese@zhishi.local")
+    # Identity is injected per call (JJ_USER/JJ_EMAIL in _jj), NOT written as
+    # per-repo config: `jj config set --repo` is what creates `config-id`, the
+    # cross-uid tripwire _drop_repo_config_id exists to keep out of the store.
 
 
 def ensure_repo(project_id: uuid.UUID) -> Path:
