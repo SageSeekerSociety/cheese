@@ -122,3 +122,43 @@ jobs:
         run: |
           docker ps --format '{{.Names}}  {{.Image}}' | grep -v cheesex-tmux || true
           df -h / | tail -1
+
+  # The cheese-ci pool, which now runs every heavy job (test, migration-heads,
+  # e2e) and had no diagnostic probe at all.
+  #
+  # Three concurrent jobs on the SINGLE shared `cheese-ci` label necessarily
+  # land on three different machines: each pool VM registers exactly one runner
+  # slot, so no two of these can be scheduled onto the same host. That covers
+  # the whole pool WITHOUT the per-machine labels a partial-outage alert would
+  # need — affordable here only because this workflow is workflow_dispatch-only,
+  # so saturating all three slots for ~20s costs nothing. box-heartbeat.yml
+  # deliberately does NOT fan out this way: an hourly probe that needs all three
+  # slots at once would queue behind an ordinary merge burst and alert on a
+  # perfectly healthy pool.
+  #
+  # `slot` is a fan-out counter only — it is not a machine identity and does not
+  # map to cheese-ci-runner-N. `hostname` in the output is the real identity.
+  # If a pool machine is down, its job stays QUEUED rather than failing
+  # (timeout-minutes bounds execution, not queueing) — a job stuck in "Queued"
+  # here IS the signal that the pool is short a machine.
+  #
+  # No database probe: these VMs run no deployment — no cheese-backend-1, no
+  # DATABASE_URL. Disk is what matters. They are 40G, every run's postgres
+  # service container leaves an anonymous volume behind, and the weekly cron in
+  # ci-runner/deps.sh is `docker system prune -af` WITHOUT `--volumes`, which
+  # does not touch volumes. This same leak reached 57 volumes / 19GB on the dev
+  # box and failed a run with "No space left on device".
+  ci-pool:
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3]
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 5
+    steps:
+      - name: Host, disk and docker reclaimables
+        run: |
+          echo "host: $(hostname)"
+          df -h / | tail -1
+          docker system df
+          echo "dangling volumes: $(docker volume ls -qf dangling=true | wc -l)"
