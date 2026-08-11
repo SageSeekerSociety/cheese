@@ -408,3 +408,116 @@ async def test_merge_refusal_without_json_body_still_reports_something():
 async def test_merge_hard_failure_still_raises():
     with pytest.raises(GitHubPrError):
         await _merge(_merge_route(httpx.Response(500, text="boom")))
+
+
+# --- pull_request_status: 谁合的、合到哪个 commit (2026-08-10) ---------------
+
+
+def _pr_route(payload: dict):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/repos/acme/widgets/pulls/7"
+        return httpx.Response(200, json=payload)
+
+    return handler
+
+
+async def _status(payload: dict):
+    return await _client(_pr_route(payload)).pull_request_status(
+        owner="acme", repo="widgets", number=7, token="t"
+    )
+
+
+@pytest.mark.anyio
+async def test_status_of_a_merged_pr_reports_the_merge_commit():
+    """Shape taken from a real api.github.com response (astral-sh/ruff#20000,
+    squash-merged): `merged: true`, `merge_commit_sha` is the commit that
+    landed on the base branch, and it is NOT the PR's head."""
+    status = await _status(
+        {
+            "state": "closed",
+            "merged": True,
+            "merged_at": "2025-08-20T13:19:18Z",
+            "merge_commit_sha": "f4be05a83be770c8c9781088508275170396b411",
+            "head": {"sha": "6c0badc4333edf4732b3c04f6a583c8dbcaf515c"},
+        }
+    )
+
+    assert status.merged is True
+    assert status.state == "closed"
+    assert status.merge_commit_sha == "f4be05a83be770c8c9781088508275170396b411"
+    assert status.head_sha == "6c0badc4333edf4732b3c04f6a583c8dbcaf515c"
+    assert status.merged_at is not None
+    # 项目约定: aware UTC, never naive.
+    assert status.merged_at.tzinfo is not None
+    assert status.merged_at.isoformat() == "2025-08-20T13:19:18+00:00"
+
+
+@pytest.mark.anyio
+async def test_status_of_an_open_pr_never_reports_its_test_merge_commit():
+    """The trap this whole field exists to avoid: GitHub fills
+    `merge_commit_sha` on OPEN PRs too, with a throwaway test-merge commit
+    that lives on no branch (verified against api.github.com 2026-08-10 with
+    astral-sh/ruff#27626 — `compare <that sha>...main` puts it 2 commits
+    ahead of main, i.e. not on main at all). Handing that sha to the deploy
+    gate would make the card wait forever for a run that cannot exist."""
+    status = await _status(
+        {
+            "state": "open",
+            "merged": False,
+            "merged_at": None,
+            "merge_commit_sha": "cb623502067ee859eca9e9ae779ba95e2c61b26d",
+            "head": {"sha": "8e7631069025aa4e4c8fb3c9cf3f55853256a9f2"},
+        }
+    )
+
+    assert status.merged is False
+    assert status.state == "open"
+    assert status.merge_commit_sha is None
+    assert status.merged_at is None
+    assert status.head_sha == "8e7631069025aa4e4c8fb3c9cf3f55853256a9f2"
+
+
+@pytest.mark.anyio
+async def test_status_of_a_closed_unmerged_pr_is_distinguishable_from_merged():
+    status = await _status(
+        {
+            "state": "closed",
+            "merged": False,
+            "merged_at": None,
+            "merge_commit_sha": None,
+            "head": {"sha": "deadbeef"},
+        }
+    )
+
+    assert status.state == "closed"
+    assert status.merged is False
+
+
+@pytest.mark.anyio
+async def test_status_merged_with_unparseable_time_still_reports_the_merge():
+    """A timestamp surprise must not cost us the merge itself — the caller
+    falls back to "now" rather than leaving the card stuck."""
+    status = await _status(
+        {
+            "state": "closed",
+            "merged": True,
+            "merged_at": "not-a-time",
+            "merge_commit_sha": "abc123",
+            "head": {"sha": "deadbeef"},
+        }
+    )
+
+    assert status.merged is True
+    assert status.merge_commit_sha == "abc123"
+    assert status.merged_at is None
+
+
+@pytest.mark.anyio
+async def test_status_http_failure_raises_github_pr_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="Not Found")
+
+    with pytest.raises(GitHubPrError):
+        await _client(handler).pull_request_status(
+            owner="acme", repo="widgets", number=7, token="t"
+        )
