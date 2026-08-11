@@ -35,7 +35,9 @@ jobs:
     # comparable job; 30m wins because it is the number with a measurement
     # behind it, and the whole point of the bound is to cut a wedged job loose
     # sooner than the box can be starved. Revisit against the 4.8m figure, not
-    # against build.yml, if this ever starts timing out legitimately.
+    # against build.yml, if this ever starts timing out legitimately. (The two
+    # jobs are not comparable anyway: build-sandbox builds the base from
+    # scratch, this one starts FROM the finished base and only adds tmux+ttyd.)
     timeout-minutes: 30
     permissions:
       contents: read

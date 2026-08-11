@@ -10,6 +10,7 @@ import viteCompression from 'vite-plugin-compression'
 import { prismjsPlugin } from 'vite-plugin-prismjs'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
+import { configDefaults } from 'vitest/config'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -162,6 +163,11 @@ export default defineConfig({
     // "Unknown file extension .css" 崩在收集阶段——挂真实组件的测试需要它走
     // Vite 的 transform 管线。
     server: { deps: { inline: ['vuetify'] } },
+    // `scripts/` is node:test territory (`pnpm run test:ratchet`), not vitest's.
+    // Its *.test.mjs files match vitest's default include glob, and vitest fails
+    // the whole run on them with "No test suite found" — node:test registers its
+    // cases through `node:test`, which vitest's collector never sees.
+    exclude: [...configDefaults.exclude, 'scripts/**'],
   },
   optimizeDeps: {
     include: ['editorjs-parser'],

@@ -9,8 +9,9 @@ name: Frontend Test
 # AuditTask.vue, a guaranteed ReferenceError on the reject path.
 #
 # The frontend's own unit tests were unrun for the same reason: `frontend/src`
-# holds 27 vitest files / 289 assertions — including the ones added by #244,
-# #246 and #249 — and build.yml only runs on pushes to main anyway. So a
+# holds 29 vitest files / 299 tests (measured on this tree) — including the
+# ones added by #244, #246 and #249 — and build.yml only runs on pushes to
+# main anyway. So a
 # frontend PR could go green with its own new tests failing, and did. That is
 # what the `Unit tests` step below exists for; it is a separate gap from the
 # type/lint one and neither covers the other.
@@ -78,11 +79,18 @@ jobs:
         with:
           node-version: 22
 
-      # pnpm comes from package.json's `packageManager` field, so the version is
-      # pinned by the repo rather than by this workflow.
+      # pnpm comes from frontend/package.json's `packageManager` field
+      # (pnpm@9.15.3), so the repo pins the version rather than this workflow.
+      # Deliberately NOT `pnpm/action-setup` with a hard-coded major: that
+      # overrides the pinned version, and a newer pnpm resolving this lockfile
+      # is exactly the drift `--frozen-lockfile` exists to prevent. (corepack
+      # reads the field from the working directory, which `defaults.run` has
+      # already set to frontend/ — the repo root has no package.json.)
       - name: Enable corepack
         run: corepack enable
 
+      # Explicit cache rather than setup-node's `cache: pnpm`, which shells out
+      # to pnpm to locate the store and so would have to run after corepack.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.local/share/pnpm/store
@@ -141,17 +149,17 @@ jobs:
       # `pnpm run test` is the watch-mode `vitest`, which never exits, so CI
       # needs the one-shot form. Measured on this tree: 29 files, 299 tests.
       #
-      # `--dir src` is load-bearing, not tidiness. Vitest's default include glob
-      # sweeps the whole package, so it also collects `scripts/*.test.mjs` — the
-      # ratchet's own tests, which are written for node:test, not vitest, and
-      # fail collection outright with "No test suite found in file". Scoping to
-      # src/ says what this step actually means: the application suite. The
-      # ratchet's tests have their own step above, under the runner they were
-      # written for.
+      # `--dir src` says what this step actually means: the application suite.
+      # The ratchet's tests have their own step above, under the runner they
+      # were written for (node:test — vitest fails collecting them outright
+      # with "No test suite found in file").
       #
-      # A plain `pnpm exec vitest run` (and `pnpm run test` locally) still hits
-      # that collision — the real fix is an `exclude: ['scripts/**']` in the
-      # vitest config, which is out of scope for this merge.
+      # It is no longer the only thing standing between vitest and that
+      # collision: `vite.config.ts` now carries `exclude: [...configDefaults
+      # .exclude, 'scripts/**']`, so a plain `pnpm exec vitest run` — and
+      # `pnpm run test` locally — are clean too. Both were written against the
+      # same bug from different sides; keeping both means neither the config
+      # nor this flag is load-bearing alone.
       - name: Unit tests
         run: pnpm exec vitest run --dir src
 
