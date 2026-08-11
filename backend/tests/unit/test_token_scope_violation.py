@@ -52,9 +52,7 @@ async def test_token_from_another_topic_is_refused(monkeypatch):
     resolver = _resolver(monkeypatch, cheese_token=token)
 
     with pytest.raises(ForbiddenError):
-        await resolver.resolve(
-            fallback_handle=None, topic_id=TOPIC, project_id=PROJECT
-        )
+        await resolver.resolve(fallback_handle=None, topic_id=TOPIC, project_id=PROJECT)
 
 
 async def test_wrong_topic_token_cannot_hide_behind_a_body_author(monkeypatch):
@@ -73,9 +71,7 @@ async def test_token_from_another_project_is_refused(monkeypatch):
     resolver = _resolver(monkeypatch, cheese_token=token)
 
     with pytest.raises(ForbiddenError):
-        await resolver.resolve(
-            fallback_handle=None, topic_id=TOPIC, project_id=PROJECT
-        )
+        await resolver.resolve(fallback_handle=None, topic_id=TOPIC, project_id=PROJECT)
 
 
 async def test_in_scope_token_still_acts_as_this_topics_agent(monkeypatch):

@@ -1090,12 +1090,13 @@ class ChatService:
                 if refs:
                     block.refs = refs
                 for bad in unresolved:
+                    warn = f"⚠️ @了 <@{bad}>，项目成员里没有这个 handle，没能通知到"
                     await blocks.add(
                         project_id=project_id,
                         topic_id=topic_id,
                         author=author,
                         author_type=AuthorType.ai,
-                        content=f"⚠️ @了 <@{bad}>，但项目成员里没有这个 handle，没能通知到",
+                        content=warn,
                         kind=BlockKind.event,
                         turn_id=turn_id,
                     )
