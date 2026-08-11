@@ -238,6 +238,11 @@ class OpenVikingMemoryStore:
                 lines.append(f"[{e.get('rel_path', '')}] {content}")
         return lines
 
+    async def count(self, scope: MemoryScope, scope_id: str) -> int:
+        """Memory cards in the scope, including the ones `recall` left out —
+        injection subtracts the two to report what it had to cut."""
+        return len(await self._memory_files(scope, scope_id))
+
     async def remember(self, scope: MemoryScope, scope_id: str, content: str) -> None:
         """Persist a fact through OpenViking's canonical write path: a one-shot
         session commit. OpenViking's extractor classifies/merges/dedups it into
