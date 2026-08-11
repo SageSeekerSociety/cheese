@@ -21,13 +21,8 @@ import uuid
 
 from sqlalchemy import delete
 
-from app.core.tokens import mint_session_token
 from app.domain.topic.models import TopicMembership, TopicRole
-
-
-def _bearer(handle: str) -> dict:
-    token = mint_session_token(handle=handle, user_id=None)
-    return {"Authorization": f"Bearer {token}"}
+from tests.integration.conftest import session_auth_headers
 
 
 def _project(client, owner: str | None) -> dict:
@@ -55,7 +50,7 @@ def _add_project_member(
     r = client.post(
         f"/api/projects/{project_id}/members",
         json={"user_handle": handle, "role": role},
-        headers=_bearer(actor),
+        headers=session_auth_headers(actor),
     )
     assert r.status_code == 200, r.text
 
@@ -83,7 +78,7 @@ def _orphan_the_roster(client, topic_id: str) -> None:
 
 def test_topic_created_by_human_is_owned_by_that_human(client):
     p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"], headers=_bearer("alice"))
+    topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
 
     assert _roster(client, topic["id"]).get("alice") == "owner"
 
@@ -131,7 +126,7 @@ def test_owner_can_manage_roster_of_an_agent_created_topic(client):
     r = client.post(
         f"/api/topics/{topic['id']}/members",
         json={"handle": "bob", "actor": "alice"},
-        headers=_bearer("alice"),
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     assert _roster(client, topic["id"]).get("bob") == "member"
@@ -141,7 +136,7 @@ def test_project_lead_can_rescue_a_room_that_lost_its_owner(client):
     """The way out for the 96 rooms already stuck: a project lead may appoint an
     owner while the room has none. Before this, the only fix was a DB script."""
     p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"], headers=_bearer("alice"))
+    topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     _orphan_the_roster(client, topic["id"])
     assert "owner" not in _roster(client, topic["id"]).values()
 
@@ -149,7 +144,7 @@ def test_project_lead_can_rescue_a_room_that_lost_its_owner(client):
     r = client.post(
         f"/api/topics/{topic['id']}/members",
         json={"handle": "dana", "role": "owner", "actor": "dana"},
-        headers=_bearer("dana"),
+        headers=session_auth_headers("dana"),
     )
     assert r.status_code == 200
     assert _roster(client, topic["id"]).get("dana") == "owner"
@@ -158,14 +153,14 @@ def test_project_lead_can_rescue_a_room_that_lost_its_owner(client):
 def test_plain_project_member_cannot_rescue_a_room(client):
     """The hatch is for whoever answers for the project, not for everyone in it."""
     p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"], headers=_bearer("alice"))
+    topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     _orphan_the_roster(client, topic["id"])
 
     _add_project_member(client, p["id"], "erin", "member")
     r = client.post(
         f"/api/topics/{topic['id']}/members",
         json={"handle": "erin", "role": "owner", "actor": "erin"},
-        headers=_bearer("erin"),
+        headers=session_auth_headers("erin"),
     )
     assert r.status_code == 403
 
@@ -174,12 +169,12 @@ def test_hatch_closes_once_the_room_has_an_owner_again(client):
     """A healthy room's owner is never overridden — the lead loses the power the
     moment the room can manage itself, so this isn't a blanket project-wide key."""
     p = _project(client, owner="alice")
-    topic = _create_topic(client, p["id"], headers=_bearer("alice"))
+    topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     _add_project_member(client, p["id"], "dana", "lead")
 
     r = client.post(
         f"/api/topics/{topic['id']}/members",
         json={"handle": "mallory", "role": "member", "actor": "dana"},
-        headers=_bearer("dana"),
+        headers=session_auth_headers("dana"),
     )
     assert r.status_code == 403

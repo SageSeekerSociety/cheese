@@ -959,7 +959,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(client, monkeypatch):
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         number = accepted["pr_number"]
         fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")

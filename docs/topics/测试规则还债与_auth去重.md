@@ -47,6 +47,26 @@
 - 改动范围内本沙箱实跑：守卫测试 + 8 个改过的集成测试（`test_protocol` / `test_reassign` / `test_room_and_task` / `test_project_tree` / `test_github_connect` / `test_connector_viewer` / `test_split_authz` / `test_auth_actor`），**53 passed / 0 failed**（75s，`-n 4`，dev-db.sh 起的 PG + Redis）。
 - 故意没跑 `test_accept*.py`：<&CLAUDE.md> 记着这批在本沙箱因缺 git identity 恒定失败，跑它只收获环境噪音；那部分由上面的全量绿覆盖。也没起全量——基线已绿，且本文件第 5 条症状就是「两个 pytest 打同一个测试库会造出假失败」。
 
+## 采纳时的合并冲突（已解）
+
+平台把新 main 合进工作区时冲突了。**只有一个文件带冲突标记，但真正要处理的是四处没有标记的语义冲突**——这次合并本身就是这条守卫的第一个实战用例。
+
+带标记的一处，<&backend/tests/integration/test_protocol.py>：main 那侧把 owner handle 提成了 `OWNER = "owner-1"` 常量并新增两处 roster 写入（用本地 `_auth()`），我这侧删了 `_auth()`。合法：常量保留，`_auth()` 不保留，main 新增的调用改走 `session_auth_headers(OWNER)`。机械选 main 那侧的话，第九份 `_auth` 会连同 `mint_session_token` 的 import 一起被合回来——**守卫拦的不只是「新写的第十份」，还有「合并把删掉的那份带回来」**，后者 review 时几乎看不出来。
+
+没有冲突标记、但合完就坏掉的四处：
+
+| 文件 | 情况 | 处理 |
+|---|---|---|
+| <&backend/tests/integration/test_accept_pr.py> | main 新增的用例调用了我删掉的 `_auth()` | 改 `session_auth_headers("alice")`（ruff F821 抓到的就是这个） |
+| <&backend/tests/integration/test_accept_authorization_first.py> | main 新文件，`from ...test_accept_pr import _auth` | 改从 conftest 引共享 helper |
+| <&backend/tests/integration/test_accept_card_orphans.py> | 同上，3 处调用 | 同上 |
+| <&backend/tests/integration/test_topic_owner_seed.py> | main 新文件，自带 `_bearer()` 内联铸 token | 改共享 helper |
+| <&backend/tests/conftest.py> | main 新增 `bearer` fixture，在 fixture 里铸 token | 改成委托 `session_auth_headers()`，单一事实源 |
+
+**注意 `_auth` 这个名字只帮上了 ruff 那一处的忙**：F821 只能报「文件内用了未定义的名字」，另外两个文件是 `from ... import _auth`，静态检查看不出问题，要到运行时才 ImportError；而 `_bearer` 和 `bearer` fixture 连名字都不一样，ruff 完全无感。**能同时把这五处都指出来的只有守卫测试**（它盯的是 `mint_session_token`，改名和内联都躲不掉）。
+
+顺带一条数据：这支分支在途期间，main 又新长出 **2 处**自己铸 token 的地方（`test_topic_owner_seed.py` 的 `_bearer`、`tests/conftest.py` 的 `bearer` fixture）。也就是说从 14 涨到了 16 —— 散文规则在这段时间里一次都没拦住。**不过 main 那两个新增的采纳测试文件是 `import _auth` 而不是再抄一份**，方向是对的，只是引错了源头（从测试模块引，而不是 conftest）。
+
 ## 待处理（交接）
 
 本分支基于**今天早些时候的 main**，`check-repo-rules.sh` 那次合并之后 main 又动过。两件事要在采纳前后处理：

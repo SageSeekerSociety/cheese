@@ -22,8 +22,8 @@ import asyncio
 
 import pytest
 
+from tests.integration.conftest import session_auth_headers
 from tests.integration.test_accept_pr import (
-    _auth,
     _cards_for_topic,
     _make_card,
     _make_project,
@@ -50,7 +50,7 @@ def _authorize(client, monkeypatch, *, reviewer: str = "alice") -> tuple:
     r = client.post(
         f"/api/accept-cards/{cid}/accept",
         json={"decided_by": reviewer},
-        headers=_auth(reviewer),
+        headers=session_auth_headers(reviewer),
     )
     assert r.status_code == 200
     return fake, tid, r.json()["data"]
