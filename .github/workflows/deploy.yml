@@ -47,6 +47,8 @@ jobs:
   wait-for-ci:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    # Deliberately unbounded: this blocks until the release commit's CI
+    # finishes, which is however long the box's queue is that day.
     steps:
       - name: Wait for Docker image build
         uses: lewagon/wait-on-check-action@v1.3.4
@@ -81,6 +83,9 @@ jobs:
     # job too — allow dispatch through, and require CI success on release.
     if: always() && (github.event_name == 'workflow_dispatch' || needs.wait-for-ci.result == 'success')
     runs-on: ubuntu-latest
+    # Deliberately unbounded (GitHub's 360m default): this job blocks on a
+    # human approving via manual-approval. A tight timeout here would not
+    # catch a hang, it would cancel a deploy waiting on its approver.
     environment: production
 
     steps:

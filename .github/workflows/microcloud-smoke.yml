@@ -19,6 +19,12 @@ on:
       offering:
         description: "offering id (54=lxc, 55=vm); blank = first active"
 
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
 concurrency:
   group: microcloud-smoke
   cancel-in-progress: false

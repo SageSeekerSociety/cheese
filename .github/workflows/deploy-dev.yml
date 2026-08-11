@@ -44,6 +44,9 @@ jobs:
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion != 'success'
     runs-on: [self-hosted, cheese-dev]
+    # Echoes one message and exits; anything longer is a stuck runner holding
+    # the box's only slot.
+    timeout-minutes: 5
     steps:
       - name: Say why nothing was deployed
         run: |

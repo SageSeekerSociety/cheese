@@ -30,9 +30,13 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
+# each merge in its own group: with a shared `github.ref` key, a second merge
+# cancelled the first one's run and main was left with no result for that
+# commit. build.yml already keyed on sha for main; these did not.
 concurrency:
-  group: repo-guards-${{ github.ref }}
-  cancel-in-progress: true
+  group: repo-guards-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   guards:
