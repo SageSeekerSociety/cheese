@@ -70,9 +70,10 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 | `cheese members` | 列出项目成员(名字+handle+角色)。点名时 `@名字` 和 `@handle` 都行——平台会统一改写成可点的提及 |
 | `cheese await "<命令>" [--label "..."] [--timeout 3600]` | **要等几分钟以上的命令一律走它**(全量检查、构建、长跑脚本)。命令在后台跑,本命令立刻返回;跑完平台会**自动开一轮新的**把你叫醒,并带上退出码、耗时和输出尾巴。**丢给它之后就可以放心结束本轮**——别为了等一个后台任务而干等或反复轮询,那会把话题冻死 |
 | `cheese status` | 平台状态快照:本轮运行状态(正常运行中/疑似卡死/接近硬顶,tmux 后端才有活跃度信号)、本话题验收卡(闸门红了带**输出尾巴**,不是全文——后端截末 2000 字符,这里再打末 15 行)、磁盘/排队/额度水位。想知道"卡到哪了/闸门为什么红"时先跑它,别去轮询原始 API |
+| `cheese gh-token` | 铸一个只读 GitHub token(约 1 小时过期),用来查 CI/CD:`GH_TOKEN=$(cheese gh-token) gh run list` |
+| `cheese --version` | 打印本 CLI 的源码指纹。怀疑容器里这份跟后端不同版时用它核对(挂载来自后端每轮 stage 的那份) |
 | `cheese artifact <文件> [--as html\|svg]` | 把工作区里的产物设为**当前预览**,渲染进右侧预览窗口 |
 | `cheese serve ["说明"]` | 把**容器里跑起来的应用**设为当前预览。先把 dev server 起在 `0.0.0.0:$CHEESE_APP_PORT`(注意不能只绑 localhost;vite 要 `--host 0.0.0.0`,uvicorn 要 `--host 0.0.0.0`),后台运行(`nohup ... &`),验证 `curl localhost:$CHEESE_APP_PORT` 通了再 serve。**怎么跑这个项目由你判断**(看 README/package.json/pyproject)——每个项目不一样。**页面经后端反代挂在 `$CHEESE_APP_BASE` 这个子路径下**:会发根绝对资源 URL 的 dev server(vite 的 `/@vite/client`)要按这个 base 起(`vite --base=$CHEESE_APP_BASE --host 0.0.0.0`),否则用户那边只有白框 |
-| `cheese gh-token` | 铸一个只读(actions/checks)GitHub token 查 CI/CD,约 1 小时过期。stdout 只有 token 本身,所以直接 `GH_TOKEN=$(cheese gh-token) gh run list` |
 | `cheese api <METHOD> <path> [--data '<json>']` | **原始 API 逃生口(兜底,不推荐)**。上面的 curated 命令覆盖 80% 场景,优先用它们(语义清晰、有校验)。只有当没有对应的 curated 命令时,才用 `cheese api` 直接打后端。无参 `cheese api` 会列出所有可用操作。它**仍走容器已有鉴权**(不是无鉴权后门,后端照样按你的身份授权),但校验少、易出错——能用 curated 就别用它 |
 
 > 配了质量闸门（check_command）的项目：递卡后平台会自动跑检查，红了卡片会打回并叫你去修——**递卡前先自己把检查跑绿**，省一个来回。
