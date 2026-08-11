@@ -396,10 +396,6 @@ class Settings(BaseSettings):
     # 提交，按 head_sha 查 100 条 run 全是 0 条）。那种卡不是「还在等」，是死等
     # ——等的那个 run 永远不会存在。所以这个宽限期不能设成"无限"。
     accept_deploy_stale_after_minutes: int = 45
-    # 推镜像的那个 workflow。用途只有一个：拿到「这个 commit 的镜像根本没被推上
-    # 去」的**肯定证据**时，否决祖先关系（`_images_never_pushed`）。祖先关系说明
-    # 盒子上那份代码里有这个提交，但 build 红了的那一类要另外挡一道。
-    accept_build_workflow_file: str = "build.yml"
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having

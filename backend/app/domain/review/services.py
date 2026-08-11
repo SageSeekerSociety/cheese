@@ -1302,21 +1302,14 @@ class AcceptService:
             card=card, runs=runs, owner=owner, repo=repo, token=token, client=client
         )
         if landed is not None:
-            blocked = await self._images_never_pushed(
-                card=card, owner=owner, repo=repo, token=token, client=client
+            await self._finish_pr_accept(
+                card=card,
+                topic=topic,
+                landed_via=landed,
+                failed_tail=tail
+                if state == "failure"
+                else "这个提交自己没有成功的部署 run",
             )
-            if blocked is None:
-                await self._finish_pr_accept(
-                    card=card,
-                    topic=topic,
-                    landed_via=landed,
-                    failed_tail=tail
-                    if state == "failure"
-                    else "这个提交自己没有成功的部署 run",
-                )
-                return
-            self._note_images_never_pushed(card=card, topic=topic, reason=blocked)
-            await self._session.flush()
             return
 
         if state == "failure":
@@ -1338,55 +1331,6 @@ class AcceptService:
         # 还在等。等太久了就说一声——默默等着正是这个话题要治的病。
         self._note_deploy_stalled(card=card, topic=topic)
         await self._session.flush()
-
-    async def _images_never_pushed(
-        self, *, card: AcceptCard, owner: str, repo: str, token: str, client
-    ) -> str | None:
-        """Positive evidence that THIS commit's images were never pushed, or
-        None. A veto on the ancestry criterion, not a precondition for it.
-
-        祖先关系说明「盒子上跑的那份代码里有我这个提交」，但 wangchangxin 要求
-        对 build 没产出镜像那一类另外挡一道（2026-08-11: `docker login -u
-        github.actor` 在 push 事件里取提交作者，采纳提交的作者不是仓库主 → 403
-        推不动镜像；根因已由 #276 修掉，历史卡里可能还有）。这里就是那道闸。
-
-        证据取自 build workflow 对**这个 sha** 的运行：它就是推镜像的那个
-        workflow，所以它红了 = 镜像没推上去，不需要去猜 job 名，也不需要 packages
-        权限。`build.yml` 的并发组按 sha 分组，每个 commit 都有自己的 run。
-
-        **只在拿到肯定证据时否决。** 没有 run、还在跑、拿不到——都返回 None，
-        因为「查不到」不是「没有」，而反过来会把 run 压根不会被创建的那批卡
-        （本话题的主症状）永远锁死。
-        """
-        state, tail = await client.workflow_run_state(
-            owner=owner,
-            repo=repo,
-            workflow_file=settings.accept_build_workflow_file,
-            head_sha=card.pr_head_sha,
-            token=token,
-        )
-        return tail if state == "failure" else None
-
-    def _note_images_never_pushed(
-        self, *, card: AcceptCard, topic: Topic, reason: str
-    ) -> None:
-        """镜像没推上去 → 绝不放行，哪怕祖先关系成立。写一次，不刷屏。"""
-        note = (
-            f"⛔ 这个提交的镜像没有被推上去（{reason}），"
-            "所以即便后来有包含它的成功部署，也不能算它自己上线了。"
-            "话题保持 active，需要人重跑 build 或确认。"
-        )[:2000]
-        if card.note == note:
-            return
-        card.note = note
-        logger.warning("card %s: images were never pushed — %s", card.id, reason)
-        self._notify_merge_result(
-            topic,
-            f"⛔ PR #{card.pr_number} 已合并，后来也有包含它的成功部署，但**这个提交"
-            f"自己的镜像没有被推上去**（{reason}）。\n"
-            "平台不拿祖先关系替这种情况背书：话题保持 active，需要人重跑 build，"
-            f"或者自己确认代码到底上没上线。\n{card.pr_url}",
-        )
 
     def _note_deploy_stalled(self, *, card: AcceptCard, topic: Topic) -> None:
         """Merged long ago, deploy neither succeeded nor failed, and nothing
@@ -1499,15 +1443,19 @@ class AcceptService:
         checkout of the project's GitHub repo to run git in.
 
         Note what is deliberately NOT the criterion: whether THIS commit's own
-        images were pushed. When a build fails (2026-08-11: `docker login -u
-        github.actor` 403 on 采纳 commits, fixed in #276) the images for this
-        commit never exist — but a later commit that CONTAINS ours and does
-        build and deploy puts our source on the box all the same. Gating on
-        "my own image exists" would leave exactly those cards (#267/#270/#274)
-        stuck forever after the registry was fixed; gating on "some run that
-        really deployed shipped a commit containing mine" archives them for
-        the right reason. A build that produced no images and no later deploy
-        carrying it still ends where it did before: 保持 active、告诉人.
+        images were pushed. It was proposed twice and withdrawn (2026-08-11,
+        wangchangxin: "我把「镜像在不在」当成了目的，其实它只是「代码上没上
+        线」的一个坏代理"), and a veto built on it briefly lived here. When a
+        build fails (`docker login -u github.actor` 403 on 采纳 commits, fixed
+        in #276) the images for this commit never exist — but a later commit
+        that CONTAINS ours and does build and deploy puts our source on the box
+        all the same. **A commit does not need an image of its own to be
+        live.** Gating on "my own image exists" would leave exactly the cards
+        this whole topic is about (#267/#270/#274 — all three verified
+        ancestors of the 16:11 deploy 45b6169a4) stuck forever; gating on "some
+        run that really deployed shipped a commit containing mine" archives
+        them for the right reason. A build that produced no images and no later
+        deploy carrying it still ends where it did before: 保持 active、告诉人.
 
         Best-effort by construction: every GitHub hiccup here returns None,
         which lands back on the old "保持 active、告诉人" path. This check can

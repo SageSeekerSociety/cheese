@@ -100,8 +100,6 @@ class FakeGitHubPrClient:
         # number → GitHub's refusal reason (405/409); wins over a sha.
         self.merge_blocked_by_number: dict[int, str] = {}
         self.workflow_state_by_sha: dict[str, tuple[str, str]] = {}
-        # 推镜像的那个 workflow 对某个 sha 的结论（`accept_build_workflow_file`）。
-        self.build_state_by_sha: dict[str, tuple[str, str]] = {}
         # 人类授权动作前移: sha → the PR diff at that sha, as [(status, path)].
         # None models GitHub's oversized-compare response (no `files` key).
         # Unset shas answer with an empty diff, which is what every test that
@@ -231,10 +229,6 @@ class FakeGitHubPrClient:
     async def workflow_run_state(
         self, *, owner, repo, workflow_file, head_sha, token
     ) -> tuple[str, str]:
-        if workflow_file == settings.accept_build_workflow_file:
-            # 「查不到」不是「没推上去」——默认给无结论，只有明确登记了 failure
-            # 的用例才构成「镜像没推上去」的肯定证据。
-            return self.build_state_by_sha.get(head_sha, ("pending", "build 还没结论"))
         return self.workflow_state_by_sha.get(head_sha, ("pending", "还没触发"))
 
     async def recent_workflow_runs(
@@ -797,9 +791,16 @@ def test_poll_deploy_stalled_past_the_grace_says_so_once(client, monkeypatch):
         _reset_client()
 
 
-def test_poll_images_never_pushed_vetoes_the_ancestry_criterion(client, monkeypatch):
-    """祖先关系成立，但**这个提交自己的镜像没被推上去**（build 红了）——
-    wangchangxin 要求对这一类另外挡一道，不拿祖先关系替它背书。"""
+def test_poll_commit_without_its_own_image_archives_when_something_carried_it(
+    client, monkeypatch
+):
+    """**一个 commit 不需要有自己的镜像才算上线。** 这张卡自己的 build 403 推不动
+    镜像（deploy 的守卫 job 如实报了 no images were pushed），但后来一个包含它、
+    并且真的部署过的提交把它的源码送上了盒子——它就是上线了。
+
+    「镜像在不在」这条判据被提过两次又撤回（2026-08-11）：它只是「代码上没上线」
+    的一个坏代理。按它判，#267/#270/#274 会永远等一个自己的镜像，而它们三个都已经
+    是 16:11 那次成功部署 45b6169a4 的祖先。"""
     fake, tid = _merged_awaiting_deploy(client, monkeypatch)
     try:
         fake.workflow_state_by_sha["merge-sha-1"] = (
@@ -807,22 +808,25 @@ def test_poll_images_never_pushed_vetoes_the_ancestry_criterion(client, monkeypa
             "部署 workflow 失败：failure",
         )
         fake.workflow_runs = [
-            _deploy_run("later-sha", conclusion="success", minutes=5, run_id=920)
+            _deploy_run("45b6169a", conclusion="success", minutes=5, run_id=930),
+            _deploy_run("merge-sha-1", conclusion="failure", minutes=1, run_id=931),
         ]
-        fake.compare_status_by_pair[("later-sha", "merge-sha-1")] = "behind"
-        # 肯定证据：推镜像的那个 workflow 对这个 sha 是红的。
-        fake.build_state_by_sha["merge-sha-1"] = (
-            "failure",
-            "denied: permission_denied",
-        )
+        fake.compare_status_by_pair[("45b6169a", "merge-sha-1")] = "behind"
+        # 我们自己那次：build 没产出镜像，守卫 job 红着。
+        fake.jobs_by_run_id[931] = [
+            github_pr.WorkflowJob(
+                name="build-did-not-produce-images",
+                conclusion="failure",
+                steps=[("Say why nothing was deployed", "failure")],
+            ),
+        ]
 
         _poll(client)
 
         card = _cards_for_topic(client, tid)[0]
-        assert card["status"] == "pr_open"
-        assert _topic(client, tid)["status"] == "active"
-        assert card["note"].startswith("⛔")
-        assert "permission_denied" in card["note"]
+        assert card["status"] == "accepted"
+        assert _topic(client, tid)["status"] == "archived"
+        assert "45b6169a" in card["note"]
     finally:
         _reset_client()
 
