@@ -148,6 +148,56 @@ def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
     return (f"{prefix}；{base}" if base else prefix)[:2000]
 
 
+# ---- 人类授权动作前移 (2026-08-10) -----------------------------------------
+#
+# 人点的那一下从「合并前」挪到了「开 PR 前」：它买到的是"以我的名义把这条分支
+# 推上去、让真 CI 开始跑，之后的迭代不用再问我"。摩擦因此是 O(1) 而不是
+# O(迭代次数)。代价是那一刻 CI 还没有任何结果，所以机器后来自动合并之前必须自
+# 己守住三道闸——这三条就是整个方案的安全阀，任何一条命中都不自动合并，回来找人。
+
+#: 例外 3: prod 永远两次都要人。本项目当前采纳目标是 main/dev，这里先把判断位
+#: 留出来（不是猜测式匹配：只认这几个确切分支名，`main-prod` 之类要显式加）。
+_PROD_BASE_BRANCHES = frozenset({"prod", "production", "release"})
+
+#: 例外 1 的两类"敏感路径"。第三类（新增文件）看的是 diff 状态而不是路径。
+_CI_CONFIG_PREFIX = ".github/"
+
+
+def _is_prod_base(base: str) -> bool:
+    return base.strip().lower() in _PROD_BASE_BRANCHES
+
+
+def _is_migration_path(path: str) -> bool:
+    """迁移文件——改数据库结构的东西，人授权时没看见就不该跟着自动合进去。"""
+    return (
+        "alembic/versions/" in path
+        or path.startswith("migrations/")
+        or "/migrations/" in path
+    )
+
+
+def _drift_reasons(
+    authorized: list[tuple[str, str]], current: list[tuple[str, str]]
+) -> list[str]:
+    """例外 1: 授权之后 head 又动了，新 diff 里有没有超出授权范围的东西。
+
+    只看"授权时那份 diff 里没有的路径"——人已经看过的文件被继续改，正是这次设计
+    要放行的迭代（改 CI 报错、补一行断言），拦下来就把 O(1) 变回 O(迭代次数)。
+    在这些新出现的路径里，只有三类算越界：新增文件 / 碰 `.github/` / 碰迁移。"""
+    known = {path for _, path in authorized}
+    reasons: list[str] = []
+    for status, path in current:
+        if path in known:
+            continue
+        if status == "added":
+            reasons.append(f"新增了文件 {path}")
+        elif path.startswith(_CI_CONFIG_PREFIX):
+            reasons.append(f"动了 CI 配置 {path}")
+        elif _is_migration_path(path):
+            reasons.append(f"动了数据库迁移 {path}")
+    return reasons
+
+
 def approvals_required_of(project: Project | None) -> int:
     """主分支保护 (spec §4.4): distinct approvals an accept needs. Default 1 —
     the accepter's own accept counts, so unconfigured projects are unchanged."""
@@ -775,6 +825,10 @@ class AcceptService:
         card.pr_repo = f"{owner}/{repo}"
         card.pr_url = pr.url
         card.pr_head_sha = pushed["head_sha"]
+        # 人类授权动作前移: freeze what this human actually authorized. From here
+        # on `pr_head_sha` follows every fix 芝士 pushes; this one does not, and
+        # the poller diffs the two before it dares merge without asking again.
+        card.pr_authorized_sha = pushed["head_sha"]
         card.pr_merged_at = None
         # A PR GitHub reports as already open on this head branch IS this
         # topic's PR (the branch name is derived from the topic id), so it is
@@ -785,13 +839,18 @@ class AcceptService:
             if pr.already_existed
             else f"已开 PR #{pr.number}"
         )
-        card.note = f"{pr_phrase}，等 CI 转绿后自动合并：{pr.url}"
+        card.note = (
+            f"{pr_phrase}，真 CI 现在才开始跑，全绿且没超出授权范围才自动合并：{pr.url}"
+        )
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(
             topic,
-            f"🔁 {decided_by} 采纳了这个话题，{pr_phrase} 等待 CI：{pr.url}\n"
-            "话题保持 active（容器不停），PR 合并且部署也成功后才会归档。",
+            f"🔁 {decided_by} 授权了这次改动，{pr_phrase} —— 真 CI 现在才开始跑："
+            f"{pr.url}\n"
+            "话题保持 active（容器不停）。检查全绿、且改动没超出授权范围时平台自动"
+            "合并，之后的迭代不用再问人；三种例外（新 diff 越界 / 根本没有 CI 会跑"
+            " / 目标是 prod）会回来找人。PR 合并且部署也成功后才会归档。",
         )
         return card
 
@@ -903,6 +962,15 @@ class AcceptService:
             await self._session.flush()
             return
 
+        # 人类授权动作前移: a card that opened its PR before this feature existed
+        # has no recorded authorization baseline. Adopt the head it is riding
+        # RIGHT NOW rather than leaving the valve off forever — that can only
+        # ever govern pushes from here on, so an in-flight card is never
+        # retroactively blocked for something it did before the rule existed.
+        if card.pr_authorized_sha is None:
+            card.pr_authorized_sha = card.pr_head_sha
+            await self._session.flush()
+
         # 芝士 fixed something in its workspace — push it to the PR branch
         # before checking CI, or a fixed commit just sits local forever (see
         # _repush_if_local_head_moved's docstring for why 芝士 can't do this
@@ -949,6 +1017,24 @@ class AcceptService:
             await self._session.flush()
             return
 
+        # 人类授权动作前移 (2026-08-10): 检查不红 ≠ 机器可以免人合并。人当初批的
+        # 是「以我的名义开这个 PR、让 CI 真跑」，不是「这堆代码我看过了」——所以
+        # 合并前还要过三道安全阀，任一命中就不合并、回来找人。
+        withheld = await self._authorization_exception(
+            card=card,
+            topic=topic,
+            owner=owner,
+            repo=repo,
+            token=token,
+            client=client,
+            state=state,
+            tail=tail,
+        )
+        if withheld is not None:
+            self._note_needs_human(card=card, topic=topic, reason=withheld)
+            await self._session.flush()
+            return
+
         # Green → merge now. Trailers go on the merge commit too, not just
         # the PR description (2026-08-09 设计要点5: 标清芝士代表谁) — under
         # squash that means the body field, with the title passed separately.
@@ -976,6 +1062,106 @@ class AcceptService:
             topic,
             f"✅ PR #{card.pr_number} 的检查全绿，已自动合并。"
             "等部署也成功后话题才会归档。",
+        )
+
+    async def _authorization_exception(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        owner: str,
+        repo: str,
+        token: str,
+        client,
+        state: str,
+        tail: str,
+    ) -> str | None:
+        """人类授权动作前移 (2026-08-10) 的安全阀：checks aren't red — may the
+        machine merge WITHOUT going back to the human? Returns None for yes, or
+        the human-readable reason it must ask, for the three exceptions the
+        design names. Anything it cannot determine counts as "ask" (fail
+        closed): the whole point of the human's click moving earlier is that
+        nobody has looked at what the machine is about to merge.
+
+        Deliberately NOT part of the polling state machine — `advance_pr_card`
+        and its stages are reused as-is; this is one gate in front of the merge
+        call, and returning None leaves the old behaviour byte for byte."""
+        from app.domain.workspace import service as ws
+
+        # 例外 2: 「12 项检查全过」和「没有 workflow 会对这次改动触发检查」是两件
+        # 事。后者也让轮询停下来（零检查死锁的修复原样保留），但它意味着真 CI 从
+        # 未跑过这段代码，所以不享受免人自动合并。
+        if state == "no_checks":
+            return f"没有任何 CI 真的跑过这次改动（{tail}）"
+
+        # 例外 3: 目标是 prod —— 永远两次都要人。
+        try:
+            base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
+        except Exception as exc:  # noqa: BLE001 — 认不出目标分支就不敢替人决定
+            logger.warning(
+                "card %s: cannot resolve PR base branch (%s) — withholding merge",
+                card.id,
+                exc,
+            )
+            return f"认不出这个 PR 要合进哪条分支（{type(exc).__name__}），不敢替人决定"
+        if _is_prod_base(base):
+            return f"目标分支是 {base}，prod 永远要人自己合，机器不代劳"
+
+        # 例外 1: 授权之后 head 又动了，且新 diff 超出当时授权的范围。
+        authorized_sha = card.pr_authorized_sha
+        if not authorized_sha or authorized_sha == card.pr_head_sha:
+            # 人授权的就是现在这个 commit —— 没有"之后"，也就没有漂移。
+            return None
+        authorized = await client.compare_files(
+            owner=owner, repo=repo, base=base, head=authorized_sha, token=token
+        )
+        current = await client.compare_files(
+            owner=owner, repo=repo, base=base, head=card.pr_head_sha, token=token
+        )
+        if authorized is None or current is None:
+            return (
+                "改动太大，GitHub 没给出完整的文件列表，"
+                "无法确认新提交有没有超出授权范围"
+            )
+        reasons = _drift_reasons(authorized, current)
+        if not reasons:
+            return None
+        shown = "、".join(reasons[:5])
+        if len(reasons) > 5:
+            shown += f" 等 {len(reasons)} 处"
+        return f"授权之后的新提交超出了当时授权的范围（{shown}）"
+
+    def _note_needs_human(self, *, card: AcceptCard, topic: Topic, reason: str) -> None:
+        """One of the three exceptions fired: say so on the card and in the
+        room, and stop — never merge.
+
+        The ✋ prefix is deliberately none of the existing ones: `⚠️` is
+        `_nudge_pr_fix`'s "已经叫过芝士了" marker (reusing it would silence the
+        next real CI failure), `🚫` is GitHub refusing to merge, `❌` is a
+        broken deploy. This is neither a failure nor a refusal — it is the
+        machine declining to act on an authorization that no longer covers
+        what's in the PR. `❌` still outranks it, same as for 🚫.
+
+        Dedup by exact text rather than by prefix: the poll runs every 60s, and
+        the reason can legitimately change (范围漂移 → 目标是 prod → …) while
+        the card itself hasn't moved."""
+        if card.note.startswith("❌"):
+            return
+        note = (
+            f"✋ PR #{card.pr_number} 平台不会自动合并：{reason}。"
+            "需要人来定：自己在 GitHub 上合并这个 PR，或者撤销这次采纳。"
+        )[:2000]
+        if card.note == note:
+            return  # already said once — the 60s poll must not repeat it
+        card.note = note
+        logger.warning("card %s: auto-merge withheld — %s", card.id, reason)
+        self._notify_merge_result(
+            topic,
+            f"✋ PR #{card.pr_number} 的检查没有拦住它，"
+            f"但平台不会自动合并：{reason}。\n"
+            f"这是「人类授权动作前移」的安全阀之一：{card.decided_by} 当初授权的是"
+            "另一份改动，机器不替他把这一份也签下去。需要人来定：自己在 GitHub 上"
+            f"合并，或者撤销这次采纳。\n{card.pr_url}",
         )
 
     async def _advance_deploy_checks(
