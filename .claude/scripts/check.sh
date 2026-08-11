@@ -153,6 +153,36 @@ else
     ((++SKIP))
 fi
 
+# --- repo rules + migration fork ---
+# Mirrors CI's repo-guards.yml job. Both are pure bash/python3 stdlib — no venv,
+# no DB, no network — so unlike everything above they cannot degrade to SKIP for
+# environment reasons; if they cannot run, that is a real failure.
+#
+# The fork check compares against origin/main, which the alembic-heads check
+# above CANNOT see: that one only proves THIS tree has one head, and two
+# branches each adding a migration on the same parent both pass it. Cheap
+# (reads the revision graph) so it runs every time.
+echo "==> repo guards"
+if bash "$REPO_ROOT/.claude/scripts/check-repo-rules.sh" >/dev/null 2>&1; then
+    echo "  PASS: repo rules"
+    ((++PASS))
+else
+    bash "$REPO_ROOT/.claude/scripts/check-repo-rules.sh" 2>&1 | sed 's/^/    /'
+    echo "  FAIL: repo rules"
+    ((++FAIL))
+fi
+
+echo "==> migration fork (vs origin/main)"
+FORK_OUT="$(cd "$REPO_ROOT" && python3 .claude/scripts/check-migration-fork.py 2>&1)" && FORK_RC=0 || FORK_RC=$?
+if [ "$FORK_RC" = 0 ]; then
+    echo "  PASS: merging would not fork the alembic chain"
+    ((++PASS))
+else
+    printf '%s\n' "$FORK_OUT" | sed 's/^/    /'
+    echo "  FAIL: migration fork"
+    ((++FAIL))
+fi
+
 # --- pytest ---
 echo "==> pytest"
 if [ "$SKIP_TESTS" = "1" ]; then
