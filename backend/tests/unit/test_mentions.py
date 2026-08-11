@@ -78,3 +78,18 @@ def test_resolve_mentions_splits_known_and_hallucinated():
     resolved, unresolved = _resolve_mentions("<@andyl> 和 <@nobody> 看下", ROSTER)
     assert resolved == ["andyl"]
     assert unresolved == ["nobody"]
+
+
+def test_empty_roster_accuses_nobody():
+    # 私聊 (and any caller with no member list) passes an empty roster. "I have
+    # no list" must not render as "你不是项目成员" — that copy sent people hunting
+    # through the project member table for someone who is plainly in it.
+    resolved, unresolved = _resolve_mentions("<@andyl> 看下", [])
+    assert resolved == []
+    assert unresolved == []
+
+
+def test_broadcast_token_needs_no_roster_entry():
+    resolved, unresolved = _resolve_mentions("<@all> 都看下", ROSTER)
+    assert resolved == ["all"]
+    assert unresolved == []

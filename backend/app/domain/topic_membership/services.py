@@ -14,13 +14,16 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.identity.handles import (
+    CHEESE_HANDLE,
+    looks_like_agent_handle,
+    topic_agent_handle,
+)
 from app.domain.topic.models import TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
-# 芝士 is a member by default — the agent lives in every topic's room. Still a
-# string handle here (agent-as-user is P1); no user table is introduced.
-CHEESE_HANDLE = "cheese"
+__all__ = ["CHEESE_HANDLE", "TopicMemberService"]
 
 # Roles allowed to manage a topic's roster (add / remove / change roles).
 _MANAGER_ROLES = frozenset({TopicRole.owner, TopicRole.admin})
@@ -46,10 +49,14 @@ class TopicMemberService:
         """Seed a newborn topic's roster: the creator becomes owner and 芝士
         joins as a member (fusion-design §3). Idempotent — re-seeding never
         duplicates a row. Called at topic-create time, outside the actor check
-        (the platform, not a user, seeds)."""
-        if owner_handle and owner_handle != CHEESE_HANDLE:
+        (the platform, not a user, seeds).
+
+        芝士 joins as THIS topic's 分身 (its own agent-user), not as the shared
+        platform account — that seat is what makes the room's agent attributable
+        and individually revocable."""
+        if owner_handle and not self._is_agent_handle(owner_handle):
             await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
-        await self._ensure_member(topic_id, CHEESE_HANDLE, role=TopicRole.member)
+        await self.ensure_topic_agent_seat(topic_id)
 
     async def seed_root(
         self,
@@ -95,9 +102,17 @@ class TopicMemberService:
     ) -> None:
         await self.seed(topic_id, owner_handle=owner_handle)
         for handle in member_handles:
-            if not handle or handle == CHEESE_HANDLE or handle == owner_handle:
+            if not handle or self._is_agent_handle(handle) or handle == owner_handle:
                 continue
             await self._ensure_member(topic_id, handle, role=TopicRole.member)
+
+    @staticmethod
+    def _is_agent_handle(handle: str) -> bool:
+        """Seeding-time check only: a 分身 never joins a room as a *human* member
+        (it gets its own seat via :meth:`resolve_agent_handle`), and a room whose
+        "owner" is 芝士 has no human owner. Both the shared platform handle and a
+        per-topic 分身 handle count."""
+        return looks_like_agent_handle(handle)
 
     async def _ensure_member(
         self, topic_id: uuid.UUID, handle: str, *, role: TopicRole
@@ -141,18 +156,54 @@ class TopicMemberService:
             and user.id in agent_ids
         ]
 
+    async def ensure_topic_agent_seat(self, topic_id: uuid.UUID) -> str:
+        """Give this topic its own 分身: an agent-user row plus a roster seat.
+
+        The seat is the grant. One 分身 per room is what makes an action
+        attributable to it, and what makes de-authorizing it a single row delete
+        instead of waiting out a shared token's TTL.
+
+        Idempotent, and cheap on the fast path (one indexed lookup)."""
+        handle = topic_agent_handle(topic_id)
+        if await self._repo.get(topic_id=topic_id, member_handle=handle) is None:
+            from app.domain.identity.services import IdentityService
+
+            await IdentityService(self._session).ensure_topic_agent_user(topic_id)
+            await self._repo.add(
+                topic_id=topic_id, member_handle=handle, role=TopicRole.member
+            )
+        return handle
+
+    async def migrate_shared_agent_seat(self, topic_id: uuid.UUID) -> None:
+        """Retire a pre-分身独立身份 room's shared ``cheese`` seat in favour of its
+        own 分身. Called when the room's agent is about to act, so rooms migrate
+        themselves — no data migration, hence no alembic chain to fork.
+
+        Deliberately narrow: it fires ONLY when the shared seat is actually there.
+        A room whose agent seat was **revoked** (no agent at all), or replaced by
+        another agent, is left exactly as it is — re-adding a seat here would
+        silently undo a revocation, i.e. break the one capability this whole
+        change exists to provide. Blocks already authored under the shared handle
+        keep it; history is history.
+        """
+        legacy = await self._repo.get(topic_id=topic_id, member_handle=CHEESE_HANDLE)
+        if legacy is None:
+            return
+        await self.ensure_topic_agent_seat(topic_id)
+        await self._repo.delete(legacy)
+
     async def resolve_agent_handle(self, topic_id: uuid.UUID) -> str:
         """The handle 芝士 acts under in this topic — for authoring blocks and
-        keying its memory.
+        keying its memory. Read-only.
 
-        Falls back to :data:`CHEESE_HANDLE` when the roster resolves to no bound
-        agent. That is the pre-agent-as-user state: rooms seeded before bindings
-        existed carry a plain ``cheese`` member with no user row behind it, and
-        an agent turn still has to answer "who am I". The fallback keeps those
-        rooms working instead of writing an empty author.
+        The roster decides: a room hosting some other agent attributes to that
+        one. With no agent seated at all, fall back to the handle this topic's
+        sandbox token names (``cheese-<topic hex>``) — a turn still has to answer
+        "who am I", and answering with the shared account would put the collapsed
+        identity back into the audit trail.
         """
         handles = await self.agent_handles(topic_id)
-        return handles[0] if handles else CHEESE_HANDLE
+        return handles[0] if handles else topic_agent_handle(topic_id)
 
     async def add(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str

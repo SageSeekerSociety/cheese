@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
-from app.core.sandbox_auth import verify_scoped_token
+from app.core.sandbox_auth import token_agent_handle, verify_scoped_token
 from app.core.tokens import verify_session_token
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
@@ -105,12 +105,19 @@ class ActorResolver:
                 topic_id=str(topic_id) if topic_id else None,
             )
 
+        # WHO the scoped token acts as: the topic's own 分身 (claim ``a``), not the
+        # one collapsed platform account. A token minted before this claim existed —
+        # or a project-wide one with no topic — carries none and falls back to
+        # ``cheese``, which is exactly the previous behaviour.
+        agent_handle = (
+            token_agent_handle(self._cheese_token) if self._cheese_token else None
+        )
         actor = await resolve_actor(
             bearer_token=self._bearer,
             verify_token=_token_verifier,
             cheese_valid=cheese_valid,
             is_agent=self._identity.is_agent,
-            cheese_handle=CHEESE_HANDLE,
+            cheese_handle=agent_handle or CHEESE_HANDLE,
             fallback_handle=fallback_handle,
         )
         if actor is None:
