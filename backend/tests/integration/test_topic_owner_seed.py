@@ -21,6 +21,7 @@ import uuid
 
 from sqlalchemy import delete
 
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.models import TopicMembership, TopicRole
 from tests.integration.conftest import session_auth_headers
 
@@ -90,7 +91,9 @@ def test_topic_created_by_cheese_falls_back_to_project_owner(client):
 
     roster = _roster(client, topic["id"])
     assert roster.get("alice") == "owner"
-    assert roster.get("cheese") == "member"
+    # The room's agent seat is THIS topic's 分身 (``cheese-<topic hex>``), not the
+    # shared platform ``cheese`` account — that account no longer sits in rooms.
+    assert roster.get(topic_agent_handle(uuid.UUID(topic["id"]))) == "member"
 
 
 def test_topic_created_anonymously_still_gets_an_owner(client):

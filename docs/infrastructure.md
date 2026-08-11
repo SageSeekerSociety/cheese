@@ -126,6 +126,35 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   for ~20s) but not for the hourly heartbeat, which would then false-alarm
   whenever a merge burst holds the slots — hence the ops step above.
 
+## Disk — what actually fills a box, and what may be deleted
+
+Two mechanisms, deliberately different in kind:
+
+- **`deploy/cheesex-disk-pressure-guard.sh`** (systemd timer, app box) is an
+  *emergency brake*: at 85% it removes sandbox containers, and only after
+  confirming no turn is active. It never touches build caches, and it is **not
+  installed on the dev/agent boxes** — so on those boxes nothing was watching
+  the things that actually fill them.
+- **`deploy/dev-box-disk-cleanup.sh`** is the *routine* reclaim for any box.
+  Reports by default; `--apply` deletes; `--self-test` checks its own arithmetic.
+
+What filled `cheese-dev-env6-app` (measured 2026-08-11 at **92%**, 2.6G free):
+docker build cache 3.0G (71 entries, none in use) · apt archives 1.7G · Go build
+cache 1.3G · superseded vscode-server builds + VSIX cache 2.0G · rust toolchain
+downloads 665M. Reclaiming exactly those took it to **65%** (~8.5G back).
+
+The rule the script encodes: **only delete what a command can rebuild.** A
+slower next build is an acceptable price; someone else's data is not. Dev boxes
+are shared — env6 also hosts unrelated projects' containers — so the script
+never touches images or volumes a running container uses, never touches
+`~/.cache/ms-playwright` (e2e browser binaries, not refetched on demand), and
+never touches anything under a project directory. `docker system prune -a` is
+the wrong tool here for exactly that reason: it would delete a co-tenant's
+stopped work.
+
+To see disk across the CI pool without ssh, run `box-diag.yml`'s `ci-pool` job —
+it prints hostname and disk per machine.
+
 ## Box ops runbook — changing backend env on a box
 
 The one rule: **containers are only ever (re)created by `deploy/deploy-docker.sh`.**

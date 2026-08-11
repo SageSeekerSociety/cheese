@@ -90,6 +90,14 @@ jobs:
           REF_TYPE="$GITHUB_REF_TYPE" \
             bash .github/scripts/plan-image-builds.sh
 
+      # NOT `github.actor` (what GitHub's own template uses) — on a `push` that
+      # is the COMMIT AUTHOR, not whoever triggered the run, and the platform
+      # authors accept-merge commits as the person whose work was accepted.
+      # 2026-08-11, same sha 2e72632e3 twice: as `push` (actor=andylizf) the
+      # push to ghcr got `403 permission_denied` and no image was produced, so
+      # dev silently stayed on the previous commit; re-run via
+      # `workflow_dispatch` (actor=WangChangxin0809) it succeeded. Whether an
+      # image ships must not depend on who happened to author the commit.
       - name: Log in to Container Registry for unchanged images
         if: >-
           steps.plan.outputs.backend == 'false' ||
@@ -102,7 +110,7 @@ jobs:
           retry_wait_seconds: 15
           command: >-
             echo "${{ secrets.GITHUB_TOKEN }}" |
-            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
 
       - name: Give unchanged images this commit's immutable tag
         if: >-
@@ -196,7 +204,7 @@ jobs:
           retry_wait_seconds: 15
           command: >-
             echo "${{ secrets.GITHUB_TOKEN }}" |
-            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
 
       - name: Extract metadata
         id: meta
@@ -294,7 +302,7 @@ jobs:
           retry_wait_seconds: 15
           command: >-
             echo "${{ secrets.GITHUB_TOKEN }}" |
-            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
 
       - name: Extract metadata
         id: meta
@@ -415,7 +423,7 @@ jobs:
           retry_wait_seconds: 15
           command: >-
             echo "${{ secrets.GITHUB_TOKEN }}" |
-            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
 
       - name: Extract metadata
         id: meta

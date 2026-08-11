@@ -48,8 +48,9 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
-from app.domain.memory.store import memory_store
+from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
@@ -419,6 +420,7 @@ def _build_system_prompt(
     untitled: bool = False,
     turn_meta: list[str] | None = None,
     stage_guide: str | None = None,
+    memories_omitted: int = 0,
 ) -> str:
     parts = [base]
     if untitled:
@@ -473,9 +475,21 @@ def _build_system_prompt(
             "## 当前话题的活文档（这是最新状态；用户可能编辑了它，"
             "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n" + doc
         )
-    if memories:
+    if memories or memories_omitted:
         facts = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
-        parts.append(f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}")
+        block = f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}"
+        if memories_omitted:
+            # 溢出必须可见: what does not fit is stated, never dropped in
+            # silence. A reader who cannot tell "nothing was stored" from
+            # "the oldest fell off the end" stops trusting memory entirely —
+            # and stops asking for the part it can still get.
+            block += (
+                f"\n\n> ⚠️ 上面只是最近的 {len(memories)} 条，另有 **{memories_omitted} "
+                "条更早的记忆没放进来**（放不下，不是不存在）。**没列出来 ≠ 不存在**——"
+                '要用到早期约定/踩过的坑时，用 `cheese recall "<关键词>"` 现查；'
+                "一次没查到也不等于没有，换个说法、用更短的词再试一次。"
+            )
+        parts.append(block)
     if turn_meta:
         parts.append(
             "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
@@ -591,7 +605,17 @@ _expand_mention_names = expand_mention_names
 def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[str]]:
     """Resolve <@handle> mention tokens against the roster. Returns
     (resolved_handles, unresolved_handles); unresolved = a token whose handle is
-    not a member (a hallucinated handle → the platform flags it)."""
+    not a member (a hallucinated handle → the platform flags it).
+
+    An EMPTY roster means "this topic exposes no member list" (私聊, or a project
+    carrying no explicit member rows), not "nobody is a member": with no list to
+    check against a concrete handle can be neither confirmed nor refuted, so it
+    is left out of BOTH lists — no notification, and no false 「项目里没有这个
+    成员」 accusation against a real teammate.
+
+    ``@all``/``@here`` are unaffected by any of that: they are expanded from the
+    TOPIC's roster by :meth:`_notify_mentions` (a DB read), never from this list,
+    so an empty list must not silence a broadcast."""
     resolved: list[str] = []
     unresolved: list[str] = []
     if not text:
@@ -600,7 +624,10 @@ def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[st
     for h in dict.fromkeys(_MENTION_RE.findall(text)):
         # @all/@here are reserved broadcast tokens — always "resolved" (expanded
         # to the roster by _notify_mentions), never flagged as a bad handle.
-        (resolved if h in _SPECIAL_MENTIONS or h in handles else unresolved).append(h)
+        if h in _SPECIAL_MENTIONS or h in handles:
+            resolved.append(h)
+        elif roster:
+            unresolved.append(h)
     return resolved, unresolved
 
 
@@ -1025,30 +1052,42 @@ class ChatService:
         *,
         project_id: uuid.UUID,
         agent_handle: str,
-    ) -> list[str]:
+    ) -> RecallResult:
         """What this 芝士 remembers inside this project.
 
         Reads its own per-agent scope first, then the legacy shared ``project``
         pool. Writes only ever go to the per-agent scope, so the pool is a
         read-only tail of what was learned before memory was split per agent —
         rooms that accumulated it keep it, and nothing new lands there.
+
+        Returns what did *not* fit alongside what did: both pools are capped,
+        and a cap nobody is told about is how memory quietly stops existing.
         """
-        own = await memory.recall(
-            MemoryScope.agent_project,
-            agent_project_scope_id(project_id, agent_handle),
+        return await recall_pools(
+            memory,
+            [
+                (
+                    MemoryScope.agent_project,
+                    agent_project_scope_id(project_id, agent_handle),
+                ),
+                (MemoryScope.project, str(project_id)),
+            ],
         )
-        shared = await memory.recall(MemoryScope.project, str(project_id))
-        return [*own, *shared]
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         """The handle 芝士 authors under in this topic.
 
         Resolved from the roster's execution bindings rather than the fixed
         ``cheese`` string, so a room hosting more than one agent attributes each
-        message to the one that wrote it. Falls back to ``cheese`` for rooms
-        seeded before agent-as-user, which is what the old constant meant.
+        message to the one that wrote it — normally this topic's own 分身.
+
+        A turn is also where a room seeded before 分身独立身份 swaps its shared
+        ``cheese`` seat for that 分身: doing it here means every live room migrates
+        without a data migration, and one that never runs a turn never needed it.
         """
-        return await TopicMemberService(session).resolve_agent_handle(topic_id)
+        members = TopicMemberService(session)
+        await members.migrate_shared_agent_seat(topic_id)
+        return await members.resolve_agent_handle(topic_id)
 
     async def _persist_assistant_message(
         self,
@@ -1058,7 +1097,7 @@ class ChatService:
         text: str,
         turn_id: uuid.UUID | None,
         reply_to: uuid.UUID | None,
-        roster: list[dict],
+        roster: list[dict] | None,
         topic_refs: list[dict],
         eid: str | None = None,
         backfilled: bool = False,
@@ -1069,7 +1108,6 @@ class ChatService:
         Handles the same mention canonicalization / notify / refs as before.
         ``eid`` (hooks path) is stamped into meta so the spool reconcile can
         dedup a backfilled copy against this live one."""
-        text = _expand_mention_names(text, roster, topic_refs)
         meta: dict | None = None
         if eid:
             meta = {"eid": eid}
@@ -1077,6 +1115,18 @@ class ChatService:
             meta = {**(meta or {}), "backfilled": True}
         async with self._sessions() as session:
             blocks = BlockRepository(session)
+            topic = await TopicRepository(session).get(topic_id)
+            if roster is None:
+                # The reconcile/backfill caller holds no roster. Load it here
+                # instead of passing []: [] means 私聊 (no member list at all),
+                # and conflating the two flagged every @ in a recovered message
+                # as a non-member while silently dropping its notification.
+                roster = (
+                    []
+                    if topic is None or topic.is_private
+                    else await ProjectRepository(session).list_members(project_id)
+                )
+            text = _expand_mention_names(text, roster, topic_refs)
             author = await self._agent_handle(session, topic_id)
             block = await blocks.add(
                 project_id=project_id,
@@ -1089,7 +1139,6 @@ class ChatService:
                 turn_id=turn_id,
                 meta=meta,
             )
-            topic = await TopicRepository(session).get(topic_id)
             # <@handle> mentions in 芝士's message → strong notify (the token is
             # the single source of truth: what's shown = who's notified).
             # Hallucinated handles get flagged in 现场, never silently no-op.
@@ -1101,12 +1150,13 @@ class ChatService:
                 if refs:
                     block.refs = refs
                 for bad in unresolved:
+                    warn = f"⚠️ @了 <@{bad}>，项目成员里没有这个 handle，没能通知到"
                     await blocks.add(
                         project_id=project_id,
                         topic_id=topic_id,
                         author=author,
                         author_type=AuthorType.ai,
-                        content=f"⚠️ @了 <@{bad}>，但项目里没有这个成员，没能通知到",
+                        content=warn,
                         kind=BlockKind.event,
                         turn_id=turn_id,
                     )
@@ -1196,7 +1246,7 @@ class ChatService:
                         text=event.text,
                         turn_id=turn_id,
                         reply_to=None,
-                        roster=[],
+                        roster=None,
                         topic_refs=[],
                         eid=eid,
                         backfilled=True,
@@ -1516,7 +1566,7 @@ class ChatService:
         if targets:
             notifs = NotificationService(session)
             preview = markdown_preview(text, 200)
-            who = "芝士" if author == CHEESE_AUTHOR else author
+            who = "芝士" if looks_like_agent_handle(author) else author
             for h in targets:
                 await notifs.create(
                     project_id=topic.project_id,
@@ -1591,7 +1641,9 @@ class ChatService:
             acting_agent = await self._agent_handle(session, topic.id)
             if is_private and private_owner:
                 # Private chat: the owner's cross-project personal memory.
-                memories = await memory.recall(MemoryScope.user, private_owner)
+                memories = await recall_pools(
+                    memory, [(MemoryScope.user, private_owner)]
+                )
                 doc_text = None
             else:
                 memories = await self._recall_agent_memories(
@@ -1683,11 +1735,12 @@ class ChatService:
             self._base_prompt,
             skills,
             doc_text,
-            memories,
+            memories.facts,
             role,
             roster,
             topic_refs_for_prompt,
             untitled,
+            memories_omitted=memories.omitted,
             turn_meta=_turn_meta_lines(
                 budget_s=settings.agent_turn_timeout_s,
                 activity_aware=is_activity_aware_backend,
@@ -2249,7 +2302,11 @@ class ChatService:
 
         # --- run 芝士 with the activity-digestion skill + tools ---
         system_prompt = _build_system_prompt(
-            self._base_prompt, load_skills(ACTIVITY_SKILLS), None, memories
+            self._base_prompt,
+            load_skills(ACTIVITY_SKILLS),
+            None,
+            memories.facts,
+            memories_omitted=memories.omitted,
         )
         prompt = (
             "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
@@ -2417,7 +2474,9 @@ class ChatService:
             # Deliberately the shared pool, not any one agent's memory: a project
             # summary describes the project, and what a 芝士 learned for itself is
             # not project knowledge.
-            memories = await memory.recall(MemoryScope.project, str(project_id))
+            memories = await recall_pools(
+                memory, [(MemoryScope.project, str(project_id))]
+            )
             role = await resolve_role_description(session, project.expert_role)
             compute_id = _resolve_compute_id(
                 project.settings,
@@ -2433,7 +2492,9 @@ class ChatService:
             f"- {m.title} 截止 {m.due_date.isoformat() if m.due_date else '未定'}"
             for m in upcoming
         )
-        mem_lines = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
+        mem_lines = "\n".join(f"- {_chipify_paths(m)}" for m in memories.facts)
+        if memories.omitted:
+            mem_lines += f"\n- （另有 {memories.omitted} 条更早的记忆未列出）"
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"

@@ -39,9 +39,9 @@ from app.domain.agent.hooks_substrate import (
 from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
 from app.domain.agent.service import CLAUDE_BASE_CMD
 from app.domain.agent.tmux_control import TmuxControlClient
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
 
-_CHEESE_AUTHOR = "cheese"
 _SESSION = "cheese"  # tmux session name inside the container
 _TTYD_PORT = 7681  # in-container ttyd port (published for 施工现场; not wired yet)
 _APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
@@ -644,7 +644,9 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
                 "CHEESE_API": settings.sandbox_api_base,
                 "CHEESE_PROJECT": str(project_id),
                 "CHEESE_TOPIC": str(topic_id),
-                "CHEESE_AUTHOR": _CHEESE_AUTHOR,
+                # Which 分身 this sandbox is (分身独立身份) — the same identity
+                # its scoped CHEESE_TOKEN carries, never the shared account.
+                "CHEESE_AUTHOR": topic_agent_handle(topic_id),
                 "CHEESE_TOKEN": token,
                 # Where the baked cheese-hook script forwards hook payloads.
                 "CHEESE_HOOK_URL": f"{_hook_base()}/sandbox/hooks/{topic_id}",
