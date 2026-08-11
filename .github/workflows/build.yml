@@ -20,8 +20,10 @@ env:
   # frontend/base-image resolution through the same cache.
   BUILDKIT_IMAGE: mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
 
-# A single self-hosted runner serves this repo, so superseded runs must not
-# queue behind each other (deploys share the same runner). On main, every
+# The build jobs below stay on the dev box, whose single runner slot is also
+# what deploys use, so superseded runs must not queue behind each other. (The
+# heavy test/e2e jobs moved off to the cheese-ci pool; these did not — see the
+# header comment on why they need the box's warm layer cache.) On main, every
 # push shares one ref, so a plain ref-keyed group would let each merge cancel
 # the previous commit's still-running build — GitHub cancels not just the
 # in-progress run but any run still pending in the group, so even
@@ -61,7 +63,7 @@ jobs:
       frontend: ${{ steps.plan.outputs.frontend }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -93,7 +95,7 @@ jobs:
           steps.plan.outputs.backend == 'false' ||
           steps.plan.outputs.sandbox == 'false' ||
           steps.plan.outputs.frontend == 'false'
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
           max_attempts: 4
@@ -158,10 +160,10 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           # A stable builder name: the default is per-run, which would throw away
           # the box's layer cache between builds — the very cache that replaces
@@ -187,7 +189,7 @@ jobs:
       # connections often enough to have failed a build on the login step alone
       # ("read: connection reset by peer"). A hosted runner never saw this.
       - name: Log in to Container Registry
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
           max_attempts: 4
@@ -198,7 +200,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend
           tags: |
@@ -209,7 +211,7 @@ jobs:
             type=sha,prefix=
 
       - name: Build and push backend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         id: backend_build
         with:
           context: ./backend
@@ -258,10 +260,10 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           # A stable builder name: the default is per-run, which would throw away
           # the box's layer cache between builds — the very cache that replaces
@@ -285,7 +287,7 @@ jobs:
       # connections often enough to have failed a build on the login step alone
       # ("read: connection reset by peer"). A hosted runner never saw this.
       - name: Log in to Container Registry
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
           max_attempts: 4
@@ -296,7 +298,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox
           tags: |
@@ -311,7 +313,7 @@ jobs:
             type=raw,value=run-${{ github.run_id }}
 
       - name: Build and push sandbox image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./backend/sandbox
           file: ./backend/sandbox/Dockerfile
@@ -324,7 +326,7 @@ jobs:
       # app deploys can go green while the first real user message cannot start.
       - name: Extract tmux sandbox metadata
         id: tmux_meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox-tmux
           tags: |
@@ -342,7 +344,7 @@ jobs:
           echo "ref=${REGISTRY}/${name}/sandbox:run-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push tmux sandbox image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./backend/sandbox
           file: ./backend/sandbox/tmux.Dockerfile
@@ -376,13 +378,13 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Test frontend static-asset integrity guard
         run: sh frontend/scripts/test-check-static-assets.sh
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           # A stable builder name: the default is per-run, which would throw away
           # the box's layer cache between builds — the very cache that replaces
@@ -406,7 +408,7 @@ jobs:
       # connections often enough to have failed a build on the login step alone
       # ("read: connection reset by peer"). A hosted runner never saw this.
       - name: Log in to Container Registry
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
           max_attempts: 4
@@ -417,7 +419,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend
           tags: |
@@ -428,7 +430,7 @@ jobs:
             type=sha,prefix=
 
       - name: Build and push frontend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./frontend
           file: ./frontend/Dockerfile

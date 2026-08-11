@@ -328,7 +328,15 @@ export interface WorkspaceFile {
 // GET /projects/{id}/file?path=
 export interface FileContent {
   path: string
-  content: string
+  // null when the file must not be edited as text: `binary` (a text editor would
+  // corrupt it on save) or `too_large` (never sent — it would freeze the tab).
+  content: string | null
+  // Content id to echo back on save; a mismatch means someone wrote in between.
+  // Null only when the content was not read at all (`too_large`).
+  version: string | null
+  bytes: number
+  binary: boolean
+  too_large: boolean
 }
 
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
@@ -339,7 +347,11 @@ export interface PreviewInfo {
   kind?: 'file' | 'app'
   path: string
   mime: string | null
+  // kind=app: the backend's reverse-proxy path (root-relative), or null when the
+  // app isn't answering. `container_up` separates "容器不在了" from "容器还在但
+  // 应用没在跑" — without it both looked like an empty white frame.
   url?: string | null
+  container_up?: boolean
 }
 
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).

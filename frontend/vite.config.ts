@@ -10,6 +10,7 @@ import viteCompression from 'vite-plugin-compression'
 import { prismjsPlugin } from 'vite-plugin-prismjs'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
+import { configDefaults } from 'vitest/config'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -63,11 +64,15 @@ export default defineConfig({
         target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799',
         changeOrigin: true,
         ws: true,
-        // Exception: the ttyd terminal iframe loads /api/topics/<id>/terminal/live/
-        // verbatim and resolves its relative assets against that path; terminal.py
-        // serves it at that exact /api-prefixed path, so it must pass through
-        // unrewritten (see terminal.py). Everything else loses one /api like nginx.
-        rewrite: (path) => (/^\/api\/topics\/[^/]+\/terminal(\/|$)/.test(path) ? path : path.replace(/^\/api/, '')),
+        // Exception: the two iframe proxies — the ttyd terminal
+        // (/api/topics/<id>/terminal/live/) and the running-app preview
+        // (/api/topics/<id>/app/) — are loaded verbatim by an iframe that resolves
+        // its assets/WebSocket against that path, and the backend serves them at
+        // that exact /api-prefixed path, so they must pass through unrewritten
+        // (see routes/terminal.py, routes/app_preview.py — and nginx.conf, which
+        // carries the same exception). Everything else loses one /api like nginx.
+        rewrite: (path) =>
+          /^\/api\/topics\/[^/]+\/(terminal|app)(\/|$)/.test(path) ? path : path.replace(/^\/api/, ''),
       },
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
@@ -158,6 +163,11 @@ export default defineConfig({
     // "Unknown file extension .css" 崩在收集阶段——挂真实组件的测试需要它走
     // Vite 的 transform 管线。
     server: { deps: { inline: ['vuetify'] } },
+    // `scripts/` is node:test territory (`pnpm run test:ratchet`), not vitest's.
+    // Its *.test.mjs files match vitest's default include glob, and vitest fails
+    // the whole run on them with "No test suite found" — node:test registers its
+    // cases through `node:test`, which vitest's collector never sees.
+    exclude: [...configDefaults.exclude, 'scripts/**'],
   },
   optimizeDeps: {
     include: ['editorjs-parser'],

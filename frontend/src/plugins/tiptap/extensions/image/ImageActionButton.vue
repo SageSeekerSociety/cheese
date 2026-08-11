@@ -1,6 +1,6 @@
 <template>
   <file-select v-model="files" accept="image/*" :max="1" :disabled="disabled" @change="onFileChange">
-    <action-button :editor="editor" :tooltip="t('editor.image.tooltip')" :disabled="disabled">
+    <action-button :editor="vptEditor" :tooltip="t('editor.image.tooltip')" :disabled="disabled">
       <v-icon>mdi-image-plus</v-icon>
     </action-button>
   </file-select>
@@ -25,7 +25,7 @@
 import type { Editor } from '@tiptap/vue-3'
 import type { ImageMeta } from '@/types'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ActionButton } from 'vuetify-pro-tiptap'
 
@@ -40,6 +40,12 @@ interface Props {
 }
 
 const { editor, disabled = false } = defineProps<Props>()
+
+// Third instance of the tiptap v2/v3 bridge described in TipTapViewer.vue:
+// ActionButton comes from vuetify-pro-tiptap and so wants v2's Editor (which
+// declares getCharacterCount), while `editor` above is v3's. One live instance,
+// two declaration files. Bound as `vptEditor` in the template.
+const vptEditor = computed(() => editor as unknown as InstanceType<typeof ActionButton>['$props']['editor'])
 
 const files = ref<File[]>()
 const dialogVisible = ref(false)

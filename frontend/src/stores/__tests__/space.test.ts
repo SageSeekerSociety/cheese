@@ -151,7 +151,10 @@ describe('fetchDomainGroups core logic', () => {
 
     it('handles undefined groups → empty array', async () => {
       const state = makeState(10)
-      const apiFn = async () => ({ data: {} as ListResponse })
+      // `{} as ListResponse` here would double-wrap (ListResponse *is* the
+      // {data:...} envelope), and the assertion below only passed because the
+      // extra layer also made `.groups` undefined. Cast the inner payload.
+      const apiFn = async (): Promise<ListResponse> => ({ data: {} as ListResponse['data'] })
 
       await fetchDomainGroupsLogic(state, apiFn)
 

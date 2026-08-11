@@ -18,15 +18,34 @@ on:
       - 'backend/**'
       - '.github/workflows/test.yml'
 
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: backend
 
-# A single self-hosted runner serves this repo, so superseded runs must not
-# queue behind each other (deploys share the same runner).
+# Superseded runs must not occupy the finite self-hosted capacity (three
+# cheese-ci slots, one per pool machine), so they are cancelled rather than
+# left to queue ahead of the commit that replaced them.
+#
+# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
+# each merge in its own group, for exactly the reason build.yml already is (see
+# the long comment there): every main push shares the one ref, so a ref-only
+# key let a second merge cancel the previous commit's still-running suite and
+# left main with no result for that commit. That is worse here than it is for a
+# build, because a cancelled run is not a red run — main can end up carrying
+# code this workflow never finished checking with nothing on the commit to say
+# so. It is also precisely the wrong run to cancel: the scope job below already
+# skips main pushes whose tree passed on the PR, so anything that reaches these
+# jobs is a commit CI has NOT seen. PR refs keep the ref key, so repeated pushes
+# to one PR still supersede each other the way they always did.
 concurrency:
-  group: ci-test-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # A squash merge produces a new main commit whose tree was already checked on
@@ -101,9 +120,9 @@ jobs:
     # ever touches Docker's own image/build-cache store) cannot sweep it.
     #
     # Keyed per job name (migration-heads/test/e2e each get their own
-    # subdirectory) rather than one shared dir: migration-heads and test run
-    # on the same single self-hosted runner and could execute concurrently,
-    # and Cargo's own target-dir lock would then serialize them (best case) or
+    # subdirectory) rather than one shared dir: any two of them can land on the
+    # same pool machine and, across successive runs, share its disk — and
+    # Cargo's own target-dir lock would then serialize them (best case) or
     # corrupt a partial build (worst case, e.g. a crash mid-write). Separate
     # directories make that scenario impossible outright — there is nothing to
     # lock over. The cost is that each job's cache warms up independently
@@ -113,17 +132,16 @@ jobs:
     # change, so no existing benefit is lost, and each job still gets full
     # warm-cache savings on every run after its own first one.
     #
-    # If a second self-hosted runner is added later (P3): job-name-keyed paths
-    # live on that runner's own local disk, so a second machine just cold-
-    # starts its own copy of each job's cache once and stays warm from then on
-    # — no cross-machine contention, because the caches were never shared
-    # filesystems to begin with. The one scenario this does NOT cover is two
-    # instances of the *same* job (e.g. two `test` runs) landing concurrently
-    # on the *same* physical runner — that would require multiple runner
-    # processes registered against one disk, which isn't how this box is set
-    # up today; flagging it here rather than assuming it away.
+    # Now that the pool has three machines, these paths live on each machine's
+    # own local disk, so every machine cold-starts its own copy of each job's
+    # cache once and stays warm from then on — no cross-machine contention,
+    # because the caches were never a shared filesystem to begin with. The one
+    # scenario this does NOT cover is two instances of the *same* job (e.g. two
+    # `test` runs) executing concurrently on the *same* machine — that needs
+    # multiple runner processes against one disk, and provision.sh registers
+    # exactly one slot per machine; flagging it rather than assuming it away.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/migration-heads" >> "$GITHUB_ENV"
@@ -134,7 +152,7 @@ jobs:
         run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/migration-heads" >> "$GITHUB_ENV"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
 
@@ -168,10 +186,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
           enable-cache: true
@@ -228,7 +246,7 @@ jobs:
           - 6379:6379
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
@@ -241,7 +259,7 @@ jobs:
         run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/test" >> "$GITHUB_ENV"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
 

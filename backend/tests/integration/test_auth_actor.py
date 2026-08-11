@@ -2,7 +2,8 @@
 resolved from the verified token (not the body), the Phase-0 handle fallback
 still works, and a token-authenticated outsider is denied (越权)."""
 
-from app.core.tokens import mint_session_token, verify_session_token
+from app.core.tokens import verify_session_token
+from tests.integration.conftest import session_token
 
 
 def _login(client, handle: str) -> str:
@@ -10,7 +11,7 @@ def _login(client, handle: str) -> str:
     # in the fusion merge (unify P3: auth unified to main's SRP login). The actor
     # here is identified purely by the token's ``handle`` claim, so mint a session
     # token directly to exercise the (still-present) token-actor resolution.
-    return mint_session_token(handle=handle, user_id=None)
+    return session_token(handle)
 
 
 def _bearer(token: str) -> dict:
@@ -139,6 +140,7 @@ def test_project_member_allowed_even_if_not_in_roster(client):
     import asyncio
     import uuid
 
+    from app.domain.identity.actor import Actor
     from app.domain.membership.services import MemberService
     from app.domain.project.models import ProjectRole
 
@@ -152,6 +154,8 @@ def test_project_member_allowed_even_if_not_in_roster(client):
                 project_id=uuid.UUID(pid),
                 user_handle="bob",
                 role=ProjectRole.member,
+                # Roster writes are authorized — seed as the project owner.
+                actor=Actor(handle="alice", user_id=None, is_agent=False, via="token"),
             )
             await s.commit()
 

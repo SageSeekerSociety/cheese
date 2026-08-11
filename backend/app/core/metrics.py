@@ -20,6 +20,7 @@ class Gauge:
     labels: dict[str, str] = field(default_factory=dict)
     value: float = 0.0
 
+    # allow-builtin-shadow: `set` is the metrics API's own name (prometheus Gauge.set)
     def set(self, value: float) -> None:
         self.value = value
 
