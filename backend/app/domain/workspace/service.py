@@ -2089,6 +2089,18 @@ def run_check_command(
     environment/secrets, and no network. Failure to start Docker fails the gate
     closed -- there is intentionally no host-execution fallback.
 
+    The worktree is mounted at the SAME path the agent's own sandbox uses
+    (``/work``, see SANDBOX_WORKDIR / tmux_provider). This is not cosmetic: uv/pip
+    console scripts (pyright, pytest, alembic) bake the absolute path of their
+    venv into their shebang, so a worktree built by the agent under /work and
+    then mounted at some other path has a .venv whose tools cannot execute. With
+    no network in here, nothing can be reinstalled to repair that -- which is
+    exactly how the gate ended up running lint only and reporting a green card.
+
+    ``CHECK_STRICT=1`` tells a check command that this is a gate and not a
+    developer's laptop: a check that can't run must not be reported as passed
+    (.claude/scripts/check.sh turns that into exit code 2 -> gate_blocked).
+
     Full output goes to ``log_path`` while the returned tail remains bounded.
     """
     from datetime import UTC, datetime
@@ -2136,10 +2148,12 @@ def run_check_command(
         "TMPDIR=/tmp",
         "--env",
         "PYTHONDONTWRITEBYTECODE=1",
+        "--env",
+        "CHECK_STRICT=1",
         "--mount",
-        f"type=bind,source={resolved_cwd},target=/workspace",
+        f"type=bind,source={resolved_cwd},target={SANDBOX_WORKDIR}",
         "--workdir",
-        "/workspace",
+        SANDBOX_WORKDIR,
         settings.quality_gate_image,
         "sh",
         "-lc",

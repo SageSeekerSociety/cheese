@@ -383,6 +383,8 @@ export type AcceptStatus =
   // 机器闸门 (eval C2): the project's check_command is running / failed.
   | 'pending_gate'
   | 'gate_failed'
+  // 闸门没跑成：检查没能在门禁环境里跑起来，对代码没有结论（不是「未通过」）。
+  | 'gate_blocked'
   // 两阶段采纳 (PR迭代式, 2026-08-09): the human already accepted; the PR is
   // open and the machine stretch (CI → merge → deploy) is still running.
   | 'pr_open'
