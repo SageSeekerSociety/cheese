@@ -17,6 +17,7 @@ import shutil
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -193,7 +194,8 @@ def _tool_event_meta(name: str, args: dict, *, platform: bool) -> dict:
 
 # Claude Code's structured Task tools → a live working-log todo (§3.1.1). These
 # are the *process* (rendered as a checklist in the in-progress message), so they
-# are streamed live but NOT persisted as 现场 events.
+# are streamed live but NOT persisted as 现场 events — the checklist they build
+# is persisted instead, as the topic's 进度层 (see _Progress).
 _TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TaskList", "TaskGet"}
 
 
@@ -217,6 +219,96 @@ def _apply_task_event(todo: list[dict], name: str, args: dict) -> bool:
                 item["status"] = status
                 return True
     return False
+
+
+# How many folded event-ids to keep on the row. Only guards against a spool
+# replay folding the same TaskCreate twice, and the spool only ever holds one
+# turn's worth — a few hundred is far more than that, and keeps the column small.
+_PROGRESS_EID_CAP = 500
+
+_TASK_STATUS_MARK = {"pending": "⬜", "in_progress": "⏳", "completed": "✅"}
+
+
+@dataclass
+class _Progress:
+    """The topic's checklist as a turn folds it (进度层).
+
+    Claude keeps its own Task list in the session file, inside the container.
+    That file dies with the machine and is released at accept, which is why a
+    resumed piece of work could not say 上次做到哪. This is the platform-side
+    copy: same events, folded onto the topic row.
+
+    ``session_id`` is whose ids the items are — Claude numbers tasks per session,
+    so a checklist may only keep growing while the same session is being resumed.
+    ``eids`` are the hook event-ids already folded, so the durable spool's replay
+    of a live-delivered event cannot append the same task twice.
+    """
+
+    session_id: str | None = None
+    items: list[dict] = field(default_factory=list)
+    eids: list[str] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, stored: object, *, resume_session_id: str | None) -> "_Progress":
+        """Read the row's checklist, but only adopt it when this turn resumes the
+        session that numbered it — otherwise a fresh session's TaskCreate #1 would
+        land next to an old #1 and every later TaskUpdate would hit the wrong row.
+        A dropped list is not lost: it still rides the prompt (see
+        ``_progress_lines``), which is what actually tells 芝士 what's done."""
+        if not isinstance(stored, dict):
+            return cls()
+        if not resume_session_id or stored.get("session_id") != resume_session_id:
+            return cls(session_id=resume_session_id)
+        return cls(
+            session_id=resume_session_id,
+            items=[dict(i) for i in stored.get("items") or [] if isinstance(i, dict)],
+            eids=[e for e in stored.get("eids") or [] if isinstance(e, str)],
+        )
+
+    def restart_if_new_session(self, session_id: str) -> None:
+        """Claude announced a session we did not ask to resume — it started over
+        (the session file is gone: new machine, re-created container), so its Task
+        ids restart at 1 and the old items can no longer be appended to. Drop them
+        and number from scratch; this turn's prompt already carries what they said
+        (``_progress_lines``), which is the part the agent actually needs."""
+        if session_id != self.session_id:
+            self.session_id = session_id
+            self.items = []
+            self.eids = []
+
+    def fold(self, name: str, args: dict, eid: str | None) -> bool:
+        """Apply one Task event; returns whether the checklist changed."""
+        if eid is not None and eid in self.eids:
+            return False  # already folded (live path, then spool replay)
+        if not _apply_task_event(self.items, name, args):
+            return False
+        if eid is not None:
+            self.eids.append(eid)
+            del self.eids[:-_PROGRESS_EID_CAP]
+        return True
+
+    def frame(self) -> dict:
+        return {"type": "todo", "items": [dict(i) for i in self.items]}
+
+
+def _progress_lines(stored: object) -> list[str]:
+    """The saved checklist, rendered into the prompt's turn-meta header.
+
+    This is the half that survives a machine: even when the session file is gone
+    and Claude starts blank, the turn still opens knowing which items were
+    finished, instead of redoing them."""
+    items = stored.get("items") if isinstance(stored, dict) else None
+    if not items:
+        return []
+    rendered = " / ".join(
+        f"{_TASK_STATUS_MARK.get(str(i.get('status')), '▫')} {i.get('subject', '')}"
+        for i in items
+        if isinstance(i, dict)
+    )
+    return [
+        f"- 上次的任务清单（平台留存，换机器也在）：{rendered}。"
+        "先确认哪些已经做完了，别重做；继续用 Task 工具维护它。"
+    ]
 
 
 # A platform-mutating `cheese <sub>` command → which UI panel should refresh live
@@ -363,6 +455,7 @@ def _turn_meta_lines(
     is_resume: bool,
     disk: tuple[int, int] | None,
     open_cards: list[AcceptCard] | None,
+    progress: object = None,
 ) -> list[str]:
     """盲飞防护: the run facts an agent has no other way to see — its own time
     budget, whether it's a continuation, disk headroom, and where this topic's
@@ -391,6 +484,8 @@ def _turn_meta_lines(
             "- 本轮是自动续跑：上一轮被中断后接着跑。"
             "先确认上一轮做到哪了再继续，别重做。"
         )
+    # 进度层: the saved checklist, whether or not the session behind it survived.
+    lines.extend(_progress_lines(progress))
     if disk is not None:
         free_b, total_b = disk
         if total_b > 0:
@@ -941,6 +1036,24 @@ class ChatService:
         except Exception:  # noqa: BLE001 — never mask the original failure
             logger.exception("failed to save session pointer for %s", topic_id)
 
+    async def _save_progress(self, topic_id: uuid.UUID, progress: "_Progress") -> None:
+        """Best-effort: write the checklist the moment it changes (进度层). Never
+        raises — a lost checkbox must not take the turn down with it."""
+        try:
+            async with self._sessions() as session:
+                topics = TopicRepository(session)
+                topic = await topics.get(topic_id)
+                if topic is not None:
+                    await topics.set_progress(
+                        topic,
+                        items=[dict(i) for i in progress.items],
+                        eids=list(progress.eids),
+                        session_id=progress.session_id,
+                    )
+                    await session.commit()
+        except Exception:  # noqa: BLE001 — progress is a record, not the work
+            logger.exception("failed to save progress for %s", topic_id)
+
     async def _post_user_message(
         self,
         topic_id: uuid.UUID,
@@ -1204,7 +1317,12 @@ class ChatService:
         return payload
 
     async def _reconcile_spool(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID | None,
+        *,
+        progress: "_Progress | None" = None,
     ) -> AsyncIterator[dict]:
         """Backfill 现场 events the live hook path missed (backend down / no listener
         during a prior turn) from the durable spool WAL — idempotent by event-id.
@@ -1259,7 +1377,16 @@ class ChatService:
                     continue  # SessionStart/Stop have no historical counterpart
                 name = event.name.replace("mcp__cheese__", "")
                 if name in _TASK_TOOLS:
-                    continue  # task todos are process state, not persisted 现场
+                    # Not a 现场 event (it's process, not work) — but the checklist
+                    # it builds IS the progress record, and an unspooled task event
+                    # means the turn that produced it died: precisely the case where
+                    # 做到哪 has to survive. Fold it instead of dropping it.
+                    if progress is not None and progress.fold(
+                        name, event.input or {}, eid
+                    ):
+                        await self._save_progress(topic_id, progress)
+                        yield progress.frame()
+                    continue
                 args = event.input or {}
                 block_payload = await self._persist_tool_event(
                     project_id=project_id,
@@ -1676,6 +1803,7 @@ class ChatService:
                 )
             project_id = topic.project_id
             resume_session_id = topic.session_id
+            stored_progress = topic.progress
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             # 盲飞防护: this topic's open accept cards, surfaced in the prompt's
             # turn-meta header so the agent knows a gate/adoption is pending
@@ -1730,6 +1858,28 @@ class ChatService:
             # emitted here, so every other backend's outer-wrap behaviour is
             # untouched (turn 活跃度检测).
             yield {"type": "turn_ceiling", "seconds": provider.hard_ceiling_s}
+
+        # 进度层: pick the saved checklist back up, and let the spool backfill
+        # below fold into it — both BEFORE the prompt is assembled, so a checkbox
+        # recovered from a crashed turn reaches the agent in the very turn that
+        # recovers it, not one turn later.
+        progress = _Progress.load(stored_progress, resume_session_id=resume_session_id)
+        if progress.items:
+            yield progress.frame()
+        # Backfill any 现场 events the live hook path missed (backend down / no
+        # listener during a prior turn) from the durable spool WAL — idempotent by
+        # event-id. No-op for the sdk backend and an empty spool.
+        async for frame in self._reconcile_spool(
+            project_id, topic_id, turn_id, progress=progress
+        ):
+            yield frame
+        # What to show the agent: the live list when this turn may keep using it,
+        # otherwise the saved one verbatim — a checklist whose session is gone is
+        # still the truth about what got done.
+        shown_progress = (
+            {"items": progress.items} if progress.items else stored_progress
+        )
+
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
         system_prompt = _build_system_prompt(
             self._base_prompt,
@@ -1747,6 +1897,7 @@ class ChatService:
                 is_resume=is_resume,
                 disk=_workspace_disk(self._workspace_root),
                 open_cards=open_cards,
+                progress=shown_progress,
             ),
             stage_guide=(
                 load_scenario(stage_scenario(topic_stage))
@@ -1767,13 +1918,6 @@ class ChatService:
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(project_id, provider.name)
 
-        # Backfill any 现场 events the live hook path missed (backend down / no
-        # listener during a prior turn) from the durable spool WAL — idempotent by
-        # event-id. No-op for the sdk backend and an empty spool.
-        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
-            yield frame
-
-        todo: list[dict] = []
         seen_eids: set[str] = set()  # dedup device-drainer re-deliveries this turn
         actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None
@@ -1795,6 +1939,7 @@ class ChatService:
                 if isinstance(event, AgentSessionInfo):
                     # Announced early so even a failed turn persists it below.
                     new_session_id = event.session_id
+                    progress.restart_if_new_session(event.session_id)
                 elif isinstance(event, AgentMessage):
                     # Slack-style discrete message: one completed provider
                     # message = one chat block, persisted + broadcast NOW
@@ -1830,13 +1975,14 @@ class ChatService:
                         seen_eids.add(event.eid)
                     name = event.name.replace("mcp__cheese__", "")
                     args = event.input or {}
-                    # Task tools → live working-log todo (process, not 现场).
+                    # Task tools → the working checklist (process, not 现场). Saved
+                    # to the row on every change, not at turn end: the turns that
+                    # most need 做到哪 are exactly the ones that never reach an end.
                     if name in _TASK_TOOLS:
-                        if _apply_task_event(todo, name, args):
-                            yield {
-                                "type": "todo",
-                                "items": [dict(t) for t in todo],
-                            }
+                        if progress.fold(name, args, event.eid):
+                            progress.session_id = new_session_id or resume_session_id
+                            await self._save_progress(topic_id, progress)
+                            yield progress.frame()
                         continue
                     # Platform vs plain work, decided on the RAW name (prefix
                     # rule) + full command string — before any truncation.
@@ -2140,10 +2286,20 @@ class ChatService:
         # from here, and its eid+backfilled twin from a LATER turn's reconcile
         # that couldn't recognize the two as the same event).
         reconciled_texts: set[str] = set()
-        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+        # Same sweep picks up the turn's last checkbox changes, which lose the
+        # same race (written to the spool, Stop hook wins the network).
+        progress.session_id = new_session_id or resume_session_id
+        async for frame in self._reconcile_spool(
+            project_id, topic_id, turn_id, progress=progress
+        ):
             if frame["type"] == "assistant_block":
                 reconciled_texts.add(frame["block"]["content"])
             yield frame
+        if progress.items:
+            # Final stamp: the checklist is only usable by a later turn if the row
+            # says which session numbered it, and that id can arrive after the last
+            # checkbox did (spool-recovered events carry none of their own).
+            await self._save_progress(topic_id, progress)
 
         # Fallback single message: 芝士's messages normally landed one-by-one at
         # each AgentMessage boundary above. A provider that never announced a

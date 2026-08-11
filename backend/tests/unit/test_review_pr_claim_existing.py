@@ -69,7 +69,12 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     project = SimpleNamespace(
         ai_mode=AiMode.collaborative, settings={}, owner_handle="owner"
     )
-    service = AcceptService(AsyncMock())
+    session = AsyncMock()
+    # 采纳即归档 now cascades, so the accept path looks up this topic's children.
+    # A lone topic has none — a bare AsyncMock returns something `list()` can't
+    # consume.
+    session.scalars.return_value = SimpleNamespace(all=lambda: [])
+    service = AcceptService(session)
     service._repo = AsyncMock()
     service._repo.get.return_value = card
     service._repo.list_approver_handles.return_value = []

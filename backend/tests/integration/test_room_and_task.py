@@ -106,3 +106,73 @@ def test_archiving_the_room_still_takes_its_tasks(client):
 
     assert _status(client, room_id) == "archived"
     assert _status(client, task["id"]) == "archived"
+
+
+def test_work_does_not_nest_a_task_under_a_task(client):
+    """A task is the leaf. Asking for a child of one gives a task in the same
+    room, not a second level of work — the tree stays 本体 > 房间 > 事.
+
+    It used to just make a task under a task, so 分身 could sit under 分身 and
+    the room stopped listing the work that belonged to it.
+    """
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    task = _task(client, project_id, room_id, "修登录")
+
+    child = _task(client, project_id, task["id"], "顺手加个测试")
+
+    assert child["kind"] == "task"
+    assert child["parent_id"] == room_id
+    assert child["id"] != task["id"]
+
+
+def test_splitting_from_inside_a_task_lands_the_new_task_beside_it(client):
+    """分身 finds its job is really two jobs: 拆 still works, the result is a
+    sibling in the room rather than a child of the splitter."""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    task = _task(client, project_id, room_id, "修登录")
+
+    r = client.post(
+        f"/api/topics/{task['id']}/split",
+        json={"title": "顺手加个测试", "created_by": "alice", "brief": "补测试"},
+    )
+    assert r.status_code == 200
+    split = r.json()["data"]
+
+    assert split["kind"] == "task"
+    assert split["parent_id"] == room_id
+    # The room lists both pieces of work; neither hides under the other.
+    children = client.get(f"/api/topics/{room_id}/children").json()["data"]["data"]
+    assert {c["id"] for c in children} >= {task["id"], split["id"]}
+
+
+def test_accepting_a_room_takes_the_work_still_open_inside_it(client):
+    """采纳即归档 cascades, exactly like manual 归档 already did.
+
+    Accepting a room used to archive the room alone and leave its tasks running
+    — 分身 working on a delivered parent, each holding a sandbox container for
+    work nobody could hand in anymore.
+    """
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    unfinished = _task(client, project_id, room_id, "还没干完的活")
+
+    _accept(client, room_id)
+
+    assert _status(client, room_id) == "archived"
+    assert _status(client, unfinished["id"]) == "archived"
+
+
+def test_accepting_a_task_still_leaves_its_siblings_alone(client):
+    """The cascade only goes down. A room's OTHER work is not collateral."""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    first = _task(client, project_id, room_id, "修登录")
+    second = _task(client, project_id, room_id, "加导出")
+
+    _accept(client, first["id"])
+
+    assert _status(client, first["id"]) == "archived"
+    assert _status(client, second["id"]) == "active"
+    assert _status(client, room_id) == "active"
