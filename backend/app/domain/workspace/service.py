@@ -1742,6 +1742,13 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     spool = d / "cheese-spool"
     spool.mkdir(parents=True, exist_ok=True)
     _loosen(str(spool), 0o777)
+    # Same treatment for `cheese await`'s output logs: they live in the session
+    # mount (not the container's own filesystem) so a multi-hour command's output
+    # outlives the container that ran it, and not in the worktree so it never
+    # reaches a commit.
+    awaited = d / "cheese-await"
+    awaited.mkdir(parents=True, exist_ok=True)
+    _loosen(str(awaited), 0o777)
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
@@ -1803,17 +1810,51 @@ def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     ).resolve()
 
 
+def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
+    """Host path of the topic's `cheese await` output logs. The container writes
+    here via CHEESE_AWAIT_LOGS=/home/node/.claude/cheese-await (the session dir
+    mounts to /home/node/.claude), so the output of a command that runs for hours
+    survives the container being rebuilt under it. Mirrors spool_dir's base so
+    both sides agree on ONE location."""
+    return (
+        Path(settings.workspace_root)
+        / ".sessions"
+        / str(project_id)
+        / topic_id.hex[:8]
+        / "cheese-await"
+    ).resolve()
+
+
+def has_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
+    """Whether this topic already has a jj workspace on disk. Read-only probe:
+    unlike `_ensure_worktree` it creates nothing, so a caller that only wants to
+    snapshot existing work can ask without conjuring a repo as a side effect."""
+    return (_worktree_path(project_id, branch_for_topic(topic_id)) / ".jj").exists()
+
+
 def snapshot_worktree(
     project_id: uuid.UUID, topic_id: uuid.UUID, message: str = "芝士 edits"
 ) -> None:
     """Snapshot whatever the agent changed in the topic's workspace this turn as a
     jj commit, so native Bash/Write/Edit edits become version history (no manual
     commit needed). The topic's git branch (bookmark) is moved to the new commit
-    so 采纳/diff still work via git."""
+    so 采纳/diff still work via git.
+
+    A snapshot taken while `cheese await` has a command in flight can only catch a
+    half-written worktree, so the automatic post-turn one is HELD instead
+    (`awaited_tasks.checkpoint_worktree`). What still reaches here during a hold
+    are the paths a human is waiting on — 采纳前快照, PR 快照 — where refusing
+    would wedge the accept. Those commit, but say so in the message rather than
+    passing a mid-command tree off as a settled one."""
+    from app.domain.agent import awaited_tasks  # local: it imports this module
+
     branch = branch_for_topic(topic_id)
     wt = _ensure_worktree(project_id, branch)
     if not _jj(wt, "diff", "-s").strip():
         return  # nothing changed this turn
+    held = awaited_tasks.snapshot_hold(topic_id)
+    if held is not None:
+        message = f"{message}（⚠️ 后台任务「{held.label}」运行中，可能是中间态）"
     _jj(wt, "commit", "-m", message)
     # The just-committed work is @- (jj commit started a fresh empty @).
     _jj(wt, "bookmark", "set", branch, "-r", "@-", "--allow-backwards")

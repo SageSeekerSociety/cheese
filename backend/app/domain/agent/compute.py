@@ -26,6 +26,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import awaited_tasks
 from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
 from app.domain.agent.service import (
     AgentEvent,
@@ -232,13 +233,14 @@ class LocalDockerProvider:
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the agent's native edits this turn into version history
-        (workspace lifecycle, R2/R9). Best-effort; never fail the turn on git."""
+        (workspace lifecycle, R2/R9). Best-effort; never fail the turn on git.
+
+        Held while a `cheese await` command is still writing the worktree — the
+        turn ends first BY DESIGN there, so this is the one moment the snapshot
+        is guaranteed to catch a half-finished tree."""
         if not self.sandboxed():
             return
-        try:
-            ws.snapshot_worktree(project_id, topic_id)
-        except Exception:  # noqa: BLE001 — git snapshot is best-effort
-            pass
+        awaited_tasks.checkpoint_worktree(project_id, topic_id)
 
 
 class RemoteCheesedProvider:
@@ -307,6 +309,13 @@ class RemoteCheesedProvider:
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         # Commit the turn's edits ON THE NODE so /git/log + /git/diff have history.
         # Best-effort; never fail the turn (runs after streaming, not in the path).
+        #
+        # The await hold is decided HERE rather than on the node: `cheese await`
+        # registers with the platform, so this process is the only one that knows
+        # a command is still writing that tree. The node then catches up on the
+        # next turn's checkpoint (the wake gives it one).
+        if awaited_tasks.snapshot_hold(topic_id) is not None:
+            return
         try:
             httpx.post(f"{self._url}/checkpoint/{project_id}/{topic_id}", timeout=15)
         except httpx.HTTPError:
