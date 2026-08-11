@@ -1,9 +1,12 @@
 import { defineConfig } from '@playwright/test';
 
-// Ports are overridable because the CI runner is the dev box itself, which is
-// already serving the dev deployment on 8081 — a hardcoded port made Playwright
-// fail with "8081 is already used" before a single test ran. Defaults keep local
-// runs exactly as they were.
+// Ports are overridable because CI once ran on the dev box itself, which serves
+// the dev deployment on 8081 — a hardcoded port made Playwright fail with
+// "8081 is already used" before a single test ran. CI has since moved to the
+// cheese-ci pool (e2e.yml still passes E2E_*_PORT overrides; nothing else
+// listens there, but a local dev stack does). Defaults keep local runs exactly
+// as they were. NOTE: smoke.spec.ts hardcodes its own BACKEND_PORT fallback and
+// must be kept in step with the resolution below by hand.
 const BACKEND_PORT = process.env.E2E_BACKEND_PORT ?? '8081';
 const FRONTEND_PORT = process.env.E2E_FRONTEND_PORT ?? '3000';
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;

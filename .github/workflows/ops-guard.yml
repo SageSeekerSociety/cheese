@@ -1,0 +1,87 @@
+name: Ops request guard
+
+# 必需检查 for operation requests (操作卡 第 3 步：只登记不执行).
+#
+# Two things, both of which must be true before the manifest format is used for
+# anything real:
+#
+#   1. **An ops PR may only touch `ops/requests/`.** A PR that reads like "just
+#      a deploy request" must not be able to carry a code change in the same
+#      diff — the human approving the operation would be authorizing that code
+#      too, with their own GitHub identity.
+#   2. **Every manifest validates against the registry.** Bad format fails here,
+#      not at execution time. (Nothing executes yet — that is a later step.)
+#
+# Runs on EVERY pull request, not just ones touching ops/, so it can be
+# registered as a required check: a PR with no manifests passes trivially and in
+# a couple of seconds. It is deliberately hosted (ubuntu-latest) and does NOT
+# `uv sync` the backend — the validator only needs pydantic + pyyaml, so the
+# box's single self-hosted runner never has to queue for it.
+#
+# `--python 3.13` is not decoration: `--no-project` means uv ignores the
+# backend's `requires-python`, so without it uv is free to host the validator on
+# whatever interpreter the runner happens to have — and the registry it imports
+# uses 3.12+ syntax. Pin it to the version the project actually targets.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Need the merge base to diff against; a shallow single-commit
+          # checkout cannot list what this PR changed.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          version: "0.12.1"
+
+      - name: List the files this PR changes
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --name-only "$(git merge-base "$BASE_SHA" "$HEAD_SHA")" "$HEAD_SHA" \
+            > changed-files.txt
+          echo "--- changed files ---"
+          cat changed-files.txt
+
+      # Rule 1. Reads the file list only; passes with nothing to say when the PR
+      # touches no manifest.
+      - name: An ops PR may only touch ops/requests/
+        run: |
+          set -euo pipefail
+          mapfile -t files < changed-files.txt
+          uv run --no-project --python 3.13 --with 'pydantic>=2' --with pyyaml \
+            python backend/scripts/ops_manifest.py guard "${files[@]}"
+
+      # Rule 2. Validates every manifest present on the branch — not just the
+      # changed ones: a registry change can invalidate a manifest nobody touched,
+      # and that must turn this check red rather than surface at execution time.
+      - name: Every manifest validates against the registry
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          manifests=(ops/requests/*.yaml)
+          if [ ${#manifests[@]} -eq 0 ]; then
+            echo "没有操作请求清单，跳过。"
+            exit 0
+          fi
+          uv run --no-project --python 3.13 --with 'pydantic>=2' --with pyyaml \
+            python backend/scripts/ops_manifest.py check "${manifests[@]}"

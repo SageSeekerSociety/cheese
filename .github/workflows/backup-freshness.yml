@@ -11,6 +11,12 @@ on:
     - cron: '0 9 * * *' # 09:00 UTC daily
   workflow_dispatch: {}
 
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: [self-hosted, cheese-dev]

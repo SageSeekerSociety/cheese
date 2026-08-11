@@ -243,3 +243,146 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     t = client.get(f"/api/topics/{tid}").json()["data"]
     assert t["status"] == "archived"
     assert ws.read_file(puid, "f.txt") == "merged version\n"
+
+
+def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
+    client, tmp_path
+):
+    """同步上游冲突不是死路 (the gap this closes): 同步上游 aborting cleanly is
+    correct for the shared repo, but on its own it leaves the project unable to
+    ever pull — every later sync hits the same wall. The conflict must land in a
+    topic's workspace with markers, and accepting that topic must finish the
+    sync that aborted."""
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    puid = _uuid.UUID(pid)
+
+    # Local main and upstream both have hello.txt with different content → the
+    # unrelated-histories merge is an add/add conflict.
+    repo = ws.ensure_repo(puid)
+    (repo / "hello.txt").write_text("local version\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
+    )
+    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+    assert d["synced"] is False and d["conflicts"] == ["hello.txt"]
+
+    # A topic to resolve it in, then materialize the conflict there.
+    tid = client.post(
+        "/api/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
+    ).json()["data"]["id"]
+    tuid = _uuid.UUID(tid)
+    files = ws.prepare_upstream_conflict_resolution(puid, tuid)
+    assert files == ["hello.txt"]
+
+    # Both sides are visible in the working copy — 芝士 can actually merge them
+    # by hand rather than guessing which side to keep.
+    body = (ws.topic_worktree(puid, tuid) / "hello.txt").read_text()
+    assert "<<<<<<<" in body
+    assert "local version" in body and "hi from upstream" in body
+
+    # 芝士 resolves; the platform snapshots as it does after any turn.
+    (ws.topic_worktree(puid, tuid) / "hello.txt").write_text("merged by hand\n")
+    ws.snapshot_worktree(puid, tuid, "解决同步上游冲突")
+
+    card = client.post(
+        f"/api/topics/{tid}/accept-card",
+        json={"reviewer_handle": "u", "routing_reason": ""},
+    ).json()["data"]["id"]
+    r = client.post(
+        f"/api/accept-cards/{card}/accept",
+        json={"decided_by": "u"},
+        headers=_owner(client, "u"),
+    )
+    assert r.status_code == 200 and r.json()["data"]["status"] == "accepted"
+
+    # The resolution is on base…
+    assert ws.read_file(puid, "hello.txt") == "merged by hand\n"
+    # …and the sync is genuinely DONE: upstream is now an ancestor of base, so
+    # the next sync has nothing left to bring over. This is the assertion that
+    # proves the merge carried the upstream history, not just the file edit.
+    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+    assert d["synced"] is True and d["commits"] == 0
+
+
+def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_path):
+    """The exit, wired to the button people actually press: a conflicting 同步上游
+    by a logged-in caller creates a resolution task in their 1:1 room with 芝士
+    and materializes the merge there. Without this the route reported a conflict
+    and stopped, and the project could never pull again."""
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    puid = _uuid.UUID(pid)
+    repo = ws.ensure_repo(puid)
+    (repo / "hello.txt").write_text("local version\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
+    )
+    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+
+    d = client.post(
+        f"/api/projects/{pid}/upstream/sync", headers=_owner(client, "alice")
+    ).json()["data"]
+
+    # The sync itself still tells the truth: aborted, and which files.
+    assert d["synced"] is False and d["conflicts"] == ["hello.txt"]
+    # …and now there is somewhere to go.
+    assert d["dispatched"]["files"] == ["hello.txt"]
+    tid = d["dispatched"]["topic_id"]
+
+    # The task is real, carries the conflict in its workspace, and hangs under
+    # the caller's 1:1 room rather than polluting the project's topic list.
+    t = client.get(f"/api/topics/{tid}").json()["data"]
+    assert t["title"] == "解决同步上游冲突"
+    body = (ws.topic_worktree(puid, _uuid.UUID(tid)) / "hello.txt").read_text()
+    assert "<<<<<<<" in body
+    assert "local version" in body and "hi from upstream" in body
+
+    # The shared repo is untouched — dispatching must not half-merge either.
+    assert (repo / "hello.txt").read_text() == "local version\n"
+    assert not (repo / ".git" / "MERGE_HEAD").exists()
+
+
+def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
+    """Pressing 同步上游 again while a resolution is open must point back at it,
+    not start a second one: re-materializing would overwrite whatever 芝士 has
+    already resolved, and the room would fill with identical dead tasks."""
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    repo = ws.ensure_repo(_uuid.UUID(pid))
+    (repo / "hello.txt").write_text("local version\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
+    )
+    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+
+    headers = _owner(client, "alice")
+    first = client.post(f"/api/projects/{pid}/upstream/sync", headers=headers).json()[
+        "data"
+    ]["dispatched"]
+
+    # 芝士 has started resolving — this content must survive a second press.
+    wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(first["topic_id"]))
+    (wt / "hello.txt").write_text("half-resolved by 芝士\n")
+
+    second = client.post(f"/api/projects/{pid}/upstream/sync", headers=headers).json()[
+        "data"
+    ]["dispatched"]
+    assert second["topic_id"] == first["topic_id"] and second["reused"] is True
+    assert (wt / "hello.txt").read_text() == "half-resolved by 芝士\n"

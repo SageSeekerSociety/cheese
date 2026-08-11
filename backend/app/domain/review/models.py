@@ -91,6 +91,18 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # queried against (a fresh push moves this, so polling never checks a stale
     # commit's status after 芝士 pushes a fix).
     pr_head_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 人类授权动作前移 (2026-08-10): the commit the human actually authorized —
+    # frozen at the moment they clicked, while `pr_head_sha` keeps moving with
+    # every 芝士 fix pushed onto the PR afterwards. THE reason this is a column
+    # and not derived: the safety valve is baseline-relative by definition
+    # ("approve 之后 head 又动，且新 diff 超出授权范围"), and after two pushes
+    # nothing else on the card, on GitHub, or in the local repo still says what
+    # the human saw. Comparing each push against the PREVIOUS one instead would
+    # forget drift as soon as a benign push followed a risky one.
+    # NULL = a card from before this existed (or one that never rode a PR):
+    # 在途的 pr_open 卡不能被打断, so the poller adopts the current head as the
+    # baseline on its first tick rather than blocking retroactively.
+    pr_authorized_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # None: still waiting on the PR's own CI. Set: PR merged, now waiting on
     # the deploy workflow it triggered before the topic can finally archive.
     pr_merged_at: Mapped[datetime | None] = mapped_column(

@@ -2,10 +2,12 @@
 // model has two halves, mirrored by two command groups:
 //
 //	cheese auth …   who this machine is (login / logout)
-//	cheese link …   whether it is connected (connect / disconnect / status /
+//	cheese link …   whether it is connected (connect / disconnect /
 //	                auto-connect / no-auto-connect)
 //
-// plus `cheese api` (the server's generated API) and `cheese uninstall`. Every
+// plus the top-level `cheese status` (login + connection + screens at a
+// glance), `cheese api` (the server's generated API), `cheese update` and
+// `cheese uninstall`. Every
 // command tries to meet the user where they are: connect logs you in first if
 // needed, disconnect warns when screens are still running, and each success
 // message says what to do next.
@@ -489,4 +491,3 @@ func confirm(q string) bool {
 	line = strings.ToLower(strings.TrimSpace(line))
 	return line == "y" || line == "yes"
 }
-

@@ -1,5 +1,6 @@
 """Project routes."""
 
+import asyncio
 import re
 import uuid
 from dataclasses import asdict
@@ -9,11 +10,17 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_profile_registry, project_device_online
+from app.api.deps import (
+    get_chat_service,
+    get_profile_registry,
+    get_turn_runner,
+    project_device_online,
+)
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.agent.chat import ChatService
 from app.domain.agent.market import (
     compute_default_name,
     compute_selectable,
@@ -23,6 +30,7 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
+from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -41,6 +49,7 @@ from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
+from app.domain.workspace import upstream_conflict
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -555,8 +564,34 @@ async def set_project_upstream(
 
 
 @router.post("/{project_id}/upstream/sync")
-async def sync_project_upstream(project_id: uuid.UUID, db: DbSession) -> dict:
+async def sync_project_upstream(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+) -> dict:
     """同步上游: fetch + merge the upstream default branch into the project base.
-    Conflicts abort cleanly and come back as {"synced": false, "reason": ...}."""
+    Conflicts abort cleanly and come back as {"synced": false, "reason": ...} —
+    and, when we know who asked, 芝士 is dispatched at the materialized conflict
+    so that report is a starting point instead of a dead end (spec §6.3, same
+    contract as 采纳冲突 in routes/accept.py)."""
     await ProjectService(db).get_or_404(project_id)
-    return ok(ws.sync_upstream(project_id))
+    result = await asyncio.to_thread(ws.sync_upstream, project_id)
+    if result.get("synced") or not result.get("conflicts"):
+        return ok(result)
+    # Anonymous callers get the old behaviour: with no handle there is no 1:1
+    # room to put the work in, and inventing one would strand it.
+    actor = await resolver.resolve(fallback_handle=None)
+    if not actor.authenticated or not actor.handle:
+        return ok(result)
+    dispatched = await upstream_conflict.dispatch(
+        db,
+        project_id,
+        requested_by=actor.handle,
+        chat=chat,
+        runner=runner,
+    )
+    if dispatched is not None:
+        result = {**result, "dispatched": dispatched}
+    return ok(result)

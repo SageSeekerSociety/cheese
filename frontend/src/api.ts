@@ -98,6 +98,19 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+// A failed request still carries its HTTP status. Callers that must tell one
+// failure from another — a save rejected as a conflict (409) vs. anything else —
+// would otherwise be left substring-matching the message.
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
   for (let attempt = 0; ; attempt += 1) {
@@ -123,7 +136,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue
       }
-      throw new Error(`HTTP ${res.status} for ${path}`)
+      throw new ApiError(res.status, `HTTP ${res.status} for ${path}`)
     }
     const envelope = (await res.json()) as ApiEnvelope<T>
     if (envelope.code !== 200) {
@@ -799,6 +812,27 @@ export function getTerminal(topicId: string): Promise<TerminalInfo> {
   return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)
 }
 
+// The 现场 terminal and 运行环境预览 are backend reverse proxies loaded by an
+// <iframe>, and a browser can set no header on one — so the session token rides
+// as ?token=, exactly like the device-screen WebSocket above. Without it the
+// proxy 404s and the panel shows a white box; the backend's own status endpoint
+// applies the same check, so a signed-out viewer is told "unavailable" and falls
+// back to the timeline instead of embedding a frame that cannot load.
+// 运行环境预览 authenticates its iframe differently, and on purpose: the frame
+// renders whatever 芝士 chose to serve, and a ?token= in the URL is readable by
+// that page's own JS (location.search) even sandboxed — so instead this call,
+// which DOES carry the Authorization header, leaves an HttpOnly path-scoped
+// cookie that the iframe's same-origin requests present by themselves.
+export function primeAppPreview(topicId: string): Promise<{ ready: boolean }> {
+  return request<{ ready: boolean }>(`/topics/${encodeURIComponent(topicId)}/app-session`)
+}
+
+export function withSessionToken(url: string): string {
+  const token = authToken()
+  if (!token) return url
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+}
+
 // Git: commit log + diff. With `topicId` these are THIS topic's own commits and
 // the full diff its 采纳 would merge; without it, the project repo's. The 话题
 // panel must always pass it — the project-level answer is other topics' work.
@@ -832,16 +866,21 @@ export function readFile(projectId: string, path: string, topicId?: string | nul
 
 // Save an edited workspace file (人改文件即指令). The agent reads the latest on
 // its next turn, like 改文档即指令.
+//
+// `version` is the one readFile returned. Sending it makes the write
+// conditional: if 芝士 wrote the same file in between, the backend answers 409
+// instead of letting this save erase their edits without a trace.
 export function writeFile(
   projectId: string,
   path: string,
   content: string,
-  topicId?: string | null
-): Promise<{ path: string }> {
+  topicId?: string | null,
+  version?: string | null
+): Promise<{ path: string; version: string }> {
   const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
   return request(`/projects/${encodeURIComponent(projectId)}/file${t}`, {
     method: 'PUT',
-    body: JSON.stringify({ path, content }),
+    body: JSON.stringify({ path, content, version: version ?? null }),
   })
 }
 

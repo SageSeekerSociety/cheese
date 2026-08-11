@@ -17,7 +17,7 @@ A stub agent keeps tests off the live model.
 import asyncio
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -135,6 +135,27 @@ class StubAgent(AgentService):
 @pytest.fixture
 def stub_agent() -> StubAgent:
     return StubAgent()
+
+
+@pytest.fixture
+def bearer() -> Callable[[str], dict[str, str]]:
+    """``Authorization`` headers proving the caller is ``handle``.
+
+    Most 2.0 routes still accept a handle named in the body (Phase-0), but the
+    ones that decide who may reach the project — writing the project roster —
+    read the actor from the verified token only. Those tests need a real token.
+    """
+
+    def _headers(handle: str) -> dict[str, str]:
+        # Deferred import: the shared helper lives in the integration conftest,
+        # and only integration tests request this fixture. Minting here instead
+        # would be a second source of truth for the same token —
+        # tests/unit/test_no_adhoc_auth_helpers.py exists to stop exactly that.
+        from tests.integration.conftest import session_auth_headers
+
+        return session_auth_headers(handle)
+
+    return _headers
 
 
 @pytest.fixture

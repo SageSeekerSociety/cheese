@@ -49,10 +49,13 @@ class _FakeRun:
         self.stderr = ""
 
 
+# The `docker port` call moved into workspace.published_endpoint (one parse
+# shared by the terminal and 运行环境预览), so the seam to stub is the one that
+# module runs — tmux_provider no longer imports subprocess at all.
 def test_ttyd_endpoint_parses_docker_port(monkeypatch):
     monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
     monkeypatch.setattr(
-        tp.subprocess, "run", lambda *a, **k: _FakeRun(0, "127.0.0.1:55011\n")
+        tp.ws.subprocess, "run", lambda *a, **k: _FakeRun(0, "127.0.0.1:55011\n")
     )
     assert tp.ttyd_endpoint(uuid.uuid4()) == "127.0.0.1:55011"
 
@@ -60,7 +63,7 @@ def test_ttyd_endpoint_parses_docker_port(monkeypatch):
 def test_ttyd_endpoint_none_when_container_down(monkeypatch):
     monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
     # docker port on a missing/unpublished container → non-zero rc, empty stdout.
-    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **k: _FakeRun(1, ""))
+    monkeypatch.setattr(tp.ws.subprocess, "run", lambda *a, **k: _FakeRun(1, ""))
     assert tp.ttyd_endpoint(uuid.uuid4()) is None
 
 
@@ -102,6 +105,25 @@ async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
     )
     new_session = next(c for c in calls if "new-session" in c)
     assert f"--resume {sid}" in " ".join(new_session)
+
+
+async def test_ensure_session_denies_the_unanswerable_ask_tool(monkeypatch, tmp_path):
+    """AskUserQuestion draws its picker inside the pane, where nobody can answer
+    it — the turn then hangs. The launch line must deny it (cheese ask is the
+    platform's way to ask), and --dangerously-skip-permissions must not be able
+    to wave it through."""
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_docker(*args: str, stdin=None):
+        calls.append(args)
+        return (1, "", "") if "has-session" in args else (0, "", "")
+
+    monkeypatch.setattr(tp, "_docker", fake_docker)
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    await provider._ensure_session("box", None, session_dir=str(tmp_path))
+
+    new_session = " ".join(next(c for c in calls if "new-session" in c))
+    assert "--disallowedTools AskUserQuestion" in new_session
 
 
 @pytest.fixture

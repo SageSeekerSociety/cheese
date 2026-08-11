@@ -6,6 +6,8 @@ own kind (``task``) inside a room, which is what lets the room stay open for the
 next piece of work — and for anything delivered into it later.
 """
 
+from tests.integration.conftest import session_auth_headers
+
 
 def _project(client) -> str:
     return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
@@ -36,16 +38,6 @@ def _task(client, project_id: str, room_id: str, title: str) -> dict:
     return r.json()["data"]
 
 
-def _auth(handle: str) -> dict[str, str]:
-    """Accepting a card now requires an authenticated actor who IS the reviewer
-    (added in the accept-authorization work); the room helper authenticates as
-    the routed reviewer, matching test_accept.py."""
-    from app.core.tokens import mint_session_token
-
-    token = mint_session_token(handle=handle, user_id=None)
-    return {"Authorization": f"Bearer {token}"}
-
-
 def _accept(client, topic_id: str) -> None:
     card = client.post(
         f"/api/topics/{topic_id}/accept-card",
@@ -54,7 +46,7 @@ def _accept(client, topic_id: str) -> None:
     r = client.post(
         f"/api/accept-cards/{card['id']}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
 
