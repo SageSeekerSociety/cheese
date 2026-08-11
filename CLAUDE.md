@@ -159,6 +159,18 @@ work here — conftest strips them on purpose (see the comment at the top of the
 file) — but it never touches global config, which is why the `git config` route
 does. Verified: with the identity set the whole batch goes green.
 
+**Install `jj` too** — same story as the git identity: a container rebuild wipes
+it, and nothing in `uv sync` puts it back. Symptom is unmistakable once you know
+it: every DB-backed test that builds a real workspace dies with
+`FileNotFoundError: [Errno 2] No such file or directory: 'jj'` (10 failures in
+`test_upstream.py` alone). Project repos are jj-colocated, so the app shells out
+to the binary. Install the same version CI does (`.github/workflows/test.yml`):
+
+```bash
+curl -sSL https://github.com/jj-vcs/jj/releases/download/v0.43.0/jj-v0.43.0-x86_64-unknown-linux-musl.tar.gz \
+  | tar -xz -C /tmp/jj-dl && mv /tmp/jj-dl/jj ~/.local/bin/jj && jj --version
+```
+
 Two sandbox gaps are left, and both are **missing host setup, not code defects**.
 Don't spend time re-diagnosing them:
 
