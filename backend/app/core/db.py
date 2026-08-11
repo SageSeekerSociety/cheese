@@ -1,5 +1,6 @@
 """Async SQLAlchemy engine, session factory, and declarative base."""
 
+import json
 import os
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -36,7 +37,25 @@ elif _db_url.startswith("postgresql+psycopg2://"):
 _engine_kwargs: dict[str, Any] = (
     {"poolclass": NullPool} if os.environ.get("CHEESEX_TEST_NULLPOOL") else {}
 )
-engine = create_async_engine(_db_url, echo=settings.db_echo, **_engine_kwargs)
+
+
+def _json_dumps_utf8(obj: Any) -> str:
+    # Send JSON/JSONB binds as raw UTF-8, not \uXXXX escapes. json.dumps
+    # defaults to ensure_ascii=True, and PostgreSQL rejects non-ASCII \u
+    # escapes in jsonb unless the server encoding is UTF8 — the dev box's
+    # database was initdb'd as SQL_ASCII, so the first GitHub profile with a
+    # Chinese display name (raw_profile jsonb) 500'd the OAuth callback
+    # (2026-08-10, #222). Raw UTF-8 bytes pass under either encoding, and are
+    # what ends up stored anyway.
+    return json.dumps(obj, ensure_ascii=False)
+
+
+engine = create_async_engine(
+    _db_url,
+    echo=settings.db_echo,
+    json_serializer=_json_dumps_utf8,
+    **_engine_kwargs,
+)
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 __all__ = ["AsyncSession", "Base", "async_session_factory", "engine", "get_db"]

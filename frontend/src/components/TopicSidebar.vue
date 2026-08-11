@@ -2,11 +2,12 @@
 import type { TopicSortField, TopicSortOrder } from '../api'
 import type { Project, ProjectMemberRow, Topic } from '../cx_types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { relTime } from '../lib/relTime'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
+import { ancestorPathIds, loadCollapsedTopics, saveCollapsedTopics, visibleRows } from '../lib/topicTree'
 import { avatarColor } from '../utils/avatar'
 
 import CheeseAvatar from './CheeseAvatar.vue'
@@ -234,12 +235,53 @@ function unreadOf(id: string): number {
   return props.unreadMap?.[id] ?? 0
 }
 // The badge shows at most 99+ (a runaway count shouldn't stretch the row).
-function unreadLabel(id: string): string {
-  const n = unreadOf(id)
+function countLabel(n: number): string {
   return n > 99 ? '99+' : String(n)
+}
+function unreadLabel(id: string): string {
+  return countLabel(unreadOf(id))
 }
 // Unread hiding inside the collapsed archived group still deserves a hint.
 const archivedUnread = computed<number>(() => archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0))
+
+// ---- 子话题折叠 ----
+// 范式跟底部的「已归档」分组一致（一个 chevron 收起一堆行），只是这里的开关
+// 长在每一个有子话题的行上。行的可见性/未读聚合是纯逻辑，住在 lib/topicTree.ts
+// 里（有单测），这里只管状态和落盘。
+//
+// 默认展开：升级前后所见完全一致，没有人会因为这次改动突然找不到自己的话题；
+// "这里还有内容" 这个提示再好也弱于直接看见那一行。100+ 话题带来的长列表由
+// 「收起来的状态会被记住」来解——每个人只需要把噪音大的父话题收一次。
+// 按项目存 localStorage（而不是只放内存）：这个 rail 是主导航，每次刷新都要
+// 重收一遍等于没有折叠。存的是**收起来的** id，所以新拆出来的话题天然可见。
+const collapsedIds = ref<ReadonlySet<string>>(new Set<string>())
+watch(
+  () => props.selectedProjectId,
+  (pid) => {
+    collapsedIds.value = loadCollapsedTopics(pid)
+  },
+  { immediate: true }
+)
+
+// 当前选中话题的祖先链：这条路径无论祖先收没收起来都照常渲染，所以"人正待在
+// 里面的那个话题"永远不会被折叠藏掉。用 reveal 而不是"自动展开"，是为了不把
+// 用户自己设的折叠状态在导航时偷偷改写——离开之后那一支照旧是收起来的。
+const selectedPath = computed(() => ancestorPathIds(props.topics, props.selectedTopicId))
+const visibleTree = computed(() =>
+  visibleRows(activeTree.value, {
+    collapsed: collapsedIds.value,
+    reveal: selectedPath.value,
+    unreadOf,
+  })
+)
+
+function toggleCollapse(id: string) {
+  const next = new Set(collapsedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  collapsedIds.value = next
+  saveCollapsedTopics(props.selectedProjectId, next)
+}
 
 // The root topic (本体) — represented by the rail header (a selector + a click
 // target), not a list row. And the current project's display name.
@@ -372,7 +414,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 
           <v-list v-else density="compact" nav class="py-0">
             <v-list-item
-              v-for="row in activeTree"
+              v-for="row in visibleTree"
               :key="row.topic.id"
               :active="row.topic.id === selectedTopicId"
               rounded="lg"
@@ -390,21 +432,32 @@ const onMemory = computed(() => props.activeDocs === 'memory')
               <!-- 干净行 + 前置图标做身份锚（混合版）：图标未读变琥珀，
                    种类标签仍不要（缩进表达层级），操作 hover 才浮现。 -->
               <template #prepend>
+                <!-- 折叠开关：只有真有子话题的行才画，没有的行留同宽占位，
+                     免得两种行的图标错开一列。 -->
+                <button
+                  v-if="row.hasChildren"
+                  type="button"
+                  class="subtree-toggle"
+                  :title="row.collapsed ? '展开子话题' : '收起子话题'"
+                  :aria-expanded="!row.collapsed"
+                  @click.stop="toggleCollapse(row.topic.id)"
+                >
+                  <v-icon size="15" class="c-faint">
+                    {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+                  </v-icon>
+                </button>
+                <span v-else class="subtree-toggle subtree-toggle--empty" />
                 <span class="row-glyph-wrap">
                   <v-icon
                     v-if="row.depth === 0"
                     size="16"
                     class="row-glyph"
-                    :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
+                    :class="{ 'row-glyph--unread': row.unreadTotal > 0 }"
                     icon="mdi-message-text-outline"
                   />
                   <!-- 分身不用钩子箭头：树的结构交给缩进 + 竖向引导线，
                        行内只留一个小圆点做锚（未读转琥珀）。 -->
-                  <span
-                    v-else
-                    class="row-glyph row-glyph--dot"
-                    :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
-                  />
+                  <span v-else class="row-glyph row-glyph--dot" :class="{ 'row-glyph--unread': row.unreadTotal > 0 }" />
                   <!-- 芝士还在这个话题里跑这一轮：呼吸点，人凭它判断啥时候
                        该派下一个任务——和归档/采纳状态无关，只是本轮有没有跑完。 -->
                   <span v-if="row.topic.running" class="running-dot" title="芝士正在这个话题里工作" />
@@ -426,9 +479,16 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                   @blur="saveRename(row.topic)"
                 />
                 <template v-else>
-                  <span class="text-truncate" :class="{ 'title-unread': unreadOf(row.topic.id) > 0 }">{{
+                  <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
                     row.topic.title
                   }}</span>
+                  <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
+                  <span
+                    v-if="row.collapsed && row.hiddenCount > 0"
+                    class="subtree-count ms-2"
+                    :title="`收起了 ${row.hiddenCount} 个子话题`"
+                    >{{ countLabel(row.hiddenCount) }}</span
+                  >
                   <span
                     v-if="statusBadge(row.topic.status)"
                     class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
@@ -439,7 +499,13 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                 </template>
               </v-list-item-title>
               <template #append>
-                <span v-if="unreadOf(row.topic.id) > 0" class="unread-badge">{{ unreadLabel(row.topic.id) }}</span>
+                <!-- 折叠不能把"有新消息"吞掉：收起来的后代的未读加到本行上。 -->
+                <span
+                  v-if="row.unreadTotal > 0"
+                  class="unread-badge"
+                  :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
+                  >{{ countLabel(row.unreadTotal) }}</span
+                >
                 <!-- items 感的右锚：没未读时给最后活跃时间（真实信息，非装饰） -->
                 <span v-else class="row-time">{{ relTime(row.topic.updated_at) }}</span>
                 <!-- hover 浮出的操作层：绝对定位覆盖行尾，不占布局宽度 -->
@@ -934,6 +1000,36 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   position: relative;
   display: inline-flex;
   align-items: center;
+}
+
+/* 子话题折叠开关：定宽槽，没有子话题的行放同宽占位，图标列才不会错开。 */
+.subtree-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 2px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.subtree-toggle:hover {
+  background: var(--fill);
+}
+.subtree-toggle--empty {
+  cursor: default;
+  pointer-events: none;
+}
+/* 收起来了收了几个——形态沿用「已归档」那颗计数丸。 */
+.subtree-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--faint);
+  background: var(--fill);
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
 }
 /* 呼吸点：芝士还在这一轮里工作，跟归档/采纳状态无关。 */
 .running-dot {

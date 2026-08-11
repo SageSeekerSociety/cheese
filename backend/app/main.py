@@ -210,6 +210,11 @@ register_all_permissions()
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/webhook-token$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/decision$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/background-task$")),
+    (
+        "POST",
+        re.compile(r"^/api/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
+    ),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/return-conclusion$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/accept-card$")),
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),

@@ -37,6 +37,7 @@ import TopicMembers from '../components/TopicMembers.vue'
 import TopicSidebar from '../components/TopicSidebar.vue'
 import { usePendingAttachments } from '../lib/attachments'
 import { refreshBlockCache } from '../lib/blockCache'
+import { deliveryNoteTone, deliveryStageOf } from '../lib/deliveryStage'
 import { formatToolAction, isPlatformAction, toolLabel } from '../lib/toolLabels'
 import { myHandle } from '../me'
 
@@ -471,6 +472,22 @@ const pendingCard = computed<AcceptCard | null>(
 // The accepted card on an archived topic — its presence lets us offer 撤回采纳.
 const acceptedCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'accepted') ?? null)
 
+// 交付进度 (两阶段采纳, 2026-08-09): the human already clicked 采纳 and the PR
+// is open — CI / merge / deploy run for hours after that. Without this branch
+// the whole merge box vanishes the moment someone accepts, and nothing on
+// screen says the delivery is still in flight. Read-only: the decision was
+// already made, nobody should be asked to click a second time.
+const deliveringCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'pr_open') ?? null)
+// 阶段推导只此一处 —— 见 lib/deliveryStage.ts 顶部关于那个 `if` 的说明。
+const deliveryStage = computed(() => (deliveringCard.value ? deliveryStageOf(deliveringCard.value) : null))
+// 交付途中后端把阶段信息/故障写在卡的 note 上（CI 红了、部署失败、GitHub 拒绝
+// 合并、轮询用的 token 失效），那是这些事唯一露头的地方，照原样显示。
+const deliveryNote = computed(() => {
+  const note = deliveringCard.value?.note ?? ''
+  const tone = deliveryNoteTone(note)
+  return tone ? { text: note, tone } : null
+})
+
 // 机器闸门 (eval C2): the newest card while the platform check runs / after it
 // failed. Only the newest card can be in a gate state (one in-flight card per
 // topic is enforced server-side).
@@ -497,13 +514,16 @@ onUnmounted(() => {
   if (gatePollTimer !== null) window.clearInterval(gatePollTimer)
 })
 
-// 采纳 PR 化 (#188 §5.1): live CI state of the pending card's PR. Polled
-// slowly while such a card is on screen — checks take minutes, not seconds.
+// 采纳 PR 化 (#188 §5.1): live CI state of the card's PR. Polled slowly while
+// such a card is on screen — checks take minutes, not seconds. Both the
+// pending card (人还没点) and the delivering one (点完了，CI 在跑) ride the
+// same PR, and /pr-checks answers for any card that has a pr_number.
+const prCheckCard = computed<AcceptCard | null>(() => pendingCard.value ?? deliveringCard.value)
 const prChecks = ref<PrChecks | null>(null)
 let prPollTimer: number | null = null
 async function loadPrChecks() {
   const tid = selectedTopicId.value
-  if (!tid || !pendingCard.value?.pr_number) return
+  if (!tid || !prCheckCard.value?.pr_number) return
   try {
     const payload = await getPrChecks(tid)
     if (selectedTopicId.value === tid) prChecks.value = payload
@@ -512,12 +532,17 @@ async function loadPrChecks() {
   }
 }
 watch(
-  () => (pendingCard.value?.pr_number ? selectedTopicId.value : null),
+  () => (prCheckCard.value?.pr_number ? selectedTopicId.value : null),
   (active) => {
     prChecks.value = null
     if (active && prPollTimer === null) {
       void loadPrChecks()
-      prPollTimer = window.setInterval(() => void loadPrChecks(), 15000)
+      prPollTimer = window.setInterval(() => {
+        void loadPrChecks()
+        // 交付中卡本身也在变（合并时间、note、最终 accepted），跟着一起刷新，
+        // 否则界面会停在采纳那一刻的快照上直到用户手动切话题。
+        if (deliveringCard.value) void loadAcceptCard(true)
+      }, 15000)
     } else if (!active && prPollTimer !== null) {
       window.clearInterval(prPollTimer)
       prPollTimer = null
@@ -1063,7 +1088,10 @@ onUnmounted(() => {
         >
           <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
           <template
-            v-if="selectedTopic && (pendingCard || gateCard || (selectedTopic.status === 'archived' && acceptedCard))"
+            v-if="
+              selectedTopic &&
+              (pendingCard || gateCard || deliveringCard || (selectedTopic.status === 'archived' && acceptedCard))
+            "
             #timeline-end
           >
             <!-- 机器闸门 (eval C2): the platform is running the project's
@@ -1267,6 +1295,87 @@ onUnmounted(() => {
                   <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard">
                     确认退回
                   </v-btn>
+                </div>
+              </div>
+            </v-card>
+
+            <!-- 交付进度 (两阶段采纳): 人已经点过采纳，剩下的 CI → 合并 →
+                 部署是机器在跑，要跑几小时。只读，不给任何按钮 —— 授权已经
+                 给过了，不该再问人第二次。 -->
+            <v-card v-else-if="deliveringCard" variant="outlined" class="merge-box mt-2">
+              <div class="merge-box__bar" />
+              <div class="pa-3">
+                <div class="d-flex align-center ga-2 mb-1">
+                  <v-progress-circular indeterminate size="18" width="2" />
+                  <span class="t-title">交付中 · {{ deliveryStage?.title }}</span>
+                </div>
+                <div class="text-caption text-medium-emphasis mb-2">
+                  已由 <strong>@{{ deliveringCard.decided_by }}</strong> 采纳，{{ deliveryStage?.hint }}
+                </div>
+                <!-- 阶段条：人点完之后走到哪一步了 -->
+                <div class="d-flex align-center flex-wrap ga-1 text-caption mb-2">
+                  <template v-for="(step, i) in deliveryStage?.steps ?? []" :key="step.key">
+                    <v-icon v-if="i > 0" size="13" class="text-disabled">mdi-chevron-right</v-icon>
+                    <span
+                      class="d-flex align-center ga-1"
+                      :class="step.state === 'todo' ? 'text-disabled' : 'text-medium-emphasis'"
+                    >
+                      <v-progress-circular v-if="step.state === 'active'" indeterminate size="13" width="2" />
+                      <v-icon v-else-if="step.state === 'done'" color="success" size="14">mdi-check-circle</v-icon>
+                      <v-icon v-else size="14">mdi-circle-outline</v-icon>
+                      {{ step.label }}
+                    </span>
+                  </template>
+                </div>
+                <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。 -->
+                <div
+                  v-if="deliveryNote"
+                  class="text-caption mb-2"
+                  :class="deliveryNote.tone === 'error' ? 'text-error' : 'text-medium-emphasis'"
+                >
+                  {{ deliveryNote.text }}
+                </div>
+                <!-- PR + 实时 CI，复用待采纳卡那套 prChecks 轮询。 -->
+                <div v-if="deliveringCard.pr_url">
+                  <div class="d-flex align-center flex-wrap ga-2">
+                    <v-chip
+                      size="small"
+                      variant="tonal"
+                      prepend-icon="mdi-source-pull"
+                      :href="deliveringCard.pr_url"
+                      target="_blank"
+                    >
+                      PR #{{ deliveringCard.pr_number }}
+                    </v-chip>
+                    <span v-if="deliveringCard.pr_head_sha" class="text-caption text-medium-emphasis">
+                      {{ deliveringCard.pr_head_sha.slice(0, 7) }}
+                    </span>
+                    <span v-if="prChecks?.available && prChecks.mergeable === false" class="text-caption text-error">
+                      与主分支冲突
+                    </span>
+                  </div>
+                  <div
+                    v-for="chk in prChecks?.checks ?? []"
+                    :key="chk.name"
+                    class="d-flex align-center ga-1 text-caption text-medium-emphasis mt-1"
+                  >
+                    <v-icon
+                      size="14"
+                      :color="
+                        chk.conclusion === 'success' ? 'success' : chk.conclusion === 'failure' ? 'error' : undefined
+                      "
+                    >
+                      {{
+                        chk.conclusion === 'success'
+                          ? 'mdi-check-circle'
+                          : chk.conclusion === 'failure'
+                            ? 'mdi-close-circle'
+                            : 'mdi-progress-clock'
+                      }}
+                    </v-icon>
+                    {{ chk.name }}
+                    <span v-if="chk.status !== 'completed'">（进行中）</span>
+                  </div>
                 </div>
               </div>
             </v-card>

@@ -46,4 +46,7 @@ class MachineOut(BaseModel):
     enroll_attempts: int
     enroll_max_attempts: int = MAX_ENROLL_ATTEMPTS
     requested_by: str | None
+    # When MicroCloud last answered about this machine. Reported so a stale
+    # reading is visible as stale rather than presented as current.
+    last_seen_at: datetime | None
     created_at: datetime
