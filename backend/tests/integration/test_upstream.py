@@ -353,6 +353,19 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     assert (repo / "hello.txt").read_text() == "local version\n"
     assert not (repo / ".git" / "MERGE_HEAD").exists()
 
+    # 芝士 is told to submit an accept card. Found the hard way in production
+    # (2026-08-11): the first real dispatch resolved its conflict cleanly and
+    # then stopped, because the prompt only described what acceptance WOULD do
+    # and never asked for the card. With no card there is nothing to accept, so
+    # a correct resolution sat in the workspace and the sync stayed stuck.
+    #
+    # Asserted on the prompt itself, NOT on the block it eventually becomes:
+    # `runner.submit` is fire-and-forget, so reading the topic's blocks here is
+    # a race — it passed locally and failed in CI on the very first run.
+    from app.domain.workspace.upstream_conflict import _prompt
+
+    assert "验收卡" in _prompt(["hello.txt"])
+
 
 def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
     """Pressing 同步上游 again while a resolution is open must point back at it,
