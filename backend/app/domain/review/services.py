@@ -15,11 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.cx_notification.models import NotifKind, NotifLevel
+from app.domain.cx_notification.services import NotificationService
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review import archive
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
@@ -46,6 +51,15 @@ _DEPLOY_STALLED_PREFIX = "⏳ 部署迟迟没有完成"
 #: (`_later_successful_deploy`)。顶替我们的那次部署必然是合并之后最近的几次之一，
 #: 而这段代码每 60 秒跑一次 —— 无上限地遍历会把一次误报变成持续的 API 消耗。
 _MAX_SUPERSEDE_COMPARES = 5
+
+#: pending_gate 孤儿卡 (2026-08-11). 判死的卡和检查真红了的卡都落在 `gate_failed`
+#: 上，但对芝士意味着完全相反的下一步——「没跑完」= 原样重递，「没通过」= 去修
+#: 代码。状态列分不开，所以**这条前缀就是那个区分**：它在 note 和 gate_output 里
+#: 都出现，任何读卡的人/代码靠它判断，不要靠猜 gate_output 是不是空的。
+GATE_ABANDONED_PREFIX = "⏱ 闸门没跑完"
+#: 人工作废 (2026-08-11)。作废复用 `revoked` 终态（archive.py 收敛非终态卡时也
+#: 用它），所以「谁作废的、为什么」只能靠这条前缀留在 note 里。
+VOIDED_PREFIX = "🗑 卡片已作废"
 
 
 def _nudge_note_prefix(stage: str) -> str:
@@ -353,6 +367,20 @@ class AcceptService:
         topic = await self._topic_or_404(topic_id)
         project = await self._projects.get(topic.project_id)
         return topic.project_id, check_command_of(project)
+
+    async def mark_gate_started(self, *, card_id: uuid.UUID) -> AcceptCard:
+        """闸门开跑打点 (孤儿卡, 2026-08-11). Idempotent-ish and deliberately
+        forgiving: if the card already left `pending_gate` (swept as abandoned,
+        or voided by a human) this is a no-op rather than an error — a
+        diagnostic timestamp must never resurrect a closed card, and it must
+        never be the thing that fails a check that is about to run anyway."""
+        card = await self._card_or_404(card_id)
+        if card.status != AcceptStatus.pending_gate:
+            return card
+        card.gate_started_at = datetime.now(UTC)
+        await self._session.flush()
+        await self._session.refresh(card)
+        return card
 
     async def finish_gate(
         self, *, card_id: uuid.UUID, passed: bool, output_tail: str
@@ -2076,4 +2104,95 @@ class AcceptService:
 
         await self._session.flush()
         await self._session.refresh(card)
+        return card
+
+    async def void(
+        self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
+    ) -> AcceptCard:
+        """人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).
+
+        这是**唯一**能把非终态卡强制收尾的人工动作。它存在的理由是 `create_card`
+        的互斥：一张卡卡在 `pending_gate` / `conflict` / `pr_open` 上，整个话题
+        就再也递不出第二张卡，而 accept/reject/revoke/reassign 五条路由对这些状态
+        全部是拒绝的——出口是零。
+
+        ⚠️ **它把卡置为终态，不是"放行到 pending"**。放行等于让卡面的绿勾替一段
+        从没被检查过的代码背书；作废 + 重递效果一样而且安全，这条区别是本功能的
+        设计前提，不要"优化"掉。
+
+        授权：卡上的验收人、项目 owner、项目 lead。它是授权类动作，所以芝士在
+        collaborative 模式下被 `_forbid_ai` 挡住（跟 accept/approve 同一条线）
+        —— 路由也**故意不进** `app/main.py` 的 `_CHEESE_WRITE_PATHS`。
+        """
+        card = await self._card_or_404(card_id)
+        if card.status not in archive.OPEN_CARD_STATUSES:
+            raise ValidationError(f"这张验收卡已经是终态（{card.status}），不用作废")
+
+        topic = await self._topic_or_404(card.topic_id)
+        project = await self._projects.get(topic.project_id)
+        self._forbid_ai(project, decided_by, "作废")
+
+        allowed = {card.reviewer_handle}
+        if project is not None and project.owner_handle:
+            allowed.add(project.owner_handle)
+        members = await MemberRepository(self._session).list_for_project(
+            topic.project_id
+        )
+        allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
+        if decided_by not in allowed:
+            raise ForbiddenError("只有这张卡的验收人或项目 owner / 组长能作废它")
+
+        was = card.status
+        reason = f" 理由：{note.strip()}" if note.strip() else ""
+        headline = (
+            f"{VOIDED_PREFIX}：<@{decided_by}> 作废了这张卡（原状态：{was}）。"
+            f"话题可以重新递卡。{reason}"
+        )
+        if was == AcceptStatus.pr_open and card.pr_merged_at is None:
+            # 跟归档收敛同一条产品判断 (review/archive.py 的模块 docstring)：平台
+            # 不拿别人的 token 去关别人名下的 PR。停止推进 + 留痕 + 通知授权人。
+            headline = (
+                f"{VOIDED_PREFIX}：<@{decided_by}> 作废了这张卡，平台已停止推进 "
+                f"PR #{card.pr_number}。PR 未合并、仍开在 GitHub 上，合还是关由人"
+                f"决定：{card.pr_url or '(无链接)'}{reason}"
+            )
+        card.status = AcceptStatus.revoked
+        card.note = archive.prefix_note(card.note, headline)
+        # 只在空的时候补：`pr_open` 的卡上 decided_by 记的是当初授权开 PR 的人，
+        # 覆盖掉就丢了授权来源；作废人始终写在 note 里。
+        if card.decided_by is None:
+            card.decided_by = decided_by
+        if card.decided_at is None:
+            card.decided_at = datetime.now(UTC)
+
+        await self._session.flush()
+        await self._session.refresh(card)
+
+        await BlockRepository(self._session).add(
+            project_id=topic.project_id,
+            topic_id=topic.id,
+            author="cheese",
+            author_type=AuthorType.system,
+            content=(
+                f"🗑 <@{decided_by}> 作废了这张验收卡（原状态：{was}）。"
+                f"这不是驳回，也不代表检查不通过——它只是把卡收尾，"
+                f"好让这个话题能重新递卡。{reason}"
+            ),
+            kind=BlockKind.event,
+            meta={"platform": True},
+        )
+        if was == AcceptStatus.pr_open and card.decided_by not in (None, decided_by):
+            await NotificationService(self._session).create(
+                project_id=topic.project_id,
+                level=NotifLevel.strong,
+                kind=NotifKind.change_alert,
+                title=f"话题「{topic.title}」的验收卡被作废，你的 PR 还开着",
+                body=(
+                    f"<@{decided_by}> 作废了这张验收卡，平台已停止推进它。"
+                    f"PR #{card.pr_number} 是以你的身份开的，平台不会替你关掉："
+                    f"{card.pr_url or '(无链接)'}"
+                ),
+                target_handle=card.decided_by or "",
+                topic_id=topic.id,
+            )
         return card

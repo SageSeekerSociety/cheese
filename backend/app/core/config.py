@@ -378,6 +378,14 @@ class Settings(BaseSettings):
     # on the card's stored pr_number, so flipping this never strands a card.
     accept_via_pr: bool = False
 
+    # --- 闸门孤儿卡扫底 (2026-08-11) ---
+    # How often to look for `pending_gate` cards nobody will ever settle (the
+    # gate runner is an in-memory asyncio task — see review/gate_sweep.py for
+    # the three ways it goes missing). Startup does one sweep unconditionally;
+    # this interval is what covers the "process still alive, task died" half.
+    # 0 disables the periodic sweep (the startup one still runs).
+    gate_sweep_interval_s: int = 300
+
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.

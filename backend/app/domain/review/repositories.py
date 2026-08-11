@@ -1,8 +1,9 @@
 """Accept card data access."""
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
@@ -57,6 +58,32 @@ class AcceptCardRepository:
             select(AcceptCard)
             .where(AcceptCard.topic_id == topic_id)
             .order_by(AcceptCard.created_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_stale_pending_gate(self, cutoff: datetime) -> list[AcceptCard]:
+        """孤儿卡扫底 (2026-08-11): cards still waiting on a gate that started
+        (or, failing that, was filed) before ``cutoff``.
+
+        The clock is `COALESCE(gate_started_at, created_at)`, not `created_at`:
+        a long worktree preparation legitimately delays the check, and rows
+        written before `gate_started_at` existed have no start time at all — the
+        COALESCE keeps both aging out without ever ageing a card out EARLY.
+
+        Archived topics are excluded because `review/archive.py` already closed
+        their cards; anything left there is not a deadlock (that topic can't be
+        re-递卡'd anyway) and re-condemning it would just spam its history.
+        """
+        stmt = (
+            select(AcceptCard)
+            .join(Topic, Topic.id == AcceptCard.topic_id)
+            .where(
+                AcceptCard.status == AcceptStatus.pending_gate,
+                Topic.status != TopicStatus.archived,
+                func.coalesce(AcceptCard.gate_started_at, AcceptCard.created_at)
+                < cutoff,
+            )
+            .order_by(AcceptCard.created_at)
         )
         return list((await self._session.scalars(stmt)).all())
 
