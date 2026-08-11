@@ -25,11 +25,19 @@ tasks:
       - tsconfig*.json
     generates:
       - dist/**/*
+  # `lint` CHECKS, `lint:fix` writes. They used to be one script (`eslint . --fix`),
+  # so `task check` — the thing you run to find out whether your tree is clean —
+  # rewrote the tree it was inspecting, and CI could never use it as a gate.
   lint:
-    desc: Run ESLint
+    desc: Run ESLint (check only, never writes)
     deps: [install]
     cmds:
       - pnpm run lint
+  lint:fix:
+    desc: Run ESLint and apply fixes
+    deps: [install]
+    cmds:
+      - pnpm run lint:fix
   typecheck:
     desc: Run vue-tsc type check
     deps: [install]

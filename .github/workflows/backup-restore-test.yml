@@ -10,12 +10,18 @@ on:
     - cron: '17 4 * * 1' # Mondays 04:17 UTC
   workflow_dispatch: {}
 
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
 jobs:
   restore-test:
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Prove restore failures fail the drill
         run: bash deploy/tests/test-db-restore-test.sh
       - name: Restore latest backup into a throwaway postgres
