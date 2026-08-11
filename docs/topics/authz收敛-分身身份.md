@@ -50,6 +50,8 @@ return not await roster_exists(topic_id)   # 无 roster → 放行
 
 这是阶段三「两个宽松档」里 legacy 档的真实爆炸半径，比未认证 fallback 更急。修法二选一：私聊建 topic 时 seed 一个两人 roster（干净，顺带让「无 roster」真正只剩历史遗留话题）；或在 policy 里显式判 `is_private`。倾向前者。
 
+**关键补充（父话题复核时提出，已写进 <&backend/app/domain/authz/policy.py> 注释）**：`policy.py` 那句注释说这个口子是留给 legacy topic 的，暗示它会随迁移自然收敛。**不会。** 私聊是从设计上永远落在这个口子里的——`get_or_create_private()` 根本不 seed roster，所以每建一个私聊就新增一个永久越权面。它不是待清的存量，是持续产生的新增量。这条把这个口子的优先级从「迁移完就好」提到「必须显式修」。
+
 ## 身份塌缩成 anonymous：链路查清并已修
 
 父话题拿自己的 scoped token 往子话题发评论、作者被记成 `anonymous` —— 三个缺陷叠出来的，**未认证 fallback 正是让这次写入落地的那一环**：
@@ -76,6 +78,8 @@ return not await roster_exists(topic_id)   # 无 roster → 放行
 **做到 X** —— 阶段一全部完成并可验收：per-topic 分身身份（`cheese-<topic hex>`）、token 带 `a=` 声明、actor 落地、三处硬编码 handle 改成认 `looks_like_agent_handle`；外加本轮两个真 bug：@ 提及的空名单误判 + 跨话题 token 身份塌缩成 anonymous。
 
 **卡在 Y** —— 阶段二（拆 `is_agent` 短路）**不是卡在工作量，是卡在一个前置事实**：老话题的分身座位靠 `migrate_shared_agent_seat()` 在「下一次开轮时」就地迁移。存量话题里有多少还没迁，现在没人知道。**这个数没查清之前拆短路 = 未迁移话题的分身当场失去访问权。**
+
+查这个数需要生产库访问权，本话题和父话题都没有。父话题已把它作为「需要人接的一件事」发进全员通知，所以**这不是我该继续想办法绕过去的事**——拿到数之前阶段二保持不做。
 
 **下一步 Z**，按急迫度：
 
