@@ -1,7 +1,10 @@
-# CI 补洞 —— 交接简报
+# CI 补洞 —— 交接简报 ✅ 已执行完毕（2026-08-11）
 
+> **状态：已完成并全部合进 GitHub main**，PR #264 / #265 / #266。本文保留作记录。
+> 执行结果、以及执行者对本文**事项 2 的正确推翻**，见 <&docs/topics/对标buzz-总览.md> 的「已落地」一节。
+>
 > 来源：话题「对标 Buzz 找差距」。下面每条证据都已在本仓核实过（含行号）。
-> 执行者请先自己复验一遍再动手，别信简报。
+> 执行者请先自己复验一遍再动手，别信简报——**事项 2 就是没复验会出错的活例子。**
 
 ## 任务边界
 
@@ -74,13 +77,17 @@ Buzz 的做法：两个**普通单元测试**（`crates/buzz-db/src/migration.rs
 
 ---
 
-## 事项 2：抄 `check-branch-skew.sh` 防 alembic 迁移链分叉
+## ~~事项 2：抄 `check-branch-skew.sh` 防 alembic 迁移链分叉~~ ❌ 本条是错的，已被推翻
 
-Buzz 的 `scripts/check-branch-skew.sh`，约 30 行。直接命中我们反复踩的坑：**并行 PR 各自基于旧 head 生成迁移，合并后 alembic 链分叉**。
-
-参考实现（本仓已 sparse clone 一份在 `tmp/buzz`，gitignored；没有的话 `git clone --depth 1 https://github.com/block/buzz.git tmp/buzz`）。
-
-放进 CI + `check.sh`。**验收**：手工造一个双 head 的分叉状态，检查必须报错。
+> **2026-08-11 更正（本文作者的错，不是执行者的）**：这条建议不成立，**不要照做**。
+>
+> `check-branch-skew.sh` 的判据是两侧 `git diff --name-only` 的 `comm -12`，即**文件名交集**。而 alembic 分叉的形态恰恰是两个 PR 各加一个**不同名**的 `versions/*.py`——交集恒为空，**一条都抓不到**。
+>
+> 我写这条时说它「直接命中反复踩的坑」，是**没有拿一个真实的分叉反例喂给这个脚本**就下的结论。
+>
+> **实际落地的正确做法**（执行者已自行改正并合并进 #264）：`check-migration-fork.py`——用 `ast` 解析 `down_revision`（**merge revision 的 `down_revision` 是 tuple，正则会读错**），把 `origin/main` 和工作树两张 revision 图并起来算 head 数，>1 即报。带 `--self-test`。
+>
+> `check-branch-skew.sh` 本身仍有价值，但价值在**别的地方**：防「本地在落后的分支上跑检查假绿」。想抄的话按那个目的抄，别按防迁移分叉抄。
 
 ---
 

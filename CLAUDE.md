@@ -18,6 +18,46 @@ bash .claude/scripts/check.sh   # alternative: shell script
 
 After `git pull`: `bash .claude/scripts/post-pull.sh`
 
+## Sandbox Capability Boundaries
+
+Read this before you plan work that touches VCS, CI, or the network. These are
+**not** hypotheticals — every "can't" below was reproduced in an agent sandbox.
+The dangerous ones are the tools that **fail silently or report success**.
+
+### What works
+
+| Need | The supported path |
+|---|---|
+| Read CI logs / check runs / workflow runs | `cheese gh-token` mints a ~1h read-only GitHub token → `GH_TOKEN=$(cheese gh-token) gh api ...`. **This is the only sanctioned route**, and nothing else in the repo will lead you to it |
+| Run the DB-backed test suite without docker | `.claude/scripts/dev-db.sh` (see Testing) |
+| Long-running commands | `cheese await` — the platform wakes the topic with the exit code, instead of you blocking |
+
+### What does not work
+
+- **`jj git fetch` / `jj git push` are unavailable.** The box ships git 2.39.5;
+  jj requires >= 2.41. The failure is explicit, so this one at least tells you:
+  `Error: Git does not recognize required option: porcelain`.
+  **You cannot sync with upstream from inside the sandbox.** Do not plan around
+  "I'll rebase onto latest main first" — you can't see latest main.
+- **The `gh` token is actions/checks scoped only.** `gh api repos/{owner}/{repo}/commits`,
+  PR file lists, and PR conflict data all return **403 Resource not accessible by
+  integration**. You can read what CI *did*; you cannot read what the repo *contains*.
+
+### Failures that look like success
+
+- **A push that reports success but lands nothing** (seen in #267). After any
+  push, **read the branch tip SHA back and confirm it changed**. A report of
+  "pushed successfully" that was never verified against the remote tip is not
+  evidence of anything.
+- **Checks that pass on a stale base.** Your workspace can be days behind main,
+  and editing a file another PR already changed is, to git, an ordinary
+  modification — not a conflict. It merges cleanly and **silently reverts the
+  other change**. If you are editing a file you did not create, say so in your
+  report so a human can check.
+
+Neither of these raises an error, and neither is caught by tests or lint. The
+only defense is writing the boundary down — which is what this section is.
+
 ## Python Conventions
 
 - Python >=3.13. `list[str]`, `dict[int, str]`, `X | None` natively. No `from __future__ import annotations`.

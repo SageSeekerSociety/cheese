@@ -77,7 +77,7 @@ Buzz 和我们**产品域高度重合、技术栈完全不搭**。所以值得�
 |---|---|---|
 | 文案/文件体积规范 | `check-px-text.mjs` / `check-file-sizes.mjs` 接进 CI | —— |
 | 多租户列必须存在且打头 | `buzz-db/src/migration.rs:1038`、`:1057` 两个普通单测**解析迁移 SQL** 强制 | <&CLAUDE.md> 里的一段话 |
-| 迁移链不许分叉 | `check-branch-skew.sh`（约 30 行） | <&.claude/rules/migrations.md> 里的一段话 |
+| 迁移链不许分叉 | ~~`check-branch-skew.sh`~~ → 我们自己写的 `check-migration-fork.py`（已落地，见下） | 原先只有 <&.claude/rules/migrations.md> 里的一段话 |
 | 分层不许被穿透 | Cargo 编译期禁环 | <&CLAUDE.md> 里的一段话 |
 
 **反证就在本仓**：<&.claude/rules/backend-tests.md> 白纸黑字写着「别加第九个 `_auth()`」——现在有 9 个一模一样的 `def _auth(handle: str) -> dict[str, str]`。
@@ -96,6 +96,53 @@ Buzz 和我们**产品域高度重合、技术栈完全不搭**。所以值得�
 
 ## 值得学的（随子话题回流累积，按 ROI 排）
 
+### -1. 在 CLAUDE.md 加一节「沙箱能力边界」⭐⭐ 半小时，不需拍板 —— 全场第一优先级
+
+来自 @仓库自解释能力对比（第二次回流，**推翻了它自己的第一版结论**）。
+
+原论点是「我们的文档结构不如 Buzz」。改后的论点更狠：
+
+> **我们最大的缺口不是文档过期，是「能力存在但没有入口，等于不存在」。**
+
+**为什么这比文档过期严重一个量级**：过期文档至少会被读到、会被质疑；没入口的能力**连被质疑的机会都没有**。
+
+#### 反面案例一：`cheese gh-token`（我复核过，成立）
+
+它能读完整 CI 日志。全仓 `.md` 文件里提到它的次数是 **0**（`grep -rn gh-token --include='*.md' .` → 零命中）；唯一写明它的是 <&backend/app/api/routes/topics.py>:216 的一句**代码注释**。agent 要发现它，得先好奇去读一个响应构造函数——**没有任何路径会把 agent 带到那里。**
+
+对照 Buzz：`buzz-cli` 每个能力都有 `AGENTS.md` → skill → `--help` 三层入口。**它的能力发现率是设计出来的，我们的是碰运气。**
+
+#### 反面案例二：工具能力边界没写下来 → 沉默的成功假象
+
+我在本话题的盒子里**独立复现了**最关键的一条：
+
+```console
+$ git --version
+git version 2.39.5
+$ jj git fetch --remote upstream
+Error: Git does not recognize required option: porcelain
+       (note: Jujutsu requires git >= 2.41.0)
+```
+
+**`jj git fetch` 在盒子里根本不能用。** 加上 `gh` 只有 actions/checks 权限（读 PR 冲突文件 403，wangchangxin 实测），合起来就是：**能改能推，推完看不见结果。** #267 已经出现过「汇报推送成功、但分支尖端没有新提交」。
+
+**这类失败不报错，测试和 lint 都拦不住**——只能靠把工具能力边界显式写下来。Buzz 的 Common Gotchas 有一半正是这个类型：记的不是「怎么做对」，是**「这个工具在哪儿会骗你」**。
+
+#### 正面案例：我们自己已经有一个模板
+
+<&.claude/scripts/dev-db.sh>（无 docker 起 PG + Redis，今天跑通 3924 条测试）。**它对的地方不是脚本，是 <&CLAUDE.md> 把这条反直觉能力写进了常驻文档**，还写了 Redis 必需、两个 wheel 为何不进依赖、65 条注定失败的测试别再诊断。照这个写法办。
+
+#### 要写什么
+
+一节，三段：**能做 / 不能做 / 失败长什么样**。必含：
+
+- `jj git fetch` 不可用（git 2.39.5 < 2.41），要同步 upstream 走什么路
+- `gh` 的权限边界：actions/checks 可读，PR 冲突文件 403
+- **推送后必须回查分支尖端 sha**（`#267` 的教训）
+- 查 CI 的正路是 `cheese gh-token` + `gh api`
+
+> **核实边界**：`jj git fetch` 失败和 `gh-token` 零文档提及是我本轮亲手跑的；`gh` 的 403、#267 空推送、3924 条测试是 wangchangxin 实测，我未独立复现，按其事实采信。
+
 ### 0. 闸门按路径分流 + 偏差写进注释 ⭐ 已确证
 
 Buzz 真正领先我们的是三件事，前两件在这里：
@@ -103,7 +150,13 @@ Buzz 真正领先我们的是三件事，前两件在这里：
 - **按路径分流**：`lefthook.yml` 用 glob 决定跑什么——改 `web/**` 只跑 web 的 fix，不碰 Rust 测试。
 - **偏差写进注释**：该文件顶部逐条列出「本地闸门与 CI 的**故意**偏差及理由」。这条纪律比分流本身更值钱——它让「本地和 CI 不一致」从暗坑变成了有据可查的决定。
 
-最划算的单点抄袭是 `scripts/check-branch-skew.sh`（约 30 行）：直接命中我们「并行 PR 把 alembic 迁移链分叉」那个反复踩的坑。
+> ⚠️ **本节原有一条建议已被推翻，2026-08-11**。原文说「最划算的单点抄袭是 `check-branch-skew.sh`，直接命中 alembic 链分叉」——**这条不成立**。该脚本的判据是两侧 `git diff --name-only` 的 `comm -12`（**文件名交集**），而 alembic 分叉恰恰是两个 PR 各加一个**不同名**的 `versions/*.py`，交集恒为空，一条都抓不到。
+>
+> 实际落地的是另写的 `check-migration-fork.py`：用 `ast` 解析 `down_revision`（**merge revision 的 `down_revision` 是 tuple，正则会读错**），把 `origin/main` 和工作树两张 revision 图并起来算 head 数。已随 #264 合并。
+>
+> 教训记在这：**「约 30 行、直接命中」这种判断，是我没实际拿它跑一遍反例就下的结论。** 抄别人的脚本前，先构造一个我们真正怕的场景喂给它。
+
+`lefthook.yml` 的两条（按路径分流 + 偏差写进注释）仍然成立，是本节剩下的价值。
 
 ### 1. 文档里的每条硬规则，背后都该配一个可执行守卫 ⭐ 已确证
 
@@ -117,7 +170,7 @@ Buzz 真正领先我们的是三件事，前两件在这里：
 - 遮蔽内建的方法名（`list` / `set` / `dict` / `type`）
 - domain 层出现裸 `HTTPException`（约定要用 `app.core.errors`）
 
-> 落地排期：与上方「前端 CI 补洞」「抄 check-branch-skew.sh」同属一次 `check.sh` / CI 改动，合并成一个 PR 做，别分三次改同一个文件。
+> ✅ **已落地（#264，2026-08-11）**：三条守卫做成了 `check-repo-rules.sh`（naive datetime / 方法名遮蔽 builtin / 领域层裸 `HTTPException`），带 `--self-test` 接在 `repo-guards.yml` 上——**先自证再判树**。这个 `--self-test` 的形状值得记住：和「agent 能力发现」那一路的「拿改动前的文件跑同一断言」是同一个东西——**守卫必须先证明自己会红，绿才有意义。**
 
 ### 1.5 把架构铁律下沉成「解析迁移 SQL 的 lint 单元测试」⭐ 约 1 人日
 
@@ -266,10 +319,11 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 
 | # | 动作 | 估工 | 备注 |
 |---|---|---|---|
-| 0 | **补前端 CI 检查**（`vue-tsc` + `eslint`） | 小 | 漏洞级，非优化。先跑一次摸底存量错误数 |
-| 1 | 迁移 SQL 的 lint 单测（TIMESTAMPTZ / 外键索引 / 软删命名） | 1 人日 | 62 个存量迁移白名单豁免 |
-| 2 | 抄 `check-branch-skew.sh` 防 alembic 链分叉 | 约 30 行 | 命中反复踩的坑 |
-| 3 | 三条 grep 守卫（`tzinfo=None` / 遮蔽内建 / 裸 `HTTPException`） | 小 | |
+| **-1** | **<&CLAUDE.md> 加一节「沙箱能力边界」** | 半小时 | **现在的第一优先级**，不需拍板。见上方 -1 节 |
+| ~~0~~ | ~~补前端 CI 检查（`vue-tsc` + `eslint`）~~ | — | ✅ **已落地 #264**，见下方「已落地」 |
+| 1 | 迁移 SQL 的 lint 单测（TIMESTAMPTZ / 外键索引 / 软删命名） | 1 人日 | 62 个存量迁移白名单豁免。**仍未做**——#264 的 `check-migration-fork.py` 只管链分叉，不管列约定 |
+| ~~2~~ | ~~抄 `check-branch-skew.sh` 防 alembic 链分叉~~ | — | ❌ **建议被推翻**（文件名交集抓不到）→ 改为 `check-migration-fork.py`，✅ 已落地 #264 |
+| ~~3~~ | ~~三条 grep 守卫（`tzinfo=None` / 遮蔽内建 / 裸 `HTTPException`）~~ | — | ✅ **已落地 #264**（`check-repo-rules.sh`，带 `--self-test`） |
 | 3.5 | **给每个话题分身独立 agent-user 身份** | 中 | 漏洞级。形态已在设备屏幕 agent 跑通，铺开即可；做完才能拆 `is_agent` 短路 |
 | 4 | `repositories` 跨域 import lint | 0.5 人日 + 还债 | 20 对双向依赖要还 |
 | **P0** | **活文档版本历史 + 乐观并发** | 一个迁移 + 约 50 行 | **数据丢失级**。工作流不变，顺带修「人盖人」。已发决策请求给 andy |
@@ -283,9 +337,25 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 | 7 | authz 策略表 | 3–5 人日 | 收敛两个宽松档；与 3.5 同属 authz 改造，宜连做 |
 | — | 其余（事件日志 / crate 切法 / Host 租户 / Nostr 密钥 / M1 公理 / 同室模型 / 多端发布 / canary / Renovate / Hermit / VISION 进仓） | **不做** | 理由见上 |
 
+### ✅ 已落地：CI 那一路全部合进 GitHub main（2026-08-11）
+
+交接给外部 agent 的那批（见 <&docs/topics/CI补洞-交接简报.md>）已执行完毕，三个 PR：
+
+| PR | 内容 |
+|---|---|
+| **#264** | `frontend.yml`：ESLint 零错误 + `vue-tsc` 走 **ratchet**（`tsc-baseline.json` 冻结 31 个存量错误、分布在 9 个文件，**只许降不许升**）。顺带修了 `AuditTask.vue` 一个真 bug（`catch` 少了绑定变量）。同 PR 还有 `check-repo-rules.sh` 与 `check-migration-fork.py`，都带 `--self-test`，接在 `repo-guards.yml` 上 |
+| **#265** | 补 `cli/` 的 Go 闸门（`gofmt`/`vet`/`build`/`test -race`，**此前 Go 代码零 CI**）；33 个 job 全部补 timeout 和最小权限；concurrency key 改成 **PR 按 ref、main 按 sha**——**这条正是「最近两次 accept 没能实际部署」的根因** |
+| **#266** | 17 个 action 全部钉到 40 位 commit SHA + 防回退守卫。理由硬：`build`/`build-tmux`/`deploy-dev` 跑在自建 runner，也就是 **dev 和生产机器本身** |
+
+三条值得单独记住的做法：
+
+1. **ratchet 而不是一刀切**：31 个存量错误冻进 baseline，只许降不许升。这正好是交接简报里担心的「别让新 job 一上来就是红的」的更好解——比 `continue-on-error` 强，因为它**真的会拦新增**。
+2. **`--self-test`**：守卫先证明自己会红，再去判树。
+3. **concurrency key 的 bug 是被这轮顺带抓到的**，不是这轮的目标——补闸门的副产品是发现了一个一直在偷偷吃掉部署的真 bug。
+
 ### 分工（2026-08-11 起）
 
-**外部 agent 负责**（见交接简报 <&docs/topics/CI补洞-交接简报.md>）：事项 0–3，即补前端 CI、迁移 lint 单测、`check-branch-skew.sh`、三条 grep 守卫，外加 `check.sh` 按路径分流、`CLAUDE.md` 不实断言。**动 `.github/workflows/` 和 <&.claude/scripts/check.sh> 的只有他一个。**
+**外部 agent 负责**：已完成，见上。**动 `.github/workflows/` 和 <&.claude/scripts/check.sh> 的只有他一个。**
 
 **本话题负责**，已拆四个子话题并行：
 
@@ -308,12 +378,28 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 | @架构与领域模型对比 | ✅ 已回流（详见 `docs/topics/对标buzz-架构与领域模型.md`）。**贡献了单点价值最高的迁移 lint** |
 | @Agent 一等公民机制对比 | ✅ 已回流（详见 <&docs/topics/对标buzz-agent机制.md>）。**挖出分身身份塌缩这个第二处漏洞** |
 | @质量闸门与 CI/CD 对比 | ✅ 已回流，结论已并入上方（详见 `docs/topics/对标buzz-质量闸门.md`）。**顺带挖出前端 CI 零检查这个真漏洞** |
-| @测试策略与可运行性对比 | 进行中（针对沙箱无 docker 的真痛点） |
-| @仓库自解释能力对比 | ✅ 已回流，结论已并入上方 |
+| @测试策略与可运行性对比 | ⏸ **卡住**：容器被重建 + AI 服务报错，`running=false`，无产出。**唯一还没给过任何结论的一路** |
+| @仓库自解释能力对比 | ✅ **已两次回流**。第二次**推翻了自己的第一版结论**，贡献了现在的第一优先级（见 -1 节） |
+
+### 后拆的五路 + 收口动作（2026-08-11）
+
+| 子话题 | 状态 | 收口动作 |
+|---|---|---|
+| @分身高风险动作的护栏调研 | ✅ 已回流（否定结论 + 挖出活文档 P0） | 无需再动 |
+| @agent 能力发现：补 jj 与 CLI 自描述 | ✅ 已回流，产出在自己工作区**待采纳** | 等验收 |
+| @分身独立身份与 authz 收敛 | 🔄 深度进行中（226 blocks），当前不在跑 | 已催：阶段一做完就递卡，没做完就说清卡在哪 |
+| @领域包解环与 import 守卫 | 🔄 深度进行中（302 blocks），当前不在跑 | 已催：守卫能单独成立就先递卡，还债还到哪算哪 |
+| @测试规则还债与 _auth 去重 | ⏸ 停在一条 `pyright` 命令中间 | 已催并告知基线已绿，不必重跑全量 |
+
+**收口原则（wangchangxin 定的）**：能递卡的递卡，递不出的说清楚卡在哪，**不要无限期 active**。九个子话题已全部按此发出定向催办，每条都带了当天的实测事实（`jj git fetch` 不可用 / 基线已绿 / `--self-test` 的做法），避免它们重新开题。
+
+> **催办本身撞出一条新证据**：父话题用自己的 scoped token 往子话题发评论，后端把作者记成了 **`anonymous`**。这是 @Agent 一等公民机制对比 说的「分身身份塌缩」的**活样本**——不是理论推演，是刚才在这条留言上直接观察到的。已同步给那一路写进结论。
 
 ## 衍生设计：并行话题冲突预警（待拍板，未开工）
 
 起因是 wangchangxin 反馈「conflict 现在经常遇到」。查 Buzz 怎么做的，答案是 **它没有登记表，它从 git 算**——`check-branch-skew.sh` 取「main 改过的文件」∩「本分支改过的文件」，非空就拦 push。
+
+> **注意**：这条「从 git 算而不是让人报」的**思路**成立，是本设计的地基；但它那个**具体脚本**只做文件名交集，抓不到语义冲突（alembic 分叉就是反例，已被 #264 的 `check-migration-fork.py` 证伪并取代）。设计文档里的 P2 从一开始就是按语义冲突写的，未受影响。
 
 完整设计、对「登记表」方案的四条保留意见、以及三条局限，见 <&docs/topics/并行话题冲突预警设计.md>。
 
