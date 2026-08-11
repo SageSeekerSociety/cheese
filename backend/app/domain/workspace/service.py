@@ -1522,13 +1522,27 @@ def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
 
 
 _SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
+# The `cheese` CLI as this backend build ships it — the ONLY source of truth.
+_CLI_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "cheese"
+# Where session_dir() stages it, relative to the session dir. Both container
+# backends mount THIS over /usr/local/bin/cheese, so the CLI a turn runs is
+# always the one its backend shipped, never whatever an image baked months ago.
+CLI_IN_SESSION = "bin/cheese"
+
+
+def cheese_cli_mount_source(session: Path) -> Path:
+    """Host path of the CLI copy staged in a topic's session dir (see
+    `session_dir`). Host-visible by construction — the session dir is already a
+    bind-mount source — which the in-image `/app/sandbox/cheese` is not."""
+    return session / CLI_IN_SESSION
 
 
 def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """Persistent per-topic ~/.claude (mounted into the ephemeral container) so
     the agent session / --resume survives across turns. Also seeds the `cheese`
     skill here (= ~/.claude/skills, the user source) — one mount holds both the
-    session and the skill, with no host settings leaking in."""
+    session and the skill, with no host settings leaking in — and stages the
+    `cheese` CLI at bin/cheese for the container to mount over its baked copy."""
     import os
     import shutil
 
@@ -1556,7 +1570,29 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
         _loosen(root, 0o777)
         for f in files:
             _loosen(os.path.join(root, f), 0o666)
+    # AFTER the loosen walk, which would strip the CLI's exec bit (0o666). Copied
+    # every time so a redeployed backend refreshes it on the next turn; a topic
+    # whose container is reused for weeks still gets the current CLI.
+    _stage_cheese_cli(d)
     return d
+
+
+def _stage_cheese_cli(session: Path) -> None:
+    """Refresh <session>/bin/cheese from this build's copy. Best-effort: a stale
+    CLI is bad, but failing a turn over it is worse — the container still has its
+    baked copy to fall back on."""
+    import shutil
+
+    if not _CLI_SRC.is_file():
+        return
+    dst = cheese_cli_mount_source(session)
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        _loosen(str(dst.parent), 0o777)
+        shutil.copyfile(_CLI_SRC, dst)
+        _loosen(str(dst), 0o777)
+    except OSError:
+        logger.warning("could not stage the cheese CLI at %s", dst, exc_info=True)
 
 
 def _loosen(path: str, mode: int) -> None:
