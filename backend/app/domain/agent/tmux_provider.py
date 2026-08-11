@@ -38,6 +38,7 @@ from app.domain.agent.hooks_substrate import (
     hooks_settings,
 )
 from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
+from app.domain.agent.service import CLAUDE_BASE_CMD
 from app.domain.agent.tmux_control import TmuxControlClient
 from app.domain.workspace import service as ws
 
@@ -390,7 +391,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         rc, _, _ = await _docker("exec", name, "tmux", "has-session", "-t", _SESSION)
         if rc == 0:
             return
-        claude_cmd = "claude --dangerously-skip-permissions"
+        claude_cmd = CLAUDE_BASE_CMD
         if (
             resume_session_id
             and session_dir

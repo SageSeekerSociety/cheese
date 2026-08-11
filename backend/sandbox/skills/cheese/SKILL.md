@@ -24,6 +24,7 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 - **绝不写 `/tmp`**。要落地的内容(文档草稿、代码、产物)一律写工作区里的相对路径,如 `Write ./doc.md` 然后 `cheese doc set ./doc.md`。`/tmp` 的文件用户在「文件」面板看不到。
 - **绝不 `curl`/直接访问后端 API,绝不去翻 `/home`、`/home/node/.claude`、session 文件、`.jj` 内部、系统目录**。你需要的平台数据**只用 `cheese` 命令**拿:成员 `cheese members`、当前活文档 `cheese doc get`。找不到东西时**不要满文件系统找**——停下来,用 `cheese` 或直接问用户。
 - **不确定某个 `cheese` 子命令就先 `cheese --help`**,不要瞎试 `cheese set-milestone`、`cheese doc --markdown` 这种不存在的写法。
+- **要用户拍板一律用 `cheese ask`,不要用原生的「向用户提问」(AskUserQuestion)**。那个工具的选项框画在容器的终端里,用户根本够不着,问了没人能答——平台已经禁用它,调了只会被拒。`cheese ask` 才会在对话里出真按钮,答案下一轮自动带回给你。
 - 一轮里反复探查、找不到就继续找,会把整轮拖到超时、现场刷出一堆没用的命令卡片。**先想清楚再动手,一步到位。**
 
 ## 点名某人 = 名字前加 @
