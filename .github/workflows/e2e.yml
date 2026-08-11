@@ -23,8 +23,16 @@ on:
 # e2e run for a superseded commit keeps running to completion instead of
 # being cancelled (measured: only ~1.7% of e2e runs were ever cancelled, vs
 # 15%/33% for test/build).
+#
+# Keyed by commit sha on main, same as build.yml and test.yml — a ref-only key
+# lets each merge cancel the previous commit's still-running suite, and a
+# cancelled run is not a red run, so main can carry code this workflow never
+# finished checking with nothing on the commit to say so. The scope job below
+# already skips main pushes whose tree passed on the PR, so anything reaching
+# the e2e job is a commit CI has not seen. Non-main refs (PR merge refs) keep
+# the ref-only key, so repeated pushes to one PR still supersede each other.
 concurrency:
-  group: ci-e2e-${{ github.ref }}
+  group: ci-e2e-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: true
 
 jobs:

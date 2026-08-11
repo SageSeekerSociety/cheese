@@ -1,0 +1,110 @@
+name: Frontend Test
+
+# Until this file existed, nothing in CI ever ran the frontend's own tests.
+# `frontend/src` holds 27 vitest files / 289 assertions — including the ones
+# added by #244, #246 and #249 — and the only frontend job in CI was build.yml
+# compiling the Docker image, which runs `vite build` (no type check, no
+# tests) and only on pushes to main. So a frontend PR could go green with its
+# own new tests failing, and did.
+#
+# Everything here runs GitHub-hosted, unlike test.yml/e2e.yml's heavy jobs.
+# That is deliberate: this job needs no service containers, no native amd64
+# Docker and nothing box-local, and the box's single self-hosted slot is also
+# the deploy target — parking a multi-minute frontend check on it would queue
+# ahead of deploys for no gain. test.yml already puts its `scope` and `lint`
+# jobs on hosted for the same reason.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+
+# No step here comments, pushes or reads another workflow's runs — checkout is
+# the only thing that wants the token at all. Without this block the run would
+# inherit the repository default, which can be read/write across every scope.
+permissions:
+  contents: read
+
+# Keyed by commit sha on main, the same way build.yml, test.yml and e2e.yml
+# are (build.yml carries the long version of this comment): every main push
+# shares the one ref, so a ref-only key lets each merge cancel the previous
+# commit's still-running check — and a cancelled run is not a red run, so main
+# quietly loses the coverage with nothing on the commit to show for it. Other
+# refs (PR merge refs) keep the ref-only key, so repeated pushes to a single
+# PR still supersede each other.
+concurrency:
+  group: ci-frontend-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Measured locally: install ~40s, eslint ~90s, vitest ~56s. The margin
+    # covers a cold pnpm store without letting a wedged run bill for an hour.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Nothing below pushes, and the lockfile has zero git: specifiers,
+          # so there is no reason to leave the token in .git/config while
+          # third-party postinstall scripts run.
+          persist-credentials: false
+
+      # Must precede setup-node: `cache: pnpm` shells out to pnpm to locate
+      # its store, so pnpm has to exist first. The version is pinned here
+      # rather than inferred from a `packageManager` field because the repo
+      # root has no package.json for the action to read — identical to the
+      # setup e2e.yml already uses.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          # Resolved from the workspace root — defaults.run.working-directory
+          # applies to `run:` steps only, never to an action's inputs.
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Deliberately NOT `pnpm run lint`: that script is `eslint . --fix`,
+      # which rewrites the checkout and can exit 0 on a violation it silently
+      # repaired. A gate has to be the read-only form. `task fe:lint:check`
+      # runs this exact command locally so the two cannot drift.
+      #
+      # No --max-warnings: the tree carries 288 warnings today (mostly
+      # no-explicit-any and unused vars) and only errors fail this step.
+      # Tightening that is a separate cleanup, not a prerequisite for having
+      # any lint gate at all.
+      - name: Lint
+        run: pnpm exec eslint .
+
+      - name: Unit tests
+        run: pnpm exec vitest run
+
+      # Two checks that belong here are deliberately absent, so that nobody
+      # reads a green tick as covering them:
+      #
+      #   * `vue-tsc --noEmit` — currently reports 31 pre-existing errors
+      #     across 9 files (TipTapViewer.vue alone accounts for 16,
+      #     ManageDomainGroups.vue for 6). Adding the step before those are
+      #     fixed would just make main permanently red on its first run. Fix
+      #     them, then add the step — `task fe:typecheck` runs it locally.
+      #   * `vite build` — build.yml already runs it via frontend/Dockerfile,
+      #     but only on pushes to main, so a build-only breakage still lands
+      #     before anything catches it. Worth adding here (~2 min); left out
+      #     only because it could not be executed to a verified pass while
+      #     writing this file.

@@ -23,9 +23,19 @@ defaults:
     working-directory: backend
 
 # A single self-hosted runner serves this repo, so superseded runs must not
-# queue behind each other (deploys share the same runner).
+# queue behind each other (deploys share the same runner). Keyed by commit sha
+# on main for exactly the reason build.yml already is (see the long comment
+# there): every main push shares the one ref, so a ref-only group let each
+# merge cancel the previous commit's still-running suite. That is worse here
+# than it is for a build, because a cancelled run is not a red run — main can
+# end up carrying code this workflow never finished checking with nothing on
+# the commit to say so. It is also precisely the wrong run to cancel: the
+# scope job below already skips main pushes whose tree passed on the PR, so
+# anything that reaches these jobs is a commit CI has NOT seen. Non-main refs
+# (PR merge refs) keep the ref-only key, so repeated pushes to one PR still
+# supersede each other the way they always did.
 concurrency:
-  group: ci-test-${{ github.ref }}
+  group: ci-test-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: true
 
 jobs:
