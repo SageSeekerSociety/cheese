@@ -45,10 +45,13 @@ jobs:
   # only; a manual dispatch trusts the operator's ref) and then a human approval.
   gate:
     runs-on: ubuntu-latest
+    # Deliberately unbounded (GitHub's 360m default): this job blocks on a
+    # human approving via manual-approval. A tight timeout here would not
+    # catch a hang, it would cancel a deploy waiting on its approver.
     steps:
       - name: Wait for Docker image build
         if: github.event_name == 'release'
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
         with:
           ref: ${{ github.event.release.tag_name }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -57,7 +60,7 @@ jobs:
 
       - name: Wait for backend tests
         if: github.event_name == 'release'
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
         with:
           ref: ${{ github.event.release.tag_name }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -69,7 +72,7 @@ jobs:
       # "deploy only checks build success" was accurate for prod too.
       - name: Wait for e2e tests
         if: github.event_name == 'release'
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
         with:
           ref: ${{ github.event.release.tag_name }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -81,7 +84,7 @@ jobs:
       # issue — the same mechanism the etrip deploy uses. Skipped for dry-run.
       - name: Require manual approval
         if: ${{ !inputs.dry_run }}
-        uses: trstringer/manual-approval@v1.13.1
+        uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
         with:
           secret: ${{ github.token }}
           approvers: andylizf
@@ -99,7 +102,7 @@ jobs:
       # branch — release branches/tags don't carry it (checking out the release
       # ref made the job fail with "deploy/deploy-docker.sh: No such file").
       - name: Check out deploy tooling (default branch)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # The deployed REF only determines WHICH image sha to run. Fetch it and
       # peel to the commit (annotated tags point at a tag object, not the commit).

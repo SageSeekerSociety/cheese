@@ -470,7 +470,7 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func (c *cappedBuffer) String() string { return c.buf.String() }
-func (c *cappedBuffer) Len() int        { return c.buf.Len() }
+func (c *cappedBuffer) Len() int       { return c.buf.Len() }
 
 // busAdapter maps one screen's runtime.Bus onto sid-tagged link messages.
 type busAdapter struct {

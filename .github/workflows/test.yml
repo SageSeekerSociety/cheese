@@ -18,26 +18,34 @@ on:
       - 'backend/**'
       - '.github/workflows/test.yml'
 
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: backend
 
 # Superseded runs must not occupy the finite self-hosted capacity (three
 # cheese-ci slots, one per pool machine), so they are cancelled rather than
-# left to queue ahead of the commit that replaced them. Keyed by commit sha
-# on main for exactly the reason build.yml already is (see the long comment
-# there): every main push shares the one ref, so a ref-only group let each
-# merge cancel the previous commit's still-running suite. That is worse here
-# than it is for a build, because a cancelled run is not a red run — main can
-# end up carrying code this workflow never finished checking with nothing on
-# the commit to say so. It is also precisely the wrong run to cancel: the
-# scope job below already skips main pushes whose tree passed on the PR, so
-# anything that reaches these jobs is a commit CI has NOT seen. Non-main refs
-# (PR merge refs) keep the ref-only key, so repeated pushes to one PR still
-# supersede each other the way they always did.
+# left to queue ahead of the commit that replaced them.
+#
+# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
+# each merge in its own group, for exactly the reason build.yml already is (see
+# the long comment there): every main push shares the one ref, so a ref-only
+# key let a second merge cancel the previous commit's still-running suite and
+# left main with no result for that commit. That is worse here than it is for a
+# build, because a cancelled run is not a red run — main can end up carrying
+# code this workflow never finished checking with nothing on the commit to say
+# so. It is also precisely the wrong run to cancel: the scope job below already
+# skips main pushes whose tree passed on the PR, so anything that reaches these
+# jobs is a commit CI has NOT seen. PR refs keep the ref key, so repeated pushes
+# to one PR still supersede each other the way they always did.
 concurrency:
-  group: ci-test-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
-  cancel-in-progress: true
+  group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # A squash merge produces a new main commit whose tree was already checked on
@@ -133,7 +141,7 @@ jobs:
     # multiple runner processes against one disk, and provision.sh registers
     # exactly one slot per machine; flagging it rather than assuming it away.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/migration-heads" >> "$GITHUB_ENV"
@@ -144,7 +152,7 @@ jobs:
         run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/migration-heads" >> "$GITHUB_ENV"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
 
@@ -178,10 +186,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
           enable-cache: true
@@ -238,7 +246,7 @@ jobs:
           - 6379:6379
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
@@ -251,7 +259,7 @@ jobs:
         run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/test" >> "$GITHUB_ENV"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
 

@@ -17,6 +17,12 @@ on:
 
 # A new heartbeat replaces a stuck one (box down → queued job) so dead
 # heartbeats don't pile up in the queue.
+# Least privilege: none of these jobs write anything back to GitHub, so the
+# token they run with should not be able to. Jobs that DO need more (the
+# `scope` gh-api jobs) declare it at job level, which overrides this.
+permissions:
+  contents: read
+
 concurrency:
   group: box-heartbeat
   cancel-in-progress: true
