@@ -108,7 +108,52 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   machines = ask Lg for capacity.
 - One runner slot per machine is deliberate: the workflows bind host ports
   5432/6379 for service containers, so two heavy jobs on one machine would
-  collide (`port is already allocated`).
+  collide (`port is already allocated`). Lifting this (常驻 PG/Valkey + drop the
+  host port bindings) would double the pool to 6 slots on the same three
+  machines — the open follow-up from the CI plan's P2.
+- Liveness (alerting): `box-heartbeat.yml`'s `ci-pool` job proves **at least
+  one** of the three is alive; `box-uptime.yml` alerts when it stays queued. It
+  cannot see a partial outage, because `provision.sh` gives every machine the
+  same single `cheese-ci` label. **Open ops step**: re-register each runner with
+  `--labels cheese-ci,<name>` (`config.sh --replace`), then fan the heartbeat
+  out to a matrix over the per-machine labels. Until that lands, a single dead
+  pool machine shows up only as slower CI.
+- Liveness (on demand): `box-diag.yml`'s `ci-pool` job **does** cover all three
+  today — three concurrent jobs on the one shared label cannot land on the same
+  machine, since each VM has a single slot. It prints hostname, disk, and
+  dangling-volume count per machine; a job left **Queued** means the pool is
+  short a machine. This trick is fine for a manual probe (it saturates the pool
+  for ~20s) but not for the hourly heartbeat, which would then false-alarm
+  whenever a merge burst holds the slots — hence the ops step above.
+
+## Disk — what actually fills a box, and what may be deleted
+
+Two mechanisms, deliberately different in kind:
+
+- **`deploy/cheesex-disk-pressure-guard.sh`** (systemd timer, app box) is an
+  *emergency brake*: at 85% it removes sandbox containers, and only after
+  confirming no turn is active. It never touches build caches, and it is **not
+  installed on the dev/agent boxes** — so on those boxes nothing was watching
+  the things that actually fill them.
+- **`deploy/dev-box-disk-cleanup.sh`** is the *routine* reclaim for any box.
+  Reports by default; `--apply` deletes; `--self-test` checks its own arithmetic.
+
+What filled `cheese-dev-env6-app` (measured 2026-08-11 at **92%**, 2.6G free):
+docker build cache 3.0G (71 entries, none in use) · apt archives 1.7G · Go build
+cache 1.3G · superseded vscode-server builds + VSIX cache 2.0G · rust toolchain
+downloads 665M. Reclaiming exactly those took it to **65%** (~8.5G back).
+
+The rule the script encodes: **only delete what a command can rebuild.** A
+slower next build is an acceptable price; someone else's data is not. Dev boxes
+are shared — env6 also hosts unrelated projects' containers — so the script
+never touches images or volumes a running container uses, never touches
+`~/.cache/ms-playwright` (e2e browser binaries, not refetched on demand), and
+never touches anything under a project directory. `docker system prune -a` is
+the wrong tool here for exactly that reason: it would delete a co-tenant's
+stopped work.
+
+To see disk across the CI pool without ssh, run `box-diag.yml`'s `ci-pool` job —
+it prints hostname and disk per machine.
 
 ## Box ops runbook — changing backend env on a box
 
@@ -162,9 +207,12 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
-  if last backup > 26h), `box-uptime.yml` (hourly, fails if a box's runner goes
-  offline), `backup-restore-test.yml` (weekly, restores the newest dump into a
-  throwaway postgres and fails if it doesn't come back).
+  if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
+  the last **two** heartbeats both failed to complete — dev box, prod box, or
+  the cheese-ci pool; one queued heartbeat is ordinary contention, not an
+  outage, so it does not alert),
+  `backup-restore-test.yml` (weekly, restores the newest dump into a throwaway
+  postgres and fails if it doesn't come back).
 
 The backup scripts are version-controlled, but **installing them on a box**
 (copying to `~/ops/`, systemd timers, the R2 credential in `~/ops/r2.env`) is a
@@ -176,6 +224,65 @@ manual runbook, not automated provisioning — see `deploy/README-backup.md`.
   into ghg. Credentials are not in this repo.
 - **etrip**: SSH target (`ssh etrip`); GitHub Actions reaches it over Tailscale.
 - Self-hosted runners pull outbound, so no public inbound is needed on the boxes.
+
+## The backend runs as uid 1000 — and must keep doing so
+
+The backend process and the agent inside a sandbox container share one jj store:
+`ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.jj`/`.git` into every
+sandbox container, read-write. jj writes its store objects — `.jj/repo/config-id`
+above all — with a **hardcoded 0600**, so if the two sides run as different uids,
+whichever writes first locks the other out of every jj command
+(`Failed to determine the secure config for a repo … Permission denied`). That is
+not a theoretical risk: both directions have hit production — the file panel
+422ing for every topic in a project, and jj being unusable inside sandboxes.
+
+umask, a shared group, and default ACLs are all powerless against a mode the
+writer sets explicitly. The only fix is that both sides ARE the same uid:
+
+- sandbox: `node:22` + `USER node` = **1000**, started with `--user node`;
+  `backend/sandbox/Dockerfile` asserts the uid at build time.
+- backend: `backend/Dockerfile` creates its user with uid/gid **1000** to match.
+- single source of truth: `app.domain.workspace.service.AGENT_UID`, pinned
+  against both Dockerfiles by `tests/unit/test_workspace_uid_alignment.py`.
+
+**Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
+`UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
+where jj keeps the per-repo secure config that `config-id` points at) hold files
+written by the pre-2026-08 backend as uid 1001. `deploy/deploy-docker.sh` hands
+them over once via `deploy/fix-workspace-ownership.sh` before the swap —
+idempotent, marker-guarded, and it runs the chown in a throwaway root container
+(no sudo on the box). If a backend ever boots onto an unmigrated path it logs
+`workspace_ownership` at ERROR naming the offending file; the fix is to run that
+script and restart.
+
+**The handover is the deploy's point of no return, so it runs last.** Every other
+fallible step — image pulls, the runtime-image smoke test, `alembic upgrade head`
+— aborts leaving the box exactly as it was; this one does not. It sits
+immediately before `dc up` with nothing between them that can fail. It was third
+of five until 2026-08-11, when the step after it aborted the deploy and left dev
+holding a 1001 backend on a 1000 tree: `git` refused the workspaces as
+`dubious ownership` and every project 422'd until the next deploy (run
+31466502982). For the same reason a health-check rollback hands the mounts
+*back* to `PREVIOUS_AGENT_UID` (1001) before starting the old image — but only
+when that run actually moved them, which the script reports to the caller.
+Rolling images back without rolling ownership back is not a rollback.
+
+`GIT_CREDENTIALS_FILE` **is** handed over with everything else, mode untouched
+(600 before, 600 after). It is operator-owned and outside git, but it is mounted
+read-only into the backend at a fixed path, so its owner has to *be* the
+backend's uid — it was 1001 only because the backend was. An earlier version of
+this script deliberately refused to move it and only checked readability; that
+protected nothing and stopped the deploy on a step whose only remedy was a sudo
+nobody in the deploy path has. The readability check survives and still fails the
+deploy loudly with the exact `chown` to run, but it now runs *after* the
+handover, so it only fires on something a chown cannot fix. The default
+`/dev/null` (feature off) is a device node and is skipped, never chowned.
+
+These scripts are exercised by `deploy/tests/` against a fake docker, gated in CI
+by `.github/workflows/deploy-scripts-test.yml` (hosted, ~1m — it must not queue
+behind the box's single runner). Before 2026-08-11 that harness existed but no
+workflow ran it, which is how an untested ordering change reached the box with
+six green checks.
 
 ## Gotchas — things that look renameable but are NOT
 
@@ -192,6 +299,17 @@ keep the old name **on purpose** because changing them breaks or loses data:
 
 ## Known gaps / follow-ups
 
+- **The dev box has one runner slot serving 11 workflows.** Since the heavy jobs
+  moved to the cheese-ci pool this is the binding constraint on CI: measured over
+  2026-08-10..11, `test.yml` finishes in 4.5m median / 5.1m p75 and `e2e.yml` in
+  3.4m / 4.4m, while `build.yml` — whose three build jobs are still on
+  `cheese-dev` — takes 9.9m median / 17.2m p75 / 20.7m p90, with `build-backend`
+  queueing 14.1m at p75 and `build-frontend` 10.3m at the median. The box is not
+  busy (15% utilisation over 19h, and 0 overlapping jobs, confirming the single
+  slot) — it is serialised. It is also what every box-monitoring false alarm has
+  been about, and a wedged job here held the slot for 8h on 2026-08-07. Adding a
+  second labelled slot on the box is the cheapest fix; see
+  `docs/topics/CI提速B-plan-job-挪-hosted.md`.
 - **PITR** (second-level RPO) needs OS access to the PG hosts — blocked.
 - **Off-site immutability**: R2 has no object-lock/versioning, and the box's
   token can delete objects, so a compromised box could wipe the off-site copies.

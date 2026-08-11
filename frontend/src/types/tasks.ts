@@ -170,13 +170,19 @@ export type TaskFormSubmitData = {
   editable: boolean
   intro: string
   description: string
-  categoryId: number
+  // Optional, matching both what TaskForm.vue actually emits and what
+  // PostTaskRequestData accepts: categoryId falls back to undefined, and the
+  // team sizes are only set for submitterType === 'TEAM'. They were declared
+  // required, but nothing ever caught it — TaskForm builds this object by
+  // spreading vee-validate's untyped `values`, which collapses the whole
+  // literal to `any` and switches off checking for every field below.
+  categoryId?: number
   requireRealName: boolean
-  minTeamSize: number
-  maxTeamSize: number
+  minTeamSize?: number
+  maxTeamSize?: number
   participantLimit?: number
   teamLockingPolicy?: TaskTeamMembershipLockPolicy
   accessControlEnabled?: boolean
   accessDomainGroupIds?: number[]
-  videoUrl?: string
+  videoUrl?: string | null
 }

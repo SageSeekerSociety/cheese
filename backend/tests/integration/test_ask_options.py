@@ -1,5 +1,9 @@
 """cheese ask: option questions in the chat, one-click structured answers."""
 
+import uuid
+
+from app.domain.identity.handles import topic_agent_handle
+
 
 def _topic(client) -> str:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
@@ -21,7 +25,8 @@ def _ask(client, tid: str) -> dict:
 def test_ask_creates_option_message(client):
     tid = _topic(client)
     blk = _ask(client, tid)
-    assert blk["author"] == "cheese"
+    # Authored by THIS topic's 分身, not the shared platform ``cheese`` account.
+    assert blk["author"] == topic_agent_handle(uuid.UUID(tid))
     assert blk["kind"] == "message"
     assert blk["meta"]["options"] == ["cursor", "pageStart"]
     # It shows in the timeline like any message.

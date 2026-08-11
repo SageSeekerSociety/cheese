@@ -12,6 +12,14 @@ from dataclasses import dataclass
 
 STORAGE_EXHAUSTED_CODE = "storage_exhausted"
 RUNTIME_IMAGE_MISSING_CODE = "runtime_image_missing"
+WORKSPACE_VCS_PERMS_CODE = "workspace_vcs_perms"
+# jj's own wording, plus the backend's translation of it (workspace/service.py).
+# Either one reaching here means a metadata file in the store is owned by another
+# uid — a chmod-shaped problem that used to render as "AI 服务返回错误".
+_VCS_PERMS_MARKERS = (
+    "failed to determine the secure config",
+    "工作区版本库权限异常",
+)
 _STORAGE_PATTERNS = (
     re.compile(r"\bno space left on device\b", re.IGNORECASE),
     re.compile(r"\benospc\b", re.IGNORECASE),
@@ -71,6 +79,39 @@ RUNTIME_IMAGE_MISSING = PlatformFailure(
 )
 
 
+WORKSPACE_VCS_PERMS = PlatformFailure(
+    code=WORKSPACE_VCS_PERMS_CODE,
+    title="工作区版本库权限异常",
+    content=(
+        "这轮没能开始：工作区版本库里有一个元数据文件的属主不是平台进程，"
+        "平台读不到它，话题就起不来。项目文件和已提交的改动都没有受影响，"
+        "版本历史也没有动过。平台会在下一次访问时自动清掉这个文件并恢复，"
+        "请稍后再 @芝士 重试；若反复出现，请把这条提示转给管理员。"
+    ),
+    retryable=True,
+)
+
+
+def _text_is_workspace_vcs_perms(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _VCS_PERMS_MARKERS)
+
+
+def is_workspace_vcs_perms(value: BaseException | str) -> bool:
+    """Identify the cross-uid jj metadata failure without leaking a traceback."""
+    if isinstance(value, str):
+        return _text_is_workspace_vcs_perms(value)
+
+    seen: set[int] = set()
+    current: BaseException | None = value
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if _text_is_workspace_vcs_perms(str(current)):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _text_is_storage_exhausted(text: str) -> bool:
     return any(pattern.search(text) for pattern in _STORAGE_PATTERNS)
 
@@ -121,4 +162,6 @@ def classify_platform_failure(
         return STORAGE_EXHAUSTED
     if is_runtime_image_missing(value):
         return RUNTIME_IMAGE_MISSING
+    if is_workspace_vcs_perms(value):
+        return WORKSPACE_VCS_PERMS
     return None

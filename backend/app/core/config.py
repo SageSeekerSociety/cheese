@@ -138,12 +138,13 @@ class Settings(BaseSettings):
     # Image the tmux backend uses (base image + tmux + ttyd + pre-accepted
     # first-launch gates). Independent of sandbox_image (the SDK path's image).
     tmux_sandbox_image: str = "cheesex-agent-tmux:latest"
-    # When the backend itself runs in a container, the sandbox it spawns is a
-    # SIBLING, so any -v source must be a path the HOST daemon can see. The
-    # `cheese` CLI is baked into the sandbox image; set this to a HOST directory
-    # holding a fresher `cheese` to override it, or leave empty to use the baked
-    # copy. (The in-image /app/sandbox path is not host-visible and aborts the
-    # container if mounted.)
+    # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
+    # to mount over the image's baked copy — but nothing kept that checkout in
+    # sync with the backend, so boxes served agents a months-old CLI. The CLI is
+    # now staged per-topic from the backend's own copy (ws.session_dir →
+    # bin/cheese), which is host-visible and fresh by construction. Kept only so
+    # a box that still sets it gets the loud startup warning in main.lifespan
+    # instead of silence; delete once no deployment sets it.
     sandbox_shim_host_dir: str = ""
 
     # --- Subscription compute through the metering proxy ---
@@ -381,6 +382,11 @@ class Settings(BaseSettings):
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
     accept_pr_poll_interval_s: int = 60
+    # 自动同步上游: how often to pull the upstream's default branch into each
+    # linked project's base. Falling behind is what makes accepts unable to push
+    # (see SchedulerService.sync_upstreams), so this only has to run often
+    # enough that the gap stays small — not on every commit. 0 disables it.
+    upstream_sync_interval_s: int = 1800
     # Workflow file (under .github/workflows/) that deploys after a merge to
     # the base branch — must reach completed+success before a pr_open card's
     # topic is finally archived (2026-08-09 拍板: merge alone is not enough).

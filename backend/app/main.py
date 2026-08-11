@@ -55,6 +55,7 @@ async def lifespan(_: FastAPI):
         SandboxReaperRunner,
         SchedulerRunner,
         SchedulerService,
+        UpstreamSyncRunner,
     )
 
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
@@ -70,6 +71,34 @@ async def lifespan(_: FastAPI):
     except Exception as exc:  # noqa: BLE001 — a missing table (pre-migration) must not crash boot
         get_logger("cheesex.runtime").warning(
             "agent-user seed skipped", reason=str(exc)[:120]
+        )
+
+    # The backend and the in-container agent share one jj store and must run as
+    # the same uid (ws.AGENT_UID). When they don't, nothing here fails — the file
+    # panel just 422s for every topic in the project. Say it out loud at boot.
+    try:
+        from app.domain.workspace import service as _ws
+
+        for problem in _ws.audit_workspace_ownership():
+            get_logger("cheesex.runtime").error(
+                "workspace_ownership", problem=problem, uid=_ws.AGENT_UID
+            )
+    except Exception:  # noqa: BLE001 — a diagnostic must never block boot
+        get_logger("cheesex.runtime").exception("workspace ownership audit failed")
+
+    # The `cheese` CLI is now staged into each topic's session dir from THIS
+    # build (ws.session_dir) instead of an operator-maintained host checkout. A
+    # box still setting the retired var is the exact configuration that served a
+    # months-old CLI to every agent, so say so instead of ignoring it silently.
+    if settings.sandbox_shim_host_dir.strip():
+        get_logger("cheesex.runtime").warning(
+            "sandbox_shim_host_dir_retired",
+            value=settings.sandbox_shim_host_dir.strip(),
+            detail=(
+                "SANDBOX_SHIM_HOST_DIR is no longer used to mount the cheese CLI "
+                "(it is staged per-topic from this backend build). Remove it from "
+                "the box .env — a checkout there is no longer kept in sync."
+            ),
         )
 
     try:
@@ -93,6 +122,11 @@ async def lifespan(_: FastAPI):
     # the reaper above.
     pr_poller = PrPollRunner(scheduler, settings.accept_pr_poll_interval_s)
     pr_poller.start()
+    # 自动同步上游: keeps each linked project's base current so accepting can
+    # actually push. Conflicts hand off to 芝士 the same way the manual button
+    # does, and an open resolution task is reused rather than duplicated.
+    upstream_sync = UpstreamSyncRunner(scheduler, settings.upstream_sync_interval_s)
+    upstream_sync.start()
 
     # Enrolling provisioned machines is platform plumbing, so it runs on its own
     # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
@@ -118,6 +152,7 @@ async def lifespan(_: FastAPI):
     finally:
         await usage_ingest.stop()
         await machines.stop()
+        await upstream_sync.stop()
         await pr_poller.stop()
         await reaper.stop()
         await runner.stop()

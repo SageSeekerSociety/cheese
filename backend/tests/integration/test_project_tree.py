@@ -3,16 +3,10 @@
 import asyncio
 import uuid
 
-from app.core.tokens import mint_session_token
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import seed_space
 from tests.conftest import wait_turns_idle as _wait_turns_idle
-
-
-def _auth(handle: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
-    }
+from tests.integration.conftest import session_auth_headers
 
 
 def _project(client, **kw) -> dict:
@@ -202,7 +196,7 @@ def test_archived_topic_is_frozen(client):
     client.post(
         f"/api/accept-cards/{card['id']}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
     got = client.get(f"/api/topics/{topic['id']}").json()["data"]
     assert got["status"] == "archived"
@@ -231,7 +225,7 @@ def test_upgrade_on_archived_topic_rejected(client):
     client.post(
         f"/api/accept-cards/{card['id']}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
     r = client.post(f"/api/blocks/{block_id}/upgrade", json={"created_by": "alice"})
     assert r.status_code == 422

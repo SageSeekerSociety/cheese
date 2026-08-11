@@ -20,13 +20,13 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import SortOrder, TopicRepository, TopicSortField
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
 
-CHEESE_AUTHOR = "cheese"
 # Titles are AI-generated (the agent names a topic via `cheese title`), never
 # deterministically derived from text — see CLAUDE.md. An upgraded block starts
 # untitled and 芝士 names it on its first turn (same as a + new topic).
@@ -123,9 +123,48 @@ class TopicService:
             created_by=created_by,
         )
         # 群聊房间的地基 (fusion-design §3): seed the roster — creator = owner,
-        # 芝士 joins as a member.
-        await self._members.seed(topic.id, owner_handle=created_by)
+        # 芝士 joins as a member. `created_by` alone is not enough: 芝士 itself
+        # creating a topic, or a caller whose token didn't resolve (anonymous
+        # Phase-0), would leave the room OWNERLESS — seed() deliberately skips
+        # "cheese"/None as owner — and then nobody can manage its roster, and
+        # every sub-topic split beneath it inherits the same emptiness
+        # (split_to_subtopic falls back to the PARENT's owner). Same fallback
+        # ladder as split_to_subtopic, one level wider.
+        await self._members.seed(
+            topic.id,
+            owner_handle=await self._resolve_owner(
+                created_by, parent_id=parent_id, project_owner=project.owner_handle
+            ),
+        )
         return topic
+
+    async def _resolve_owner(
+        self,
+        created_by: str | None,
+        *,
+        parent_id: uuid.UUID | None,
+        project_owner: str | None,
+    ) -> str | None:
+        """Who owns a newborn topic: the real human who created it, else the
+        parent room's owner, else the project's owner. Returns None only when
+        the whole chain is ownerless (a legacy project) — the caller still
+        seeds 芝士, and the room stays manageable by any project member.
+
+        "Is the creator 芝士" spans the whole agent handle namespace, not the bare
+        ``cheese`` string: each 分身 creates under its own ``cheese-<topic hex>``
+        handle, and a string match would make the 分身 the room's owner — the one
+        thing this chain exists to prevent (same rule as split_to_subtopic)."""
+        if created_by and not looks_like_agent_handle(created_by):
+            return created_by
+        if parent_id is not None:
+            parent_members, _ = await self._members.list_for_topic(parent_id)
+            parent_owner = next(
+                (m.member_handle for m in parent_members if m.role == TopicRole.owner),
+                None,
+            )
+            if parent_owner:
+                return parent_owner
+        return project_owner
 
     async def get_or_create_private(
         self,
@@ -209,6 +248,18 @@ class TopicService:
     ) -> None:
         topic.status = TopicStatus.archived
         topic.archived_at = datetime.now(UTC)
+        # 孤儿卡修复 (2026-08-10): 归档必须同时终结这个话题上还没决议的验收卡。
+        # 一张 `pr_open` 的卡不是"停着"——轮询器每 60 秒还在用当初批准人的
+        # GitHub token 推进它。去向与理由见 review/archive.py 的模块 docstring。
+        from app.domain.review.archive import close_cards_for_archived_topic
+
+        await close_cards_for_archived_topic(
+            self._session,
+            topic_id=topic.id,
+            project_id=topic.project_id,
+            topic_title=topic.title,
+            by=by,
+        )
         note = (
             f"📦 随父话题「{cascaded_from}」一同归档"
             if cascaded_from
@@ -363,13 +414,23 @@ class TopicService:
             None,
         )
         # A split requested BY a real human keeps them as the child's owner. But
-        # when the splitter is 芝士 itself (创建者="cheese", e.g. an autonomous
-        # 分身发起的拆分) or no human is identified at all, `created_by` alone
-        # would leave the child ownerless (seed() intentionally skips "cheese"
-        # as owner) — nobody could then manage its roster. Default to the
-        # parent's real human owner instead, so every sub-topic keeps one.
+        # when the splitter is 芝士 itself (e.g. an autonomous 分身发起的拆分) or no
+        # human is identified at all, `created_by` alone would leave the child
+        # ownerless (seed() intentionally skips 芝士 as owner) — nobody could then
+        # manage its roster. Two independent gaps, both closed here:
+        #
+        # 1. WHO counts as 芝士: the check spans the whole 芝士 handle namespace,
+        #    because 分身 split under their OWN handle (``cheese-<topic hex>``) and
+        #    matching the bare ``cheese`` string would hand them the very
+        #    ownership this branch exists to withhold.
+        # 2. WHERE the fallback lands: the parent's real human owner, and when the
+        #    parent is itself ownerless (a room born before this fallback existed),
+        #    the project's owner — so the emptiness stops cascading down the tree.
+        project = await self._projects.get(parent.project_id)
         owner_handle = (
-            created_by if created_by and created_by != CHEESE_AUTHOR else parent_owner
+            created_by
+            if created_by and not looks_like_agent_handle(created_by)
+            else parent_owner or (project.owner_handle if project else None)
         )
         await self._members.seed_split(
             new_topic.id,
@@ -462,9 +523,11 @@ class TopicService:
         # Append-only conversation event (spec H1): the doc edit is visible.
         # A human actor is emitted as the structured <@handle> token so the
         # client renders it as a clickable mention chip (resolving handle→name
-        # via the roster) — NOT prose we later pattern-match. 芝士 isn't a roster
-        # member, so it stays as plain product copy.
-        actor = "芝士" if author == "cheese" else f"<@{author}>"
+        # via the roster) — NOT prose we later pattern-match. 芝士 stays plain
+        # product copy: every topic's 分身 authors under its own
+        # ``cheese-<topic hex>`` handle, and a raw handle is not what a reader
+        # should see — one familiar name, whichever 分身 wrote it.
+        actor = "芝士" if looks_like_agent_handle(author) else f"<@{author}>"
         await self._blocks.add(
             project_id=topic.project_id,
             topic_id=topic_id,
@@ -535,10 +598,13 @@ class TopicService:
         parent = await self._repo.get(sub.parent_id)
 
         # 1) Conversation: a message in the parent referencing the sub-topic.
+        # Authored by the PARENT room's 芝士 — the conclusion lands in that room,
+        # and a message from someone who is not in it reads as a ghost.
+        parent_agent = await self._members.resolve_agent_handle(sub.parent_id)
         block = await self._blocks.add(
             project_id=sub.project_id,
             topic_id=sub.parent_id,
-            author=CHEESE_AUTHOR,
+            author=parent_agent,
             author_type=AuthorType.ai,
             content=f"【子话题结论｜{sub.title}】\n{conclusion}",
             kind=BlockKind.message,
@@ -552,7 +618,7 @@ class TopicService:
             existing = root.content.strip() if root and root.content else ""
             new_content = f"{existing}\n\n{section}" if existing else section
             await self.edit_doc(
-                topic_id=sub.parent_id, content=new_content, author=CHEESE_AUTHOR
+                topic_id=sub.parent_id, content=new_content, author=parent_agent
             )
 
         # 3) Notify 本体 (the coordinator) that the 分身 finished.

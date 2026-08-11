@@ -88,6 +88,62 @@ class SchedulerService:
                 reaped += 1
         return reaped
 
+    async def sync_upstreams(self) -> dict:
+        """Keep every linked project's base current with its upstream, unattended.
+
+        同步上游 has only ever been a button someone presses. Nobody presses it,
+        the platform's base falls behind the upstream's default branch, and then
+        accepting stops being able to push: GitHub rejects any branch whose
+        `.github/workflows/` differs from the default branch unless the
+        credential carries `workflows` (see `push_topic_branch_for_github_pr`,
+        whose comment reads "Nearly every card hit this"). The card then
+        degrades to a local merge and the work never leaves the platform.
+
+        Measured on 2026-08-11: three accepts in a row degraded that way; one
+        manual 同步上游 later, the next four opened PRs normally. Falling behind
+        is the whole cause, and staying current is something a loop can do — so
+        this is that loop.
+
+        Conflicts hand off exactly as the manual button does. `dispatch()`
+        reuses an already-open resolution task, so repeating this on an interval
+        cannot pile up duplicates, and a project with no owner is skipped rather
+        than dispatched into nowhere."""
+        from app.api.deps import get_turn_runner
+        from app.domain.workspace import upstream_conflict
+
+        runner = get_turn_runner()
+        synced = 0
+        dispatched = 0
+        errors: list[str] = []
+        async with self._sessions() as session:
+            projects = await ProjectRepository(session).list_all()
+        for project in projects:
+            try:
+                if await asyncio.to_thread(ws.get_upstream, project.id) is None:
+                    continue  # no upstream linked — nothing to keep current
+                result = await asyncio.to_thread(ws.sync_upstream, project.id)
+            except Exception as exc:  # noqa: BLE001 — one project must not stop the rest
+                errors.append(f"{project.id}: {exc}")
+                logger.exception("upstream sync failed for project %s", project.id)
+                continue
+            if result.get("synced") or not result.get("conflicts"):
+                synced += 1
+                continue
+            if not project.owner_handle:
+                continue  # nobody to hand the conflict to
+            async with self._sessions() as session:
+                handoff = await upstream_conflict.dispatch(
+                    session,
+                    project.id,
+                    requested_by=project.owner_handle,
+                    chat=self._chat,
+                    runner=runner,
+                )
+                await session.commit()
+            if handoff is not None:
+                dispatched += 1
+        return {"synced": synced, "dispatched": dispatched, "errors": errors}
+
     async def poll_open_prs(self) -> dict:
         """两阶段采纳 (PR迭代式, 2026-08-09): advance every pr_open accept card
         one step — see AcceptService.advance_pr_card for the actual state
@@ -95,7 +151,6 @@ class SchedulerService:
         One DB transaction per card so one card's failure can't roll back
         another's progress."""
         from app.api.deps import get_turn_runner
-        from app.domain.review.models import AcceptStatus
         from app.domain.review.repositories import AcceptCardRepository
         from app.domain.review.services import AcceptService
 
@@ -103,9 +158,10 @@ class SchedulerService:
         checked = 0
         errors: list[str] = []
         async with self._sessions() as session:
-            cards = await AcceptCardRepository(session).list_by_status(
-                AcceptStatus.pr_open
-            )
+            # 孤儿卡修复 (2026-08-10): cards on ARCHIVED topics are deliberately
+            # NOT in this list — driving them means using the approver's GitHub
+            # token on work nobody tracks any more.
+            cards = await AcceptCardRepository(session).list_pr_open_on_active_topics()
             card_ids = [c.id for c in cards]
         for card_id in card_ids:
             async with self._sessions() as session:
@@ -224,3 +280,36 @@ class PrPollRunner:
                     logger.info("pr poll: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("pr poll failed")
+
+
+class UpstreamSyncRunner:
+    """Drives SchedulerService.sync_upstreams() on its own interval — same shape
+    as PrPollRunner. Separate from the AI heartbeat on purpose: staying current
+    with upstream is deterministic plumbing, not a judgment call."""
+
+    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
+        self._scheduler = scheduler
+        self._interval = interval_seconds
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._loop())
+            logger.info("upstream sync runner started (every %ss)", self._interval)
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                result = await self._scheduler.sync_upstreams()
+                if result["synced"] or result["dispatched"] or result["errors"]:
+                    logger.info("upstream sync: %s", result)
+            except Exception:  # noqa: BLE001 -- maintenance loop must survive
+                logger.exception("upstream sync failed")

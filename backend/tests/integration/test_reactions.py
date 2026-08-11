@@ -8,6 +8,7 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
+from app.domain.identity.handles import topic_agent_handle
 from tests.conftest import StubAgent
 
 
@@ -127,7 +128,8 @@ def test_summon_gets_cheese_check_receipt(client):
         next(f for f in frames if f["type"] == "assistant_block")
     )
     assert ack["block_id"] == user_block["id"]
-    assert ack["reactions"] == [{"emoji": "✅", "count": 1, "authors": ["cheese"]}]
+    agent = topic_agent_handle(uuid.UUID(topic_id))
+    assert ack["reactions"] == [{"emoji": "✅", "count": 1, "authors": [agent]}]
     assert _block_reactions(client, topic_id, user_block["id"]) == ack["reactions"]
 
 

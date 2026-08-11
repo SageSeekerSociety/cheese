@@ -2,7 +2,7 @@
 import type { ChainedCommands, Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { SuggestionProps } from '@tiptap/suggestion'
-import type { Block, FileContent, GitCommit, Topic, UsageStats, WorkspaceFile } from '../cx_types'
+import type { Block, FileContent, GitCommit, PreviewInfo, Topic, UsageStats, WorkspaceFile } from '../cx_types'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { Extension } from '@tiptap/core'
@@ -14,6 +14,7 @@ import { Suggestion } from '@tiptap/suggestion'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
 import {
+  ApiError,
   BASE as API_BASE,
   getComments,
   getDoc,
@@ -26,8 +27,10 @@ import {
   getTopicUsage,
   getTranscript,
   listFiles,
+  primeAppPreview,
   putDoc,
   readFile,
+  withSessionToken,
   workspaceFileRawUrl,
   writeFile,
 } from '../api'
@@ -513,6 +516,18 @@ const fileSaved = ref<string>('') // last loaded/saved content, for the dirty fl
 const fileSaving = ref(false)
 const fileListOpen = ref(true) // the ☰ toggle hides the list for a wider editor
 const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
+// Version of the open file as it was read; echoed back on save so a write that
+// lost a race to 芝士 is rejected instead of silently erasing their edits.
+const fileVersion = ref<string | null>(null)
+// Files that must not be edited as text: binary (a text round-trip destroys
+// them) or too large to send. They open read-only, with no 保存 button.
+const fileBinary = ref(false)
+const fileTooLarge = ref(false)
+const fileBytes = ref(0)
+const fileReadOnly = computed(() => fileBinary.value || fileTooLarge.value || openIsImage.value)
+// Set when the backend rejected a save as a conflict. Nobody wins by default —
+// the human sees it and picks.
+const fileConflict = ref(false)
 
 // 文件树: the backend returns a flat list of full relative paths; build a
 // nested tree out of it (folders first, each level sorted by name), then
@@ -602,12 +617,34 @@ const projectUsage = ref<UsageStats | null>(null)
 const previewFile = ref<FileContent | null>(null)
 const previewMime = ref<string>('text/html')
 const previewNamed = ref(false)
-// 运行环境预览: the agent declared a RUNNING app (cheese serve) — iframe its
-// live-resolved localhost URL instead of rendering file content.
+// 运行环境预览: the agent declared a RUNNING app (cheese serve) — iframe the
+// backend's reverse-proxy path for its container instead of rendering file
+// content. Null while the app isn't answering; `previewContainerUp` then says
+// whether the box is even there, so the two cases can read differently.
 const previewAppUrl = ref<string | null>(null)
 const previewAppNote = ref<string>('')
+const previewContainerUp = ref(false)
+// What 芝士 named, app or file — so a read failure can say WHICH artifact broke.
+const previewNamedPath = ref<string>('')
+// Failures, kept apart from "nothing is set". Collapsing them (the old
+// `.catch(() => null)` on both calls) reported every backend error and every
+// unreadable file as "芝士还没有指定预览" — a broken panel that looked idle, so
+// nobody reported it.
+const previewError = ref<string | null>(null)
+const previewReadError = ref<string | null>(null)
 // 全屏预览 (Claude Artifacts style): the same content, workspace-covering.
 const previewFull = ref(false)
+// Esc closes it. The overlay div carried a `@keydown.esc`, but a plain div is
+// never focused, so the handler could not fire and the ✕ was the only way out.
+// A window listener, mounted only while the overlay is up, actually gets the key.
+function onPreviewFullKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') previewFull.value = false
+}
+watch(previewFull, (open) => {
+  if (open) window.addEventListener('keydown', onPreviewFullKeydown)
+  else window.removeEventListener('keydown', onPreviewFullKeydown)
+})
+onBeforeUnmount(() => window.removeEventListener('keydown', onPreviewFullKeydown))
 function openPreviewInNewTab() {
   if (previewAppUrl.value) {
     window.open(previewAppUrl.value, '_blank', 'noopener')
@@ -644,9 +681,14 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       const [tx, term] = await Promise.all([getTranscript(tid), getTerminal(tid).catch(() => null)])
       if (props.topic?.id !== tid) return
       transcript.value = tx.data
-      // `url` is already a root-relative path ("/api/topics/…/terminal/live/")
-      // — the iframe loads it through the same dev/proxy that fronts /api.
-      terminalUrl.value = term?.available && term.url ? term.url : null
+      // `url` is a root-relative path ("/api/topics/…/terminal/live/") loaded
+      // through the same dev/proxy that fronts /api. The session token has to be
+      // appended: the proxy authorizes every request and an iframe can carry no
+      // header, so the bare URL 404s and the drawer renders a white box that
+      // never falls back. `available` is the backend's own probe (credential +
+      // container + something actually answering), so a false here means the
+      // timeline below is the honest thing to show.
+      terminalUrl.value = term?.available && term.url ? withSessionToken(term.url) : null
     } else if (key === 'git') {
       // A fresh repo with no commits makes git log fail (422); tolerate it so
       // the diff still renders instead of the whole drawer showing an error.
@@ -662,7 +704,11 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       gitCommits.value = log.data
       gitDiff.value = diff.diff
     } else if (key === 'files') {
-      files.value = (await listFiles(pid, tid)).data
+      const listed = (await listFiles(pid, tid)).data
+      // Guard against a topic switch mid-flight, like every other tool does —
+      // without it the previous topic's listing repopulates the new panel.
+      if (props.topic?.id !== tid) return
+      files.value = listed
       // Keep the open file if it still exists; otherwise open the first file.
       if (!openPath.value || !files.value.some((f) => f.path === openPath.value)) {
         openPath.value = null
@@ -679,19 +725,61 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       // first-*.html fallback proudly served frontend/index.html — an SPA
       // shell that renders blank — which is exactly why the spec says the
       // platform never picks the preview itself.
-      const art = await getPreview(tid).catch(() => null)
-      if (props.topic?.id !== tid) return
       previewAppUrl.value = null
       previewAppNote.value = ''
+      previewContainerUp.value = false
+      previewError.value = null
+      previewReadError.value = null
+      previewNamedPath.value = ''
+      let art: PreviewInfo | null
+      try {
+        art = await getPreview(tid)
+      } catch (e) {
+        if (props.topic?.id !== tid) return
+        // "The backend errored" is its own state — not "nothing is set".
+        previewNamed.value = false
+        previewFile.value = null
+        previewError.value = e instanceof Error ? e.message : '加载失败'
+        return
+      }
+      if (props.topic?.id !== tid) return
       if (art && art.kind === 'app') {
         previewNamed.value = true
         previewAppNote.value = art.path
-        previewAppUrl.value = art.url ?? null
+        previewNamedPath.value = art.path
+        previewContainerUp.value = !!art.container_up
         previewFile.value = null
+        if (art.url) {
+          // The frame carries no credential of its own (a ?token= would be
+          // readable by whatever the agent is serving), so hand the browser the
+          // scoped cookie FIRST — otherwise its very first request 404s and the
+          // panel is back to showing a white box.
+          try {
+            await primeAppPreview(tid)
+          } catch (e) {
+            if (props.topic?.id !== tid) return
+            previewError.value = e instanceof Error ? e.message : '预览授权失败'
+            return
+          }
+          if (props.topic?.id !== tid) return
+        }
+        previewAppUrl.value = art.url ?? null
       } else if (art) {
         previewNamed.value = true
+        previewNamedPath.value = art.path
         previewMime.value = art.mime || 'text/html'
-        previewFile.value = await readFile(pid, art.path, tid).catch(() => null)
+        try {
+          const content = await readFile(pid, art.path, tid)
+          // Guard against a topic switch mid-flight — this await was the one
+          // fetch in the drawer without it, so a slow read could paint topic A's
+          // artifact into topic B's panel.
+          if (props.topic?.id !== tid) return
+          previewFile.value = content
+        } catch (e) {
+          if (props.topic?.id !== tid) return
+          previewFile.value = null
+          previewReadError.value = e instanceof Error ? e.message : '读不到这个文件'
+        }
       } else {
         previewNamed.value = false
         previewFile.value = null
@@ -755,46 +843,112 @@ function isImagePath(path: string): boolean {
   return IMAGE_EXT.has(path.split('.').pop()?.toLowerCase() ?? '')
 }
 const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.value))
-const openImageUrl = computed(() =>
+// Raw bytes of the open file: what <img> renders for an image, and what the
+// download button hands over for anything else that can't be shown as text.
+const openRawUrl = computed(() =>
   openPath.value && projectId.value ? workspaceFileRawUrl(projectId.value, openPath.value, props.topic?.id) : ''
 )
 
+// 文件 panel state is per-topic. openPath/fileDraft describe a file in the
+// CURRENT topic's worktree, so a topic switch must drop them: carrying them over
+// meant the next 保存 wrote topic A's draft into topic B's tree, at A's path.
+function resetFilePanel() {
+  files.value = []
+  openPath.value = null
+  fileDraft.value = ''
+  fileSaved.value = ''
+  fileVersion.value = null
+  fileBinary.value = false
+  fileTooLarge.value = false
+  fileBytes.value = 0
+  fileConflict.value = false
+  expandedDirs.value = new Set()
+}
+
 async function selectFile(path: string) {
   const pid = projectId.value
+  const tid = props.topic?.id
   if (!pid) return
   toolError.value = null
+  fileConflict.value = false
+  const listed = files.value.find((f) => f.path === path)?.bytes ?? 0
   // Images render as images — Monaco would show mangled bytes.
   if (isImagePath(path)) {
     openPath.value = path
     fileDraft.value = ''
     fileSaved.value = ''
+    fileVersion.value = null
+    fileBinary.value = false
+    fileTooLarge.value = false
+    fileBytes.value = listed
     revealInTree(path)
     return
   }
   try {
-    const f = await readFile(pid, path, props.topic?.id)
+    const f = await readFile(pid, path, tid)
+    // A topic switch mid-flight must not land the previous topic's file — and
+    // its draft — in the new topic's panel.
+    if (props.topic?.id !== tid) return
     openPath.value = path
-    fileDraft.value = f.content
-    fileSaved.value = f.content
+    // Binary and oversized files arrive with no content: they open read-only,
+    // so the draft stays empty and there is nothing to write back.
+    fileDraft.value = f.content ?? ''
+    fileSaved.value = f.content ?? ''
+    fileVersion.value = f.version
+    fileBinary.value = f.binary
+    fileTooLarge.value = f.too_large
+    fileBytes.value = f.bytes ?? listed
     revealInTree(path)
   } catch (e) {
+    if (props.topic?.id !== tid) return
     toolError.value = e instanceof Error ? e.message : '读取文件失败'
   }
 }
 
-async function saveFile() {
+// One write path. `expected` is the version this save is based on; null means
+// the human explicitly chose to overwrite after being shown the conflict.
+async function writeOpenFile(expected: string | null) {
   const pid = projectId.value
-  if (!pid || !openPath.value || !fileDirty.value || fileSaving.value) return
+  const tid = props.topic?.id
+  const path = openPath.value
+  if (!pid || !path || fileReadOnly.value || !fileDirty.value || fileSaving.value) return
+  const draft = fileDraft.value
   fileSaving.value = true
   toolError.value = null
   try {
-    await writeFile(pid, openPath.value, fileDraft.value, props.topic?.id)
-    fileSaved.value = fileDraft.value
+    const res = await writeFile(pid, path, draft, tid, expected)
+    // The answer is only about the file that was open in the topic that was
+    // open — anything else finished after a switch and must be dropped.
+    if (props.topic?.id !== tid || openPath.value !== path) return
+    fileSaved.value = draft
+    fileVersion.value = res.version
+    fileConflict.value = false
   } catch (e) {
-    toolError.value = e instanceof Error ? e.message : '保存失败'
+    if (props.topic?.id !== tid || openPath.value !== path) return
+    if (e instanceof ApiError && e.status === 409) {
+      // 芝士 wrote this file since it was read. Neither side wins by default:
+      // show the conflict and let the human reload or overwrite on purpose.
+      fileConflict.value = true
+    } else {
+      toolError.value = e instanceof Error ? e.message : '保存失败'
+    }
   } finally {
-    fileSaving.value = false
+    if (props.topic?.id === tid) fileSaving.value = false
   }
+}
+
+function saveFile() {
+  void writeOpenFile(fileVersion.value)
+}
+
+// 冲突后的两条出路,都由人点：丢掉自己的改动看最新的，或者明知有冲突仍然覆盖。
+function overwriteFile() {
+  void writeOpenFile(null)
+}
+
+function reloadOpenFile() {
+  const path = openPath.value
+  if (path) void selectFile(path)
 }
 
 function toggleTool(key: string) {
@@ -1898,6 +2052,18 @@ watch(
     drawerOpen.value = false
     // Drop the previous topic's terminal so it can't flash in the new 现场.
     terminalUrl.value = null
+    // Same for the preview: a stale app frame or error would otherwise be
+    // attributed to the topic just opened.
+    previewAppUrl.value = null
+    previewAppNote.value = ''
+    previewNamedPath.value = ''
+    previewFile.value = null
+    previewError.value = null
+    previewReadError.value = null
+    previewFull.value = false
+    // …and the previous topic's file + draft, which would otherwise be saved
+    // into THIS topic's worktree the next time 保存 is pressed.
+    resetFilePanel()
   },
   { immediate: true }
 )
@@ -2425,7 +2591,11 @@ onBeforeUnmount(() => {
                     </span>
                     <span v-if="fileDirty" class="file-bar__dot" title="未保存" />
                     <v-spacer />
+                    <!-- Read-only files (binary / oversized / images) get no 保存
+                     button at all: saving one is what corrupted them. -->
+                    <span v-if="fileReadOnly && openPath" class="file-bar__ro">只读</span>
                     <v-btn
+                      v-else
                       size="x-small"
                       variant="flat"
                       color="primary"
@@ -2434,6 +2604,18 @@ onBeforeUnmount(() => {
                       @click="saveFile"
                     >
                       保存
+                    </v-btn>
+                  </div>
+                  <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and
+                   let the human choose — a silent winner is how edits vanished. -->
+                  <div v-if="fileConflict" class="file-conflict">
+                    <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
+                    <span class="file-conflict__text">
+                      这个文件在你编辑期间被改过（多半是芝士写的）。直接保存会盖掉那些改动。
+                    </span>
+                    <v-btn size="x-small" variant="text" @click="reloadOpenFile">放弃我的修改，看最新的</v-btn>
+                    <v-btn size="x-small" variant="text" color="error" :loading="fileSaving" @click="overwriteFile">
+                      仍然覆盖保存
                     </v-btn>
                   </div>
                   <div class="file-body">
@@ -2476,7 +2658,33 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="file-editor">
                       <div v-if="openPath && openIsImage" class="file-image-view">
-                        <img :src="openImageUrl" :alt="openPath" />
+                        <img :src="openRawUrl" :alt="openPath" />
+                      </div>
+                      <!-- Binary / oversized: no editor. Opening one in Monaco
+                       meant every byte utf-8 could not decode came back as
+                       U+FFFD, and 保存 wrote the damage to disk. -->
+                      <div v-else-if="openPath && fileReadOnly" class="file-blob">
+                        <v-icon size="30" class="c-faint mb-2">
+                          {{ fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
+                        </v-icon>
+                        <div class="file-blob__title">
+                          {{ fileTooLarge ? '文件太大，不在浏览器里打开' : '二进制文件，不能当文本编辑' }}
+                        </div>
+                        <div class="file-blob__note">
+                          {{ openPath }} · {{ fmtBytes(fileBytes) }}
+                          <template v-if="!fileTooLarge"> —— 按文本打开会改坏它，所以这里只读。 </template>
+                        </div>
+                        <v-btn
+                          size="small"
+                          variant="tonal"
+                          class="mt-3"
+                          :href="openRawUrl || undefined"
+                          target="_blank"
+                          rel="noopener"
+                        >
+                          <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
+                          下载原文件
+                        </v-btn>
                       </div>
                       <CodeEditor v-else-if="openPath" v-model="fileDraft" :filename="openPath" @save="saveFile" />
                       <div
@@ -2546,19 +2754,32 @@ onBeforeUnmount(() => {
                       {{ previewAppUrl }}
                     </v-chip>
                   </div>
-                  <!-- The app is on 127.0.0.1:<port> — already a DIFFERENT origin
-                   from the platform, so allow-same-origin only lets the app be
-                   itself (cookies/storage on its own origin), never us. -->
-                  <iframe
-                    class="preview-frame"
-                    :src="previewAppUrl"
-                    sandbox="allow-same-origin allow-scripts allow-forms"
-                  />
+                  <!-- The app now rides the backend's reverse proxy, so it is on
+                   OUR origin: allow-same-origin would hand whatever the agent is
+                   serving our localStorage (session token) and our API cookies.
+                   Opaque origin only — same posture as the file artifact below. -->
+                  <iframe class="preview-frame" :src="previewAppUrl ?? undefined" sandbox="allow-scripts allow-forms" />
+                </div>
+                <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
+                  <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
+                  <div>预览加载失败</div>
+                  <div class="text-caption mt-1">后端没能返回这个话题的预览：{{ previewError }}</div>
+                </div>
+                <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
+                  <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+                  <div>指定的产物读不到</div>
+                  <div class="text-caption mt-1">
+                    芝士指定了 {{ previewNamedPath || '一个文件' }}，但它现在读不出来：{{ previewReadError }}
+                  </div>
                 </div>
                 <div v-else-if="previewNamed && previewAppNote" class="text-center text-medium-emphasis py-8">
                   <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
                   <div>应用暂时不在线</div>
-                  <div class="text-caption mt-1">
+                  <div v-if="previewContainerUp" class="text-caption mt-1">
+                    容器还在，但约定端口上没有服务在应答——芝士声明过的那个 dev server 大概已经退出了，再 @
+                    它一次拉起来。
+                  </div>
+                  <div v-else class="text-caption mt-1">
                     芝士声明过一个运行中的应用，但它的容器当前没在跑——再 @ 它一次即可拉起。
                   </div>
                 </div>
@@ -2575,14 +2796,14 @@ onBeforeUnmount(() => {
                   <!-- allow-scripts WITHOUT allow-same-origin (Claude Artifacts
                    posture): interactive artifacts run their JS, but in an
                    opaque origin that cannot touch the platform page. -->
-                  <iframe class="preview-frame" :srcdoc="previewFile.content" sandbox="allow-scripts" />
+                  <iframe class="preview-frame" :srcdoc="previewFile.content ?? ''" sandbox="allow-scripts" />
                 </div>
                 <div v-else class="text-center text-medium-emphasis py-8">
                   <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
                   <div>芝士还没有指定预览</div>
                   <div class="text-caption mt-1">
-                    它做出网页 / 图表等可看的产物时，会把成果放到这里。 预览渲染的是自足的单文件产物；要跑整个应用（如
-                    Vue 工程） 属于"运行环境预览"，还没做。
+                    它做出网页 / 图表等可看的产物时，会把成果放到这里。 单文件产物直接渲染；整个应用（如 Vue
+                    工程）走"运行环境预览"——芝士把 dev server 跑起来再声明一次即可。
                   </div>
                 </div>
               </template>
@@ -2594,7 +2815,9 @@ onBeforeUnmount(() => {
 
       <!-- 全屏预览 overlay: same artifact, workspace-covering (Esc / ✕ closes). -->
       <Teleport to="body">
-        <div v-if="previewFull" class="preview-full" @keydown.esc="previewFull = false">
+        <!-- Esc is handled by a window listener (onPreviewFullKeydown) — a div
+         never has focus, so a @keydown on it can never fire. -->
+        <div v-if="previewFull" class="preview-full">
           <div class="preview-full__bar">
             <span class="preview-full__title">
               {{ previewAppUrl ? previewAppNote || '运行中的应用' : previewFile?.path }}
@@ -2614,12 +2837,12 @@ onBeforeUnmount(() => {
             v-if="previewAppUrl"
             class="preview-full__frame"
             :src="previewAppUrl"
-            sandbox="allow-same-origin allow-scripts allow-forms"
+            sandbox="allow-scripts allow-forms"
           />
           <iframe
             v-else-if="previewFile"
             class="preview-full__frame"
-            :srcdoc="previewFile.content"
+            :srcdoc="previewFile.content ?? ''"
             sandbox="allow-scripts"
           />
         </div>
@@ -3045,6 +3268,49 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: var(--accent);
   flex: 0 0 auto;
+}
+.file-bar__ro {
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid rgba(var(--v-border-color), 0.6);
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex: 0 0 auto;
+}
+.file-conflict {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  font-size: 0.76rem;
+  color: rgb(var(--v-theme-error));
+  background: rgba(var(--v-theme-error), 0.07);
+  border-bottom: 1px solid rgba(var(--v-theme-error), 0.25);
+  flex: 0 0 auto;
+}
+.file-conflict__text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.file-blob {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 16px;
+  text-align: center;
+}
+.file-blob__title {
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.file-blob__note {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 4px;
+  word-break: break-all;
 }
 .file-body {
   display: flex;

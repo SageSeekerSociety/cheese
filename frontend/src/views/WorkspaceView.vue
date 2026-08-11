@@ -318,7 +318,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
       kind: 'member' as const,
       insert: m.name || m.user_handle,
       sub: `@${m.user_handle}`,
-      agent: m.user_handle === 'cheese',
+      agent: !!m.agent,
     })),
     ...topics.value
       .filter((t) => t.kind !== 'root')
@@ -1189,13 +1189,18 @@ onUnmounted(() => {
                 <div v-if="pendingCard.routing_reason" class="text-caption text-medium-emphasis mb-3">
                   推荐理由：{{ pendingCard.routing_reason }}
                 </div>
-                <!-- 机器闸门 (eval C2): this card already passed the check. -->
+                <!--
+                  机器闸门 (eval C2) + 人类授权动作前移 (2026-08-10): 闸门跑的是
+                  check.sh --no-tests——lint 和类型，没有测试。真 CI 只在 PR 上跑，
+                  而 PR 是你点下去之后才开的。所以这一格绝不能是绿勾：那等于让卡面
+                  替一段还没被任何测试碰过的代码背书。它说的是"即将开始跑"。
+                -->
                 <div
                   v-if="pendingCard.gate_passed_at"
                   class="d-flex align-center ga-1 text-caption text-medium-emphasis mb-2"
                 >
-                  <v-icon color="success" size="15">mdi-check-decagram</v-icon>
-                  平台检查已通过
+                  <v-icon size="15">mdi-timer-sand</v-icon>
+                  平台检查已过（只有 lint/类型，没跑测试）· 真 CI 在你授权后才开始跑
                 </div>
                 <!-- 采纳 PR 化 (#188 §5.1): the real PR + its CI, live. -->
                 <div v-if="pendingCard.pr_url" class="mb-2">
