@@ -1570,6 +1570,13 @@ class AcceptService:
             synced = await asyncio.to_thread(ws.sync_upstream, topic.project_id)
             if not synced.get("synced"):
                 note += f"；本地同步待补：{synced.get('reason', '')}"
+                # Say what to DO about it. The merge landed upstream, so this
+                # note is the only trace the pull-down failed, and a conflict
+                # here recurs on every later sync until someone resolves it —
+                # 同步上游 now dispatches 芝士 at the materialized conflict
+                # (workspace/upstream_conflict.py) instead of dead-ending.
+                if synced.get("conflicts"):
+                    note += "；到项目里点一次「同步上游」，芝士会去解这个冲突"
         except Exception as exc:  # noqa: BLE001 — never fail the accept itself
             note += f"；本地同步待补：{exc}"
 
