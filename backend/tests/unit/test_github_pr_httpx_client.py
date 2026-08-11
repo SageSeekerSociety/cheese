@@ -673,3 +673,51 @@ async def test_workflow_runs_and_compare_status_http_failures_raise():
         await _client(handler).compare_status(
             owner="acme", repo="widgets", base="a", head="b", token="t"
         )
+
+
+@pytest.mark.anyio
+async def test_workflow_run_jobs_keeps_step_conclusions():
+    """归档闸门要靠**步骤**级的结论分辨「真的部署了」和「绿灯但跳过了部署」
+    （deploy-dev.yml 对 docs-only 提交就是后者），所以每一步的 conclusion 都
+    不能在这层被丢掉。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/actions/runs/801/jobs")
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "name": "deploy",
+                        "conclusion": "success",
+                        "steps": [
+                            {
+                                "name": "Check out the built commit",
+                                "conclusion": "success",
+                            },
+                            {"name": "Log in to ghcr", "conclusion": "skipped"},
+                            {
+                                "name": "Docker deploy this commit",
+                                "conclusion": "skipped",
+                            },
+                        ],
+                    },
+                    {
+                        "name": "build-did-not-produce-images",
+                        "conclusion": "failure",
+                        "steps": None,
+                    },
+                ]
+            },
+        )
+
+    jobs = await _client(handler).workflow_run_jobs(
+        owner="acme", repo="widgets", run_id=801, token="t"
+    )
+
+    assert [(j.name, j.conclusion) for j in jobs] == [
+        ("deploy", "success"),
+        ("build-did-not-produce-images", "failure"),
+    ]
+    assert [c for _, c in jobs[0].steps] == ["success", "skipped", "skipped"]
+    assert jobs[1].steps == []

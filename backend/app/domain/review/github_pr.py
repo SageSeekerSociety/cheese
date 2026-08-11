@@ -112,6 +112,25 @@ class WorkflowRun:
     created_at: datetime | None
     url: str
     branch: str = ""
+    #: Actions run id — the handle for `workflow_run_jobs`. A run's conclusion
+    #: alone cannot say whether it DID anything (see `WorkflowJob`).
+    id: int = 0
+
+
+@dataclass
+class WorkflowJob:
+    """One job inside a run, with its steps' conclusions.
+
+    Exists because `conclusion == "success"` on a deploy run does NOT mean the
+    deploy happened: `deploy-dev.yml`'s deploy job skips its own login+deploy
+    steps for a docs-only commit and still reports success. A skipped step in
+    an otherwise green job is the workflow saying "I deliberately did nothing",
+    and the archive gate has to be able to see that."""
+
+    name: str
+    conclusion: str | None
+    #: (step name, conclusion) in the workflow's own order.
+    steps: list[tuple[str, str]]
 
 
 class GitHubPrError(RuntimeError):
@@ -267,6 +286,14 @@ class GitHubPrClient(Protocol):
         exists for the follow-up question the 被顶替 check asks: "did some LATER
         deploy already ship my commit anyway". Implementations must return the
         raw `conclusion` per run and never collapse runs into one verdict."""
+        ...
+
+    async def workflow_run_jobs(
+        self, *, owner: str, repo: str, run_id: int, token: str
+    ) -> list[WorkflowJob]:
+        """Every job of one run, with per-step conclusions — the only place
+        GitHub says whether a green run actually DID its work. See
+        `WorkflowJob` for why the run-level conclusion is not enough."""
         ...
 
     async def compare_status(
@@ -824,6 +851,7 @@ class HttpxGitHubPrClient:
             if not isinstance(sha, str) or not sha:
                 continue
             conclusion = run.get("conclusion")
+            run_id = run.get("id")
             out.append(
                 WorkflowRun(
                     head_sha=sha,
@@ -832,6 +860,41 @@ class HttpxGitHubPrClient:
                     created_at=_parse_github_time(run.get("created_at")),
                     url=str(run.get("html_url") or ""),
                     branch=str(run.get("head_branch") or ""),
+                    id=run_id if isinstance(run_id, int) else 0,
+                )
+            )
+        return out
+
+    async def workflow_run_jobs(
+        self, *, owner: str, repo: str, run_id: int, token: str
+    ) -> list[WorkflowJob]:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
+                headers=self._headers(token),
+                params={"per_page": 100},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝查部署运行的 job 列表"
+                f"（HTTP {resp.status_code}）：{resp.text[:300]}"
+            )
+        out: list[WorkflowJob] = []
+        for job in resp.json().get("jobs", []):
+            if not isinstance(job, dict):
+                continue
+            steps: list[tuple[str, str]] = []
+            for step in job.get("steps") or []:
+                if isinstance(step, dict):
+                    steps.append(
+                        (str(step.get("name") or ""), str(step.get("conclusion") or ""))
+                    )
+            conclusion = job.get("conclusion")
+            out.append(
+                WorkflowJob(
+                    name=str(job.get("name") or ""),
+                    conclusion=conclusion if isinstance(conclusion, str) else None,
+                    steps=steps,
                 )
             )
         return out

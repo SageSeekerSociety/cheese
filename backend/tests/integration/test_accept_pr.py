@@ -59,6 +59,33 @@ def _cards_for_topic(client, topic_id: str) -> list[dict]:
     return client.get(f"/api/topics/{topic_id}/accept-card").json()["data"]["data"]
 
 
+def _deployed_job(name: str = "deploy") -> github_pr.WorkflowJob:
+    """一次**真的部署过**的 job：步骤全成功，没有一步被跳过。"""
+    return github_pr.WorkflowJob(
+        name=name,
+        conclusion="success",
+        steps=[
+            ("Check out the built commit", "success"),
+            ("Docker deploy this commit", "success"),
+        ],
+    )
+
+
+def _docs_only_job() -> github_pr.WorkflowJob:
+    """`deploy-dev.yml` 碰到 docs-only 提交时的样子：job 报 success，但登录和
+    部署两步是 skipped —— 盒子上什么都没变。"""
+    return github_pr.WorkflowJob(
+        name="deploy",
+        conclusion="success",
+        steps=[
+            ("Check out the built commit", "success"),
+            ("Skip docs-only commits", "success"),
+            ("Log in to ghcr", "skipped"),
+            ("Docker deploy this commit", "skipped"),
+        ],
+    )
+
+
 class FakeGitHubPrClient:
     """两阶段采纳 (PR迭代式) test double — no real GitHub calls. State is plain
     dicts keyed by PR number / commit sha so a test can move it forward
@@ -86,6 +113,11 @@ class FakeGitHubPrClient:
         self.workflow_runs: list[github_pr.WorkflowRun] = []
         self.compare_status_by_pair: dict[tuple[str, str], str] = {}
         self.compare_status_calls: list[tuple[str, str]] = []
+        # run id → 那次运行的 job 列表。默认（未登记的 run）给一个真的部署过的
+        # job，因为绝大多数测试关心的不是这一层；「跳过了部署」和「挂在哪个
+        # job 上」的用例自己登记。
+        self.jobs_by_run_id: dict[int, list[github_pr.WorkflowJob]] = {}
+        self.jobs_calls: list[int] = []
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -206,6 +238,12 @@ class FakeGitHubPrClient:
     async def compare_status(self, *, owner, repo, base, head, token) -> str | None:
         self.compare_status_calls.append((base, head))
         return self.compare_status_by_pair.get((base, head))
+
+    async def workflow_run_jobs(
+        self, *, owner, repo, run_id, token
+    ) -> list[github_pr.WorkflowJob]:
+        self.jobs_calls.append(run_id)
+        return self.jobs_by_run_id.get(run_id, [_deployed_job()])
 
 
 def _fake_installation(repo: str = "acme/widgets"):
@@ -608,7 +646,12 @@ def _merged_awaiting_deploy(client, monkeypatch) -> tuple[FakeGitHubPrClient, st
 
 
 def _deploy_run(
-    sha: str, *, conclusion: str, minutes: int, status: str = "completed"
+    sha: str,
+    *,
+    conclusion: str,
+    minutes: int,
+    status: str = "completed",
+    run_id: int = 900,
 ) -> github_pr.WorkflowRun:
     """A deploy run `minutes` after "now" (i.e. after the merge the helper
     above just made) — negative means before it."""
@@ -617,8 +660,9 @@ def _deploy_run(
         status=status,
         conclusion=conclusion,
         created_at=datetime.now(UTC) + timedelta(minutes=minutes),
-        url=f"https://github.com/acme/widgets/actions/runs/{sha}",
+        url=f"https://github.com/acme/widgets/actions/runs/{run_id}",
         branch="main",
+        id=run_id,
     )
 
 
@@ -678,6 +722,71 @@ def test_poll_deploy_cancelled_without_any_later_success_still_asks_a_human(
         assert _topic(client, tid)["status"] == "active"
         # 一次成功的都没有 → 根本不必去问 GitHub 包含关系.
         assert fake.compare_status_calls == []
+    finally:
+        _reset_client()
+
+
+def test_poll_deploy_later_success_that_skipped_the_deploy_does_not_count(
+    client, monkeypatch
+):
+    """成功 ≠ 真的部署过。`deploy-dev.yml` 对 docs-only 提交会跳过登录和部署两步，
+    job 照样报 success —— 盒子上什么都没变。这样一次「成功部署」顶替掉我们那次，
+    代码并没有上线，绝不能当成归档的依据。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        fake.workflow_state_by_sha["merge-sha-1"] = (
+            "failure",
+            "部署 workflow 失败：cancelled",
+        )
+        fake.workflow_runs = [
+            _deploy_run("docs-only-sha", conclusion="success", minutes=5, run_id=801)
+        ]
+        # 包含关系是成立的 —— 只是那次运行根本没部署。
+        fake.compare_status_by_pair[("docs-only-sha", "merge-sha-1")] = "behind"
+        fake.jobs_by_run_id[801] = [_docs_only_job()]
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert card["note"].startswith("❌")
+        assert _topic(client, tid)["status"] == "active"
+        # 确实去 job 那一层看过了，不是靠运行级 conclusion 下的结论.
+        assert 801 in fake.jobs_calls
+    finally:
+        _reset_client()
+
+
+def test_poll_deploy_failure_says_which_job_failed(client, monkeypatch):
+    """2026-08-11 的另一半：build 403 没推成镜像，deploy 的守卫 job
+    `build-did-not-produce-images` 报错，盒子上跑的**确实还是旧代码**。运行级的
+    tail 只会说「失败：failure」，两种情况一个样 —— 把 GitHub 自己的 job 名带上，
+    人一眼就能分清是「部署跑了但挂了」还是「压根没产出镜像」。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        fake.workflow_state_by_sha["merge-sha-1"] = (
+            "failure",
+            "部署 workflow 失败：failure",
+        )
+        fake.workflow_runs = [
+            _deploy_run("merge-sha-1", conclusion="failure", minutes=1, run_id=701)
+        ]
+        fake.jobs_by_run_id[701] = [
+            github_pr.WorkflowJob(
+                name="build-did-not-produce-images",
+                conclusion="failure",
+                steps=[("Say why nothing was deployed", "failure")],
+            ),
+            github_pr.WorkflowJob(name="deploy", conclusion="skipped", steps=[]),
+        ]
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        # 没上线就是没上线：不归档，保持 active，交给人。
+        assert card["status"] == "pr_open"
+        assert _topic(client, tid)["status"] == "active"
+        assert "build-did-not-produce-images" in card["note"]
     finally:
         _reset_client()
 

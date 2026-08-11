@@ -1275,15 +1275,22 @@ class AcceptService:
             return
         if state == "failure":
             # 这次部署没成功 ≠ 这段代码没上线 (2026-08-11, PR #251 的真实事故)。
-            # 问一句「有没有更晚的成功部署已经把这个提交带上去了」再下结论。
-            landed = await self._later_successful_deploy(
+            # 问一句「有没有更晚的、真的部署过的成功运行已经把这个提交带上去了」
+            # 再下结论。同一份运行列表也用来说明这次失败到底挂在哪个 job 上。
+            runs = await self._recent_deploy_runs(
                 card=card, owner=owner, repo=repo, token=token, client=client
+            )
+            landed = await self._later_successful_deploy(
+                card=card, runs=runs, owner=owner, repo=repo, token=token, client=client
             )
             if landed is not None:
                 await self._finish_pr_accept(
                     card=card, topic=topic, landed_via=landed, failed_tail=tail
                 )
                 return
+            tail = tail + await self._failed_deploy_jobs_suffix(
+                card=card, runs=runs, owner=owner, repo=repo, token=token, client=client
+            )
             # wangchangxin 建议的默认值，评估后采纳为最终方案：topic 保持
             # active，复用卡5 webhook 通知房间，不自动重试，交给人判断。
             if not card.note.startswith("❌"):
@@ -1298,10 +1305,36 @@ class AcceptService:
 
         await self._finish_pr_accept(card=card, topic=topic)
 
+    async def _recent_deploy_runs(
+        self, *, card: AcceptCard, owner: str, repo: str, token: str, client
+    ) -> "list[WorkflowRun]":
+        """The deploy workflow's recent runs, newest first — or [] if GitHub
+        won't say. Fetched once per failing tick and shared by the two questions
+        a failed deploy raises: 有没有更晚的成功部署带上线了, and 这次到底挂在
+        哪个 job 上。"""
+        from app.domain.review.github_pr import GitHubPrError
+
+        try:
+            return await client.recent_workflow_runs(
+                owner=owner,
+                repo=repo,
+                workflow_file=settings.accept_deploy_workflow_file,
+                token=token,
+            )
+        except GitHubPrError as exc:
+            logger.warning(
+                "card %s: cannot list deploy runs (%s) — treating the failed "
+                "deploy as final for this tick",
+                card.id,
+                exc,
+            )
+            return []
+
     async def _later_successful_deploy(
         self,
         *,
         card: AcceptCard,
+        runs: "list[WorkflowRun]",
         owner: str,
         repo: str,
         token: str,
@@ -1319,20 +1352,37 @@ class AcceptService:
         Applies to `failure` too: someone re-running the deploy successfully
         ships the same commit just as thoroughly.
 
-        Two things this must NOT do, both of which would archive a topic whose
-        code never shipped:
+        Three things this must NOT do, each of which would archive a topic
+        whose code never shipped:
 
         - **完成 ≠ 成功.** Only the literal conclusion `success` counts —
           `cancelled`/`skipped`/`neutral` are all "completed".
         - **更晚才算.** A deploy that ran BEFORE this merge cannot contain it.
           Runs come back newest-first, so scanning stops at the merge time
           rather than walking the whole history.
+        - **成功 ≠ 真的部署过.** `deploy-dev.yml` skips its own login+deploy
+          steps for a docs-only commit and still reports the run green. Such a
+          run restarts nothing on the box, so a card whose own deploy was
+          cancelled and then "superseded" by one of these is NOT live. Every
+          candidate is therefore checked at job level — see
+          `_run_actually_deployed`.
 
         Containment is decided by GitHub's compare API (`base...head` with
         `base` = the successful run's commit, `head` = ours → `behind` or
         `identical` means ours is in it). Deliberately not by cloning the repo
         platform-side: the answer is one API call, and the platform holds no
         checkout of the project's GitHub repo to run git in.
+
+        Note what is deliberately NOT the criterion: whether THIS commit's own
+        images were pushed. When a build fails (2026-08-11: `docker login -u
+        github.actor` 403 on 采纳 commits, fixed in #276) the images for this
+        commit never exist — but a later commit that CONTAINS ours and does
+        build and deploy puts our source on the box all the same. Gating on
+        "my own image exists" would leave exactly those cards (#267/#270/#274)
+        stuck forever after the registry was fixed; gating on "some run that
+        really deployed shipped a commit containing mine" archives them for
+        the right reason. A build that produced no images and no later deploy
+        carrying it still ends where it did before: 保持 active、告诉人.
 
         Best-effort by construction: every GitHub hiccup here returns None,
         which lands back on the old "保持 active、告诉人" path. This check can
@@ -1343,21 +1393,6 @@ class AcceptService:
         merge_sha = card.pr_head_sha
         merged_at = card.pr_merged_at
         if not merge_sha:
-            return None
-        try:
-            runs = await client.recent_workflow_runs(
-                owner=owner,
-                repo=repo,
-                workflow_file=settings.accept_deploy_workflow_file,
-                token=token,
-            )
-        except GitHubPrError as exc:
-            logger.warning(
-                "card %s: cannot list deploy runs (%s) — treating the failed "
-                "deploy as final for this tick",
-                card.id,
-                exc,
-            )
             return None
 
         compares = 0
@@ -1372,7 +1407,18 @@ class AcceptService:
                 # 列表是新→旧，再往下只会更早，没必要继续问 GitHub。
                 break
             if run.head_sha == merge_sha:
-                return run  # 同一个 commit 上后来重跑成功了 —— identical，不必比较
+                # 同一个 commit 上后来重跑成功了 —— identical，不必比较，但
+                # 「真的部署过」这一关照走。
+                if await self._run_actually_deployed(
+                    card=card,
+                    run=run,
+                    owner=owner,
+                    repo=repo,
+                    token=token,
+                    client=client,
+                ):
+                    return run
+                continue
             if compares >= _MAX_SUPERSEDE_COMPARES:
                 logger.info(
                     "card %s: stopped after %d containment checks — a still "
@@ -1401,9 +1447,118 @@ class AcceptService:
                 continue
             # base = 那次成功部署的 commit, head = 我们的合并提交:
             # behind = 我们在它后面（它包含我们）, identical = 同一个提交。
-            if status in ("behind", "identical"):
+            if status not in ("behind", "identical"):
+                continue
+            if await self._run_actually_deployed(
+                card=card, run=run, owner=owner, repo=repo, token=token, client=client
+            ):
                 return run
         return None
+
+    async def _run_actually_deployed(
+        self,
+        *,
+        card: AcceptCard,
+        run: "WorkflowRun",
+        owner: str,
+        repo: str,
+        token: str,
+        client,
+    ) -> bool:
+        """Did this green run actually deploy anything, or did it green-light
+        itself while skipping the work?
+
+        `deploy-dev.yml` has a "Skip docs-only commits" step that turns the
+        login+deploy steps off for a commit touching only `*.md`/`docs/`; the
+        job still concludes `success`. Nothing on the box changed. So a card
+        whose own deploy got cancelled and whose "superseding" run was one of
+        these has NOT shipped — the box still runs whatever it ran before.
+
+        The test is name-free on purpose (job and step names are the project's
+        to change, and `accept_deploy_workflow_file` is a setting): a run
+        counts only if some job concluded `success`, ran at least one step,
+        and skipped NONE of them. A skipped step inside a green job is the
+        workflow itself saying "I deliberately did not do this part".
+
+        Fails CLOSED — an API error, an empty job list, or a shape we don't
+        recognise all return False, which just leaves the card where it
+        already was (active, waiting for a human). The cost of a wrong True
+        is archiving a topic whose code is not running anywhere.
+        """
+        from app.domain.review.github_pr import GitHubPrError
+
+        if not run.id:
+            logger.info(
+                "card %s: deploy run on %s has no usable id — not counting it",
+                card.id,
+                run.head_sha,
+            )
+            return False
+        try:
+            jobs = await client.workflow_run_jobs(
+                owner=owner, repo=repo, run_id=run.id, token=token
+            )
+        except GitHubPrError as exc:
+            logger.warning(
+                "card %s: cannot read jobs of deploy run %s (%s) — not counting it",
+                card.id,
+                run.id,
+                exc,
+            )
+            return False
+        for job in jobs:
+            if job.conclusion != "success" or not job.steps:
+                continue
+            conclusions = [conclusion for _, conclusion in job.steps]
+            if "skipped" in conclusions:
+                logger.info(
+                    "card %s: deploy run %s reported success but job %r skipped "
+                    "steps — it did not deploy",
+                    card.id,
+                    run.id,
+                    job.name,
+                )
+                continue
+            if "success" in conclusions:
+                return True
+        return False
+
+    async def _failed_deploy_jobs_suffix(
+        self,
+        *,
+        card: AcceptCard,
+        runs: "list[WorkflowRun]",
+        owner: str,
+        repo: str,
+        token: str,
+        client,
+    ) -> str:
+        """`（失败的 job：build-did-not-produce-images）`, or "" if unknown.
+
+        The run-level tail says `部署 workflow 失败：failure` and stops there,
+        which is the same sentence for two situations a human must tell apart
+        (2026-08-11): the deploy ran and broke, versus the build pushed no
+        images at all so the box is still on the previous commit —
+        `deploy-dev.yml` has a job whose NAME says exactly that. Reporting
+        GitHub's own job names puts that difference in front of the human
+        without the platform guessing at causes; nothing here changes what the
+        gate decides.
+        """
+        from app.domain.review.github_pr import GitHubPrError
+
+        run = next((r for r in runs if r.head_sha == card.pr_head_sha and r.id), None)
+        if run is None:
+            return ""
+        try:
+            jobs = await client.workflow_run_jobs(
+                owner=owner, repo=repo, run_id=run.id, token=token
+            )
+        except GitHubPrError:
+            return ""  # 纯粹是给人看的补充信息，拿不到就不说
+        failed = [job.name for job in jobs if job.conclusion == "failure" and job.name]
+        if not failed:
+            return ""
+        return f"（失败的 job：{'、'.join(failed[:5])}）"
 
     async def _settle_external_merge(
         self, *, card: AcceptCard, topic: Topic, status: "PullRequestStatus"
