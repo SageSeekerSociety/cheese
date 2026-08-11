@@ -49,10 +49,13 @@ class _FakeRun:
         self.stderr = ""
 
 
+# The `docker port` call moved into workspace.published_endpoint (one parse
+# shared by the terminal and 运行环境预览), so the seam to stub is the one that
+# module runs — tmux_provider no longer imports subprocess at all.
 def test_ttyd_endpoint_parses_docker_port(monkeypatch):
     monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
     monkeypatch.setattr(
-        tp.subprocess, "run", lambda *a, **k: _FakeRun(0, "127.0.0.1:55011\n")
+        tp.ws.subprocess, "run", lambda *a, **k: _FakeRun(0, "127.0.0.1:55011\n")
     )
     assert tp.ttyd_endpoint(uuid.uuid4()) == "127.0.0.1:55011"
 
@@ -60,7 +63,7 @@ def test_ttyd_endpoint_parses_docker_port(monkeypatch):
 def test_ttyd_endpoint_none_when_container_down(monkeypatch):
     monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
     # docker port on a missing/unpublished container → non-zero rc, empty stdout.
-    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **k: _FakeRun(1, ""))
+    monkeypatch.setattr(tp.ws.subprocess, "run", lambda *a, **k: _FakeRun(1, ""))
     assert tp.ttyd_endpoint(uuid.uuid4()) is None
 
 

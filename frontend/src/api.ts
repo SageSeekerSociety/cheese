@@ -812,6 +812,27 @@ export function getTerminal(topicId: string): Promise<TerminalInfo> {
   return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)
 }
 
+// The 现场 terminal and 运行环境预览 are backend reverse proxies loaded by an
+// <iframe>, and a browser can set no header on one — so the session token rides
+// as ?token=, exactly like the device-screen WebSocket above. Without it the
+// proxy 404s and the panel shows a white box; the backend's own status endpoint
+// applies the same check, so a signed-out viewer is told "unavailable" and falls
+// back to the timeline instead of embedding a frame that cannot load.
+// 运行环境预览 authenticates its iframe differently, and on purpose: the frame
+// renders whatever 芝士 chose to serve, and a ?token= in the URL is readable by
+// that page's own JS (location.search) even sandboxed — so instead this call,
+// which DOES carry the Authorization header, leaves an HttpOnly path-scoped
+// cookie that the iframe's same-origin requests present by themselves.
+export function primeAppPreview(topicId: string): Promise<{ ready: boolean }> {
+  return request<{ ready: boolean }>(`/topics/${encodeURIComponent(topicId)}/app-session`)
+}
+
+export function withSessionToken(url: string): string {
+  const token = authToken()
+  if (!token) return url
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+}
+
 // Git: commit log + diff. With `topicId` these are THIS topic's own commits and
 // the full diff its 采纳 would merge; without it, the project repo's. The 话题
 // panel must always pass it — the project-level answer is other topics' work.

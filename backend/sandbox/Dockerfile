@@ -43,4 +43,12 @@ WORKDIR /work
 # Platform CLI (芝士 calls this for platform actions; files/code use native tools)
 COPY cheese /usr/local/bin/cheese
 RUN chmod +x /usr/local/bin/cheese && mkdir -p /work && chown -R node:node /work
+
+# `node` is uid/gid 1000 here (node:22's own user) and the backend deliberately
+# runs as the SAME uid — the two share one jj store through the main-repo
+# .jj/.git bind mounts, and jj's 0600 store objects mean a uid split locks one
+# side out of every jj command. Do not usermod/groupmod this user, and keep any
+# derived image (backend/sandbox/cheesex-dev.Dockerfile) on `USER node`.
+# The invariant is asserted by tests/unit/test_workspace_uid_alignment.py.
+RUN test "$(id -u node)" = 1000 && test "$(id -g node)" = 1000
 USER node

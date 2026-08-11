@@ -177,6 +177,65 @@ manual runbook, not automated provisioning — see `deploy/README-backup.md`.
 - **etrip**: SSH target (`ssh etrip`); GitHub Actions reaches it over Tailscale.
 - Self-hosted runners pull outbound, so no public inbound is needed on the boxes.
 
+## The backend runs as uid 1000 — and must keep doing so
+
+The backend process and the agent inside a sandbox container share one jj store:
+`ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.jj`/`.git` into every
+sandbox container, read-write. jj writes its store objects — `.jj/repo/config-id`
+above all — with a **hardcoded 0600**, so if the two sides run as different uids,
+whichever writes first locks the other out of every jj command
+(`Failed to determine the secure config for a repo … Permission denied`). That is
+not a theoretical risk: both directions have hit production — the file panel
+422ing for every topic in a project, and jj being unusable inside sandboxes.
+
+umask, a shared group, and default ACLs are all powerless against a mode the
+writer sets explicitly. The only fix is that both sides ARE the same uid:
+
+- sandbox: `node:22` + `USER node` = **1000**, started with `--user node`;
+  `backend/sandbox/Dockerfile` asserts the uid at build time.
+- backend: `backend/Dockerfile` creates its user with uid/gid **1000** to match.
+- single source of truth: `app.domain.workspace.service.AGENT_UID`, pinned
+  against both Dockerfiles by `tests/unit/test_workspace_uid_alignment.py`.
+
+**Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
+`UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
+where jj keeps the per-repo secure config that `config-id` points at) hold files
+written by the pre-2026-08 backend as uid 1001. `deploy/deploy-docker.sh` hands
+them over once via `deploy/fix-workspace-ownership.sh` before the swap —
+idempotent, marker-guarded, and it runs the chown in a throwaway root container
+(no sudo on the box). If a backend ever boots onto an unmigrated path it logs
+`workspace_ownership` at ERROR naming the offending file; the fix is to run that
+script and restart.
+
+**The handover is the deploy's point of no return, so it runs last.** Every other
+fallible step — image pulls, the runtime-image smoke test, `alembic upgrade head`
+— aborts leaving the box exactly as it was; this one does not. It sits
+immediately before `dc up` with nothing between them that can fail. It was third
+of five until 2026-08-11, when the step after it aborted the deploy and left dev
+holding a 1001 backend on a 1000 tree: `git` refused the workspaces as
+`dubious ownership` and every project 422'd until the next deploy (run
+31466502982). For the same reason a health-check rollback hands the mounts
+*back* to `PREVIOUS_AGENT_UID` (1001) before starting the old image — but only
+when that run actually moved them, which the script reports to the caller.
+Rolling images back without rolling ownership back is not a rollback.
+
+`GIT_CREDENTIALS_FILE` **is** handed over with everything else, mode untouched
+(600 before, 600 after). It is operator-owned and outside git, but it is mounted
+read-only into the backend at a fixed path, so its owner has to *be* the
+backend's uid — it was 1001 only because the backend was. An earlier version of
+this script deliberately refused to move it and only checked readability; that
+protected nothing and stopped the deploy on a step whose only remedy was a sudo
+nobody in the deploy path has. The readability check survives and still fails the
+deploy loudly with the exact `chown` to run, but it now runs *after* the
+handover, so it only fires on something a chown cannot fix. The default
+`/dev/null` (feature off) is a device node and is skipped, never chowned.
+
+These scripts are exercised by `deploy/tests/` against a fake docker, gated in CI
+by `.github/workflows/deploy-scripts-test.yml` (hosted, ~1m — it must not queue
+behind the box's single runner). Before 2026-08-11 that harness existed but no
+workflow ran it, which is how an untested ordering change reached the box with
+six green checks.
+
 ## Gotchas — things that look renameable but are NOT
 
 The GitHub repo was renamed `cheese-backend-py` → `cheese`. Several identifiers

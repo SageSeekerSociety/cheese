@@ -23,7 +23,6 @@ continuous inside it (no --resume needed — the session IS the continuity).
 import asyncio
 import hashlib
 import json
-import subprocess
 import uuid
 from pathlib import Path
 
@@ -164,21 +163,11 @@ def ttyd_endpoint(topic_id: uuid.UUID) -> str | None:
     """`127.0.0.1:<host-port>` of the topic's tmux container ttyd (the read-only
     terminal mirror on the in-container `_TTYD_PORT`), or None when the container
     is down / the port isn't published (old container). Same `docker port` parse
-    as workspace.app_preview_url, just for 7681 instead of the app port — used by
+    as workspace.app_endpoint, just for 7681 instead of the app port — used by
     the 施工现场 terminal proxy to reach the container's live pane."""
     if not ws.sandbox_available():
         return None
-    result = subprocess.run(
-        ["docker", "port", _tmux_container_name(topic_id), str(_TTYD_PORT)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    # e.g. "127.0.0.1:55011" (possibly one line per address family).
-    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-    port = line.rsplit(":", 1)[-1]
-    return f"127.0.0.1:{port}" if port.isdigit() else None
+    return ws.published_endpoint(_tmux_container_name(topic_id), _TTYD_PORT)
 
 
 def _hook_base() -> str:
@@ -643,6 +632,12 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             {
                 "HOME": "/home/node",
                 "CHEESE_APP_PORT": str(_APP_PORT),
+                # 运行环境预览 reaches the app through the backend's reverse
+                # proxy, which serves it under THIS sub-path. A dev server that
+                # emits root-absolute asset URLs (vite's `/@vite/client`) must be
+                # started under it — `vite --base=$CHEESE_APP_BASE` — or those
+                # assets miss the container and hit the platform SPA instead.
+                "CHEESE_APP_BASE": f"/api/topics/{topic_id}/app/",
                 "SBX_WORKTREE": worktree,
                 "SBX_SESSION": session_dir,
                 "CHEESE_API": settings.sandbox_api_base,
