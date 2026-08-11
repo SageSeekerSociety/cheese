@@ -20,12 +20,39 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.errors import ValidationError
+from app.core.errors import ConflictError, ValidationError
 from app.domain.workspace.dogfood_notices import watch_dogfood_push
+from app.domain.workspace.textfile import (
+    MAX_TEXT_BYTES,
+    content_version,
+    decode_text,
+    looks_binary,
+)
 
 DEFAULT_BRANCH = "main"
 # 沙箱镜像：芝士分身在容器里跑代码/测试，碰不到宿主机 (spec §9.1).
 SANDBOX_IMAGE = "python:3.12-slim"
+
+# The ONE uid/gid that may touch a project's jj store.
+#
+# `sandbox_vcs_mounts` below bind-mounts the project's main-repo `.jj`/`.git`
+# into every sandbox container read-write, so the backend process and the
+# in-container agent operate on the same store. jj creates its store objects
+# (op_store/, index/, store/extra/, workspace_store/index, working_copy/*) and
+# `.jj/repo/config-id` with a hardcoded 0600 — a tempfile that gets persisted,
+# NOT `0666 & ~umask` — so the first writer owns the store and every later jj
+# command from the other uid dies with "Failed to determine the secure config
+# for a repo … Permission denied". No umask, shared group, or default ACL can
+# widen a mode the writer sets explicitly; the only fix is for both sides to be
+# the same uid.
+#
+# 1000 = `node` in the sandbox image (node:22 + USER node, started with
+# `--user node`), which is the side we do not fully control — a project can
+# point `sandbox_image` at any other node-based image. The backend image is
+# built to match (backend/Dockerfile); tests/unit/test_workspace_uid_alignment.py
+# pins all three together.
+AGENT_UID = 1000
+AGENT_GID = 1000
 
 logger = logging.getLogger("cheesex.workspace")
 
@@ -128,8 +155,39 @@ def _git(
         # git reports merge conflicts on stdout with an empty stderr — fall back
         # so the caller's error isn't blank.
         detail = result.stderr.strip() or result.stdout.strip()
+        # The main repo's `.git` is shared with the sandbox exactly like `.jj`
+        # (sandbox_vcs_mounts mounts both), so it can fail the same way.
+        if _permission_denied(detail):
+            raise WorkspacePermissionError(_uid_split_hint(f"git {args[0]}: {detail}"))
         raise ValidationError(f"git {args[0]} failed: {detail}")
     return result.stdout
+
+
+class WorkspacePermissionError(ValidationError):
+    """A workspace operation failed because the on-disk repo is owned by another
+    uid. Distinct from a generic ValidationError so the failure names its own
+    cause: this is the shape a uid split takes, and it used to reach the file
+    panel as a bare `jj diff failed: Internal error…` — indistinguishable from
+    "the file is missing", which is why it went undiagnosed for a whole project.
+    """
+
+
+# jj reports an unreadable store as an internal error whose *cause* is the EACCES
+# — match the OS error rather than the wording of any one jj message.
+_PERMISSION_SIGNS = ("Permission denied", "os error 13", "Operation not permitted")
+
+
+def _permission_denied(text: str) -> bool:
+    return any(sign in text for sign in _PERMISSION_SIGNS)
+
+
+def _uid_split_hint(detail: str) -> str:
+    return (
+        f"工作区仓库里有当前进程（uid={os.getuid()}）无权访问的文件。"
+        f"后端与沙箱容器必须跑在同一个 uid（应为 {AGENT_UID}）——"
+        f"jj 的 store 文件是 0600，uid 不一致时先写的一方会把另一方锁死。"
+        f"原始报错：{detail}"
+    )
 
 
 def _jj_store(repo: Path) -> Path:
@@ -197,20 +255,89 @@ def _share_jj_modes(repo: Path, since: float = 0.0) -> None:
         pass
 
 
+JJ_USER_NAME = "芝士"
+JJ_USER_EMAIL = "cheese@zhishi.local"
+
+
+def _drop_repo_config_id(store: Path) -> None:
+    """Delete the store's `config-id` if one exists — the file that took every
+    topic on the platform down at 11:39.
+
+    The mode repair above cannot cover this one, because the problem is not the
+    mode: jj's per-repo config does NOT live in the repo. `config-id` holds a
+    20-hex id naming a directory under the CALLER's `~/.config/jj/repos/`. Run
+    jj as a user whose home has no entry for that id — every fresh sandbox
+    container — and jj rewrites `config-id` via tmp+rename, so it returns owned
+    by whoever ran jj, mode 0600. The backend (uid 1001) then cannot read a file
+    the sandbox (uid 1000) owns, `_repair_modes`' chmod raises EPERM and is
+    swallowed, and EVERY jj call dies with "Internal error: Failed to determine
+    the secure config for a repo" — `jj workspace add` included, so no topic can
+    start at all.
+
+    Repairing modes can never win that race: chmod requires being the file's
+    owner, and jj replaces the inode on the next rewrite regardless. Deleting
+    can:
+
+    - it is possible — unlink needs write permission on the DIRECTORY (which the
+      backend owns), not on the file;
+    - it is safe — the file is not merely regenerable, it is optional. With it
+      absent jj runs normally and does not recreate it; only `jj config set
+      --repo` does. It holds no repo data (that is store/, op_store/, index/,
+      none of which this touches), only a binding to a per-user config dir. The
+      one thing that binding provided — the 芝士 identity — comes from
+      JJ_USER/JJ_EMAIL below instead, which is why `_ensure_jj` no longer sets
+      per-repo config.
+    """
+    try:
+        (store / "config-id").unlink()
+    except OSError:
+        pass  # absent (the normal case), or a store we cannot write — _jj reports it
+
+
+_SECURE_CONFIG_FAILURE = "failed to determine the secure config"
+
+
+def _jj_failure_message(command: str, detail: str, repo: Path) -> str:
+    """Name the real cause. This failure is a file permission problem in the
+    workspace, but it reaches the user through a generic wrapper that renders it
+    as 「AI 服务返回错误」 — which sent people looking at the model provider for
+    what is a chmod."""
+    if _SECURE_CONFIG_FAILURE in detail.lower():
+        return (
+            f"工作区版本库权限异常：{_jj_store(repo) / 'config-id'} "
+            "的属主不是后端进程，既读不了、也删不掉（删除需要它所在目录的写权限）。"
+            "这不是 AI 服务故障。修法：删掉该文件即可——它是指向 per-user 配置目录的"
+            f"索引，可再生，不含任何版本历史。原始报错：{detail}"
+        )
+    return f"jj {command} failed: {detail}"
+
+
 def _jj(repo: Path, *args: str) -> str:
     started = time.time() - 1  # -1s: filesystem mtime vs clock granularity slack
+    # Before every call, not once at setup: a jj run by any other uid (an agent
+    # in a sandbox) recreates config-id and locks the backend out mid-flight.
+    _drop_repo_config_id(_jj_store(repo))
     result = subprocess.run(
         ["jj", "--no-pager", *args],
         cwd=repo,
         capture_output=True,
         text=True,
         timeout=30,
+        # Identity per call rather than as per-repo config: setting it with
+        # `--repo` is the one thing that creates config-id in the first place.
+        env={**os.environ, "JJ_USER": JJ_USER_NAME, "JJ_EMAIL": JJ_USER_EMAIL},
     )
     # Before the returncode check: a FAILED jj call still writes operations, and
     # those unreadable files break the sandbox just as thoroughly.
     _share_jj_modes(repo, since=started)
     if result.returncode != 0:
-        raise ValidationError(f"jj {args[0]} failed: {result.stderr.strip()}")
+        detail = result.stderr.strip()
+        # config-id has its own remedy (dropped before every call, and named by
+        # _jj_failure_message when even deleting fails) — leave that path alone.
+        # Every OTHER permission failure in the shared store is the uid split.
+        if _permission_denied(detail) and _SECURE_CONFIG_FAILURE not in detail.lower():
+            raise WorkspacePermissionError(_uid_split_hint(f"jj {args[0]}: {detail}"))
+        raise ValidationError(_jj_failure_message(args[0], detail, repo))
     return result.stdout
 
 
@@ -220,8 +347,9 @@ def _ensure_jj(repo: Path) -> None:
     if (repo / ".jj").exists():
         return
     _jj(repo, "git", "init", "--colocate")
-    _jj(repo, "config", "set", "--repo", "user.name", "芝士")
-    _jj(repo, "config", "set", "--repo", "user.email", "cheese@zhishi.local")
+    # Identity is injected per call (JJ_USER/JJ_EMAIL in _jj), NOT written as
+    # per-repo config: `jj config set --repo` is what creates `config-id`, the
+    # cross-uid tripwire _drop_repo_config_id exists to keep out of the store.
 
 
 def ensure_repo(project_id: uuid.UUID) -> Path:
@@ -355,6 +483,45 @@ def sandbox_vcs_mounts(
     ]
 
 
+def audit_workspace_ownership() -> list[str]:
+    """Boot-time check that this process can actually use the workspace it was
+    handed — one problem string per finding, empty when healthy.
+
+    A uid split does not announce itself: the backend keeps booting and only the
+    file panel dies, project-wide, with a 422 that reads like "file not found".
+    So state it at startup instead. Deliberately cheap (the project dirs plus
+    each store's `config-id`, not a walk of the whole store): `config-id` is the
+    one file whose unreadability fails EVERY jj command, so it is both the
+    likeliest and the most damaging finding.
+
+    Non-fatal by design — one stray file must not keep the platform from
+    booting, and an operator who sees this in the log has the fix in hand
+    (deploy/fix-workspace-ownership.sh).
+    """
+    problems: list[str] = []
+    root = Path(settings.workspace_root)
+    if not root.exists():
+        return problems
+    me = os.getuid()
+    if not os.access(root, os.R_OK | os.W_OK | os.X_OK):
+        problems.append(
+            f"{root} 当前进程（uid={me}）不可读写（属主 uid={root.stat().st_uid}）"
+        )
+    for entry in sorted(root.iterdir()):
+        config_id = entry / ".jj" / "repo" / "config-id"
+        try:
+            if not config_id.is_file() or os.access(config_id, os.R_OK):
+                continue
+            owner = config_id.stat().st_uid
+        except OSError:
+            continue
+        problems.append(
+            f"{config_id} 属主 uid={owner}，当前进程 uid={me} 读不了"
+            f"——该项目的所有 jj 操作都会失败"
+        )
+    return problems
+
+
 def _make_world_writable(root: Path) -> None:
     """The sandbox's non-root user must be able to edit a worktree the backend
     (possibly root) materialized — found live when 芝士 hit Permission denied on
@@ -455,7 +622,15 @@ def list_files(project_id: uuid.UUID, topic_id: uuid.UUID | None = None) -> list
         for name in sorted(filenames):
             p = Path(root) / name
             rel = p.relative_to(tree)
-            files.append({"path": str(rel), "bytes": p.stat().st_size})
+            # lstat, not stat: a symlink pointing at something that no longer
+            # exists is an ordinary thing to find in a worktree, and stat() on it
+            # raised FileNotFoundError — one dangling link took the whole file
+            # list down with a 500. It is listed, at the link's own size.
+            try:
+                size = p.lstat().st_size
+            except OSError:
+                size = 0
+            files.append({"path": str(rel), "bytes": size})
     files.sort(key=lambda f: f["path"])
     return files
 
@@ -467,18 +642,87 @@ def read_file(
     target = _safe_path(tree, path)
     if not target.is_file():
         raise ValidationError("file not found")
-    return target.read_text(encoding="utf-8", errors="replace")
+    try:
+        return target.read_text(encoding="utf-8", errors="replace")
+    except PermissionError as exc:
+        raise WorkspacePermissionError(_uid_split_hint(f"读 {path}: {exc}")) from exc
+
+
+def read_text_file(
+    project_id: uuid.UUID, path: str, topic_id: uuid.UUID | None = None
+) -> dict:
+    """Read a worktree file *for editing* — the shape the 文件 panel needs.
+
+    Unlike :func:`read_file` this never pretends binary is text. ``content`` is
+    None when the file cannot be edited safely (``binary``) or is too big to send
+    at all (``too_large``); the panel renders a read-only view for those instead
+    of loading mangled bytes into Monaco and offering a 保存 button. ``version``
+    is the token to echo back on save so a lost race is caught (see
+    :mod:`app.domain.workspace.textfile`).
+    """
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
+    if not target.is_file():
+        raise ValidationError("file not found")
+    size = target.stat().st_size
+    meta = {"path": path, "bytes": size, "binary": False, "too_large": False}
+    if size > MAX_TEXT_BYTES:
+        # Deliberately not read: the point is to not build the giant body.
+        return {**meta, "content": None, "version": None, "too_large": True}
+    data = target.read_bytes()
+    text = decode_text(data)
+    if text is None:
+        return {
+            **meta,
+            "content": None,
+            "version": content_version(data),
+            "binary": True,
+        }
+    return {**meta, "content": text, "version": content_version(data)}
 
 
 def write_file(
-    project_id: uuid.UUID, path: str, content: str, topic_id: uuid.UUID | None = None
-) -> None:
+    project_id: uuid.UUID,
+    path: str,
+    content: str,
+    topic_id: uuid.UUID | None = None,
+    expected_version: str | None = None,
+) -> str:
     """Write a file in the topic's worktree (人改文件即指令 — the agent reads the
-    latest on its next turn, like 改文档即指令). _safe_path guards traversal + .git."""
+    latest on its next turn, like 改文档即指令). _safe_path guards traversal + .git.
+
+    Refuses to overwrite a file that is not text: the only way to reach here with
+    a binary target is a client that decoded it lossily, and writing the result
+    back destroys the original.
+
+    ``expected_version`` is the version the caller last read. When given, a write
+    whose target has changed since is rejected with a conflict rather than
+    winning silently — the human's 保存 used to erase 芝士's edits with no hint
+    that anything was lost. Callers that legitimately have no read to base a
+    write on (the agent writing its own output) omit it and still write through.
+
+    Returns the new version, so a client can keep saving without a re-read.
+    """
     tree = _tree(project_id, topic_id)
     target = _safe_path(tree, path)
+    current = target.read_bytes() if target.is_file() else None
+    if current is not None and looks_binary(current):
+        raise ValidationError("这是二进制文件，不能以文本保存")
+    if expected_version is not None:
+        actual = content_version(current) if current is not None else None
+        if actual != expected_version:
+            raise ConflictError(
+                "文件已被改动（芝士或其他人写过），你的版本是基于旧内容的",
+                data={"path": path, "version": actual},
+            )
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    data = content.encode("utf-8")
+    try:
+        target.write_bytes(data)
+    except PermissionError as exc:
+        # 人在文件面板保存芝士刚建的文件时，这里曾经是一个未捕获的 OSError → 500.
+        raise WorkspacePermissionError(_uid_split_hint(f"写 {path}: {exc}")) from exc
+    return content_version(data)
 
 
 def read_file_bytes(
@@ -490,7 +734,10 @@ def read_file_bytes(
     target = _safe_path(tree, path)
     if not target.is_file():
         raise ValidationError("file not found")
-    return target.read_bytes()
+    try:
+        return target.read_bytes()
+    except PermissionError as exc:
+        raise WorkspacePermissionError(_uid_split_hint(f"读 {path}: {exc}")) from exc
 
 
 def write_file_bytes(
@@ -501,7 +748,10 @@ def write_file_bytes(
     tree = _tree(project_id, topic_id)
     target = _safe_path(tree, path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
+    try:
+        target.write_bytes(data)
+    except PermissionError as exc:
+        raise WorkspacePermissionError(_uid_split_hint(f"写 {path}: {exc}")) from exc
 
 
 def git_log(
@@ -744,7 +994,18 @@ def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
                 except OSError:
                     pass
         try:
-            _git(repo, "checkout", "-q", base)
+            # `--force` is what makes the "no conflict possible" above true.
+            # Without it `git checkout` REFUSES whenever the shared tree holds a
+            # local modification to a file that differs between the current HEAD
+            # and `base` ("Your local changes ... would be overwritten by
+            # checkout ... Aborting"), which is precisely the state this function
+            # exists to clean up. The `reset --hard` on the very next line
+            # discards those modifications anyway, so refusing protects nothing —
+            # it only wedges the sync. Observed 2026-08-11: an accept failed here
+            # with a file list spanning several unrelated topics, and because
+            # this runs AFTER the ref move (see the caller) the merge had already
+            # landed while the user was told "采纳未完成：合并出错".
+            _git(repo, "checkout", "-q", "--force", base)
             _git(repo, "reset", "-q", "--hard", sha)
             return
         except ValidationError as exc:
@@ -820,7 +1081,30 @@ def _merge_ref_into_base(
             _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
         except ValidationError:
             continue  # base moved concurrently (another accept landed) — retry
-        _sync_shared_checkout(repo, base, new_sha)
+        # Past this point the merge is DURABLE: the CAS above already advanced
+        # `base` to new_sha. Syncing the shared working tree is housekeeping for
+        # the readers of that directory (list_files/read_file/exec_in_sandbox
+        # with topic_id=None, and the sandbox bind-mount) — a failure there
+        # leaves them reading stale files, which is worth shouting about, but it
+        # is NOT a failed merge. Letting it raise told the user "采纳未完成：
+        # 合并出错" about work that was already on the base branch, and invited a
+        # re-accept of an already-merged topic (observed 2026-08-11).
+        try:
+            _sync_shared_checkout(repo, base, new_sha)
+        except ValidationError as exc:
+            logger.exception(
+                "merge landed (%s -> %s) but the shared checkout could not be "
+                "synced; the shared directory is stale until the next accept "
+                "or sync touches it",
+                base,
+                new_sha,
+            )
+            return {
+                "merged": True,
+                "branch": merge_ref,
+                "into": base,
+                "sync_failed": str(exc),
+            }
         return {"merged": True, "branch": merge_ref, "into": base}
     return {
         "merged": False,
@@ -966,6 +1250,47 @@ def prepare_conflict_resolution(
     except ValidationError:
         pass
     _jj(wt, "new", branch, base)
+    out = _jj(wt, "resolve", "--list")
+    files = [line.split()[0] for line in out.splitlines() if line.strip()]
+    # Move the bookmark onto the (conflicted) merge so the snapshot/export path
+    # keeps working; the resolution edits amend this same commit.
+    _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
+    return files
+
+
+def prepare_upstream_conflict_resolution(
+    project_id: uuid.UUID, topic_id: uuid.UUID
+) -> list[str]:
+    """同步上游冲突 → 派芝士解决的前置。Same contract as
+    `prepare_conflict_resolution`, but the side being merged in is the UPSTREAM
+    branch rather than a topic branch: the workspace ends up holding a
+    base×upstream merge with the conflicts materialized as <<<<<<< markers.
+
+    Why this exists at all: `sync_upstream` aborts cleanly on conflict and
+    reports — which is the right thing for the shared repo, but on its own it is
+    a dead end. Accepting a topic had an exit (routes/accept.py dispatches 芝士
+    at the materialized conflict); syncing did not, so a project whose upstream
+    had diverged simply could not pull, and every later sync hit the same wall.
+
+    Accepting the resulting topic finishes the sync: the merge commit carries
+    upstream as a parent, so `merge_topic` folding it into base brings the
+    upstream history along with the resolution."""
+    repo = ensure_repo(project_id)
+    # Resolve upstream to a commit id rather than a ref name: jj addresses git
+    # remote branches as `main@upstream`, git as `upstream/main`, and a raw sha
+    # is unambiguous in both — no name translation to get wrong.
+    _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
+    upstream_sha = _git(repo, "rev-parse", _upstream_ref(repo)).strip()
+    base = _base_branch(repo)
+    branch = branch_for_topic(topic_id)
+    wt = _ensure_worktree(project_id, branch)
+    # The workspace's jj view lags the git side — import first, or the merge
+    # would run against a stale base (and possibly see no conflict at all).
+    try:
+        _jj(wt, "git", "import")
+    except ValidationError:
+        pass
+    _jj(wt, "new", base, upstream_sha)
     out = _jj(wt, "resolve", "--list")
     files = [line.split()[0] for line in out.splitlines() if line.strip()]
     # Move the bookmark onto the (conflicted) merge so the snapshot/export path
@@ -1382,13 +1707,27 @@ def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
 
 
 _SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
+# The `cheese` CLI as this backend build ships it — the ONLY source of truth.
+_CLI_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "cheese"
+# Where session_dir() stages it, relative to the session dir. Both container
+# backends mount THIS over /usr/local/bin/cheese, so the CLI a turn runs is
+# always the one its backend shipped, never whatever an image baked months ago.
+CLI_IN_SESSION = "bin/cheese"
+
+
+def cheese_cli_mount_source(session: Path) -> Path:
+    """Host path of the CLI copy staged in a topic's session dir (see
+    `session_dir`). Host-visible by construction — the session dir is already a
+    bind-mount source — which the in-image `/app/sandbox/cheese` is not."""
+    return session / CLI_IN_SESSION
 
 
 def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """Persistent per-topic ~/.claude (mounted into the ephemeral container) so
     the agent session / --resume survives across turns. Also seeds the `cheese`
     skill here (= ~/.claude/skills, the user source) — one mount holds both the
-    session and the skill, with no host settings leaking in."""
+    session and the skill, with no host settings leaking in — and stages the
+    `cheese` CLI at bin/cheese for the container to mount over its baked copy."""
     import os
     import shutil
 
@@ -1416,7 +1755,29 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
         _loosen(root, 0o777)
         for f in files:
             _loosen(os.path.join(root, f), 0o666)
+    # AFTER the loosen walk, which would strip the CLI's exec bit (0o666). Copied
+    # every time so a redeployed backend refreshes it on the next turn; a topic
+    # whose container is reused for weeks still gets the current CLI.
+    _stage_cheese_cli(d)
     return d
+
+
+def _stage_cheese_cli(session: Path) -> None:
+    """Refresh <session>/bin/cheese from this build's copy. Best-effort: a stale
+    CLI is bad, but failing a turn over it is worse — the container still has its
+    baked copy to fall back on."""
+    import shutil
+
+    if not _CLI_SRC.is_file():
+        return
+    dst = cheese_cli_mount_source(session)
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        _loosen(str(dst.parent), 0o777)
+        shutil.copyfile(_CLI_SRC, dst)
+        _loosen(str(dst), 0o777)
+    except OSError:
+        logger.warning("could not stage the cheese CLI at %s", dst, exc_info=True)
 
 
 def _loosen(path: str, mode: int) -> None:
@@ -1531,13 +1892,12 @@ def exec_in_sandbox(
 APP_PORT = 3000
 
 
-def app_preview_url(topic_id: uuid.UUID) -> str | None:
-    """http://127.0.0.1:<host-port> for the topic container's published app
-    port, or None (container down / mapping missing — old container)."""
-    if not sandbox_available():
-        return None
+def published_endpoint(container: str, port: int) -> str | None:
+    """`127.0.0.1:<host-port>` a container publishes an in-container port to, or
+    None (container down / mapping missing — an old container predating the
+    publish). One parse shared by every "reach into the box" feature."""
     result = subprocess.run(
-        ["docker", "port", container_name(topic_id), str(APP_PORT)],
+        ["docker", "port", container, str(port)],
         capture_output=True,
         text=True,
     )
@@ -1545,8 +1905,34 @@ def app_preview_url(topic_id: uuid.UUID) -> str | None:
         return None
     # e.g. "127.0.0.1:55007" (possibly one line per address family).
     line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-    port = line.rsplit(":", 1)[-1]
-    return f"http://127.0.0.1:{port}" if port.isdigit() else None
+    host_port = line.rsplit(":", 1)[-1]
+    return f"127.0.0.1:{host_port}" if host_port.isdigit() else None
+
+
+def app_endpoint(topic_id: uuid.UUID) -> str | None:
+    """`127.0.0.1:<host-port>` of the topic's app port, or None when no container
+    publishes it.
+
+    Both backends' boxes are asked, tmux first. Asking only the SDK one (the old
+    behavior) meant 运行环境预览 was dead for every tmux-backed topic — which is
+    all of them under ``AGENT_BACKEND=tmux`` — because 3000 is published by
+    ``cheesex-tmux-*`` while the lookup went to ``cheesex-sbx-*``.
+    """
+    if not sandbox_available():
+        return None
+    for name in (tmux_container_name(topic_id), container_name(topic_id)):
+        endpoint = published_endpoint(name, APP_PORT)
+        if endpoint is not None:
+            return endpoint
+    return None
+
+
+# NOTE: there is deliberately no `app_preview_url` here any more. It returned
+# `http://127.0.0.1:<host-port>` — the port is bound to the *server's* loopback,
+# so the address only ever resolved for someone running the whole platform on
+# their own laptop and every remote user got a white iframe. What a browser gets
+# now is the backend's reverse-proxy path, built by the route that serves it
+# (`app.api.routes.app_preview`), from this endpoint.
 
 
 def container_name(topic_id: uuid.UUID) -> str:

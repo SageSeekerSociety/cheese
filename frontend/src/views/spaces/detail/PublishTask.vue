@@ -112,6 +112,7 @@
 </template>
 
 <script setup lang="ts">
+import type { PdfTaskDraftData } from '@/network/api/tasks/types'
 import type { TaskSubmissionSchemaEntry } from '@/types'
 import type { TaskFormSubmitData } from '@/types'
 
@@ -136,7 +137,7 @@ const { currentSpaceId, templates, classificationTopics, categories, domainGroup
 const pdfFile = ref<File | File[] | null>(null)
 const pdfPreviewLoading = ref(false)
 const pdfConfirmLoading = ref(false)
-const pdfDrafts = ref<Record<string, any>[]>([])
+const pdfDrafts = ref<PdfTaskDraftData[]>([])
 const pdfTokenUsed = ref<number | null>(null)
 
 /** 当前选中的 PDF 文件（兼容 v-file-input 的单文件或数组返回值） */

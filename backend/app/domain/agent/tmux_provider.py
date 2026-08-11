@@ -23,7 +23,6 @@ continuous inside it (no --resume needed — the session IS the continuity).
 import asyncio
 import hashlib
 import json
-import subprocess
 import uuid
 from pathlib import Path
 
@@ -38,6 +37,7 @@ from app.domain.agent.hooks_substrate import (
     hooks_settings,
 )
 from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
+from app.domain.agent.service import CLAUDE_BASE_CMD
 from app.domain.agent.tmux_control import TmuxControlClient
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
@@ -49,26 +49,27 @@ _APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
 _READY_TIMEOUT_S = 45.0
 _READY_POLL_S = 0.4
 
-# The `cheese` CLI lives next to the shim; mounted read-only like the SDK path.
-_CHEESE_CLI = Path(settings.sandbox_shim).resolve().parent / "cheese"
 
+def _cheese_cli_mount(session_host: str) -> list[str]:
+    """`-v <session>/bin/cheese:/usr/local/bin/cheese:ro`.
 
-def _cheese_cli_mount() -> list[str]:
-    """`-v <cheese>:/usr/local/bin/cheese:ro`, or nothing.
+    The mount OVERRIDES the copy the sandbox image bakes at build time, and it
+    is a REQUIREMENT, not an optimisation: an image is rebuilt on its own
+    schedule, so the baked copy silently falls behind the backend that drives it
+    (observed 2026-08-10 — the container ran a CLI whose `remember`/`recall` did
+    not send `topic`, so every memory an agent wrote landed in the wrong pool).
 
-    The mount OVERRIDES the copy the sandbox image already bakes with a fresher
-    one — an optimisation, not a requirement. When the backend itself runs in a
-    container it spawns the sandbox as a SIBLING, so the mount source has to be a
-    path the HOST daemon can see; the in-image path `/app/sandbox/cheese` is not
-    one, and mounting it aborts the container (`not a directory`). So use the
-    host dir when configured, and otherwise mount nothing and rely on the baked
-    copy (current, since the image is built from this same repo)."""
-    host_dir = settings.sandbox_shim_host_dir.strip()
-    if host_dir:
-        return ["-v", f"{host_dir.rstrip('/')}/cheese:/usr/local/bin/cheese:ro"]
-    if _CHEESE_CLI.is_file():
-        return ["-v", f"{_CHEESE_CLI}:/usr/local/bin/cheese:ro"]
-    return []
+    When the backend runs in a container it spawns the sandbox as a SIBLING, so
+    the source must be a path the HOST daemon can see. The in-image
+    `/app/sandbox/cheese` is not one (mounting it aborts the container with
+    `not a directory`), and an operator-maintained host checkout — the old
+    `sandbox_shim_host_dir` — is exactly what went stale. The session dir is
+    already a host bind-mount source AND is re-seeded from this build on every
+    turn (ws.session_dir), so sourcing from there is fresh by construction."""
+    return [
+        "-v",
+        f"{ws.cheese_cli_mount_source(Path(session_host))}:/usr/local/bin/cheese:ro",
+    ]
 
 
 def _best_effort_chmod(path: Path, mode: int) -> None:
@@ -163,21 +164,11 @@ def ttyd_endpoint(topic_id: uuid.UUID) -> str | None:
     """`127.0.0.1:<host-port>` of the topic's tmux container ttyd (the read-only
     terminal mirror on the in-container `_TTYD_PORT`), or None when the container
     is down / the port isn't published (old container). Same `docker port` parse
-    as workspace.app_preview_url, just for 7681 instead of the app port — used by
+    as workspace.app_endpoint, just for 7681 instead of the app port — used by
     the 施工现场 terminal proxy to reach the container's live pane."""
     if not ws.sandbox_available():
         return None
-    result = subprocess.run(
-        ["docker", "port", _tmux_container_name(topic_id), str(_TTYD_PORT)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    # e.g. "127.0.0.1:55011" (possibly one line per address family).
-    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-    port = line.rsplit(":", 1)[-1]
-    return f"127.0.0.1:{port}" if port.isdigit() else None
+    return ws.published_endpoint(_tmux_container_name(topic_id), _TTYD_PORT)
 
 
 def _hook_base() -> str:
@@ -289,17 +280,23 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         exists = rc == 0
         image_switched = exists and cur_image.strip() != self._image
         env_drifted = False
+        cli_mount_stale = False
         if exists and not image_switched:
             _, cur_stamp, _ = await _docker(
                 "inspect", "-f", f'{{{{index .Config.Labels "{_ENV_LABEL}"}}}}', name
             )
             env_drifted = env_stamp_drifted(cur_stamp.strip(), _env_stamp(env))
-        if image_switched or env_drifted:
-            await _docker("rm", "-f", name)  # image or model route changed
+            # Mounts are fixed at creation, so a box built before the CLI mount
+            # moved to the session dir would keep serving the old source (or the
+            # image's baked copy) for the life of the topic — the very staleness
+            # this mount exists to prevent. Recheck it like the model route.
+            cli_mount_stale = await self._cli_mount_stale(name, env["SBX_SESSION"])
+        if image_switched or env_drifted or cli_mount_stale:
+            await _docker("rm", "-f", name)  # image, model route, or CLI mount
             exists = False
         if not exists:
             await self._create_container(name, env)
-            if image_switched or env_drifted:
+            if image_switched or env_drifted or cli_mount_stale:
                 # The old box (and anything running in it — the interactive
                 # session, background processes) is gone with no other
                 # warning; tell the topic (best-effort, never blocks the turn).
@@ -309,6 +306,21 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         if running.strip() != "true":
             await _docker("start", name)
         return name
+
+    @staticmethod
+    async def _cli_mount_stale(name: str, session_host: str) -> bool:
+        """True when the box's /usr/local/bin/cheese does not come from THIS
+        build's staged copy (missing mount, or an old source path)."""
+        rc, out, _ = await _docker(
+            "inspect",
+            "-f",
+            '{{range .Mounts}}{{.Source}}->{{.Destination}}{{"\\n"}}{{end}}',
+            name,
+        )
+        if rc != 0:
+            return False  # can't tell — don't destroy a box on a failed inspect
+        staged = ws.cheese_cli_mount_source(Path(session_host))
+        return f"{staged}->/usr/local/bin/cheese" not in out.splitlines()
 
     async def _create_container(self, name: str, env: dict[str, str]) -> None:
         # SBX_WORKTREE / SBX_SESSION are mount sources, not container env vars.
@@ -343,7 +355,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             "-w",
             "/work",
         ]
-        args += _cheese_cli_mount()
+        args += _cheese_cli_mount(env["SBX_SESSION"])
         args += [
             "--network",
             "bridge",
@@ -390,7 +402,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         rc, _, _ = await _docker("exec", name, "tmux", "has-session", "-t", _SESSION)
         if rc == 0:
             return
-        claude_cmd = "claude --dangerously-skip-permissions"
+        claude_cmd = CLAUDE_BASE_CMD
         if (
             resume_session_id
             and session_dir
@@ -621,6 +633,12 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             {
                 "HOME": "/home/node",
                 "CHEESE_APP_PORT": str(_APP_PORT),
+                # 运行环境预览 reaches the app through the backend's reverse
+                # proxy, which serves it under THIS sub-path. A dev server that
+                # emits root-absolute asset URLs (vite's `/@vite/client`) must be
+                # started under it — `vite --base=$CHEESE_APP_BASE` — or those
+                # assets miss the container and hit the platform SPA instead.
+                "CHEESE_APP_BASE": f"/api/topics/{topic_id}/app/",
                 "SBX_WORKTREE": worktree,
                 "SBX_SESSION": session_dir,
                 "CHEESE_API": settings.sandbox_api_base,

@@ -1,5 +1,5 @@
 // Package service runs `cheese` as a cross-platform system service via
-// kardianos/service, so `cheese autoconnect enable`, `cheese start`, etc. drive
+// kardianos/service, so `cheese link connect` / `cheese link auto-connect` drive
 // it under whatever init system the host uses (systemd, openrc, launchd). The
 // work itself — connecting out and hosting server-driven sessions — lives in
 // internal/host; this only adapts it to the service.Interface lifecycle.

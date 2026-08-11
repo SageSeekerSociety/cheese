@@ -1,6 +1,6 @@
 // Command cheese is the single binary a user installs to attach a machine to a
 // server. To a human it is just `cheese` — `cheese auth login` to log in,
-// `cheese autoconnect enable` to stay connected in the background. The full
+// `cheese link auto-connect` to stay connected in the background. The full
 // request/response API the server publishes (generated live from its OpenAPI)
 // lives under `cheese api`, for scripts and automated callers. There is
 // deliberately no separate "daemon" the user must know about.

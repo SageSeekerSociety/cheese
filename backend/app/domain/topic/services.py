@@ -123,9 +123,48 @@ class TopicService:
             created_by=created_by,
         )
         # 群聊房间的地基 (fusion-design §3): seed the roster — creator = owner,
-        # 芝士 joins as a member.
-        await self._members.seed(topic.id, owner_handle=created_by)
+        # 芝士 joins as a member. `created_by` alone is not enough: 芝士 itself
+        # creating a topic, or a caller whose token didn't resolve (anonymous
+        # Phase-0), would leave the room OWNERLESS — seed() deliberately skips
+        # "cheese"/None as owner — and then nobody can manage its roster, and
+        # every sub-topic split beneath it inherits the same emptiness
+        # (split_to_subtopic falls back to the PARENT's owner). Same fallback
+        # ladder as split_to_subtopic, one level wider.
+        await self._members.seed(
+            topic.id,
+            owner_handle=await self._resolve_owner(
+                created_by, parent_id=parent_id, project_owner=project.owner_handle
+            ),
+        )
         return topic
+
+    async def _resolve_owner(
+        self,
+        created_by: str | None,
+        *,
+        parent_id: uuid.UUID | None,
+        project_owner: str | None,
+    ) -> str | None:
+        """Who owns a newborn topic: the real human who created it, else the
+        parent room's owner, else the project's owner. Returns None only when
+        the whole chain is ownerless (a legacy project) — the caller still
+        seeds 芝士, and the room stays manageable by any project member.
+
+        "Is the creator 芝士" spans the whole agent handle namespace, not the bare
+        ``cheese`` string: each 分身 creates under its own ``cheese-<topic hex>``
+        handle, and a string match would make the 分身 the room's owner — the one
+        thing this chain exists to prevent (same rule as split_to_subtopic)."""
+        if created_by and not looks_like_agent_handle(created_by):
+            return created_by
+        if parent_id is not None:
+            parent_members, _ = await self._members.list_for_topic(parent_id)
+            parent_owner = next(
+                (m.member_handle for m in parent_members if m.role == TopicRole.owner),
+                None,
+            )
+            if parent_owner:
+                return parent_owner
+        return project_owner
 
     async def get_or_create_private(
         self,
@@ -209,6 +248,18 @@ class TopicService:
     ) -> None:
         topic.status = TopicStatus.archived
         topic.archived_at = datetime.now(UTC)
+        # 孤儿卡修复 (2026-08-10): 归档必须同时终结这个话题上还没决议的验收卡。
+        # 一张 `pr_open` 的卡不是"停着"——轮询器每 60 秒还在用当初批准人的
+        # GitHub token 推进它。去向与理由见 review/archive.py 的模块 docstring。
+        from app.domain.review.archive import close_cards_for_archived_topic
+
+        await close_cards_for_archived_topic(
+            self._session,
+            topic_id=topic.id,
+            project_id=topic.project_id,
+            topic_title=topic.title,
+            by=by,
+        )
         note = (
             f"📦 随父话题「{cascaded_from}」一同归档"
             if cascaded_from
@@ -366,15 +417,20 @@ class TopicService:
         # when the splitter is 芝士 itself (e.g. an autonomous 分身发起的拆分) or no
         # human is identified at all, `created_by` alone would leave the child
         # ownerless (seed() intentionally skips 芝士 as owner) — nobody could then
-        # manage its roster. Default to the parent's real human owner instead, so
-        # every sub-topic keeps one. The check spans the whole 芝士 handle
-        # namespace: 分身 split under their OWN handle (``cheese-<topic hex>``), so
-        # matching the bare ``cheese`` string would hand them the ownership this
-        # branch exists to withhold.
+        # manage its roster. Two independent gaps, both closed here:
+        #
+        # 1. WHO counts as 芝士: the check spans the whole 芝士 handle namespace,
+        #    because 分身 split under their OWN handle (``cheese-<topic hex>``) and
+        #    matching the bare ``cheese`` string would hand them the very
+        #    ownership this branch exists to withhold.
+        # 2. WHERE the fallback lands: the parent's real human owner, and when the
+        #    parent is itself ownerless (a room born before this fallback existed),
+        #    the project's owner — so the emptiness stops cascading down the tree.
+        project = await self._projects.get(parent.project_id)
         owner_handle = (
             created_by
             if created_by and not looks_like_agent_handle(created_by)
-            else parent_owner
+            else parent_owner or (project.owner_handle if project else None)
         )
         await self._members.seed_split(
             new_topic.id,

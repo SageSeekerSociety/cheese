@@ -233,7 +233,7 @@ const rejectTask = async (taskId: number) => {
     }
     await TasksApi.update(taskId, { approved: 'DISAPPROVED', rejectReason })
     toast.success(t('spaces.detail.auditTasks.operationSuccess'))
-  } catch {
+  } catch (error) {
     if (error instanceof CancelError) {
       return
     }

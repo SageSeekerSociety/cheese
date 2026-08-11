@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 
 import pytest
 
@@ -141,6 +142,20 @@ class TestLockStaleness:
         assert ws._is_lock_stale(tmp_path / "gone", age_threshold_s=60) is False
 
 
+def _git_in(repo, *args):
+    subprocess.run(  # noqa: S603
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],  # noqa: S607
+        cwd=repo,
+        check=True,
+    )
+
+
+def _rev_parse(repo, ref):
+    return subprocess.run(  # noqa: S607
+        ["git", "rev-parse", ref], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
+
+
 class TestSyncSharedCheckout:
     def _repo(self, tmp_path):
         repo = tmp_path / "repo"
@@ -163,6 +178,30 @@ class TestSyncSharedCheckout:
             check=True,
         )
         return repo
+
+    def test_dirty_shared_tree_does_not_block_the_sync(self, tmp_path):
+        """The shared directory is a mirror of the base tip, not a place work
+        is kept — so a local modification there must be discarded, not treated
+        as an obstacle. Plain `git checkout <base>` refuses ("Your local
+        changes ... would be overwritten by checkout"), which wedged a real
+        accept on 2026-08-11 AFTER its merge had already landed."""
+        repo = self._repo(tmp_path)
+        (repo / "f.txt").write_text("one\n")
+        _git_in(repo, "add", "f.txt")
+        _git_in(repo, "commit", "-q", "-m", "one")
+        main_sha = _rev_parse(repo, "HEAD")
+        # A second branch that changes the same file, and a HEAD parked on it.
+        _git_in(repo, "checkout", "-q", "-b", "other")
+        (repo / "f.txt").write_text("two\n")
+        _git_in(repo, "commit", "-q", "-am", "two")
+        # ...plus an uncommitted edit to that same file: the exact shape git
+        # refuses to check out over.
+        (repo / "f.txt").write_text("uncommitted\n")
+
+        ws._sync_shared_checkout(repo, "main", main_sha)  # must not raise
+
+        assert (repo / "f.txt").read_text() == "one\n"
+        assert _rev_parse(repo, "HEAD") == main_sha
 
     def test_stale_lock_is_cleared_and_checkout_proceeds(self, tmp_path):
         repo = self._repo(tmp_path)
@@ -195,6 +234,67 @@ class TestSyncSharedCheckout:
             ws._sync_shared_checkout(repo, "main", sha)
 
         assert lock.exists(), "a lock that isn't provably stale must survive"
+
+
+class TestMergeSurvivesSharedCheckoutFailure:
+    """The shared-tree sync runs AFTER the compare-and-swap that advances the
+    base branch, so by then the merge is durable. If the sync fails anyway, the
+    caller must still be told the merge happened — reporting it as a failed
+    merge told a user "采纳未完成：合并出错" about work already sitting on main,
+    and invited a re-accept of an already-merged topic (2026-08-11)."""
+
+    def _project_repo(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        (repo / "base.txt").write_text("base\n")
+        _git_in(repo, "add", "base.txt")
+        _git_in(repo, "commit", "-q", "-m", "base")
+        _git_in(repo, "checkout", "-q", "-b", "topic")
+        (repo / "topic.txt").write_text("topic\n")
+        _git_in(repo, "add", "topic.txt")
+        _git_in(repo, "commit", "-q", "-m", "topic work")
+        _git_in(repo, "checkout", "-q", "main")
+        return repo
+
+    def test_merge_reported_as_merged_when_sync_fails(self, tmp_path, monkeypatch):
+        repo = self._project_repo(tmp_path, monkeypatch)
+        before = _rev_parse(repo, "main")
+
+        def _boom(*_args, **_kwargs):
+            raise ws.ValidationError("git checkout failed: simulated dirty tree")
+
+        monkeypatch.setattr(ws, "_sync_shared_checkout", _boom)
+
+        result = ws._merge_ref_into_base(
+            uuid.uuid4(), repo, "main", "topic", "采纳 topic → main"
+        )
+
+        assert result["merged"] is True, "the ref move already landed"
+        assert "sync_failed" in result
+        after = _rev_parse(repo, "main")
+        assert after != before, "base branch must actually have advanced"
+        assert (
+            "topic work"
+            in subprocess.run(  # noqa: S607
+                ["git", "log", "--oneline", "main"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            ).stdout
+        )
+
+    def test_successful_sync_reports_no_failure_key(self, tmp_path, monkeypatch):
+        repo = self._project_repo(tmp_path, monkeypatch)
+
+        result = ws._merge_ref_into_base(
+            uuid.uuid4(), repo, "main", "topic", "采纳 topic → main"
+        )
+
+        assert result["merged"] is True
+        assert "sync_failed" not in result
+        assert (repo / "topic.txt").exists(), "shared tree really was synced"
 
 
 class TestReapOrphanedMergeWorktrees:
