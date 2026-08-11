@@ -47,11 +47,17 @@ def _create_topic(client, project_id: str, **kw) -> dict:
     return client.post("/api/topics", json=body, **kw).json()["data"]
 
 
-def _add_project_member(client, project_id: str, handle: str, role: str) -> None:
-    client.post(
+def _add_project_member(
+    client, project_id: str, handle: str, role: str, *, actor: str = "alice"
+) -> None:
+    """Seed the project roster as its owner — writing it needs an owner/lead token
+    now, so an anonymous POST here would silently 403 and leave the roster empty."""
+    r = client.post(
         f"/api/projects/{project_id}/members",
         json={"user_handle": handle, "role": role},
+        headers=_bearer(actor),
     )
+    assert r.status_code == 200, r.text
 
 
 def _orphan_the_roster(client, topic_id: str) -> None:

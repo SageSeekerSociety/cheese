@@ -143,19 +143,23 @@ def test_files_stay_readable_after_the_agent_runs_jj(project):
 def test_unreadable_store_names_the_uid_split_instead_of_dumping_jj_output(project):
     """When it does go wrong, the file panel must say why. This used to surface
     as `jj diff failed: Internal error…`, which reads like "file not found" and
-    is why a project-wide outage went undiagnosed."""
+    is why a project-wide outage went undiagnosed.
+
+    `config-id` is deliberately NOT the probe here: `_jj` now deletes that one
+    before every call (its own remedy, added upstream), so it can no longer
+    reach a user. Any OTHER unreadable file in the shared store still can, and
+    that is the shape a uid split takes once config-id is handled."""
     topic = uuid.uuid4()
     wt = ws.topic_worktree(project, topic)
     (wt / "note.md").write_text("hello\n", encoding="utf-8")
-    _agent_jj(wt, "config", "set", "--repo", "user.name", "芝士")
 
-    config_id = ws._repo(project) / ".jj" / "repo" / "config-id"  # noqa: SLF001
-    config_id.chmod(0o000)  # what another uid's 0600 looks like from this process
+    op_store = ws._jj_store(ws._repo(project)) / "op_store"  # noqa: SLF001
+    op_store.chmod(0o000)  # what another uid's 0600 looks like from this process
     try:
         with pytest.raises(ws.WorkspacePermissionError) as excinfo:
             ws.list_files(project, topic_id=topic)
     finally:
-        config_id.chmod(0o600)
+        op_store.chmod(0o755)
 
     message = str(excinfo.value)
     assert str(ws.AGENT_UID) in message

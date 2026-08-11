@@ -31,7 +31,9 @@ def _seed_agent(handle: str) -> None:
 
 
 def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
-    project_id = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = client.post(
+        "/api/projects", json={"name": "P", "owner_handle": created_by}
+    ).json()["data"]["id"]
     topic_id = client.post(
         "/api/topics",
         json={"project_id": project_id, "title": "T", "created_by": created_by},
@@ -206,7 +208,7 @@ def _notifs(client, project_id: str, handle: str) -> list[dict]:
     ).json()["data"]["data"]
 
 
-def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client):
+def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client, bearer):
     """The two paths differ on purpose.
 
     A broadcast reaches the room's humans — every 芝士 in the room already reads
@@ -220,6 +222,7 @@ def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client):
     client.post(
         f"/api/projects/{project_id}/members",
         json={"user_handle": "ops", "role": "member"},
+        headers=bearer("alice"),  # the project owner — roster writes are guarded
     )
     client.post(
         f"/api/topics/{topic_id}/members",

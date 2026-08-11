@@ -8,7 +8,7 @@ from app.domain.memory.store import DbMemoryStore
 from app.domain.user.models import User, UserProfile
 
 
-def test_user_profile_aggregates_across_projects(client):
+def test_user_profile_aggregates_across_projects(client, bearer):
     # The cheesex POST /api/users stub (handle-only user with skills/bio) was
     # retired in the fusion merge (unify P3); identity is 知是's int User +
     # UserProfile, keyed by username == handle. Seed one directly. The merged
@@ -40,12 +40,23 @@ def test_user_profile_aggregates_across_projects(client):
     asyncio.run(_seed_user())
 
     # Two projects, member of both; started a topic in one.
-    p1 = client.post("/api/projects", json={"name": "P1"}).json()["data"]["id"]
-    p2 = client.post("/api/projects", json={"name": "P2"}).json()["data"]["id"]
+    p1 = client.post("/api/projects", json={"name": "P1", "owner_handle": "u1"}).json()[
+        "data"
+    ]["id"]
+    p2 = client.post("/api/projects", json={"name": "P2", "owner_handle": "u1"}).json()[
+        "data"
+    ]["id"]
+    # Roster writes need the owner's token, so u1 adds itself to both projects.
     client.post(
-        f"/api/projects/{p1}/members", json={"user_handle": "u1", "role": "lead"}
+        f"/api/projects/{p1}/members",
+        json={"user_handle": "u1", "role": "lead"},
+        headers=bearer("u1"),
     )
-    client.post(f"/api/projects/{p2}/members", json={"user_handle": "u1"})
+    client.post(
+        f"/api/projects/{p2}/members",
+        json={"user_handle": "u1"},
+        headers=bearer("u1"),
+    )
     client.post(
         "/api/topics",
         json={"project_id": p1, "title": "我的话题", "created_by": "u1"},

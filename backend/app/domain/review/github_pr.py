@@ -36,7 +36,13 @@ import httpx
 from app.core.config import settings
 from app.domain.agent.github_app import GitHubAppTokens
 
-CheckState = Literal["pending", "success", "failure"]
+#: `no_checks` (人类授权动作前移, 2026-08-10) is NOT a flavour of success: it
+#: means "no workflow will ever produce a check for this ref" (every workflow's
+#: `paths-ignore` skipped it). The zero-check deadlock fix still holds — the
+#: poller stops waiting — but a ref nothing checked has never had its tests
+#: run, so it does not get the machine's免人 auto-merge. See
+#: `_resolve_zero_checks` here and `_authorization_exception` in services.py.
+CheckState = Literal["pending", "success", "failure", "no_checks"]
 
 
 @dataclass
@@ -166,6 +172,25 @@ class GitHubPrClient(Protocol):
         (freshly pushed/re-pushed, still racing the webhook). Implementations
         must resolve that ambiguity themselves rather than always returning
         one side — see `HttpxGitHubPrClient` for how."""
+        ...
+
+    async def compare_files(
+        self, *, owner: str, repo: str, base: str, head: str, token: str
+    ) -> list[tuple[str, str]] | None:
+        """(status, path) for every file `head` changes relative to its merge
+        base with `base` — i.e. exactly the diff a PR from `head` onto `base`
+        would show. `status` is GitHub's own word (`added` / `modified` /
+        `removed` / `renamed` / ...).
+
+        `base...head` (merge-base) semantics, NOT `base..head`, is the whole
+        point: a topic branch that merged the base branch in (every re-push
+        does — see `_repush_if_local_head_moved`) would otherwise report every
+        file main moved as if this branch had touched it.
+
+        None means GitHub gave no usable file list (diff too large — the
+        compare API caps at 300 files — or an unexpected shape). Callers must
+        treat None as "scope unknown" and fail CLOSED (ask a human), never as
+        "nothing changed"."""
         ...
 
     async def pull_request_head_sha(
@@ -446,11 +471,15 @@ class HttpxGitHubPrClient:
         instantaneous, "no github-actions suite" alone isn't trusted
         immediately either — it must hold for `_zero_checks_grace_s`
         (default 120s, two poll rounds at the default 60s interval) before
-        this returns "success", as a backstop against the residual sliver of
+        this returns "no_checks", as a backstop against the residual sliver of
         race between "we just pushed" and "GitHub has processed the push far
         enough to create even the check-suite". Losing this bookkeeping
         (process restart) only restarts the grace period — it can never
-        shorten it, so it can't turn into a false "success".
+        shorten it, so it can't turn into a false "no_checks".
+
+        人类授权动作前移 (2026-08-10): the settled verdict is `no_checks`, not
+        `success`. Both end the wait (the deadlock fix is intact), but only
+        `success` means checks actually ran and passed — see `CheckState`.
         """
         suites = await self._check_suites(owner=owner, repo=repo, ref=ref, token=token)
         key = (owner, repo, ref)
@@ -468,7 +497,7 @@ class HttpxGitHubPrClient:
         if now - first_seen < self._zero_checks_grace_s:
             return "pending", "还没有检查报告"
         self._zero_checks_first_seen.pop(key, None)
-        return "success", "没有任何 workflow 会对这次改动触发检查，判定为通过"
+        return "no_checks", "没有任何 workflow 会对这次改动触发检查（真 CI 从未跑过）"
 
     async def _check_suites(
         self, *, owner: str, repo: str, ref: str, token: str
@@ -485,6 +514,35 @@ class HttpxGitHubPrClient:
                 f"（HTTP {resp.status_code}）：{resp.text[:300]}"
             )
         return resp.json().get("check_suites", [])
+
+    async def compare_files(
+        self, *, owner: str, repo: str, base: str, head: str, token: str
+    ) -> list[tuple[str, str]] | None:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/compare/{base}...{head}",
+                headers=self._headers(token),
+                params={"per_page": 100},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝比较改动范围（HTTP {resp.status_code}）：{resp.text[:300]}"
+            )
+        payload = resp.json()
+        files = payload.get("files")
+        if not isinstance(files, list):
+            # Truncated/oversized compare — GitHub omits `files` entirely.
+            # "Scope unknown" is not "scope unchanged" (see the Protocol).
+            return None
+        out: list[tuple[str, str]] = []
+        for item in files:
+            if not isinstance(item, dict):
+                return None
+            filename = item.get("filename")
+            if not isinstance(filename, str):
+                return None
+            out.append((str(item.get("status") or ""), filename))
+        return out
 
     async def pull_request_head_sha(
         self, *, owner: str, repo: str, number: int, token: str
