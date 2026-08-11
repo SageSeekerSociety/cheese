@@ -8,12 +8,7 @@ the install URL when nothing matches. GitHub itself is faked at the module
 seams; the tests assert what the route DOES, not HTTP details.
 """
 
-
-def _auth(handle: str) -> dict[str, str]:
-    from app.core.tokens import mint_session_token
-
-    token = mint_session_token(handle=handle, user_id=None)
-    return {"Authorization": f"Bearer {token}"}
+from tests.integration.conftest import session_auth_headers
 
 
 def _make_project(client) -> str:
@@ -60,7 +55,9 @@ def test_connect_uses_the_existing_installation(client, monkeypatch):
     )
     pid = _make_project(client)
 
-    r = client.post(f"/api/projects/{pid}/github/connect", headers=_auth("alice"))
+    r = client.post(
+        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+    )
     assert r.status_code == 200
     data = r.json()["data"]
     assert data["connected"] is True
@@ -80,7 +77,9 @@ def test_connect_falls_back_to_the_install_url(client, monkeypatch):
     )
     pid = _make_project(client)
 
-    r = client.post(f"/api/projects/{pid}/github/connect", headers=_auth("alice"))
+    r = client.post(
+        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+    )
     assert r.status_code == 200
     data = r.json()["data"]
     assert data["connected"] is False
@@ -96,7 +95,9 @@ def test_connect_skips_github_without_a_github_upstream(client, monkeypatch):
     )
     pid = _make_project(client)
 
-    r = client.post(f"/api/projects/{pid}/github/connect", headers=_auth("alice"))
+    r = client.post(
+        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+    )
     assert r.status_code == 200
     assert r.json()["data"]["connected"] is False
     assert calls["list"] == 0  # never asked GitHub — nothing to match against
@@ -113,9 +114,13 @@ def test_connect_is_idempotent_once_connected(client, monkeypatch):
     )
     pid = _make_project(client)
 
-    first = client.post(f"/api/projects/{pid}/github/connect", headers=_auth("alice"))
+    first = client.post(
+        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+    )
     assert first.json()["data"]["connected"] is True
-    second = client.post(f"/api/projects/{pid}/github/connect", headers=_auth("alice"))
+    second = client.post(
+        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+    )
     assert second.json()["data"]["connected"] is True
     assert second.json()["data"]["repo"] == "acme/widgets"
     assert calls["list"] == 1  # the second call answered from the DB, not GitHub

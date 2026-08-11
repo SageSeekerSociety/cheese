@@ -6,11 +6,11 @@ the child's roster from the requested owner — a 分身-initiated split (owner
 handle "cheese", which `seed()` deliberately skips) left every human silently
 off the new sub-topic's member list, which is what users actually noticed."""
 
-from app.core.tokens import mint_session_token
+from tests.integration.conftest import session_token
 
 
 def _login(handle: str) -> str:
-    return mint_session_token(handle=handle, user_id=None)
+    return session_token(handle)
 
 
 def _bearer(token: str) -> dict:

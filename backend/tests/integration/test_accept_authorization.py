@@ -7,13 +7,7 @@ request body with no authentication at all — anyone who could reach the API
 could accept/reject/revoke any card by simply naming the right handle.
 """
 
-from app.core.tokens import mint_session_token
-
-
-def _auth(handle: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
-    }
+from tests.integration.conftest import session_auth_headers
 
 
 def _make_project(client) -> str:
@@ -63,7 +57,7 @@ def test_accept_by_non_reviewer_403_even_with_matching_body_field(client):
     r = client.post(
         f"/api/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("mallory"),
+        headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403
     assert "验收人" in r.json()["message"]
@@ -81,7 +75,7 @@ def test_accept_by_routed_reviewer_succeeds(client):
     r = client.post(
         f"/api/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "accepted"
@@ -105,7 +99,7 @@ def test_reject_by_non_reviewer_403(client):
     r = client.post(
         f"/api/accept-cards/{cid}/reject",
         json={"decided_by": "mallory"},
-        headers=_auth("mallory"),
+        headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403
     cards = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"]
@@ -119,7 +113,7 @@ def test_revoke_without_auth_401(client):
     client.post(
         f"/api/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
 
     r = client.post(f"/api/accept-cards/{cid}/revoke", json={"decided_by": "alice"})
@@ -134,7 +128,7 @@ def test_revoke_ignores_spoofed_body_identity(client):
     client.post(
         f"/api/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
 
     # mallory authenticates as herself but claims to be "alice" in the body —
@@ -142,7 +136,7 @@ def test_revoke_ignores_spoofed_body_identity(client):
     r = client.post(
         f"/api/accept-cards/{cid}/revoke",
         json={"decided_by": "alice"},
-        headers=_auth("mallory"),
+        headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 422
     assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
@@ -182,7 +176,7 @@ def test_approve_uses_verified_identity_not_body(client):
     r = client.post(
         f"/api/accept-cards/{cid}/approve",
         json={"approver_handle": "alice"},
-        headers=_auth("bob"),
+        headers=session_auth_headers("bob"),
     )
     assert r.status_code == 200
     assert r.json()["data"]["approvals"] == ["bob"]

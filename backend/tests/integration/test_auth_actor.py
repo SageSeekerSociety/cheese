@@ -2,7 +2,8 @@
 resolved from the verified token (not the body), the Phase-0 handle fallback
 still works, and a token-authenticated outsider is denied (越权)."""
 
-from app.core.tokens import mint_session_token, verify_session_token
+from app.core.tokens import verify_session_token
+from tests.integration.conftest import session_token
 
 
 def _login(client, handle: str) -> str:
@@ -10,7 +11,7 @@ def _login(client, handle: str) -> str:
     # in the fusion merge (unify P3: auth unified to main's SRP login). The actor
     # here is identified purely by the token's ``handle`` claim, so mint a session
     # token directly to exercise the (still-present) token-actor resolution.
-    return mint_session_token(handle=handle, user_id=None)
+    return session_token(handle)
 
 
 def _bearer(token: str) -> dict:

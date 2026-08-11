@@ -21,17 +21,11 @@ from datetime import UTC, datetime
 import httpx
 
 from app.core.errors import ValidationError
-from app.core.tokens import mint_session_token
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.review import github_pr
 from app.domain.workspace import service as ws
 from tests.conftest import wait_turns_idle
-
-
-def _auth(handle: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
-    }
+from tests.integration.conftest import session_auth_headers
 
 
 def _make_project(client) -> str:
@@ -278,7 +272,7 @@ def test_accept_with_token_opens_pr_topic_stays_active(client, monkeypatch):
         r = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         )
         assert r.status_code == 200
         card = r.json()["data"]
@@ -322,7 +316,7 @@ def test_accept_pr_open_failure_degrades_with_github_call_failed_reason(
         r = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         )
         assert r.status_code == 200
         card = r.json()["data"]
@@ -345,7 +339,7 @@ def test_poll_ci_pending_no_change(client, monkeypatch):
         client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         )
         # No check_state configured -> defaults to "pending".
         _poll(client)
@@ -381,7 +375,7 @@ def test_poll_token_gone_pauses_with_visible_reason(client, monkeypatch):
         client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         )
 
         # Token goes bad after the PR is already open (key rotated / expired
@@ -412,7 +406,7 @@ def test_poll_ci_green_merges_but_topic_stays_active_until_deploy(client, monkey
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         number = accepted["pr_number"]
         head_sha = fake.prs[number]["head_sha"]
@@ -445,7 +439,7 @@ def test_poll_deploy_success_finally_archives(client, monkeypatch):
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         number = accepted["pr_number"]
         head_sha = fake.prs[number]["head_sha"]
@@ -479,7 +473,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch):
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         number = accepted["pr_number"]
         head_sha = fake.prs[number]["head_sha"]
@@ -530,7 +524,7 @@ def test_poll_deploy_failure_keeps_topic_active_no_retry(client, monkeypatch):
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         number = accepted["pr_number"]
         head_sha = fake.prs[number]["head_sha"]
@@ -598,7 +592,7 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         assert accepted["status"] == "pr_open"
         assert accepted["pr_head_sha"] == first_head
@@ -668,7 +662,7 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         holder["pr_number"] = accepted["pr_number"]
         fake.prs[holder["pr_number"]]["head_sha"] = first_head
@@ -722,7 +716,7 @@ def test_accept_without_token_or_repo_degrades_to_direct_merge(client):
     r = client.post(
         f"/api/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     card = r.json()["data"]
@@ -810,7 +804,7 @@ def test_accept_claims_the_pr_that_already_exists_on_the_branch(client, monkeypa
         r = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         )
         assert r.status_code == 200
         card = r.json()["data"]
@@ -869,7 +863,7 @@ def test_accept_still_degrades_on_a_422_that_is_not_already_exists(client, monke
         r = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         )
         assert r.status_code == 200
         card = r.json()["data"]
@@ -893,7 +887,7 @@ def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):
     client.post(
         f"/api/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     )
     result = _poll(client)
     assert result["cards_checked"] == 0
@@ -912,7 +906,7 @@ def test_poll_merge_refused_puts_the_reason_on_the_card(client, monkeypatch):
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         number = accepted["pr_number"]
         fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
@@ -949,7 +943,7 @@ def test_poll_merge_refusal_reason_updates_when_it_changes(client, monkeypatch):
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         number = accepted["pr_number"]
         fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全部通过")
@@ -982,7 +976,7 @@ def test_poll_merge_refusal_replaces_a_stale_ci_failure_note(client, monkeypatch
         accepted = client.post(
             f"/api/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
-            headers=_auth("alice"),
+            headers=session_auth_headers("alice"),
         ).json()["data"]
         number = accepted["pr_number"]
         head_sha = fake.prs[number]["head_sha"]
@@ -1018,7 +1012,7 @@ def _accept_to_pr_open(client, monkeypatch) -> tuple[FakeGitHubPrClient, str, in
     accepted = client.post(
         f"/api/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
-        headers=_auth("alice"),
+        headers=session_auth_headers("alice"),
     ).json()["data"]
     assert accepted["status"] == "pr_open"
     return fake, tid, accepted["pr_number"]

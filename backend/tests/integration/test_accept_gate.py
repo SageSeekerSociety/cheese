@@ -12,9 +12,9 @@ import uuid
 
 import pytest
 
-from app.core.tokens import mint_session_token
 from app.domain.review import gate
 from tests.conftest import wait_turns_idle
+from tests.integration.conftest import session_auth_headers
 
 
 @pytest.fixture(autouse=True)
@@ -51,9 +51,7 @@ def _gate_logs(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _authenticated_project_owner(client):
-    client.headers["Authorization"] = (
-        f"Bearer {mint_session_token(handle='alice', user_id=None)}"
-    )
+    client.headers.update(session_auth_headers("alice"))
     yield
     client.headers.pop("Authorization", None)
 
@@ -151,9 +149,7 @@ def test_quality_gate_update_requires_human_project_admin(client):
     )
     assert r.status_code == 404
 
-    client.headers["Authorization"] = (
-        f"Bearer {mint_session_token(handle='mallory', user_id=None)}"
-    )
+    client.headers.update(session_auth_headers("mallory"))
     r = client.put(
         f"/api/projects/{pid}/quality-gate", json={"check_command": "echo bad"}
     )
@@ -169,17 +165,13 @@ def test_quality_gate_update_allows_project_lead_not_ordinary_member(client):
         )
         assert r.status_code == 200
 
-    client.headers["Authorization"] = (
-        f"Bearer {mint_session_token(handle='lead-user', user_id=None)}"
-    )
+    client.headers.update(session_auth_headers("lead-user"))
     r = client.put(
         f"/api/projects/{pid}/quality-gate", json={"check_command": "echo safe"}
     )
     assert r.status_code == 200
 
-    client.headers["Authorization"] = (
-        f"Bearer {mint_session_token(handle='member-user', user_id=None)}"
-    )
+    client.headers.update(session_auth_headers("member-user"))
     r = client.put(
         f"/api/projects/{pid}/quality-gate", json={"check_command": "echo bad"}
     )

@@ -1,13 +1,7 @@
 """Task Template protocol enforcement on accept (spec §4.2/§4.4)."""
 
-from app.core.tokens import mint_session_token
 from tests.conftest import seed_space
-
-
-def _auth(handle: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {mint_session_token(handle=handle, user_id=None)}"
-    }
+from tests.integration.conftest import session_auth_headers
 
 
 def _setup_with_mentor_condition(client) -> tuple[str, str]:
@@ -54,7 +48,7 @@ def test_non_mentor_cannot_accept_protocol_topic(client):
     r = client.post(
         f"/api/accept-cards/{card}/accept",
         json={"decided_by": "user-1"},
-        headers=_auth("user-1"),
+        headers=session_auth_headers("user-1"),
     )
     assert r.status_code == 422  # 须导师验收
 
@@ -65,7 +59,7 @@ def test_mentor_can_accept(client):
     r = client.post(
         f"/api/accept-cards/{card}/accept",
         json={"decided_by": "mentor-1"},
-        headers=_auth("mentor-1"),
+        headers=session_auth_headers("mentor-1"),
     )
     assert r.status_code == 200
     topic = client.get(f"/api/topics/{tid}").json()["data"]
