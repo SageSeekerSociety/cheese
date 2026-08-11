@@ -59,7 +59,6 @@ from app.domain.review.repositories import AcceptCardRepository
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicRepository
-from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
@@ -1556,8 +1555,9 @@ class ChatService:
             # explicit <@handle> is different and is NOT filtered here — that is
             # how one agent addresses another, which a room hosting several 芝士
             # depends on.
-            members = await TopicMembershipRepository(session).list_for_topic(topic.id)
-            agents = set(await TopicMemberService(session).agent_handles(topic.id))
+            member_service = TopicMemberService(session)
+            members, _ = await member_service.list_for_topic(topic.id)
+            agents = set(await member_service.agent_handles(topic.id))
             concrete += [
                 m.member_handle for m in members if m.member_handle not in agents
             ]
