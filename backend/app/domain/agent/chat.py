@@ -594,19 +594,27 @@ def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[st
     (resolved_handles, unresolved_handles); unresolved = a token whose handle is
     not a member (a hallucinated handle → the platform flags it).
 
-    An EMPTY roster means "this topic exposes no member list" (私聊), not "nobody
-    is a member": with no list to check against, a handle can be neither
-    confirmed nor refuted, so it is left out of BOTH lists — no notification, and
-    no false 「项目里没有这个成员」 accusation against a real teammate."""
+    An EMPTY roster means "this topic exposes no member list" (私聊, or a project
+    carrying no explicit member rows), not "nobody is a member": with no list to
+    check against a concrete handle can be neither confirmed nor refuted, so it
+    is left out of BOTH lists — no notification, and no false 「项目里没有这个
+    成员」 accusation against a real teammate.
+
+    ``@all``/``@here`` are unaffected by any of that: they are expanded from the
+    TOPIC's roster by :meth:`_notify_mentions` (a DB read), never from this list,
+    so an empty list must not silence a broadcast."""
     resolved: list[str] = []
     unresolved: list[str] = []
-    if not text or not roster:
+    if not text:
         return resolved, unresolved
     handles = {m["handle"] for m in roster}
     for h in dict.fromkeys(_MENTION_RE.findall(text)):
         # @all/@here are reserved broadcast tokens — always "resolved" (expanded
         # to the roster by _notify_mentions), never flagged as a bad handle.
-        (resolved if h in _SPECIAL_MENTIONS or h in handles else unresolved).append(h)
+        if h in _SPECIAL_MENTIONS or h in handles:
+            resolved.append(h)
+        elif roster:
+            unresolved.append(h)
     return resolved, unresolved
 
 

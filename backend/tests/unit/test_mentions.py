@@ -93,3 +93,12 @@ def test_broadcast_token_needs_no_roster_entry():
     resolved, unresolved = _resolve_mentions("<@all> 都看下", ROSTER)
     assert resolved == ["all"]
     assert unresolved == []
+
+
+def test_empty_roster_does_not_silence_a_broadcast():
+    # Regression: @all/@here expand from the TOPIC roster (a DB read in
+    # _notify_mentions), never from this list — an empty list here must not
+    # swallow the broadcast. Bailing out early on `not roster` did exactly that.
+    resolved, unresolved = _resolve_mentions("<@all> 都看下", [])
+    assert resolved == ["all"]
+    assert unresolved == []
