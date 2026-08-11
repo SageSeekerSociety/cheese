@@ -85,10 +85,43 @@ check_raw_http_exception() {
     "raise the matching class from app.core.errors instead" "$hits"
 }
 
+# Rule 4 — one piece of work leaves ONE note in docs/topics/. Nothing in the
+# platform writes these files; 芝士 writes them by hand, and with no convention
+# anywhere the same topic has twice been written down under two names in a
+# SINGLE accept commit (955707a31 added both authz收敛-分身身份.md and
+# 分身独立身份与authz收敛.md; 937a615e7 did the same for the sidebar-collapse
+# pair). Two of 85 files, and it compounds — every accept can leave another.
+#
+# Matching is on the heading plus the first sentence, not on whole-file
+# equality: the duplicates are never byte-identical — one is the plan and one
+# the finished note, and they diverge within a few lines. That first sentence is
+# what actually names the topic. Tuned against the real corpus: 2 non-blank
+# lines finds both known pairs among 85 files and pairs nothing else; 3 already
+# misses one, because by then the plan and the finished note have split.
+check_duplicate_topic_docs() {
+  local dir="$ROOT/docs/topics" hits
+  [ -d "$dir" ] || return 0
+  hits="$(
+    for f in "$dir"/*.md; do
+      [ -e "$f" ] || continue
+      printf '%s\t%s\n' \
+        "$(grep -v '^[[:space:]]*$' "$f" | head -2 | tr -d '[:space:]' | md5sum | cut -d' ' -f1)" \
+        "${f#"$ROOT/"}"
+    done | sort | awk -F'\t' '
+      $1 == prev { print "  " prevf "\n  " $2 "\n" }
+      { prev = $1; prevf = $2 }'
+  )"
+  [ -z "$hits" ] && return 0
+  echo "FAIL: the same topic is written down twice in docs/topics"
+  report "duplicate topic notes" \
+    "keep the fuller/later note, delete the other — one topic, one file" "$hits"
+}
+
 run_all() {
   check_naive_datetime
   check_builtin_shadowing
   check_raw_http_exception
+  check_duplicate_topic_docs
 }
 
 # --- self-test -------------------------------------------------------------
@@ -131,7 +164,23 @@ if [ "$SELF_TEST" = 1 ]; then
   mv "$tmp/backend/app/domain/bad_err.py" "$tmp/backend/app/core/ok_err.py"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "HTTPException outside domain must pass"
 
-  echo "PASS: check-repo-rules self-test (3 rules, scoping and opt-out verified)"
+  # Rule 4. The pair that actually happened is not byte-identical — same opening,
+  # one is the plan and one the finished note — so the fixture mirrors that.
+  mkdir -p "$tmp/docs/topics"
+  printf '## 目标\n\n让每个话题分身有自己的身份。\n\n- 阶段一（本轮必做）：做。\n' \
+    > "$tmp/docs/topics/a.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a single topic note must pass"
+  printf '## 目标\n\n让每个话题分身有自己的身份。\n\n- 阶段一：**已完成**。\n\n## 结果\n\n绿。\n' \
+    > "$tmp/docs/topics/b.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the same topic under two names must fail"
+  # A genuinely different note sharing only the boilerplate heading must pass,
+  # or the guard would fire on every note that opens with 「## 目标」.
+  printf '## 目标\n\n把上游冲突交给芝士解决。\n\n- 先定位。\n- 再改。\n' \
+    > "$tmp/docs/topics/b.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "different topics sharing a heading must pass"
+  rm -rf "$tmp/docs"
+
+  echo "PASS: check-repo-rules self-test (4 rules, scoping and opt-out verified)"
   exit 0
 fi
 
@@ -141,4 +190,4 @@ if [ "$FAILED" = 1 ]; then
   echo "These rules are stated as absolute in CLAUDE.md; this script only enforces them."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, builtin shadowing, raw HTTPException)"
+echo "PASS: repo rules (naive datetime, builtin shadowing, raw HTTPException, duplicate topic notes)"

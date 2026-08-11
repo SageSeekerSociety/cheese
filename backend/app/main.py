@@ -55,6 +55,7 @@ async def lifespan(_: FastAPI):
         SandboxReaperRunner,
         SchedulerRunner,
         SchedulerService,
+        UpstreamSyncRunner,
     )
 
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
@@ -121,6 +122,11 @@ async def lifespan(_: FastAPI):
     # the reaper above.
     pr_poller = PrPollRunner(scheduler, settings.accept_pr_poll_interval_s)
     pr_poller.start()
+    # 自动同步上游: keeps each linked project's base current so accepting can
+    # actually push. Conflicts hand off to 芝士 the same way the manual button
+    # does, and an open resolution task is reused rather than duplicated.
+    upstream_sync = UpstreamSyncRunner(scheduler, settings.upstream_sync_interval_s)
+    upstream_sync.start()
 
     # Enrolling provisioned machines is platform plumbing, so it runs on its own
     # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
@@ -146,6 +152,7 @@ async def lifespan(_: FastAPI):
     finally:
         await usage_ingest.stop()
         await machines.stop()
+        await upstream_sync.stop()
         await pr_poller.stop()
         await reaper.stop()
         await runner.stop()

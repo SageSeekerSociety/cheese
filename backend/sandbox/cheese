@@ -14,7 +14,7 @@
   cheese split "数据清洗"           # 拆出子话题
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
-  cheese recall "技术选型"          # 按需检索记忆(语义搜索)
+  cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
@@ -547,12 +547,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     prec = sub.add_parser(
         "recall",
-        help="按需检索记忆（语义搜索,返回摘要级结果）",
+        help="按需检索记忆（关键词检索,不是语义检索）",
         description=(
-            "语义搜索项目记忆。开场只注入了记忆的**摘要**,所以:需要某条的细节、"
-            "或怀疑有相关旧记忆没出现在摘要里时,先 recall 再回答。"
-            "输出是摘要级的,不是原文。"
+            "检索项目记忆。开场注入的不是全部——放不下的会被截断,"
+            "而且截断时注入块会明说「另有 N 条更早的记忆没放进来」。所以:"
+            "需要某条的细节、或怀疑有相关旧记忆没出现在开场里时,先 recall 再回答。\n"
+            "\n"
+            "这是**关键词检索**,不是语义检索:你的问题会被拆成关键词,"
+            "按命中覆盖度排序。**一次没查到不等于没有这条记忆**——"
+            "换个说法、或只用其中一两个关键词再试一次。"
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     prec.add_argument("query", help="关键词或问题,自然语言即可")
 
@@ -776,7 +781,10 @@ def main() -> None:
             body["owner"] = OWNER
         hits = _call("POST", f"/projects/{proj}/memory/search", body).get("data", {}).get("hits", [])
         if not hits:
-            print("没有找到相关记忆。")
+            # 关键词检索没命中 ≠ 没有这条记忆。说清楚这一点,否则一次空结果就会被
+            # 当成"确认不存在",然后一头撞上那条记忆本来要拦住的坑。
+            print("没有找到相关记忆。（关键词检索,不是语义检索：换个说法、"
+                  "或只用其中一两个关键词再试一次）")
         for h in hits:
             print(f"- {h.get('abstract', '')}")
     elif a.cmd == "ask":

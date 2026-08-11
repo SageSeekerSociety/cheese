@@ -1,7 +1,9 @@
 """End-to-end Phase 0 flow over HTTP + WebSocket (with the stub agent)."""
 
 import asyncio
+import uuid
 
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import DbMemoryStore
 
@@ -69,7 +71,8 @@ def test_blocks_empty_then_populated_after_chat(client):
     assert types == ["user_block", "reaction", "turn_active", "assistant_block", "done"]
 
     ack = next(f for f in frames if f["type"] == "reaction")
-    assert ack["reactions"] == [{"emoji": "✅", "count": 1, "authors": ["cheese"]}]
+    agent = topic_agent_handle(uuid.UUID(topic_id))
+    assert ack["reactions"] == [{"emoji": "✅", "count": 1, "authors": [agent]}]
 
     assistant = next(f for f in frames if f["type"] == "assistant_block")["block"]
     assert assistant["content"] == "Hello world"

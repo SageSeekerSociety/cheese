@@ -33,11 +33,11 @@ from app.domain.agent.service import (
     AgentService,
     event_from_dict,
 )
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
 
 # Author handle for 芝士's cheese-CLI callbacks (kept here to avoid importing
 # chat.py, which imports this module).
-_CHEESE_AUTHOR = "cheese"
 
 # Native tools 芝士 may use inside the sandbox + the Task tools (live todo).
 _SANDBOX_TOOLS = [
@@ -170,7 +170,9 @@ class LocalDockerProvider:
             "CHEESE_API": settings.sandbox_api_base,
             "CHEESE_PROJECT": str(project_id),
             "CHEESE_TOPIC": str(topic_id),
-            "CHEESE_AUTHOR": _CHEESE_AUTHOR,
+            # Which 分身 this sandbox is (分身独立身份) — the same identity its
+            # scoped CHEESE_TOKEN carries, never the shared account.
+            "CHEESE_AUTHOR": topic_agent_handle(topic_id),
             # Per-turn token scoped to THIS project+topic (review R5): a container
             # for one project/topic can't write another's cheese endpoints.
             "CHEESE_TOKEN": mint_scoped_token(

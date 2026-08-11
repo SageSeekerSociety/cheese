@@ -247,7 +247,8 @@ async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dic
     """记忆检索 — used by the `cheese recall` CLI. Defaults to project memory;
     with scope="user"+owner it searches that member's personal memory. On the
     OpenViking backend this is semantic search returning L0 abstracts; the flat
-    DB backend falls back to a substring filter."""
+    DB backend degrades to keyword matching ranked by query coverage — related,
+    but not the same thing, which is why the CLI never promises 语义搜索."""
     from app.domain.memory.models import MemoryScope
     from app.domain.memory.store import memory_store
 
@@ -262,13 +263,16 @@ async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dic
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
         hits = await store.search(MemoryScope.user, owner, query)
         return ok({"hits": [h.as_dict() for h in hits]})
-    # The agent's own memory first, then the shared pool — which is a read-only
-    # tail of what was written before memory was split per agent.
+    # The agent's own memory plus the shared pool — the latter a read-only tail
+    # of what was written before memory was split per agent. Merged on score, not
+    # concatenated by pool: which pool a fact happens to sit in says nothing
+    # about how well it answers the question, and the caller reads top-down.
     hits = []
     agent_scope = await _agent_memory_scope(db, project_id, body.get("topic") or "")
     if agent_scope is not None:
         hits.extend(await store.search(*agent_scope, query))
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
+    hits.sort(key=lambda h: -h.score)
     return ok({"hits": [h.as_dict() for h in hits]})
 
 
