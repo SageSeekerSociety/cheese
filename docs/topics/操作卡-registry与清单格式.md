@@ -40,13 +40,30 @@
 ## 进展
 
 - [x] 接手、范围确认、活文档改写
-- [ ] `backend/app/domain/ops/` registry + 清单 schema + 校验器 + 七问推导
-- [ ] `ops/requests/` 目录约定 + 示例清单
-- [ ] CI 必需检查：ops PR 路径白名单 + 清单校验
-- [ ] 卡面七问展示
-- [ ] 测试 + `task be:check` 跑绿
+- [x] `backend/app/domain/ops/` registry + 清单 schema + 校验器 + 七问推导
+      （`registry.py` / `manifest.py` / `guard.py` / `schemas.py` / `services.py`）
+- [x] `ops/requests/` 目录约定 + 格式说明（`ops/README.md`）
+- [x] CI 必需检查 `ops-guard.yml`：ops PR 路径白名单 + 全量清单校验
+- [x] 卡面七问展示：`GET /api/projects/{id}/operation-requests`（只读，不接执行回写）
+- [x] 单测 472 行（合法清单、隐含「当前」被拒、夹带非 ops 文件被拒）
+- [x] 检查跑绿：ruff 通过、alembic 单 head、ops 单测 40 passed、
+      pyright 对 `app/domain/ops` + `routes/ops.py` + `scripts/ops_manifest.py` 0 errors
+      （沙箱没有 Postgres，check.sh 跳过全量 pytest；CI 上会跑）
+
+## 落地形态（与最初设想的两处差异）
+
+- **不提交示例清单文件。** 规矩 3 要求「ops PR 只能碰 `ops/requests/`」，而本 PR 同时带着
+  backend 代码——真放一份 `.yaml` 进去，`ops-guard` 会当场把自己这个 PR 判红。
+  所以示例以完整 YAML 的形式写在 <&ops/README.md> 里，`ops/requests/` 本体只留 `.gitkeep`。
+  第一份真清单会是它自己那一个 PR，这正是格式想要的形状。
+- **卡面停在 API 层。** 后端把七问按 registry 推导好后整份吐出来，前端渲染留给接执行链的那一步——
+  本卡范围内没有必要动 `frontend/`，也就不去和并发的几条线抢文件。
+
+## 改动范围
+
+15 个文件、全部新建（另加 `pyproject.toml` / `uv.lock` 各一行：pyyaml）。
+没有 alembic 迁移，没有触碰 `backend/app/domain/review/` 与 `topic/`。
 
 ## 下一步
 
-先落 registry 与清单 schema（纯新文件、零外部依赖），再接 CI 守卫，最后做卡面。
-卡面是唯一可能要碰既有文件的地方，动之前会先说明改哪、为什么。
+第 4 步（`pull_request_review` 触发执行，从 device-smoke 只读起步）不在本卡范围内。
