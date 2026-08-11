@@ -71,6 +71,20 @@
 下面两处「标记之外」的修复也都跟着进去了（`catch (error)` 完好、并发键是
 `event_name` 形状而不是那个杂交体）。
 
+## 第三轮冲突：<&backend/sandbox/cheese> 的 gh-token 帮助（已解）
+
+两边都在给 `gh-token` 子命令补说明，补的是**不同的两半**，所以取并集而不是二选一：
+
+- 主分支那半：加 `description=` + `RawDescriptionHelpFormatter`，讲清**为什么必须显式带
+  `-R owner/repo`**——本仓库是 jj，工作区没有 `.git`，`gh` 推断不出仓库会报
+  `not a git repository`。这半更要紧，是踩过才知道的坑。
+- 本卡那半：把「stderr 会带上仓库名和查 CI 的具体命令」写进帮助。这条描述的是**实际行为**——
+  handler 里确实把仓库名、过期时间、查 check-runs 和抓 job 日志的两条现成命令打到 stderr
+  （stdout 只留 token，`$(cheese gh-token)` 才不会坏）。
+
+合成一份：`help=` 保持主分支的短句（子命令列表里不该塞长文），两段说明都进 `description=`。
+`cheese gh-token --help` 实跑渲染正常，可执行位保留。
+
 ## 采纳时的合并冲突（两轮，已解）
 
 同一批 CI 改动在主分支上有另一条并行线，采纳时撞了两轮。
