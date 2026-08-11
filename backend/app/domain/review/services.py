@@ -7,7 +7,7 @@ This is deterministic platform code, not AI.
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +37,9 @@ logger = logging.getLogger("cheesex.review")
 # 失败", 把真正的 CI 失败通知整个吞掉, 见 _nudge_pr_fix).
 _REPUSH_FAILED_PREFIX = "⚠️ 平台自动重推失败"
 _POLL_PAUSED_PREFIX = "⚠️ 轮询暂停"
+#: 合并很久了，部署既没成功也没失败——最常见的成因是这个提交根本没有部署 run
+#: (2026-08-11 实测)。比"还在等"强、比"❌ 部署失败"弱，所以是自己的前缀。
+_DEPLOY_STALLED_PREFIX = "⏳ 部署迟迟没有完成"
 
 #: 一次轮询里最多问 GitHub 多少次「这次成功部署包含我的提交吗」
 #: (`_later_successful_deploy`)。顶替我们的那次部署必然是合并之后最近的几次之一，
@@ -1263,7 +1266,20 @@ class AcceptService:
         client,
     ) -> None:
         """Stage 2 (2026-08-09 拍板): the PR merged — now wait for the deploy
-        workflow it triggered before the topic is allowed to archive."""
+        workflow it triggered before the topic is allowed to archive.
+
+        平台原来问的是「**我这个 sha 的部署 run 怎么样了**」，而唯一稳的问法是
+        「**我这个 commit 到底上线了没**」——2026-08-11 量出来的三组对照说明前者
+        取决于 GitHub 调度的偶然：`deploy-dev.yml` 的并发组名是固定字符串
+        `deploy-dev`，合并一密集，后来的 `workflow_run` 触发会被并发组吞掉，
+        **连 run 都不会被创建**（不是 cancelled，是按 sha 查 100 条终态全为 0）。
+        14:58 和 14:59 挨在一起的两个合并都没有 run，15:05 单独的那个有。合并
+        越密集越容易撞上，也就是说：平台自动合并跑得越顺，卡死的概率越高。
+
+        所以顺序是「先看自己的 run，没成功就改问祖先关系」，而祖先关系是主判据
+        而非补丁——它一视同仁地覆盖 run 成功、run 被顶替（cancelled）、run 根本
+        不存在这三种，因为它问的根本不是 run。
+        """
         state, tail = await client.workflow_run_state(
             owner=owner,
             repo=repo,
@@ -1271,23 +1287,39 @@ class AcceptService:
             head_sha=card.pr_head_sha,
             token=token,
         )
-        if state == "pending":
+        if state == "success":
+            await self._finish_pr_accept(card=card, topic=topic)
             return
-        if state == "failure":
-            # 这次部署没成功 ≠ 这段代码没上线 (2026-08-11, PR #251 的真实事故)。
-            # 问一句「有没有更晚的、真的部署过的成功运行已经把这个提交带上去了」
-            # 再下结论。同一份运行列表也用来说明这次失败到底挂在哪个 job 上。
-            runs = await self._recent_deploy_runs(
+
+        # 自己那次 run 没有给出「成功」——无论是 cancelled、failure，还是压根没有
+        # run。改问主判据：有没有一次更晚的、真的部署过的成功部署把这个提交带上
+        # 线了。这一步对 pending 也做（run 不存在时状态永远是 pending），但只在
+        # 它真的能定案时才有可见效果。
+        runs = await self._recent_deploy_runs(
+            card=card, owner=owner, repo=repo, token=token, client=client
+        )
+        landed = await self._later_successful_deploy(
+            card=card, runs=runs, owner=owner, repo=repo, token=token, client=client
+        )
+        if landed is not None:
+            blocked = await self._images_never_pushed(
                 card=card, owner=owner, repo=repo, token=token, client=client
             )
-            landed = await self._later_successful_deploy(
-                card=card, runs=runs, owner=owner, repo=repo, token=token, client=client
-            )
-            if landed is not None:
+            if blocked is None:
                 await self._finish_pr_accept(
-                    card=card, topic=topic, landed_via=landed, failed_tail=tail
+                    card=card,
+                    topic=topic,
+                    landed_via=landed,
+                    failed_tail=tail
+                    if state == "failure"
+                    else "这个提交自己没有成功的部署 run",
                 )
                 return
+            self._note_images_never_pushed(card=card, topic=topic, reason=blocked)
+            await self._session.flush()
+            return
+
+        if state == "failure":
             tail = tail + await self._failed_deploy_jobs_suffix(
                 card=card, runs=runs, owner=owner, repo=repo, token=token, client=client
             )
@@ -1303,7 +1335,100 @@ class AcceptService:
                 )
             return
 
-        await self._finish_pr_accept(card=card, topic=topic)
+        # 还在等。等太久了就说一声——默默等着正是这个话题要治的病。
+        self._note_deploy_stalled(card=card, topic=topic)
+        await self._session.flush()
+
+    async def _images_never_pushed(
+        self, *, card: AcceptCard, owner: str, repo: str, token: str, client
+    ) -> str | None:
+        """Positive evidence that THIS commit's images were never pushed, or
+        None. A veto on the ancestry criterion, not a precondition for it.
+
+        祖先关系说明「盒子上跑的那份代码里有我这个提交」，但 wangchangxin 要求
+        对 build 没产出镜像那一类另外挡一道（2026-08-11: `docker login -u
+        github.actor` 在 push 事件里取提交作者，采纳提交的作者不是仓库主 → 403
+        推不动镜像；根因已由 #276 修掉，历史卡里可能还有）。这里就是那道闸。
+
+        证据取自 build workflow 对**这个 sha** 的运行：它就是推镜像的那个
+        workflow，所以它红了 = 镜像没推上去，不需要去猜 job 名，也不需要 packages
+        权限。`build.yml` 的并发组按 sha 分组，每个 commit 都有自己的 run。
+
+        **只在拿到肯定证据时否决。** 没有 run、还在跑、拿不到——都返回 None，
+        因为「查不到」不是「没有」，而反过来会把 run 压根不会被创建的那批卡
+        （本话题的主症状）永远锁死。
+        """
+        state, tail = await client.workflow_run_state(
+            owner=owner,
+            repo=repo,
+            workflow_file=settings.accept_build_workflow_file,
+            head_sha=card.pr_head_sha,
+            token=token,
+        )
+        return tail if state == "failure" else None
+
+    def _note_images_never_pushed(
+        self, *, card: AcceptCard, topic: Topic, reason: str
+    ) -> None:
+        """镜像没推上去 → 绝不放行，哪怕祖先关系成立。写一次，不刷屏。"""
+        note = (
+            f"⛔ 这个提交的镜像没有被推上去（{reason}），"
+            "所以即便后来有包含它的成功部署，也不能算它自己上线了。"
+            "话题保持 active，需要人重跑 build 或确认。"
+        )[:2000]
+        if card.note == note:
+            return
+        card.note = note
+        logger.warning("card %s: images were never pushed — %s", card.id, reason)
+        self._notify_merge_result(
+            topic,
+            f"⛔ PR #{card.pr_number} 已合并，后来也有包含它的成功部署，但**这个提交"
+            f"自己的镜像没有被推上去**（{reason}）。\n"
+            "平台不拿祖先关系替这种情况背书：话题保持 active，需要人重跑 build，"
+            f"或者自己确认代码到底上没上线。\n{card.pr_url}",
+        )
+
+    def _note_deploy_stalled(self, *, card: AcceptCard, topic: Topic) -> None:
+        """Merged long ago, deploy neither succeeded nor failed, and nothing
+        later has carried it either — say so once instead of waiting mutely.
+
+        最常见的成因是这个提交**根本没有部署 run**（2026-08-11 实测：
+        fa7d08653 / 482ca022e / 611e43f02 三个 main 上真实存在的合并提交，按
+        sha 查 100 条终态全为 0 条）。`deploy-dev.yml` 的并发组名是固定字符串，
+        合并一密集，后来的 `workflow_run` 触发就被并发组吞掉，连 run 都不会建。
+        那种卡不是「还在等」，是死等——#267 这样躺了三个多小时。
+
+        主判据（祖先关系）已经在调用方问过了，问不出结果才轮到这里，所以这条
+        note 说的是「既没上线、也没有结论」，不是「部署失败」。`❌ 部署失败`
+        是更强的结论（真的跑过并且挂了），永远不被这条盖掉。
+        """
+        merged_at = card.pr_merged_at
+        if merged_at is None:
+            return
+        minutes = settings.accept_deploy_stale_after_minutes
+        if datetime.now(UTC) - merged_at < timedelta(minutes=minutes):
+            return  # 还在正常的等待窗口里
+        if card.note.startswith("❌") or card.note.startswith(_DEPLOY_STALLED_PREFIX):
+            return
+        card.note = (
+            f"{_DEPLOY_STALLED_PREFIX}：合并已超过 {minutes} 分钟，这个提交对应的部署"
+            "仍未成功完成，也还没有更晚的成功部署把它带上线。话题保持 active。"
+        )[:2000]
+        logger.warning(
+            "card %s: deploy for %s still not successful %s min after merge",
+            card.id,
+            card.pr_head_sha,
+            minutes,
+        )
+        self._notify_merge_result(
+            topic,
+            f"⏳ PR #{card.pr_number} 已合并超过 {minutes} 分钟，但它的部署一直没有成功"
+            "完成，也没有更晚的成功部署把这个提交带上线。\n"
+            "实测有一种情况长得和「还在等」一模一样：合并密集时 `deploy-dev.yml` 的"
+            "并发组会把后来的触发吞掉，**连 run 都不会被创建**，那样等下去永远不会有"
+            f"结果。需要人看一眼：重跑 build/deploy，或者直接确认代码上没上线。\n"
+            f"{card.pr_url}",
+        )
 
     async def _recent_deploy_runs(
         self, *, card: AcceptCard, owner: str, repo: str, token: str, client

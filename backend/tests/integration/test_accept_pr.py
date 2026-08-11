@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
+from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.review import github_pr
@@ -99,6 +100,8 @@ class FakeGitHubPrClient:
         # number → GitHub's refusal reason (405/409); wins over a sha.
         self.merge_blocked_by_number: dict[int, str] = {}
         self.workflow_state_by_sha: dict[str, tuple[str, str]] = {}
+        # 推镜像的那个 workflow 对某个 sha 的结论（`accept_build_workflow_file`）。
+        self.build_state_by_sha: dict[str, tuple[str, str]] = {}
         # 人类授权动作前移: sha → the PR diff at that sha, as [(status, path)].
         # None models GitHub's oversized-compare response (no `files` key).
         # Unset shas answer with an empty diff, which is what every test that
@@ -228,6 +231,10 @@ class FakeGitHubPrClient:
     async def workflow_run_state(
         self, *, owner, repo, workflow_file, head_sha, token
     ) -> tuple[str, str]:
+        if workflow_file == settings.accept_build_workflow_file:
+            # 「查不到」不是「没推上去」——默认给无结论，只有明确登记了 failure
+            # 的用例才构成「镜像没推上去」的肯定证据。
+            return self.build_state_by_sha.get(head_sha, ("pending", "build 还没结论"))
         return self.workflow_state_by_sha.get(head_sha, ("pending", "还没触发"))
 
     async def recent_workflow_runs(
@@ -722,6 +729,100 @@ def test_poll_deploy_cancelled_without_any_later_success_still_asks_a_human(
         assert _topic(client, tid)["status"] == "active"
         # 一次成功的都没有 → 根本不必去问 GitHub 包含关系.
         assert fake.compare_status_calls == []
+    finally:
+        _reset_client()
+
+
+def test_poll_deploy_with_no_run_at_all_archives_once_something_carries_it(
+    client, monkeypatch
+):
+    """2026-08-11 实测的主症状，也是最危险的一种：`deploy-dev.yml` 的并发组名是
+    固定字符串，合并一密集，后来的 `workflow_run` 触发会被并发组吞掉，**连 run 都
+    不会被创建**（482ca022e / 611e43f02 按 sha 查 100 条终态全是 0）。按 head_sha
+    精确匹配的老逻辑对这种卡永远是 pending —— 不是「还在等」，是死等。
+
+    祖先关系是主判据，不是 cancelled 的补丁：它一视同仁地覆盖这一种。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        # 这个 sha 一条 run 都没有 —— 状态永远停在 pending。
+        assert "merge-sha-1" not in fake.workflow_state_by_sha
+        fake.workflow_runs = [
+            _deploy_run("45b6169a", conclusion="success", minutes=5, run_id=910)
+        ]
+        fake.compare_status_by_pair[("45b6169a", "merge-sha-1")] = "behind"
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "accepted"
+        assert _topic(client, tid)["status"] == "archived"
+        assert "45b6169a" in card["note"]
+    finally:
+        _reset_client()
+
+
+def test_poll_deploy_pending_stays_quiet_inside_the_grace_window(client, monkeypatch):
+    """刚合并、部署还没跑完，是完全正常的：不写备注、不发通知、更不归档。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert not card["note"].startswith("⏳")
+        assert _topic(client, tid)["status"] == "active"
+    finally:
+        _reset_client()
+
+
+def test_poll_deploy_stalled_past_the_grace_says_so_once(client, monkeypatch):
+    """主判据也定不了案（既没上线、也没有结论）时仍然保持 active——但不再默默
+    等着。默默等正是这个话题要治的病：#267 那样躺了三个多小时没人知道。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        monkeypatch.setattr(settings, "accept_deploy_stale_after_minutes", 0)
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert card["note"].startswith("⏳")
+        assert _topic(client, tid)["status"] == "active"
+        stalled_note = card["note"]
+
+        # 60 秒一轮，这条不能每轮重写、每轮再通知一遍。
+        _poll(client)
+        assert _cards_for_topic(client, tid)[0]["note"] == stalled_note
+    finally:
+        _reset_client()
+
+
+def test_poll_images_never_pushed_vetoes_the_ancestry_criterion(client, monkeypatch):
+    """祖先关系成立，但**这个提交自己的镜像没被推上去**（build 红了）——
+    wangchangxin 要求对这一类另外挡一道，不拿祖先关系替它背书。"""
+    fake, tid = _merged_awaiting_deploy(client, monkeypatch)
+    try:
+        fake.workflow_state_by_sha["merge-sha-1"] = (
+            "failure",
+            "部署 workflow 失败：failure",
+        )
+        fake.workflow_runs = [
+            _deploy_run("later-sha", conclusion="success", minutes=5, run_id=920)
+        ]
+        fake.compare_status_by_pair[("later-sha", "merge-sha-1")] = "behind"
+        # 肯定证据：推镜像的那个 workflow 对这个 sha 是红的。
+        fake.build_state_by_sha["merge-sha-1"] = (
+            "failure",
+            "denied: permission_denied",
+        )
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert _topic(client, tid)["status"] == "active"
+        assert card["note"].startswith("⛔")
+        assert "permission_denied" in card["note"]
     finally:
         _reset_client()
 
