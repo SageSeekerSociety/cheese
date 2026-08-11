@@ -809,10 +809,17 @@ async def return_conclusion(
     conclusion = await canonicalize_refs(
         db, topic.project_id, body.conclusion, exclude_topic_id=topic_id
     )
-    block = await service.return_conclusion(subtopic_id=topic_id, conclusion=conclusion)
+    block, card = await service.return_conclusion(
+        subtopic_id=topic_id, conclusion=conclusion
+    )
     parent = await service.get_or_404(block.topic_id)
     out = BlockOut.model_validate(block).model_dump(mode="json")
     wake = parent.status != TopicStatus.archived
+    # 结论卡·阶段一: the card id has to reach the digest turn, otherwise the
+    # parent has a card it cannot address — read it BEFORE the commit expires
+    # the instance.
+    card_id = str(card.id) if card is not None else None
+    card_deadline = card.digest_deadline_at if card is not None else None
     # Commit BEFORE waking: the parent's turn runs on its own session.
     await db.commit()
     await get_broker().publish(
@@ -820,7 +827,11 @@ async def return_conclusion(
     )
     if wake:
         get_turn_runner().submit_kickoff(
-            chat, parent.id, prompt=conclusion_digest_prompt(block.content)
+            chat,
+            parent.id,
+            prompt=conclusion_digest_prompt(
+                block.content, card_id=card_id, deadline=card_deadline
+            ),
         )
     return ok(out)
 
