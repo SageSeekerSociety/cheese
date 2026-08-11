@@ -169,9 +169,8 @@ def test_the_finished_command_gets_the_final_state_onto_the_branch(
     """The other half: holding is only safe because the report puts the settled
     tree on the branch. Driven over the real HTTP path the detached child uses."""
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    tid = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "T"}
-    ).json()["data"]["id"]
+    created = client.post("/api/topics", json={"project_id": p["id"], "title": "T"})
+    tid = created.json()["data"]["id"]
     project, topic = uuid.UUID(p["id"]), uuid.UUID(tid)
     wt = _worktree_with_committed_fix(project, topic)
 

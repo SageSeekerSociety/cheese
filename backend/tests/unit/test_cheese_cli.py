@@ -425,7 +425,8 @@ def test_await_log_finds_the_session_mount_on_its_own(monkeypatch, tmp_path):
     monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / ".claude").mkdir()
-    assert Path(cli._await_log_path("r")).parent == tmp_path / ".claude" / "cheese-await"
+    logs = Path(cli._await_log_path("r")).parent
+    assert logs == tmp_path / ".claude" / "cheese-await"
 
 
 def test_await_log_falls_back_when_there_is_no_session_mount(monkeypatch, tmp_path):
