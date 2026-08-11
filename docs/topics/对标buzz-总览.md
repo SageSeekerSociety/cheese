@@ -22,11 +22,41 @@ Buzz 和我们**产品域高度重合、技术栈完全不搭**。所以值得�
 | 前端 | 主战场是 **Tauri 桌面端**（1836 个 TS 文件）；`web/` 只有 48 个文件（仓库/邀请两个 feature）；另有 Flutter 移动端 371 个 dart | Vue 3 单 Web 端，389 个 `.vue`/`.ts` |
 | 测试 | 224 个 crate 内联 `#[cfg(test)]` + 37 个集成测试文件 + 独立的 `buzz-conformance` crate + benchmarks/perf | 288 个测试文件（unit / integration / contract）+ 5 个 Playwright e2e |
 | CI | 18 个 workflow（含 4 条 canary、桌面/移动发布线） | 16 个 workflow（部署/备份/心跳/漂移检测这一侧比它厚） |
-| 本地闸门 | `lefthook.yml`，**按改动路径分流**，且注释里逐条记录了与 CI 的故意偏差 | <&.claude/scripts/pre-commit>，全量 |
+| 本地闸门 | `lefthook.yml`，**按改动路径分流**，且注释里逐条记录了与 CI 的故意偏差 | <&.claude/scripts/pre-commit>，一刀切跑**后端**全量；前端零检查 |
 | 给 agent 的文档 | 一个 2.9 万字的 `AGENTS.md`（`CLAUDE.md` 软链过去）+ `ARCHITECTURE.md` 4.5 万字 + 8 个 `VISION_*.md` | <&CLAUDE.md> 刻意精简，程序性知识推到 <&.claude/rules/>（按路径自动加载）和 `.claude/skills/` |
 | 给 agent 的工具 | `buzz-cli` + `buzz-dev-mcp`（MCP server）+ desktop-screenshot skill；同时适配 claude/goose/codex/agents 四套工具链 | `cheese` CLI + <&.claude/scripts/> |
 
+## ⚠️ 对标过程中挖出的自身漏洞（优先于「学什么」）
+
+来自 @质量闸门与 CI/CD 对比，我已逐条复核确认。
+
+### 前端类型错误可以一路合并进 main 并部署
+
+- `.github/workflows/` 16 个 workflow 里 grep **不到** `vue-tsc`、也 grep 不到 `eslint`（零命中）
+- <&.github/workflows/test.yml> 的 `paths` 只有 `backend/**`
+- <&.github/workflows/e2e.yml> 虽然对 `frontend/**` 触发，但只跑 Playwright，不做类型检查
+- 前端唯一被碰到的地方是 `build.yml` 里的 docker build，而 Dockerfile 跑的 `vite build` **不做类型检查**
+
+最扎心的是：**工具全都装好了，从来没人调用**。<&frontend/Taskfile.yml> 里 `lint`（ESLint）和 `typecheck`（`vue-tsc --noEmit`）两个任务写得好好的，CI 里一次都没出现。
+
+### pre-commit 是「一刀切跑后端全量」，且没有安装入口
+
+<&.claude/scripts/check.sh> 开头就 `cd "$REPO_ROOT/backend"`——所以改前端也要等 60s 的 pytest，而前端本身一个检查都不跑。更麻烦的是这个 hook **在仓库里搜不到任何安装入口**（全仓 grep `pre-commit` 只命中文档），而 <&CLAUDE.md> 却断言「Tests MUST pass before any commit. Pre-commit hook enforces this.」——这条断言目前没有事实支撑。
+
+### 规则靠自觉 = 规则会烂：本仓反证
+
+<&.claude/rules/backend-tests.md> 白纸黑字写着「别加第九个 `_auth()`」——现在有 9 个。这正好从反面印证了下面第 1 条。
+
 ## 值得学的（随子话题回流累积，按 ROI 排）
+
+### 0. 闸门按路径分流 + 偏差写进注释 ⭐ 已确证
+
+Buzz 真正领先我们的是三件事，前两件在这里：
+
+- **按路径分流**：`lefthook.yml` 用 glob 决定跑什么——改 `web/**` 只跑 web 的 fix，不碰 Rust 测试。
+- **偏差写进注释**：该文件顶部逐条列出「本地闸门与 CI 的**故意**偏差及理由」。这条纪律比分流本身更值钱——它让「本地和 CI 不一致」从暗坑变成了有据可查的决定。
+
+最划算的单点抄袭是 `scripts/check-branch-skew.sh`（约 30 行）：直接命中我们「并行 PR 把 alembic 迁移链分叉」那个反复踩的坑。
 
 ### 1. 文档里的每条硬规则，背后都该配一个可执行守卫 ⭐ 已确证
 
@@ -40,7 +70,7 @@ Buzz 和我们**产品域高度重合、技术栈完全不搭**。所以值得�
 - 遮蔽内建的方法名（`list` / `set` / `dict` / `type`）
 - domain 层出现裸 `HTTPException`（约定要用 `app.core.errors`）
 
-> 落地排期：等 @质量闸门与 CI/CD 对比 回流后一起动手，避免两路同时改 `check.sh`。
+> 落地排期：与上方「前端 CI 补洞」「抄 check-branch-skew.sh」同属一次 `check.sh` / CI 改动，合并成一个 PR 做，别分三次改同一个文件。
 
 ### 2. Gotcha 该写成「症状 → 会被误判成什么 → 真因」
 
@@ -56,7 +86,9 @@ Buzz 和我们**产品域高度重合、技术栈完全不搭**。所以值得�
 
 ## 明确不学的
 
-- **签名发布 / canary / DCO / CLA / 许可证门禁**：它要给陌生人自托管，这块占它工程投入一大块，我们用不上。
+- **多端签名发布 / canary / DCO / CLA / 许可证白名单**：它要给陌生人自托管，这块占它工程投入一大块，我们用不上。
+- **Renovate 自动合并**：我们是盒子上的单 runner，自动合并的依赖 PR 会把 runner 堵死。
+- **Hermit**（它的工具链管理器）：我们 uv + pnpm + Taskfile 这套够用，换的收益抵不上迁移成本。
 - **8 个 `VISION_*.md` 进仓**：我们没人维护 Status 表，飞书 wiki 策略继续。
 - **2.9 万字的常驻大文件**：其中 36% 篇幅是截图流程——改后端的 agent 每一轮都在为这些 token 白付费。
 - **`.claude/` `.agents/` `.goose/` `.codex/` 四份逐字节相同的 skill 拷贝**：无同步脚本、无 CI 校验，纯粹的漂移隐患。
@@ -69,7 +101,7 @@ Buzz 和我们**产品域高度重合、技术栈完全不搭**。所以值得�
 |---|---|
 | @架构与领域模型对比 | 进行中 |
 | @Agent 一等公民机制对比 | 进行中（五面里与我们产品最相关） |
-| @质量闸门与 CI/CD 对比 | 进行中（最可能出「今天就能抄」的动作） |
+| @质量闸门与 CI/CD 对比 | ✅ 已回流，结论已并入上方（详见 `docs/topics/对标buzz-质量闸门.md`）。**顺带挖出前端 CI 零检查这个真漏洞** |
 | @测试策略与可运行性对比 | 进行中（针对沙箱无 docker 的真痛点） |
 | @仓库自解释能力对比 | ✅ 已回流，结论已并入上方 |
 
@@ -81,4 +113,12 @@ Buzz 和我们**产品域高度重合、技术栈完全不搭**。所以值得�
 
 ---
 
-*参照仓库已 clone 至各子话题工作区的 `tmp/buzz`（gitignored）。浅克隆（depth 50）导致无法判断它文档的更新频率，故本文未就「它的文档有多新」下任何结论。*
+*参照仓库已 clone 至各子话题工作区的 `tmp/buzz`（gitignored）。*
+
+**已知未核实项**（不要当成已确认的事实用）：
+
+- 浅克隆（depth 50）导致无法判断 Buzz 文档的更新频率，故本文未就「它的文档有多新」下任何结论。
+- 我们各条 CI/闸门的**实际耗时**没实测过，「60s pytest」是估值。
+- jj 环境下 git hooks 到底触没触发，没验证。
+- 前端**存量**类型错误有多少个，没跑过 `vue-tsc` —— 补 CI 之前得先跑一次摸底，否则可能一上来就是红的。
+- Buzz 的 4 个 canary workflow 没有逐个读。
