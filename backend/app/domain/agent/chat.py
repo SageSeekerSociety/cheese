@@ -43,7 +43,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
 from app.domain.agent.stages import resolve_stage, stage_scenario
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import AuthorType, Block, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.cx_notification.models import NotifKind, NotifLevel
@@ -640,6 +640,38 @@ def _prompt_line(b) -> str:
             f"它同时存在你工作目录的 {b.content}）"
         )
     return f"[{b.author}]: {_strip_platform_notice(b.content)}"
+
+
+def _pending_human_blocks(history: list[Block]) -> list[Block]:
+    """The human messages/attachments no agent turn has read into a prompt yet.
+
+    轮次边界按**归属**划，不按位置划：一条在轮次运行中到达的人类消息，created_at
+    排在那轮 AI 回复之前，所以"最后一条 AI 消息之后"这个窗口会把它切掉 —— 而且
+    切掉就再也捡不回来了（那个下标只会往前走）。这里改成挑「没被任何一轮盖过
+    consumed 戳」的块，戳由跑完的轮次自己盖上（BlockRepository.mark_consumed）。
+
+    `history` 已按 created_at 升序。
+    """
+    watermark = -1  # 最后一个已被消费的人类块的位置
+    for i, b in enumerate(history):
+        if _is_human_input(b) and consumed_turn(b) is not None:
+            watermark = i
+    if watermark < 0:
+        # 兼容老数据：戳是这次改动才有的，改动之前的块一个都没有。一个戳都没有
+        # 的话题退回旧语义（最后一条 AI 消息之前的算已读），否则上线后每个老话题
+        # 的第一轮都会把整段历史重放一遍。盖过一次戳之后就永远走上面那条线。
+        for i, b in enumerate(history):
+            if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
+                watermark = i
+    return [b for b in history[watermark + 1 :] if _is_human_input(b)]
+
+
+def _is_human_input(b: Block) -> bool:
+    """A block that carries something a person said to 芝士 this turn."""
+    return b.author_type == AuthorType.human and b.kind in (
+        BlockKind.message,
+        BlockKind.attachment,
+    )
 
 
 # What an exhausted relay balance looks like coming back from newapi. It arrives
@@ -1525,21 +1557,20 @@ class ChatService:
             if topic is None:
                 raise NotFoundError("Topic not found")
 
-            # Speaker-labelled prompt covering every human message since 芝士's
-            # last reply — so messages posted without @芝士 are still seen on the
-            # next summon (spec §7.1 所有消息 AI 都会收到), each tagged with who
-            # said it so 芝士 can tell people apart in a group topic (§8.4).
+            # Speaker-labelled prompt covering every human message 芝士 hasn't
+            # been handed yet — so messages posted without @芝士 are still seen on
+            # the next summon (spec §7.1 所有消息 AI 都会收到), each tagged with
+            # who said it so 芝士 can tell people apart in a group topic (§8.4).
             history = await blocks.list_for_topic(topic_id)
-            last_ai = -1
-            for i, b in enumerate(history):
-                if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
-                    last_ai = i
-            pending = [
-                b
-                for b in history[last_ai + 1 :]
-                if b.kind in (BlockKind.message, BlockKind.attachment)
-                and b.author_type == AuthorType.human
-            ]
+            pending = _pending_human_blocks(history)
+            pending_ids = [b.id for b in pending]
+            if not pending and user_block_id is not None:
+                # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
+                # @，第一轮在锁上把两条合并答掉）。再跑一轮就是白烧一轮算力，还会
+                # 走下面的 platform_prompt 兜底、把已经答过的话当成平台指令重投一
+                # 遍。这里直接收工 —— 只是不跑这一轮，不碰任何排队/锁的逻辑。
+                yield {"type": "done"}
+                return
             # No pending human block ⇒ nobody spoke: this is a resume nudge,
             # a kickoff or a returned conclusion. Say so, rather than handing
             # 芝士 bare text that looks like a person's message.
@@ -2035,6 +2066,13 @@ class ChatService:
 
             if topic is not None and new_session_id:
                 await topics.set_session_id(topic, new_session_id)
+
+            # 这一轮真的把这些消息交给 agent 跑完了 —— 现在才盖 consumed 戳，下一轮
+            # 的窗口从这里往后开。**故意放在这里而不是建 prompt 的 tx1**：轮次崩了 /
+            # 超时 / provider 报错的路径都在上面 return 或 raise 掉了，戳没盖上，消息
+            # 就留在 pending 里由续跑轮重发。宁可重复，不可丢失 —— 重复看得见，丢失
+            # 看不见，而后者正是这次要修的 bug。
+            await blocks.mark_consumed(pending_ids, turn_id)
             await session.commit()
 
         # A hooks backend can reach here with assistant_count == 0 not because
