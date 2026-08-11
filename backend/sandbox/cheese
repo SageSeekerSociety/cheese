@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -357,8 +358,28 @@ def _print_api_index() -> None:
     print("例:   cheese api GET /topics/$CHEESE_TOPIC/blocks")
 
 
-def main() -> None:
+def source_fingerprint() -> str:
+    """A short digest of THIS file's bytes.
+
+    The box's `cheese` is bind-mounted from the backend's own copy, so the only
+    way to tell — from inside a box — whether that plumbing actually worked is
+    to compare what runs here against what the backend shipped. `cheese
+    --version` prints this; a mismatch means the mount is stale."""
+    try:
+        with open(__file__, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:12]
+    except OSError:
+        return "unknown"
+
+
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cheese", description="芝士 平台 CLI")
+    p.add_argument(
+        "--version",
+        action="version",
+        version=f"cheese {source_fingerprint()}",
+        help="打印源码指纹,用来核对本容器里的 CLI 是不是后端那一份",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pd = sub.add_parser("doc", help="活文档")
@@ -454,7 +475,11 @@ def main() -> None:
     papi.add_argument("path", nargs="?", help="API 路径,如 /topics/<id>/blocks")
     papi.add_argument("--data", "-d", default=None, help="请求体(JSON 字符串)")
 
-    a = p.parse_args()
+    return p
+
+
+def main() -> None:
+    a = build_parser().parse_args()
 
     if a.cmd == "doc" and a.doccmd == "set":
         topic = _need("CHEESE_TOPIC", TOPIC)
