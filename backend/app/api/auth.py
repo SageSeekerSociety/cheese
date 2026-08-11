@@ -18,7 +18,11 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
-from app.core.sandbox_auth import token_agent_handle, verify_scoped_token
+from app.core.sandbox_auth import (
+    scoped_token_claims,
+    token_agent_handle,
+    verify_scoped_token,
+)
 from app.core.tokens import verify_session_token
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
@@ -91,6 +95,15 @@ class ActorResolver:
         nothing — an anonymous fallback resolves to a plain ``anonymous`` actor so
         existing callers that omitted an author keep working."""
 
+        # A scoped token that is genuinely valid but minted for ANOTHER topic /
+        # project is a scope violation, not "no credential". It used to fall
+        # through to the Phase-0 handle fallback and resolve to ``anonymous`` —
+        # which policy.py treats as UNauthenticated and therefore lets through,
+        # so presenting the wrong token beat presenting none and the write landed
+        # with its author erased. Observed live: a parent topic posting a comment
+        # into a child topic, recorded as ``anonymous``.
+        self._reject_out_of_scope_token(topic_id=topic_id, project_id=project_id)
+
         async def cheese_valid() -> bool:
             # Only a SCOPED per-turn token identifies "the agent is acting" and
             # binds it to this project/topic. The bare global SANDBOX_TOKEN is a
@@ -142,6 +155,38 @@ class ActorResolver:
         if actor.via == "handle" and actor.handle != "anonymous":
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
+
+    def _reject_out_of_scope_token(
+        self, *, topic_id: uuid.UUID | None, project_id: uuid.UUID | None
+    ) -> None:
+        """403 when the presented scoped token names a different resource.
+
+        Deliberately narrow — it fires ONLY for a well-formed, correctly-signed,
+        unexpired scoped token. An absent header, a malformed or expired token,
+        and the global ``SANDBOX_TOKEN`` dev override all keep their existing
+        behaviour (``scoped_token_claims`` returns None for each), so this closes
+        the identity-collapse path without touching the dev/legacy surface.
+
+        A token with no ``t`` claim (project-wide capability: git-http, LLM proxy)
+        is not out of scope for a topic route — it simply does not authenticate
+        there, which ``cheese_valid`` already handles.
+        """
+        if not self._cheese_token:
+            return
+        claims = scoped_token_claims(self._cheese_token)
+        if claims is None:
+            return
+        if project_id is not None and claims.get("p") != str(project_id):
+            _log.info("token_scope_violation", kind="project", got=claims.get("p"))
+            raise ForbiddenError("这个 token 属于别的项目，不能在这里操作")
+        claimed_topic = claims.get("t")
+        if (
+            topic_id is not None
+            and claimed_topic is not None
+            and claimed_topic != str(topic_id)
+        ):
+            _log.info("token_scope_violation", kind="topic", got=claimed_topic)
+            raise ForbiddenError("这个 token 属于别的话题，不能在这里操作")
 
     async def _recover_numeric_handle(self, actor: Actor) -> Actor:
         """Repair a token actor whose handle degraded into the int User PK.
