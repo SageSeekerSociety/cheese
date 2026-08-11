@@ -758,7 +758,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
       kind: 'member' as const,
       insert: m.name || m.user_handle,
       sub: `@${m.user_handle}`,
-      agent: m.user_handle === 'cheese',
+      agent: !!m.agent,
     })),
     ...props.topicList
       .filter((t) => t.kind !== 'root')

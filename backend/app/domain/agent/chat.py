@@ -48,6 +48,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
@@ -604,7 +605,17 @@ _expand_mention_names = expand_mention_names
 def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[str]]:
     """Resolve <@handle> mention tokens against the roster. Returns
     (resolved_handles, unresolved_handles); unresolved = a token whose handle is
-    not a member (a hallucinated handle → the platform flags it)."""
+    not a member (a hallucinated handle → the platform flags it).
+
+    An EMPTY roster means "this topic exposes no member list" (私聊, or a project
+    carrying no explicit member rows), not "nobody is a member": with no list to
+    check against a concrete handle can be neither confirmed nor refuted, so it
+    is left out of BOTH lists — no notification, and no false 「项目里没有这个
+    成员」 accusation against a real teammate.
+
+    ``@all``/``@here`` are unaffected by any of that: they are expanded from the
+    TOPIC's roster by :meth:`_notify_mentions` (a DB read), never from this list,
+    so an empty list must not silence a broadcast."""
     resolved: list[str] = []
     unresolved: list[str] = []
     if not text:
@@ -613,7 +624,10 @@ def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[st
     for h in dict.fromkeys(_MENTION_RE.findall(text)):
         # @all/@here are reserved broadcast tokens — always "resolved" (expanded
         # to the roster by _notify_mentions), never flagged as a bad handle.
-        (resolved if h in _SPECIAL_MENTIONS or h in handles else unresolved).append(h)
+        if h in _SPECIAL_MENTIONS or h in handles:
+            resolved.append(h)
+        elif roster:
+            unresolved.append(h)
     return resolved, unresolved
 
 
@@ -1033,10 +1047,15 @@ class ChatService:
 
         Resolved from the roster's execution bindings rather than the fixed
         ``cheese`` string, so a room hosting more than one agent attributes each
-        message to the one that wrote it. Falls back to ``cheese`` for rooms
-        seeded before agent-as-user, which is what the old constant meant.
+        message to the one that wrote it — normally this topic's own 分身.
+
+        A turn is also where a room seeded before 分身独立身份 swaps its shared
+        ``cheese`` seat for that 分身: doing it here means every live room migrates
+        without a data migration, and one that never runs a turn never needed it.
         """
-        return await TopicMemberService(session).resolve_agent_handle(topic_id)
+        members = TopicMemberService(session)
+        await members.migrate_shared_agent_seat(topic_id)
+        return await members.resolve_agent_handle(topic_id)
 
     async def _persist_assistant_message(
         self,
@@ -1046,7 +1065,7 @@ class ChatService:
         text: str,
         turn_id: uuid.UUID | None,
         reply_to: uuid.UUID | None,
-        roster: list[dict],
+        roster: list[dict] | None,
         topic_refs: list[dict],
         eid: str | None = None,
         backfilled: bool = False,
@@ -1057,7 +1076,6 @@ class ChatService:
         Handles the same mention canonicalization / notify / refs as before.
         ``eid`` (hooks path) is stamped into meta so the spool reconcile can
         dedup a backfilled copy against this live one."""
-        text = _expand_mention_names(text, roster, topic_refs)
         meta: dict | None = None
         if eid:
             meta = {"eid": eid}
@@ -1065,6 +1083,18 @@ class ChatService:
             meta = {**(meta or {}), "backfilled": True}
         async with self._sessions() as session:
             blocks = BlockRepository(session)
+            topic = await TopicRepository(session).get(topic_id)
+            if roster is None:
+                # The reconcile/backfill caller holds no roster. Load it here
+                # instead of passing []: [] means 私聊 (no member list at all),
+                # and conflating the two flagged every @ in a recovered message
+                # as a non-member while silently dropping its notification.
+                roster = (
+                    []
+                    if topic is None or topic.is_private
+                    else await ProjectRepository(session).list_members(project_id)
+                )
+            text = _expand_mention_names(text, roster, topic_refs)
             author = await self._agent_handle(session, topic_id)
             block = await blocks.add(
                 project_id=project_id,
@@ -1077,7 +1107,6 @@ class ChatService:
                 turn_id=turn_id,
                 meta=meta,
             )
-            topic = await TopicRepository(session).get(topic_id)
             # <@handle> mentions in 芝士's message → strong notify (the token is
             # the single source of truth: what's shown = who's notified).
             # Hallucinated handles get flagged in 现场, never silently no-op.
@@ -1089,12 +1118,13 @@ class ChatService:
                 if refs:
                     block.refs = refs
                 for bad in unresolved:
+                    warn = f"⚠️ @了 <@{bad}>，项目成员里没有这个 handle，没能通知到"
                     await blocks.add(
                         project_id=project_id,
                         topic_id=topic_id,
                         author=author,
                         author_type=AuthorType.ai,
-                        content=f"⚠️ @了 <@{bad}>，但项目里没有这个成员，没能通知到",
+                        content=warn,
                         kind=BlockKind.event,
                         turn_id=turn_id,
                     )
@@ -1184,7 +1214,7 @@ class ChatService:
                         text=event.text,
                         turn_id=turn_id,
                         reply_to=None,
-                        roster=[],
+                        roster=None,
                         topic_refs=[],
                         eid=eid,
                         backfilled=True,
@@ -1504,7 +1534,7 @@ class ChatService:
         if targets:
             notifs = NotificationService(session)
             preview = markdown_preview(text, 200)
-            who = "芝士" if author == CHEESE_AUTHOR else author
+            who = "芝士" if looks_like_agent_handle(author) else author
             for h in targets:
                 await notifs.create(
                     project_id=topic.project_id,

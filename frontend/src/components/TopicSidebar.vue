@@ -89,7 +89,7 @@ const narrowPages = computed(() => (props.width ?? 280) < 216)
 // gets its own dedicated row above, and you don't DM yourself.
 const peerDms = computed(() =>
   (props.members ?? [])
-    .filter((m) => m.user_handle !== props.meHandle && m.user_handle !== 'cheese')
+    .filter((m) => m.user_handle !== props.meHandle && !m.agent)
     .map((m) => ({
       handle: m.user_handle,
       name: m.name || m.user_handle,
