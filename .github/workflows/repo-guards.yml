@@ -13,19 +13,23 @@ name: Repo Guards
 # self-hosted runner. Deliberately NOT behind test.yml's `scope` gate — that
 # gate skips the suite for a squash merge whose tree already passed PR CI, which
 # is exactly the path a cross-PR migration fork travels.
+#
+# `.github/workflows/**` is in the path filter because one of the guards judges
+# the workflows themselves (action pinning) — filtering on this file alone would
+# let an unpinned action land in any other workflow without ever running it.
 on:
   push:
     branches: [main]
     paths:
       - 'backend/**'
       - '.claude/scripts/**'
-      - '.github/workflows/repo-guards.yml'
+      - '.github/workflows/**'
   pull_request:
     branches: [main]
     paths:
       - 'backend/**'
       - '.claude/scripts/**'
-      - '.github/workflows/repo-guards.yml'
+      - '.github/workflows/**'
 
 permissions:
   contents: read
@@ -43,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Each guard proves itself before it is trusted to judge the tree: a guard
       # that silently stopped matching would otherwise look identical to a clean
@@ -51,10 +55,19 @@ jobs:
       - name: Guards self-test
         run: |
           bash .claude/scripts/check-repo-rules.sh --self-test
+          bash .claude/scripts/check-action-pins.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
 
       - name: CLAUDE.md rules (naive datetime, builtin shadowing, raw HTTPException)
         run: bash .claude/scripts/check-repo-rules.sh
+
+      # Third-party actions run on the dev and prod boxes themselves (build.yml,
+      # build-tmux.yml and deploy-dev.yml all target self-hosted runners), so a
+      # repointed upstream tag executes with the docker socket and the ghcr
+      # credentials in reach. Pins make that an upgrade we review, not one that
+      # happens to us.
+      - name: Actions are pinned to a commit SHA
+        run: bash .claude/scripts/check-action-pins.sh
 
       # The remote-tracking ref has to exist for the comparison; a PR checkout
       # does not create it. Shallow is enough — only the tree at main's tip is

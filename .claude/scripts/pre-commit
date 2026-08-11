@@ -14,6 +14,7 @@
 #   pyright                       test.yml / lint
 #   alembic single head           test.yml / migration-heads
 #   repo rules                    repo-guards.yml / guards
+#   actions pinned to a SHA       repo-guards.yml / guards
 #   migration fork vs main        repo-guards.yml / guards
 #   pytest (whole suite, -n 4)    test.yml / test
 #
