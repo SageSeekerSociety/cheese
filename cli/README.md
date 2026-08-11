@@ -48,15 +48,15 @@ connected:
 ```
 cheese auth login [server-url]   log this machine in (device flow); first login names it
 cheese auth logout               forget the credential (disconnects first)
-cheese devicename <name>         rename this machine
 
-cheese link connect              connect (runs login first if needed)
+cheese link connect [server-url] connect (runs login first if needed)
 cheese link disconnect           disconnect (warns if screens are running)
-cheese link status               login, connection and screen count at a glance
 cheese link auto-connect         connect now and reconnect on every boot
 cheese link no-auto-connect      disconnect and stop reconnecting on boot
 
+cheese status                    login, connection and screen count at a glance
 cheese api <operation> [args]    the server's full request/response API
+cheese update                    update the binary to the latest published build
 cheese uninstall                 remove the CLI entirely (service, config, binary)
 ```
 
