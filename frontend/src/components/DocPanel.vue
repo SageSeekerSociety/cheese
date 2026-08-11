@@ -2,7 +2,7 @@
 import type { ChainedCommands, Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { SuggestionProps } from '@tiptap/suggestion'
-import type { Block, FileContent, GitCommit, Topic, UsageStats, WorkspaceFile } from '../cx_types'
+import type { Block, FileContent, GitCommit, PreviewInfo, Topic, UsageStats, WorkspaceFile } from '../cx_types'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { Extension } from '@tiptap/core'
@@ -27,8 +27,10 @@ import {
   getTopicUsage,
   getTranscript,
   listFiles,
+  primeAppPreview,
   putDoc,
   readFile,
+  withSessionToken,
   workspaceFileRawUrl,
   writeFile,
 } from '../api'
@@ -615,12 +617,34 @@ const projectUsage = ref<UsageStats | null>(null)
 const previewFile = ref<FileContent | null>(null)
 const previewMime = ref<string>('text/html')
 const previewNamed = ref(false)
-// 运行环境预览: the agent declared a RUNNING app (cheese serve) — iframe its
-// live-resolved localhost URL instead of rendering file content.
+// 运行环境预览: the agent declared a RUNNING app (cheese serve) — iframe the
+// backend's reverse-proxy path for its container instead of rendering file
+// content. Null while the app isn't answering; `previewContainerUp` then says
+// whether the box is even there, so the two cases can read differently.
 const previewAppUrl = ref<string | null>(null)
 const previewAppNote = ref<string>('')
+const previewContainerUp = ref(false)
+// What 芝士 named, app or file — so a read failure can say WHICH artifact broke.
+const previewNamedPath = ref<string>('')
+// Failures, kept apart from "nothing is set". Collapsing them (the old
+// `.catch(() => null)` on both calls) reported every backend error and every
+// unreadable file as "芝士还没有指定预览" — a broken panel that looked idle, so
+// nobody reported it.
+const previewError = ref<string | null>(null)
+const previewReadError = ref<string | null>(null)
 // 全屏预览 (Claude Artifacts style): the same content, workspace-covering.
 const previewFull = ref(false)
+// Esc closes it. The overlay div carried a `@keydown.esc`, but a plain div is
+// never focused, so the handler could not fire and the ✕ was the only way out.
+// A window listener, mounted only while the overlay is up, actually gets the key.
+function onPreviewFullKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') previewFull.value = false
+}
+watch(previewFull, (open) => {
+  if (open) window.addEventListener('keydown', onPreviewFullKeydown)
+  else window.removeEventListener('keydown', onPreviewFullKeydown)
+})
+onBeforeUnmount(() => window.removeEventListener('keydown', onPreviewFullKeydown))
 function openPreviewInNewTab() {
   if (previewAppUrl.value) {
     window.open(previewAppUrl.value, '_blank', 'noopener')
@@ -657,9 +681,14 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       const [tx, term] = await Promise.all([getTranscript(tid), getTerminal(tid).catch(() => null)])
       if (props.topic?.id !== tid) return
       transcript.value = tx.data
-      // `url` is already a root-relative path ("/api/topics/…/terminal/live/")
-      // — the iframe loads it through the same dev/proxy that fronts /api.
-      terminalUrl.value = term?.available && term.url ? term.url : null
+      // `url` is a root-relative path ("/api/topics/…/terminal/live/") loaded
+      // through the same dev/proxy that fronts /api. The session token has to be
+      // appended: the proxy authorizes every request and an iframe can carry no
+      // header, so the bare URL 404s and the drawer renders a white box that
+      // never falls back. `available` is the backend's own probe (credential +
+      // container + something actually answering), so a false here means the
+      // timeline below is the honest thing to show.
+      terminalUrl.value = term?.available && term.url ? withSessionToken(term.url) : null
     } else if (key === 'git') {
       // A fresh repo with no commits makes git log fail (422); tolerate it so
       // the diff still renders instead of the whole drawer showing an error.
@@ -696,19 +725,61 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       // first-*.html fallback proudly served frontend/index.html — an SPA
       // shell that renders blank — which is exactly why the spec says the
       // platform never picks the preview itself.
-      const art = await getPreview(tid).catch(() => null)
-      if (props.topic?.id !== tid) return
       previewAppUrl.value = null
       previewAppNote.value = ''
+      previewContainerUp.value = false
+      previewError.value = null
+      previewReadError.value = null
+      previewNamedPath.value = ''
+      let art: PreviewInfo | null
+      try {
+        art = await getPreview(tid)
+      } catch (e) {
+        if (props.topic?.id !== tid) return
+        // "The backend errored" is its own state — not "nothing is set".
+        previewNamed.value = false
+        previewFile.value = null
+        previewError.value = e instanceof Error ? e.message : '加载失败'
+        return
+      }
+      if (props.topic?.id !== tid) return
       if (art && art.kind === 'app') {
         previewNamed.value = true
         previewAppNote.value = art.path
-        previewAppUrl.value = art.url ?? null
+        previewNamedPath.value = art.path
+        previewContainerUp.value = !!art.container_up
         previewFile.value = null
+        if (art.url) {
+          // The frame carries no credential of its own (a ?token= would be
+          // readable by whatever the agent is serving), so hand the browser the
+          // scoped cookie FIRST — otherwise its very first request 404s and the
+          // panel is back to showing a white box.
+          try {
+            await primeAppPreview(tid)
+          } catch (e) {
+            if (props.topic?.id !== tid) return
+            previewError.value = e instanceof Error ? e.message : '预览授权失败'
+            return
+          }
+          if (props.topic?.id !== tid) return
+        }
+        previewAppUrl.value = art.url ?? null
       } else if (art) {
         previewNamed.value = true
+        previewNamedPath.value = art.path
         previewMime.value = art.mime || 'text/html'
-        previewFile.value = await readFile(pid, art.path, tid).catch(() => null)
+        try {
+          const content = await readFile(pid, art.path, tid)
+          // Guard against a topic switch mid-flight — this await was the one
+          // fetch in the drawer without it, so a slow read could paint topic A's
+          // artifact into topic B's panel.
+          if (props.topic?.id !== tid) return
+          previewFile.value = content
+        } catch (e) {
+          if (props.topic?.id !== tid) return
+          previewFile.value = null
+          previewReadError.value = e instanceof Error ? e.message : '读不到这个文件'
+        }
       } else {
         previewNamed.value = false
         previewFile.value = null
@@ -1981,6 +2052,15 @@ watch(
     drawerOpen.value = false
     // Drop the previous topic's terminal so it can't flash in the new 现场.
     terminalUrl.value = null
+    // Same for the preview: a stale app frame or error would otherwise be
+    // attributed to the topic just opened.
+    previewAppUrl.value = null
+    previewAppNote.value = ''
+    previewNamedPath.value = ''
+    previewFile.value = null
+    previewError.value = null
+    previewReadError.value = null
+    previewFull.value = false
     // …and the previous topic's file + draft, which would otherwise be saved
     // into THIS topic's worktree the next time 保存 is pressed.
     resetFilePanel()
@@ -2674,19 +2754,32 @@ onBeforeUnmount(() => {
                       {{ previewAppUrl }}
                     </v-chip>
                   </div>
-                  <!-- The app is on 127.0.0.1:<port> — already a DIFFERENT origin
-                   from the platform, so allow-same-origin only lets the app be
-                   itself (cookies/storage on its own origin), never us. -->
-                  <iframe
-                    class="preview-frame"
-                    :src="previewAppUrl"
-                    sandbox="allow-same-origin allow-scripts allow-forms"
-                  />
+                  <!-- The app now rides the backend's reverse proxy, so it is on
+                   OUR origin: allow-same-origin would hand whatever the agent is
+                   serving our localStorage (session token) and our API cookies.
+                   Opaque origin only — same posture as the file artifact below. -->
+                  <iframe class="preview-frame" :src="previewAppUrl ?? undefined" sandbox="allow-scripts allow-forms" />
+                </div>
+                <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
+                  <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
+                  <div>预览加载失败</div>
+                  <div class="text-caption mt-1">后端没能返回这个话题的预览：{{ previewError }}</div>
+                </div>
+                <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
+                  <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+                  <div>指定的产物读不到</div>
+                  <div class="text-caption mt-1">
+                    芝士指定了 {{ previewNamedPath || '一个文件' }}，但它现在读不出来：{{ previewReadError }}
+                  </div>
                 </div>
                 <div v-else-if="previewNamed && previewAppNote" class="text-center text-medium-emphasis py-8">
                   <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
                   <div>应用暂时不在线</div>
-                  <div class="text-caption mt-1">
+                  <div v-if="previewContainerUp" class="text-caption mt-1">
+                    容器还在，但约定端口上没有服务在应答——芝士声明过的那个 dev server 大概已经退出了，再 @
+                    它一次拉起来。
+                  </div>
+                  <div v-else class="text-caption mt-1">
                     芝士声明过一个运行中的应用，但它的容器当前没在跑——再 @ 它一次即可拉起。
                   </div>
                 </div>
@@ -2709,8 +2802,8 @@ onBeforeUnmount(() => {
                   <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
                   <div>芝士还没有指定预览</div>
                   <div class="text-caption mt-1">
-                    它做出网页 / 图表等可看的产物时，会把成果放到这里。 预览渲染的是自足的单文件产物；要跑整个应用（如
-                    Vue 工程） 属于"运行环境预览"，还没做。
+                    它做出网页 / 图表等可看的产物时，会把成果放到这里。 单文件产物直接渲染；整个应用（如 Vue
+                    工程）走"运行环境预览"——芝士把 dev server 跑起来再声明一次即可。
                   </div>
                 </div>
               </template>
@@ -2722,7 +2815,9 @@ onBeforeUnmount(() => {
 
       <!-- 全屏预览 overlay: same artifact, workspace-covering (Esc / ✕ closes). -->
       <Teleport to="body">
-        <div v-if="previewFull" class="preview-full" @keydown.esc="previewFull = false">
+        <!-- Esc is handled by a window listener (onPreviewFullKeydown) — a div
+         never has focus, so a @keydown on it can never fire. -->
+        <div v-if="previewFull" class="preview-full">
           <div class="preview-full__bar">
             <span class="preview-full__title">
               {{ previewAppUrl ? previewAppNote || '运行中的应用' : previewFile?.path }}
@@ -2742,7 +2837,7 @@ onBeforeUnmount(() => {
             v-if="previewAppUrl"
             class="preview-full__frame"
             :src="previewAppUrl"
-            sandbox="allow-same-origin allow-scripts allow-forms"
+            sandbox="allow-scripts allow-forms"
           />
           <iframe
             v-else-if="previewFile"

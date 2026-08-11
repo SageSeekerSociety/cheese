@@ -1817,13 +1817,12 @@ def exec_in_sandbox(
 APP_PORT = 3000
 
 
-def app_preview_url(topic_id: uuid.UUID) -> str | None:
-    """http://127.0.0.1:<host-port> for the topic container's published app
-    port, or None (container down / mapping missing — old container)."""
-    if not sandbox_available():
-        return None
+def published_endpoint(container: str, port: int) -> str | None:
+    """`127.0.0.1:<host-port>` a container publishes an in-container port to, or
+    None (container down / mapping missing — an old container predating the
+    publish). One parse shared by every "reach into the box" feature."""
     result = subprocess.run(
-        ["docker", "port", container_name(topic_id), str(APP_PORT)],
+        ["docker", "port", container, str(port)],
         capture_output=True,
         text=True,
     )
@@ -1831,8 +1830,34 @@ def app_preview_url(topic_id: uuid.UUID) -> str | None:
         return None
     # e.g. "127.0.0.1:55007" (possibly one line per address family).
     line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-    port = line.rsplit(":", 1)[-1]
-    return f"http://127.0.0.1:{port}" if port.isdigit() else None
+    host_port = line.rsplit(":", 1)[-1]
+    return f"127.0.0.1:{host_port}" if host_port.isdigit() else None
+
+
+def app_endpoint(topic_id: uuid.UUID) -> str | None:
+    """`127.0.0.1:<host-port>` of the topic's app port, or None when no container
+    publishes it.
+
+    Both backends' boxes are asked, tmux first. Asking only the SDK one (the old
+    behavior) meant 运行环境预览 was dead for every tmux-backed topic — which is
+    all of them under ``AGENT_BACKEND=tmux`` — because 3000 is published by
+    ``cheesex-tmux-*`` while the lookup went to ``cheesex-sbx-*``.
+    """
+    if not sandbox_available():
+        return None
+    for name in (tmux_container_name(topic_id), container_name(topic_id)):
+        endpoint = published_endpoint(name, APP_PORT)
+        if endpoint is not None:
+            return endpoint
+    return None
+
+
+# NOTE: there is deliberately no `app_preview_url` here any more. It returned
+# `http://127.0.0.1:<host-port>` — the port is bound to the *server's* loopback,
+# so the address only ever resolved for someone running the whole platform on
+# their own laptop and every remote user got a white iframe. What a browser gets
+# now is the backend's reverse-proxy path, built by the route that serves it
+# (`app.api.routes.app_preview`), from this endpoint.
 
 
 def container_name(topic_id: uuid.UUID) -> str:
