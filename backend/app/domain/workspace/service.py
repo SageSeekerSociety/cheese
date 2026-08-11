@@ -20,8 +20,14 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.errors import ValidationError
+from app.core.errors import ConflictError, ValidationError
 from app.domain.workspace.dogfood_notices import watch_dogfood_push
+from app.domain.workspace.textfile import (
+    MAX_TEXT_BYTES,
+    content_version,
+    decode_text,
+    looks_binary,
+)
 
 DEFAULT_BRANCH = "main"
 # 沙箱镜像：芝士分身在容器里跑代码/测试，碰不到宿主机 (spec §9.1).
@@ -197,20 +203,83 @@ def _share_jj_modes(repo: Path, since: float = 0.0) -> None:
         pass
 
 
+JJ_USER_NAME = "芝士"
+JJ_USER_EMAIL = "cheese@zhishi.local"
+
+
+def _drop_repo_config_id(store: Path) -> None:
+    """Delete the store's `config-id` if one exists — the file that took every
+    topic on the platform down at 11:39.
+
+    The mode repair above cannot cover this one, because the problem is not the
+    mode: jj's per-repo config does NOT live in the repo. `config-id` holds a
+    20-hex id naming a directory under the CALLER's `~/.config/jj/repos/`. Run
+    jj as a user whose home has no entry for that id — every fresh sandbox
+    container — and jj rewrites `config-id` via tmp+rename, so it returns owned
+    by whoever ran jj, mode 0600. The backend (uid 1001) then cannot read a file
+    the sandbox (uid 1000) owns, `_repair_modes`' chmod raises EPERM and is
+    swallowed, and EVERY jj call dies with "Internal error: Failed to determine
+    the secure config for a repo" — `jj workspace add` included, so no topic can
+    start at all.
+
+    Repairing modes can never win that race: chmod requires being the file's
+    owner, and jj replaces the inode on the next rewrite regardless. Deleting
+    can:
+
+    - it is possible — unlink needs write permission on the DIRECTORY (which the
+      backend owns), not on the file;
+    - it is safe — the file is not merely regenerable, it is optional. With it
+      absent jj runs normally and does not recreate it; only `jj config set
+      --repo` does. It holds no repo data (that is store/, op_store/, index/,
+      none of which this touches), only a binding to a per-user config dir. The
+      one thing that binding provided — the 芝士 identity — comes from
+      JJ_USER/JJ_EMAIL below instead, which is why `_ensure_jj` no longer sets
+      per-repo config.
+    """
+    try:
+        (store / "config-id").unlink()
+    except OSError:
+        pass  # absent (the normal case), or a store we cannot write — _jj reports it
+
+
+_SECURE_CONFIG_FAILURE = "failed to determine the secure config"
+
+
+def _jj_failure_message(command: str, detail: str, repo: Path) -> str:
+    """Name the real cause. This failure is a file permission problem in the
+    workspace, but it reaches the user through a generic wrapper that renders it
+    as 「AI 服务返回错误」 — which sent people looking at the model provider for
+    what is a chmod."""
+    if _SECURE_CONFIG_FAILURE in detail.lower():
+        return (
+            f"工作区版本库权限异常：{_jj_store(repo) / 'config-id'} "
+            "的属主不是后端进程，既读不了、也删不掉（删除需要它所在目录的写权限）。"
+            "这不是 AI 服务故障。修法：删掉该文件即可——它是指向 per-user 配置目录的"
+            f"索引，可再生，不含任何版本历史。原始报错：{detail}"
+        )
+    return f"jj {command} failed: {detail}"
+
+
 def _jj(repo: Path, *args: str) -> str:
     started = time.time() - 1  # -1s: filesystem mtime vs clock granularity slack
+    # Before every call, not once at setup: a jj run by any other uid (an agent
+    # in a sandbox) recreates config-id and locks the backend out mid-flight.
+    _drop_repo_config_id(_jj_store(repo))
     result = subprocess.run(
         ["jj", "--no-pager", *args],
         cwd=repo,
         capture_output=True,
         text=True,
         timeout=30,
+        # Identity per call rather than as per-repo config: setting it with
+        # `--repo` is the one thing that creates config-id in the first place.
+        env={**os.environ, "JJ_USER": JJ_USER_NAME, "JJ_EMAIL": JJ_USER_EMAIL},
     )
     # Before the returncode check: a FAILED jj call still writes operations, and
     # those unreadable files break the sandbox just as thoroughly.
     _share_jj_modes(repo, since=started)
     if result.returncode != 0:
-        raise ValidationError(f"jj {args[0]} failed: {result.stderr.strip()}")
+        raise ValidationError(_jj_failure_message(args[0], result.stderr.strip(), repo))
     return result.stdout
 
 
@@ -220,8 +289,9 @@ def _ensure_jj(repo: Path) -> None:
     if (repo / ".jj").exists():
         return
     _jj(repo, "git", "init", "--colocate")
-    _jj(repo, "config", "set", "--repo", "user.name", "芝士")
-    _jj(repo, "config", "set", "--repo", "user.email", "cheese@zhishi.local")
+    # Identity is injected per call (JJ_USER/JJ_EMAIL in _jj), NOT written as
+    # per-repo config: `jj config set --repo` is what creates `config-id`, the
+    # cross-uid tripwire _drop_repo_config_id exists to keep out of the store.
 
 
 def ensure_repo(project_id: uuid.UUID) -> Path:
@@ -455,7 +525,15 @@ def list_files(project_id: uuid.UUID, topic_id: uuid.UUID | None = None) -> list
         for name in sorted(filenames):
             p = Path(root) / name
             rel = p.relative_to(tree)
-            files.append({"path": str(rel), "bytes": p.stat().st_size})
+            # lstat, not stat: a symlink pointing at something that no longer
+            # exists is an ordinary thing to find in a worktree, and stat() on it
+            # raised FileNotFoundError — one dangling link took the whole file
+            # list down with a 500. It is listed, at the link's own size.
+            try:
+                size = p.lstat().st_size
+            except OSError:
+                size = 0
+            files.append({"path": str(rel), "bytes": size})
     files.sort(key=lambda f: f["path"])
     return files
 
@@ -470,15 +548,77 @@ def read_file(
     return target.read_text(encoding="utf-8", errors="replace")
 
 
-def write_file(
-    project_id: uuid.UUID, path: str, content: str, topic_id: uuid.UUID | None = None
-) -> None:
-    """Write a file in the topic's worktree (人改文件即指令 — the agent reads the
-    latest on its next turn, like 改文档即指令). _safe_path guards traversal + .git."""
+def read_text_file(
+    project_id: uuid.UUID, path: str, topic_id: uuid.UUID | None = None
+) -> dict:
+    """Read a worktree file *for editing* — the shape the 文件 panel needs.
+
+    Unlike :func:`read_file` this never pretends binary is text. ``content`` is
+    None when the file cannot be edited safely (``binary``) or is too big to send
+    at all (``too_large``); the panel renders a read-only view for those instead
+    of loading mangled bytes into Monaco and offering a 保存 button. ``version``
+    is the token to echo back on save so a lost race is caught (see
+    :mod:`app.domain.workspace.textfile`).
+    """
     tree = _tree(project_id, topic_id)
     target = _safe_path(tree, path)
+    if not target.is_file():
+        raise ValidationError("file not found")
+    size = target.stat().st_size
+    meta = {"path": path, "bytes": size, "binary": False, "too_large": False}
+    if size > MAX_TEXT_BYTES:
+        # Deliberately not read: the point is to not build the giant body.
+        return {**meta, "content": None, "version": None, "too_large": True}
+    data = target.read_bytes()
+    text = decode_text(data)
+    if text is None:
+        return {
+            **meta,
+            "content": None,
+            "version": content_version(data),
+            "binary": True,
+        }
+    return {**meta, "content": text, "version": content_version(data)}
+
+
+def write_file(
+    project_id: uuid.UUID,
+    path: str,
+    content: str,
+    topic_id: uuid.UUID | None = None,
+    expected_version: str | None = None,
+) -> str:
+    """Write a file in the topic's worktree (人改文件即指令 — the agent reads the
+    latest on its next turn, like 改文档即指令). _safe_path guards traversal + .git.
+
+    Refuses to overwrite a file that is not text: the only way to reach here with
+    a binary target is a client that decoded it lossily, and writing the result
+    back destroys the original.
+
+    ``expected_version`` is the version the caller last read. When given, a write
+    whose target has changed since is rejected with a conflict rather than
+    winning silently — the human's 保存 used to erase 芝士's edits with no hint
+    that anything was lost. Callers that legitimately have no read to base a
+    write on (the agent writing its own output) omit it and still write through.
+
+    Returns the new version, so a client can keep saving without a re-read.
+    """
+    tree = _tree(project_id, topic_id)
+    target = _safe_path(tree, path)
+    current = target.read_bytes() if target.is_file() else None
+    if current is not None and looks_binary(current):
+        raise ValidationError("这是二进制文件，不能以文本保存")
+    if expected_version is not None:
+        actual = content_version(current) if current is not None else None
+        if actual != expected_version:
+            raise ConflictError(
+                "文件已被改动（芝士或其他人写过），你的版本是基于旧内容的",
+                data={"path": path, "version": actual},
+            )
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    data = content.encode("utf-8")
+    target.write_bytes(data)
+    return content_version(data)
 
 
 def read_file_bytes(
@@ -1382,13 +1522,27 @@ def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
 
 
 _SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
+# The `cheese` CLI as this backend build ships it — the ONLY source of truth.
+_CLI_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "cheese"
+# Where session_dir() stages it, relative to the session dir. Both container
+# backends mount THIS over /usr/local/bin/cheese, so the CLI a turn runs is
+# always the one its backend shipped, never whatever an image baked months ago.
+CLI_IN_SESSION = "bin/cheese"
+
+
+def cheese_cli_mount_source(session: Path) -> Path:
+    """Host path of the CLI copy staged in a topic's session dir (see
+    `session_dir`). Host-visible by construction — the session dir is already a
+    bind-mount source — which the in-image `/app/sandbox/cheese` is not."""
+    return session / CLI_IN_SESSION
 
 
 def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """Persistent per-topic ~/.claude (mounted into the ephemeral container) so
     the agent session / --resume survives across turns. Also seeds the `cheese`
     skill here (= ~/.claude/skills, the user source) — one mount holds both the
-    session and the skill, with no host settings leaking in."""
+    session and the skill, with no host settings leaking in — and stages the
+    `cheese` CLI at bin/cheese for the container to mount over its baked copy."""
     import os
     import shutil
 
@@ -1416,7 +1570,29 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
         _loosen(root, 0o777)
         for f in files:
             _loosen(os.path.join(root, f), 0o666)
+    # AFTER the loosen walk, which would strip the CLI's exec bit (0o666). Copied
+    # every time so a redeployed backend refreshes it on the next turn; a topic
+    # whose container is reused for weeks still gets the current CLI.
+    _stage_cheese_cli(d)
     return d
+
+
+def _stage_cheese_cli(session: Path) -> None:
+    """Refresh <session>/bin/cheese from this build's copy. Best-effort: a stale
+    CLI is bad, but failing a turn over it is worse — the container still has its
+    baked copy to fall back on."""
+    import shutil
+
+    if not _CLI_SRC.is_file():
+        return
+    dst = cheese_cli_mount_source(session)
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        _loosen(str(dst.parent), 0o777)
+        shutil.copyfile(_CLI_SRC, dst)
+        _loosen(str(dst), 0o777)
+    except OSError:
+        logger.warning("could not stage the cheese CLI at %s", dst, exc_info=True)
 
 
 def _loosen(path: str, mode: int) -> None:

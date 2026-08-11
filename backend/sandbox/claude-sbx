@@ -30,8 +30,12 @@ NAME="${SBX_CONTAINER:?SBX_CONTAINER not set}"
 # `docker port` and proxies the preview iframe straight to it.
 APP_PORT=3000
 # The cheese CLI is MOUNTED from the host (not baked): CLI changes reach every
-# container instantly — no image rebuild, no stale-binary class of bugs.
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# container instantly — no image rebuild, no stale-binary class of bugs. The
+# source is the copy the backend stages into this topic's session dir
+# (ws.session_dir → bin/cheese), NOT the shim's own directory: when the backend
+# runs in a container, that is an in-image path the host daemon cannot see, and
+# docker would silently create an empty DIRECTORY there instead.
+CHEESE_CLI="${SBX_SESSION}/bin/cheese"
 create_container() {
   docker run -d --name "$NAME" --user node \
     -e HOME=/home/node \
@@ -41,7 +45,7 @@ create_container() {
     -v "${SBX_SESSION}":/home/node/.claude \
     -v "${SBX_WORKTREE}":/work -w /work \
     ${SBX_VCS_MOUNTS:-} \
-    -v "$SELF_DIR/cheese":/usr/local/bin/cheese:ro \
+    -v "$CHEESE_CLI":/usr/local/bin/cheese:ro \
     --network bridge \
     --memory 2g --cpus 2 --pids-limit 512 \
     --label cheesex-sandbox=1 \
@@ -59,9 +63,11 @@ elif ! docker port "$NAME" "$APP_PORT" >/dev/null 2>&1; then
   # Pre-app-port container (no published port) → recreate with the mapping.
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   create_container
-elif ! docker inspect -f '{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}' "$NAME" \
-    | grep -q '^/usr/local/bin/cheese$'; then
-  # Pre-mounted-CLI container (baked cheese) → recreate with the host mount.
+elif ! docker inspect \
+    -f '{{range .Mounts}}{{.Source}}->{{.Destination}}{{"\n"}}{{end}}' "$NAME" \
+    | grep -qxF "$CHEESE_CLI->/usr/local/bin/cheese"; then
+  # No CLI mount (baked cheese), or one still sourced from the retired host
+  # checkout → recreate so this turn runs the CLI the backend actually shipped.
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   create_container
 elif [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" != "true" ]; then

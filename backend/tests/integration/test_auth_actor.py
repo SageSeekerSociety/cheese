@@ -139,6 +139,7 @@ def test_project_member_allowed_even_if_not_in_roster(client):
     import asyncio
     import uuid
 
+    from app.domain.identity.actor import Actor
     from app.domain.membership.services import MemberService
     from app.domain.project.models import ProjectRole
 
@@ -152,6 +153,8 @@ def test_project_member_allowed_even_if_not_in_roster(client):
                 project_id=uuid.UUID(pid),
                 user_handle="bob",
                 role=ProjectRole.member,
+                # Roster writes are authorized — seed as the project owner.
+                actor=Actor(handle="alice", user_id=None, is_agent=False, via="token"),
             )
             await s.commit()
 

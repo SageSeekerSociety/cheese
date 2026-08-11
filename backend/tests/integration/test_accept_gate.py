@@ -59,6 +59,8 @@ def _authenticated_project_owner(client):
 
 
 def _make_project(client) -> str:
+    # No owner_handle: the autouse fixture above authenticates every request as
+    # alice, so the project (and the roster writes below) belong to her.
     r = client.post("/api/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -162,6 +164,8 @@ def test_quality_gate_update_requires_human_project_admin(client):
 
 def test_quality_gate_update_allows_project_lead_not_ordinary_member(client):
     pid = _make_project(client)
+    # Still alice's token from the autouse fixture — she owns the project, which
+    # is what writing the roster now requires.
     for handle, role in (("lead-user", "lead"), ("member-user", "member")):
         r = client.post(
             f"/api/projects/{pid}/members",

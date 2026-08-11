@@ -24,6 +24,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.domain.agent.service import AgentService, event_to_dict
+from app.domain.workspace.textfile import (
+    MAX_TEXT_BYTES,
+    content_version,
+    decode_text,
+    looks_binary,
+)
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -154,32 +160,72 @@ async def list_files(project_id: str, topic_id: str) -> dict:
         for p in sorted(tree.rglob("*")):
             if p.is_dir() or ".git" in p.parts or ".jj" in p.parts:
                 continue
-            files.append({"path": str(p.relative_to(tree)), "bytes": p.stat().st_size})
+            # lstat: a dangling symlink is not a reason to 500 the whole list.
+            try:
+                size = p.lstat().st_size
+            except OSError:
+                size = 0
+            files.append({"path": str(p.relative_to(tree)), "bytes": size})
     return {"data": files}
 
 
 @app.get("/file/{project_id}/{topic_id}")
 async def read_file(project_id: str, topic_id: str, path: str) -> dict:
-    """Read one node-local worktree file. Path is confined to the worktree."""
+    """Read one node-local worktree file. Path is confined to the worktree.
+
+    Same payload as the backend's local read (binary / too_large / version) —
+    the panel must behave identically whether compute is local or remote.
+    """
     tree = (Path(_WORKSPACE) / project_id / topic_id).resolve()
     target = (tree / path).resolve()
     if not str(target).startswith(str(tree)) or not target.is_file():
         return {"data": None}
-    return {"data": target.read_text(encoding="utf-8", errors="replace")}
+    size = target.stat().st_size
+    meta = {"path": path, "bytes": size, "binary": False, "too_large": False}
+    if size > MAX_TEXT_BYTES:
+        return {"data": {**meta, "content": None, "version": None, "too_large": True}}
+    data = target.read_bytes()
+    text = decode_text(data)
+    if text is None:
+        return {
+            "data": {
+                **meta,
+                "content": None,
+                "version": content_version(data),
+                "binary": True,
+            }
+        }
+    return {"data": {**meta, "content": text, "version": content_version(data)}}
 
 
 @app.put("/file/{project_id}/{topic_id}")
 async def write_file(project_id: str, topic_id: str, body: dict) -> dict:
     """Write one node-local worktree file (human edit, proxied from the backend).
-    Path is confined to the worktree."""
+    Path is confined to the worktree.
+
+    Refuses a text write over a binary file, and honours the optional `version`
+    the reader was given so a save that lost a race is reported rather than
+    silently overwriting. `reason` tells the backend which error to raise.
+    """
     tree = (Path(_WORKSPACE) / project_id / topic_id).resolve()
     path = (body.get("path") or "").strip()
     target = (tree / path).resolve()
-    if not path or not str(target).startswith(str(tree)) or ".git" in target.parts:
-        return {"ok": False}
+    if not str(target).startswith(str(tree)):
+        return {"ok": False, "reason": "path"}
+    if not path or ".git" in target.parts:
+        return {"ok": False, "reason": "path"}
+    current = target.read_bytes() if target.is_file() else None
+    if current is not None and looks_binary(current):
+        return {"ok": False, "reason": "binary"}
+    expected = body.get("version") or None
+    if expected is not None:
+        actual = content_version(current) if current is not None else None
+        if actual != expected:
+            return {"ok": False, "reason": "conflict", "version": actual}
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(body.get("content") or "", encoding="utf-8")
-    return {"ok": True}
+    data = (body.get("content") or "").encode("utf-8")
+    target.write_bytes(data)
+    return {"ok": True, "version": content_version(data)}
 
 
 @app.post("/checkpoint/{project_id}/{topic_id}")

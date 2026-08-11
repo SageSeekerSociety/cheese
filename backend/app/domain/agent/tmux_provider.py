@@ -48,26 +48,27 @@ _APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
 _READY_TIMEOUT_S = 45.0
 _READY_POLL_S = 0.4
 
-# The `cheese` CLI lives next to the shim; mounted read-only like the SDK path.
-_CHEESE_CLI = Path(settings.sandbox_shim).resolve().parent / "cheese"
 
+def _cheese_cli_mount(session_host: str) -> list[str]:
+    """`-v <session>/bin/cheese:/usr/local/bin/cheese:ro`.
 
-def _cheese_cli_mount() -> list[str]:
-    """`-v <cheese>:/usr/local/bin/cheese:ro`, or nothing.
+    The mount OVERRIDES the copy the sandbox image bakes at build time, and it
+    is a REQUIREMENT, not an optimisation: an image is rebuilt on its own
+    schedule, so the baked copy silently falls behind the backend that drives it
+    (observed 2026-08-10 — the container ran a CLI whose `remember`/`recall` did
+    not send `topic`, so every memory an agent wrote landed in the wrong pool).
 
-    The mount OVERRIDES the copy the sandbox image already bakes with a fresher
-    one — an optimisation, not a requirement. When the backend itself runs in a
-    container it spawns the sandbox as a SIBLING, so the mount source has to be a
-    path the HOST daemon can see; the in-image path `/app/sandbox/cheese` is not
-    one, and mounting it aborts the container (`not a directory`). So use the
-    host dir when configured, and otherwise mount nothing and rely on the baked
-    copy (current, since the image is built from this same repo)."""
-    host_dir = settings.sandbox_shim_host_dir.strip()
-    if host_dir:
-        return ["-v", f"{host_dir.rstrip('/')}/cheese:/usr/local/bin/cheese:ro"]
-    if _CHEESE_CLI.is_file():
-        return ["-v", f"{_CHEESE_CLI}:/usr/local/bin/cheese:ro"]
-    return []
+    When the backend runs in a container it spawns the sandbox as a SIBLING, so
+    the source must be a path the HOST daemon can see. The in-image
+    `/app/sandbox/cheese` is not one (mounting it aborts the container with
+    `not a directory`), and an operator-maintained host checkout — the old
+    `sandbox_shim_host_dir` — is exactly what went stale. The session dir is
+    already a host bind-mount source AND is re-seeded from this build on every
+    turn (ws.session_dir), so sourcing from there is fresh by construction."""
+    return [
+        "-v",
+        f"{ws.cheese_cli_mount_source(Path(session_host))}:/usr/local/bin/cheese:ro",
+    ]
 
 
 def _best_effort_chmod(path: Path, mode: int) -> None:
@@ -278,17 +279,23 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         exists = rc == 0
         image_switched = exists and cur_image.strip() != self._image
         env_drifted = False
+        cli_mount_stale = False
         if exists and not image_switched:
             _, cur_stamp, _ = await _docker(
                 "inspect", "-f", f'{{{{index .Config.Labels "{_ENV_LABEL}"}}}}', name
             )
             env_drifted = env_stamp_drifted(cur_stamp.strip(), _env_stamp(env))
-        if image_switched or env_drifted:
-            await _docker("rm", "-f", name)  # image or model route changed
+            # Mounts are fixed at creation, so a box built before the CLI mount
+            # moved to the session dir would keep serving the old source (or the
+            # image's baked copy) for the life of the topic — the very staleness
+            # this mount exists to prevent. Recheck it like the model route.
+            cli_mount_stale = await self._cli_mount_stale(name, env["SBX_SESSION"])
+        if image_switched or env_drifted or cli_mount_stale:
+            await _docker("rm", "-f", name)  # image, model route, or CLI mount
             exists = False
         if not exists:
             await self._create_container(name, env)
-            if image_switched or env_drifted:
+            if image_switched or env_drifted or cli_mount_stale:
                 # The old box (and anything running in it — the interactive
                 # session, background processes) is gone with no other
                 # warning; tell the topic (best-effort, never blocks the turn).
@@ -298,6 +305,21 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         if running.strip() != "true":
             await _docker("start", name)
         return name
+
+    @staticmethod
+    async def _cli_mount_stale(name: str, session_host: str) -> bool:
+        """True when the box's /usr/local/bin/cheese does not come from THIS
+        build's staged copy (missing mount, or an old source path)."""
+        rc, out, _ = await _docker(
+            "inspect",
+            "-f",
+            '{{range .Mounts}}{{.Source}}->{{.Destination}}{{"\\n"}}{{end}}',
+            name,
+        )
+        if rc != 0:
+            return False  # can't tell — don't destroy a box on a failed inspect
+        staged = ws.cheese_cli_mount_source(Path(session_host))
+        return f"{staged}->/usr/local/bin/cheese" not in out.splitlines()
 
     async def _create_container(self, name: str, env: dict[str, str]) -> None:
         # SBX_WORKTREE / SBX_SESSION are mount sources, not container env vars.
@@ -332,7 +354,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             "-w",
             "/work",
         ]
-        args += _cheese_cli_mount()
+        args += _cheese_cli_mount(env["SBX_SESSION"])
         args += [
             "--network",
             "bridge",
