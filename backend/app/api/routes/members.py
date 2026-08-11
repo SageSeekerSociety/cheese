@@ -1,4 +1,12 @@
-"""Project membership routes (nested under /api/projects)."""
+"""Project membership routes (nested under /api/projects).
+
+The three write routes decide who is a member of the project, and project
+membership is what ``authorize_topic_access`` reads to let someone into every
+topic of that project. So the acting identity is resolved at the trust boundary
+(``ActorResolverDep``) and the service authorizes it — unlike most 2.0 routes
+these do NOT honor a handle passed in the body: a claimed handle is exactly the
+forgery this surface must not accept. Reading the roster stays open, as it was.
+"""
 
 import uuid
 from typing import Annotated
@@ -6,6 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.domain.membership.schemas import (
@@ -21,9 +30,15 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post("/api/projects/{project_id}/members")
-async def add_member(project_id: uuid.UUID, body: MemberCreate, db: DbSession) -> dict:
+async def add_member(
+    project_id: uuid.UUID,
+    body: MemberCreate,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
     member = await MemberService(db).add(
-        project_id=project_id, user_handle=body.user_handle, role=body.role
+        project_id=project_id, user_handle=body.user_handle, role=body.role, actor=who
     )
     return ok(MemberOut.model_validate(member).model_dump(mode="json"))
 
@@ -52,14 +67,24 @@ async def update_member_role(
     user_handle: str,
     body: MemberRoleUpdate,
     db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
+    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
     member = await MemberService(db).update_role(
-        project_id=project_id, user_handle=user_handle, role=body.role
+        project_id=project_id, user_handle=user_handle, role=body.role, actor=who
     )
     return ok(MemberOut.model_validate(member).model_dump(mode="json"))
 
 
 @router.delete("/api/projects/{project_id}/members/{user_handle}")
-async def remove_member(project_id: uuid.UUID, user_handle: str, db: DbSession) -> dict:
-    await MemberService(db).remove(project_id=project_id, user_handle=user_handle)
+async def remove_member(
+    project_id: uuid.UUID,
+    user_handle: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await MemberService(db).remove(
+        project_id=project_id, user_handle=user_handle, actor=who
+    )
     return ok({"deleted": True})
