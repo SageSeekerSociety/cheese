@@ -373,7 +373,16 @@ def source_fingerprint() -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="cheese", description="芝士 平台 CLI")
+    p = argparse.ArgumentParser(
+        prog="cheese",
+        description=(
+            "芝士 平台 CLI —— 改「平台状态」用它,改「文件/代码」用原生工具。\n"
+            "\n"
+            "每个子命令的 --help 是权威的那一份(它和代码同源,不会过期)。\n"
+            "散文文档(SKILL.md / CLAUDE.md / .claude/rules/)只补 --help 说不了的东西。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument(
         "--version",
         action="version",
@@ -382,23 +391,80 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pd = sub.add_parser("doc", help="活文档")
+    pd = sub.add_parser(
+        "doc",
+        help="活文档",
+        description=(
+            "活文档 = 本话题的状态摘要,也是你跨轮的记忆。"
+            "话题标题会被渲染成文档大标题,正文别再用一级标题重复一遍。"
+        ),
+    )
     pdsub = pd.add_subparsers(dest="doccmd", required=True)
-    pdset = pdsub.add_parser("set", help="把文件设为本话题活文档")
-    pdset.add_argument("file")
-    pdsub.add_parser("get", help="打印本话题活文档")
+    pdset = pdsub.add_parser(
+        "set",
+        help="把文件设为本话题活文档",
+        description=(
+            "整块覆盖,没有版本历史,也没有并发控制。人在文档面板上编辑是 2.5 秒"
+            "自动保存的,你 set 上去就把人刚写的东西盖掉了、且捞不回来。"
+            "所以:改之前先 doc get 看一眼,做增量改写,别拿一份旧内容直接覆盖。"
+        ),
+    )
+    pdset.add_argument(
+        "file",
+        help="工作区里的 markdown 文件路径(放 docs/topics/ 下,别堆在仓库根目录)",
+    )
+    pdsub.add_parser(
+        "get",
+        help="打印本话题活文档",
+        description="打印当前活文档原文。set 之前先跑一次,免得覆盖掉别人的改动。",
+    )
 
-    ps = sub.add_parser("split", help="拆出子话题（分身自动开工）")
-    ps.add_argument("title")
+    ps = sub.add_parser(
+        "split",
+        help="拆出子话题（分身自动开工）",
+        description=(
+            "拆出一个子话题,平台立刻起一个分身去做它。\n"
+            "\n"
+            "分身开工时能看到的只有两样东西,都来自本命令:\n"
+            "  1. --brief 的原文(标题为「拆分意图」)\n"
+            "  2. 本话题当前活文档的快照(平台自动附上,不用你复制)\n"
+            "它看不到本话题的对话历史。简报里没写的前提,它就是不知道。\n"
+            "\n"
+            "分身跑在一个独立沙箱里,工作区是从 main 新建的 jj workspace:\n"
+            "  - 本话题工作区里 gitignored 的东西(reference/、tmp/、clone 下来的\n"
+            "    参照仓库、装好的依赖)都不会跟过去,要它用就在简报里写清怎么自己弄\n"
+            "  - 它写的文件必须落在自己工作区的相对路径下,写 /tmp 会丢\n"
+            "  - 它和你并行改同一个仓库,会撞车的地方(同一个文件/同一份配置)要在\n"
+            "    简报里划成硬边界\n"
+            "\n"
+            "split 是唯一会生出另一个 agent 的动作,没有深度/频率上限。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ps.add_argument("title", help="子话题标题,≤12 字最好")
     ps.add_argument(
         "--brief",
         default=None,
-        help="任务简报：这个子话题要干什么/约束/验收标准。会预置成分身的活文档，分身开工全靠它——尽量写",
+        help=(
+            "任务简报,分身的全部起点:要干什么、硬边界(别碰哪些文件/别做哪些事)、"
+            "验收标准(做到什么程度算完)、已知但未核实的事实要标出来。"
+            "不用重复父话题活文档(平台会自动附快照)。"
+            "不填的话分身只有标题和那份快照,基本等于让它自己猜。"
+        ),
     )
 
     paw = sub.add_parser(
         "await",
         help="把长命令丢到后台跑；跑完平台自动叫醒本话题并带上退出码+输出尾巴",
+        description=(
+            "要等几分钟以上的命令一律走它:全量检查、构建、长跑脚本。\n"
+            "\n"
+            "命令在后台跑,本命令立刻返回。跑完平台会自动开一轮新的把你叫醒,"
+            "带上退出码、耗时和输出尾巴。\n"
+            "**丢给它之后就可以放心结束本轮**——别为了等它而干等或反复轮询,"
+            "那会把话题冻死。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     paw.add_argument("command", help="要跑的命令，如 'bash .claude/scripts/check.sh'")
     paw.add_argument("--label", default="", help="一句话说明在跑什么（唤醒时会显示）")
@@ -413,56 +479,188 @@ def build_parser() -> argparse.ArgumentParser:
     pawc.add_argument("log_path")
     pawc.add_argument("timeout_s", type=int)
 
-    pdec = sub.add_parser("decision", help="记录一条决策")
-    pdec.add_argument("text")
+    pdec = sub.add_parser(
+        "decision",
+        help="记录一条决策",
+        description=(
+            "记一条决策到决策记录。只记「定了什么 + 为什么」这种以后会被翻出来问的,"
+            "别把进度当决策记。记完平台会在对话里自动出一张可点的卡片——"
+            "你不用再写一句「已记入决策记录」。"
+        ),
+    )
+    pdec.add_argument("text", help="决策内容,一句话说清定了什么、为什么")
 
-    ptitle = sub.add_parser("title", help="给本话题起/改标题")
-    ptitle.add_argument("text")
+    ptitle = sub.add_parser(
+        "title",
+        help="给本话题起/改标题",
+        description="话题还叫「新话题」时,据任务起一个 ≤12 字的标题。这是开工第一步。",
+    )
+    ptitle.add_argument("text", help="标题,≤12 字")
 
-    prem = sub.add_parser("remember", help="记入项目记忆")
-    prem.add_argument("fact")
+    prem = sub.add_parser(
+        "remember",
+        help="记入项目记忆",
+        description=(
+            "记一条事实进项目记忆,以后任何话题都能 recall 到。\n"
+            "\n"
+            "只记「跨话题还成立、且从代码/git 历史里读不出来」的东西。"
+            "代码结构、改过什么 bug、本轮的临时状态都不要记。"
+            "相对时间要换成绝对日期。"
+        ),
+    )
+    prem.add_argument("fact", help="一条事实,一句话")
 
-    prec = sub.add_parser("recall", help="按需检索记忆（语义搜索,返回摘要级结果）")
-    prec.add_argument("query")
+    prec = sub.add_parser(
+        "recall",
+        help="按需检索记忆（语义搜索,返回摘要级结果）",
+        description=(
+            "语义搜索项目记忆。开场只注入了记忆的**摘要**,所以:需要某条的细节、"
+            "或怀疑有相关旧记忆没出现在摘要里时,先 recall 再回答。"
+            "输出是摘要级的,不是原文。"
+        ),
+    )
+    prec.add_argument("query", help="关键词或问题,自然语言即可")
 
-    pn = sub.add_parser("notify", help="发通知")
-    pn.add_argument("--title", required=True)
-    pn.add_argument("--body", default="")
-    pn.add_argument("--level", default="light", choices=["silent", "light", "strong"])
-    pn.add_argument("--kind", default="change_alert")
+    pn = sub.add_parser(
+        "notify",
+        help="发通知",
+        description=(
+            "给人发通知。要用户在对话里一键拍板,优先用 `cheese ask`(按钮直接回到"
+            "你下一轮);notify 走的是通知面板,适合「人不在这个话题里也得知道」的事。\n"
+            "\n"
+            "通知正文是纯文本渲染:@某人 / <&文件> 这类引用在这里不会变成 chip。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pn.add_argument("--title", required=True, help="一行标题,通知列表里只看得到它")
+    pn.add_argument("--body", default="", help="正文,纯文本渲染")
+    pn.add_argument(
+        "--level",
+        default="light",
+        choices=["silent", "light", "strong"],
+        help="打扰强度:silent=只进列表,light=默认,strong=强提醒(慎用)",
+    )
+    pn.add_argument(
+        "--kind",
+        default="change_alert",
+        help="change_alert=知会一声(默认);decision_request=要人拍板,配 --options",
+    )
     pn.add_argument("--to", default=None, help="target handle（不填=广播）")
-    pn.add_argument("--options", default=None, help="决策选项,用 | 分隔")
+    pn.add_argument(
+        "--options",
+        default=None,
+        help="决策选项,用 | 分隔;配 --kind decision_request 才有按钮",
+    )
 
-    pask = sub.add_parser("ask", help="在对话里问一个带选项的问题（用户点按钮回答）")
-    pask.add_argument("question")
+    pask = sub.add_parser(
+        "ask",
+        help="在对话里问一个带选项的问题（用户点按钮回答）",
+        description=(
+            "在对话里发一个带按钮的问题,用户点一下就是答案,自动带回你下一轮。"
+            "要人拍板时首选它,别让人打字。只在「不同答案会导致做的事不一样」时问——"
+            "有惯例默认值的选择自己定,说一声就行。"
+        ),
+    )
+    pask.add_argument("question", help="问题,一句话问清楚")
     pask.add_argument("--option", action="append", required=True,
-                      help="一个选项,可重复 2-4 次")
+                      help="一个选项,可重复 2-4 次(少于 2 或多于 4 会被拒)")
 
-    pa = sub.add_parser("accept-request", help="递验收卡给某人")
-    pa.add_argument("reviewer")
-    pa.add_argument("reason", nargs="?", default="")
+    pa = sub.add_parser(
+        "accept-request",
+        help="递验收卡给某人",
+        description=(
+            "成果做完了,把验收卡递给某个具体的人(不是广播)。\n"
+            "\n"
+            "配了质量闸门的项目,递卡后平台会自动跑一遍检查,红了卡片会被打回、"
+            "根本到不了验收人手上。**递卡前先自己把检查跑绿**,省一个来回。\n"
+            "闸门跑在另一个容器里,只和你共享 /work,$HOME 不一样——所以「我这儿是绿的」"
+            "不等于闸门那儿是绿的。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pa.add_argument("reviewer", help="验收人的 handle(用 `cheese members` 查准确值)")
+    pa.add_argument("reason", nargs="?", default="", help="为什么找这个人验收")
 
-    pc = sub.add_parser("conclude", help="子话题结论回流父话题")
-    pc.add_argument("conclusion")
+    pc = sub.add_parser(
+        "conclude",
+        help="子话题结论回流父话题",
+        description=(
+            "子话题做完了,把结论回流父话题。父话题读到的就只有这段话——"
+            "写摘要,不写流水账。\n"
+            "\n"
+            "值钱的三样:做了什么、**查出来但故意没做的(以及为什么)**、"
+            "哪些结论是没核实的。否定结论和肯定结论一样值钱,别省掉。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pc.add_argument("conclusion", help="结论摘要,给父话题看的")
 
-    pm = sub.add_parser("milestone", help="钉里程碑")
-    pm.add_argument("title")
+    pm = sub.add_parser(
+        "milestone",
+        help="钉里程碑",
+        description="把关键节点钉成里程碑。给「以后会被回头对照的节点」用,不是待办清单。",
+    )
+    pm.add_argument("title", help="里程碑标题")
     pm.add_argument("--due", default=None, help="ISO 日期,如 2026-06-20")
 
-    sub.add_parser("members", help="列出项目成员(名字+handle+角色)")
+    sub.add_parser(
+        "members",
+        help="列出项目成员(名字+handle+角色)",
+        description=(
+            "列出项目成员。点名前先跑一次核对写法——名字和成员表不一致时,"
+            "平台会在现场标红「没能通知到」,而且那条提醒真的没送出去。"
+        ),
+    )
 
-    sub.add_parser("gh-token", help="铸一个只读 GitHub token(看 CI/CD 用,约1小时过期)")
+    sub.add_parser(
+        "gh-token",
+        help="铸一个只读 GitHub token(看 CI/CD 用,约1小时过期)",
+        description=(
+            "铸一个只读 token 查 CI/CD:`GH_TOKEN=$(cheese gh-token) gh run list -R <owner/repo>`\n"
+            "\n"
+            "本仓库的版本控制是 jj 不是 git,工作区里没有 .git,所以 `gh` 自己推断不出仓库,"
+            "会报 `not a git repository`——**必须显式带 -R owner/repo**。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
     sub.add_parser(
         "status",
         help="平台状态快照:本轮运行状态/验收卡与闸门输出/磁盘与额度水位",
+        description=(
+            "想知道「卡到哪了 / 闸门为什么红」时先跑它,别去轮询原始 API。"
+            "验收卡那一段带闸门的失败输出。"
+        ),
     )
 
-    psv = sub.add_parser("serve", help="把容器里跑起来的应用设为当前预览(先起在 0.0.0.0:$CHEESE_APP_PORT)")
+    psv = sub.add_parser(
+        "serve",
+        help="把容器里跑起来的应用设为当前预览(先起在 0.0.0.0:$CHEESE_APP_PORT)",
+        description=(
+            "把**容器里已经跑起来的**应用设为当前预览。跑之前:\n"
+            "  1. dev server 起在 0.0.0.0:$CHEESE_APP_PORT(只绑 localhost 不行)\n"
+            "  2. 后台跑(nohup ... &)\n"
+            "  3. curl localhost:$CHEESE_APP_PORT 验证通了,再 serve\n"
+            "\n"
+            "页面经后端反代挂在 $CHEESE_APP_BASE 这个子路径下。会发根绝对资源 URL 的\n"
+            "dev server(vite 的 /@vite/client)要按这个 base 起:\n"
+            "  vite --base=$CHEESE_APP_BASE --host 0.0.0.0\n"
+            "否则用户那边只有一个白框。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     psv.add_argument("note", nargs="?", default="app",
                      help="一句话说明在跑什么,如 'Vue dev server'")
 
-    part = sub.add_parser("artifact", help="把工作区文件设为可渲染产物(当前预览)")
+    part = sub.add_parser(
+        "artifact",
+        help="把工作区文件设为可渲染产物(当前预览)",
+        description=(
+            "做出了能直接「看」的东西(网页/可视化/SVG)就点名它,用户在右侧预览里"
+            "就能看到。平台不会去猜该显示哪个文件——你显式指定。"
+            "每次调用都会把预览指向最新那个。"
+        ),
+    )
     part.add_argument("path", help="工作区相对路径,如 report.html")
     part.add_argument("--as", dest="as_", default="html", choices=["html", "svg"],
                       help="渲染类型(默认 html)")
@@ -470,6 +668,15 @@ def build_parser() -> argparse.ArgumentParser:
     papi = sub.add_parser(
         "api",
         help="原始 API 逃生口(兜底,不推荐):直接打后端,带容器已有鉴权。无参=列可用操作",
+        description=(
+            "原始 API 通道。上面那些 curated 命令覆盖 80% 场景,语义清晰、有校验,"
+            "**优先用它们**;只有当没有对应的 curated 命令时才用 api。\n"
+            "\n"
+            "它仍然走容器已有的鉴权(不是无鉴权后门,后端照样按你的身份授权),"
+            "但校验少、易出错。裸 curl 和翻 session 文件依然是禁止的——"
+            "这个逃生口只是「少校验的原始通道」,不改变鉴权纪律。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     papi.add_argument("method", nargs="?", help="HTTP 方法,如 GET/POST/PUT/DELETE")
     papi.add_argument("path", nargs="?", help="API 路径,如 /topics/<id>/blocks")
