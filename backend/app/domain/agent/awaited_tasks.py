@@ -101,9 +101,19 @@ class AwaitedTask:
 
 
 # Process-global, like TurnRunner._tasks and HookRouter: a restart forgets
-# in-flight tasks, which costs a wake (the child's report 404s and it gives up)
-# but never corrupts anything. Persisting them would not help — the child that
-# was going to report died with the container in that scenario anyway.
+# in-flight tasks. For the WAKE half that costs one wake (the child's report 404s
+# and it gives up) and corrupts nothing, and persisting would not buy much — a
+# container rebuild kills the child that was going to report anyway.
+#
+# For the SNAPSHOT-HOLD half it is worse, and the container-rebuild argument does
+# not transfer: the child runs in the agent's own sandbox, so a BACKEND restart
+# leaves it alive and still writing the worktree while every hold is forgotten —
+# the next checkpoint then tears the tree exactly as before. Strictly better than
+# no hold at all (was: always torn; now: torn only if a restart lands inside the
+# window) and not worth blocking on, but real: this topic itself was interrupted
+# by a platform restart twice on 2026-08-11. If it needs fixing, the fix is to
+# PERSIST the hold — widening SNAPSHOT_HOLD_GRACE_S does nothing for a restart and
+# only lets a dead child freeze history longer (裁定 2026-08-11, PR 采纳意见).
 _ACTIVE: dict[uuid.UUID, AwaitedTask] = {}
 # topic id → timestamps of recent automatic wakes (rolling window).
 _WAKES: dict[str, deque[float]] = {}
@@ -179,10 +189,26 @@ def forget(task_id: uuid.UUID) -> None:
 # the snapshot landed 10s in, and the branch showed the fix missing for 2 hours.
 #
 # Policy: HOLD the automatic snapshot while a task is in flight, then take one as
-# soon as the last task reports. Holding is recoverable — the worktree is a host
-# bind mount, so nothing is lost and the next snapshot picks it up — whereas a
-# torn commit is not: it stays in history, and the bookmark points at it for the
-# whole run. Snapshots that CANNOT be held (采纳前快照 and friends: a human is
+# soon as the last task reports.
+#
+# The reason to prefer holding is NOT mainly that it is the recoverable option
+# (it is — the worktree is a host bind mount, so nothing is lost and the next
+# snapshot picks it up, whereas a torn commit stays in history with the bookmark
+# pointing at it for the whole run). It is what each failure LOOKS like:
+#
+# * a held snapshot produces a QUESTION — "why isn't my change on the branch?" —
+#   which somebody asks and somebody answers;
+# * a torn commit produces a CONFIDENT WRONG CONCLUSION — "this fix was never
+#   made" — which nobody re-checks, because it looks completely normal.
+#
+# The incident is the proof: those 2 hours were not spent failing to recover, they
+# were spent with nobody suspecting anything. So this choice holds even where both
+# options are recoverable. Same principle as 宁可重复不可丢失 on the message path:
+# make the failure mode the visible one (裁定 2026-08-11, PR 采纳意见).
+#
+# Which is also why the hold itself must be visible — `status_snapshot` puts it on
+# `cheese status`, or "my edits aren't on the branch" becomes the same mystery by
+# another route. Snapshots that CANNOT be held (采纳前快照 and friends: a human is
 # waiting, and refusing would wedge the accept) instead get a warning marker in
 # their commit message — see `ws.snapshot_worktree`.
 

@@ -314,8 +314,16 @@ class RemoteCheesedProvider:
         #
         # The await hold is decided HERE rather than on the node: `cheese await`
         # registers with the platform, so this process is the only one that knows
-        # a command is still writing that tree. The node then catches up on the
-        # next turn's checkpoint (the wake gives it one).
+        # a command is still writing that tree. There is no catch-up snapshot on
+        # this path either — `_catch_up_snapshot` commits the LOCAL worktree, and
+        # a remote node has none here — so the node catches up on the next turn's
+        # checkpoint, which the report's wake provides.
+        #
+        # Known gap, accepted: two of the guards in `awaited_tasks` take the result
+        # as a block WITHOUT waking (归档话题, 卡已结算). On those the node's tree
+        # stays uncommitted until some later turn happens to run. Accepted because
+        # both states mean nobody is reading that branch any more — but it is a
+        # gap, not an invariant: do not read this as "a wake always follows".
         if awaited_tasks.snapshot_hold(topic_id) is not None:
             return
         try:
