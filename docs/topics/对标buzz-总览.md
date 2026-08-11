@@ -184,6 +184,27 @@ Buzz 用两个**普通 Rust 单测**（`buzz-db/src/migration.rs:1038` 和 `:105
 
 > ⚠️ 归属待定：`deploy/` 属 CI/CD territory，已交给外部 agent 的范围边缘。见下方分工表。
 
+### 1.11 让 agent 知道「有什么能用」：把需要同步的东西降到最少 ⭐
+
+起因是一个具体痛点：**我们的分身连 jj 都不会用。**
+
+去查 Buzz 怎么解的，答案有点反直觉——**它没有「同步机制」，它是把需要同步的东西降到最少**：
+
+1. **CLI 自己描述自己**：`buzz-cli` 用 clap derive，`crates/buzz-cli/src/lib.rs:176` 那个 `enum Cmd` 每个变体头上的 `///` 注释**就是** `--help` 文本。这一层**永不过期，因为它和代码是同一份东西**。
+2. **散文明确划界**（枢纽所在）：`.claude/skills/sprout-cli/SKILL.md` 写着 —— *"This skill documents only what `--help` cannot tell you."* 散文只写 `--help` 说不了的：语义、坑、输出契约、什么时候**不**该用。所以它短，加个 flag 也不会让它过期。
+3. MCP server 的工具 schema 从代码生成。
+
+**它的同步机制其实不存在，别去抄**：grep 整个 `Justfile` / `.github/workflows/` / `lefthook.yml`，**零条**校验 `AGENTS.md` / `ARCHITECTURE.md` 的机制；四份 SKILL.md 逐字节相同（md5 验证）且无同步脚本。
+
+对照出我们两个洞：
+
+| 洞 | 证据 |
+|---|---|
+| **jj 从来没写过** | <&CLAUDE.md> 零命中、<&.claude/rules/> 零命中。更糟：环境给 agent 的信号是 `Is a git repository: false`，它收到的是「这儿没有版本控制」 |
+| **cheese CLI 的 `--help` 是反过来的** | 顶层很好（每个子命令都有中文描述），**子命令层几乎是裸的**：`split --help` 不说 `--brief` 该写什么、分身在什么环境跑；`conclude`/`remember`/`recall`/`milestone`/`ask` 全是裸参数名 |
+
+**一句话**：能永不过期的那一层（`--help`）是空的，容易过期的那一层（散文）在扛所有事。已拆 @agent 能力发现：补 jj 与 CLI 自描述 去补。
+
 ### 2. Gotcha 该写成「症状 → 会被误判成什么 → 真因」
 
 它 `AGENTS.md` 的 Common Gotchas 一节不写「应该怎么做」，而是从症状倒推。这个写法对 agent 更有用——agent 遇到的是症状，不是规范。
@@ -260,6 +281,7 @@ Buzz 的 `tenant.rs` 注释里直说自己是 **"lint-and-review fence, not a co
 | @领域包解环与 import 守卫 | 4 | 守卫做成 `backend/tests/` 下的测试，绕开 `check.sh` |
 | @测试规则还债与 _auth 去重 | 5 + 9 个 `_auth` 去重 | 小而实 |
 | @分身高风险动作的护栏调研 | 4.5 + 4.6 + 计时器排查 | ✅ **已回流**。给了否定结论 + 挖出活文档 P0 |
+| @agent 能力发现：补 jj 与 CLI 自描述 | 1.11 | 补 jj、补 CLI 子命令 help、立「散文只写 --help 说不了的」这条界 |
 
 **防撞车约定**：四个子话题都被明令不碰 `.github/workflows/` 和 `check.sh`；需要加守卫的一律实现成 `backend/tests/` 下的测试（`check.sh` 本来就跑 pytest，效果等价）。
 
