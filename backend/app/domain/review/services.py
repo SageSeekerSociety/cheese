@@ -31,6 +31,18 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
 
 logger = logging.getLogger("cheesex.review")
 
+# note 前缀家族 (docs/topics/诊断信息搬上验收卡.md). 多个写入方共用一条 `note`,
+# 靠前缀互相识别 —— 所以每个前缀都必须是**具名常量**, 不能靠 "⚠️" 这个共同的
+# 表情去粗判 (2026-08-10 修的就是这个: 用 "⚠️" 粗判会让"轮询暂停"冒充"重推
+# 失败", 把真正的 CI 失败通知整个吞掉, 见 _nudge_pr_fix).
+_REPUSH_FAILED_PREFIX = "⚠️ 平台自动重推失败"
+_POLL_PAUSED_PREFIX = "⚠️ 轮询暂停"
+
+
+def _nudge_note_prefix(stage: str) -> str:
+    return f"⚠️ {stage} 检查未通过："
+
+
 _MERGE_FAILED_MESSAGE = (
     "Acceptance could not complete because the topic could not be merged. "
     "The card remains pending and the topic stays active; repair the workspace "
@@ -71,6 +83,36 @@ def _pr_merge_commit_message(topic: Topic, decided_by: str) -> str:
     `_pr_merge_commit_title` now, and repeating it here would put it in the
     commit twice."""
     return _pr_trailers(topic, decided_by)
+
+
+#: How much of the failure detail rides in the nudge message. The detail is
+#: already bounded per job upstream (`github_pr._failure_detail`); this is the
+#: backstop that keeps a pathological payload from flooding the topic.
+_NUDGE_TAIL_LIMIT = 4000
+
+
+def _ci_log_howto(repo_full_name: str) -> str:
+    """The "where do I read the rest" paragraph of a CI-failure nudge.
+
+    The excerpt above it is deliberately short, so the message has to say how
+    to get the whole thing — and that path was undocumented everywhere 芝士
+    can read (not in `.claude/`, not in `CLAUDE.md`): the read-only token is
+    a `cheese gh-token` away, but nothing told it so, and nothing told it the
+    repo's name either, which `gh api repos/:owner/:repo/...` needs. Both are
+    in hand right here, at the one moment they're wanted.
+    """
+    repo = repo_full_name or "<owner>/<repo>"
+    return (
+        "上面是失败 job 的名字、Actions 页面链接，以及日志里错误行附近的片段。"
+        "要看完整日志，在本话题的工作区里跑：\n"
+        "```bash\n"
+        "export GH_TOKEN=$(cheese gh-token)   # 只读 token，约 1 小时过期\n"
+        f"gh api repos/{repo}/actions/jobs/<job_id>/logs\n"
+        "```\n"
+        "（`<job_id>` 就是上面 Actions 链接里 `/job/` 后面那串数字；"
+        f"要重新列出这次提交的所有检查：`gh api "
+        f"repos/{repo}/commits/<head_sha>/check-runs`。）\n"
+    )
 
 
 # 两阶段采纳 (PR迭代式) 降级原因可见性: TOKEN_UNAVAILABLE_* → 人能看懂的中文说明,
@@ -148,6 +190,73 @@ def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
     return (f"{prefix}；{base}" if base else prefix)[:2000]
 
 
+# 递卡互斥 (2026-08-10): a topic may have at most one card that is still
+# "live" — awaiting a decision, mid-delivery, or blocked mid-accept. Each gets
+# its own message because the way OUT differs (改验收人 / 等交付 / 解冲突).
+_BLOCKED_BY_CARD_MESSAGES = {
+    AcceptStatus.pending: "已有待处理的验收卡，请改验收人而不是再递一张",
+    AcceptStatus.pending_gate: "已有待处理的验收卡，请改验收人而不是再递一张",
+    AcceptStatus.pr_open: (
+        "这个话题的验收卡已经在交付中（PR 正在跑 CI / 等部署），"
+        "不能再递一张；要改动就提交到工作区，平台会自动同步到那个 PR"
+    ),
+    AcceptStatus.conflict: (
+        "上一张验收卡卡在合并冲突上，解决冲突后由人重试采纳，不要再递一张"
+    ),
+}
+_CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
+
+
+# ---- 人类授权动作前移 (2026-08-10) -----------------------------------------
+#
+# 人点的那一下从「合并前」挪到了「开 PR 前」：它买到的是"以我的名义把这条分支
+# 推上去、让真 CI 开始跑，之后的迭代不用再问我"。摩擦因此是 O(1) 而不是
+# O(迭代次数)。代价是那一刻 CI 还没有任何结果，所以机器后来自动合并之前必须自
+# 己守住三道闸——这三条就是整个方案的安全阀，任何一条命中都不自动合并，回来找人。
+
+#: 例外 3: prod 永远两次都要人。本项目当前采纳目标是 main/dev，这里先把判断位
+#: 留出来（不是猜测式匹配：只认这几个确切分支名，`main-prod` 之类要显式加）。
+_PROD_BASE_BRANCHES = frozenset({"prod", "production", "release"})
+
+#: 例外 1 的两类"敏感路径"。第三类（新增文件）看的是 diff 状态而不是路径。
+_CI_CONFIG_PREFIX = ".github/"
+
+
+def _is_prod_base(base: str) -> bool:
+    return base.strip().lower() in _PROD_BASE_BRANCHES
+
+
+def _is_migration_path(path: str) -> bool:
+    """迁移文件——改数据库结构的东西，人授权时没看见就不该跟着自动合进去。"""
+    return (
+        "alembic/versions/" in path
+        or path.startswith("migrations/")
+        or "/migrations/" in path
+    )
+
+
+def _drift_reasons(
+    authorized: list[tuple[str, str]], current: list[tuple[str, str]]
+) -> list[str]:
+    """例外 1: 授权之后 head 又动了，新 diff 里有没有超出授权范围的东西。
+
+    只看"授权时那份 diff 里没有的路径"——人已经看过的文件被继续改，正是这次设计
+    要放行的迭代（改 CI 报错、补一行断言），拦下来就把 O(1) 变回 O(迭代次数)。
+    在这些新出现的路径里，只有三类算越界：新增文件 / 碰 `.github/` / 碰迁移。"""
+    known = {path for _, path in authorized}
+    reasons: list[str] = []
+    for status, path in current:
+        if path in known:
+            continue
+        if status == "added":
+            reasons.append(f"新增了文件 {path}")
+        elif path.startswith(_CI_CONFIG_PREFIX):
+            reasons.append(f"动了 CI 配置 {path}")
+        elif _is_migration_path(path):
+            reasons.append(f"动了数据库迁移 {path}")
+    return reasons
+
+
 def approvals_required_of(project: Project | None) -> int:
     """主分支保护 (spec §4.4): distinct approvals an accept needs. Default 1 —
     the accepter's own accept counts, so unconfigured projects are unchanged."""
@@ -197,15 +306,22 @@ class AcceptService:
         # 采纳是一次性交付 (spec §6.3): a frozen topic can't be re-submitted.
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能再递验收卡")
-        # One reviewer at a time, not a broadcast (spec §4.4): if a card is
-        # already pending (or still behind the gate), re-route / wait instead
-        # of stacking a new one.
+        # One card at a time, not a broadcast (spec §4.4): re-route / wait
+        # instead of stacking a new one.
+        #
+        # 2026-08-10: the guard used to cover only pending/pending_gate, so a
+        # card mid-DELIVERY (`pr_open`, a real PR running CI) or stuck on a
+        # merge `conflict` did not block a second card. The frontend only ever
+        # renders the NEWEST card, so the older one — and the PR it was
+        # driving — vanished from the UI while the poller kept advancing it.
+        # Every non-terminal status blocks now; `gate_failed` deliberately does
+        # not (a red gate voids the card, and re-递卡 after fixing IS the flow).
         existing = await self._repo.list_for_topic(topic_id)
-        if any(
-            c.status in (AcceptStatus.pending, AcceptStatus.pending_gate)
-            for c in existing
-        ):
-            raise ValidationError("已有待处理的验收卡，请改验收人而不是再递一张")
+        blocking = next(
+            (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
+        )
+        if blocking is not None:
+            raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
         # 机器闸门 (spec §4.4/§9, eval C2): with a check_command configured the
         # card is born pending_gate; the platform runs the check in the topic's
         # workspace and only a green result promotes it to pending. The check
@@ -687,8 +803,8 @@ class AcceptService:
             # otherwise 芝士 believes its fix was pushed and just waits forever.
             # Dedup by prefix — this fires every 60s poll tick until the push
             # succeeds, and must not spam the note each time.
-            if not card.note.startswith("⚠️ 平台自动重推失败"):
-                card.note = (f"⚠️ 平台自动重推失败（下一轮还会重试）：{exc}")[:2000]
+            if not card.note.startswith(_REPUSH_FAILED_PREFIX):
+                card.note = (f"{_REPUSH_FAILED_PREFIX}（下一轮还会重试）：{exc}")[:2000]
                 await self._session.flush()
             return False
         card.pr_head_sha = pushed["head_sha"]
@@ -775,6 +891,10 @@ class AcceptService:
         card.pr_repo = f"{owner}/{repo}"
         card.pr_url = pr.url
         card.pr_head_sha = pushed["head_sha"]
+        # 人类授权动作前移: freeze what this human actually authorized. From here
+        # on `pr_head_sha` follows every fix 芝士 pushes; this one does not, and
+        # the poller diffs the two before it dares merge without asking again.
+        card.pr_authorized_sha = pushed["head_sha"]
         card.pr_merged_at = None
         # A PR GitHub reports as already open on this head branch IS this
         # topic's PR (the branch name is derived from the topic id), so it is
@@ -785,13 +905,18 @@ class AcceptService:
             if pr.already_existed
             else f"已开 PR #{pr.number}"
         )
-        card.note = f"{pr_phrase}，等 CI 转绿后自动合并：{pr.url}"
+        card.note = (
+            f"{pr_phrase}，真 CI 现在才开始跑，全绿且没超出授权范围才自动合并：{pr.url}"
+        )
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(
             topic,
-            f"🔁 {decided_by} 采纳了这个话题，{pr_phrase} 等待 CI：{pr.url}\n"
-            "话题保持 active（容器不停），PR 合并且部署也成功后才会归档。",
+            f"🔁 {decided_by} 授权了这次改动，{pr_phrase} —— 真 CI 现在才开始跑："
+            f"{pr.url}\n"
+            "话题保持 active（容器不停）。检查全绿、且改动没超出授权范围时平台自动"
+            "合并，之后的迭代不用再问人；三种例外（新 diff 越界 / 根本没有 CI 会跑"
+            " / 目标是 prod）会回来找人。PR 合并且部署也成功后才会归档。",
         )
         return card
 
@@ -828,13 +953,23 @@ class AcceptService:
             )
             # Without this the card just sits at `pr_open` forever and looks
             # identical to "CI still running" — no signal anyone's token died.
-            if not card.note.startswith("⚠️ 轮询暂停"):
+            if not card.note.startswith(_POLL_PAUSED_PREFIX):
                 card.note = (
-                    f"⚠️ 轮询暂停（下一轮还会重试）："
+                    f"{_POLL_PAUSED_PREFIX}（下一轮还会重试）："
                     f"{_describe_token_unavailable(reason)}"
                 )[:2000]
                 await self._session.flush()
             return
+
+        # Token is usable again → the pause note is stale. Clearing it here is
+        # what makes the pause self-healing: it stops describing a condition
+        # that no longer holds, AND it can no longer sit in front of a real CI
+        # failure (which is how "轮询暂停" used to swallow CI 失败 notifications
+        # — see _nudge_pr_fix). Only this exact prefix is cleared; 重推失败 /
+        # 部署失败 / 拒绝合并 notes describe live conditions and stay put.
+        if card.note.startswith(_POLL_PAUSED_PREFIX):
+            card.note = ""
+            await self._session.flush()
 
         from app.domain.review import github_pr
 
@@ -903,6 +1038,15 @@ class AcceptService:
             await self._session.flush()
             return
 
+        # 人类授权动作前移: a card that opened its PR before this feature existed
+        # has no recorded authorization baseline. Adopt the head it is riding
+        # RIGHT NOW rather than leaving the valve off forever — that can only
+        # ever govern pushes from here on, so an in-flight card is never
+        # retroactively blocked for something it did before the rule existed.
+        if card.pr_authorized_sha is None:
+            card.pr_authorized_sha = card.pr_head_sha
+            await self._session.flush()
+
         # 芝士 fixed something in its workspace — push it to the PR branch
         # before checking CI, or a fixed commit just sits local forever (see
         # _repush_if_local_head_moved's docstring for why 芝士 can't do this
@@ -945,7 +1089,26 @@ class AcceptService:
                 stage="CI",
                 chat_service=chat_service,
                 runner=runner,
+                repo_full_name=f"{owner}/{repo}",
             )
+            await self._session.flush()
+            return
+
+        # 人类授权动作前移 (2026-08-10): 检查不红 ≠ 机器可以免人合并。人当初批的
+        # 是「以我的名义开这个 PR、让 CI 真跑」，不是「这堆代码我看过了」——所以
+        # 合并前还要过三道安全阀，任一命中就不合并、回来找人。
+        withheld = await self._authorization_exception(
+            card=card,
+            topic=topic,
+            owner=owner,
+            repo=repo,
+            token=token,
+            client=client,
+            state=state,
+            tail=tail,
+        )
+        if withheld is not None:
+            self._note_needs_human(card=card, topic=topic, reason=withheld)
             await self._session.flush()
             return
 
@@ -964,7 +1127,13 @@ class AcceptService:
             # GitHub refused (405/409). NOT necessarily transient — a
             # merge_method the repo disabled refuses on every poll forever —
             # so the reason goes on the card rather than into the void.
-            self._note_merge_blocked(card=card, reason=result.blocked_reason or "")
+            self._note_merge_blocked(
+                card=card,
+                topic=topic,
+                reason=result.blocked_reason or "",
+                chat_service=chat_service,
+                runner=runner,
+            )
             await self._session.flush()
             return
         merge_sha = result.sha
@@ -976,6 +1145,106 @@ class AcceptService:
             topic,
             f"✅ PR #{card.pr_number} 的检查全绿，已自动合并。"
             "等部署也成功后话题才会归档。",
+        )
+
+    async def _authorization_exception(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        owner: str,
+        repo: str,
+        token: str,
+        client,
+        state: str,
+        tail: str,
+    ) -> str | None:
+        """人类授权动作前移 (2026-08-10) 的安全阀：checks aren't red — may the
+        machine merge WITHOUT going back to the human? Returns None for yes, or
+        the human-readable reason it must ask, for the three exceptions the
+        design names. Anything it cannot determine counts as "ask" (fail
+        closed): the whole point of the human's click moving earlier is that
+        nobody has looked at what the machine is about to merge.
+
+        Deliberately NOT part of the polling state machine — `advance_pr_card`
+        and its stages are reused as-is; this is one gate in front of the merge
+        call, and returning None leaves the old behaviour byte for byte."""
+        from app.domain.workspace import service as ws
+
+        # 例外 2: 「12 项检查全过」和「没有 workflow 会对这次改动触发检查」是两件
+        # 事。后者也让轮询停下来（零检查死锁的修复原样保留），但它意味着真 CI 从
+        # 未跑过这段代码，所以不享受免人自动合并。
+        if state == "no_checks":
+            return f"没有任何 CI 真的跑过这次改动（{tail}）"
+
+        # 例外 3: 目标是 prod —— 永远两次都要人。
+        try:
+            base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
+        except Exception as exc:  # noqa: BLE001 — 认不出目标分支就不敢替人决定
+            logger.warning(
+                "card %s: cannot resolve PR base branch (%s) — withholding merge",
+                card.id,
+                exc,
+            )
+            return f"认不出这个 PR 要合进哪条分支（{type(exc).__name__}），不敢替人决定"
+        if _is_prod_base(base):
+            return f"目标分支是 {base}，prod 永远要人自己合，机器不代劳"
+
+        # 例外 1: 授权之后 head 又动了，且新 diff 超出当时授权的范围。
+        authorized_sha = card.pr_authorized_sha
+        if not authorized_sha or authorized_sha == card.pr_head_sha:
+            # 人授权的就是现在这个 commit —— 没有"之后"，也就没有漂移。
+            return None
+        authorized = await client.compare_files(
+            owner=owner, repo=repo, base=base, head=authorized_sha, token=token
+        )
+        current = await client.compare_files(
+            owner=owner, repo=repo, base=base, head=card.pr_head_sha, token=token
+        )
+        if authorized is None or current is None:
+            return (
+                "改动太大，GitHub 没给出完整的文件列表，"
+                "无法确认新提交有没有超出授权范围"
+            )
+        reasons = _drift_reasons(authorized, current)
+        if not reasons:
+            return None
+        shown = "、".join(reasons[:5])
+        if len(reasons) > 5:
+            shown += f" 等 {len(reasons)} 处"
+        return f"授权之后的新提交超出了当时授权的范围（{shown}）"
+
+    def _note_needs_human(self, *, card: AcceptCard, topic: Topic, reason: str) -> None:
+        """One of the three exceptions fired: say so on the card and in the
+        room, and stop — never merge.
+
+        The ✋ prefix is deliberately none of the existing ones: `⚠️` is
+        `_nudge_pr_fix`'s "已经叫过芝士了" marker (reusing it would silence the
+        next real CI failure), `🚫` is GitHub refusing to merge, `❌` is a
+        broken deploy. This is neither a failure nor a refusal — it is the
+        machine declining to act on an authorization that no longer covers
+        what's in the PR. `❌` still outranks it, same as for 🚫.
+
+        Dedup by exact text rather than by prefix: the poll runs every 60s, and
+        the reason can legitimately change (范围漂移 → 目标是 prod → …) while
+        the card itself hasn't moved."""
+        if card.note.startswith("❌"):
+            return
+        note = (
+            f"✋ PR #{card.pr_number} 平台不会自动合并：{reason}。"
+            "需要人来定：自己在 GitHub 上合并这个 PR，或者撤销这次采纳。"
+        )[:2000]
+        if card.note == note:
+            return  # already said once — the 60s poll must not repeat it
+        card.note = note
+        logger.warning("card %s: auto-merge withheld — %s", card.id, reason)
+        self._notify_merge_result(
+            topic,
+            f"✋ PR #{card.pr_number} 的检查没有拦住它，"
+            f"但平台不会自动合并：{reason}。\n"
+            f"这是「人类授权动作前移」的安全阀之一：{card.decided_by} 当初授权的是"
+            "另一份改动，机器不替他把这一份也签下去。需要人来定：自己在 GitHub 上"
+            f"合并，或者撤销这次采纳。\n{card.pr_url}",
         )
 
     async def _advance_deploy_checks(
@@ -1094,21 +1363,41 @@ class AcceptService:
             "话题保持 active，需要人决定：重开 PR，或撤销这次采纳。",
         )
 
-    def _note_merge_blocked(self, *, card: AcceptCard, reason: str) -> None:
-        """Put GitHub's merge refusal on the card's `note` — the one surface
-        both 芝士 and the user actually read. Before this existed a refusal
-        left `note` empty, so a permanently-unmergeable PR looked exactly like
-        a healthy one still waiting on CI.
+    def _note_merge_blocked(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        reason: str,
+        chat_service,
+        runner,
+    ) -> None:
+        """Put GitHub's merge refusal on the card's `note` AND wake 芝士 up.
+        Before this existed a refusal left `note` empty, so a permanently-
+        unmergeable PR looked exactly like a healthy one still waiting on CI.
 
-        Two things the 60s poll makes mandatory:
+        The note alone was still not enough (2026-08-11): a note is something
+        you have to be looking at. The most common refusal — merge conflicts —
+        is exactly the kind 芝士 can fix in its own workspace, so this summons
+        it the same way `_nudge_pr_fix` does for a red check. Without the
+        summon nobody is working the card and the topic just sits at `pr_open`
+        forever (真实案例: PR #242). Note that the conflict dispatch in
+        `routes/accept.py` never covers this — that one only runs for the
+        synchronous merge at the moment a human clicks 采纳, not for the poll.
+
+        Three things the 60s poll makes mandatory:
 
         - **No spam.** The note is rewritten only when the text actually
           changes, so an unchanging reason costs one write, not one per poll.
           (Stricter than `_nudge_pr_fix`'s prefix check, which can't notice a
           405 turning into a 409.)
+        - **One summon per reason.** The dispatch hangs off that same "the note
+          really changed" test rather than a prefix check, so a 405 that turns
+          into a 409 gets a fresh nudge while an unchanging one stays quiet.
         - **No clobbering.** `❌ 部署失败` outranks this and is never
           overwritten — that note describes a merged PR whose deploy broke,
-          which is strictly more urgent than "not merged yet".
+          which is strictly more urgent than "not merged yet" — and, since it
+          returns before the write, never summons either.
         """
         if card.note.startswith("❌"):
             return
@@ -1118,6 +1407,22 @@ class AcceptService:
             return
         card.note = note
         logger.warning("PR merge refused for card %s: %s", card.id, reason)
+        runner.submit(
+            chat_service,
+            topic.id,
+            author="system",
+            content=(
+                f"PR #{card.pr_number}（{card.pr_url}）的检查全绿，"
+                "但 GitHub 拒绝合并：\n"
+                f"```\n{reason[:1500]}\n```\n"
+                "最常见的原因是这个分支和主分支冲突了。请在这个话题的工作区里把主分支"
+                "合并进来、解决冲突后提交（不需要、也没法自己推到 GitHub），平台会自动"
+                "把新提交同步到这个 PR，检查会自动重新跑，能合并时平台会自动合并。\n"
+                "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
+                "请在话题里说清楚卡在哪、需要谁做什么。"
+            ),
+            summon=True,
+        )
 
     def _nudge_pr_fix(
         self,
@@ -1128,17 +1433,37 @@ class AcceptService:
         stage: str,
         chat_service,
         runner,
+        repo_full_name: str = "",
     ) -> None:
-        if card.note.startswith("⚠️"):
-            return  # already nudged for this exact commit — don't spam every poll
-        card.note = f"⚠️ {stage} 检查未通过：{tail}"[:2000]
+        # Dedup, precisely (2026-08-10). This used to be `startswith("⚠️")`,
+        # which treats the whole ⚠️ family as "already nudged" — so a
+        # `⚠️ 轮询暂停` note left behind by a dead token silently swallowed
+        # every subsequent CI failure: no message, no note, no trace, and the
+        # only escape (pr_head_sha moving) needs a human to push first. Two
+        # separate reasons to stay quiet, spelled out:
+        #   1. we already nudged for THIS stage on this commit — don't spam;
+        #   2. 重推失败 outranks a CI failure and must not be overwritten —
+        #      it means 芝士's fix never reached GitHub, so the red CI on
+        #      record is stale (docs/topics/诊断信息搬上验收卡.md, 优先级说明).
+        if card.note.startswith(_nudge_note_prefix(stage)) or card.note.startswith(
+            _REPUSH_FAILED_PREFIX
+        ):
+            return
+        # `tail` is now a headline PLUS per-job links and log excerpts (see
+        # `github_pr._failure_detail`). The card's note is a one-line field in
+        # the UI, so only the headline goes there — the detail is exactly what
+        # the message is for, and duplicating it into a 2000-char column would
+        # cost the note its glanceability for no reader's benefit.
+        headline = tail.splitlines()[0] if tail else ""
+        card.note = f"{_nudge_note_prefix(stage)}{headline}"[:2000]
         runner.submit(
             chat_service,
             topic.id,
             author="system",
             content=(
                 f"PR #{card.pr_number}（{card.pr_url}）的{stage}检查没通过：\n"
-                f"```\n{tail[:1500]}\n```\n"
+                f"```\n{tail[:_NUDGE_TAIL_LIMIT]}\n```\n"
+                f"{_ci_log_howto(repo_full_name)}"
                 "请在这个话题的工作区里修复问题并提交（不需要、也没法自己推到 "
                 "GitHub），平台会自动把新提交同步到这个 PR，检查会自动重新跑；"
                 "转绿后平台会自动合并 PR。"
@@ -1284,6 +1609,13 @@ class AcceptService:
             synced = await asyncio.to_thread(ws.sync_upstream, topic.project_id)
             if not synced.get("synced"):
                 note += f"；本地同步待补：{synced.get('reason', '')}"
+                # Say what to DO about it. The merge landed upstream, so this
+                # note is the only trace the pull-down failed, and a conflict
+                # here recurs on every later sync until someone resolves it —
+                # 同步上游 now dispatches 芝士 at the materialized conflict
+                # (workspace/upstream_conflict.py) instead of dead-ending.
+                if synced.get("conflicts"):
+                    note += "；到项目里点一次「同步上游」，芝士会去解这个冲突"
         except Exception as exc:  # noqa: BLE001 — never fail the accept itself
             note += f"；本地同步待补：{exc}"
 

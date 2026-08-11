@@ -49,7 +49,7 @@ from app.domain.block.schemas import BlockOut
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
-from app.domain.memory.store import memory_store
+from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
@@ -419,6 +419,7 @@ def _build_system_prompt(
     untitled: bool = False,
     turn_meta: list[str] | None = None,
     stage_guide: str | None = None,
+    memories_omitted: int = 0,
 ) -> str:
     parts = [base]
     if untitled:
@@ -473,9 +474,21 @@ def _build_system_prompt(
             "## 当前话题的活文档（这是最新状态；用户可能编辑了它，"
             "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n" + doc
         )
-    if memories:
+    if memories or memories_omitted:
         facts = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
-        parts.append(f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}")
+        block = f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}"
+        if memories_omitted:
+            # 溢出必须可见: what does not fit is stated, never dropped in
+            # silence. A reader who cannot tell "nothing was stored" from
+            # "the oldest fell off the end" stops trusting memory entirely —
+            # and stops asking for the part it can still get.
+            block += (
+                f"\n\n> ⚠️ 上面只是最近的 {len(memories)} 条，另有 **{memories_omitted} "
+                "条更早的记忆没放进来**（放不下，不是不存在）。**没列出来 ≠ 不存在**——"
+                '要用到早期约定/踩过的坑时，用 `cheese recall "<关键词>"` 现查；'
+                "一次没查到也不等于没有，换个说法、用更短的词再试一次。"
+            )
+        parts.append(block)
     if turn_meta:
         parts.append(
             "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
@@ -993,20 +1006,27 @@ class ChatService:
         *,
         project_id: uuid.UUID,
         agent_handle: str,
-    ) -> list[str]:
+    ) -> RecallResult:
         """What this 芝士 remembers inside this project.
 
         Reads its own per-agent scope first, then the legacy shared ``project``
         pool. Writes only ever go to the per-agent scope, so the pool is a
         read-only tail of what was learned before memory was split per agent —
         rooms that accumulated it keep it, and nothing new lands there.
+
+        Returns what did *not* fit alongside what did: both pools are capped,
+        and a cap nobody is told about is how memory quietly stops existing.
         """
-        own = await memory.recall(
-            MemoryScope.agent_project,
-            agent_project_scope_id(project_id, agent_handle),
+        return await recall_pools(
+            memory,
+            [
+                (
+                    MemoryScope.agent_project,
+                    agent_project_scope_id(project_id, agent_handle),
+                ),
+                (MemoryScope.project, str(project_id)),
+            ],
         )
-        shared = await memory.recall(MemoryScope.project, str(project_id))
-        return [*own, *shared]
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         """The handle 芝士 authors under in this topic.
@@ -1560,7 +1580,9 @@ class ChatService:
             acting_agent = await self._agent_handle(session, topic.id)
             if is_private and private_owner:
                 # Private chat: the owner's cross-project personal memory.
-                memories = await memory.recall(MemoryScope.user, private_owner)
+                memories = await recall_pools(
+                    memory, [(MemoryScope.user, private_owner)]
+                )
                 doc_text = None
             else:
                 memories = await self._recall_agent_memories(
@@ -1652,11 +1674,12 @@ class ChatService:
             self._base_prompt,
             skills,
             doc_text,
-            memories,
+            memories.facts,
             role,
             roster,
             topic_refs_for_prompt,
             untitled,
+            memories_omitted=memories.omitted,
             turn_meta=_turn_meta_lines(
                 budget_s=settings.agent_turn_timeout_s,
                 activity_aware=is_activity_aware_backend,
@@ -2211,7 +2234,11 @@ class ChatService:
 
         # --- run 芝士 with the activity-digestion skill + tools ---
         system_prompt = _build_system_prompt(
-            self._base_prompt, load_skills(ACTIVITY_SKILLS), None, memories
+            self._base_prompt,
+            load_skills(ACTIVITY_SKILLS),
+            None,
+            memories.facts,
+            memories_omitted=memories.omitted,
         )
         prompt = (
             "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
@@ -2379,7 +2406,9 @@ class ChatService:
             # Deliberately the shared pool, not any one agent's memory: a project
             # summary describes the project, and what a 芝士 learned for itself is
             # not project knowledge.
-            memories = await memory.recall(MemoryScope.project, str(project_id))
+            memories = await recall_pools(
+                memory, [(MemoryScope.project, str(project_id))]
+            )
             role = await resolve_role_description(session, project.expert_role)
             compute_id = _resolve_compute_id(
                 project.settings,
@@ -2395,7 +2424,9 @@ class ChatService:
             f"- {m.title} 截止 {m.due_date.isoformat() if m.due_date else '未定'}"
             for m in upcoming
         )
-        mem_lines = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
+        mem_lines = "\n".join(f"- {_chipify_paths(m)}" for m in memories.facts)
+        if memories.omitted:
+            mem_lines += f"\n- （另有 {memories.omitted} 条更早的记忆未列出）"
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"

@@ -17,7 +17,7 @@ description: 机器闸门在跑或刚红——它只跑 lint 不跑测试，怎�
 
 ## 闸门红了怎么办
 
-`cheese status` 里有**完整的失败输出**（`gate_output`）——先看它，别猜，也别去翻别的地方。
+`cheese status` 里有失败输出的**尾巴**（`gate_output_tail`：后端截末 2000 字符，`cheese status` 再打其中末 15 行）——先看它，别猜，也别去翻别的地方。尾巴不够定位时，在工作区里把 `check_command` 重跑一遍看全文，别去翻平台的其它地方。
 
 修完**重新递卡**（`cheese accept-request`），卡才会重新走闸门。红了的卡本身作废了，它不会自己复活。
 

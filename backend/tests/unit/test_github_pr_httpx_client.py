@@ -177,10 +177,15 @@ async def test_zero_checks_no_suite_at_all_stays_pending_within_grace():
 
 
 @pytest.mark.anyio
-async def test_zero_checks_no_suite_past_grace_becomes_success():
+async def test_zero_checks_no_suite_past_grace_becomes_no_checks():
     """Case 1 from the brief: paths-ignore skipped every workflow — this ref
     will genuinely never get a check. Once the grace period has elapsed with
-    the "zero, no suite" state holding, it's safe to call it success."""
+    the "zero, no suite" state holding, the wait ends.
+
+    人类授权动作前移 (2026-08-10): it ends as `no_checks`, NOT `success`. The
+    deadlock fix is what mattered (the poller must stop waiting) and it still
+    holds; what changed is that this verdict no longer claims tests passed, so
+    the poller can refuse to auto-merge it without a human (例外 2)."""
     handler = _routed(
         check_runs=_check_runs_response([]), check_suites=_check_suites_response([])
     )
@@ -196,8 +201,8 @@ async def test_zero_checks_no_suite_past_grace_becomes_success():
     state, tail = await client.check_state(
         owner="acme", repo="widgets", ref="docsonly", token="t"
     )
-    assert state == "success"
-    assert "不会" not in tail or "workflow" in tail  # sanity: message mentions workflow
+    assert state == "no_checks"
+    assert "workflow" in tail  # sanity: the message names what didn't happen
 
 
 @pytest.mark.anyio
@@ -222,7 +227,7 @@ async def test_zero_checks_third_party_suite_only_is_not_mistaken_for_github_act
     state, _ = await client.check_state(
         owner="acme", repo="widgets", ref="pr209", token="t"
     )
-    assert state == "success"
+    assert state == "no_checks"
 
 
 @pytest.mark.anyio
@@ -520,4 +525,69 @@ async def test_status_http_failure_raises_github_pr_error():
     with pytest.raises(GitHubPrError):
         await _client(handler).pull_request_status(
             owner="acme", repo="widgets", number=7, token="t"
+        )
+
+
+# ---- compare_files: 人类授权动作前移 例外 1 的取数 ---------------------------
+#
+# 这一层单独测的理由跟本文件开头说的一样：集成测试把 compare_files 整个 fake 掉
+# 了，所以"URL 用没用三点语法""GitHub 省略 files 时返回什么"这类只在真实 payload
+# 上才成立的判断，只有在这里才跑得到。
+
+
+@pytest.mark.anyio
+async def test_compare_files_uses_merge_base_syntax_and_parses_status():
+    """必须是 `base...head`（三点/merge-base），不是 `base..head`：分支把 base
+    合进来之后，两点语法会把 main 动过的每个文件都算成这条分支改的，例外 1 会因此
+    对每一张卡都误报。"""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        return httpx.Response(
+            200,
+            json={
+                "files": [
+                    {"filename": "a/b.py", "status": "modified"},
+                    {"filename": ".github/workflows/ci.yml", "status": "added"},
+                ]
+            },
+        )
+
+    files = await _client(handler).compare_files(
+        owner="acme", repo="widgets", base="main", head="deadbeef", token="t"
+    )
+
+    assert seen["path"].endswith("/compare/main...deadbeef")
+    assert files == [
+        ("modified", "a/b.py"),
+        ("added", ".github/workflows/ci.yml"),
+    ]
+
+
+@pytest.mark.anyio
+async def test_compare_files_returns_none_when_github_omits_the_file_list():
+    """compare API 有 300 文件上限，超了 GitHub 直接不返回 `files`。那是"范围
+    不明"，不是"没有变化"——必须返回 None 让调用方 fail closed。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "ahead", "total_commits": 700})
+
+    files = await _client(handler).compare_files(
+        owner="acme", repo="widgets", base="main", head="deadbeef", token="t"
+    )
+
+    assert files is None
+
+
+@pytest.mark.anyio
+async def test_compare_files_http_failure_raises_github_pr_error():
+    """GitHub 挂了是"机制不可用"（轮询下一轮重试），不能被当成"没有漂移"。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    with pytest.raises(GitHubPrError):
+        await _client(handler).compare_files(
+            owner="acme", repo="widgets", base="main", head="deadbeef", token="t"
         )

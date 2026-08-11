@@ -72,6 +72,34 @@ async def lifespan(_: FastAPI):
             "agent-user seed skipped", reason=str(exc)[:120]
         )
 
+    # The backend and the in-container agent share one jj store and must run as
+    # the same uid (ws.AGENT_UID). When they don't, nothing here fails — the file
+    # panel just 422s for every topic in the project. Say it out loud at boot.
+    try:
+        from app.domain.workspace import service as _ws
+
+        for problem in _ws.audit_workspace_ownership():
+            get_logger("cheesex.runtime").error(
+                "workspace_ownership", problem=problem, uid=_ws.AGENT_UID
+            )
+    except Exception:  # noqa: BLE001 — a diagnostic must never block boot
+        get_logger("cheesex.runtime").exception("workspace ownership audit failed")
+
+    # The `cheese` CLI is now staged into each topic's session dir from THIS
+    # build (ws.session_dir) instead of an operator-maintained host checkout. A
+    # box still setting the retired var is the exact configuration that served a
+    # months-old CLI to every agent, so say so instead of ignoring it silently.
+    if settings.sandbox_shim_host_dir.strip():
+        get_logger("cheesex.runtime").warning(
+            "sandbox_shim_host_dir_retired",
+            value=settings.sandbox_shim_host_dir.strip(),
+            detail=(
+                "SANDBOX_SHIM_HOST_DIR is no longer used to mount the cheese CLI "
+                "(it is staged per-topic from this backend build). Remove it from "
+                "the box .env — a checkout there is no longer kept in sync."
+            ),
+        )
+
     try:
         n = await get_turn_runner().resume_orphans(get_chat_service())
         if n:
