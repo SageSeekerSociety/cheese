@@ -44,7 +44,8 @@
 - `uv run ruff check tests/`：干净。
 - `uv run pyright`：0 errors / 0 warnings（<@wangchangxin> 沙箱实测）。
 - 全量 `uv run pytest tests/ -n 4`：**3924 passed / 30 skipped / 0 failed**（138s，<@wangchangxin> 沙箱实测）。
-- 本轮另外单跑了守卫测试本身：2 passed。
+- 改动范围内本沙箱实跑：守卫测试 + 8 个改过的集成测试（`test_protocol` / `test_reassign` / `test_room_and_task` / `test_project_tree` / `test_github_connect` / `test_connector_viewer` / `test_split_authz` / `test_auth_actor`），**53 passed / 0 failed**（75s，`-n 4`，dev-db.sh 起的 PG + Redis）。
+- 故意没跑 `test_accept*.py`：<&CLAUDE.md> 记着这批在本沙箱因缺 git identity 恒定失败，跑它只收获环境噪音；那部分由上面的全量绿覆盖。也没起全量——基线已绿，且本文件第 5 条症状就是「两个 pytest 打同一个测试库会造出假失败」。
 
 ## 待处理（交接）
 
