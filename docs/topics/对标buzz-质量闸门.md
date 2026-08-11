@@ -11,6 +11,37 @@
 
 ---
 
+## 落地状态（2026-08-11 更新）
+
+本文提的 CI 缺口**已由 wangchangxin 合成一个批次落地并合入 GitHub main**，决策请求已关闭。
+下面各条的"我们现在什么样"描述的是 2026-08-11 落地**之前**的状态，读的时候请对照本节。
+
+| 本文条目 | 落地情况 |
+|---|---|
+| ① 前端接 CI 闸门 | **已做**，PR #264。`frontend.yml`：ESLint 零错误闸门 + vue-tsc 走**棘轮**，`tsc-baseline.json` 冻结 31 个存量错误（分布在 9 个文件），只许降不许升。顺带修了 `AuditTask.vue` 一个真 bug（catch 少了绑定变量）。 |
+| ② 抄 check-branch-skew.sh | **已撤回**，判据不成立，见下文 ②。改为 `check-migration-fork.py`（PR 随 `repo-guards.yml`）。 |
+| ④ `_auth()` 规则机器化 | **部分做了**，方向对但选了更值的三条：`check-repo-rules.sh` 守 naive datetime / 方法名遮蔽 builtin / 领域层裸 `HTTPException`。 |
+| ③ pre-commit 按路径分流 | **未做**。<&.claude/scripts/check.sh> 开头 `cd backend` 仍在，前端改动照付 ~60s pytest 且拿不到任何前端检查。已在 <&.claude/scripts/pre-commit> 注释里**明确标成缺口，不是权衡**。 |
+| ⑤ 无基础设施测试档 / ⑥ 依赖门禁 | 未做。 |
+
+**本文没提、但同批落地且更重要的两条**（我这轮分析漏了，记在这里）：
+
+- **PR #265：`cli/` 的 Go 代码此前零 CI**，现补 gofmt/vet/build/`test -race`。
+  我通篇只对比了 backend/frontend 两个面，**漏了 `cli/` 这一整个语言面**——
+  我数 workflow 数量、grep `vue-tsc|eslint` 时都没想到去问"还有没有第三种语言"。
+  这是我这次分析真正的盲点，比 ② 那条判据错误更值得记。
+- **PR #265 的 concurrency key**：改成 PR 按 `ref`、main 按 `sha`。
+  原先 main 上的 run 共用一个 key，**第二次合并会取消掉第一次的 main run**——
+  这正是"最近两次 accept 没能实际部署"的根因。我在「关键差异」里写了 buzz 有 concurrency 组，
+  却没反过来查我们自己的 key 选得对不对，一个真实的、正在持续造成故障的 bug 从我眼皮底下过去了。
+- **PR #266**：17 个 action 全部钉到 40 位 commit SHA，配 `check-action-pins.sh` 防回退。
+  理由是 `build.yml`/`build-tmux.yml`/`deploy-dev.yml` 的 job 跑在**自建 runner，也就是 dev/生产机器本身**，
+  可变 tag 被上游改指的影响半径是那台机器。同批给 33 个 job 补了 timeout 和最小权限。
+  这条我完全没想到——我把"供应链门禁"整个归到了 ⑥ 依赖漏洞那一档，
+  只想到扫我们自己的依赖，没想到 **CI 自己消费的 action 也是依赖**，而且它的执行位置比依赖危险得多。
+
+---
+
 ## 关键差异
 
 ### 1. 我们的 pre-commit 不是"一刀切跑全量"，是"一刀切跑后端全量"
@@ -173,23 +204,35 @@ ci.yml 的 `Desktop Core` job 另跑 `just desktop-check`（biome + file-sizes +
 **先跑一次数数，再决定第一天就阻塞、还是先 `continue-on-error: true` 观察一两周**。
 存量清理才是这条的真实成本，不是 workflow 本身。
 
-### ② 抄 `check-branch-skew.sh` —— 改动最小，直接命中我们已知反复踩的坑
+> **落地回填（2026-08-11）**：摸底跑了，**31 个存量类型错误，分布在 9 个文件**。
+> 实际方案比我建议的两个选项都好：ESLint 直接零错误阻塞，vue-tsc 走**棘轮**——
+> `tsc-baseline.json` 冻结现状、只许降不许升。既不用等存量清完，也不像 `continue-on-error` 那样
+> 放任新错误进来。棘轮这个形状本文在「关键差异 6」里从 buzz 的 `check-file-sizes-core.mjs` 抄到了，
+> 但我没想到把它用在类型错误上。
 
-**它怎么做的**：<&tmp/buzz/scripts/check-branch-skew.sh>，30 行 bash，pre-push 跑。
-`git merge-base` 判断是否落后 origin/main；落后时取本分支改动与 main 改动的**文件交集**，
-交集为空就放行，非空才拦并列出重叠文件。
+### ② ~~抄 `check-branch-skew.sh`~~ —— 已撤回，原方案对 alembic 分叉无效
 
-**我们现在什么样**：没有这道闸。而 <&.claude/rules/migrations.md> 记的
-"2026-08-09/10 两天内 alembic 链被并行 PR 分叉四次，每次都杀掉 `alembic upgrade head` 并中止 dev 部署"
-正是这个问题的一个特例——两个 PR 各自本地绿，合到一起双头。<&CLAUDE.md> 也写着
-"Multiple agents work this repo concurrently"，我们比 buzz 更需要这道闸。
+> **2026-08-11 更正**（wangchangxin 指出，我已复核确认）。这条原本被我标成"全篇最划算"，是错的。
+> <&tmp/buzz/scripts/check-branch-skew.sh> 第 20–22 行的判据是两侧 `git diff --name-only`
+> 做 `comm -12`，即**文件名交集**。而 alembic 分叉的形状是：两个 PR 各新增一个
+> `backend/alembic/versions/<不同 hash>_*.py`，文件名必然不同 → 交集为空 → 第 24 行 `exit 0`。
+> 这个脚本对我们最想防的那个坑**一条都抓不到**。
+> 我的错在于把"文件重叠"当成了"逻辑冲突"的充分近似，而迁移链恰好是它的反例：
+> 冲突发生在两个新文件**共同指向的 `down_revision`** 上，不在文件名上。
+> 脚本本身没问题（它防的是 buzz 那种"改同一个文件"的 skew），错的是我拿它去对我们的场景。
 
-**具体怎么改**：脚本几乎可以原样搬到 `.claude/scripts/check-branch-skew.sh`。
-只有一处要改：本仓库 VCS 是 jj，`git rev-parse --abbrev-ref HEAD` 在 colocate 下能用但要实测；
-更稳的是用 `jj log -r 'main@origin'` / `jj diff --name-only -r`。
-最省事的降级版：只做迁移这一档——若本分支新增了 `backend/alembic/versions/*` 且 main 也新增了，直接拦。
+**实际落地的方案**：`.claude/scripts/check-migration-fork.py`（wangchangxin 实现，随
+`repo-guards.yml` 合入 main）。判据不是文件名而是 **revision 图**：用 `ast` 解析每个 migration 的
+`down_revision`（**不能用正则**——merge revision 的 `down_revision` 是 tuple，正则会读错），
+把 `origin/main` 与工作树的两张图并起来算 head 数，>1 即分叉。
+这是直接测量我们要防的那个不变量，而不是测量它的一个不可靠代理。
 
-**代价**：一小时以内。**我认为这是全篇最划算的一条。**
+同批还有 `check-repo-rules.sh`（naive datetime / 方法名遮蔽 builtin / 领域层裸 `HTTPException`
+三条守卫）。两个脚本都带 `--self-test`，在 `repo-guards.yml` 里**先自证再判树**——
+这一步比脚本本身更值得记：守卫脚本自己也会坏，而坏掉的守卫是**静默放行**，比没有守卫更危险。
+
+**留给这条的教训**（比原建议有用）：抄别人的检查脚本，要抄的是"把反复踩的坑固化成机器检查"这个
+**动作**，不是脚本本身。判据必须直接测量你要防的那个不变量。
 
 ### ③ pre-commit 按路径分流 + 提供安装入口
 
@@ -295,7 +338,16 @@ ci.yml 的 `Desktop Core` job 另跑 `just desktop-check`（biome + file-sizes +
 - **没有实测任何耗时**。"我们太慢/太快"的判断全部基于代码里已有的注释（如 test.yml 记的
   "measured median 5.1m"）和命令内容推断，我没有跑过 `task check`，也没跑过 buzz 的 `just ci`（缺 Rust 工具链）。
 - **jj 下 git hooks 是否触发，没验证**。建议 ③ 的第 2 步整个压在这个假设上。
-- **前端 `vue-tsc --noEmit` / 无 fix eslint 的存量错误数，没跑过**。建议 ① 的真实成本因此估不准。
+- ~~**前端 `vue-tsc --noEmit` / 无 fix eslint 的存量错误数，没跑过**。建议 ① 的真实成本因此估不准。~~
+  → 已解决：31 个错误 / 9 个文件，见 ① 的落地回填。
+- **我只对比了 backend 和 frontend 两个语言面，漏了 `cli/`（Go）**——它当时零 CI，
+  由 PR #265 补上。我数 workflow、grep 关键词的时候没有先问一句"这个仓库总共有几种语言"，
+  盘点的起点就漏了一块。这是本文最实的一处遗漏。
+- **我核对了 buzz 的 concurrency 组，却没反查我们自己的 concurrency key 选得对不对**。
+  我们 main 上共用一个 key、后一次合并取消前一次 run，正在持续造成"accept 了但没部署"，
+  由 PR #265 修。对标时只看了"对方有没有这个东西"，没做"我们有的那个是不是对的"这一步。
+- **我把供应链风险整个收在 ⑥「依赖漏洞门禁」里，没想到 CI 自己消费的 action 也是依赖**，
+  而且它跑在自建 runner（= dev/生产机器）上，影响半径比一个 Python 包大得多。由 PR #266 修。
 - <&tmp/buzz/Justfile> 4.3 万字，我只读了 recipe 名单和 `check`/`ci`/`test-unit`/`web-*`/`mobile-*` 几段；
   `ci.yml` 1140 行只读了前 200 行加抽查（deny/renovate 相关段落）；CHANGELOG 完全没读。
   **发布那一面（第 4 个焦点）我是靠文件名单 + RELEASING.md 的规模 + `.release/` 内容判断的，
