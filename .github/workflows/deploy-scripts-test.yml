@@ -46,6 +46,11 @@ jobs:
           done < <(find deploy scripts -name '*.sh' -type f 2>/dev/null)
           exit "$status"
 
+      # One case reads a `run:` block out of deploy-drift.yml. Everything else in
+      # these suites is bash against fakes — this is the whole dependency.
+      - name: Ensure a YAML-capable python3
+        run: python3 -c 'import yaml' || pip install --quiet pyyaml
+
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
 

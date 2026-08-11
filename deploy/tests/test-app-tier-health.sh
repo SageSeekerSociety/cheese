@@ -459,10 +459,16 @@ test_operator_uses_registry_sha_width() {
   echo "PASS: operator drift check uses the registry's 7-character SHA tag"
 }
 
+# The only step in this suite that needs Python at all — it reads one `run:`
+# block out of a workflow file. Plain python3 is tried first and `uv run` is the
+# fallback: everything else here is bash against fakes, so the suite has to be
+# runnable where the backend venv does not exist, which is exactly the hosted CI
+# job that gates deploy/ changes.
 workflow_script() {
-  (
-    cd "$ROOT/backend"
-    uv run python - "$ROOT/.github/workflows/deploy-drift.yml" <<'PY'
+  local parser
+  mkdir -p "$ROOT/tmp"
+  parser="$(mktemp "$ROOT/tmp/drift-step.XXXXXX.py")"
+  cat > "$parser" <<'PY'
 import sys
 from pathlib import Path
 
@@ -478,7 +484,15 @@ for step in workflow["jobs"]["drift"]["steps"]:
 else:
     raise SystemExit("workflow drift step not found")
 PY
-  )
+  if python3 -c 'import yaml' >/dev/null 2>&1; then
+    python3 "$parser" "$ROOT/.github/workflows/deploy-drift.yml"
+  elif command -v uv >/dev/null 2>&1; then
+    (cd "$ROOT/backend" && uv run python "$parser" "$ROOT/.github/workflows/deploy-drift.yml")
+  else
+    rm -f "$parser"
+    fail "no python3 with PyYAML and no uv — cannot read the drift workflow"
+  fi
+  rm -f "$parser"
 }
 
 test_workflow_rejects_stale_frontend() {
