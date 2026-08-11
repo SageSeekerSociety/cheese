@@ -92,19 +92,29 @@ jobs:
       - name: Lint
         run: pnpm exec eslint .
 
+      # Identical to `task fe:typecheck`. `pnpm build` does NOT do this —
+      # the build script is a bare `vite build`, which strips types without
+      # checking them, so until this step existed a type error could only be
+      # caught by someone running vue-tsc by hand.
+      - name: Type check
+        env:
+          # Private-repo hosted runners are 2-core/7GB, where Node's default
+          # heap lands around 2GB; vue-tsc on this tree peaks near 1.7GB, which
+          # is too close to the edge to leave to chance. Physical memory is
+          # nowhere near the limit, so this only removes a cliff.
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm exec vue-tsc --noEmit
+
       - name: Unit tests
         run: pnpm exec vitest run
 
-      # Two checks that belong here are deliberately absent, so that nobody
-      # reads a green tick as covering them:
+      # One check that belongs here is deliberately absent, so that nobody
+      # reads a green tick as covering it:
       #
-      #   * `vue-tsc --noEmit` — currently reports 31 pre-existing errors
-      #     across 9 files (TipTapViewer.vue alone accounts for 16,
-      #     ManageDomainGroups.vue for 6). Adding the step before those are
-      #     fixed would just make main permanently red on its first run. Fix
-      #     them, then add the step — `task fe:typecheck` runs it locally.
       #   * `vite build` — build.yml already runs it via frontend/Dockerfile,
       #     but only on pushes to main, so a build-only breakage still lands
       #     before anything catches it. Worth adding here (~2 min); left out
       #     only because it could not be executed to a verified pass while
-      #     writing this file.
+      #     writing this file (the sandbox it was authored in caps memory at
+      #     2GB and vite OOMs well below the finish line — a limitation of the
+      #     sandbox, not evidence that the build is broken).

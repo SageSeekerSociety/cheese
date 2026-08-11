@@ -74,7 +74,11 @@ const router = useRouter()
 
 const editorRef = ref<InstanceType<typeof TipTapEditor> | null>(null)
 const discussionTitle = ref('')
-const discussionContent = ref<string | null>(null)
+// Matches TipTapEditor's v-model type. It used to be `string | null`, which the
+// editor never accepts and never emits — with `output="json"` it writes a
+// JSONContent object back. Nothing reads this ref (submitDiscussion pulls from
+// editorRef.editor.getJSON() instead), so the old type was pure noise.
+const discussionContent = ref<string | JSONContent | undefined>(undefined)
 const isSubmitting = ref(false)
 const errorMesssage = ref('')
 
