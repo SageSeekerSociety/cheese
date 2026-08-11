@@ -22,6 +22,9 @@
 #   CI_POSTGRES_IMAGE / CI_REDIS_IMAGE  pinned refs to protect from image
 #                      prune, see retain_ci_service_images() below (defaults
 #                      match test.yml/e2e.yml `services:`)
+#   PREVIOUS_AGENT_UID / PREVIOUS_AGENT_GID  the uid the pre-2026-08 images ran
+#                      as (default 1001). Only used to hand the bind mounts back
+#                      when a health-check rollback returns to such an image.
 set -euo pipefail
 
 # Box-local deploy overrides (chmod-600, NOT in git — same pattern as ~/ops/r2.env):
@@ -346,6 +349,10 @@ fi
 
 log_disk "after pull"
 
+log "running DB migrations (alembic upgrade head)…"
+# Production image ships no pyproject, so call alembic directly from the venv.
+dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
+
 # The backend now runs as the same uid as the sandbox's `node` (1000) so the two
 # stop locking each other out of the shared jj store — see
 # fix-workspace-ownership.sh. Files the old uid (1001) left behind have to change
@@ -354,18 +361,33 @@ log_disk "after pull"
 # APPHOME matters as much as the workspaces themselves: it is the backend's HOME,
 # and jj keeps its per-repo secure config there (the other half of the
 # `.jj/repo/config-id` pointer).
+#
+# ORDER MATTERS, and it is why this block sits here rather than before the
+# migration. Handing 2.2M files to another uid is the one step of this deploy
+# that cannot be undone by simply not proceeding: whatever fails after it leaves
+# the box holding a backend of one uid and a workspace tree of another, which is
+# a project-wide 422 on the file panel. It ran before the migration and the
+# credential check until 2026-08-11, when the credential check aborted
+# deploy-dev *after* the trees had already moved and took dev down until the
+# next deploy (run 31466502982). So: last fallible step first, irreversible step
+# last, and nothing between it and `dc up` that can fail.
+OWNERSHIP_REPORT="$(mktemp)"
+OWNERSHIP_PATHS=(
+  "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}"
+  "${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}"
+  "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
+)
+OWNERSHIP_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
+OWNERSHIP_SECRETS="${GIT_CREDENTIALS_FILE:-/dev/null}"
 log "checking workspace/uploads ownership…"
-VERIFY_READABLE_PATHS="${GIT_CREDENTIALS_FILE:-/dev/null}" \
+SECRET_FILE_PATHS="$OWNERSHIP_SECRETS" \
+OWNERSHIP_REPORT_FILE="$OWNERSHIP_REPORT" \
 "$HERE/fix-workspace-ownership.sh" \
-  "${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}" \
-  "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}" \
-  "${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}" \
-  "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}" \
+  "$OWNERSHIP_IMAGE" \
+  "${OWNERSHIP_PATHS[@]}" \
   || fail "workspace ownership migration failed — aborting before swap"
-
-log "running DB migrations (alembic upgrade head)…"
-# Production image ships no pyproject, so call alembic directly from the venv.
-dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
+OWNERSHIP_MIGRATED="$(cat "$OWNERSHIP_REPORT" 2>/dev/null || echo no)"
+rm -f "$OWNERSHIP_REPORT"
 
 log "bringing up backend + frontend…"
 dc up -d backend frontend || fail "compose up failed"
@@ -391,6 +413,24 @@ if [ "$code" != ok ]; then
   printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" || true
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
     log "rolling back to ${PREV_SHA}…"
+    # Rolling the images back without rolling the ownership back is not a
+    # rollback: $PREV_SHA is by definition the image from before the uid change,
+    # so it comes up on a tree it can no longer read and the box stays broken
+    # while every signal says "rolled back". Only when THIS run actually moved
+    # the trees — the report says so — is the old uid the right one to restore;
+    # once the box is past the migration the previous image shares the current
+    # uid and handing anything back would be the thing that breaks it.
+    if [ "${OWNERSHIP_MIGRATED:-no}" = yes ]; then
+      log "handing the bind mounts back to ${PREVIOUS_AGENT_UID:-1001} before starting $PREV_SHA…"
+      AGENT_UID="${PREVIOUS_AGENT_UID:-1001}" \
+      AGENT_GID="${PREVIOUS_AGENT_GID:-1001}" \
+      SECRET_FILE_PATHS="$OWNERSHIP_SECRETS" \
+      FORCE_OWNERSHIP_FIX=1 \
+      "$HERE/fix-workspace-ownership.sh" \
+        "$OWNERSHIP_IMAGE" \
+        "${OWNERSHIP_PATHS[@]}" \
+        || log "WARNING: could not hand the mounts back to ${PREVIOUS_AGENT_UID:-1001} — $PREV_SHA will come up on a tree it cannot read; re-run the deploy or chown by hand"
+    fi
     if [ -n "$PREV_BACKEND_IMAGE" ] && [ -n "$PREV_FRONTEND_IMAGE" ]; then
       BACKEND_IMAGE="$PREV_BACKEND_IMAGE" \
         FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE" \

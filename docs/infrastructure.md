@@ -207,12 +207,34 @@ idempotent, marker-guarded, and it runs the chown in a throwaway root container
 `workspace_ownership` at ERROR naming the offending file; the fix is to run that
 script and restart.
 
-`GIT_CREDENTIALS_FILE` is deliberately **not** chowned — it is an operator-owned
-secret (chmod 600, outside git), so the script only checks that uid 1000 can read
-it and fails the deploy with the exact `chown` to run if not. Silently losing
-private-repo push to the "git prompts fail cleanly" fallback is precisely the
-disguised failure this change exists to stop. The default `/dev/null` (feature
-off) passes the check.
+**The handover is the deploy's point of no return, so it runs last.** Every other
+fallible step — image pulls, the runtime-image smoke test, `alembic upgrade head`
+— aborts leaving the box exactly as it was; this one does not. It sits
+immediately before `dc up` with nothing between them that can fail. It was third
+of five until 2026-08-11, when the step after it aborted the deploy and left dev
+holding a 1001 backend on a 1000 tree: `git` refused the workspaces as
+`dubious ownership` and every project 422'd until the next deploy (run
+31466502982). For the same reason a health-check rollback hands the mounts
+*back* to `PREVIOUS_AGENT_UID` (1001) before starting the old image — but only
+when that run actually moved them, which the script reports to the caller.
+Rolling images back without rolling ownership back is not a rollback.
+
+`GIT_CREDENTIALS_FILE` **is** handed over with everything else, mode untouched
+(600 before, 600 after). It is operator-owned and outside git, but it is mounted
+read-only into the backend at a fixed path, so its owner has to *be* the
+backend's uid — it was 1001 only because the backend was. An earlier version of
+this script deliberately refused to move it and only checked readability; that
+protected nothing and stopped the deploy on a step whose only remedy was a sudo
+nobody in the deploy path has. The readability check survives and still fails the
+deploy loudly with the exact `chown` to run, but it now runs *after* the
+handover, so it only fires on something a chown cannot fix. The default
+`/dev/null` (feature off) is a device node and is skipped, never chowned.
+
+These scripts are exercised by `deploy/tests/` against a fake docker, gated in CI
+by `.github/workflows/deploy-scripts-test.yml` (hosted, ~1m — it must not queue
+behind the box's single runner). Before 2026-08-11 that harness existed but no
+workflow ran it, which is how an untested ordering change reached the box with
+six green checks.
 
 ## Gotchas — things that look renameable but are NOT
 

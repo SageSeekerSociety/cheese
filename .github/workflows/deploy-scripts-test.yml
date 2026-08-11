@@ -1,0 +1,56 @@
+name: Deploy Scripts Test
+
+# deploy/tests/ has had a fake-docker harness for the deploy scripts for months
+# and nothing ran it: test.yml is scoped to `backend/**`, so a change under
+# deploy/ reached the box having been executed by nobody. That is how the
+# 2026-08-11 dev outage shipped — an ownership handover ordered ahead of a check
+# that could abort it, six green CI jobs, none of which touched the file (run
+# 31466502982).
+#
+# Hosted on purpose: these suites are pure bash against fakes — no service
+# containers, no registry, no docker at all — so they must not queue behind
+# builds and deploys on the box's single runner. Measured well under a minute.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/deploy-scripts-test.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/deploy-scripts-test.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-scripts-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # A syntax error in a deploy script is only discovered on the box, mid
+      # deploy, with the app tier already half-swapped. Cheapest possible gate.
+      - name: Parse every deploy script
+        run: |
+          status=0
+          while IFS= read -r script; do
+            bash -n "$script" || { echo "::error file=$script::bash -n failed"; status=1; }
+          done < <(find deploy scripts -name '*.sh' -type f 2>/dev/null)
+          exit "$status"
+
+      - name: App-tier deploy contract
+        run: bash deploy/tests/test-app-tier-health.sh
+
+      - name: Workspace ownership handover
+        run: bash deploy/tests/test-workspace-ownership.sh
+
+      - name: Disk-pressure guard
+        run: bash deploy/tests/test-disk-pressure-guard.sh
