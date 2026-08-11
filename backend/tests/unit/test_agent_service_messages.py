@@ -21,9 +21,11 @@ from app.domain.agent.service import (
 
 class FakeClaudeClient:
     messages: list[object] = []
+    last_options: object = None
 
     def __init__(self, *, options) -> None:
         self.options = options
+        FakeClaudeClient.last_options = options
 
     async def __aenter__(self):
         return self
@@ -117,3 +119,40 @@ async def test_tool_call_splits_two_logical_messages():
         "我先查一下",
         "查完了",
     ]
+
+
+@pytest.mark.anyio
+async def test_sandbox_turn_denies_the_tool_no_user_can_answer():
+    """`bypassPermissions` means the allowlist restricts nothing — a tool left
+    out of `allowed_tools` is still callable. AskUserQuestion has no UI on this
+    platform (its picker is drawn in the sandbox's own terminal), so a call to
+    it strands the turn; only an explicit deny keeps it away. `cheese ask` is
+    the platform's way to put a question in front of a user."""
+    FakeClaudeClient.messages = [result("done")]
+
+    events = [
+        event
+        async for event in AgentService(model="stub").stream_reply(
+            prompt="test",
+            system_prompt="system",
+            cwd=".",
+            resume_session_id=None,
+            sandbox={"cli_path": "/x/claude-sbx", "allowed_tools": ["Bash"], "env": {}},
+        )
+    ]
+
+    assert isinstance(events[-1], AgentResult)
+    options = FakeClaudeClient.last_options
+    assert "AskUserQuestion" in options.disallowed_tools
+    assert "AskUserQuestion" not in options.allowed_tools
+
+
+@pytest.mark.anyio
+async def test_plain_turn_denies_it_too():
+    """The no-sandbox turn already disallows the built-ins; the unanswerable
+    question tool belongs in the same deny list, not just the sandbox one."""
+    FakeClaudeClient.messages = [result("done")]
+
+    await collect(AgentService(model="stub"))
+
+    assert "AskUserQuestion" in FakeClaudeClient.last_options.disallowed_tools

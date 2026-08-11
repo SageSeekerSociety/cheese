@@ -107,6 +107,25 @@ async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
     assert f"--resume {sid}" in " ".join(new_session)
 
 
+async def test_ensure_session_denies_the_unanswerable_ask_tool(monkeypatch, tmp_path):
+    """AskUserQuestion draws its picker inside the pane, where nobody can answer
+    it — the turn then hangs. The launch line must deny it (cheese ask is the
+    platform's way to ask), and --dangerously-skip-permissions must not be able
+    to wave it through."""
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_docker(*args: str, stdin=None):
+        calls.append(args)
+        return (1, "", "") if "has-session" in args else (0, "", "")
+
+    monkeypatch.setattr(tp, "_docker", fake_docker)
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    await provider._ensure_session("box", None, session_dir=str(tmp_path))
+
+    new_session = " ".join(next(c for c in calls if "new-session" in c))
+    assert "--disallowedTools AskUserQuestion" in new_session
+
+
 @pytest.fixture
 def _stub_env(monkeypatch, tmp_path):
     """Fake docker + workspace so the provider needs no real container."""
