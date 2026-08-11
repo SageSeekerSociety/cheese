@@ -147,10 +147,13 @@ def bearer() -> Callable[[str], dict[str, str]]:
     """
 
     def _headers(handle: str) -> dict[str, str]:
-        from app.core.tokens import mint_session_token
+        # Deferred import: the shared helper lives in the integration conftest,
+        # and only integration tests request this fixture. Minting here instead
+        # would be a second source of truth for the same token —
+        # tests/unit/test_no_adhoc_auth_helpers.py exists to stop exactly that.
+        from tests.integration.conftest import session_auth_headers
 
-        token = mint_session_token(handle=handle, user_id=None)
-        return {"Authorization": f"Bearer {token}"}
+        return session_auth_headers(handle)
 
     return _headers
 

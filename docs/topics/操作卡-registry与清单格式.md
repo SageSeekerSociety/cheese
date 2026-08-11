@@ -71,6 +71,21 @@
 下面两处「标记之外」的修复也都跟着进去了（`catch (error)` 完好、并发键是
 `event_name` 形状而不是那个杂交体）。
 
+## 第四轮冲突：还是 gh-token，外加 14 个文件被静默合旧（已解）
+
+标记里的那处好办：主分支这轮自己也把两半合了（长 `help=` + 带两段的 `description=`），
+只差一个 `\n\n`——它的第二段直接粘在第一段末尾，渲染成一坨。取主分支的长 `help=`
+和它的措辞，补回段落分隔，并保留本卡那句「stdout 只有 token，所以 `$(cheese gh-token)` 照常能用」。
+
+**真正危险的仍在标记之外。** 对拍发现 **14 个文件**在工作区被合成了比两个 parent 都旧的版本，
+其中包括 <&backend/app/domain/workspace/service.py>——`_sync_shared_checkout` 的 `--force`
+和「合并已落地就别把同步失败报成采纳失败」那两处修复**双双被抹掉**，而两个 parent 都带着它们。
+另外 13 个是 `test_workspace_git_timeout.py`、`docs/infrastructure.md`、tiptap 插件、
+几个 spaces 视图等。凡是两个 parent 内容一致的，正确内容没有歧义，已逐一按 parent 还原。
+
+这是第二次撞见同一类事故（上次是 `AuditTask.vue` 的 `catch (error)` 被合成 `catch {`）。
+**结论：解冲突时只看 `<<<<<<<` 是不够的**，必须再跑一遍「两 parent 一致 → 工作区必须逐字节相同」的对拍。
+
 ## 第三轮冲突：<&backend/sandbox/cheese> 的 gh-token 帮助（已解）
 
 两边都在给 `gh-token` 子命令补说明，补的是**不同的两半**，所以取并集而不是二选一：

@@ -27,6 +27,8 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 
+from app.core.tokens import mint_session_token
+
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
     from fastapi import FastAPI
@@ -41,6 +43,29 @@ def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
     """
     span = max_val - min_val + 1
     return min_val + (uuid.uuid4().int % span)
+
+
+def session_token(handle: str) -> str:
+    """A handle-scoped session token — the ONLY sanctioned way for a test to
+    mint one.
+
+    No DB user is created: the token carries ``sub=<handle>`` and no numeric
+    user id, which is exactly what handle-based actor resolution (accept /
+    split / connector / project routes) keys off. When a test needs a real DB
+    user instead, use ``seed_user`` or the ``authenticated_user`` fixture.
+
+    ``backend/tests/`` must not import ``mint_session_token`` directly —
+    ``tests/unit/test_no_adhoc_auth_helpers.py`` enforces it. Fourteen
+    hand-rolled copies of this had accumulated — 9 named ``_auth``, 3 named
+    ``_login``, 2 inlined into headers — which is why the rule is now a test
+    rather than a sentence in a rules file.
+    """
+    return mint_session_token(handle=handle, user_id=None)
+
+
+def session_auth_headers(handle: str) -> dict[str, str]:
+    """``Authorization`` header carrying :func:`session_token` for ``handle``."""
+    return {"Authorization": f"Bearer {session_token(handle)}"}
 
 
 @dataclass
