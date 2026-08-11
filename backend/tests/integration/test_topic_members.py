@@ -1,6 +1,15 @@
 """Topic membership (话题成员名册) CRUD + permissions over HTTP."""
 
+import uuid
+
+from app.domain.identity.handles import topic_agent_handle
+
 MISSING_TOPIC = "00000000-0000-0000-0000-000000000000"
+
+
+def _agent(tid: str) -> str:
+    """The handle THIS topic's 分身 sits in the roster under (分身独立身份)."""
+    return topic_agent_handle(uuid.UUID(tid))
 
 
 def _topic(client, created_by: str = "alice") -> str:
@@ -17,12 +26,16 @@ def _roster(client, tid: str) -> list[dict]:
 
 
 def test_seed_creator_owner_and_cheese_member(client):
-    """A newborn topic seeds its roster: creator = owner, 芝士 = member."""
+    """A newborn topic seeds its roster: creator = owner, 芝士 = member.
+
+    芝士 joins as THIS topic's own 分身 rather than the shared platform account,
+    so the seat identifies one 分身 and can be taken from it alone."""
     tid = _topic(client, created_by="alice")
     members = {m["member_handle"]: m for m in _roster(client, tid)}
     assert members["alice"]["role"] == "owner"
-    assert members["cheese"]["role"] == "member"
-    assert members["cheese"]["agent"] is True
+    assert members[_agent(tid)]["role"] == "member"
+    assert members[_agent(tid)]["agent"] is True
+    assert members[_agent(tid)]["name"] == "芝士"
     assert members["alice"]["agent"] is False
 
 
@@ -35,7 +48,7 @@ def test_owner_can_add_member(client):
     assert r.status_code == 200
     assert r.json()["data"]["member_handle"] == "bob"
     handles = {m["member_handle"] for m in _roster(client, tid)}
-    assert handles == {"alice", "cheese", "bob"}
+    assert handles == {"alice", _agent(tid), "bob"}
 
 
 def test_non_manager_cannot_add_member(client):

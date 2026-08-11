@@ -184,6 +184,9 @@ export interface ProjectMemberRow {
   user_handle: string
   role: string
   name?: string
+  // `agent` marks 芝士 (any of its per-topic 分身), derived server-side from the
+  // execution binding — never from the handle string, which differs per topic.
+  agent?: boolean
   [key: string]: unknown
 }
 
