@@ -493,7 +493,7 @@ const deliveryNote = computed(() => {
 // topic is enforced server-side).
 const gateCard = computed<AcceptCard | null>(() => {
   const c = acceptCards.value[0]
-  return c && (c.status === 'pending_gate' || c.status === 'gate_failed') ? c : null
+  return c && (c.status === 'pending_gate' || c.status === 'gate_failed' || c.status === 'gate_blocked') ? c : null
 })
 const showGateOutput = ref(false)
 
@@ -1121,6 +1121,35 @@ onUnmounted(() => {
                 </div>
                 <div class="text-caption text-medium-emphasis mb-2">
                   这张验收卡没有送出。芝士已收到检查结果，会修复后重新递卡。
+                </div>
+                <v-btn
+                  size="small"
+                  variant="text"
+                  :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+                  @click="showGateOutput = !showGateOutput"
+                >
+                  {{ showGateOutput ? '收起输出' : '查看输出' }}
+                </v-btn>
+                <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '（无输出）' }}</pre>
+              </div>
+            </v-card>
+
+            <!-- 闸门没跑成：检查本身没能在门禁容器里跑起来，对代码没有结论。
+                 刻意跟「未通过」分开显示——它是需要人看一眼的状态，不是代码红了。 -->
+            <v-card
+              v-else-if="gateCard && gateCard.status === 'gate_blocked'"
+              variant="outlined"
+              class="merge-box mt-2"
+            >
+              <div class="merge-box__bar" />
+              <div class="pa-3">
+                <div class="d-flex align-center ga-2 mb-1">
+                  <v-icon color="warning" size="19">mdi-help-circle-outline</v-icon>
+                  <span class="t-title">平台检查没跑成</span>
+                </div>
+                <div class="text-caption text-medium-emphasis mb-2">
+                  检查没能在门禁环境里跑起来，所以它对这次改动<strong>没有结论</strong>（既不是通过也不是未通过）。
+                  这张验收卡没有送出。芝士已收到通知去把检查环境弄起来再重新递卡；如果它反复跑不起来，需要人看一眼。
                 </div>
                 <v-btn
                   size="small"

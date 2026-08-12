@@ -327,6 +327,7 @@ _OPEN_CARD_STATUSES = (
     AcceptStatus.pending,
     AcceptStatus.pending_gate,
     AcceptStatus.gate_failed,
+    AcceptStatus.gate_blocked,
     AcceptStatus.conflict,
     # 两阶段采纳: `pr_open` 是 open 状态里最容易被漏掉的一个 —— 卡被采纳了但
     # 话题没归档、容器没停、活还没干完。不在这里就等于芝士在 PR 迭代期间
@@ -339,6 +340,10 @@ _OPEN_CARD_HINTS = {
     AcceptStatus.pending_gate: "闸门检查进行中",
     AcceptStatus.gate_failed: (
         "闸门检查未过——用 `cheese status` 看失败输出，修复后重新递卡"
+    ),
+    AcceptStatus.gate_blocked: (
+        "闸门检查没跑成（不是没通过，是没跑起来）——用 `cheese status` 看输出，"
+        "把检查环境弄起来再重新递卡"
     ),
     AcceptStatus.conflict: "采纳时发现合并冲突，待处理",
     AcceptStatus.pr_open: (
