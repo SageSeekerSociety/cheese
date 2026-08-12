@@ -330,6 +330,13 @@ class Settings(BaseSettings):
     # before the sweep calls it wedged and tears it down. See
     # TurnRunner.SILENT_TURN_S for why 30 minutes and not less.
     turn_silence_timeout_s: float = 1800.0
+    # How long a topic may sit on a mid-turn block before `/topics/{id}/status`
+    # calls it stalled. Lower than the sweep's ceiling above on purpose: this
+    # one only REPORTS, so a false positive costs a second look rather than a
+    # cancelled turn, and 10 minutes is already past the ceiling of a single
+    # blocking tool call — the longest a healthy turn can legitimately go
+    # without adding a block.
+    turn_stall_signal_s: float = 600.0
 
     # --- Memory backend (spec §8.4 / §15 Q9) ---
     # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).
