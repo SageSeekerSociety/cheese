@@ -14,7 +14,20 @@
 | **供给形式** supply | `cloud` \| `self_hosted` | 平台能不能销毁它 → 可弃性 → **坏了能不能换** | **没有名字**，靠 `ProjectMachine.device_id` 反查 |
 | **可见性** visibility | `isolated` \| `host` | agent 能看见什么、能碰到谁 | **没有名字**，隐含在 provider 实现里 |
 | **计费归属** billing | credit 池 id | 谁付钱 | **没有表达** |
-| （派生）生命周期 lifecycle | idle→停机→销毁 的两个时限 | 活多久 | **硬编码**：容器 8h（<&backend/app/core/config.py> `sandbox_idle_hours`），device 不回收 |
+| （派生）生命周期 lifecycle | idle→停机→销毁 的两个时限 | 这次房间占用的**所有可回收资源**活多久 | 见下表，**两类对象里有一类连硬编码都没有** |
+
+**生命周期的对象不止「机器」。** 一次房间占用会占住至少两类可回收资源，它们今天的处境差得很远：
+
+| 对象 | 今天的策略 | 话题归档后 |
+|---|---|---|
+| 机器 / 容器 | `sandbox_idle_hours = 8h` 硬编码（<&backend/app/core/config.py>） | cloud 可回收，self-hosted 不可动 |
+| **工作树** | **无** | **无** |
+
+工作树这一格是实测出来的，不是推演：dev 盒子 `/dev/vda1` 504G 已用 313G，其中 **231G（全盘 74%）是 `.worktrees/` 下每话题一棵的树**，不是缓存也不是 docker（镜像 13.5G 且 0 可回收）。平台侧的分母是**225 个话题、206 个已归档、只有 19 个活着**——**九成的树属于早就结束的活**，平均约 1G，主要是 `.venv` + `node_modules`。
+
+代码侧对得上：`TopicService._archive_one`（<&backend/app/domain/topic/services.py>）归档时只改状态、关验收卡、写一条事件块，**磁盘上什么都不动**；整个 workspace 层只有两处 `shutil.rmtree`（<&backend/app/domain/workspace/service.py>），一处是迁移 pre-jj 的老 git 工作树，一处是拆临时 merge 工作树——**没有任何一条路径会回收话题工作树**。`sandbox_idle_hours` 那个 reaper 收的是容器，不是树。
+
+**它的失败方式和 #185 那条是同一个**：231G 悄悄堆到 74%，是人去 `du` 才发现的，平台一个字都没说。**不是丢，是无声**——只不过这次无声的是「占着」而不是「没了」。
 
 **档 = 轴的具名组合。** `compute_profile` 这个字段本身不删、不改类型，降级成「preset 的名字」，后端 resolve 成一个四元组。这样前端、`topic.compute_profile` / `project.settings` / `team.compute_profile` 三级继承（<&backend/app/domain/agent/chat.py>）、已有数据全部不用动，语义在后端展开。
 
@@ -109,7 +122,22 @@ issue 说共用机器上的隔离理由是防串扰不是防偷看，「都是�
 
 1. **#185 那句「丢得无声」，无声的不是丢，是没有预告。** 所以关键的一条不是「销毁后留说明」，是**销毁前 24h 那条强提醒**——只有它是人还来得及做点什么的时刻。销毁后的说明是补记账，防不住任何事。
 2. **误杀比漏机器贵得多。** issue 说「漏的是钱」，但为了不漏而把 timeout 收紧，代价是把人正在用的工作树销毁掉——那损失的是信任，不是钱。所以时限取宽，成本靠「停机」这个便宜动作兜，「销毁」这个贵动作永远走预告。
-3. **硬前置：工作树推回平台之前不许销毁。**
+3. **硬前置：可重建之前不许回收。**（原为「工作树推回平台之前不许销毁机器」，按上表扩到所有可回收对象——两类资源共用同一条不变量，否则第二类必然被漏掉。）
+
+#### 工作树的回收：只删「命令能重建的」
+
+分寸不用另发明，`deploy/dev-box-disk-cleanup.sh` 已经把它写死了：**只删一条命令能重建的东西。「下一次构建慢一点」是可接受的代价，「别人的数据」不是。** 那个脚本据此不碰镜像/卷、不碰 e2e 要的浏览器二进制、不碰任何项目目录。
+
+落到工作树上就是一条清清楚楚的界线：
+
+| 归档话题的工作树 | 能不能删 | 为什么 |
+|---|---|---|
+| `.venv` / `node_modules` / `target` | **能** | `uv sync` / `pnpm i` 重建，代价是下一轮慢几分钟 |
+| **整棵树** | **不能** | 没有命令能重建它 |
+
+**「归档」不是终点**——今天上午就有人把 `issue 186` 从归档里捞回来接着干。代码上 `TopicService.unarchive` 是个幂等、无代价、连采纳记录都保留的操作，说明它本来就被设计成常规动作。树没了而话题被 unarchive，芝士会**在一个空目录里醒来**——这比省下的那 1G 贵得多，而且又是一次静默失败（launcher `mkdir -p` 任何路径，没人会看到报错）。
+
+按上面 206/225 的分母粗算，只清可重建的那部分，量级就在 **150G+**，而且不承担任何不可逆风险。
 
 #### 两条硬前置（都是实测出来的，不是假想）
 
@@ -198,13 +226,23 @@ UPDATE device SET supply='cloud'
 
 | 改动 | 位置 |
 |---|---|
-| `Supply` / `Visibility` 两个枚举 + `Device` 两个字段 | <&backend/app/domain/device/repository.py> |
+| `Supply` / `Visibility` 两个枚举 | <&backend/app/domain/device/supply.py>（`Device` 的两个字段在 <&backend/app/domain/device/repository.py>） |
 | `device.supply` / `device.visibility` 两列（保守 server_default）+ 一次性回填 | <&backend/app/domain/device/models.py>、`alembic/versions/c4a71e5d9b30_device_supply_and_visibility.py` |
 | `approve(supply=...)` **无默认值**，两个入口各写死一个常量 | <&backend/app/domain/device/service.py>、<&backend/app/api/routes/connector.py>（`self_hosted`）、<&backend/app/domain/machine/services.py>（`cloud`） |
 | 不变量：`delete_platform_provisioned` 对 self-hosted **抛错**；`delete_owned`（人自己删）不受影响 | <&backend/app/domain/device/service.py> |
 | 守卫 + `--self-test` | <&.claude/scripts/check-repo-rules.sh> 规则 5 |
+| 还掉一条存量债：`device_provider` → `machine.repositories` 的跨域 repository import 随反查一起消失，白名单对应行删除 | <&backend/tests/unit/test_domain_import_guard.py> |
 
-**验证**：ruff / pyright 全绿（pyright `0 errors`）；`check-repo-rules.sh` 与其 `--self-test`（现 5 条规则）全绿；`alembic heads` 单一头 `c4a71e5d9b30`；迁移链在一个空库上从头跑到 head 通过，**回填另用带数据的库单独验过**（平台开的 device → `cloud`，人 enroll 的 → `self_hosted`）；全量 `pytest tests/ -n 4` **4038 passed / 25 failed**，25 个全部是沙箱缺主机二进制导致的既有失败，与本改动无关：`test_machine_service.py` 21 个死在 `provision()` 的 `generate_keypair()` 上（**缺 `ssh-keygen`**，容器无 root 装不了），`test_tmux_control` / `test_workspace_git_timeout` 缺 `kill` 二进制（CLAUDE.md 已记的 no-procps），`test_market_api` 缺 provider 凭据（已记），`test_cheese_cli` 被沙箱自身的 `CHEESE_AWAIT_LOGS` 环境变量顶掉。
+**验证**：ruff / ruff format / pyright 全绿（pyright 剩的 2 个 `_as_utc` 报错在 <&backend/app/domain/topic/services.py>，主线既有、不在本改动的 diff 里）；`check-repo-rules.sh` 与其 `--self-test`（现 5 条规则）全绿；`tests/unit` 全量 2851 passed，受影响的 8 个设备/机器测试文件 87 passed；迁移链在一个空库上从头跑到 head 通过，**回填另用带数据的库单独验过**（平台开的 device → `cloud`，人 enroll 的 → `self_hosted`）。
+
+**变基后的两处返工**（2026-08-12 第二轮，基线换成含 #289/#299/#301 的 main）：
+
+1. **枚举搬家**。#299 立了 `tests/unit/test_domain_import_guard.py`：领域包不许直接 import 别的领域的 repository 模块。`Supply` 原本住在 `device/repository.py`，而 `machine`、`agent` 两个领域都要读它——照原样合并就是**新欠两条债**。改为把两个枚举放进 `device/supply.py`（值类型本来就不该住在数据访问层），`repository.py` 从那里 import。`device_provider` 的那次读取也改走 #299 新增的 `device/wiring.py` 接缝，不再自己 `SqlDeviceRepository(session)`。
+2. **两个新测试文件的调用点**。#301 带来的 `test_device_health.py` / `test_host_swap.py` 各有一处 `approve(code, owner_user_id=...)`——`supply` **故意无默认值**，所以它们不是「碰巧红了」，正是这个设计要求的：新入口必须自己表态。已各补一个 `self_hosted` 常量（这两个文件的逻辑不读该字段，是表态不是断言）。
+
+> 顺带一条给 CLAUDE.md 的更正：那份文档把 `test_machine_service.py` 的失败归给 no-procps，实测**根因是缺 `ssh-keygen`（openssh-client）**，报错也不是 `'kill'` 而是 `'ssh-keygen'`。没有改 CLAUDE.md——那是共享文件，等你点头。
+
+**一条本地拦住的事，不是本改动引起的**：这个沙箱同步到的 `main@upstream`（`08c58dba` = 采纳 issue 186 #301）**自身就是分叉的**——`alembic heads` 在**完全移除本改动的迁移文件**之后仍然是两个头（`b7e3c19d4f80` 来自 #301，`c1f7a3b90d24` 来自 #289），DB 类测试因此在建库那一步就 `Multiple head revisions are present` 报错。也就是说 #307 的修复还没同步进来。后果有两条：(a) 本轮**跑不了任何 DB 类测试**（integration / contract / 一部分 unit），只有纯 unit 可跑；(b) `c4a71e5d9b30` 的 `down_revision` 该挂谁，**在这个盒子里看不出来**——现按指示挂在 `c1f7a3b90d24` 上，但若 #307 是一条合并迁移，真正的链尾是那条合并的 revision，需要它的 id 才能挂对。
 
 > 顺带一条给 CLAUDE.md 的更正：那份文档把 `test_machine_service.py` 的失败归给 no-procps，实测**根因是缺 `ssh-keygen`（openssh-client）**，报错也不是 `'kill'` 而是 `'ssh-keygen'`。没有改 CLAUDE.md——那是共享文件，等你点头。
 
@@ -212,5 +250,6 @@ UPDATE device SET supply='cloud'
 
 **接下来**：
 1. 决定 1 阻塞在两条前置上：**补 owner**（前置 A）与**推送重试上界**（前置 B）；N/M 还阻塞在 billing 轴的计费粒度上。
-2. 决定 3 的落地切分（配额两层），以及和 #186 那张卡的先后顺序。
-3. `visibility` 目前只有 `host` 一个真实取值——`isolated` 要等「每房间一个容器的 device 传输」才有意义，本轮只落列不开值。
+2. **工作树回收**（归档话题的可重建目录）可以独立于以上全部先做——它不依赖 supply、不依赖 billing、不需要任何新字段，只需要「归档 + 只删可重建物」这一条判据，是本 issue 里唯一现在就能落地且能立刻还出 150G+ 的一格。
+3. 决定 3 的落地切分（配额两层），以及和 #186 那张卡的先后顺序。
+4. `visibility` 目前只有 `host` 一个真实取值——`isolated` 要等「每房间一个容器的 device 传输」才有意义，本轮只落列不开值。
