@@ -256,6 +256,15 @@ class DeviceHub:
             if s.project_id == project_id and self.is_online(s.device_id)
         ]
 
+    def screens_for_topic(self, topic_id: uuid.UUID) -> list[HubScreen]:
+        """Every screen bound to a topic, ACROSS devices and whether or not the
+        device is online — the reverse lookup the lifecycle reaper needs to free a
+        topic's screen when it is archived/accepted (``topic_id`` is globally unique,
+        so this is the whole set). Offline devices are included on purpose: closing
+        their screen still forgets it here, so an archived topic leaves no stale
+        registry entry to re-surface if the device reconnects."""
+        return [s for s in self._screens.values() if s.topic_id == topic_id]
+
     async def call_screen(
         self, device_id: str, sid: str, name: str, args: list[Any]
     ) -> str:

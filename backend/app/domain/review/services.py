@@ -318,6 +318,28 @@ class AcceptService:
             raise NotFoundError("Accept card not found")
         return card
 
+    async def _release_topic_compute(self, topic: Topic) -> None:
+        """Free a done topic's long-lived compute on 采纳/归档 — the sandbox
+        container(s) AND, when the topic ran on an enrolled device, its screen (plus
+        a remote device's per-topic work dir). The container reaper only ever knew
+        about Docker boxes, so a device screen (and the ``claude`` process behind it)
+        used to leak on the machine forever.
+
+        Best-effort in both halves: a missing box or screen is a successful no-op
+        (it is recreated on demand if the archived topic is ever resumed), and a
+        failure here must never fail the accept itself."""
+        from app.domain.agent.device_provider import release_topic_screen
+        from app.domain.workspace import service as ws
+
+        try:
+            ws.stop_topic_container(topic.id)
+        except Exception:  # noqa: BLE001 — best effort, never fatal
+            pass
+        try:
+            await release_topic_screen(topic.project_id, topic.id)
+        except Exception:  # noqa: BLE001 — best effort, never fatal
+            pass
+
     async def create_card(
         self,
         *,
@@ -754,12 +776,8 @@ class AcceptService:
             # and fell back, even though there's no push outcome to report.
             card.note = _with_pr_degrade_note("", pr_degrade_reason)
 
-        # Topic is done → free its long-lived sandbox container (it would be
-        # recreated on demand if the archived topic is ever resumed).
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
+        # Topic is done → free its long-lived compute (container + device screen).
+        await self._release_topic_compute(topic)
 
         # 采纳即归档 (spec §6.3).
         topic.status = TopicStatus.archived
@@ -1887,8 +1905,6 @@ class AcceptService:
         did not succeed, but a later successful one already carried this commit.
         Same archive either way; the wording must not claim the card's own
         deploy went green when it didn't."""
-        from app.domain.workspace import service as ws
-
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
         if landed_via is None:
@@ -1913,10 +1929,7 @@ class AcceptService:
                 "所以代码确实已经上线，闸门满足。\n"
                 f"{landed_via.url or ''}\n{card.pr_url}"
             )
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
+        await self._release_topic_compute(topic)
         topic.status = TopicStatus.archived
         topic.accepted_by = card.decided_by
         topic.accepted_at = now
@@ -2058,10 +2071,7 @@ class AcceptService:
         card.decided_at = now
         card.note = note[:2000]
 
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
+        await self._release_topic_compute(topic)
 
         # 采纳即归档 (spec §6.3).
         topic.status = TopicStatus.archived
