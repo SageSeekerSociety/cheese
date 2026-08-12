@@ -572,7 +572,7 @@ async def test_forgetting_never_destroys_a_machine_the_platform_did_not_open(cap
     assert service._devices.deleted == []
     assert "someones-own-box" in service._devices.devices
     assert machine not in await service._repo.list_for_project(project_id)
-    assert any("supply=self_hosted" in r.message % r.args for r in caplog.records)
+    assert any("supply=self_hosted" in r.getMessage() for r in caplog.records)
 
 
 # ---- built-in AI channel (→ccproxy, operator guidance) -----------------------
