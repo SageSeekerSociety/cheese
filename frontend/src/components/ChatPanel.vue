@@ -26,7 +26,14 @@ import type {
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { answerOptions, attachmentRawUrl, chatWsUrl, listBlocks, toggleReaction as apiToggleReaction } from '../api'
+import {
+  answerOptions,
+  attachmentRawUrl,
+  chatWsUrl,
+  getProgress,
+  listBlocks,
+  toggleReaction as apiToggleReaction,
+} from '../api'
 import { usePendingAttachments } from '../lib/attachments'
 import { backendErrorPresentation } from '../lib/backendErrorEvent'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
@@ -147,8 +154,13 @@ const errorMsg = ref<string | null>(null)
 const awaitingReply = ref(false)
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
-// Live working-log todo (芝士's Task tools) for the in-progress turn (§3.1.1).
+// Working-log todo (芝士's Task tools). Live during a turn (§3.1.1); between
+// turns it holds the topic's stored 进度层 (#187) instead of being wiped, so
+// "做到哪了" is visible in the room without summoning anyone.
 const todoItems = ref<TodoItem[]>([])
+// The list on screen is a previous turn's leftovers, not this turn's live
+// progress — labelled differently so nobody reads a stale ◐ as "running now".
+const todoRestored = ref(false)
 // Action cards: 芝士's cheese actions (decision/doc/...) are persisted as system
 // event blocks tagged refs=["action:<resource>"] and rendered as clickable cards.
 const ACTION_META: Record<string, { verb: string; btn: string }> = {
@@ -518,8 +530,11 @@ function handleFrame(frame: WsServerFrame) {
       emit('tool-used', frame.name.replace(/^mcp__cheese__/, ''), frame.input)
       break
     case 'todo':
-      // Live working-log checklist (process), updated in place.
+      // Working-log checklist, updated in place. `restored` marks the replay of
+      // a previous turn's list at turn start (进度层) — the first live frame of
+      // this turn clears the flag.
       todoItems.value = frame.items
+      todoRestored.value = frame.restored === true
       autoScroll()
       break
     case 'state':
@@ -553,11 +568,15 @@ function handleFrame(frame: WsServerFrame) {
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
       awaitingReply.value = false
-      todoItems.value = []
+      // A failed turn is exactly when the checklist matters most — it is what
+      // whoever picks this up next (person or new machine) works from. Keep it.
+      todoRestored.value = true
       break
     case 'done':
       awaitingReply.value = false
-      todoItems.value = [] // working-log done; the messages are the record
+      // Kept, not cleared: the checklist is the topic's 进度层 now, not just
+      // this turn's working log, and it is what the next turn resumes from.
+      todoRestored.value = true
       emit('turn-done')
       autoScroll()
       break
@@ -577,6 +596,17 @@ async function loadTopic(topic: Topic) {
   connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
   todoItems.value = []
+  todoRestored.value = false
+  // 进度层 (#187): the checklist the last turn left behind. Fire-and-forget and
+  // guarded on the topic still being active — it is context, never a reason to
+  // hold up (or fail) opening the conversation.
+  void getProgress(topic.id)
+    .then((p) => {
+      if (props.topic?.id !== topic.id || todoItems.value.length) return
+      todoItems.value = p.items
+      todoRestored.value = p.items.length > 0
+    })
+    .catch(() => {})
   reactionPickerFor.value = null
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
@@ -676,7 +706,9 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   // Only show the "awaiting reply" indicator when 芝士 was summoned — an
   // instant local ack (正在看…) even before the backend's ✅ receipt lands.
   if (summon) awaitingReply.value = true
-  todoItems.value = []
+  // The stored checklist stays on screen until this turn's first live frame
+  // replaces it — blanking it here would hide 进度 during the cold start, which
+  // is precisely when someone is wondering where the work got to.
   scrollToBottom()
   return true
 }
@@ -1172,7 +1204,10 @@ onBeforeUnmount(() => {
                 <span class="im-name">芝士</span>
               </div>
 
-              <!-- Live working-log checklist (芝士's tasks this turn, §3.1.1) -->
+              <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
+                 turn; between turns this is the topic's stored 进度层 (#187),
+                 labelled so a leftover ◐ is not read as "running right now". -->
+              <div v-if="todoItems.length && todoRestored" class="todo-label">进度（上次做到这里）</div>
               <ul v-if="todoItems.length" class="todo-list">
                 <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
                   <span class="todo-mark">{{ todoMark(t.status) }}</span>
@@ -1368,7 +1403,13 @@ onBeforeUnmount(() => {
   background: var(--accent);
   flex: none;
 }
-/* Live working-log checklist (§3.1.1) — process, sits above the streaming text. */
+/* Working-log checklist (§3.1.1) — process, sits above the streaming text.
+   Between turns the same list shows the stored 进度层 (#187) under a label. */
+.todo-label {
+  font-size: 12px;
+  color: var(--muted, #666);
+  margin: 2px 0 0;
+}
 .todo-list {
   list-style: none;
   margin: 2px 0 6px;

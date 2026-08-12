@@ -26,7 +26,12 @@ from app.domain.cx_notification.services import NotificationService
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
-from app.domain.topic.repositories import SortOrder, TopicRepository, TopicSortField
+from app.domain.topic.repositories import (
+    SortOrder,
+    TopicProgressRepository,
+    TopicRepository,
+    TopicSortField,
+)
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
 
@@ -634,6 +639,21 @@ class TopicService:
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
         await self.get_or_404(topic_id)
         return await self._blocks.doc_root(topic_id)
+
+    async def get_progress(
+        self, topic_id: uuid.UUID
+    ) -> tuple[list[dict], datetime | None]:
+        """进度层 (#187): the checklist this topic's work left behind.
+
+        Returns ``([], None)`` for a topic that never had one — an empty
+        checklist and no checklist are the same thing to a reader, and making
+        the caller handle a null row buys nothing.
+        """
+        await self.get_or_404(topic_id)
+        row = await TopicProgressRepository(self._session).get(topic_id)
+        if row is None:
+            return [], None
+        return [dict(item) for item in row.items], row.updated_at
 
     async def edit_doc(
         self, *, topic_id: uuid.UUID, content: str, author: str

@@ -32,6 +32,7 @@ import type {
   Topic,
   TopicComputeProfile,
   TopicMemberRow,
+  TopicProgress,
   UpstreamInfo,
   UpstreamSyncResult,
   UsageStats,
@@ -729,6 +730,14 @@ export function attachmentRawUrl(topicId: string, path: string): string {
 // GET returns the doc Block, or null when the topic has no doc yet.
 export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
+}
+
+// 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
+// Read on topic open — between turns there is no WS stream to carry it, and
+// "做到哪了" has to be visible without summoning anyone. `items` is [] for a
+// topic that never had a checklist.
+export function getProgress(topicId: string): Promise<TopicProgress> {
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
 }
 
 // PUT upserts the living doc and appends a "📝 编辑了文档" event to the
