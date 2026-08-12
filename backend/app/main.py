@@ -31,6 +31,7 @@ from app.core.obs import bind_context, clear_context, configure_logging, get_log
 from app.core.sandbox_auth import is_valid_cheese_token
 from app.core.turn_context import current_turn_id, parse_turn_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
+from app.domain import backend_log  # module import: tests swap the intake singleton
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
 # every request/turn correlated. See app/core/obs.py.
@@ -186,9 +187,17 @@ async def lifespan(_: FastAPI):
         settings.subscription_ingest_interval_s,
     )
     usage_ingest.start()
+    # 后端报错回房间 (issue #283): closes burst windows on a clock, so a flood
+    # that stopped still reports its size instead of waiting for a recurrence
+    # that a fixed bug never has.
+    error_flush = backend_log.BackendErrorFlushRunner(
+        settings.backend_error_flush_interval_s
+    )
+    error_flush.start()
     try:
         yield
     finally:
+        await error_flush.stop()
         await usage_ingest.stop()
         await machines.stop()
         await gate_sweeper.stop()
@@ -404,6 +413,33 @@ async def cheese_token_gate(request: Request, call_next: Callable):  # type: ign
         return await call_next(request)
     finally:
         current_turn_id.reset(ctx)
+
+
+@app.middleware("http")
+async def report_unhandled_to_room(request: Request, call_next: Callable):  # type: ignore[type-arg]
+    """The push half of the backend-error channel (app.domain.backend_log).
+
+    Registered LAST, so it is the OUTERMOST user middleware and sees anything
+    that escapes: everything a route handles deliberately — BaseError, AppError,
+    HTTPException, validation — has already become a response further in, which
+    is exactly the cut we want. An expected 4xx is normal flow and is not an
+    incident; only a genuine unhandled exception reaches this except.
+
+    The exception is re-raised untouched: this reports, it does not swallow.
+    """
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        # A failure inside the intake endpoint itself must not report into the
+        # same channel (a broken intake would amplify every other error).
+        if not request.url.path.startswith("/api/backend-errors"):
+            await backend_log.report_request_failure(
+                exc,
+                method=request.method,
+                path=request.url.path,
+                request_id=request.headers.get("x-request-id"),
+            )
+        raise
 
 
 loaded_routers = _discover_routers(app)
