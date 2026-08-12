@@ -415,15 +415,24 @@ function cancelRetry() {
   }
 }
 
-// An auth refusal is not an outage: the backend closes the socket after one
-// error frame, so retrying just reopens and gets refused again — silently, at
-// 1s→15s forever, with the banner saying 正在自动重连. The message the user
-// needs (登录已失效) would be overwritten by the next retry's banner. So we
-// latch it: stop retrying and keep the reason on screen until they act.
-const authRefused = ref(false)
+// Every way the backend can refuse a socket AT CONNECT (app/api/routes/chat.py):
+// no token, a token it could not verify, and a verified token whose owner is not
+// on this topic's roster. The set is the point — `forbidden` was left out once
+// and behaved exactly like the bug this latch exists to fix, because a refusal
+// the client doesn't recognise falls through to the reconnect path below.
+const CONNECT_REFUSAL_CODES = new Set(['auth_required', 'auth_expired', 'forbidden'])
+
+// A connect refusal is not an outage: the backend closes the socket after one
+// error frame, so retrying just reopens and gets refused again. And it does not
+// even back off — the HANDSHAKE succeeds, the refusal arrives as a frame, so
+// onopen has already cleared the banner and reset retryDelayMs to 1s before the
+// reason lands. Measured with `forbidden` unlatched: 9 connections in 8 seconds,
+// the green dot flickering and the reason blinking with it, forever. So we latch
+// it: stop retrying and keep the reason on screen until they act.
+const connectRefused = ref(false)
 
 function scheduleReconnect(topicId: string) {
-  if (retryTimer || authRefused.value) return
+  if (retryTimer || connectRefused.value) return
   const delay = retryDelayMs
   retryDelayMs = Math.min(retryDelayMs * 2, 15000)
   retryTimer = setTimeout(() => {
@@ -467,7 +476,7 @@ function openSocket(topicId: string) {
   }
   ws.onerror = () => {
     // The close handler owns retry; the banner just explains the grey dot.
-    if (!authRefused.value) errorMsg.value = '连接断开，正在自动重连…'
+    if (!connectRefused.value) errorMsg.value = '连接断开，正在自动重连…'
   }
   ws.onmessage = (ev: MessageEvent) => {
     // Guard against frames from a stale socket after topic switch.
@@ -532,10 +541,10 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'error':
-      // The socket could not authenticate — the backend closes right after this
+      // The socket was refused at connect — the backend closes right after this
       // frame, so latch the reason and stop the reconnect loop from burying it.
-      if (frame.code === 'auth_expired' || frame.code === 'auth_required') {
-        authRefused.value = true
+      if (frame.code && CONNECT_REFUSAL_CODES.has(frame.code)) {
+        connectRefused.value = true
         errorMsg.value = frame.message
         awaitingReply.value = false
         return
@@ -565,7 +574,7 @@ function handleFrame(frame: WsServerFrame) {
 
 async function loadTopic(topic: Topic) {
   errorMsg.value = null
-  authRefused.value = false // a fresh topic gets a fresh attempt at connecting
+  connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
   todoItems.value = []
   reactionPickerFor.value = null
