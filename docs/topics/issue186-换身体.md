@@ -179,3 +179,47 @@ uv run alembic heads   →  KeyError: 'c8b1f4a70d29'
 不碰库的测试不受影响：本卡的 `test_device_health.py` + `test_host_swap.py` + `test_platform_failures.py` 共 **21 passed**。
 
 **没做也不该做的事**：本地伪造一个 `c8b1f4a70d29` 占位文件让 alembic 闭环。那会把一条假迁移落进链里，比 CI 红严重得多。
+
+---
+
+## 7. PR #301 第二轮 CI 红：两个失败，其中一个是本卡的真 bug
+
+两个失败的测试**在当时的工作区里都不存在**——`live_turn_for_topic` 这个方法本身也没有。它们随 `采纳 领域包解环与 import 守卫 (#299)` 一起进的 main，在我的基线之后。本地全量跑绿过，因此不是漏跑，是**基线里没有这两个测试**。
+
+拿到它们的办法不是猜：`jj rebase` 走不通（靠前的提交已 immutable，属于共享历史），但 **CI 测的本来就是 PR 的 merge ref**，所以在本地把 main 合进来看到的就是 CI 看到的那棵树（`jj new @ main`，新增 25 个文件、改 50 个）。合完两个失败都能本地复现。
+
+### 7.1 跨领域 import（架构违规，我引入的）
+
+```
+app.domain.agent.host_swap → app.domain.device.sql_repository
+```
+
+`host_swap` 自己 `new` 了 device 域的 repository。`device_provider.py`、`machine/services.py` 也这么干，但它们在守卫的 `_EXEMPT` 里被祖父条款放过了——新代码不该再加一条豁免。
+
+修法：在 device 域里加 `device_service_for_session(session)` 工厂，repository 的 import 留在自己域内，跨域的只依赖 **service**。
+
+### 7.2 轮次收尾去等数据库（真 bug，生产同样成立）
+
+失败的断言：
+
+```python
+finish.set()
+for _ in range(50):
+    await asyncio.sleep(0)          # 只给 50 个事件循环 tick
+    if runner.live_turn_for_topic(topic) is None:
+        break
+assert runner.live_turn_for_topic(topic) is None
+```
+
+`_live` 是在轮次自己的 `finally` 里清的，而我加的 `await record_host_success(...)` 挡在它前面，会开一个真数据库会话。**CI 的 test job 里是有 Postgres 的**，所以这不是"连不上慢慢超时"，是它真的连上、真的跑了两条查询——一次真实 DB 往返远超 50 个 tick。
+
+**这不只是测试怪癖。** `live_turn_for_topic` 是 stall 判定的心跳半边（`TopicService.stall_signal`）。让每一轮的收尾都等一次 DB 往返，等于让一个已经跑完的轮次在这段时间里被读成"还活着"。而这条记账本身在 99.99% 的轮次里是空操作——健康表只在发生过 host-scoped 失败后才有行。
+
+修法两步：
+
+1. `TurnRunner` 记一个进程内的 `_host_failed_topics`，只有**这个进程真的见过这台机器失败**时，成功轮次才去清零。正常轮次完全不碰库。
+2. 进程重启会丢掉那个集合，于是"成功清零"可能不发生——用 `DEFAULT_STREAK_WINDOW`（30 分钟）兜底：**陈旧的一击不再算进 streak**。这条规则本身也是对的，一小时前的一次失败和现在这次不该叫"连续"。
+
+因果是验证过的、不是推断：把那行临时改回无条件 `await`，本地精确复现了 CI 的同一个失败；改回来即绿。
+
+**教训**：本地全量绿只证明"在我的基线上绿"。当 main 新增的测试针对的正是我改动的那个函数时，基线差异就是盲区——`jj new @ main` 合出 merge ref 是把这个盲区补上的最短路径。
