@@ -128,6 +128,7 @@ Route → Service → Repository → Model
 
 ## API Design
 
+- **A route's path is not a URL you can send.** The backend is mounted at `/api` on the app origin, and the gateway strips that one segment — so a 1.0 route (`/users/…`) is reached at `/api/users/…` and a 2.0 route (which carries its own `/api`) at `/api/api/topics/…`. The doubling is deliberate and load-bearing; flattening it makes six endpoints answer from the wrong generation. Writing a client, or wondering why a call 404s or returns HTML: [`docs/api-conventions.md`](docs/api-conventions.md).
 - RESTful: GET/POST/PUT/DELETE on `/resource`.
 - Pagination: `pageStart` + `pageSize`. Return `{data: [...], total: int}`.
 - Response format: `{"code": 200, "message": "...", "data": {...}}`.
