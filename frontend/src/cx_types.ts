@@ -154,7 +154,9 @@ export interface ChatAttachment {
 export interface WsClientMessage {
   type: 'message'
   content: string
-  author: string
+  // No `author`: the backend takes it from the socket's ?token=. Sending one
+  // was never authoritative — it was the forgeable field that let an expired
+  // session post as 匿名者 — so the client no longer names itself at all.
   summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)

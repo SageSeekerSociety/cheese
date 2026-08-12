@@ -127,7 +127,11 @@ DOM_STATE = """
 POST_MESSAGE = """
 async ({ topicId, content }) => {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/api/topics/${topicId}/chat`);
+  // The chat socket requires the session token (the page is logged in, so it
+  // is in localStorage) — without it the server closes the connection.
+  const token = localStorage.getItem('accessToken') || '';
+  const ws = new WebSocket(
+    `${proto}://${location.host}/api/topics/${topicId}/chat?token=${encodeURIComponent(token)}`);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   ws.send(JSON.stringify({ type: 'message', content, author: 'user-1', summon: false }));
   // Wait for the persisted user_block echo so we know it's in the DB.

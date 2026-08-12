@@ -471,6 +471,15 @@ class Settings(BaseSettings):
     # (no-token) callers are unaffected. Ops kill-switch: set false to disable the
     # membership check entirely if a token rollout surfaces an unexpected block.
     authz_enforce_topic_access: bool = True
+    # Escape hatch for LOCAL harnesses only (the eval runner's throwaway backend,
+    # browser probes): admit a chat WebSocket that carries no ``?token=`` and let
+    # the message body name its own author. That is the pre-token Phase-0 path —
+    # with it on, any client can post as any handle, which is why production
+    # leaves it off. It does NOT weaken the invalid/expired-token case: a socket
+    # that presents a token we cannot verify is refused either way, because
+    # silently downgrading a failed credential to "anonymous" is what let a whole
+    # batch of messages land under 匿名者 while the sender saw no error at all.
+    chat_ws_allow_anonymous: bool = False
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
     # (task AI advice, rank checks, email/notifications, meilisearch, real-name
