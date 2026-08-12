@@ -113,6 +113,39 @@ def main() -> int:
 
     branch_graph = collect(None, args.versions_dir)
 
+    # --- HEAD sentinel -----------------------------------------------------
+    # The chain's tip, duplicated into ONE shared file (backend/alembic/HEAD).
+    # The graph itself lives spread across file contents, so git cannot see two
+    # branches claim the same parent — different files, clean textual merge.
+    # Forcing every migration PR to move this one line makes two concurrent
+    # migration PRs collide in GIT (same line), and GitHub re-evaluates
+    # CONFLICTING continuously as main moves — unlike checks, whose green goes
+    # stale the moment a sibling merges. That staleness is exactly how main
+    # ended up with three heads on 2026-08-12 despite this very script.
+    from pathlib import Path
+
+    sentinel_path = Path(args.versions_dir).parent / "HEAD"
+    branch_heads = find_heads(branch_graph)
+    if len(branch_heads) == 1:
+        tip = branch_heads[0]
+        sentinel = (
+            sentinel_path.read_text(encoding="utf-8").strip()
+            if sentinel_path.is_file()
+            else None
+        )
+        if sentinel != tip:
+            if sentinel is None:
+                print(f"FAIL: {sentinel_path} is missing.")
+            else:
+                print(f"FAIL: {sentinel_path} names {sentinel}, but the chain's tip is {tip}.")
+            print()
+            print("Every migration PR must move backend/alembic/HEAD to its new revision id")
+            print("(one line). That is what makes two concurrent migration PRs collide in git")
+            print("instead of silently forking alembic. See .claude/rules/migrations.md.")
+            print(f"Fix: echo {tip} > {sentinel_path}")
+            print("::error::backend/alembic/HEAD does not name the migration chain's tip")
+            return 1
+
     # The union is what main would hold after this merge. Branch wins on
     # conflict so an edited migration is judged as edited.
     merged = {**base_graph, **branch_graph}
@@ -120,6 +153,7 @@ def main() -> int:
 
     if len(heads) <= 1:
         print(f"PASS: one migration head after merging with {args.base} ({len(merged)} revisions)")
+        print(f"PASS: backend/alembic/HEAD names the tip ({branch_heads[0] if branch_heads else '—'})")
         return 0
 
     only_here = set(branch_graph) - set(base_graph)

@@ -237,8 +237,26 @@ echo "==> alembic heads"
 if HEADS_OUT="$(timeout 60 "${UV_RUN[@]}" alembic heads 2>/dev/null)"; then
     HEADS_N="$(printf '%s\n' "$HEADS_OUT" | grep -c '(head)')"
     if [ "$HEADS_N" = "1" ]; then
-        echo "  PASS: exactly one migration head"
-        ((++PASS))
+        # The HEAD sentinel must name the tip — it is what turns a concurrent
+        # migration PR into a git conflict instead of a silent alembic fork.
+        TIP="$(printf '%s\n' "$HEADS_OUT" | awk '/\(head\)/ {print $1; exit}')"
+        # Test for the file rather than redirecting from it and hoping: a failed
+        # `<` redirection is the SHELL's error, not the command's, so bash prints
+        # `alembic/HEAD: No such file or directory` regardless of the `2>/dev/null`
+        # on `tr`. That raw line lands above the written-for-humans FAIL below and
+        # reads as "check.sh is broken" rather than "move one line".
+        SENTINEL=""
+        if [ -f alembic/HEAD ]; then
+            SENTINEL="$(tr -d '[:space:]' < alembic/HEAD)"
+        fi
+        if [ "$SENTINEL" = "$TIP" ]; then
+            echo "  PASS: exactly one migration head, HEAD sentinel matches ($TIP)"
+            ((++PASS))
+        else
+            echo "  FAIL: backend/alembic/HEAD says '${SENTINEL:-<missing>}' but the tip is $TIP"
+            echo "        every migration moves this one-line file: echo $TIP > backend/alembic/HEAD"
+            ((++FAIL))
+        fi
     else
         printf '%s\n' "$HEADS_OUT" | sed 's/^/    /'
         echo "  FAIL: $HEADS_N migration heads — rechain your migration onto the current head (see .claude/rules/migrations.md)"
