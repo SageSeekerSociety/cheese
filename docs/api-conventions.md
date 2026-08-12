@@ -78,27 +78,57 @@ It looks like something to tidy up. It is load-bearing.
 The two generations both own resources named `topics`, `projects` and `tasks`.
 Collapsing them into a single external `/api/` namespace makes those names
 ambiguous, and FastAPI resolves the ambiguity silently — first router registered
-wins, the other's endpoints simply stop existing. Measured on `main`, six
-endpoints collide outright:
+wins, the other's endpoints simply stop existing. Measured on `main` 2026-08-12:
+of the 135 paths under the 2.0 prefix, dropping one `/api` layer sends 128 to a
+404 and 7 onto a live 1.0 route — ten endpoints at method+path granularity:
 
 | 2.0 endpoint | Single-prefixed, it reaches |
 |---|---|
+| `GET /api/topics` | 1.0 `GET /topics` |
 | `POST /api/topics` | 1.0 `POST /topics` |
 | `GET /api/topics/{id}` | 1.0 `GET /topics/{id}` |
+| `GET /api/projects` | 1.0 `GET /projects` |
 | `POST /api/projects` | 1.0 `POST /projects` |
 | `GET /api/projects/{id}` | 1.0 `GET /projects/{id}` |
+| `GET /api/projects/{id}/members` | 1.0 `GET /projects/{id}/members` |
 | `POST /api/projects/{id}/members` | 1.0 `POST /projects/{id}/members` |
+| `DELETE /api/projects/{id}/members/{handle}` | 1.0 `DELETE /projects/{id}/members/{userId}` |
 | `GET /api/tasks/{id}` | 1.0 `GET /tasks/{id}` |
+
+These numbers rot as routes are added; the table's exact set does not get to —
+`tests/contract/test_api_addressing_contract.py` recomputes the collision set on
+every run and pins it, so a drift between this table and reality fails a test
+instead of misleading the next reader.
 
 This is not a thought experiment — it is the outage that produced the current
 shape. `frontend/src/api.ts` records it: with a single `/api`, creating a project
 answered 400, the project list 400'd, and `/api/topics` returned **200 from 1.0's
 question tags**. A wrong answer with a success code is worse than a 404, and it is
-what a flattening would reintroduce for those six.
+what a flattening would reintroduce for those ten.
 
 So the seam stays where it is until the 1.0 surface is retired, and it is spelled
 in exactly two places — `BASE` in `frontend/src/api.ts` for the browser, and the
 `servers` entry in `backend/app/main.py` for everyone else.
+
+### A trailing slash re-opens the same trap (open hole)
+
+The strip happens once per pass through nginx — and a trailing slash buys a
+second pass. Send `GET <origin>/api/api/topics/` (one stray `/` at the end) and
+the chain is, verified live:
+
+1. nginx strips one segment → the backend receives `/api/topics/`.
+2. No route matches `/api/topics/`; Starlette's slash-redirect answers **307**
+   with `Location: <origin>/api/topics` — an origin-absolute URL that has
+   already spent its strip.
+3. The client follows, nginx strips again, the backend receives `/topics` —
+   and a **1.0** route answers (401 unauthenticated; real 1.0 data with a
+   ticket).
+
+So for the colliding endpoints above, one trailing slash converts a correct 2.0
+URL into a wrong-generation answer with a success code — the exact failure mode
+this page exists to prevent, still reachable today. Until the redirect is fixed
+or the 1.0 surface retires: **never send a trailing slash**, and treat a 307 on
+an `/api/api/...` URL as a bug in the caller, not something to follow.
 
 ## Notes for client authors
 
@@ -115,6 +145,11 @@ in exactly two places — `BASE` in `frontend/src/api.ts` for the browser, and t
 - **Static connector artifacts live at the origin root**, not under `/api` —
   `<origin>/connector/latest/<target>/cheesehost`.
 
-`backend/tests/contract/test_api_addressing_contract.py` pins all of this: it
-drives the real app at the URLs the schema advertises, and it fails if nginx ever
-stops stripping the segment the schema assumes.
+`backend/tests/contract/test_api_addressing_contract.py` pins all of this, from
+three directions: it drives the real app at the URLs the schema advertises; it
+recomputes the collision table above and fails if a 2.0 prefix is ever
+flattened (or a new cross-generation collision is born); and it fails if nginx
+stops stripping the segment the schema assumes. The schema alone cannot carry
+that weight — it is generated from the routes and agrees with them by
+construction — which is why the collision set and the 2.0 module list are
+pinned in the test rather than derived.
