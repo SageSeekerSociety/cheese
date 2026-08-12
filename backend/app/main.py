@@ -51,6 +51,7 @@ async def lifespan(_: FastAPI):
     # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
     from app.api.deps import get_chat_service, get_turn_runner
     from app.domain.scheduler.service import (
+        OrphanSweepRunner,
         PrPollRunner,
         SandboxReaperRunner,
         SchedulerRunner,
@@ -127,6 +128,11 @@ async def lifespan(_: FastAPI):
     # does, and an open resolution task is reused rather than duplicated.
     upstream_sync = UpstreamSyncRunner(scheduler, settings.upstream_sync_interval_s)
     upstream_sync.start()
+    # The startup sweep above only fires when the PROCESS restarts; a turn can
+    # be killed without that (container recreate, OOM, sandbox swap) and then
+    # nothing would ever look again. This is the loop that keeps looking.
+    orphan_sweep = OrphanSweepRunner(scheduler, settings.orphan_sweep_interval_s)
+    orphan_sweep.start()
 
     # Enrolling provisioned machines is platform plumbing, so it runs on its own
     # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
@@ -152,6 +158,7 @@ async def lifespan(_: FastAPI):
     finally:
         await usage_ingest.stop()
         await machines.stop()
+        await orphan_sweep.stop()
         await upstream_sync.stop()
         await pr_poller.stop()
         await reaper.stop()
