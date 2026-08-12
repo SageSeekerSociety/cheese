@@ -262,6 +262,10 @@ def test_await_registers_then_forks_and_returns_immediately(monkeypatch, tmp_pat
 def test_await_log_lives_outside_the_worktree(monkeypatch, tmp_path):
     """These logs must never be committed with the topic's work."""
     cli = _load()
+    # CHEESE_AWAIT_LOGS wins over HOME in _await_log_path, and the platform sets
+    # it in every agent sandbox — leaving it in place made this test pass only on
+    # machines that happen not to have it.
+    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     path = cli._await_log_path("run-1")
     assert path.startswith(str(tmp_path))
