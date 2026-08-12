@@ -36,8 +36,12 @@ export interface Topic {
   kind: string
   status: string
   created_at: string
-  // Any activity (a turn, a status flip) touches this — the sidebar's 右锚.
+  // 话题这一行自己被改过的时间（改标题、归档、拿到 session id）——落一块消息
+  // 不会动它。要"这个话题最后有动静是什么时候"，看 last_activity_at。
   updated_at?: string
+  // 最后活动时间 = 话题里最新一块的时间（没有块就是话题的创建时间）。侧栏的
+  // 右锚和"最后活动"排序都用它。只有 list/get 话题时才带。
+  last_activity_at?: string
   // Lifecycle markers (spec §6.3) — used by the 已归档 group ordering.
   accepted_by?: string | null
   accepted_at?: string | null

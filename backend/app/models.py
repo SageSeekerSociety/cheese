@@ -17,6 +17,7 @@ from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
 from app.domain.expert_role import models as expert_role  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
+from app.domain.idempotency import models as idempotency  # noqa: F401
 from app.domain.identity import models as identity  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.llm import models as llm  # noqa: F401

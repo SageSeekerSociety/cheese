@@ -26,11 +26,16 @@ info:
     name: Cheese Team
     url: https://github.com/SageSeekerSociety/cheese
 
+# Same servers the app itself publishes (backend/app/main.py) — the backend is
+# mounted at /api on the app origin and the gateway strips that one segment, so
+# a client composing servers[0].url + path gets a URL that actually answers.
+# Bare backend ports were published here once; every path composed against them
+# was a dead end. See docs/api-conventions.md.
 servers:
-  - url: http://127.0.0.1:8799
-    description: Merged backend (scripts/dev flow)
-  - url: http://localhost:8081
-    description: Merged backend (docker dev flow)
+  - url: /api
+    description: Through the app origin — browsers and external callers
+  - url: /
+    description: Straight at the backend port, with no gateway in front
 
 tags:
   - name: Users
