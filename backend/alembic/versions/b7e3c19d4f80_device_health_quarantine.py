@@ -10,6 +10,7 @@ case. The device FK cascades: a removed machine takes its health record with it.
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "b7e3c19d4f80"

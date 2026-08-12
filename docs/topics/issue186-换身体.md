@@ -1,8 +1,17 @@
-## 状态：**已实现并通过闸门**，基线是最新 main `14e11728`（2026-08-12 02:52 平台同步的那次）
+## 状态：**已实现，全量套件跑完**，基线是本地 main `5fcf3f33`（其上游锚点 `main@upstream` = `0e5b5fa1`）
 
 对应 [#186](https://github.com/SageSeekerSociety/cheese/issues/186) 第一节「身体能不能用」。第二节（agent 待在哪）维持现状 A，不在本卡范围；第三节归 #187。
 
-§3 那张落点表现在是**已改**，不是待办。闸门：ruff `All checks passed`、pyright `app/` **0 errors**、alembic **单头** `b7e3c19d4f80`、设备域 + 平台失败分类单测 **52 passed**。全量后端套件走 `cheese await` 在跑。
+§3 那张落点表现在是**已改**，不是待办。闸门实测：
+
+| 项 | 结果 |
+|---|---|
+| ruff check + format（全 backend，含 `alembic/`） | All checks passed / 758 files formatted |
+| pyright `app/` | 0 errors |
+| alembic heads | 单头 `b7e3c19d4f80` |
+| repo guards（仓库规则 + actions SHA 钉版） | PASS |
+| migration fork vs main | PASS（合并不会劈叉 alembic 链） |
+| **全量后端套件** | **4066 passed, 31 skipped, 24 failed** —— 24 个全部是沙箱环境问题，逐条见 §5 |
 
 ---
 
@@ -115,7 +124,7 @@ if not is_resume and platform_failure is None:
 | `agent/device_provider.py` | 首次 pin 时过滤被隔离的机器；离线错误改用 `DEVICE_OFFLINE_MESSAGE` |
 | `agent/runtime.py` | crash 分支：`host_scoped` → 记账/换绑/发 event/**恢复 `resume_after`**；成功收流 → 清零健康记录 |
 | `agent/chat.py` | AgentResult 错误分支同构；换成功 → 多发一个 `host_swap` event block + `resume_hint` 帧 |
-| `alembic/versions/b7e3c19d4f80_*.py` | `device_health` 迁移，挂在 `b8e1d4c70a92` 之后（单头） |
+| `alembic/versions/b7e3c19d4f80_*.py` | `device_health` 迁移，挂在 `c1d7e0a4b839` 之后（单头；main 期间顶掉过两次，重挂了两次） |
 | `tests/unit/test_device_health.py`（新） | 判定标准的功能测试 |
 | `tests/unit/test_host_swap.py`（新） | 换身体全流程的功能测试 |
 
@@ -125,4 +134,26 @@ if not is_resume and platform_failure is None:
 
 ## 4. 下一步
 
-开 PR。注意本仓沙箱**看不到远端**（`jj git fetch` 因 git 2.39 < 2.41 不可用，`gh` token 只有 actions/checks 域），所以"已推送/已合并/CI 绿"这类话一律是**声明不是观测**，要人来确认。
+递验收卡（`cheese accept-request`）。注意本仓沙箱**看不到远端**（`jj git fetch` 因 git 2.39 < 2.41 不可用，`gh` token 只有 actions/checks 域），所以"已推送/已合并/CI 绿"这类话一律是**声明不是观测**，要人来确认。
+
+---
+
+## 5. 全量套件那 24 个失败，逐条
+
+没有一个来自本卡的改动。三类，前两类 CLAUDE.md 已记载：
+
+| 数量 | 失败位置 | 根因 | 记载状态 |
+|---|---|---|---|
+| 22 | `tests/unit/test_machine_service.py`(21)、`tests/unit/test_tmux_control.py`(1) | 沙箱缺二进制：`kill`（无 procps）、`ssh-keygen`（无 openssh） | 已记载 |
+| 1 | `tests/integration/test_market_api.py::test_market_lists_ai_and_compute_pools` | 无 provider 凭据，AI 池诚实地报 unavailable | 已记载 |
+| 1 | `tests/unit/test_cheese_cli.py::test_await_log_lives_outside_the_worktree` | **新发现，见下** | 未记载 |
+
+**新发现的那个沙箱假阳性**：`backend/sandbox/cheese` 的 `_await_log_path()` 里，`CHEESE_AWAIT_LOGS` 的优先级高于 `HOME`；而 agent 沙箱恰好设了这个变量（`/home/node/.claude/cheese-await`）。测试只 monkeypatch 了 `HOME`，所以在沙箱里断言必挂，在 CI 里（没有这个变量）是绿的。
+
+不是代码缺陷，也不是本卡碰出来的——`backend/sandbox/cheese` 是 2026-08-11 别人刚写的文件。一行 `monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)` 可治，但与 #186 无关，**故意不并进本卡**，留给该文件的作者决定。
+
+### 一条方法论上的教训
+
+第一次跑全量拿到 `28 failed / 767 errors`，看着像灾难，其实**结果作废**：我在套件跑的过程中做了 rebase 和改迁移，树被换了。767 个 error 全是 DB 连接失败。稳住树重跑就是 `24 failed / 0 errors`。
+
+**跑长套件期间不要动工作树**——包括看起来无害的改动。代价是一次 9 分钟的空跑加一轮误判。
