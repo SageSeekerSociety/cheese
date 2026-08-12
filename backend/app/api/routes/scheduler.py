@@ -25,3 +25,13 @@ async def poll_open_prs(scheduler: SchedulerDep) -> dict:
     poller (the loop itself runs on `accept_pr_poll_interval_s` — same
     on-demand-trigger shape as /tick)."""
     return ok(await scheduler.poll_open_prs())
+
+
+@router.post("/sweep-abandoned-gates")
+async def sweep_abandoned_gates(scheduler: SchedulerDep) -> dict:
+    """闸门孤儿卡扫底 (2026-08-11): manually trigger one sweep. The same sweep
+    runs at startup and on `gate_sweep_interval_s`; this is the on-demand
+    trigger for when a topic is deadlocked RIGHT NOW and waiting out the
+    interval isn't acceptable. Returns the ids it condemned."""
+    result = await scheduler.sweep_abandoned_gates()
+    return ok({**result, "condemned": [str(cid) for cid in result["condemned"]]})

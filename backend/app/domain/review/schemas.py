@@ -22,6 +22,15 @@ class RejectDecision(BaseModel):
     note: str = ""
 
 
+class VoidDecision(BaseModel):
+    """人工作废 (2026-08-11). No `decided_by`, unlike the other decisions here:
+    作废 is an authorization action, so the actor comes from the session token
+    only — a caller must never be able to name someone else as the one who
+    did it. Same shape as 改验收人 (`reassign`)."""
+
+    note: str = Field(default="", max_length=2000)
+
+
 class ApprovalCreate(BaseModel):
     approver_handle: str = Field(min_length=1, max_length=64)
 
@@ -38,7 +47,9 @@ class AcceptCardOut(BaseModel):
     decided_at: datetime | None
     note: str
     created_at: datetime
-    # 机器闸门 (eval C2): set when the project's check_command passed.
+    # 机器闸门 (eval C2): when the check_command started / passed. `started` is
+    # NULL on a card whose gate never actually ran — see models.AcceptCard.
+    gate_started_at: datetime | None = None
     gate_passed_at: datetime | None = None
     gate_output: str = ""
     # PR-based accept (#188 §5.1): the real GitHub PR this card rides on.

@@ -51,6 +51,7 @@ async def lifespan(_: FastAPI):
     # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
     from app.api.deps import get_chat_service, get_turn_runner
     from app.domain.scheduler.service import (
+        GateSweepRunner,
         OrphanSweepRunner,
         PrPollRunner,
         SandboxReaperRunner,
@@ -110,6 +111,25 @@ async def lifespan(_: FastAPI):
         get_logger("cheesex.runtime").exception("orphan sweep failed")
 
     scheduler = SchedulerService(chat_service=get_chat_service())
+
+    # 闸门孤儿卡扫底 (2026-08-11): the gate runner is an in-memory asyncio task,
+    # so a redeploy kills every check in flight and nobody ever calls
+    # finish_gate — the card sits in `pending_gate` forever AND blocks its topic
+    # from ever filing another card (create_card's mutex). This runs BEFORE the
+    # periodic loop starts, and does the whole point of the startup path: right
+    # now `gate.in_flight_card_ids()` is empty, so everything past the deadline
+    # is provably abandoned by the process that died, not by this one.
+    try:
+        swept = await scheduler.sweep_abandoned_gates()
+        if swept["condemned"] or swept["errors"]:
+            get_logger("cheesex.runtime").info(
+                "gate_sweep_startup",
+                condemned=len(swept["condemned"]),
+                errors=swept["errors"],
+            )
+    except Exception:  # noqa: BLE001 — never block startup
+        get_logger("cheesex.runtime").exception("startup gate sweep failed")
+
     runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
     runner.start()
     reaper = SandboxReaperRunner(
@@ -133,6 +153,11 @@ async def lifespan(_: FastAPI):
     # nothing would ever look again. This is the loop that keeps looking.
     orphan_sweep = OrphanSweepRunner(scheduler, settings.orphan_sweep_interval_s)
     orphan_sweep.start()
+    # 闸门孤儿卡扫底: the same blind spot one layer down — a gate task can die
+    # under a process that keeps running, and then the card waits forever (see
+    # review/gate_sweep.py's module docstring).
+    gate_sweeper = GateSweepRunner(scheduler, settings.gate_sweep_interval_s)
+    gate_sweeper.start()
 
     # Enrolling provisioned machines is platform plumbing, so it runs on its own
     # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
@@ -158,6 +183,7 @@ async def lifespan(_: FastAPI):
     finally:
         await usage_ingest.stop()
         await machines.stop()
+        await gate_sweeper.stop()
         await orphan_sweep.stop()
         await upstream_sync.stop()
         await pr_poller.stop()
