@@ -148,3 +148,41 @@ async def test_an_offline_machine_is_never_offered_quarantined_or_not():
     await _device_on_project(service, project, "box")
 
     assert await service.healthy_devices_for_project(project, _online()) == []
+
+
+async def test_a_strike_from_long_ago_does_not_join_todays_failure():
+    """The streak has to be recent as well as unbroken.
+
+    Clearing it on a good turn is best effort — the turn layer only pays for that
+    clear when the same process saw the machine fail, so a strike recorded before a
+    restart has nobody left to clear it. Without ageing, that orphan would sit
+    there indefinitely and quarantine the machine on the next unrelated failure,
+    however many good turns ran in between.
+    """
+    clock = Clock()
+    service = _service(clock)
+    project = uuid.uuid4()
+    dev = await _device_on_project(service, project, "box")
+
+    await service.record_host_failure(dev, STORAGE_EXHAUSTED.code)
+    clock.advance(timedelta(hours=2))
+    verdict = await service.record_host_failure(dev, STORAGE_EXHAUSTED.code)
+
+    assert not verdict.quarantined, "two hours apart is two incidents, not a streak"
+    assert verdict.consecutive_failures == 1
+    assert await service.healthy_devices_for_project(project, _online(dev)) != []
+
+
+async def test_two_failures_close_together_still_indict_the_machine():
+    """The ageing rule must not blunt the standard it protects."""
+    clock = Clock()
+    service = _service(clock)
+    project = uuid.uuid4()
+    dev = await _device_on_project(service, project, "box")
+
+    await service.record_host_failure(dev, STORAGE_EXHAUSTED.code)
+    clock.advance(timedelta(minutes=1))
+    verdict = await service.record_host_failure(dev, STORAGE_EXHAUSTED.code)
+
+    assert verdict.quarantined
+    assert await service.healthy_devices_for_project(project, _online(dev)) == []

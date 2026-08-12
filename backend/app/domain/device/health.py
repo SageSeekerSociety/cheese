@@ -14,7 +14,9 @@ The standard (issue #186 §五, decided):
   between. One is a hiccup; the second is a pattern. The cost of the extra strike
   is one turn, and it buys immunity from single-sample flukes.
 * **Any success resets the streak** — that is what "consecutive" means, and it is
-  the machine's way out without anyone intervening.
+  the machine's way out without anyone intervening. A strike also ages out on its
+  own (``DEFAULT_STREAK_WINDOW``), which is what makes the reset safe to do on a
+  best-effort basis: see the constant.
 * **Only host-scoped codes get here at all** (see ``PlatformFailure.host_scoped``).
   A missing runtime image would follow the topic to any machine, so counting it
   would quarantine healthy boxes for a registry outage.
