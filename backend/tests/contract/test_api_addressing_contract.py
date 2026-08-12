@@ -277,6 +277,7 @@ def _module_routers() -> dict[str, list[tuple[str, frozenset[str]]]]:
 # that starts declaring them is a new 2.0 module and belongs in this list.
 _TWO_OH_MODULES = {
     "accept",
+    "agent_credential",
     "activities",
     "app_preview",
     "backend_log",
