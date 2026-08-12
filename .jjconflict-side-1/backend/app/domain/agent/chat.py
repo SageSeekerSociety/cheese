@@ -1651,9 +1651,6 @@ class ChatService:
             project_id = topic.project_id
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
-            # 盲飞防护: this topic's open accept cards, surfaced in the prompt's
-            # turn-meta header so the agent knows a gate/adoption is pending
-            # without polling.
             # 进度层 (#187): the checklist the last turn left behind. Read inside
             # tx1 with everything else the prompt is built from, so no extra
             # round trip; empty list when this topic has never had one.
@@ -1661,6 +1658,9 @@ class ChatService:
             prior_progress = [
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]
+            # 盲飞防护: this topic's open accept cards, surfaced in the prompt's
+            # turn-meta header so the agent knows a gate/adoption is pending
+            # without polling.
             open_cards = []
             if not is_private:
                 open_cards = [
