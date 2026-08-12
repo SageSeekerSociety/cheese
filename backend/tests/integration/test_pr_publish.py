@@ -182,14 +182,36 @@ def test_submit_route_dispatches_when_enabled(client, monkeypatch):
     assert str(kw["project_id"]) == pid
 
 
-def test_submit_route_stays_quiet_when_disabled(client, monkeypatch):
+def test_submit_route_stays_quiet_when_flag_off(client, monkeypatch):
+    from app.core.config import settings
     from app.domain.review import pr_publish
 
     dispatched: list[dict] = []
+    # 采纳即合并 (#296) 把 accept_via_pr 默认翻成了 True，所以「关」这条现在要显式
+    # 关掉 flag（.env 覆盖仍然能关），并且证明即便 App 配好了，flag 一关就不开 PR。
+    monkeypatch.setattr(settings, "accept_via_pr", False)
+    monkeypatch.setattr(settings, "github_app_id", 12345)
+    monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake-app.pem")
     monkeypatch.setattr(
         pr_publish, "dispatch", lambda factory, **kw: dispatched.append(kw)
     )
-    # accept_via_pr defaults to False — the flag ships dark.
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    _make_card(client, tid)
+
+    assert dispatched == []
+
+
+def test_submit_route_stays_quiet_when_app_not_configured(client, monkeypatch):
+    from app.domain.review import pr_publish
+
+    dispatched: list[dict] = []
+    # Flag defaults on now, but with no GitHub App configured `enabled()` is
+    # still False, so a project without the App never dispatches a PR open.
+    monkeypatch.setattr(
+        pr_publish, "dispatch", lambda factory, **kw: dispatched.append(kw)
+    )
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)

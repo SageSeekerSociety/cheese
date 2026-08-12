@@ -1102,6 +1102,178 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
         _reset_client()
 
 
+def test_app_pr_mechanism_suppresses_the_personal_token_pr_on_accept(
+    client, monkeypatch
+):
+    """采纳即合并 (#296) coexistence: when the App owns PR creation
+    (`pr_publish.enabled()`), accepting a PR-less card must NOT open a competing
+    personal-token PR — it degrades to the local merge instead. This is the
+    guard that makes flipping `accept_via_pr` on safe: without it, the App
+    publish and the accept-time personal-token path could both open a PR in the
+    publish race window."""
+    from app.core.config import settings
+    from app.domain.review import pr_publish
+    from app.domain.review.services import AcceptService
+
+    # A connected token AND a connected repo DO resolve — so the ONLY reason a
+    # personal-token PR is not opened is the coexistence guard, not a missing
+    # prerequisite.
+    fake = _pr_ready(client, monkeypatch)
+    try:
+        monkeypatch.setattr(settings, "accept_via_pr", True)
+        monkeypatch.setattr(settings, "github_app_id", 12345)
+        monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake.pem")
+        # The submit-side App publish is fire-and-forget; stub it so the test
+        # doesn't spawn a real installation lookup. Its being enabled() is what
+        # makes the App the owner of PR creation.
+        monkeypatch.setattr(pr_publish, "dispatch", lambda *_a, **_k: None)
+
+        opened_personal: list[dict] = []
+        real_open = AcceptService._open_pr_for_accept
+
+        async def spy_open(self, **kw):
+            opened_personal.append(kw)
+            return await real_open(self, **kw)
+
+        monkeypatch.setattr(AcceptService, "_open_pr_for_accept", spy_open)
+
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)  # born pending, no App PR recorded yet
+        r = client.post(
+            f"/api/accept-cards/{cid}/accept",
+            json={"decided_by": "alice"},
+            headers=session_auth_headers("alice"),
+        )
+        assert r.status_code == 200, r.text
+        card = r.json()["data"]
+        # No competing personal-token PR: neither the opener nor the fake GitHub
+        # client was ever touched.
+        assert opened_personal == []
+        assert fake.opened == []
+        # Degraded to the local merge (noop on an empty topic) and archived.
+        assert card["status"] == "accepted"
+        assert _topic(client, tid)["status"] == "archived"
+    finally:
+        _reset_client()
+
+
+def test_remote_head_ff_from_local_reads_real_git_ancestry(client):
+    """采纳即合并 (#296): the fast-forward pre-check reads REAL git ancestry, so
+    it correctly refuses a push that could only be non-fast-forward. Two real
+    snapshots give a genuine parent→child pair; the reversed direction is the
+    946bf5de shape (remote ahead of local)."""
+    from types import SimpleNamespace
+
+    from app.domain.review.services import AcceptService
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
+
+    wt = ws.topic_worktree(puid, tuid)
+    (wt / "a.txt").write_text("1\n")
+    ws.snapshot_worktree(puid, tuid)
+    head1 = _real_git_head(puid, tuid)
+    (wt / "a.txt").write_text("2\n")
+    ws.snapshot_worktree(puid, tuid)
+    head2 = _real_git_head(puid, tuid)
+    assert head1 != head2
+
+    svc = AcceptService(SimpleNamespace())
+    # remote sitting at the older head CAN fast-forward to the newer local head.
+    assert svc._remote_head_ff_from_local(puid, head1, head2) is True
+    # remote AHEAD of local (rewind/divergence) canNOT — the platform must not
+    # force-push over it, and re-attempting the plain push is the 946bf5de loop.
+    assert svc._remote_head_ff_from_local(puid, head2, head1) is False
+    # remote commit not even present locally to compare → fail closed.
+    assert svc._remote_head_ff_from_local(puid, "0" * 40, head2) is False
+
+
+def test_repush_skips_a_doomed_non_fast_forward_and_says_so(client, monkeypatch):
+    """采纳即合并 (#296): when the local topic branch has diverged from / fallen
+    behind the PR branch, a plain push can only be rejected non-fast-forward.
+    The poller must NOT attempt it every tick (card 946bf5de failed every ~70s)
+    — it declines, says so once on the card, and never force-pushes over the
+    commits already on the PR."""
+    from app.domain.review.services import AcceptService
+
+    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
+    try:
+        pushes: list[dict] = []
+
+        def spy_push(_pid, _tid, *, owner, repo, remote_branch, token):
+            pushes.append({"remote_branch": remote_branch})
+            return {"head_sha": "must-not-happen", "remote_branch": remote_branch}
+
+        monkeypatch.setattr(ws, "push_topic_branch_for_github_pr", spy_push)
+        # 芝士's local head moved, but it diverged from the PR branch.
+        monkeypatch.setattr(
+            AcceptService,
+            "_local_topic_branch_head",
+            lambda _s, _p, _t: "moved-but-diverged",
+        )
+        monkeypatch.setattr(
+            AcceptService, "_remote_head_ff_from_local", lambda *_a, **_k: False
+        )
+        # CI is red this tick too — the divergence note must win over a CI nudge,
+        # since 芝士's fix never reached the PR (the red CI on record is stale).
+        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("failure", "lint 挂了")
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert pushes == []  # the doomed push was never attempted
+        assert card["status"] == "pr_open"
+        assert card["note"].startswith("🌿 本地分支与 PR 分支已分叉")
+        assert _topic(client, tid)["status"] == "active"
+
+        # 60s polling: no spam, still no push on the next tick.
+        note = card["note"]
+        _poll(client)
+        again = _cards_for_topic(client, tid)[0]
+        assert pushes == []
+        assert again["note"] == note
+    finally:
+        _reset_client()
+
+
+def test_merged_pr_is_settled_without_re_pushing_a_moved_local_head(
+    client, monkeypatch
+):
+    """采纳即合并 (#296) deliverable 4, stated literally: the poll checks
+    merged/closed FIRST and收卡, so a merged PR is never re-pushed — even when
+    the local head has moved since (which would otherwise trigger a re-push)."""
+    from app.domain.review.services import AcceptService
+
+    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
+    try:
+        pushes: list[dict] = []
+
+        def spy_push(_pid, _tid, *, owner, repo, remote_branch, token):
+            pushes.append({"remote_branch": remote_branch})
+            return {"head_sha": "must-not-happen", "remote_branch": remote_branch}
+
+        monkeypatch.setattr(ws, "push_topic_branch_for_github_pr", spy_push)
+        monkeypatch.setattr(
+            AcceptService,
+            "_local_topic_branch_head",
+            lambda _s, _p, _t: "moved-local-head",
+        )
+        # The PR was merged on GitHub between accept and this poll.
+        fake.merge_externally(number, merge_commit_sha="merged-commit-sha")
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert pushes == []  # merged-first guard returned before any re-push
+        assert card["pr_merged_at"] is not None
+        assert "人工合并" in card["note"]
+        assert fake.merge_calls == []  # never tried to merge an already-merged PR
+    finally:
+        _reset_client()
+
+
 def test_accept_without_token_or_repo_degrades_to_direct_merge(client):
     """No monkeypatching at all here: default test env has no connected
     token/repo, so this must behave EXACTLY like the pre-existing direct

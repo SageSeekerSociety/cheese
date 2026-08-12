@@ -376,6 +376,13 @@ def test_repush_failure_still_outranks_a_ci_failure(client, monkeypatch):
             "_local_topic_branch_head",
             lambda _self, _p, _t: "local-head-moved",
         )
+        # 采纳即合并 (#296) 加了「快进不了就不推」的前置判断，靠真的
+        # `git merge-base` 判祖先。这里用的是假 sha，判不出祖先关系会走到「分叉」
+        # 分支而不是真去推。本用例要测的是**推送失败**那条 note 的优先级，所以
+        # 让快进判断放行，push 才会被调用并抛错。
+        monkeypatch.setattr(
+            AcceptService, "_remote_head_ff_from_local", lambda *_a, **_k: True
+        )
 
         def boom(*_a, **_k):
             # 与生产同一种失败：push 失败抛 ValidationError（见 ws.push_*）。
