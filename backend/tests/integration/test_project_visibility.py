@@ -90,3 +90,31 @@ def test_a_team_id_filter_still_answers_for_that_team(client):
     r = client.get("/api/projects?team_id=999999")
     assert r.status_code == 200
     assert r.json()["data"]["total"] == 0
+
+
+def test_a_real_login_token_sees_the_project_it_owns(
+    api_client, authenticated_user, auth_headers
+):
+    """The case the anonymous-branch change could plausibly have broken.
+
+    Scoping only helps if a genuinely signed-in caller still resolves to
+    someone. The e2e suite caught the difference the unit tests could not: it
+    logs in the way a browser does — the 知是 access token, `sub` an int user id
+    plus a `handle` claim — which is a different token family from the
+    handle-only session tokens the rest of these tests mint. If that family
+    failed to resolve, every real user's sidebar would go empty instead of
+    over-full, which is a worse bug than the one being fixed.
+    """
+    handle = authenticated_user.username
+    created = api_client.post(
+        "/api/projects", json={"name": "登录用户的项目"}, headers=auth_headers
+    )
+    assert created.status_code == 200
+    assert created.json()["data"]["owner_handle"] == handle, (
+        "creation must attribute the project to the token's handle, or nothing "
+        "downstream has a claim on it"
+    )
+
+    body = api_client.get("/api/projects", headers=auth_headers).json()["data"]
+    assert [p["name"] for p in body["data"]] == ["登录用户的项目"]
+    assert body["total"] == 1
