@@ -1,5 +1,6 @@
 """Signed state for the #192 GitHub App install / account-link flows."""
 
+import base64
 import uuid
 
 from app.core import github_install_state as gis
@@ -26,7 +27,19 @@ def test_install_state_garbage_rejected():
 def test_install_state_tampered_rejected():
     state = gis.mint_install_state(uuid.uuid4())
     header, payload, sig = state.split(".")
-    forged = f"{header}.{payload}.{sig[:-2]}xx"
+    # Tamper with the *decoded* signature. The obvious version of this — overwrite
+    # the last two base64url characters with "xx" — is not always a forgery: an
+    # HS256 signature is 32 bytes, which base64url-encodes to 43 characters, and
+    # 43 characters carry 258 bits. The two spare bits mean four different final
+    # characters (w/x/y/z) decode to the same byte, so whenever a signature
+    # happened to end in "xw", "xx", "xy" or "xz" the "forged" token decoded to
+    # the genuine signature and verified — measured at 209 in 200_000 mints
+    # (0.10%), which is how this test turned up red on a PR that touches nothing
+    # near it. Flipping a bit after decoding always changes the HMAC.
+    raw = base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4))
+    forged_sig = base64.urlsafe_b64encode(bytes([raw[0] ^ 0x01]) + raw[1:]).rstrip(b"=")
+    forged = f"{header}.{payload}.{forged_sig.decode()}"
+    assert forged != state
     assert gis.verify_install_state(forged) is None
 
 
