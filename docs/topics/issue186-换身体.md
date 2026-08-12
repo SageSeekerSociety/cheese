@@ -1,4 +1,4 @@
-## 状态：**已实现，全量套件跑完**，基线是本地 main `5fcf3f33`（其上游锚点 `main@upstream` = `0e5b5fa1`）
+## 状态：**已实现，全量套件跑完，PR #301 的迁移链冲突已修**（本地 main `b4a8a9bfed4f`）
 
 对应 [#186](https://github.com/SageSeekerSociety/cheese/issues/186) 第一节「身体能不能用」。第二节（agent 待在哪）维持现状 A，不在本卡范围；第三节归 #187。
 
@@ -8,7 +8,7 @@
 |---|---|
 | ruff check + format（全 backend，含 `alembic/`） | All checks passed / 758 files formatted |
 | pyright `app/` | 0 errors |
-| alembic heads | 单头 `b7e3c19d4f80` |
+| alembic heads | 在 CI 的 merge ref 上是单头 `b7e3c19d4f80`；**本地报 `KeyError` 是预期的，见 §6** |
 | repo guards（仓库规则 + actions SHA 钉版） | PASS |
 | migration fork vs main | PASS（合并不会劈叉 alembic 链） |
 | **全量后端套件** | **4066 passed, 31 skipped, 24 failed** —— 24 个全部是沙箱环境问题，逐条见 §5 |
