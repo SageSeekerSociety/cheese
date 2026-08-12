@@ -1049,6 +1049,29 @@ class TurnRunner:
         if resume_after is not None and not is_resume:
             rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
             self._schedule_resume(chat_service, topic_id, resume_after, resume_why)
+        else:
+            # 结论卡·阶段一 (机制①): this topic's turn ended and any conclusion
+            # card it was handed is still open → 默认采信. THE place to put this
+            # is here: transport-independent, so SDK/tmux/device backends all
+            # get it. Skipped when a resume is queued — the continuation turn is
+            # the one that will actually read the card. Best-effort: the 30-minute
+            # sweeper is the backstop, and nothing here may break the turn.
+            try:
+                from datetime import UTC, datetime
+
+                from app.domain.conclusion.services import settle_turn_cards
+
+                settled = await settle_turn_cards(
+                    chat_service.session_factory,
+                    topic_id,
+                    turn_started_at=datetime.fromtimestamp(rec["started_at"], UTC),
+                )
+                if settled:
+                    logger.info(
+                        "turn end: auto-accepted %d conclusion card(s)", settled
+                    )
+            except Exception:  # noqa: BLE001 — a turn must never fail on this
+                logger.exception("conclusion settle failed for topic %s", topic_id)
         reg = _load_inflight()
         if reg.pop(str(turn_id), None) is not None:
             _save_inflight(reg)

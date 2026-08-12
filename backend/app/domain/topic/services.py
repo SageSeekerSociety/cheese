@@ -18,6 +18,8 @@ from app.domain.agent import clone
 from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conclusion.models import ConclusionCard
+from app.domain.conclusion.services import ConclusionCardService
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
 from app.domain.identity.handles import looks_like_agent_handle
@@ -691,11 +693,16 @@ class TopicService:
 
     async def return_conclusion(
         self, *, subtopic_id: uuid.UUID, conclusion: str
-    ) -> Block:
+    ) -> tuple[Block, ConclusionCard | None]:
         """结论回流 (spec §6.1 / eval C4): a sub-topic's (分身) conclusion flows
         back to its parent (本体) three ways — a referencing message in the
         conversation, woven into the parent's living doc (so 分身 stay consistent
         via the doc, spec §8.4), and a change-alert so the coordinator is notified.
+
+        结论卡·阶段一 (purely additive): a 4th thing now happens — an ``open``
+        conclusion card is filed for the parent to settle, which is what finally
+        gives 回流 a receipt, a status and idempotency. The three side effects
+        above are UNCHANGED; nothing about the old flow depends on the card.
         """
         sub = await self.get_or_404(subtopic_id)
         if sub.parent_id is None:
@@ -735,4 +742,13 @@ class TopicService:
             body=markdown_preview(conclusion, 200),
             topic_id=sub.parent_id,
         )
-        return block
+
+        # 4) 结论卡: the receipt. Opening it can't fail the 回流 — a parent that
+        # was already archived has no turn left to settle a card, so it gets the
+        # three side effects above and no card.
+        card = None
+        if parent is not None and parent.status != TopicStatus.archived:
+            card = await ConclusionCardService(self._session).open_for_conclusion(
+                sub=sub, parent=parent, conclusion=conclusion
+            )
+        return block, card
