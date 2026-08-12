@@ -6,8 +6,8 @@ claimed would stop matching and all five side effects would be repeated — the
 keys would still be there, still durable, and completely inert.
 
 So this is the load-bearing assertion of the whole 下半: a turn and every
-automatic resume of it are ONE unit of work, on all three resume paths
-(timeout / crash / process restart).
+automatic continuation of it are ONE unit of work, on all three paths
+(timeout resume / crash resume / restart re-send).
 """
 
 import asyncio
@@ -42,6 +42,13 @@ class _Quiet:
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         return {"id": "b1", "content": text}
 
+    async def orphan_turn_evidence(self, topic_id, turn_ids):
+        # No trace anywhere → the sweep may re-send (the path under test).
+        return {"delivered": set(), "spool": False}
+
+    def schedule_spool_settle(self, topic_id, delay_s=2.0):
+        return None
+
 
 def _capture_resumes(runner, monkeypatch) -> list[dict]:
     seen: list[dict] = []
@@ -50,6 +57,16 @@ def _capture_resumes(runner, monkeypatch) -> list[dict]:
         seen.append({"topic": tid, "continuation_id": continuation_id})
 
     monkeypatch.setattr(runner, "_schedule_resume", _fake)
+    return seen
+
+
+def _capture_resends(runner, monkeypatch) -> list[dict]:
+    seen: list[dict] = []
+
+    def _fake(_chat, tid, after, content, *, continuation_id=None):
+        seen.append({"topic": tid, "continuation_id": continuation_id})
+
+    monkeypatch.setattr(runner, "_schedule_resend", _fake)
     return seen
 
 
@@ -107,11 +124,13 @@ async def test_crash_resume_inherits_the_continuation(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_orphan_sweep_resumes_under_the_recorded_continuation(
+async def test_orphan_resend_runs_under_the_recorded_continuation(
     tmp_path, monkeypatch
 ):
     """The path that actually broke in production: the process dies, so the
-    continuation has to come back off DISK, not out of memory."""
+    continuation has to come back off DISK, not out of memory. The sweep's
+    remedy for an undelivered prompt is a re-send now, but the invariant is the
+    same one: it runs under the dead turn's recorded continuation."""
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     topic = uuid.uuid4()
     continuation = uuid.uuid4()
@@ -122,19 +141,21 @@ async def test_orphan_sweep_resumes_under_the_recorded_continuation(
                 "started_at": _time.time() - 60,
                 "is_resume": False,
                 "continuation_id": str(continuation),
+                "author": "u",
+                "content": "修一下登录页",
             }
         }
     )
     runner = TurnRunner(InProcessBroker())
-    seen = _capture_resumes(runner, monkeypatch)
+    seen = _capture_resends(runner, monkeypatch)
     assert await runner.resume_orphans(_Quiet()) == 1
     assert seen[0]["continuation_id"] == continuation
 
 
 @pytest.mark.anyio
 async def test_legacy_orphan_entry_falls_back_to_its_turn_id(tmp_path, monkeypatch):
-    """An entry written before the field existed still resumes — under its own
-    turn id, which IS what its continuation would have been."""
+    """An entry written before the continuation field existed still re-sends —
+    under its own turn id, which IS what its continuation would have been."""
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     topic = uuid.uuid4()
     turn_id = uuid.uuid4()
@@ -144,17 +165,19 @@ async def test_legacy_orphan_entry_falls_back_to_its_turn_id(tmp_path, monkeypat
                 "topic_id": str(topic),
                 "started_at": _time.time() - 60,
                 "is_resume": False,
+                "author": "u",
+                "content": "修一下登录页",
             }
         }
     )
     runner = TurnRunner(InProcessBroker())
-    seen = _capture_resumes(runner, monkeypatch)
+    seen = _capture_resends(runner, monkeypatch)
     assert await runner.resume_orphans(_Quiet()) == 1
     assert seen[0]["continuation_id"] == turn_id
 
 
 @pytest.mark.anyio
-async def test_an_unparseable_entry_still_resumes_instead_of_killing_the_sweep(
+async def test_an_unparseable_entry_still_resends_instead_of_killing_the_sweep(
     tmp_path, monkeypatch
 ):
     """A corrupt entry must not raise out of the sweep: the sweep is what
@@ -168,17 +191,21 @@ async def test_an_unparseable_entry_still_resumes_instead_of_killing_the_sweep(
                 "topic_id": str(uuid.uuid4()),
                 "started_at": _time.time() - 60,
                 "is_resume": False,
+                "author": "u",
+                "content": "任务甲",
             },
             str(uuid.uuid4()): {
                 "topic_id": str(good_topic),
                 "started_at": _time.time() - 60,
                 "is_resume": False,
                 "continuation_id": str(uuid.uuid4()),
+                "author": "u",
+                "content": "任务乙",
             },
         }
     )
     runner = TurnRunner(InProcessBroker())
-    seen = _capture_resumes(runner, monkeypatch)
+    seen = _capture_resends(runner, monkeypatch)
     assert await runner.resume_orphans(_Quiet()) == 2
     assert all(isinstance(s["continuation_id"], uuid.UUID) for s in seen)
     assert good_topic in {s["topic"] for s in seen}

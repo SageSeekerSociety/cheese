@@ -831,6 +831,11 @@ class ChatService:
         # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
         # only keeps weak refs; without this a pending commit could be GC'd).
         self._memory_tasks: set[asyncio.Task] = set()
+        # Debounce + strong refs for background spool settles (attach 收账,
+        # #316): topics with a settle already scheduled, and the tasks running
+        # them so they can't be GC'd mid-drain.
+        self._settle_pending: set[uuid.UUID] = set()
+        self._settle_tasks: set[asyncio.Task] = set()
 
     @property
     def session_factory(self) -> async_sessionmaker:
@@ -1001,6 +1006,110 @@ class ChatService:
                 not balance["unlimited"] and balance["credits_remaining"] <= 0
             ),
         }
+
+    async def orphan_turn_evidence(
+        self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
+    ) -> dict:
+        """Did claude demonstrably RECEIVE each of these turns' prompts?
+
+        The orphan sweep decides attach-vs-re-send on this (#316): re-sending a
+        task claude already heard is how one deploy stacked five zombie turns
+        on a topic. Two sources, matching the two places a hook can leave a
+        durable trace:
+
+        - ``delivered``: turn ids among ``turn_ids`` that own at least one
+          AI-authored block — the live hook/stream path persisted it, so claude
+          acted on the prompt.
+        - ``spool``: the topic's durable spool holds any event beyond
+          SessionStart (which fires at launch, BEFORE the prompt is typed).
+          Spool entries carry no turn id, so this is topic-level evidence — it
+          vetoes every re-send on the topic rather than crediting one turn.
+        """
+        async with self._sessions() as session:
+            topic = await TopicRepository(session).get(topic_id)
+            if topic is None:
+                return {"delivered": set(), "spool": False}
+            blocks = await BlockRepository(session).list_for_topic(topic_id)
+        wanted = set(turn_ids)
+        delivered = {
+            b.turn_id
+            for b in blocks
+            if b.turn_id in wanted and b.author_type == AuthorType.ai
+        }
+        spool = False
+        for _path, _eid, payload in event_spool.spool_entries(
+            ws.spool_dir(topic.project_id, topic_id)
+        ):
+            if not isinstance(payload, dict):
+                continue
+            name = str(
+                payload.get("hook_event_name") or payload.get("hookEventName") or ""
+            )
+            if name != "SessionStart":
+                spool = True
+                break
+        return {"delivered": delivered, "spool": spool}
+
+    async def settle_spool(self, topic_id: uuid.UUID) -> int:
+        """Drain the topic's hook spool NOW, with no turn required. Returns how
+        many blocks were landed (each is also broadcast on the topic channel).
+
+        The reconcile normally runs at the next turn's start — which is exactly
+        never for an orphan the sweep attaches to instead of re-prompting
+        (#316): the events the surviving claude keeps sending (its Stop
+        included) would sit parked until a human happened to speak. This is
+        that missing drain: the same `_reconcile_spool`, under the same topic
+        lock so it can never race a turn's own reconcile, frames published to
+        the broker so open clients see the backfill live."""
+        async with self._sessions() as session:
+            topic = await TopicRepository(session).get(topic_id)
+        if topic is None:
+            return 0
+        from app.domain.agent.runtime import get_broker
+
+        broker = get_broker()
+        channel = str(topic_id)
+        landed = 0
+        async with self._lock_for(topic_id):
+            async for frame in self._reconcile_spool(topic.project_id, topic_id, None):
+                await broker.publish(channel, frame)
+                landed += 1
+        if landed:
+            # The backfilled frames were buffered as an in-progress turn; close
+            # the buffer so a reconnecting client isn't told one is mid-stream.
+            await broker.publish(channel, {"type": "done"})
+        return landed
+
+    def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
+        """Debounced background ``settle_spool``. Two callers: the hooks
+        endpoint when it parks an event with no turn listening (so a working
+        claude's progress — and its Stop — lands within seconds instead of
+        waiting for the next summon), and the orphan sweep when it attaches to
+        an interrupted turn (so anything already parked lands now)."""
+        if topic_id in self._settle_pending:
+            return
+        self._settle_pending.add(topic_id)
+
+        async def _later() -> None:
+            try:
+                await asyncio.sleep(delay_s)
+                # Cleared BEFORE the drain: a hook parked mid-settle must be
+                # able to schedule the next round rather than being missed.
+                self._settle_pending.discard(topic_id)
+                landed = await self.settle_spool(topic_id)
+                if landed:
+                    logger.info(
+                        "spool settle landed %d block(s) for topic %s",
+                        landed,
+                        topic_id,
+                    )
+            except Exception:  # noqa: BLE001 — a settle must never crash the loop
+                self._settle_pending.discard(topic_id)
+                logger.exception("spool settle failed for topic %s", topic_id)
+
+        task = asyncio.create_task(_later())
+        self._settle_tasks.add(task)
+        task.add_done_callback(self._settle_tasks.discard)
 
     async def _save_session_pointer(self, topic_id: uuid.UUID, session_id: str) -> None:
         """Best-effort: point the topic at the (possibly partial) session so the
@@ -1322,12 +1431,21 @@ class ChatService:
         No-op for the sdk backend (no spool dir) and an empty spool. Best-effort: a
         reconcile failure never blocks the turn.
 
-        Scope: 现场 tool events AND 芝士 chat messages (MessageDisplay) — both are
-        idempotent by event-id, so a copy the live path already persisted is
-        skipped. Backfilled messages skip mention-notify (the moment passed), but
-        they DO yield a WS frame like the live path — a hook that missed its turn's
-        listening window must still reach the frontend, just without threading or
-        an @-notify (bug: it was landing as a silent DB row nobody saw)."""
+        Scope: 现场 tool events, 芝士 chat messages (MessageDisplay), AND the
+        turn-ending Stop — all idempotent by event-id, so a copy the live path
+        already persisted is skipped. Backfilled messages skip mention-notify
+        (the moment passed), but they DO yield a WS frame like the live path — a
+        hook that missed its turn's listening window must still reach the
+        frontend, just without threading or an @-notify (bug: it was landing as
+        a silent DB row nobody saw).
+
+        The Stop is what lets an ORPHANED turn finish (#316): a backend restart
+        kills the waiter, not the working claude, and the sweep no longer
+        re-prompts a claude that heard the task — so its Stop arrives with no
+        turn listening, gets parked, and has to close the books from here: save
+        the finished session's pointer, and land its final message unless a
+        MessageDisplay (live or in this same batch) already carries that text —
+        Stop's last_assistant_message is normally a copy of the last one."""
         try:
             entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
             if not entries:
@@ -1341,12 +1459,47 @@ class ChatService:
                 for b in blocks
                 if isinstance(b.meta, dict) and isinstance(b.meta.get("eid"), str)
             }
+            # Text-level dedup for the Stop's final message (it has its OWN eid,
+            # so eid dedup can never match it against the MessageDisplay twin).
+            known_texts = {
+                (b.content or "").strip()
+                for b in blocks
+                if b.kind == BlockKind.message and b.author_type == AuthorType.ai
+            }
             recovered = 0
             for _path, eid, payload in entries:
                 if payload is None or eid in seen:
                     continue
                 payload["_eid"] = eid
                 event = translate_hook(payload)
+                if isinstance(event, AgentResult):
+                    if event.session_id:
+                        # The finished session is what the next summon must
+                        # resume — without this the topic keeps pointing at
+                        # whatever SessionStart last managed to save live.
+                        await self._save_session_pointer(topic_id, event.session_id)
+                    text = (event.text or "").strip()
+                    if not text or text in known_texts:
+                        seen.add(eid)
+                        continue
+                    block_payload = await self._persist_assistant_message(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        text=event.text,
+                        turn_id=turn_id,
+                        reply_to=None,
+                        roster=None,
+                        topic_refs=[],
+                        eid=eid,
+                        backfilled=True,
+                    )
+                    seen.add(eid)
+                    known_texts.add(text)
+                    if block_payload is None:
+                        continue
+                    recovered += 1
+                    yield {"type": "assistant_block", "block": block_payload}
+                    continue
                 if isinstance(event, AgentMessage):
                     # A chat message whose live delivery was lost — land it as
                     # history (no reply threading, no notify: the moment passed)
@@ -1363,13 +1516,16 @@ class ChatService:
                         backfilled=True,
                     )
                     seen.add(eid)
+                    # Feed the Stop's text dedup even when this copy itself was
+                    # suppressed — the text exists either way.
+                    known_texts.add((event.text or "").strip())
                     if block_payload is None:
                         continue  # unreachable today (no continuation → no dedup)
                     recovered += 1
                     yield {"type": "assistant_block", "block": block_payload}
                     continue
                 if not isinstance(event, AgentToolUse):
-                    continue  # SessionStart/Stop have no historical counterpart
+                    continue  # SessionStart has no historical counterpart
                 name = event.name.replace("mcp__cheese__", "")
                 if name in _TASK_TOOLS:
                     continue  # task todos are process state, not persisted 现场
