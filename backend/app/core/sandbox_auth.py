@@ -236,6 +236,7 @@ def project_agent_claims(token: str) -> ProjectAgentClaims | None:
         expires_at=datetime.fromtimestamp(expires, UTC),
     )
 
+
 def is_global_sandbox_token(token: str) -> bool:
     """True for the signing secret used directly (dev / trusted-single-host
     override). It carries NO project scope, so a caller accepting it must get the
