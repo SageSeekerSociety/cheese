@@ -255,6 +255,11 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
 
         async def converse(self, **_):
             yield {"type": "user_block"}
+            # 说过话之后才卡住。这一帧是必需的，不是装饰：它把这一轮明确地放进
+            # 「跑起来了然后卡住」那一类，而不是「压根没起来」那一类
+            # （见 test_cold_start_watchdog.py）。两类共用这个 except 分支、
+            # 报的话术不同，而这条测试要钉的是前者那句。
+            yield {"type": "assistant_block", "text": "在看了"}
             await asyncio.sleep(10)  # wedge, well past the 1s ceiling
             yield {"type": "done"}  # pragma: no cover
 
@@ -291,6 +296,10 @@ async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_defa
 
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 2.0}
+            # 同上：`turn_ceiling` 只说明选中了哪个后端，不说明它起来了。要让这一轮
+            # 真的按「后端自己的上限」跑完再超时，它得先开口——否则冷启动保险丝
+            # 会先把它按「运行环境没起来」砍掉，报的就是另一句话。
+            yield {"type": "assistant_block", "text": "在看了"}
             await asyncio.sleep(10)  # wedge, well past the rescheduled 2s
             yield {"type": "done"}  # pragma: no cover
 

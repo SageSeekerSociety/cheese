@@ -177,10 +177,19 @@ class TurnRunner:
     keeps it resolved through FastAPI's dependency overrides (e.g. tests)."""
 
     def __init__(
-        self, broker: InProcessBroker, *, turn_timeout_s: float = 900.0
+        self,
+        broker: InProcessBroker,
+        *,
+        turn_timeout_s: float = 900.0,
+        first_output_timeout_s: float = 300.0,
     ) -> None:
         self._broker = broker
         self._timeout = turn_timeout_s
+        # 冷启动看门狗: how long a turn may produce NOTHING before it is called
+        # dead. Separate from `turn_timeout_s` because it answers a different
+        # question — that one asks "is this turn taking too long?", this one asks
+        # "did this turn ever start?". 0 disables it. See `_execute`.
+        self._first_output_timeout_s = first_output_timeout_s
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
@@ -962,7 +971,37 @@ class TurnRunner:
             # Every other backend never emits this frame, so their behaviour here
             # is byte-for-byte unchanged.
             loop_start = asyncio.get_running_loop().time()
+            # 冷启动看门狗: until the model has said ANYTHING, the wrap runs on a
+            # much shorter fuse than the turn ceiling.
+            #
+            # A turn whose substrate never comes up is indistinguishable, from
+            # out here, from one thinking hard — both are silence. So the ceiling
+            # (900s for tmux) was what ended them, and for 900 seconds the topic
+            # reported 进行中 while nothing existed to make progress. On
+            # 2026-08-12 that took the whole dev platform down for 30 minutes:
+            # every topic's turn started in the same second, ran with `tools=0`
+            # and `first_output_s=None`, and each one occupied its full ceiling
+            # before failing. The information needed to call it was there from
+            # second one.
+            #
+            # The fuse only covers the gap BEFORE first output; once a `tool` or
+            # `assistant_block` arrives the deadline is pushed out to the real
+            # ceiling and this layer is gone for the rest of the turn. So a slow
+            # turn is never cut short — only a turn that never started.
+            #
+            # `turn_ceiling` deliberately does NOT lift the fuse: chat.py emits it
+            # up front, before the container is touched, so it proves a backend
+            # was selected and nothing more. It is remembered and applied at first
+            # output instead.
+            first_output_fuse_s = self._first_output_timeout_s
+            ceiling_s = self._timeout
+            if first_output_fuse_s:
+                fuse_deadline = loop_start + min(first_output_fuse_s, self._timeout)
+            else:
+                fuse_deadline = None
             async with asyncio.timeout(self._timeout) as turn_deadline:
+                if fuse_deadline is not None:
+                    turn_deadline.reschedule(fuse_deadline)
                 turn_frames = (
                     frames
                     if frames is not None
@@ -989,10 +1028,24 @@ class TurnRunner:
                     self._last_frame_at[str(turn_id)] = time.monotonic()
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
-                        turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
                         # `topic_turn()` reads this so `cheese status` reports the
                         # backend's REAL ceiling, not the generic outer default.
                         rec["ceiling_s"] = ceiling_s
+                        if fuse_deadline is None:
+                            turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
+                        else:
+                            # Still silent, so the fuse keeps its say: the deadline
+                            # is whichever of the two comes FIRST. A backend that
+                            # declares a ceiling shorter than the fuse still gets
+                            # cut at its own ceiling; one that declares 900s does
+                            # not thereby buy 900 seconds of silence — that is
+                            # exactly the failure the fuse exists to cut short,
+                            # and this frame is emitted before the container is
+                            # touched, so it cannot vouch for anything being up.
+                            fuse_deadline = loop_start + max(
+                                0.0, min(ceiling_s, first_output_fuse_s)
+                            )
+                            turn_deadline.reschedule(fuse_deadline)
                         continue
                     if kind == "resume_hint":
                         # Internal: chat layer says this failure is worth an
@@ -1006,6 +1059,11 @@ class TurnRunner:
                         and rec["first_output_s"] is None
                     ):
                         rec["first_output_s"] = round(time.monotonic() - t0, 2)
+                        # The model spoke: the substrate is up, so hand the turn
+                        # its real ceiling and retire the cold-start fuse.
+                        if fuse_deadline is not None:
+                            fuse_deadline = None
+                            turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
                     if kind == "tool":
                         rec["tools"] += 1
                     if kind == "error":
@@ -1083,18 +1141,46 @@ class TurnRunner:
             # `self._timeout`, so logging the base default here would be
             # misleading about what actually elapsed before the cut.
             effective_ceiling_s = round(rec.get("ceiling_s") or self._timeout)
-            logger.warning(
-                "turn %s timed out (>%ss, elapsed %ss) for topic %s; interrupted",
-                turn_id,
-                effective_ceiling_s,
-                rec["duration_s"],
-                topic_id,
+            # Two different failures share this handler, and telling them apart is
+            # the whole point of the cold-start fuse. "Ran a long time and wedged"
+            # is a turn problem — resuming it is reasonable. "Never produced a
+            # token" is an ENVIRONMENT problem (no container, no disk, no model
+            # connection): resuming just spends another fuse on the same wall, and
+            # saying 已完成的改动都在 is a lie, because nothing ran.
+            never_started = bool(
+                rec["first_output_s"] is None and self._first_output_timeout_s
             )
-            text = (
-                f"⚠️ 芝士这轮超时被中断了（{effective_ceiling_s}秒的上限，"
-                f"实际跑了约{rec['duration_s']}秒，可能卡在某步）。"
-                "已完成的改动都在；马上自动接着跑一次。"
-            )
+            if never_started:
+                logger.error(
+                    "turn %s produced no output within %ss for topic %s; "
+                    "treating as a substrate failure (tools=%s)",
+                    turn_id,
+                    round(self._first_output_timeout_s),
+                    topic_id,
+                    rec["tools"],
+                )
+                rec["detail"] = "no first output"
+                text = (
+                    f"⚠️ 芝士这轮**一个字都没输出**"
+                    f"（{round(self._first_output_timeout_s)}秒内没有任何模型输出，"
+                    "也没有任何工具调用），按运行环境没起来处理。"
+                    "常见原因是沙箱容器建不起来、磁盘满了、或者模型侧连不上"
+                    "——不是芝士卡在某一步，所以这里没有「已完成的改动」。"
+                    "会自动再试一次；再失败就先去看平台状态，反复 @ 它没有用。"
+                )
+            else:
+                logger.warning(
+                    "turn %s timed out (>%ss, elapsed %ss) for topic %s; interrupted",
+                    turn_id,
+                    effective_ceiling_s,
+                    rec["duration_s"],
+                    topic_id,
+                )
+                text = (
+                    f"⚠️ 芝士这轮超时被中断了（{effective_ceiling_s}秒的上限，"
+                    f"实际跑了约{rec['duration_s']}秒，可能卡在某步）。"
+                    "已完成的改动都在；马上自动接着跑一次。"
+                )
             block = None
             try:
                 block = await chat_service.post_system_event(topic_id, text, turn_id)
