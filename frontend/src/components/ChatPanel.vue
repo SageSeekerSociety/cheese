@@ -28,6 +28,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { answerOptions, attachmentRawUrl, chatWsUrl, listBlocks, toggleReaction as apiToggleReaction } from '../api'
 import { usePendingAttachments } from '../lib/attachments'
+import { backendErrorPresentation } from '../lib/backendErrorEvent'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { platformErrorPresentation } from '../lib/platformEvents'
@@ -414,8 +415,15 @@ function cancelRetry() {
   }
 }
 
+// An auth refusal is not an outage: the backend closes the socket after one
+// error frame, so retrying just reopens and gets refused again — silently, at
+// 1s→15s forever, with the banner saying 正在自动重连. The message the user
+// needs (登录已失效) would be overwritten by the next retry's banner. So we
+// latch it: stop retrying and keep the reason on screen until they act.
+const authRefused = ref(false)
+
 function scheduleReconnect(topicId: string) {
-  if (retryTimer) return
+  if (retryTimer || authRefused.value) return
   const delay = retryDelayMs
   retryDelayMs = Math.min(retryDelayMs * 2, 15000)
   retryTimer = setTimeout(() => {
@@ -459,7 +467,7 @@ function openSocket(topicId: string) {
   }
   ws.onerror = () => {
     // The close handler owns retry; the banner just explains the grey dot.
-    errorMsg.value = '连接断开，正在自动重连…'
+    if (!authRefused.value) errorMsg.value = '连接断开，正在自动重连…'
   }
   ws.onmessage = (ev: MessageEvent) => {
     // Guard against frames from a stale socket after topic switch.
@@ -524,6 +532,14 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'error':
+      // The socket could not authenticate — the backend closes right after this
+      // frame, so latch the reason and stop the reconnect loop from burying it.
+      if (frame.code === 'auth_expired' || frame.code === 'auth_required') {
+        authRefused.value = true
+        errorMsg.value = frame.message
+        awaitingReply.value = false
+        return
+      }
       // A persisted turn failure is already in the timeline as an event block
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
@@ -549,6 +565,7 @@ function handleFrame(frame: WsServerFrame) {
 
 async function loadTopic(topic: Topic) {
   errorMsg.value = null
+  authRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
   todoItems.value = []
   reactionPickerFor.value = null
@@ -641,7 +658,6 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   const msg: WsClientMessage = {
     type: 'message',
     content: trimmed,
-    author: AUTHOR,
     summon,
     reply_to: replyTarget.value?.id ?? undefined,
     attachments: atts,
@@ -758,7 +774,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
       kind: 'member' as const,
       insert: m.name || m.user_handle,
       sub: `@${m.user_handle}`,
-      agent: m.user_handle === 'cheese',
+      agent: !!m.agent,
     })),
     ...props.topicList
       .filter((t) => t.kind !== 'root')
@@ -999,6 +1015,27 @@ onBeforeUnmount(() => {
                 {{ ACTION_META[actionResource(m)!].btn }}
               </button>
             </div>
+            <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
+               person needs to know it happened. So the line shows by default
+               and the stack is one click away — a room is a conversation, not
+               a monitoring dashboard. -->
+            <details v-else-if="backendErrorPresentation(m)" class="backend-error" data-testid="backend-error-event">
+              <summary class="backend-error__line">
+                <span>{{ backendErrorPresentation(m)!.line }}</span>
+                <span v-if="backendErrorPresentation(m)!.count" class="backend-error__count">
+                  ×{{ backendErrorPresentation(m)!.count }}
+                </span>
+              </summary>
+              <div class="backend-error__meta">
+                <span v-if="backendErrorPresentation(m)!.where">{{ backendErrorPresentation(m)!.where }}</span>
+                <span v-if="backendErrorPresentation(m)!.requestId">
+                  req {{ backendErrorPresentation(m)!.requestId }}
+                </span>
+              </div>
+              <pre v-if="backendErrorPresentation(m)!.stack" class="backend-error__stack">{{
+                backendErrorPresentation(m)!.stack
+              }}</pre>
+            </details>
             <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
                Content may carry a <@handle> actor token (归档/编辑…): render it
                through the SAME token→chip path as messages so the actor is a
@@ -1941,6 +1978,57 @@ onBeforeUnmount(() => {
 .im-event span {
   display: inline-block;
   padding: 0 10px;
+}
+
+/* 后端报错: collapsed by default — one quiet line among the system lines, with
+   the traceback behind a click. Louder than 编辑了文档, quieter than a platform
+   incident card. */
+.backend-error {
+  margin: 8px 16px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, #c65a1e 22%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #c65a1e 5%, transparent);
+  font-size: 12px;
+}
+.backend-error__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-muted, var(--faint));
+  list-style: none;
+}
+.backend-error__line > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.backend-error__count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #c65a1e 16%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.backend-error__meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.backend-error__stack {
+  margin: 6px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-sunken, rgb(0 0 0 / 4%));
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
 }
 
 .caret {

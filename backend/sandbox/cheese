@@ -14,7 +14,7 @@
   cheese split "数据清洗"           # 拆出子话题
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
-  cheese recall "技术选型"          # 按需检索记忆(语义搜索)
+  cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
@@ -172,6 +172,17 @@ def _format_status(d: dict) -> str:
             lines.extend(
                 "    " + ln for ln in c["gate_output_tail"].splitlines()[-15:]
             )
+    bg = d.get("background") or {}
+    for t in bg.get("tasks") or []:
+        lines.append(
+            f"后台任务: 「{t.get('label')}」已跑 {t.get('running_s')}s"
+            f"（上限 {t.get('timeout_s')}s）；输出: {t.get('log_path')}"
+        )
+    if bg.get("snapshot_held_by"):
+        lines.append(
+            f"自动快照: 已暂停，等「{bg['snapshot_held_by']}」跑完再落"
+            "——它还在改工作区，现在提交只会把中间态冻进话题分支。"
+        )
     plat = d.get("platform") or {}
     disk = plat.get("disk")
     if disk:
@@ -206,10 +217,28 @@ _AWAIT_RETRY_DELAYS = (0, 5, 30)
 
 
 def _await_log_path(run_id: str) -> str:
-    """Where a backgrounded command's full output goes. Deliberately OUTSIDE the
-    worktree: these logs would otherwise be committed with the topic's work."""
-    home = os.environ.get("HOME") or "/tmp"
-    log_dir = os.path.join(home, ".cheese", "await")
+    """Where a backgrounded command's full output goes.
+
+    Two things it must not be. NOT the worktree — these logs would be committed
+    with the topic's work (a full check run's output is megabytes of it). And NOT
+    the container's own filesystem, which is where they used to go: `await` exists
+    FOR commands that run for hours, which is exactly long enough to be caught by
+    a container rebuild, and a rebuild took the log with it — the run's only
+    evidence, gone (measured 2026-08-11).
+
+    The session mount is both: host-backed (it is what carries --resume state and
+    the hook spool across rebuilds) and outside the worktree."""
+    log_dir = os.environ.get("CHEESE_AWAIT_LOGS") or ""
+    if not log_dir:
+        home = os.environ.get("HOME") or "/tmp"
+        session = os.path.join(home, ".claude")
+        # The container-local fallback is for a CLI run with no session mount at
+        # all; losing the log beats refusing to run the command.
+        log_dir = (
+            os.path.join(session, "cheese-await")
+            if os.path.isdir(session)
+            else os.path.join(home, ".cheese", "await")
+        )
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, f"{run_id}.log")
 
@@ -518,12 +547,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     prec = sub.add_parser(
         "recall",
-        help="按需检索记忆（语义搜索,返回摘要级结果）",
+        help="按需检索记忆（关键词检索,不是语义检索）",
         description=(
-            "语义搜索项目记忆。开场只注入了记忆的**摘要**,所以:需要某条的细节、"
-            "或怀疑有相关旧记忆没出现在摘要里时,先 recall 再回答。"
-            "输出是摘要级的,不是原文。"
+            "检索项目记忆。开场注入的不是全部——放不下的会被截断,"
+            "而且截断时注入块会明说「另有 N 条更早的记忆没放进来」。所以:"
+            "需要某条的细节、或怀疑有相关旧记忆没出现在开场里时,先 recall 再回答。\n"
+            "\n"
+            "这是**关键词检索**,不是语义检索:你的问题会被拆成关键词,"
+            "按命中覆盖度排序。**一次没查到不等于没有这条记忆**——"
+            "换个说法、或只用其中一两个关键词再试一次。"
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     prec.add_argument("query", help="关键词或问题,自然语言即可")
 
@@ -600,6 +634,27 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pc.add_argument("conclusion", help="结论摘要,给父话题看的")
+
+    pcc = sub.add_parser(
+        "conclusion",
+        help="结算子话题回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
+        description=(
+            "结算子话题回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
+            "自动采信，另有 30 分钟绝对超时兜底,所以「什么都不做」等于同意。\n"
+            "只有你要改变默认结果时才用它: need-evidence 让子话题补一条证据"
+            "(要付一整轮,且每张卡最多打回 1 次), escalate 是要人拍板。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pcc.add_argument(
+        "action",
+        choices=["accept", "need-evidence", "escalate"],
+        help="accept=采信(可不做,默认就会采信) / need-evidence=让子话题补一条证据 / escalate=要人拍板",
+    )
+    pcc.add_argument("card", help="结论卡 id（消化提示里带着）")
+    pcc.add_argument(
+        "reason", nargs="?", default="", help="need-evidence/escalate 必填：要补什么/要谁拍什么板"
+    )
 
     pm = sub.add_parser(
         "milestone",
@@ -749,7 +804,10 @@ def main() -> None:
             body["owner"] = OWNER
         hits = _call("POST", f"/projects/{proj}/memory/search", body).get("data", {}).get("hits", [])
         if not hits:
-            print("没有找到相关记忆。")
+            # 关键词检索没命中 ≠ 没有这条记忆。说清楚这一点,否则一次空结果就会被
+            # 当成"确认不存在",然后一头撞上那条记忆本来要拦住的坑。
+            print("没有找到相关记忆。（关键词检索,不是语义检索：换个说法、"
+                  "或只用其中一两个关键词再试一次）")
         for h in hits:
             print(f"- {h.get('abstract', '')}")
     elif a.cmd == "ask":
@@ -781,6 +839,24 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/return-conclusion", {"conclusion": a.conclusion})
         print("已把结论回流父话题。")
+    elif a.cmd == "conclusion":
+        # 路由挂在父话题下：per-turn token 按 URL 里的 topic 校验作用域，而结算
+        # 这一步是父话题在自己那一轮做的，所以 CHEESE_TOPIC 就是收方。
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if a.action in ("need-evidence", "escalate") and not a.reason.strip():
+            print(f"[cheese] {a.action} 必须写理由", file=sys.stderr)
+            sys.exit(2)
+        body = {"decided_by": AUTHOR}
+        if a.reason:
+            body["reason"] = a.reason
+        _call("POST", f"/topics/{topic}/conclusion-cards/{a.card}/{a.action}", body)
+        print(
+            {
+                "accept": "已采信该结论，子话题归档。",
+                "need-evidence": "已让子话题补证据（它会被叫醒一轮）。",
+                "escalate": "已升级，等人拍板。",
+            }[a.action]
+        )
     elif a.cmd == "milestone":
         proj = _need("CHEESE_PROJECT", PROJECT)
         body = {"title": a.title}

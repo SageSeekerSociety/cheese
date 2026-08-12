@@ -1,6 +1,6 @@
 # Project Conventions
 
-Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `e2e/` (Playwright). See `README.md` for setup and commands.
+Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `cli/` (Go) + `e2e/` (Playwright) + `evals/`. See `README.md` for setup and commands. When you need the full list of language surfaces (CI coverage audits, lint/test sweeps), get it from `ls` at the repo root — not from this line.
 
 Procedural guidance lives in `.claude/` (skills, path-scoped rules, agents, scripts — `ls .claude/` is the inventory), not in always-on prose here: review → `cheese-py-code-review` skill, post-pull → `post-pull` skill, running tests where there is no docker → `.claude/scripts/dev-db.sh` (see Testing); area-specific pitfalls (migrations, backend tests, e2e) live in `.claude/rules/` and load automatically when you touch matching files. This file holds only the always-relevant conventions below.
 
@@ -65,6 +65,46 @@ bash .claude/scripts/check.sh   # alternative: shell script
 
 After `git pull`: `bash .claude/scripts/post-pull.sh`
 
+## Sandbox Capability Boundaries
+
+Read this before you plan work that touches VCS, CI, or the network. These are
+**not** hypotheticals — every "can't" below was reproduced in an agent sandbox.
+The dangerous ones are the tools that **fail silently or report success**.
+
+### What works
+
+| Need | The supported path |
+|---|---|
+| Read CI logs / check runs / workflow runs | `cheese gh-token` mints a ~1h read-only GitHub token → `GH_TOKEN=$(cheese gh-token) gh api ...`. **This is the only sanctioned route**, and nothing else in the repo will lead you to it |
+| Run the DB-backed test suite without docker | `.claude/scripts/dev-db.sh` (see Testing) |
+| Long-running commands | `cheese await` — the platform wakes the topic with the exit code, instead of you blocking |
+
+### What does not work
+
+- **`jj git fetch` / `jj git push` are unavailable.** The box ships git 2.39.5;
+  jj requires >= 2.41. The failure is explicit, so this one at least tells you:
+  `Error: Git does not recognize required option: porcelain`.
+  **You cannot sync with upstream from inside the sandbox.** Do not plan around
+  "I'll rebase onto latest main first" — you can't see latest main.
+- **The `gh` token is actions/checks scoped only.** `gh api repos/{owner}/{repo}/commits`,
+  PR file lists, and PR conflict data all return **403 Resource not accessible by
+  integration**. You can read what CI *did*; you cannot read what the repo *contains*.
+
+### Failures that look like success
+
+- **A push that reports success but lands nothing** (seen in #267). After any
+  push, **read the branch tip SHA back and confirm it changed**. A report of
+  "pushed successfully" that was never verified against the remote tip is not
+  evidence of anything.
+- **Checks that pass on a stale base.** Your workspace can be days behind main,
+  and editing a file another PR already changed is, to git, an ordinary
+  modification — not a conflict. It merges cleanly and **silently reverts the
+  other change**. If you are editing a file you did not create, say so in your
+  report so a human can check.
+
+Neither of these raises an error, and neither is caught by tests or lint. The
+only defense is writing the boundary down — which is what this section is.
+
 ## Python Conventions
 
 - Python >=3.13. `list[str]`, `dict[int, str]`, `X | None` natively. No `from __future__ import annotations`.
@@ -88,6 +128,7 @@ Route → Service → Repository → Model
 
 ## API Design
 
+- **A route's path is not a URL you can send.** The backend is mounted at `/api` on the app origin, and the gateway strips that one segment — so a 1.0 route (`/users/…`) is reached at `/api/users/…` and a 2.0 route (which carries its own `/api`) at `/api/api/topics/…`. The doubling is deliberate and load-bearing; flattening it makes six endpoints answer from the wrong generation. Writing a client, or wondering why a call 404s or returns HTML: [`docs/api-conventions.md`](docs/api-conventions.md).
 - RESTful: GET/POST/PUT/DELETE on `/resource`.
 - Pagination: `pageStart` + `pageSize`. Return `{data: [...], total: int}`.
 - Response format: `{"code": 200, "message": "...", "data": {...}}`.
@@ -159,6 +200,18 @@ work here — conftest strips them on purpose (see the comment at the top of the
 file) — but it never touches global config, which is why the `git config` route
 does. Verified: with the identity set the whole batch goes green.
 
+**Install `jj` too** — same story as the git identity: a container rebuild wipes
+it, and nothing in `uv sync` puts it back. Symptom is unmistakable once you know
+it: every DB-backed test that builds a real workspace dies with
+`FileNotFoundError: [Errno 2] No such file or directory: 'jj'` (10 failures in
+`test_upstream.py` alone). Project repos are jj-colocated, so the app shells out
+to the binary. Install the same version CI does (`.github/workflows/test.yml`):
+
+```bash
+curl -sSL https://github.com/jj-vcs/jj/releases/download/v0.43.0/jj-v0.43.0-x86_64-unknown-linux-musl.tar.gz \
+  | tar -xz -C /tmp/jj-dl && mv /tmp/jj-dl/jj ~/.local/bin/jj && jj --version
+```
+
 Two sandbox gaps are left, and both are **missing host setup, not code defects**.
 Don't spend time re-diagnosing them:
 
@@ -189,6 +242,7 @@ Don't spend time re-diagnosing them:
 - After `git pull`, run `bash .claude/scripts/post-pull.sh`.
 - **All commits go through PR**: never commit directly to main.
 - **Multiple agents work this repo concurrently.** Before starting a fix, check open PRs and recent main commits for the same problem. In a jj workspace there is nothing to stage — the working copy is the commit — so the equivalent discipline is to run `jj status` before you hand work off and review every path in it. A cache directory in that list (43k files once) is a stop sign.
+- **Never `git stash` in a worktree.** Worktrees share one `.git`, so they share one stash stack: a `pop` returns whichever session pushed last, not yours. Two sessions collided this way on 2026-08-12 and each popped the other's diff — recoverable only via `git fsck --unreachable`, and the stack already held several `recovered:` entries from earlier collisions. To set changes aside, write a patch (`git diff > /tmp/x.patch`) or add another worktree.
 - Box operations (env changes, container recreation) go through `deploy/deploy-docker.sh` only — see the runbook in `docs/infrastructure.md`. Hand-rolled `docker compose up` drops the deploy script's image-pin exports and has broken dev before.
 
 ## Documentation Map

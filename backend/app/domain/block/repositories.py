@@ -7,7 +7,13 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.turn_context import current_turn_id
-from app.domain.block.models import AuthorType, Block, BlockKind, BlockReaction
+from app.domain.block.models import (
+    CONSUMED_TURN_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+    BlockReaction,
+)
 
 
 @dataclass(frozen=True)
@@ -88,6 +94,23 @@ class BlockRepository:
         await self._session.refresh(block)
         return block
 
+    async def mark_consumed(
+        self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
+    ) -> None:
+        """Stamp human blocks as read into turn `turn_id`'s prompt.
+
+        This is what makes the next turn's pending window a fact instead of a
+        guess (see CONSUMED_TURN_META_KEY). `meta` is a plain JSON column, so the
+        dict is REPLACED rather than mutated in place — an in-place mutation is
+        invisible to SQLAlchemy's change detection and would silently not save.
+        """
+        if not block_ids:
+            return
+        stmt = select(Block).where(Block.id.in_(block_ids))
+        for block in (await self._session.scalars(stmt)).all():
+            block.meta = {**(block.meta or {}), CONSUMED_TURN_META_KEY: str(turn_id)}
+        await self._session.flush()
+
     async def update_node(
         self, block: Block, *, node_type: str, struct_order: float
     ) -> Block:
@@ -138,6 +161,25 @@ class BlockRepository:
             .order_by(Block.created_at, Block.id)
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def latest_for_topic(self, topic_id: uuid.UUID) -> Block | None:
+        """The newest block in the topic's timeline, or None for an empty topic.
+
+        Same total order and same exclusions as `list_for_topic`, so "the last
+        thing in the topic" means here exactly what the reader sees at the
+        bottom of the conversation — which is what makes a stall verdict built
+        on it checkable by hand.
+        """
+        stmt = (
+            select(Block)
+            .where(
+                Block.topic_id == topic_id,
+                Block.kind.not_in(self._NON_TIMELINE),
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(1)
+        )
+        return (await self._session.scalars(stmt)).first()
 
     async def page_for_topic(
         self,

@@ -45,7 +45,9 @@ async def add_member(
 
 @router.get("/api/projects/{project_id}/members")
 async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
+    from app.domain.identity.repositories import AgentBindingRepository
     from app.domain.project.repositories import ProjectRepository
+    from app.domain.user.repositories import UserRepository
 
     members, total = await MemberService(db).list_for_project(project_id)
     # Attach display names (User.name) so the UI can resolve @名字 → handle.
@@ -53,10 +55,21 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
         m["handle"]: m["name"]
         for m in await ProjectRepository(db).list_members(project_id)
     }
+    # Same is-agent derivation as the topic roster: a member is an agent iff it
+    # carries an AgentBinding — never a handle-string check. The UI badges and
+    # filters on this, and every topic's 分身 acts under its own
+    # ``cheese-<topic hex>`` handle, so matching the bare string would mis-label
+    # any 分身 that ever lands on a project roster.
+    users = UserRepository(db)
+    rows = {m.user_handle: await users.get_by_handle(m.user_handle) for m in members}
+    user_ids = [u.id for u in rows.values() if u is not None]
+    agent_ids = await AgentBindingRepository(db).agent_user_ids(user_ids)
     items = []
     for m in members:
         d = MemberOut.model_validate(m).model_dump(mode="json")
         d["name"] = names.get(m.user_handle, m.user_handle)
+        user = rows.get(m.user_handle)
+        d["agent"] = user is not None and user.id in agent_ids
         items.append(d)
     return ok(page(items, total))
 

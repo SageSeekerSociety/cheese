@@ -7,11 +7,19 @@ to the one that wrote it.
 """
 
 import asyncio
+import uuid
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.domain.identity.handles import topic_agent_handle
 from tests.conftest import TEST_DATABASE_URL
+from tests.integration.conftest import chat_ws_url
+
+
+def _own_agent(topic_id: str) -> str:
+    """The 分身 a room is seeded with: its own agent-user, not a shared account."""
+    return topic_agent_handle(uuid.UUID(topic_id))
 
 
 def _seed_agent(handle: str) -> None:
@@ -43,10 +51,8 @@ def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
 
 def _turn(client, topic_id: str) -> list[dict]:
     """Run one summoned turn against the stub agent, return its frames."""
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "hi", "author": "alice", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "hi", "summon": True})
         frames = []
         while True:
             frame = ws.receive_json()
@@ -60,11 +66,12 @@ def _ai_authors(client, topic_id: str) -> set[str]:
     return {b["author"] for b in blocks if b["author_type"] == "ai"}
 
 
-def test_default_room_attributes_ai_blocks_to_cheese(client):
-    """The seeded roster carries 芝士, so nothing changes for existing rooms."""
+def test_default_room_attributes_ai_blocks_to_its_own_agent(client):
+    """The seeded roster carries THIS room's 分身, and its blocks say so —
+    the point of 分身独立身份: two rooms' work is told apart by its author."""
     _, topic_id = _project_and_topic(client)
     _turn(client, topic_id)
-    assert _ai_authors(client, topic_id) == {"cheese"}
+    assert _ai_authors(client, topic_id) == {_own_agent(topic_id)}
 
 
 def test_ai_blocks_follow_the_rooms_agent_not_a_fixed_handle(client):
@@ -81,7 +88,9 @@ def test_ai_blocks_follow_the_rooms_agent_not_a_fixed_handle(client):
         json={"handle": "ops", "role": "member", "actor": "alice"},
     )
     assert r.status_code == 200
-    r = client.delete(f"/api/topics/{topic_id}/members/cheese?actor=alice")
+    r = client.delete(
+        f"/api/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice"
+    )
     assert r.status_code == 200
 
     _turn(client, topic_id)
@@ -97,7 +106,7 @@ def test_the_summon_receipt_carries_the_same_agent(client):
         f"/api/topics/{topic_id}/members",
         json={"handle": "ops", "role": "member", "actor": "alice"},
     )
-    client.delete(f"/api/topics/{topic_id}/members/cheese?actor=alice")
+    client.delete(f"/api/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
 
     frames = _turn(client, topic_id)
     ack = next(f for f in frames if f["type"] == "reaction")
@@ -111,7 +120,7 @@ def _swap_agent(client, topic_id: str, handle: str) -> None:
         f"/api/topics/{topic_id}/members",
         json={"handle": handle, "role": "member", "actor": "alice"},
     )
-    client.delete(f"/api/topics/{topic_id}/members/cheese?actor=alice")
+    client.delete(f"/api/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
 
 
 def _remember(client, project_id: str, topic_id: str, fact: str) -> None:
@@ -193,10 +202,8 @@ def test_the_shared_pool_stays_readable_by_every_agent(client):
 
 def _post_without_summon(client, topic_id: str, content: str, author: str) -> None:
     """Post a human message that notifies but starts no turn."""
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": content, "author": author, "summon": False}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+        ws.send_json({"type": "message", "content": content, "summon": False})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break
@@ -244,7 +251,7 @@ def test_human_members_are_not_mistaken_for_agents(client):
         json={"handle": "bob", "role": "member", "actor": "alice"},
     )
     _turn(client, topic_id)
-    assert _ai_authors(client, topic_id) == {"cheese"}
+    assert _ai_authors(client, topic_id) == {_own_agent(topic_id)}
 
 
 # --- 记忆可见: the agent's own pool has to be listable, not just searchable ---
@@ -271,7 +278,7 @@ def test_listing_a_project_shows_what_its_agents_remembered(client):
     entries = _list_memory(client, project_id)
     assert [e["content"] for e in entries] == ["部署脚本在 deploy/deploy.sh"]
     assert entries[0]["scope"] == "agent_project"
-    assert entries[0]["scope_id"] == f"{project_id}:cheese"
+    assert entries[0]["scope_id"] == f"{project_id}:{_own_agent(topic_id)}"
 
 
 def test_listing_covers_every_agent_pool_in_the_project(client):
@@ -296,7 +303,7 @@ def test_listing_covers_every_agent_pool_in_the_project(client):
         "告警阈值是 p99 500ms",
     }
     assert {e["scope_id"] for e in everything} == {
-        f"{project_id}:cheese",
+        f"{project_id}:{_own_agent(cheese_room)}",
         f"{project_id}:ops",
     }
 

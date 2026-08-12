@@ -350,7 +350,10 @@ export function getUserProfile(handle: string): Promise<UserProfile> {
   return request<UserProfile>(`/users/${encodeURIComponent(handle)}/profile`)
 }
 
-export type TopicSortField = 'updated_at' | 'title'
+// `last_activity_at` = 最后活动时间 (the topic's newest block). `updated_at` is
+// the row's own mtime and does NOT move when a block lands — it is kept only
+// because the API still accepts it.
+export type TopicSortField = 'last_activity_at' | 'updated_at' | 'title'
 export type TopicSortOrder = 'asc' | 'desc'
 
 export function listTopics(

@@ -2,11 +2,24 @@
 
 import asyncio
 import errno
+import time
 import uuid
 
 import pytest
 
 from app.domain.agent.runtime import InProcessBroker, TurnRunner
+
+
+async def _park_a_task() -> asyncio.Task:
+    """A real, cancellable task standing in for a turn's `_run` coroutine — the
+    sweep cancels wedged turns, so a plain sentinel would not exercise it."""
+
+    async def _never():
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(_never())
+    await asyncio.sleep(0)  # let it reach the await, so cancel() is meaningful
+    return task
 
 
 class _FakeChat:
@@ -526,18 +539,157 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
     monkeypatch.setattr(
         runner,
         "_schedule_resume",
-        lambda _chat, tid, after, why: scheduled.append((tid, after, why)),
+        lambda _chat, tid, after, why, **_kw: scheduled.append((tid, after, why)),
+    )
+
+    class _Chat:
+        def __init__(self):
+            self.events: list[tuple[uuid.UUID, str]] = []
+
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            self.events.append((topic_id, text))
+            return {"id": "b1", "content": text}
+
+    chat = _Chat()
+    n = await runner.resume_orphans(chat)
+    assert n == 1
+    assert [s[0] for s in scheduled] == [topic]
+    # 宁可吵，不可静默: all three get an event — the resumed one AND the two we
+    # refuse to resume. A dropped turn that says nothing is what made a dead
+    # topic look exactly like a working one.
+    assert len(chat.events) == 3
+    dropped = [text for tid, text in chat.events if tid != topic]
+    assert len(dropped) == 2
+    assert all("@ 芝士" in text for text in dropped)
+    # registry cleared: a second sweep is a no-op
+    assert await runner.resume_orphans(_Chat()) == 0
+
+
+@pytest.mark.anyio
+async def test_periodic_sweep_claims_turn_killed_without_a_restart(
+    tmp_path, monkeypatch
+):
+    """The 101/173-minute hole: a turn can be killed (container recreate, OOM,
+    sandbox swap) while the PROCESS lives on. Nothing then re-reads the registry
+    on the startup path, so the sweep must also run periodically — and it must
+    tell the live turns apart from the corpses."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    dead_topic = uuid.uuid4()
+    live_topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "dead": {
+                "topic_id": str(dead_topic),
+                "started_at": _time.time() - 600,
+                "is_resume": False,
+            },
+            "live": {
+                "topic_id": str(live_topic),
+                "started_at": _time.time() - 600,
+                "is_resume": False,
+            },
+        }
+    )
+
+    runner = TurnRunner(InProcessBroker())
+    task = await _park_a_task()  # this process really is running it
+    runner._live["live"] = task
+    runner._last_frame_at["live"] = time.monotonic()
+    scheduled: list[uuid.UUID] = []
+    monkeypatch.setattr(
+        runner,
+        "_schedule_resume",
+        lambda _chat, tid, after, why, **_kw: scheduled.append(tid),
     )
 
     class _Chat:
         async def post_system_event(self, topic_id, text, turn_id=None):
             return {"id": "b1", "content": text}
 
-    n = await runner.resume_orphans(_Chat())
-    assert n == 1
-    assert [s[0] for s in scheduled] == [topic]
-    # registry cleared: a second sweep is a no-op
-    assert await runner.resume_orphans(_Chat()) == 0
+    assert await runner.sweep_orphans(_Chat()) == 1
+    assert scheduled == [dead_topic]
+    # The live turn keeps its registry entry — its own completion path owns it.
+    assert list(rt._load_inflight()) == ["live"]
+    # And a second sweep does not double-resume the one already claimed.
+    assert await runner.sweep_orphans(_Chat()) == 0
+
+
+@pytest.mark.anyio
+async def test_periodic_sweep_ignores_a_just_started_turn(tmp_path, monkeypatch):
+    """Belt-and-braces against resuming a live turn: an entry younger than
+    SWEEP_MIN_AGE_S is never claimed, even if `_live` somehow missed it."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    rt._save_inflight(
+        {
+            "fresh": {
+                "topic_id": str(uuid.uuid4()),
+                "started_at": _time.time() - 2,
+                "is_resume": False,
+            }
+        }
+    )
+    runner = TurnRunner(InProcessBroker())
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            raise AssertionError("a just-started turn must not be touched")
+
+    assert await runner.sweep_orphans(_Chat()) == 0
+    assert list(rt._load_inflight()) == ["fresh"]
+
+
+@pytest.mark.anyio
+async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
+    """Crossing the 2h line must not be a silent `continue`. We still don't
+    auto-resume (that part was right) — but the topic has to say so, because a
+    human is now the only thing that can move it."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "old": {
+                "topic_id": str(topic),
+                "started_at": _time.time() - 10380,  # 173 min, the real incident
+                "is_resume": False,
+            }
+        }
+    )
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+    seen: list[dict] = []
+
+    async def _capture(channel, frame):
+        seen.append(frame)
+
+    monkeypatch.setattr(broker, "publish", _capture)
+
+    class _Chat:
+        def __init__(self):
+            self.texts: list[str] = []
+
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            self.texts.append(text)
+            return {"id": "b1", "content": text}
+
+    chat = _Chat()
+    assert await runner.sweep_orphans(chat) == 0  # not resumed...
+    assert len(chat.texts) == 1  # ...but not silent either
+    assert "173" in chat.texts[0]  # says how long it has been dead
+    assert "@ 芝士" in chat.texts[0]  # says what the human can do
+    assert rt._load_inflight() == {}  # claimed, so it is not re-announced
+    assert [f["type"] for f in seen] == ["event_block"]  # pushed to the UI live
 
 
 @pytest.mark.anyio
@@ -570,3 +722,341 @@ async def test_in_flight_reflects_replay_buffer():
     assert broker.in_flight("t") is True
     await broker.publish("t", {"type": "done"})
     assert broker.in_flight("t") is False
+
+
+@pytest.mark.anyio
+async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch):
+    """The 8-hour incident (2026-08-11): three topics went quiet after their last
+    block and nothing noticed all night, while this process was up the whole
+    time. The task was still in `_live` — what died was the container it drove —
+    so `registry - _live` alone sweeps right past it. Silence is the judge."""
+    import time as _time
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "wedged": {
+                "topic_id": str(topic),
+                "started_at": _time.time() - 8 * 3600,
+                "is_resume": False,
+            }
+        }
+    )
+    runner = TurnRunner(InProcessBroker())
+    task = await _park_a_task()
+    runner._live["wedged"] = task
+    # Both signals cold: no frame for 8h, and the topic's newest block is 8h old.
+    runner._last_frame_at["wedged"] = time.monotonic() - 8 * 3600
+
+    async def _last_block(topic_ids):
+        assert topic_ids == {topic}
+        return {topic: datetime.now(UTC) - timedelta(hours=8)}
+
+    class _Chat:
+        def __init__(self):
+            self.texts: list[str] = []
+
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            self.texts.append(text)
+            return {"id": "b1", "content": text}
+
+    chat = _Chat()
+    # 8h is past ORPHAN_STALE_S, so it is not auto-resumed — but it must still be
+    # torn down and announced, which is the entire point.
+    assert await runner.sweep_orphans(chat, last_activity=_last_block) == 0
+    await asyncio.sleep(0)
+    assert task.cancelled() or task.cancelling()  # the zombie no longer holds the lock
+    assert len(chat.texts) == 1
+    assert "卡死" in chat.texts[0]  # says HOW it died, not just that it did
+    assert "@ 芝士" in chat.texts[0]
+    assert rt._load_inflight() == {}
+
+
+@pytest.mark.anyio
+async def test_sweep_spares_a_turn_grinding_through_tools(tmp_path, monkeypatch):
+    """A tool call persists no Block, so a turn deep in a tool chain can look
+    silent to the DB while being perfectly alive. Cancelling that is worse than
+    catching a corpse late — the frame signal is what prevents it."""
+    import time as _time
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "busy": {
+                "topic_id": str(topic),
+                "started_at": _time.time() - 4 * 3600,
+                "is_resume": False,
+            }
+        }
+    )
+    runner = TurnRunner(InProcessBroker())
+    task = await _park_a_task()
+    runner._live["busy"] = task
+    runner._last_frame_at["busy"] = time.monotonic() - 5  # a tool frame just now
+
+    async def _last_block(topic_ids):
+        return {topic: datetime.now(UTC) - timedelta(hours=4)}  # DB says silent
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            raise AssertionError("a turn that is still emitting frames is alive")
+
+    assert await runner.sweep_orphans(_Chat(), last_activity=_last_block) == 0
+    assert not task.cancelled()
+    assert list(rt._load_inflight()) == ["busy"]  # untouched
+    task.cancel()
+
+
+@pytest.mark.anyio
+async def test_sweep_spares_live_turns_when_the_activity_probe_fails(
+    tmp_path, monkeypatch
+):
+    """A DB hiccup must not become a mass cancellation: with no usable evidence
+    of silence, a live turn is assumed alive."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    rt._save_inflight(
+        {
+            "live": {
+                "topic_id": str(uuid.uuid4()),
+                "started_at": _time.time() - 9 * 3600,
+                "is_resume": False,
+            }
+        }
+    )
+    runner = TurnRunner(InProcessBroker())
+    task = await _park_a_task()
+    runner._live["live"] = task
+    runner._last_frame_at["live"] = time.monotonic() - 9 * 3600
+
+    async def _boom(topic_ids):
+        raise RuntimeError("PG is down")
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            raise AssertionError("no verdict may be reached without evidence")
+
+    assert await runner.sweep_orphans(_Chat(), last_activity=_boom) == 0
+    assert not task.cancelled()
+    assert list(rt._load_inflight()) == ["live"]
+    task.cancel()
+
+
+@pytest.mark.anyio
+async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeypatch):
+    """Under ORPHAN_STALE_S the wedged turn gets the full treatment: torn down,
+    announced, AND continued — nobody has to come back and @ it by hand."""
+    import time as _time
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "wedged": {
+                "topic_id": str(topic),
+                "started_at": _time.time() - 2700,  # 45 min: silent, but not stale
+                "is_resume": False,
+            }
+        }
+    )
+    runner = TurnRunner(InProcessBroker())
+    task = await _park_a_task()
+    runner._live["wedged"] = task
+    runner._last_frame_at["wedged"] = time.monotonic() - 2700
+    scheduled: list[tuple[uuid.UUID, float]] = []
+    monkeypatch.setattr(
+        runner,
+        "_schedule_resume",
+        lambda _chat, tid, after, why, **_kw: scheduled.append((tid, after)),
+    )
+
+    async def _last_block(topic_ids):
+        return {topic: datetime.now(UTC) - timedelta(seconds=2700)}
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            return {"id": "b1", "content": text}
+
+    assert await runner.sweep_orphans(_Chat(), last_activity=_last_block) == 1
+    await asyncio.sleep(0)
+    assert task.cancelled() or task.cancelling()
+    # Resumed with a delay, not instantly: the cancelled task needs to unwind
+    # before it lets go of the topic lock.
+    assert scheduled == [(topic, 10.0)]
+
+
+@pytest.mark.anyio
+async def test_sweep_keeps_a_turn_that_registered_while_it_was_probing(
+    tmp_path, monkeypatch
+):
+    """The sweep must not delete registry entries it never looked at.
+
+    It loads the registry, then AWAITS the activity probe, then writes back. A
+    turn that starts inside that window writes its own entry — and writing back
+    the pre-probe snapshot erases it. The turn keeps running with nothing on
+    disk, so no later sweep can ever find it: its death would be silent forever,
+    which is the exact failure this whole mechanism exists to end.
+    """
+    import time as _time
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    dead_topic, new_topic = uuid.uuid4(), uuid.uuid4()
+    rt._save_inflight(
+        {
+            "wedged": {
+                "topic_id": str(dead_topic),
+                "started_at": _time.time() - 8 * 3600,
+                "is_resume": False,
+            }
+        }
+    )
+    runner = TurnRunner(InProcessBroker())
+    task = await _park_a_task()
+    runner._live["wedged"] = task
+    runner._last_frame_at["wedged"] = time.monotonic() - 8 * 3600
+
+    async def _last_block(topic_ids):
+        # A fresh turn starts while the probe is in flight, exactly as a real
+        # `_execute` would: load, add itself, save.
+        reg = rt._load_inflight()
+        reg["newcomer"] = {
+            "topic_id": str(new_topic),
+            "started_at": _time.time(),
+            "is_resume": False,
+        }
+        rt._save_inflight(reg)
+        return {dead_topic: datetime.now(UTC) - timedelta(hours=8)}
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            return {"id": "b1", "content": text}
+
+    await runner.sweep_orphans(_Chat(), last_activity=_last_block)
+
+    left = rt._load_inflight()
+    assert "wedged" not in left  # claimed and announced
+    assert "newcomer" in left  # never judged, so never dropped
+    task.cancel()
+
+
+@pytest.mark.anyio
+async def test_live_turn_for_topic_tracks_a_running_turn(tmp_path, monkeypatch):
+    """The heartbeat half of the stall verdict (`/topics/{id}/status` → `stall`).
+
+    It has to answer from what the process is REALLY executing, not from
+    `_recent`: that ring buffer records what turns did, so it keeps saying
+    `running` about a turn the process died holding. Here: nothing before the
+    turn, a live entry with a fresh frame stamp while it streams, nothing again
+    once it ends.
+    """
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+    topic = uuid.uuid4()
+    assert runner.live_turn_for_topic(topic) is None
+
+    streaming = asyncio.Event()
+    finish = asyncio.Event()
+
+    class _Slow:
+        async def converse(self, **_):
+            yield {"type": "user_block"}
+            streaming.set()
+            await finish.wait()
+            yield {"type": "done"}
+
+    turn_id = runner.submit(_Slow(), topic, author="u", content="hi", summon=True)
+    await asyncio.wait_for(streaming.wait(), 1)
+    live = runner.live_turn_for_topic(topic)
+    assert live is not None
+    assert live["turn_id"] == str(turn_id)
+    assert live["silent_for_s"] < 5  # a frame just went out
+    assert runner.live_turn_for_topic(uuid.uuid4()) is None  # scoped to its topic
+
+    finish.set()
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if runner.live_turn_for_topic(topic) is None:
+            break
+    assert runner.live_turn_for_topic(topic) is None
+
+
+@pytest.mark.anyio
+async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch):
+    """Tearing a wedged turn down must also END it for every reader.
+
+    The sweep kills a wedged turn with `task.cancel()`. CancelledError is a
+    BaseException, so it misses every `except` in `_execute`: the lifecycle
+    record stayed `running` forever, and that record is exactly what
+    `GET /topics` (`running`) and `/topics/{id}/status` (`turn`) report. The
+    platform went on saying 芝士 was working on a turn it had just killed, and
+    the broker's replay buffer kept greeting every reconnect with `turn_active`
+    — the 8-hour incident's symptom outliving its own fix.
+    """
+    import time as _time
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    broker = InProcessBroker()
+    runner = TurnRunner(broker, turn_timeout_s=300)
+    topic = uuid.uuid4()
+    streaming = asyncio.Event()
+
+    class _DeadContainer:
+        """A turn whose sandbox died mid-stream: frames stop, the task lives."""
+
+        async def converse(self, **_):
+            yield {"type": "user_block"}
+            streaming.set()
+            await asyncio.sleep(300)
+
+    runner.submit(_DeadContainer(), topic, author="u", content="hi", summon=True)
+    await asyncio.wait_for(streaming.wait(), 1)
+    assert topic in runner.running_topic_ids()
+    assert broker.in_flight(str(topic)) is True
+
+    # Age it into the sweep's sights: both signals cold for eight hours.
+    turn_id = next(iter(runner._live))
+    runner._last_frame_at[turn_id] = time.monotonic() - 8 * 3600
+    reg = rt._load_inflight()
+    reg[turn_id]["started_at"] = _time.time() - 8 * 3600
+    rt._save_inflight(reg)
+
+    async def _last_block(topic_ids):
+        return {topic: datetime.now(UTC) - timedelta(hours=8)}
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None):
+            return {"id": "b1", "content": text}
+
+    await runner.sweep_orphans(_Chat(), last_activity=_last_block)
+    for _ in range(50):  # let the cancellation land at the turn's await point
+        await asyncio.sleep(0)
+        if topic not in runner.running_topic_ids():
+            break
+
+    assert topic not in runner.running_topic_ids()
+    assert runner.topic_turn(topic)["status"] != "running"
+    # A reconnecting client must not be told the dead turn is still streaming.
+    assert broker.in_flight(str(topic)) is False

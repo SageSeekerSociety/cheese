@@ -1,5 +1,5 @@
-// Package update fetches a fresh `cheese` binary from the server and swaps it in
-// place. It carries the platform→artifact mapping the installer uses
+// Package update fetches a fresh connector binary (the server's `cheesehost`
+// artifact) and swaps it in place of the running executable. It carries the platform→artifact mapping the installer uses
 // (frontend/scripts/build-connector.mjs + install.sh), downloads the matching
 // binary next to the running executable, verifies it is a real, runnable binary,
 // and atomically replaces the current one. Handing the process off to the new
@@ -42,17 +42,20 @@ func platformDir(goos, goarch string) (string, error) {
 // PlatformDir returns the artifact directory for the running platform.
 func PlatformDir() (string, error) { return platformDir(runtime.GOOS, runtime.GOARCH) }
 
-// binaryURL is the published location of the `cheese` binary for dir, at the
+// binaryURL is the published location of the connector binary for dir, at the
 // server's *origin* (scheme://host of base) — the connector artifacts live at
-// `<origin>/connector/latest/<os>-<arch>/cheese`, at the origin root, never under
-// the `/api` edge prefix (see CLAUDE.md §"Backend is always the frontend origin").
+// `<origin>/connector/latest/<os>-<arch>/cheesehost`, at the origin root, never
+// under the `/api` edge prefix (see docs/api-conventions.md). `cheesehost` is
+// the only artifact name the server publishes (installer.py's
+// `/latest/{target}/cheesehost` route, the same file install.sh downloads);
+// this used to ask for `.../cheese`, which answered 404 on every update.
 func binaryURL(base, dir string) (string, error) {
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" {
 		return "", fmt.Errorf("update: bad base %q: %v", base, err)
 	}
 	origin := u.Scheme + "://" + u.Host
-	return origin + "/connector/latest/" + dir + "/cheese", nil
+	return origin + "/connector/latest/" + dir + "/cheesehost", nil
 }
 
 // Fetch downloads the current platform's `cheese` binary from base's origin into a

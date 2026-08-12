@@ -36,8 +36,12 @@ export interface Topic {
   kind: string
   status: string
   created_at: string
-  // Any activity (a turn, a status flip) touches this — the sidebar's 右锚.
+  // 话题这一行自己被改过的时间（改标题、归档、拿到 session id）——落一块消息
+  // 不会动它。要"这个话题最后有动静是什么时候"，看 last_activity_at。
   updated_at?: string
+  // 最后活动时间 = 话题里最新一块的时间（没有块就是话题的创建时间）。侧栏的
+  // 右锚和"最后活动"排序都用它。只有 list/get 话题时才带。
+  last_activity_at?: string
   // Lifecycle markers (spec §6.3) — used by the 已归档 group ordering.
   accepted_by?: string | null
   accepted_at?: string | null
@@ -154,7 +158,9 @@ export interface ChatAttachment {
 export interface WsClientMessage {
   type: 'message'
   content: string
-  author: string
+  // No `author`: the backend takes it from the socket's ?token=. Sending one
+  // was never authoritative — it was the forgeable field that let an expired
+  // session post as 匿名者 — so the client no longer names itself at all.
   summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
@@ -184,6 +190,9 @@ export interface ProjectMemberRow {
   user_handle: string
   role: string
   name?: string
+  // `agent` marks 芝士 (any of its per-topic 分身), derived server-side from the
+  // execution binding — never from the handle string, which differs per topic.
+  agent?: boolean
   [key: string]: unknown
 }
 

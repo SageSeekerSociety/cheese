@@ -262,6 +262,11 @@ def test_await_registers_then_forks_and_returns_immediately(monkeypatch, tmp_pat
 def test_await_log_lives_outside_the_worktree(monkeypatch, tmp_path):
     """These logs must never be committed with the topic's work."""
     cli = _load()
+    # An agent sandbox EXPORTS this (the platform points it at the session
+    # mount), and it outranks the HOME-derived path this test is about — so
+    # without clearing it the test passes in CI and fails in every sandbox,
+    # which is exactly where the suite is run from most.
+    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     path = cli._await_log_path("run-1")
     assert path.startswith(str(tmp_path))
@@ -406,6 +411,36 @@ def test_every_argument_says_what_it_takes():
                 if not (action.help or "").strip():
                     undocumented.append(f"{label}:{action.dest}")
     assert not undocumented, f"arguments with no help=: {undocumented}"
+
+
+def test_await_log_goes_where_the_platform_points_it(monkeypatch, tmp_path):
+    """The log of a multi-hour command has to outlive the container that ran it,
+    so the provider hands the CLI a path inside the host-backed session mount."""
+    cli = _load()
+    monkeypatch.setenv("CHEESE_AWAIT_LOGS", str(tmp_path / "cheese-await"))
+    path = Path(cli._await_log_path("1754900000-42"))
+    assert path.parent == tmp_path / "cheese-await"
+    assert path.parent.is_dir()  # created, so the child can open the file
+
+
+def test_await_log_finds_the_session_mount_on_its_own(monkeypatch, tmp_path):
+    """A container from before the env var was added still gets the durable spot:
+    ~/.claude IS the mount."""
+    cli = _load()
+    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    logs = Path(cli._await_log_path("r")).parent
+    assert logs == tmp_path / ".claude" / "cheese-await"
+
+
+def test_await_log_falls_back_when_there_is_no_session_mount(monkeypatch, tmp_path):
+    """Outside a topic container there is nothing durable to write to — run the
+    command anyway rather than refusing over where its log lands."""
+    cli = _load()
+    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert Path(cli._await_log_path("r")).parent == tmp_path / ".cheese" / "await"
 
 
 def _is_subparsers(action):

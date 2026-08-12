@@ -321,6 +321,22 @@ class Settings(BaseSettings):
     # its transcript anyway.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
+    # Seconds between orphan sweeps (TurnRunner.sweep_orphans). On by default,
+    # unlike the heartbeat above: it consumes no model calls unless it actually
+    # finds a killed turn, and its whole purpose is catching the case where
+    # nothing else will ever look — a turn dying without the process dying.
+    orphan_sweep_interval_s: int = 300
+    # How long a registered turn may produce nothing — no block, no frame —
+    # before the sweep calls it wedged and tears it down. See
+    # TurnRunner.SILENT_TURN_S for why 30 minutes and not less.
+    turn_silence_timeout_s: float = 1800.0
+    # How long a topic may sit on a mid-turn block before `/topics/{id}/status`
+    # calls it stalled. Lower than the sweep's ceiling above on purpose: this
+    # one only REPORTS, so a false positive costs a second look rather than a
+    # cancelled turn, and 10 minutes is already past the ceiling of a single
+    # blocking tool call — the longest a healthy turn can legitimately go
+    # without adding a block.
+    turn_stall_signal_s: float = 600.0
 
     # --- Memory backend (spec §8.4 / §15 Q9) ---
     # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).
@@ -378,14 +394,46 @@ class Settings(BaseSettings):
     # on the card's stored pr_number, so flipping this never strands a card.
     accept_via_pr: bool = False
 
+    # --- 闸门孤儿卡扫底 (2026-08-11) ---
+    # How often to look for `pending_gate` cards nobody will ever settle (the
+    # gate runner is an in-memory asyncio task — see review/gate_sweep.py for
+    # the three ways it goes missing). Startup does one sweep unconditionally;
+    # this interval is what covers the "process still alive, task died" half.
+    # 0 disables the periodic sweep (the startup one still runs).
+    gate_sweep_interval_s: int = 300
+
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
     accept_pr_poll_interval_s: int = 60
+    # 后端报错回房间 (issue #283): how often to close expired burst windows so a
+    # flood that STOPPED still reports how big it was. Only bounds how late that
+    # summary line is — the dedup window decides whether it exists. 0 disables.
+    backend_error_flush_interval_s: int = 60
+    # 自动同步上游: how often to pull the upstream's default branch into each
+    # linked project's base. Falling behind is what makes accepts unable to push
+    # (see SchedulerService.sync_upstreams), so this only has to run often
+    # enough that the gap stays small — not on every commit. 0 disables it.
+    upstream_sync_interval_s: int = 1800
+    # --- 结论卡 (2026-08-11) ---
+    # How often open conclusion cards past their absolute deadline are swept and
+    # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on
+    # the parent's digest turn ever running. 0 disables the loop (tests).
+    conclusion_sweep_interval_s: int = 60
     # Workflow file (under .github/workflows/) that deploys after a merge to
     # the base branch — must reach completed+success before a pr_open card's
     # topic is finally archived (2026-08-09 拍板: merge alone is not enough).
     accept_deploy_workflow_file: str = "deploy-dev.yml"
+    # 部署 run 迟迟不成功多久之后，卡片开始反过来问「代码是不是已经被别的部署带
+    # 上线了」(2026-08-11)。这个宽限期存在的唯一理由是省 API 调用：合并之后要先
+    # 等 build 跑完，deploy 的 run 才会被创建，那段时间「还没有成功的部署」完全
+    # 正常。过了它，`_landed_without_its_own_run` 才每轮去问一次。
+    #
+    # 实测过的最坏情况：`deploy-dev.yml` 有时**根本不会为某个合并提交创建 run**
+    # （2026-08-11: fa7d08653 / 482ca022e / 611e43f02 三个 main 上真实存在的合并
+    # 提交，按 head_sha 查 100 条 run 全是 0 条）。那种卡不是「还在等」，是死等
+    # ——等的那个 run 永远不会存在。所以这个宽限期不能设成"无限"。
+    accept_deploy_stale_after_minutes: int = 45
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having
@@ -447,6 +495,15 @@ class Settings(BaseSettings):
     # (no-token) callers are unaffected. Ops kill-switch: set false to disable the
     # membership check entirely if a token rollout surfaces an unexpected block.
     authz_enforce_topic_access: bool = True
+    # Escape hatch for LOCAL harnesses only (the eval runner's throwaway backend,
+    # browser probes): admit a chat WebSocket that carries no ``?token=`` and let
+    # the message body name its own author. That is the pre-token Phase-0 path —
+    # with it on, any client can post as any handle, which is why production
+    # leaves it off. It does NOT weaken the invalid/expired-token case: a socket
+    # that presents a token we cannot verify is refused either way, because
+    # silently downgrading a failed credential to "anonymous" is what let a whole
+    # batch of messages land under 匿名者 while the sender saw no error at all.
+    chat_ws_allow_anonymous: bool = False
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
     # (task AI advice, rank checks, email/notifications, meilisearch, real-name

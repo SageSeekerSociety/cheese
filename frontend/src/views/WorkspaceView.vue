@@ -108,9 +108,9 @@ const loadingTopics = ref(false)
 const globalError = ref<string | null>(null)
 
 // 话题列表排序: defaults to most-recently-active first — the sidebar's row
-// already shows relTime(updated_at) as its right anchor, so this is the
+// already shows relTime(last_activity_at) as its right anchor, so this is the
 // ordering that anchor implies. `title` sorting is the other option.
-const topicSort = ref<TopicSortField>('updated_at')
+const topicSort = ref<TopicSortField>('last_activity_at')
 const topicOrder = ref<TopicSortOrder>('desc')
 
 async function setTopicSort(payload: { sort: TopicSortField; order: TopicSortOrder }) {
@@ -318,7 +318,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
       kind: 'member' as const,
       insert: m.name || m.user_handle,
       sub: `@${m.user_handle}`,
-      agent: m.user_handle === 'cheese',
+      agent: !!m.agent,
     })),
     ...topics.value
       .filter((t) => t.kind !== 'root')

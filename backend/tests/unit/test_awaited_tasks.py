@@ -107,3 +107,44 @@ def test_summary_handles_a_silent_command():
     task = _register(uuid.uuid4())
     text = awaited_tasks.summary(task, exit_code=0, tail="", duration_s=0.5)
     assert "成功" in text
+
+
+# --- 快照的 hold（提交那一半在 tests/integration/test_await_snapshot_hold.py）---
+
+
+def test_a_quiet_topic_holds_nothing():
+    assert awaited_tasks.snapshot_hold(uuid.uuid4()) is None
+
+
+def test_the_hold_names_the_task_that_frees_it_last():
+    """The label ends up in a log line and on `cheese status` as "snapshots
+    resume when this finishes" — so it has to be the one that actually does."""
+    topic = uuid.uuid4()
+    _register(topic, label="短的", timeout_s=60)
+    longest = _register(topic, label="全量检查", timeout_s=3600)
+    assert awaited_tasks.snapshot_hold(topic) is longest
+
+
+def test_a_dead_child_stops_holding_once_its_timeout_is_spent():
+    """Nothing clears a registration but a report, and a child that died with its
+    container never files one. Version history must not be frozen on that."""
+    topic = uuid.uuid4()
+    task = _register(topic, timeout_s=600)
+    task.started_at -= 600 + awaited_tasks.SNAPSHOT_HOLD_GRACE_S - 5
+    assert awaited_tasks.snapshot_hold(topic) is task  # still inside the grace
+    task.started_at -= 10
+    assert awaited_tasks.snapshot_hold(topic) is None
+
+
+def test_status_shows_what_is_running_and_that_it_is_holding_snapshots():
+    topic = uuid.uuid4()
+    _register(topic, "bash check.sh --full", label="全量检查", timeout_s=3600)
+    snap = awaited_tasks.status_snapshot(topic)
+    assert snap["snapshot_held_by"] == "全量检查"
+    assert [t["command"] for t in snap["tasks"]] == ["bash check.sh --full"]
+    assert snap["tasks"][0]["log_path"]  # where to read the full output
+
+
+def test_status_of_a_topic_with_nothing_in_flight_is_empty_not_absent():
+    snap = awaited_tasks.status_snapshot(uuid.uuid4())
+    assert snap == {"tasks": [], "snapshot_held_by": None}

@@ -28,6 +28,7 @@ from app.domain.review.schemas import (
     AcceptDecision,
     ApprovalCreate,
     RejectDecision,
+    VoidDecision,
 )
 from app.domain.review.services import AcceptService
 from app.domain.workspace import service as ws
@@ -213,6 +214,33 @@ async def reject_card(
         raise AuthenticationRequiredError("需要登录才能驳回验收卡")
     svc = AcceptService(db)
     card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
+    return ok(await svc.describe(card))
+
+
+@router.post("/accept-cards/{card_id}/void")
+async def void_card(
+    card_id: uuid.UUID, body: VoidDecision, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).
+
+    这是 `pending_gate` / `conflict` / `pr_open` 唯一的人工出口——那三个状态被
+    accept / reject / revoke / reassign 四条路由全部拒绝，而 `create_card` 又因为
+    它们拒绝再建新卡，于是整个话题递不出卡。作废把卡置为终态解开这个死锁。
+
+    **它不是"放行"**：卡进的是终态，不是 `pending`。放行等于让绿勾替一段没被检查
+    过的代码背书；作废 + 重递效果一样且安全。
+
+    路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS` 里——这是授权类动作，
+    给人不给芝士。但"不加白名单"本身拦不住任何东西（没列进去的写路由压根不过那个
+    中间件，症状是静默放行而不是 401），真正拦住芝士的是 `AcceptService.void` 里
+    的 `_forbid_ai`，见 tests/integration/test_accept_gate_orphan.py 的
+    `test_void_requires_a_logged_in_human`。
+    """
+    actor = await resolver.resolve(fallback_handle=None)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能作废验收卡")
+    svc = AcceptService(db)
+    card = await svc.void(card_id=card_id, decided_by=actor.handle, note=body.note)
     return ok(await svc.describe(card))
 
 

@@ -950,6 +950,43 @@ _SHARED_CHECKOUT_ATTEMPTS = 5
 _SHARED_CHECKOUT_RETRY_DELAY_S = 0.2
 
 
+def _warn_about_discarded_changes(repo: Path) -> None:
+    """Name whatever the shared-tree sync is about to throw away.
+
+    Discarding is the sync's whole point — the shared directory mirrors the
+    base tip and is not where work is kept. But it is not read-only either:
+    `write_file` and `exec_in_sandbox` both write straight into it when called
+    with `topic_id=None`, and nothing ever commits those writes (the only
+    snapshot path, `snapshot_worktree`, requires a topic and runs in that
+    topic's own jj worktree). So a discard here can silently destroy something
+    a human typed in the 文件 panel. Failing loudly was at least visible;
+    deleting silently would be a net loss, since it is the harder of the two
+    to diagnose after the fact.
+
+    Best-effort by construction: a status that fails must never become the
+    thing that wedges the sync, so every error is swallowed. Tracked
+    modifications only (`-uno`) — untracked files survive both the forced
+    checkout and the `reset --hard`, so naming them would be a false alarm.
+    `--no-optional-locks` keeps this from taking `index.lock` itself, which
+    the retry loop right below exists to wait out.
+    """
+    try:
+        dirty = _git(
+            repo, "--no-optional-locks", "status", "--porcelain", "-uno", timeout=10
+        ).strip()
+    except (ValidationError, OSError):
+        return
+    if dirty:
+        logger.warning(
+            "shared checkout sync in %s is discarding uncommitted local "
+            "changes to tracked files (the shared tree is a mirror of the "
+            "base tip, not storage — but write_file/exec_in_sandbox with "
+            "topic_id=None can write here):\n%s",
+            repo,
+            dirty,
+        )
+
+
 def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
     """The ONE piece of a merge that must still touch the shared repo
     directory: point its own working tree at the new base tip, since
@@ -972,6 +1009,7 @@ def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
     any process on the host — and only then cleared, with a retry loop for
     the (much more likely) case of two accepts landing here within
     milliseconds of each other, which needs a brief wait, not a lock clear."""
+    _warn_about_discarded_changes(repo)
     last_exc: ValidationError | None = None
     for attempt in range(_SHARED_CHECKOUT_ATTEMPTS):
         lock = repo / ".git" / "index.lock"
@@ -1742,6 +1780,13 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     spool = d / "cheese-spool"
     spool.mkdir(parents=True, exist_ok=True)
     _loosen(str(spool), 0o777)
+    # Same treatment for `cheese await`'s output logs: they live in the session
+    # mount (not the container's own filesystem) so a multi-hour command's output
+    # outlives the container that ran it, and not in the worktree so it never
+    # reaches a commit.
+    awaited = d / "cheese-await"
+    awaited.mkdir(parents=True, exist_ok=True)
+    _loosen(str(awaited), 0o777)
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
@@ -1803,17 +1848,51 @@ def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     ).resolve()
 
 
+def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
+    """Host path of the topic's `cheese await` output logs. The container writes
+    here via CHEESE_AWAIT_LOGS=/home/node/.claude/cheese-await (the session dir
+    mounts to /home/node/.claude), so the output of a command that runs for hours
+    survives the container being rebuilt under it. Mirrors spool_dir's base so
+    both sides agree on ONE location."""
+    return (
+        Path(settings.workspace_root)
+        / ".sessions"
+        / str(project_id)
+        / topic_id.hex[:8]
+        / "cheese-await"
+    ).resolve()
+
+
+def has_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
+    """Whether this topic already has a jj workspace on disk. Read-only probe:
+    unlike `_ensure_worktree` it creates nothing, so a caller that only wants to
+    snapshot existing work can ask without conjuring a repo as a side effect."""
+    return (_worktree_path(project_id, branch_for_topic(topic_id)) / ".jj").exists()
+
+
 def snapshot_worktree(
     project_id: uuid.UUID, topic_id: uuid.UUID, message: str = "芝士 edits"
 ) -> None:
     """Snapshot whatever the agent changed in the topic's workspace this turn as a
     jj commit, so native Bash/Write/Edit edits become version history (no manual
     commit needed). The topic's git branch (bookmark) is moved to the new commit
-    so 采纳/diff still work via git."""
+    so 采纳/diff still work via git.
+
+    A snapshot taken while `cheese await` has a command in flight can only catch a
+    half-written worktree, so the automatic post-turn one is HELD instead
+    (`awaited_tasks.checkpoint_worktree`). What still reaches here during a hold
+    are the paths a human is waiting on — 采纳前快照, PR 快照 — where refusing
+    would wedge the accept. Those commit, but say so in the message rather than
+    passing a mid-command tree off as a settled one."""
+    from app.domain.agent import awaited_tasks  # local: it imports this module
+
     branch = branch_for_topic(topic_id)
     wt = _ensure_worktree(project_id, branch)
     if not _jj(wt, "diff", "-s").strip():
         return  # nothing changed this turn
+    held = awaited_tasks.snapshot_hold(topic_id)
+    if held is not None:
+        message = f"{message}（⚠️ 后台任务「{held.label}」运行中，可能是中间态）"
     _jj(wt, "commit", "-m", message)
     # The just-committed work is @- (jj commit started a fresh empty @).
     _jj(wt, "bookmark", "set", branch, "-r", "@-", "--allow-backwards")
