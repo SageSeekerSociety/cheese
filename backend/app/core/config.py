@@ -432,15 +432,25 @@ class Settings(BaseSettings):
     # encryption) read these off settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
+    # These now point at 百炼's OpenAI-compatible endpoint, not OpenAI: the
+    # platform runs on domestic models (话题《credits 额度设计》§12.1), and a
+    # default aimed at api.openai.com would silently send traffic there the
+    # moment a key is configured. 百炼's DashScope key works on both its
+    # Anthropic and OpenAI-compatible gateways, so the agent token doubles as
+    # this key when OPENAI_API_KEY is unset — same pattern as OpenViking above.
+    # NOTE: this path is NOT yet metered — see §12.1 step 2.
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(
-        default="https://api.openai.com/v1", alias="OPENAI_BASE_URL"
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        alias="OPENAI_BASE_URL",
     )
+    # Advice/chat/PDF-draft are conversational loads, not coding ones — the
+    # cheap tier is enough. Reasoning calls get the mid tier.
     openai_default_model: str = Field(
-        default="gpt-4o-mini", alias="OPENAI_DEFAULT_MODEL"
+        default="qwen3.7-flash", alias="OPENAI_DEFAULT_MODEL"
     )
     openai_reasoning_model: str = Field(
-        default="o1-mini", alias="OPENAI_REASONING_MODEL"
+        default="qwen3.7-plus", alias="OPENAI_REASONING_MODEL"
     )
     openai_temperature: float = Field(default=0.7, alias="OPENAI_TEMPERATURE")
     openai_max_tokens: int = Field(default=4096, alias="OPENAI_MAX_TOKENS")
