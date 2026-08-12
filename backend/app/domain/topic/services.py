@@ -24,6 +24,8 @@ from app.domain.conclusion.services import ConclusionCardService
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.membership.services import MemberService
+from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import (
@@ -188,7 +190,10 @@ class TopicService:
         await self._members.seed(
             topic.id,
             owner_handle=await self._resolve_owner(
-                created_by, parent_id=parent_id, project_owner=project.owner_handle
+                created_by,
+                project_id=project_id,
+                parent_id=parent_id,
+                project_owner=project.owner_handle,
             ),
         )
         return topic
@@ -197,12 +202,23 @@ class TopicService:
         self,
         created_by: str | None,
         *,
+        project_id: uuid.UUID,
         parent_id: uuid.UUID | None,
         project_owner: str | None,
     ) -> str | None:
         """Who owns a newborn topic: the real human who created it, else the
-        parent room's owner, else the project's owner. Returns None only when
-        the whole chain is ownerless (a legacy project) — the caller still
+        parent room's owner, else the project's owner, else the project's 组长.
+
+        That last rung is not decoration. Measured on the dogfooding project
+        2026-08-12, answering 「新话题的拥有者为什么有的有，有的是空的」: the
+        project's ``owner_handle`` is NULL and its root topic is ownerless too,
+        so every topic 芝士 opened under the root fell through all three rungs
+        and came out blank — five active rooms with no one able to manage the
+        roster. The ladder was right; its bottom had nothing to stand on. The
+        roster did: that project has a ``lead``, which is exactly "who is in
+        charge here" already recorded, not a new policy invented to fill a hole.
+
+        Returns None only when even the roster has no lead — the caller still
         seeds 芝士, and the room stays manageable by any project member.
 
         "Is the creator 芝士" spans the whole agent handle namespace, not the bare
@@ -219,7 +235,21 @@ class TopicService:
             )
             if parent_owner:
                 return parent_owner
-        return project_owner
+        return project_owner or await self._project_lead(project_id)
+
+    async def _project_lead(self, project_id: uuid.UUID) -> str | None:
+        """The project's 组长, as the last rung of the ownership ladder.
+
+        Read lazily — only when the rungs above came up empty — so an ordinary
+        topic-create still costs no extra query. Through the roster's *service*,
+        not its repository: `test_domain_import_guard` forbids the shortcut, and
+        the service is also where "who counts as a member" is decided.
+        """
+        members, _ = await MemberService(self._session).list_for_project(project_id)
+        return next(
+            (m.user_handle for m in members if m.role == ProjectRole.lead),
+            None,
+        )
 
     async def get_or_create_private(
         self,
