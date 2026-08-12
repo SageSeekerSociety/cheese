@@ -10,7 +10,7 @@ Nullable with no default: a topic that never ran keeps NULL, and no backfill is
 possible (the old checklists were never captured anywhere).
 
 Revision ID: d41c9b7a2e18
-Revises: b5045bf862fe
+Revises: c1d7e0a4b839
 Create Date: 2026-08-10 16:00:00.000000
 
 """
