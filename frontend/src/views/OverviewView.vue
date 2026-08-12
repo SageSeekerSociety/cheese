@@ -6,16 +6,7 @@ import { useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 
-import {
-  generateSummary,
-  getContributions,
-  getInbox,
-  getOverview,
-  getProject,
-  getProjectCredits,
-  markRead,
-  sendFeedback,
-} from '../api'
+import { getContributions, getInbox, getOverview, getProject, getProjectCredits, markRead, sendFeedback } from '../api'
 import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
 import { myHandle } from '../me'
 
@@ -29,25 +20,15 @@ const inbox = ref<InboxItem[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 
-// 一页纸总结 (Feature A). Held separately so 生成/刷新 can update it in place.
+// 一页纸总结. Read-only here: the overview (or the project card) carries it and
+// nothing in this view writes it back. The 生成/刷新 button that used to sit in
+// the section head is gone along with the POST behind it — parking a feature has
+// to include its entry point, or the user reads the leftover button as "this is
+// broken" rather than "this is off".
 const summary = ref<string>('')
-const summaryLoading = ref(false)
 
 function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
-}
-
-async function onGenerateSummary() {
-  summaryLoading.value = true
-  error.value = null
-  try {
-    const res = await generateSummary(props.projectId)
-    summary.value = res.summary ?? ''
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '生成总结失败'
-  } finally {
-    summaryLoading.value = false
-  }
 }
 
 // waiting_on_you is keyed by handle. Pull out my items vs. everyone else's.
@@ -124,12 +105,14 @@ async function load() {
   try {
     const [ov, ib, contrib, cred] = await Promise.all([
       getOverview(props.projectId),
-      getInbox(props.projectId, ME),
+      // A 401/403 here (signed out, or a stale cached handle after switching
+      // accounts) must not blank the whole overview — degrade to an empty inbox.
+      getInbox(props.projectId, ME).catch(() => null),
       getContributions(props.projectId).catch(() => null),
       getProjectCredits(props.projectId).catch(() => null),
     ])
     overview.value = ov
-    inbox.value = ib.data
+    inbox.value = ib?.data ?? []
     contributions.value = contrib
     credits.value = cred
     // The overview extends the project card; if it didn't carry summary, fetch
@@ -201,25 +184,14 @@ onMounted(load)
           <h1 class="t-page-title">{{ overview.name }}</h1>
         </div>
 
-        <!-- 一页纸总结 (Feature A) -->
-        <section class="ln-section">
+        <!-- 一页纸总结 — rendered only when one exists. Generation is parked, so
+             an empty box with a dead button would read as a broken feature. -->
+        <section v-if="summary" class="ln-section">
           <div class="ln-section-head">
             <span class="ln-section-title">一页纸总结</span>
-            <v-spacer />
-            <v-btn
-              size="small"
-              variant="text"
-              class="c-muted"
-              :prepend-icon="summary ? 'mdi-refresh' : 'mdi-creation'"
-              :loading="summaryLoading"
-              @click="onGenerateSummary"
-            >
-              {{ summary ? '刷新' : '生成总结' }}
-            </v-btn>
           </div>
           <div class="ln-body">
-            <div v-if="summary" class="md-content" v-html="renderMarkdown(summary)" />
-            <div v-else class="c-faint t-body py-2">芝士还没写总结，点生成。</div>
+            <div class="md-content" v-html="renderMarkdown(summary)" />
           </div>
         </section>
 

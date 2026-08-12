@@ -688,8 +688,9 @@ def build_parser() -> argparse.ArgumentParser:
             "\n"
             "本仓库的版本控制是 jj 不是 git,工作区里没有 .git,所以 `gh` 自己推断不出仓库,"
             "会报 `not a git repository`——**必须显式带 -R owner/repo**(或用 "
-            "`gh api repos/<owner>/<repo>/...` 的全路径写法)。仓库名不用自己猜,"
-            "stderr 里就有。"
+            "`gh api repos/<owner>/<repo>/...` 的全路径写法)。仓库名和过期时间不用自己猜,"
+            "stderr 里就有;stdout 只有 token 本身,所以 `GH_TOKEN=$(cheese gh-token)` "
+            "照常能用。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

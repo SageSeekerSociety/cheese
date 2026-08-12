@@ -412,6 +412,20 @@ async def add_comment(
     return ok(payload)
 
 
+@router.get("/{topic_id}/progress")
+async def get_topic_progress(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """进度层 (#187): 芝士's checklist for this topic, as of the last turn to
+    touch it. Read on topic open — between turns there is no WS stream to carry
+    it, and "做到哪了" has to be visible without summoning anyone."""
+    items, updated_at = await TopicService(db).get_progress(topic_id)
+    return ok(
+        {
+            "items": items,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+        }
+    )
+
+
 @router.get("/{topic_id}/doc")
 async def get_topic_doc(topic_id: uuid.UUID, db: DbSession) -> dict:
     """The topic's single living doc (spec §2.2 docs-out)."""
@@ -1085,11 +1099,21 @@ project_router = APIRouter(prefix="/api/projects", tags=["topics"])
 
 @project_router.get("/{project_id}/topic-unread")
 async def project_topic_unread(
-    project_id: uuid.UUID, handle: str, db: DbSession
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    handle: str | None = None,
 ) -> dict:
-    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for one
-    user, one query. Topics with zero unread are omitted."""
-    counts = await TopicService(db).unread_counts(project_id, handle)
+    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for the
+    calling user, one query. Topics with zero unread are omitted.
+
+    Read-state is per-person, so the recipient comes from the verified
+    credential (``handle`` is only checked against it) — a caller without one
+    used to read anybody's badge map by naming them here."""
+    recipient = await resolver.resolve_recipient(
+        requested=handle, project_id=project_id, allow_anonymous=False
+    )
+    counts = await TopicService(db).unread_counts(project_id, recipient)
     return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 

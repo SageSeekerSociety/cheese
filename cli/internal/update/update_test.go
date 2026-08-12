@@ -32,20 +32,24 @@ func TestPlatformDirUnsupported(t *testing.T) {
 }
 
 func TestBinaryURL(t *testing.T) {
+	// The artifact is named cheesehost — the only name the server serves
+	// (installer.py's `/latest/{target}/cheesehost`); `.../cheese` is a 404.
+	// Dirs are Go-style (platformDir's output), which is also all the server's
+	// target validation accepts — never uname-style linux-x86_64.
 	cases := []struct {
 		base, dir, want string
 	}{
 		{
-			"https://cheese.ruc.edu.cn/api", "linux-x86_64",
-			"https://cheese.ruc.edu.cn/connector/latest/linux-x86_64/cheese",
+			"https://cheese.ruc.edu.cn/api", "linux-amd64",
+			"https://cheese.ruc.edu.cn/connector/latest/linux-amd64/cheesehost",
 		},
 		{
 			"http://127.0.0.1:8080", "darwin-arm64",
-			"http://127.0.0.1:8080/connector/latest/darwin-arm64/cheese",
+			"http://127.0.0.1:8080/connector/latest/darwin-arm64/cheesehost",
 		},
 		{
-			"https://example.com/", "linux-aarch64",
-			"https://example.com/connector/latest/linux-aarch64/cheese",
+			"https://example.com/", "linux-arm64",
+			"https://example.com/connector/latest/linux-arm64/cheesehost",
 		},
 	}
 	for _, c := range cases {
@@ -60,7 +64,7 @@ func TestBinaryURL(t *testing.T) {
 }
 
 func TestBinaryURLBadBase(t *testing.T) {
-	if _, err := binaryURL("not-a-url", "linux-x86_64"); err == nil {
+	if _, err := binaryURL("not-a-url", "linux-amd64"); err == nil {
 		t.Error("expected error for base without host")
 	}
 }

@@ -6,6 +6,12 @@ workspace (host-side, see workspace.service.run_check_command for the trust
 model), then settles the card: green → pending (the reviewer only ever sees a
 green card), red → gate_failed + a system nudge so 芝士 goes and fixes it.
 
+Third outcome (2026-08-11): the check may not run at all — no usable toolchain
+in the gate container, Docker refusing to start. `check_command` reports that as
+exit code 2 (check.sh --strict, which run_check_command turns on) and the card
+goes to gate_blocked. It is deliberately NOT green: a check that never ran says
+nothing about the code, and the whole point of a gate is that it actually ran.
+
 The check can take minutes, so it never runs inside a request handler — the
 POST returns immediately with the pending_gate card and the UI polls.
 """
@@ -20,6 +26,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.domain.review import pr_publish
+from app.domain.review.models import GateOutcome
 from app.domain.workspace import service as ws
 
 if TYPE_CHECKING:
@@ -29,6 +36,10 @@ logger = logging.getLogger("cheesex.gate")
 
 # Hard ceiling for a project's check command (10 minutes).
 GATE_TIMEOUT_S = 600
+# Exit code a check command uses to say "I couldn't run" (as opposed to "the
+# code is bad"). Convention shared with .claude/scripts/check.sh --strict; a
+# command that doesn't know about it simply never returns 2 and nothing changes.
+BLOCKED_EXIT_CODE = 2
 # Where full check output lands: logs/gate-<topic8>.log (project-local ./logs).
 LOG_DIR = Path("logs")
 
@@ -106,14 +117,25 @@ async def _run(
         logger.exception("gate check failed to run for card %s", card_id)
         result = {"exit_code": -1, "tail": f"检查无法执行：{exc}"}
 
-    passed = result["exit_code"] == 0
+    exit_code = result["exit_code"]
+    # -1 is "we never got the command started" (Docker missing, worktree gone) —
+    # the same fact as exit 2, established one layer further out.
+    if exit_code == 0:
+        outcome = GateOutcome.passed
+    elif exit_code in (BLOCKED_EXIT_CODE, -1):
+        outcome = GateOutcome.blocked
+    else:
+        outcome = GateOutcome.failed
+    passed = outcome == GateOutcome.passed
     tail = str(result["tail"])
-    settled = await _settle(session_factory, card_id=card_id, passed=passed, tail=tail)
+    settled = await _settle(
+        session_factory, card_id=card_id, outcome=outcome, tail=tail
+    )
     logger.info(
         "gate %s for card %s (exit %s, log %s)",
-        "passed" if passed else "FAILED",
+        outcome.value,
         card_id,
-        result["exit_code"],
+        exit_code,
         log_path,
     )
 
@@ -134,18 +156,33 @@ async def _run(
         )
 
     if not passed:
-        # 红了 → 芝士收到系统 nudge 去修（same dispatch pattern as the accept
-        # merge-conflict resolve turn in routes/accept.py).
-        runner.submit(
-            chat_service,
-            topic_id,
-            author="system",
-            content=(
+        # 红了 / 没跑成 → 芝士收到系统 nudge（same dispatch pattern as the accept
+        # merge-conflict resolve turn in routes/accept.py）。两种情况要说不同的
+        # 话：红了是去改代码，没跑成是去把检查环境弄起来 —— 让芝士对着一份
+        # 「什么都没跑」的输出找 bug，只会浪费一整轮并且很可能原样再递一次。
+        if outcome == GateOutcome.blocked:
+            content = (
+                "你递的验收卡没有送到验收人手上：平台的质量检查**没能跑起来**"
+                "（不是没通过——它对你的代码没有任何结论）。"
+                f"检查输出的结尾如下：\n```\n{tail[-1500:]}\n```\n"
+                f"完整输出在 {log_path}。门禁容器**没有网络**，只能用你工作区里"
+                "已经装好的环境：如果是 Python 工具链缺失，先在 `backend/` 里"
+                "`uv sync` 把 .venv 装好，再重新递卡。"
+                "如果不是这个原因、或者装好后依然跑不起来，**别反复重试**，"
+                "在对话里把情况说清楚交给人处理。"
+            )
+        else:
+            content = (
                 "你递的验收卡没有通过平台的质量检查，卡片没有送到验收人手上。"
                 f"检查输出的结尾如下：\n```\n{tail[-1500:]}\n```\n"
                 f"完整输出在 {log_path}。请在工作区里修复这些问题，"
                 "跑一遍同样的检查确认全绿，然后重新递验收卡。"
-            ),
+            )
+        runner.submit(
+            chat_service,
+            topic_id,
+            author="system",
+            content=content,
             summon=True,
         )
 
@@ -198,7 +235,7 @@ async def _settle(
     session_factory: async_sessionmaker,
     *,
     card_id: uuid.UUID,
-    passed: bool,
+    outcome: GateOutcome,
     tail: str,
 ) -> bool:
     """Persist the gate result. False = it did not land (and won't)."""
@@ -209,7 +246,7 @@ async def _settle(
             session_factory,
             card_id,
             lambda svc: svc.finish_gate(
-                card_id=card_id, passed=passed, output_tail=tail
+                card_id=card_id, outcome=outcome, output_tail=tail
             ),
         )
     except ValidationError:

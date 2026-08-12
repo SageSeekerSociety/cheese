@@ -11,6 +11,7 @@ import uuid
 from app.core.config import settings
 from app.domain.agent import clone
 from app.domain.topic.repositories import TopicRepository
+from app.domain.workspace import service as ws
 
 
 def _project_and_topics(client) -> tuple[str, str, str]:
@@ -86,8 +87,13 @@ def test_clone_forks_transcript_onto_target(client, monkeypatch, tmp_path):
     old_sid = "source-session-uuid"
     _seed_session(client, src, old_sid)
 
-    # Lay down a source transcript where the (faked) mount would hold it.
-    src_file = clone.transcript_file(fake_session_dir(None, uuid.UUID(src)), old_sid)
+    # Lay down a source transcript where the (faked) mount would hold it — under
+    # the legacy /work slug, as every pre-project-mount session wrote it.
+    src_file = clone.transcript_file(
+        fake_session_dir(None, uuid.UUID(src)),
+        old_sid,
+        cwd=clone.LEGACY_CONTAINER_CWD,
+    )
     src_file.parent.mkdir(parents=True, exist_ok=True)
     src_file.write_text(f'{{"sessionId":"{old_sid}","text":"hi"}}', encoding="utf-8")
 
@@ -97,9 +103,14 @@ def test_clone_forks_transcript_onto_target(client, monkeypatch, tmp_path):
     new_sid = _read_session(client, dst)
     assert new_sid and new_sid != old_sid
 
-    # The forked transcript exists under the target's slug, id rewritten.
+    # The forked transcript exists under the target topic's OWN workdir slug
+    # (where its container's --resume will look), id rewritten.
     dst_dir = tmp_path / uuid.UUID(dst).hex[:8]
-    dst_file = clone.transcript_file(dst_dir, new_sid)
+    dst_file = clone.transcript_file(
+        dst_dir,
+        new_sid,
+        cwd=ws.sandbox_topic_workdir(ws.branch_for_topic(uuid.UUID(dst))),
+    )
     assert dst_file.is_file()
     body = dst_file.read_text(encoding="utf-8")
     assert old_sid not in body
