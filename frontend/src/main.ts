@@ -48,12 +48,14 @@ import AccountService from '@/services/account'
 try {
   const raw = localStorage.getItem('user')
   const existingMe = localStorage.getItem('cheesex.me')
-  // Re-derive whenever there's no mirror yet, or a mirror written before `id`
-  // was added to it (2026-08-10) — those stale entries never self-heal
-  // otherwise, since this bridge only runs once per fresh 'user' write.
-  const needsId = existingMe ? !JSON.parse(existingMe)?.id : false
-  if (raw && (!existingMe || needsId)) {
-    const u = JSON.parse(raw)
+  const u = raw ? JSON.parse(raw) : null
+  const mirrored = existingMe ? JSON.parse(existingMe) : null
+  // Re-derive whenever the mirror is missing, predates `id` (2026-08-10), or
+  // names somebody other than whoever is signed in now. That last case is the
+  // one that bites: a mirror written for the previous account never self-heals,
+  // so requests go out with the new token and the old handle.
+  const stale = mirrored ? !mirrored.id || mirrored.handle !== u?.username : false
+  if (u && (!existingMe || stale)) {
     localStorage.setItem(
       'cheesex.me',
       JSON.stringify({ id: String(u.id), handle: u.username, name: u.nickname || u.username, token: '' })

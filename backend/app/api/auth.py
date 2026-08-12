@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ForbiddenError
+from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.core.obs import get_logger
 from app.core.sandbox_auth import (
     scoped_token_claims,
@@ -27,7 +27,12 @@ from app.core.tokens import verify_session_token
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
 from app.domain.authz.policy import authorize_topic_access
-from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
+from app.domain.identity.actor import (
+    ANONYMOUS_HANDLE,
+    Actor,
+    TokenIdentity,
+    resolve_actor,
+)
 from app.domain.identity.services import CHEESE_HANDLE, IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
@@ -135,7 +140,7 @@ class ActorResolver:
         )
         if actor is None:
             actor = Actor(
-                handle="anonymous", user_id=None, is_agent=False, via="handle"
+                handle=ANONYMOUS_HANDLE, user_id=None, is_agent=False, via="handle"
             )
         actor = await self._recover_numeric_handle(actor)
         # Device-screen attribution (P3): a cheese call from inside an enrolled device's
@@ -152,7 +157,7 @@ class ActorResolver:
                     is_agent=True,
                     via="cheese",
                 )
-        if actor.via == "handle" and actor.handle != "anonymous":
+        if actor.via == "handle" and actor.handle != ANONYMOUS_HANDLE:
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
 
@@ -213,6 +218,60 @@ class ActorResolver:
             return actor
         _log.info("token_handle_recovered", user_id=actor.user_id, handle=user.username)
         return replace(actor, handle=user.username)
+
+    async def recipient(
+        self, *, project_id: uuid.UUID | None, requested: str | None
+    ) -> str:
+        """Whose per-person data (mailbox, badge counts) this request addresses.
+
+        Every "one user's slice" route used to take the handle as a query
+        parameter and hand back that person's data — the string in the URL WAS
+        the authorization. Guarding such a route by passing the same string as
+        ``resolve(fallback_handle=...)`` does not fix it: the Phase-0 fallback
+        turns the query string into an identity, the actor comes back
+        ``via="handle"`` (i.e. unauthenticated), and a check written as "an
+        authenticated actor may not name somebody else" can never fire. Dropping
+        the Authorization header was therefore enough to read any handle's mail.
+
+        So the requested handle is never a credential here. A verified token (or
+        an agent's scoped token) names the recipient; a caller carrying none is
+        ``anonymous``, whose slice is broadcasts only — and naming a person does
+        not change that. An *authenticated* caller asking for somebody else is
+        refused rather than silently redirected: they do have an identity, and
+        being handed a different one than they asked for hides the denial.
+        """
+        wanted = (requested or "").strip() or None
+        actor = await self.resolve(fallback_handle=None, project_id=project_id)
+        if not actor.authenticated:
+            if wanted is not None:
+                _log.info("recipient_without_credential", requested=wanted)
+            return ANONYMOUS_HANDLE
+        if wanted is not None and wanted != actor.handle:
+            _log.info("recipient_mismatch", actor=actor.handle, requested=wanted)
+            raise ForbiddenError("不能查看别人的通知")
+        return actor.handle
+
+    async def require_recipient(
+        self, *, project_id: uuid.UUID | None, target_handle: str | None
+    ) -> Actor:
+        """The caller, proven to be the person ``target_handle`` names.
+
+        For the acts that touch one specific piece of mail — marking it read,
+        rating it, 拍板 on it — where ``target_handle`` is a fact read off the
+        row, not a wish read off the query string. ``None`` means the item is
+        addressed to nobody in particular (a broadcast, or a request that named
+        no mailbox), which any authenticated caller may act on as themselves.
+
+        Unlike :meth:`recipient` there is no anonymous slice to fall back to:
+        these write, and an unidentified caller is refused outright.
+        """
+        actor = await self.resolve(fallback_handle=None, project_id=project_id)
+        if not actor.authenticated:
+            raise AuthenticationRequiredError("需要先登录")
+        if target_handle is not None and target_handle != actor.handle:
+            _log.info("recipient_mismatch", actor=actor.handle, requested=target_handle)
+            raise ForbiddenError("这条通知不是发给你的")
+        return actor
 
     async def authorize_topic(
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID

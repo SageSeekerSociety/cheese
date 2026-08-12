@@ -124,12 +124,14 @@ async function load() {
   try {
     const [ov, ib, contrib, cred] = await Promise.all([
       getOverview(props.projectId),
-      getInbox(props.projectId, ME),
+      // Same .catch() as its neighbours: the inbox is one card on this page,
+      // so losing it must not take the whole 总览 down with it.
+      getInbox(props.projectId).catch(() => null),
       getContributions(props.projectId).catch(() => null),
       getProjectCredits(props.projectId).catch(() => null),
     ])
     overview.value = ov
-    inbox.value = ib.data
+    inbox.value = ib?.data ?? []
     contributions.value = contrib
     credits.value = cred
     // The overview extends the project card; if it didn't carry summary, fetch

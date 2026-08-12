@@ -1049,11 +1049,20 @@ project_router = APIRouter(prefix="/api/projects", tags=["topics"])
 
 @project_router.get("/{project_id}/topic-unread")
 async def project_topic_unread(
-    project_id: uuid.UUID, handle: str, db: DbSession
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    handle: str | None = None,
 ) -> dict:
-    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for one
-    user, one query. Topics with zero unread are omitted."""
-    counts = await TopicService(db).unread_counts(project_id, handle)
+    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for the
+    calling user, one query. Topics with zero unread are omitted.
+
+    Read cursors are per person, so ``handle`` was another route where the query
+    string chose whose state to return — it now only says which mailbox the
+    caller *believes* is theirs, and the resolved actor decides. Kept optional
+    so a client that already knows who it is can simply omit it."""
+    who = await resolver.recipient(project_id=project_id, requested=handle)
+    counts = await TopicService(db).unread_counts(project_id, who)
     return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 

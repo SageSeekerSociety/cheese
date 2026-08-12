@@ -85,6 +85,11 @@ export class AccountService {
     this._accessToken = null
     localStorage.removeItem('accessToken')
     localStorage.removeItem('user')
+    // The cheesex identity mirror (main.ts) is part of the session too. Leaving
+    // it behind outlived the sign-out: the next person to log in on this
+    // browser kept the previous handle, and every per-person request went out
+    // with a new token and an old name.
+    localStorage.removeItem('cheesex.me')
   }
 }
 

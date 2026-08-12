@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.domain.dashboard.services import DashboardService
@@ -17,8 +18,13 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.get("/projects/{project_id}/overview")
-async def project_overview(project_id: uuid.UUID, db: DbSession) -> dict:
-    return ok(await DashboardService(db).project_overview(project_id))
+async def project_overview(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """项目总览. 等你处理的事 is per-person, so the caller is resolved even
+    though the rest of the card is project-wide."""
+    viewer = await resolver.recipient(project_id=project_id, requested=None)
+    return ok(await DashboardService(db).project_overview(project_id, viewer=viewer))
 
 
 @router.get("/spaces/{space_id}/dashboard")
@@ -28,10 +34,21 @@ async def space_dashboard(space_id: int, db: DbSession) -> dict:
 
 @router.get("/projects/{project_id}/members/{user_handle}/summary")
 async def member_summary(
-    project_id: uuid.UUID, user_handle: str, db: DbSession
+    project_id: uuid.UUID,
+    user_handle: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
-    """成员页 (spec §7.2): one member's topics + waiting items + role."""
-    return ok(await DashboardService(db).member_summary(project_id, user_handle))
+    """成员页 (spec §7.2): one member's topics + waiting items + role.
+
+    ``user_handle`` says whose page this is, not who is asking — the waiting
+    items are trimmed to what the caller may see (see the service)."""
+    viewer = await resolver.recipient(project_id=project_id, requested=None)
+    return ok(
+        await DashboardService(db).member_summary(
+            project_id, user_handle, viewer=viewer
+        )
+    )
 
 
 @router.get("/projects/{project_id}/usage")

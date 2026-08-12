@@ -23,8 +23,11 @@ class FeedbackIn(BaseModel):
 
 
 class ResolveIn(BaseModel):
+    """拍板 payload. Deliberately only the choice: who decided is the request's
+    resolved actor, so the field is gone rather than accepted-and-ignored — an
+    ignored field still reads as supported in the OpenAPI schema."""
+
     chosen: str
-    decided_by: str = "user-1"
 
 
 class NotificationOut(BaseModel):

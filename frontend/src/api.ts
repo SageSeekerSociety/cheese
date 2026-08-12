@@ -377,11 +377,12 @@ export function createTopic(projectId: string, title: string, parentId?: string)
 
 // ---- 话题级未读 (Feishu-style badges) ----
 
-// {topic_id: unread_count} for one user; topics with zero unread are omitted.
-export function getTopicUnread(projectId: string, handle: string): Promise<Record<string, number>> {
-  return request<Record<string, number>>(
-    `/projects/${encodeURIComponent(projectId)}/topic-unread?handle=${encodeURIComponent(handle)}`
-  )
+// {topic_id: unread_count} for the signed-in user; topics with zero unread are
+// omitted. Whose badges these are comes from the bearer token — sending a handle
+// too only invites the two to disagree (a stale `cheesex.me` mirror after a
+// re-login used to make the server 403 a request the user had every right to).
+export function getTopicUnread(projectId: string): Promise<Record<string, number>> {
+  return request<Record<string, number>>(`/projects/${encodeURIComponent(projectId)}/topic-unread`)
 }
 
 // Opening a topic bumps the user's read cursor (clears its badge).
@@ -650,10 +651,10 @@ export function getProjectForTeam(teamId: number): Promise<Project | null> {
   return request<Project | null>(`/projects/by-team/${teamId}`)
 }
 
-export function getInbox(projectId: string, targetHandle: string): Promise<ListPayload<InboxItem>> {
-  return request<ListPayload<InboxItem>>(
-    `/projects/${encodeURIComponent(projectId)}/inbox?target_handle=${encodeURIComponent(targetHandle)}`
-  )
+// The caller's own inbox. Same reason as getTopicUnread: the recipient is the
+// token's, so naming one here could only ever contradict it.
+export function getInbox(projectId: string): Promise<ListPayload<InboxItem>> {
+  return request<ListPayload<InboxItem>>(`/projects/${encodeURIComponent(projectId)}/inbox`)
 }
 
 export function markRead(notificationId: string): Promise<InboxItem> {

@@ -5,6 +5,7 @@ import uuid
 
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.repositories import NotificationRepository
+from tests.integration.conftest import session_auth_headers
 
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 
@@ -126,10 +127,13 @@ def test_list_newest_first_and_filters(client):
     assert body["total"] == 1
     assert [n["title"] for n in body["data"]] == ["第一条"]
 
-    # Filter by target_handle: alice sees her own AND broadcasts (第一条 has no
-    # target_handle), but not bob's (第二条). Newest first.
+    # alice sees her own AND broadcasts (第一条 has no target_handle), but not
+    # bob's (第二条). Newest first. Who "alice" is comes from her token — the
+    # query parameter only agrees with it (see test_notification_scoping.py).
     r = client.get(
-        f"/api/projects/{pid}/notifications", params={"target_handle": "alice"}
+        f"/api/projects/{pid}/notifications",
+        params={"target_handle": "alice"},
+        headers=session_auth_headers("alice"),
     )
     body = r.json()["data"]
     assert body["total"] == 2
@@ -149,7 +153,7 @@ def test_broadcast_visible_to_everyone(client):
         target_handle="bob",
     )
     r = client.get(
-        f"/api/projects/{pid}/notifications", params={"target_handle": "alice"}
+        f"/api/projects/{pid}/notifications", headers=session_auth_headers("alice")
     )
     titles = [n["title"] for n in r.json()["data"]["data"]]
     assert "全体注意" in titles  # broadcast reaches alice
@@ -161,8 +165,10 @@ def test_list_unread_only(client):
     a = _post_notif(client, pid, level="light", kind="change_alert", title="A")
     _post_notif(client, pid, level="light", kind="change_alert", title="B")
 
-    # Mark one read.
-    rr = client.post(f"/api/notifications/{a['id']}/read")
+    # Mark one read. Both are broadcasts, so any signed-in caller may.
+    rr = client.post(
+        f"/api/notifications/{a['id']}/read", headers=session_auth_headers("alice")
+    )
     assert rr.status_code == 200
 
     r = client.get(f"/api/projects/{pid}/notifications", params={"unread_only": "true"})
@@ -198,10 +204,10 @@ def test_inbox_only_unread_decision_and_accept(client):
     # heartbeat are broadcasts, so they reach both recipients' lists — yet
     # neither inbox carries them.
     alice = client.get(
-        f"/api/projects/{pid}/inbox", params={"target_handle": "alice"}
+        f"/api/projects/{pid}/inbox", headers=session_auth_headers("alice")
     ).json()["data"]
     bob = client.get(
-        f"/api/projects/{pid}/inbox", params={"target_handle": "bob"}
+        f"/api/projects/{pid}/inbox", headers=session_auth_headers("bob")
     ).json()["data"]
     assert [n["title"] for n in alice["data"]] == ["拍板"]
     assert [n["title"] for n in bob["data"]] == ["验收"]
@@ -212,12 +218,17 @@ def test_inbox_only_unread_decision_and_accept(client):
 
     # A decision request stays in the inbox after merely being read — it leaves
     # only once 拍板 (resolved).
-    client.post(f"/api/notifications/{decision['id']}/read")
-    r = client.get(f"/api/projects/{pid}/inbox", params={"target_handle": "alice"})
+    alice_headers = session_auth_headers("alice")
+    client.post(f"/api/notifications/{decision['id']}/read", headers=alice_headers)
+    r = client.get(f"/api/projects/{pid}/inbox", headers=alice_headers)
     assert r.json()["data"]["total"] == 1
 
-    client.post(f"/api/notifications/{decision['id']}/resolve", json={"chosen": "随便"})
-    r = client.get(f"/api/projects/{pid}/inbox", params={"target_handle": "alice"})
+    client.post(
+        f"/api/notifications/{decision['id']}/resolve",
+        json={"chosen": "随便"},
+        headers=alice_headers,
+    )
+    r = client.get(f"/api/projects/{pid}/inbox", headers=alice_headers)
     assert r.json()["data"]["total"] == 0
 
 
@@ -238,7 +249,9 @@ def test_resolve_records_choice_and_posts_block(client):
         payload={"options": ["按时间切分", "随机切分"]},
     )
     r = client.post(
-        f"/api/notifications/{n['id']}/resolve", json={"chosen": "按时间切分"}
+        f"/api/notifications/{n['id']}/resolve",
+        json={"chosen": "按时间切分"},
+        headers=session_auth_headers("user-1"),
     )
     assert r.status_code == 200
     data = r.json()["data"]
@@ -256,7 +269,11 @@ def test_resolve_records_choice_and_posts_block(client):
         title="再来一个",
         payload={"options": ["A", "B"]},
     )
-    bad = client.post(f"/api/notifications/{n2['id']}/resolve", json={"chosen": "C"})
+    bad = client.post(
+        f"/api/notifications/{n2['id']}/resolve",
+        json={"chosen": "C"},
+        headers=session_auth_headers("user-1"),
+    )
     assert bad.status_code == 422
 
 
@@ -265,13 +282,17 @@ def test_mark_read_sets_timestamp(client):
     n = _post_notif(client, pid, level="light", kind="change_alert", title="X")
     assert n["read_at"] is None
 
-    r = client.post(f"/api/notifications/{n['id']}/read")
+    r = client.post(
+        f"/api/notifications/{n['id']}/read", headers=session_auth_headers("alice")
+    )
     assert r.status_code == 200
     assert r.json()["data"]["read_at"] is not None
 
 
 def test_mark_read_missing_404(client):
-    r = client.post(f"/api/notifications/{NIL_UUID}/read")
+    r = client.post(
+        f"/api/notifications/{NIL_UUID}/read", headers=session_auth_headers("alice")
+    )
     assert r.status_code == 404
 
 
@@ -279,11 +300,18 @@ def test_feedback_up_and_down(client):
     pid = _create_project(client)
     n = _post_notif(client, pid, level="light", kind="change_alert", title="X")
 
-    r = client.post(f"/api/notifications/{n['id']}/feedback", json={"feedback": "up"})
+    alice = session_auth_headers("alice")
+    r = client.post(
+        f"/api/notifications/{n['id']}/feedback", json={"feedback": "up"}, headers=alice
+    )
     assert r.status_code == 200
     assert r.json()["data"]["feedback"] == "up"
 
-    r = client.post(f"/api/notifications/{n['id']}/feedback", json={"feedback": "down"})
+    r = client.post(
+        f"/api/notifications/{n['id']}/feedback",
+        json={"feedback": "down"},
+        headers=alice,
+    )
     assert r.status_code == 200
     assert r.json()["data"]["feedback"] == "down"
 
@@ -291,10 +319,18 @@ def test_feedback_up_and_down(client):
 def test_feedback_invalid_422(client):
     pid = _create_project(client)
     n = _post_notif(client, pid, level="light", kind="change_alert", title="X")
-    r = client.post(f"/api/notifications/{n['id']}/feedback", json={"feedback": "meh"})
+    r = client.post(
+        f"/api/notifications/{n['id']}/feedback",
+        json={"feedback": "meh"},
+        headers=session_auth_headers("alice"),
+    )
     assert r.status_code == 422
 
 
 def test_feedback_missing_404(client):
-    r = client.post(f"/api/notifications/{NIL_UUID}/feedback", json={"feedback": "up"})
+    r = client.post(
+        f"/api/notifications/{NIL_UUID}/feedback",
+        json={"feedback": "up"},
+        headers=session_auth_headers("alice"),
+    )
     assert r.status_code == 404

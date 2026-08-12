@@ -26,6 +26,12 @@ CheeseVerifier = Callable[[], Awaitable[bool]]  # X-Cheese-Token valid for THIS 
 AgentDeriver = Callable[[str], Awaitable[bool]]  # handle → carries an agent-binding?
 
 
+# The handle a request resolves to when nothing identifies its caller. It is a
+# real string because authorship columns are NOT NULL, but it names nobody: no
+# per-person data may be keyed off it, and no write may be attributed to it.
+ANONYMOUS_HANDLE = "anonymous"
+
+
 @dataclass(frozen=True)
 class TokenIdentity:
     """What a verified human token asserts."""

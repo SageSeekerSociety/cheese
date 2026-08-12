@@ -56,7 +56,10 @@ def test_member_summary(client, bearer):
         },
     )
 
-    s = client.get(f"/api/projects/{pid}/members/user-1/summary").json()["data"]
+    # waiting_on_you is user-1's mail, so user-1 is the one who reads the page.
+    s = client.get(
+        f"/api/projects/{pid}/members/user-1/summary", headers=bearer("user-1")
+    ).json()["data"]
     assert s["handle"] == "user-1"
     assert s["role"] == "member"
     assert any(t["title"] == "我开的话题" for t in s["topics_started"])

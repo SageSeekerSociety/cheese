@@ -686,7 +686,7 @@ async function refreshUnread() {
   const pid = selectedProjectId.value
   if (!pid || !AUTHOR) return
   try {
-    const map = await getTopicUnread(pid, AUTHOR)
+    const map = await getTopicUnread(pid)
     if (selectedProjectId.value !== pid) return
     // The open topic is being read right now — its badge never shows.
     if (selectedTopicId.value) delete map[selectedTopicId.value]

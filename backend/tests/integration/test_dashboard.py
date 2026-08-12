@@ -84,7 +84,10 @@ def test_project_overview(client, bearer):
         },
     )
 
-    ov = client.get(f"/api/projects/{pid}/overview").json()["data"]
+    # 等你处理的事 is per-person, so the board is read as the person it waits on.
+    ov = client.get(f"/api/projects/{pid}/overview", headers=bearer("user-1")).json()[
+        "data"
+    ]
     assert ov["name"] == "P"
     assert ov["topic_count"] >= 1  # root topic auto-created
     assert ov["next_milestone"]["title"] == "中期"
