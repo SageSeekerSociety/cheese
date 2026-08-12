@@ -1,62 +1,102 @@
-"""Probe a provider against the Anthropic-protocol checklist.
+"""Probe model providers against the Anthropic-protocol checklist.
 
 (话题《credits 额度设计》§7.1.2 阶段一)
 
 Vendor docs are vague or wrong about the things that actually break a coding
-Agent — cache_control support, whether `usage` splits the four token classes,
-and what the gateway does with a claude-* model name. This script answers those
-by making real requests, so a candidate is judged on behaviour, not marketing.
+Agent — whether cache_control does anything, whether `usage` splits the four
+token classes, what the gateway does with a claude-* model name. This script
+answers those by making real requests, so a candidate is judged on behaviour.
 
-Stdlib only, so it runs without the backend venv:
+Gateway and model are independent axes: 百炼 serves qwen, glm, deepseek and
+kimi through one Anthropic endpoint, so "which gateway" and "which model" can
+be varied separately. Run several targets in one pass to compare them — with a
+model held constant across gateways, the diff isolates the gateway.
+
+    python backend/scripts/probe_provider.py --config tmp/probe_targets.json
+
+Single target, no config file:
 
     python backend/scripts/probe_provider.py \
         --base-url https://open.bigmodel.cn/api/anthropic \
-        --key "$KEY" --model glm-5.2 --haiku-model glm-4.5-air \
+        --key-file tmp/glm.key --model glm-5.2 --haiku-model glm-4.5-air \
         --openai-base-url https://open.bigmodel.cn/api/paas/v4 \
         --embedding-model embedding-3
 
-Exit code is 1 if any BLOCKER check fails — a blocker means the Agent cannot run
-at all, not that it runs worse.
+Keys come from files (`key_file`) or env (`key_env`) so they stay out of argv,
+shell history and transcripts. Stdlib only — no backend venv needed.
+
+Exit code 1 if any target fails a BLOCKER check; a blocker means the Agent
+cannot run at all, not that it runs worse.
 """
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 TIMEOUT = 120
 
 # Checks that disqualify a candidate outright rather than merely degrade it.
-BLOCKERS = {1, 2, 3, 6, 7}
+BLOCKERS = {1, 2, 3, 6}
+
+CHECK_NAMES = {
+    1: "Anthropic Messages 端点",
+    2: "tool_use 多轮往返",
+    3: "流式 tool_use 增量",
+    4: "cache_control 被接受",
+    5: "usage 四类 token 分列",
+    6: "显式模型名可用",
+    7: "claude-* 模型名不致命",
+    8: "OpenAI 端点 + embedding",
+    9: "上下文长度上限",
+    10: "速率限制信息可见",
+    11: "计费可对账",
+    12: "隐式缓存（无标记复用）",
+}
+
+MARK = {"PASS": "✅", "FAIL": "❌", "WARN": "⚠️", "SKIP": "—"}
+
+USAGE_FIELDS = [
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+]
 
 
 class Result:
-    def __init__(self) -> None:
-        self.rows: list[tuple[int, str, str, str]] = []
+    """Collects one target's rows plus the metrics the comparison table needs."""
 
-    def add(self, num: int, name: str, status: str, detail: str = "") -> None:
-        self.rows.append((num, name, status, detail))
-        mark = {"PASS": "✅", "FAIL": "❌", "WARN": "⚠️ ", "SKIP": "— "}[status]
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.rows: dict[int, tuple[str, str]] = {}
+        self.metrics: dict[str, object] = {}
+
+    def add(self, num: int, status: str, detail: str = "") -> None:
+        self.rows[num] = (status, detail)
         blocker = " [BLOCKER]" if num in BLOCKERS and status == "FAIL" else ""
-        print(f"{mark} {num:>2}. {name}{blocker}")
-        if detail:
-            for line in detail.splitlines():
-                print(f"       {line}")
+        print(f"  {MARK[status]} {num:>2}. {CHECK_NAMES[num]}{blocker}")
+        for line in detail.splitlines():
+            print(f"        {line}")
+
+    def status(self, num: int) -> str:
+        return self.rows.get(num, ("SKIP", ""))[0]
 
     def failed_blockers(self) -> list[int]:
-        return [n for n, _, s, _ in self.rows if s == "FAIL" and n in BLOCKERS]
+        return [n for n, (s, _) in self.rows.items() if s == "FAIL" and n in BLOCKERS]
 
 
 def post(url: str, key: str, payload: dict, *, anthropic: bool, stream: bool = False):
-    """POST JSON. Returns (status, headers, body_or_line_iter)."""
+    """POST JSON. Returns (status, headers, body_or_response_stream)."""
     headers = {"content-type": "application/json"}
+    headers["authorization"] = f"Bearer {key}"
     if anthropic:
+        # Gateways disagree on which auth header they read; send both.
         headers["x-api-key"] = key
         headers["anthropic-version"] = "2023-06-01"
-        headers["authorization"] = f"Bearer {key}"  # gateways differ on which they read
-    else:
-        headers["authorization"] = f"Bearer {key}"
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode(), headers=headers, method="POST"
     )
@@ -64,6 +104,8 @@ def post(url: str, key: str, payload: dict, *, anthropic: bool, stream: bool = F
         resp = urllib.request.urlopen(req, timeout=TIMEOUT)
     except urllib.error.HTTPError as exc:
         return exc.code, dict(exc.headers), exc.read().decode(errors="replace")
+    except urllib.error.URLError as exc:
+        return 0, {}, f"连接失败: {exc.reason}"
     if stream:
         return resp.status, dict(resp.headers), resp
     return resp.status, dict(resp.headers), resp.read().decode(errors="replace")
@@ -84,31 +126,39 @@ WEATHER_TOOL = {
 }
 
 
-def check_basic(r: Result, base: str, key: str, model: str) -> dict | None:
-    """1. Anthropic Messages endpoint exists and answers."""
+def _long_prefix(tag: str) -> str:
+    """A shared prefix like a class assignment's brief + starter code.
+
+    Explicit caching has a 1k-token floor, so keep it comfortably long. The tag
+    keeps the explicit and implicit probes from colliding in the same cache.
+    """
+    line = f"[{tag}] 用于测试前缀缓存的公共上下文，模拟全班共享的题面与起始代码。"
+    return line * 120
+
+
+def check_basic(r: Result, t: dict, key: str) -> bool:
     status, _, body = post(
-        messages_url(base),
+        messages_url(t["base_url"]),
         key,
         {
-            "model": model,
+            "model": t["model"],
             "max_tokens": 64,
-            "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+            "messages": [{"role": "user", "content": "Reply with the word: ok"}],
         },
         anthropic=True,
     )
     if status != 200:
-        r.add(1, "Anthropic Messages 端点可用", "FAIL", f"HTTP {status}: {body[:300]}")
-        return None
-    data = json.loads(body)
-    text = "".join(b.get("text", "") for b in data.get("content", []))
-    r.add(1, "Anthropic Messages 端点可用", "PASS", f"回复: {text.strip()[:60]}")
-    return data
+        r.add(1, "FAIL", f"HTTP {status}: {body[:300]}")
+        return False
+    text = "".join(b.get("text", "") for b in json.loads(body).get("content", []))
+    r.add(1, "PASS", f"回复: {text.strip()[:60]}")
+    return True
 
 
-def check_tool_use(r: Result, base: str, key: str, model: str) -> None:
-    """2. tools + tool_result round trip — the Agent dies without this."""
+def check_tool_use(r: Result, t: dict, key: str) -> None:
+    """The Agent dies without this, so both legs of the round trip are tested."""
     first = {
-        "model": model,
+        "model": t["model"],
         "max_tokens": 512,
         "tools": [WEATHER_TOOL],
         "messages": [
@@ -118,22 +168,17 @@ def check_tool_use(r: Result, base: str, key: str, model: str) -> None:
             }
         ],
     }
-    status, _, body = post(messages_url(base), key, first, anthropic=True)
+    status, _, body = post(messages_url(t["base_url"]), key, first, anthropic=True)
     if status != 200:
-        r.add(2, "tool_use 多轮往返", "FAIL", f"第一轮 HTTP {status}: {body[:300]}")
+        r.add(2, "FAIL", f"第一轮 HTTP {status}: {body[:300]}")
         return
     data = json.loads(body)
     calls = [b for b in data.get("content", []) if b.get("type") == "tool_use"]
     if not calls:
-        r.add(
-            2,
-            "tool_use 多轮往返",
-            "FAIL",
-            f"模型没有发起工具调用 (stop_reason={data.get('stop_reason')})",
-        )
+        r.add(2, "FAIL", f"模型未发起工具调用 (stop_reason={data.get('stop_reason')})")
         return
     call = calls[0]
-    # Feed the result back — this second leg is where loose implementations break.
+    # Feeding the result back is where loose implementations break.
     second = dict(first)
     second["messages"] = [
         first["messages"][0],
@@ -149,40 +194,36 @@ def check_tool_use(r: Result, base: str, key: str, model: str) -> None:
             ],
         },
     ]
-    status2, _, body2 = post(messages_url(base), key, second, anthropic=True)
+    status2, _, body2 = post(messages_url(t["base_url"]), key, second, anthropic=True)
     if status2 != 200:
-        r.add(
-            2,
-            "tool_use 多轮往返",
-            "FAIL",
-            f"第二轮(tool_result) HTTP {status2}: {body2[:300]}",
-        )
+        r.add(2, "FAIL", f"第二轮(tool_result) HTTP {status2}: {body2[:300]}")
         return
     final = "".join(b.get("text", "") for b in json.loads(body2).get("content", []))
-    r.add(
-        2,
-        "tool_use 多轮往返",
-        "PASS",
-        f"工具={call.get('name')} 终答={final.strip()[:60]}",
-    )
+    r.add(2, "PASS", f"工具={call.get('name')} 终答={final.strip()[:50]}")
 
 
-def check_stream(r: Result, base: str, key: str, model: str) -> None:
-    """3. tool_use blocks arrive correctly as streaming deltas."""
+def check_stream(r: Result, t: dict, key: str) -> None:
+    """Streaming deltas, and where in the stream `usage` becomes complete.
+
+    百炼 documents `message_start` carrying only two usage fields with the full
+    four arriving in `message_delta` — metering must read the right event.
+    """
     payload = {
-        "model": model,
+        "model": t["model"],
         "max_tokens": 512,
         "stream": True,
         "tools": [WEATHER_TOOL],
         "messages": [{"role": "user", "content": "Weather in Beijing? Use the tool."}],
     }
     status, _, resp = post(
-        messages_url(base), key, payload, anthropic=True, stream=True
+        messages_url(t["base_url"]), key, payload, anthropic=True, stream=True
     )
     if status != 200:
-        r.add(3, "流式 tool_use 增量", "FAIL", f"HTTP {status}")
+        r.add(3, "FAIL", f"HTTP {status}")
         return
-    events, saw_tool_start, saw_json_delta = set(), False, False
+    events: set[str] = set()
+    saw_start = saw_delta = False
+    usage_by_event: dict[str, list[str]] = {}
     for raw in resp:
         line = raw.decode(errors="replace").strip()
         if not line.startswith("data:"):
@@ -191,92 +232,102 @@ def check_stream(r: Result, base: str, key: str, model: str) -> None:
             ev = json.loads(line[5:].strip())
         except json.JSONDecodeError:
             continue
-        events.add(ev.get("type", ""))
-        if ev.get("type") == "content_block_start":
-            if ev.get("content_block", {}).get("type") == "tool_use":
-                saw_tool_start = True
-        if ev.get("type") == "content_block_delta":
-            if ev.get("delta", {}).get("type") == "input_json_delta":
-                saw_json_delta = True
-    if saw_tool_start and saw_json_delta:
-        r.add(3, "流式 tool_use 增量", "PASS", f"事件类型: {sorted(events)}")
+        kind = ev.get("type", "")
+        events.add(kind)
+        if kind == "content_block_start":
+            saw_start |= ev.get("content_block", {}).get("type") == "tool_use"
+        if kind == "content_block_delta":
+            saw_delta |= ev.get("delta", {}).get("type") == "input_json_delta"
+        usage = ev.get("usage") or ev.get("message", {}).get("usage")
+        if usage:
+            usage_by_event[kind] = sorted(usage.keys())
+    r.metrics["stream_usage"] = usage_by_event
+    where = "; ".join(f"{k}={v}" for k, v in usage_by_event.items()) or "无 usage"
+    if saw_start and saw_delta:
+        r.add(3, "PASS", f"usage 出现在: {where}")
     else:
         r.add(
             3,
-            "流式 tool_use 增量",
             "FAIL",
-            f"缺少 tool_use 增量 (block_start={saw_tool_start}, "
-            f"input_json_delta={saw_json_delta}); 事件: {sorted(events)}",
+            f"缺 tool_use 增量 (block_start={saw_start}, json_delta={saw_delta})\n"
+            f"事件: {sorted(events)}",
         )
 
 
-def _long_prefix() -> str:
-    # Caching has a minimum-token floor; make the prefix comfortably long.
-    return (
-        "这是一段用于测试前缀缓存的公共上下文，模拟教学场景下全班共享的题面与起始代码。"
-        * 120
-    )
-
-
-def check_cache(r: Result, base: str, key: str, model: str) -> None:
-    """4 & 5. cache_control accepted, and does `usage` split the four token classes?
-
-    Sent twice: the second call is what would report a cache read.
-    """
-    payload = {
-        "model": model,
+def _cache_payload(t: dict, tag: str, *, explicit: bool) -> dict:
+    block: dict = {"type": "text", "text": _long_prefix(tag)}
+    if explicit:
+        block["cache_control"] = {"type": "ephemeral"}
+    return {
+        "model": t["model"],
         "max_tokens": 32,
-        "system": [
-            {
-                "type": "text",
-                "text": _long_prefix(),
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
+        "system": [block],
         "messages": [{"role": "user", "content": "Reply with: ok"}],
     }
-    status, _, body = post(messages_url(base), key, payload, anthropic=True)
-    if status != 200:
-        r.add(4, "cache_control 被接受", "FAIL", f"HTTP {status}: {body[:300]}")
-        r.add(5, "usage 四类 token 分列", "SKIP", "依赖第 4 项")
-        return
-    r.add(4, "cache_control 被接受", "PASS", "请求未因 cache_control 报错")
 
-    status2, _, body2 = post(messages_url(base), key, payload, anthropic=True)
+
+def check_cache(r: Result, t: dict, key: str) -> None:
+    """4/5: explicit cache accepted, and does the second call report a read?"""
+    url = messages_url(t["base_url"])
+    payload = _cache_payload(t, "explicit", explicit=True)
+    status, _, body = post(url, key, payload, anthropic=True)
+    if status != 200:
+        r.add(4, "FAIL", f"HTTP {status}: {body[:300]}")
+        r.add(5, "SKIP", "依赖第 4 项")
+        return
+    r.add(4, "PASS", "请求未因 cache_control 报错")
+
+    status2, _, body2 = post(url, key, payload, anthropic=True)
     usage = json.loads(body2 if status2 == 200 else body).get("usage", {})
-    wanted = [
-        "input_tokens",
-        "output_tokens",
-        "cache_creation_input_tokens",
-        "cache_read_input_tokens",
-    ]
-    missing = [k for k in wanted if k not in usage]
+    r.metrics["usage"] = usage
+    read = usage.get("cache_read_input_tokens", 0)
+    r.metrics["explicit_cache_read"] = read
+    missing = [k for k in USAGE_FIELDS if k not in usage]
     detail = f"usage = {json.dumps(usage, ensure_ascii=False)}"
     if missing:
-        r.add(5, "usage 四类 token 分列", "FAIL", f"缺失字段: {missing}\n{detail}")
-    elif usage.get("cache_read_input_tokens", 0) > 0:
-        r.add(5, "usage 四类 token 分列", "PASS", f"第二次命中缓存\n{detail}")
+        r.add(5, "FAIL", f"缺失字段: {missing}\n{detail}")
+    elif read > 0:
+        r.add(5, "PASS", f"第二次命中缓存 {read} tokens\n{detail}")
     else:
-        r.add(
-            5,
-            "usage 四类 token 分列",
-            "WARN",
-            f"字段齐全但第二次未命中缓存（可能有最小 token 门槛或需预热）\n{detail}",
-        )
+        r.add(5, "WARN", f"字段齐全但未命中（可能有 token 门槛或需预热）\n{detail}")
 
 
-def check_alias_and_hijack(
-    r: Result, base: str, key: str, model: str, haiku: str
-) -> None:
-    """6. our explicit model names pass through; 7. what happens to a claude-* name.
+def check_implicit_cache(r: Result, t: dict, key: str) -> None:
+    """12: some gateways cache automatically with no cache_control at all.
 
-    [1211]: an unmapped alias reaches the gateway as a claude-* name. Whether that
-    400s (fatal) or silently maps (survivable) decides how safe the swap is.
+    Worth separating: implicit caching is cheaper than nothing but typically a
+    smaller discount than explicit, and on some gateways it cannot be disabled.
     """
-    ok = []
-    for name in filter(None, [model, haiku]):
+    url = messages_url(t["base_url"])
+    payload = _cache_payload(t, "implicit", explicit=False)
+    status, _, _ = post(url, key, payload, anthropic=True)
+    if status != 200:
+        r.add(12, "SKIP", f"首次请求 HTTP {status}")
+        return
+    status2, _, body2 = post(url, key, payload, anthropic=True)
+    if status2 != 200:
+        r.add(12, "SKIP", f"第二次请求 HTTP {status2}")
+        return
+    usage = json.loads(body2).get("usage", {})
+    read = usage.get("cache_read_input_tokens", 0)
+    r.metrics["implicit_cache_read"] = read
+    if read > 0:
+        r.add(12, "PASS", f"无标记也命中 {read} tokens（隐式缓存开启）")
+    else:
+        r.add(12, "WARN", f"未命中，需显式标记才有缓存\nusage = {usage}")
+
+
+def check_models(r: Result, t: dict, key: str) -> None:
+    """6: our configured names work. 7: what a claude-* name does.
+
+    [1211]: an unmapped alias reaches the gateway as a claude-* name. Whether
+    that 400s or is silently mapped decides how dangerous a missed alias is.
+    """
+    url = messages_url(t["base_url"])
+    tried = []
+    for name in filter(None, [t["model"], t.get("haiku_model")]):
         status, _, body = post(
-            messages_url(base),
+            url,
             key,
             {
                 "model": name,
@@ -285,21 +336,16 @@ def check_alias_and_hijack(
             },
             anthropic=True,
         )
-        ok.append((name, status, "" if status == 200 else body[:160]))
-    bad = [x for x in ok if x[1] != 200]
+        tried.append((name, status, "" if status == 200 else body[:140]))
+    bad = [x for x in tried if x[1] != 200]
     if bad:
-        r.add(
-            6,
-            "显式模型名可用",
-            "FAIL",
-            "\n".join(f"{n}: HTTP {s} {b}" for n, s, b in bad),
-        )
+        r.add(6, "FAIL", "\n".join(f"{n}: HTTP {s} {b}" for n, s, b in bad))
     else:
-        r.add(6, "显式模型名可用", "PASS", ", ".join(f"{n} ✓" for n, _, _ in ok))
+        r.add(6, "PASS", ", ".join(f"{n} ✓" for n, _, _ in tried))
 
     probe = "claude-sonnet-4-5"
     status, _, body = post(
-        messages_url(base),
+        url,
         key,
         {
             "model": probe,
@@ -308,29 +354,26 @@ def check_alias_and_hijack(
         },
         anthropic=True,
     )
+    r.metrics["claude_alias_status"] = status
     if status == 200:
-        r.add(
-            7,
-            "claude-* 模型名不致命",
-            "PASS",
-            f"{probe} 被静默映射（HTTP 200）——漏映射别名不会打挂整轮",
-        )
+        r.add(7, "PASS", f"{probe} 被静默映射——漏映射别名不会打挂整轮")
     else:
         r.add(
             7,
-            "claude-* 模型名不致命",
             "WARN",
-            f"{probe} → HTTP {status}: {body[:200]}\n"
-            f"即 [1211] 的失败形态：三档别名必须全部显式映射，漏一个就 400",
+            f"{probe} → HTTP {status}: {body[:160]}\n"
+            f"[1211] 的失败形态：三档别名必须全部显式映射，漏一个就 400",
         )
 
 
-def check_openai_side(r: Result, base: str, key: str, model: str, emb: str) -> None:
-    """8. OpenViking 需要的 OpenAI 协议链路：chat + embeddings。"""
+def check_openai_side(r: Result, t: dict, key: str) -> None:
+    """8: the OpenAI-protocol leg OpenViking needs — chat plus embeddings."""
+    base = t.get("openai_base_url")
     if not base:
-        r.add(8, "OpenAI 协议端点 + embedding", "SKIP", "未提供 --openai-base-url")
+        r.add(8, "SKIP", "未配置 openai_base_url")
         return
     root = base.rstrip("/")
+    model = t.get("openai_model") or t["model"]
     status, _, body = post(
         root + "/chat/completions",
         key,
@@ -342,13 +385,13 @@ def check_openai_side(r: Result, base: str, key: str, model: str, emb: str) -> N
         anthropic=False,
     )
     chat_ok = status == 200
+    emb = t.get("embedding_model")
     if not emb:
         r.add(
             8,
-            "OpenAI 协议端点 + embedding",
-            "FAIL" if not chat_ok else "WARN",
-            f"chat/completions HTTP {status}；未提供 --embedding-model，"
-            f"embedding 未验证（该厂商若无 embedding 模型，OpenViking 需另配一家）",
+            "WARN" if chat_ok else "FAIL",
+            f"chat/completions HTTP {status}；未配置 embedding_model。"
+            f"该厂商若无 embedding，OpenViking 需另配一家",
         )
         return
     status2, _, body2 = post(
@@ -356,26 +399,24 @@ def check_openai_side(r: Result, base: str, key: str, model: str, emb: str) -> N
     )
     if chat_ok and status2 == 200:
         dim = len(json.loads(body2)["data"][0]["embedding"])
-        r.add(
-            8, "OpenAI 协议端点 + embedding", "PASS", f"chat ✓, embedding ✓ (dim={dim})"
-        )
+        r.metrics["embedding_dim"] = dim
+        r.add(8, "PASS", f"chat ✓, embedding ✓ (dim={dim})")
     else:
         r.add(
             8,
-            "OpenAI 协议端点 + embedding",
             "FAIL",
-            f"chat HTTP {status} {'' if chat_ok else body[:160]}\n"
-            f"embeddings HTTP {status2} {'' if status2 == 200 else body2[:160]}",
+            f"chat HTTP {status} {'' if chat_ok else body[:140]}\n"
+            f"embeddings HTTP {status2} {'' if status2 == 200 else body2[:140]}",
         )
 
 
-def check_limits(r: Result, base: str, key: str, model: str) -> None:
-    """9-11. 上下文上限 / 速率限制 / 计费可对账 —— 部分只能看响应头与文档。"""
+def check_limits(r: Result, t: dict, key: str) -> None:
+    """9-11: context ceiling, rate-limit visibility, per-response usage."""
     status, headers, body = post(
-        messages_url(base),
+        messages_url(t["base_url"]),
         key,
         {
-            "model": model,
+            "model": t["model"],
             "max_tokens": 16,
             "messages": [{"role": "user", "content": "hi"}],
         },
@@ -384,69 +425,154 @@ def check_limits(r: Result, base: str, key: str, model: str) -> None:
     rate = {
         k: v
         for k, v in headers.items()
-        if "ratelimit" in k.lower() or "x-request-id" == k.lower()
+        if "ratelimit" in k.lower() or k.lower() == "x-request-id"
     }
     r.add(
         10,
-        "速率限制信息可见",
         "PASS" if rate else "WARN",
-        json.dumps(rate, ensure_ascii=False)
-        if rate
-        else "响应头未暴露限流信息，需查文档或问厂商",
+        json.dumps(rate, ensure_ascii=False) if rate else "响应头未暴露限流信息",
     )
     usage = json.loads(body).get("usage", {}) if status == 200 else {}
-    r.add(
-        11,
-        "计费可对账（usage 随响应返回）",
-        "PASS" if usage else "FAIL",
-        json.dumps(usage, ensure_ascii=False),
+    r.add(11, "PASS" if usage else "FAIL", json.dumps(usage, ensure_ascii=False))
+    r.add(9, "SKIP", "查厂商文档填写；编程 Agent 负载对此敏感")
+
+
+def resolve_key(t: dict) -> str:
+    """Read the key from a file or env var; inline keys are a last resort."""
+    if t.get("key_file"):
+        return Path(t["key_file"]).read_text(encoding="utf-8").strip()
+    if t.get("key_env"):
+        val = os.environ.get(t["key_env"], "")
+        if not val:
+            raise SystemExit(f"环境变量 {t['key_env']} 为空")
+        return val
+    if t.get("key"):
+        return t["key"]
+    raise SystemExit(f"目标 {t.get('name')} 未提供 key_file / key_env / key")
+
+
+def run_target(t: dict) -> Result:
+    name = t.get("name") or f"{t['base_url']} / {t['model']}"
+    r = Result(name)
+    print(f"\n{'=' * 70}\n▶ {name}\n  {t['base_url']}  模型: {t['model']}\n")
+    key = resolve_key(t)
+    if not check_basic(r, t, key):
+        print("  端点不可用，跳过其余检查。")
+        return r
+    check_tool_use(r, t, key)
+    check_stream(r, t, key)
+    check_cache(r, t, key)
+    check_implicit_cache(r, t, key)
+    check_models(r, t, key)
+    check_openai_side(r, t, key)
+    check_limits(r, t, key)
+    return r
+
+
+def render_matrix(results: list[Result]) -> None:
+    """Side-by-side matrix — the point of running several targets in one pass."""
+    print(f"\n{'=' * 70}\n对比矩阵\n")
+    width = max(len(CHECK_NAMES[n]) for n in CHECK_NAMES) + 2
+    header = "检查项".ljust(width - 4) + "".join(
+        f"  {r.name[:16]:<16}" for r in results
     )
-    r.add(9, "上下文长度上限", "SKIP", "查厂商文档填写；编程 Agent 负载对此敏感")
+    print(header)
+    print("-" * len(header))
+    for num in sorted(CHECK_NAMES):
+        row = f"{num:>2}. {CHECK_NAMES[num]}".ljust(width)
+        for r in results:
+            row += f"  {MARK[r.status(num)]:<16}"
+        print(row)
+
+    print("\n关键指标")
+    print("-" * len(header))
+    keys = [
+        ("explicit_cache_read", "显式缓存命中 tokens"),
+        ("implicit_cache_read", "隐式缓存命中 tokens"),
+        ("claude_alias_status", "claude-* 返回码"),
+        ("embedding_dim", "embedding 维度"),
+    ]
+    for mkey, label in keys:
+        row = label.ljust(width)
+        for r in results:
+            row += f"  {str(r.metrics.get(mkey, '—')):<16}"
+        print(row)
+
+
+def load_targets(a: argparse.Namespace) -> list[dict]:
+    if a.config:
+        data = json.loads(Path(a.config).read_text(encoding="utf-8"))
+        return data["targets"] if isinstance(data, dict) else data
+    if not (a.base_url and a.model):
+        raise SystemExit("需要 --config，或同时给出 --base-url 与 --model")
+    return [
+        {
+            "name": a.name or a.model,
+            "base_url": a.base_url,
+            "model": a.model,
+            "haiku_model": a.haiku_model,
+            "key": a.key,
+            "key_file": a.key_file,
+            "key_env": a.key_env,
+            "openai_base_url": a.openai_base_url,
+            "openai_model": a.openai_model,
+            "embedding_model": a.embedding_model,
+        }
+    ]
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument(
-        "--base-url",
-        required=True,
-        help="Anthropic 兼容端点，如 https://open.bigmodel.cn/api/anthropic",
+    p = argparse.ArgumentParser(
+        description="探测模型厂商的 Anthropic 协议兼容性（可多目标对比）"
     )
-    p.add_argument("--key", required=True)
-    p.add_argument("--model", required=True, help="主模型（opus/sonnet 档）")
+    p.add_argument("--config", help="JSON 配置，含 targets 列表；多目标对比用这个")
+    p.add_argument("--name", default="", help="单目标模式下的显示名")
+    p.add_argument("--base-url", help="Anthropic 兼容端点")
+    p.add_argument("--model", help="主模型（opus/sonnet 档）")
     p.add_argument("--haiku-model", default="", help="轻量档模型")
-    p.add_argument(
-        "--openai-base-url", default="", help="OpenAI 兼容端点（OpenViking 用）"
-    )
-    p.add_argument(
-        "--openai-model", default="", help="OpenAI 侧 chat 模型，默认同 --model"
-    )
-    p.add_argument(
-        "--embedding-model", default="", help="embedding 模型，如 embedding-3"
-    )
+    p.add_argument("--key", default="", help="不推荐：会进入 shell 历史")
+    p.add_argument("--key-file", default="", help="推荐：存放 key 的文件路径")
+    p.add_argument("--key-env", default="", help="推荐：存放 key 的环境变量名")
+    p.add_argument("--openai-base-url", default="", help="OpenAI 兼容端点")
+    p.add_argument("--openai-model", default="", help="OpenAI 侧 chat 模型")
+    p.add_argument("--embedding-model", default="", help="embedding 模型")
+    p.add_argument("--json-out", default="", help="把完整结果写成 JSON")
     a = p.parse_args()
 
-    print(f"\n探测目标: {a.base_url}  模型: {a.model}\n" + "=" * 64)
-    r = Result()
-    if check_basic(r, a.base_url, a.key, a.model) is None:
-        print("\n端点不可用，后续检查跳过。")
-        return 1
-    check_tool_use(r, a.base_url, a.key, a.model)
-    check_stream(r, a.base_url, a.key, a.model)
-    check_cache(r, a.base_url, a.key, a.model)
-    check_alias_and_hijack(r, a.base_url, a.key, a.model, a.haiku_model)
-    check_openai_side(
-        r, a.openai_base_url, a.key, a.openai_model or a.model, a.embedding_model
-    )
-    check_limits(r, a.base_url, a.key, a.model)
+    targets = load_targets(a)
+    results = [run_target(t) for t in targets]
 
-    print("=" * 64)
-    blockers = r.failed_blockers()
-    if blockers:
-        print(f"结论: 不通过 —— BLOCKER 项失败: {blockers}")
-        return 1
-    warns = [n for n, _, s, _ in r.rows if s in ("FAIL", "WARN")]
-    print(f"结论: 通过阶段一{'（有降级项: ' + str(warns) + '）' if warns else ''}")
-    return 0
+    if len(results) > 1:
+        render_matrix(results)
+
+    if a.json_out:
+        payload = [
+            {
+                "name": r.name,
+                "checks": {
+                    str(n): {"status": s, "detail": d} for n, (s, d) in r.rows.items()
+                },
+                "metrics": r.metrics,
+            }
+            for r in results
+        ]
+        Path(a.json_out).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"\n完整结果已写入 {a.json_out}")
+
+    print(f"\n{'=' * 70}")
+    failed = False
+    for r in results:
+        blockers = r.failed_blockers()
+        if blockers:
+            failed = True
+            print(f"{r.name}: 不通过 —— BLOCKER 失败 {blockers}")
+        else:
+            degraded = [n for n, (s, _) in r.rows.items() if s in ("FAIL", "WARN")]
+            note = f"（降级项 {sorted(degraded)}）" if degraded else ""
+            print(f"{r.name}: 通过阶段一{note}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
