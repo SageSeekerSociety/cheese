@@ -29,6 +29,7 @@ from app.domain.agent import event_spool
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
+from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
 from app.domain.agent.profiles import ProfileRegistry
@@ -1965,12 +1966,29 @@ class ChatService:
                 except Exception:  # noqa: BLE001 — retraction is best-effort
                     logger.exception("error-echo retraction failed")
             resume_after_s: float | None = None
+            resume_hint_reason = "座位额度已恢复，继续之前的任务"
+            swap = NO_SWAP
             fail_meta: dict | None = None
             fail_code: str | None = None
             if platform_failure is not None:
                 fail_text = platform_failure.content
                 fail_meta = platform_failure.meta
                 fail_code = platform_failure.code
+                if platform_failure.host_scoped:
+                    # Blame the machine, not the turn (#186): count this against
+                    # the box and, once it has failed once too often, move the
+                    # topic to a healthy one and schedule the continuation. The
+                    # platform_failure branch otherwise leaves resume_after_s
+                    # unset — correct only while there was nowhere else to go.
+                    swap = await handle_host_failure(
+                        topic_id=topic_id,
+                        project_id=project_id,
+                        failure=platform_failure,
+                        session_factory=self._sessions,
+                    )
+                    if swap.resume_after_s is not None and not is_resume:
+                        resume_after_s = swap.resume_after_s
+                        resume_hint_reason = swap.resume_reason or resume_hint_reason
             elif (
                 rate_limit
                 and rate_limit.get("status") == "rejected"
@@ -2055,11 +2073,33 @@ class ChatService:
                     meta=fail_meta,
                 )
                 fail_payload = _block_payload(BlockOut.model_validate(fail_block))
+                swap_payload = None
+                if swap.message:
+                    # The move gets its OWN event, right after the failure card:
+                    # a topic that changes machines must say so in the room, or
+                    # it is the silent drift the pin exists to prevent.
+                    swap_block = await blocks.add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        author="system",
+                        author_type=AuthorType.system,
+                        content=swap.message,
+                        kind=BlockKind.event,
+                        turn_id=turn_id,
+                        meta={
+                            "event_type": "host_swap",
+                            "from_device": swap.old_device,
+                            "to_device": swap.new_device,
+                        },
+                    )
+                    swap_payload = _block_payload(BlockOut.model_validate(swap_block))
                 await session.commit()
             if new_session_id and new_session_id != resume_session_id:
                 await self._save_session_pointer(topic_id, new_session_id)
             provider.checkpoint(project_id, topic_id)
             yield {"type": "event_block", "block": fail_payload}
+            if swap_payload is not None:
+                yield {"type": "event_block", "block": swap_payload}
             error_frame = {
                 "type": "error",
                 "message": fail_text,
@@ -2073,7 +2113,7 @@ class ChatService:
                 yield {
                     "type": "resume_hint",
                     "after_s": resume_after_s,
-                    "reason": "座位额度已恢复，继续之前的任务",
+                    "reason": resume_hint_reason,
                 }
             yield {"type": "done"}
             return

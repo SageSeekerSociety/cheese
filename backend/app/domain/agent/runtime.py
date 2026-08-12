@@ -25,7 +25,11 @@ from functools import lru_cache
 
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
-from app.domain.agent.platform_failures import classify_platform_failure
+from app.domain.agent.host_swap import handle_host_failure, record_host_success
+from app.domain.agent.platform_failures import (
+    HOST_SCOPED_CODES,
+    classify_platform_failure,
+)
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -182,6 +186,15 @@ class TurnRunner:
         # back off the on-disk registry because `live_turn_for_topic` answers a
         # request (`/topics/{id}/status`), and that must not cost a file read.
         self._live_topics: dict[str, uuid.UUID] = {}
+        # Topics whose last turn died of a host-scoped failure (#186). Clearing the
+        # machine's failure streak costs a DB round-trip, and a turn must not wait
+        # on bookkeeping to be released — `_live` is emptied only after `_execute`
+        # returns, and `live_turn_for_topic` is the heartbeat half of the stall
+        # verdict, so a slow tail here reads as "still running" to every caller.
+        # Remembering who actually failed keeps the happy path free of it entirely;
+        # what this set cannot see (a failure recorded before a restart) is covered
+        # by the staleness rule in `device.health` instead.
+        self._host_failed_topics: set[str] = set()
 
     def recent_turns(self) -> list[dict]:
         """Newest-first lifecycle summaries for /debug/turns."""
@@ -809,6 +822,10 @@ class TurnRunner:
         channel = str(topic_id)
         resume_after: float | None = None
         resume_why = "上一轮异常中断，接着跑"
+        # Did this turn blame the MACHINE? Decides whether finishing counts as
+        # evidence the machine is healthy (#186) — a turn that ends in a
+        # host-scoped failure must not immediately clear the streak it just added.
+        host_failed = False
         # Correlate: every log line anywhere inside this turn carries these ids.
         bind_context(turn=str(turn_id)[:8], topic=str(topic_id)[:8])
         t0 = time.monotonic()
@@ -912,10 +929,26 @@ class TurnRunner:
                     if kind == "error":
                         rec["status"] = "error"
                         rec["detail"] = str(frame.get("message", ""))[:200]
+                        if frame.get("code") in HOST_SCOPED_CODES:
+                            # The chat layer already recorded it against the
+                            # machine and may have moved the topic; don't undo
+                            # that below just because the stream ended cleanly.
+                            host_failed = True
+                            self._host_failed_topics.add(str(topic_id))
                     await self._broker.publish(channel, frame)
             if rec["status"] == "running":
                 rec["status"] = "done"
             rec["duration_s"] = round(time.monotonic() - t0, 1)
+            if not host_failed and str(topic_id) in self._host_failed_topics:
+                self._host_failed_topics.discard(str(topic_id))
+                # Streaming a turn to its end is the machine working. That breaks
+                # the failure streak and lifts any quarantine (#186) — the way a
+                # machine gets back into rotation without anyone clearing it.
+                # Only reached when this process actually saw the machine fail:
+                # there is nothing to clear otherwise, and paying a DB round-trip
+                # on every good turn would delay the turn's release (see
+                # `_host_failed_topics`).
+                await record_host_success(topic_id=topic_id)
             logger.info(
                 "turn done: status=%s tools=%s first_output=%ss duration=%ss",
                 rec["status"],
@@ -1046,6 +1079,24 @@ class TurnRunner:
             await self._broker.publish(channel, error_frame)
             if not is_resume and platform_failure is None:
                 resume_after = 5.0
+            if platform_failure is not None and platform_failure.host_scoped:
+                # The machine, not the turn, is the suspect (#186). Account for it
+                # and — if it has now failed once too often — move the topic to a
+                # healthy machine. That also restores the auto-resume this branch
+                # otherwise skips: "don't retry" was only ever right while there
+                # was nowhere else to retry.
+                host_failed = True
+                self._host_failed_topics.add(str(topic_id))
+                swap = await handle_host_failure(
+                    topic_id=topic_id, failure=platform_failure
+                )
+                if swap.message:
+                    await self._post_event(
+                        chat_service, topic_id, turn_id, swap.message
+                    )
+                if swap.resume_after_s is not None and not is_resume:
+                    resume_after = swap.resume_after_s
+                    resume_why = swap.resume_reason or resume_why
         if resume_after is not None and not is_resume:
             rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
             self._schedule_resume(chat_service, topic_id, resume_after, resume_why)

@@ -6,6 +6,7 @@ models so the service can be unit-tested with the in-memory repo — no DB, no a
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
@@ -41,6 +42,21 @@ class AuthCode:
     device_id: str | None = None
 
 
+@dataclass
+class HostHealth:
+    """A machine's rolling failure streak + quarantine window (#186).
+
+    Only written when something goes wrong; a successful turn deletes it. The
+    judgement that turns this into "stop sending work here" is in ``health.py``
+    (pure), so it can be exercised without a database."""
+
+    device_id: str
+    consecutive_failures: int = 0
+    last_failure_code: str | None = None
+    last_failure_at: datetime | None = None
+    quarantined_until: datetime | None = None
+
+
 class DeviceRepository(Protocol):
     """Data access for the device flow. Both the in-memory and SQL repos satisfy it."""
 
@@ -70,3 +86,16 @@ class DeviceRepository(Protocol):
     # first turn. ``bind`` is write-once — an existing pin is never overwritten.
     async def topic_device(self, topic_id: uuid.UUID) -> str | None: ...
     async def bind_topic_device(self, topic_id: uuid.UUID, device_id: str) -> None: ...
+    # Drop a topic's pin so it can be re-pinned elsewhere. The ONLY way past
+    # write-once: an explicit, reasoned release (#186 换身体), never a silent
+    # fallback inside the resolver — that was the original drift bug.
+    async def release_topic_device(self, topic_id: uuid.UUID) -> None: ...
+
+    # machine health (#186): failure streak + quarantine, one row per device,
+    # absent when the machine is healthy.
+    async def get_host_health(self, device_id: str) -> HostHealth | None: ...
+    async def save_host_health(self, health: HostHealth) -> None: ...
+    async def clear_host_health(self, device_id: str) -> None: ...
+    async def list_host_health(
+        self, device_ids: Sequence[str]
+    ) -> dict[str, HostHealth]: ...
