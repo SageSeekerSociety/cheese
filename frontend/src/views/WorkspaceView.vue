@@ -493,9 +493,7 @@ const deliveryNote = computed(() => {
 // topic is enforced server-side).
 const gateCard = computed<AcceptCard | null>(() => {
   const c = acceptCards.value[0]
-  return c && (c.status === 'pending_gate' || c.status === 'gate_failed' || c.status === 'gate_blocked')
-    ? c
-    : null
+  return c && (c.status === 'pending_gate' || c.status === 'gate_failed' || c.status === 'gate_blocked') ? c : null
 })
 const showGateOutput = ref(false)
 
@@ -1138,7 +1136,11 @@ onUnmounted(() => {
 
             <!-- 闸门没跑成：检查本身没能在门禁容器里跑起来，对代码没有结论。
                  刻意跟「未通过」分开显示——它是需要人看一眼的状态，不是代码红了。 -->
-            <v-card v-else-if="gateCard && gateCard.status === 'gate_blocked'" variant="outlined" class="merge-box mt-2">
+            <v-card
+              v-else-if="gateCard && gateCard.status === 'gate_blocked'"
+              variant="outlined"
+              class="merge-box mt-2"
+            >
               <div class="merge-box__bar" />
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
