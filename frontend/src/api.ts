@@ -112,8 +112,66 @@ export class ApiError extends Error {
   }
 }
 
+// How close to expiry is "about to expire". The refresh below is what keeps a
+// request from going out as nobody; a token that dies in flight costs the same
+// as one that was already dead, so leave room for the round trip.
+const TOKEN_REFRESH_LEEWAY_MS = 60_000
+
+// One refresh in flight at a time. Without this, a page that fires eight
+// requests on mount fires eight refreshes, and the losers race to overwrite
+// `accessToken` with each other's result.
+let refreshInFlight: Promise<void> | null = null
+
+export function tokenExpiresWithin(token: string, ms: number): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as { exp?: number }
+    if (typeof payload.exp !== 'number') return false
+    return payload.exp * 1000 - Date.now() <= ms
+  } catch {
+    // Not a JWT we can read — leave it alone rather than refresh on every call.
+    return false
+  }
+}
+
+// 2.0 rides raw `fetch`, so it never passes through the axios response
+// interceptor that refreshes on 401 — and the 2.0 routes do not answer 401
+// anyway: they resolve the actor from the token and fall back to "nobody" when
+// it does not verify. Both halves fail silently, which is how an expired token
+// turned into 「左边栏冒出一堆不是我的项目」: the request went out as an anonymous
+// caller, and the sidebar listing used to answer an anonymous caller with every
+// project on the platform. The listing is scoped now (that is the security
+// half), but a signed-in user whose token lapsed would still see an empty
+// sidebar. So refresh it here, before the request, rather than react to a
+// failure the transport cannot see.
+export async function ensureFreshToken(): Promise<void> {
+  const token = authToken()
+  if (!token || !tokenExpiresWithin(token, TOKEN_REFRESH_LEEWAY_MS)) return
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const res = await fetch('/api/users/auth/refresh-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        })
+        if (!res.ok) return
+        const body = (await res.json()) as { data?: { accessToken?: string } }
+        const next = body?.data?.accessToken
+        if (next) localStorage.setItem('accessToken', next)
+      } catch {
+        // Offline, or the refresh cookie is gone. Sending the stale token is
+        // no worse than sending nothing, and the caller still sees the result.
+      } finally {
+        refreshInFlight = null
+      }
+    })()
+  }
+  await refreshInFlight
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
+  await ensureFreshToken()
   for (let attempt = 0; ; attempt += 1) {
     let res: Response
     try {

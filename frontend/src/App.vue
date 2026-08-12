@@ -103,6 +103,7 @@ import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import { myHandle } from '@/me'
+import AccountService from '@/services/account'
 
 const currentRoute = useRoute()
 const router = useRouter()
@@ -147,6 +148,27 @@ async function loadCxProjects() {
   }
 }
 onMounted(loadCxProjects)
+
+// …and again whenever the identity changes. The rail used to load exactly once,
+// on mount — and the app normally mounts on the sign-in page, i.e. with no
+// credential yet. Signing in is an SPA navigation, not a reload, so nothing
+// ever fetched the list again: the rail a user looked at all session was the
+// one fetched as nobody.
+//
+// While the backend answered an unidentifiable caller with EVERY project, that
+// was invisible-but-wrong — a full rail of other people's work. Now that it
+// answers with none, the same gap would leave a signed-in user staring at an
+// empty rail forever, which is how the e2e suite caught this.
+//
+// `loggedIn` flips before `accessToken` is written inside AccountService.login,
+// but this watcher is not `flush: 'sync'`, so the callback runs after that
+// synchronous call has finished and the token is in storage.
+watch(
+  () => AccountService.loggedIn,
+  () => {
+    void loadCxProjects()
+  }
+)
 
 const navItems = computed<NavGenericItem[]>(() => [
   { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese', visibleOnMobile: false, shortcut: 1 },

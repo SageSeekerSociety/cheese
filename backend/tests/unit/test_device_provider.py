@@ -347,6 +347,167 @@ async def _async_value(value):
     return value
 
 
+# --- release_topic: freeing a done topic's screen (the leak this fixes) --------
+
+
+class ReleaseHub(FakeHub):
+    """Hub stand-in that records screen teardown for release_topic tests."""
+
+    def __init__(self, screens: dict) -> None:
+        super().__init__()
+        self._by_topic = screens  # topic_id -> list[HubScreen]
+        self.online = {"dev1"}
+        self.closed: list[tuple[str, str]] = []  # (device_id, sid)
+        self.execs: list[tuple[str, list]] = []  # (device_id, argv)
+
+    def screens_for_topic(self, topic_id) -> list[HubScreen]:
+        return list(self._by_topic.get(topic_id, []))
+
+    def is_online(self, device_id: str) -> bool:
+        return device_id in self.online
+
+    async def close_screen(self, device_id, sid) -> bool:
+        self.closed.append((device_id, sid))
+        return True
+
+    async def exec(self, device_id, argv, timeout=30):
+        self.execs.append((device_id, argv))
+        return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
+
+
+def _screen(device_id: str, sid: str, project_id, topic_id) -> HubScreen:
+    return HubScreen(
+        sid=sid,
+        device_id=device_id,
+        command=[],
+        token=f"tok-{sid}",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=project_id,
+        topic_id=topic_id,
+    )
+
+
+@pytest.mark.anyio
+async def test_release_topic_closes_the_exact_screen(monkeypatch):
+    """Archiving a topic that ran on a device must close THAT topic's screen on the
+    device it pinned to — the reverse lookup lands on the right (device_id, sid)."""
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+    hub = ReleaseHub({tid: [_screen("dev1", "s7", pid, tid)]})
+    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+
+    await provider.release_topic(pid, tid)
+
+    assert hub.closed == [("dev1", "s7")]
+
+
+@pytest.mark.anyio
+async def test_release_topic_removes_only_a_remote_devices_work_dir(monkeypatch):
+    """A REMOTE device owns its own clone under a per-topic scratch dir, so releasing
+    the topic removes that dir too — and the delete target is that scratch path,
+    never anything above it."""
+    from app.core.config import settings
+
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+    hub = ReleaseHub({tid: [_screen("dev1", "s1", pid, tid)]})
+    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")
+    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+
+    await provider.release_topic(pid, tid)
+
+    assert hub.closed == [("dev1", "s1")]
+    assert len(hub.execs) == 1
+    device_id, argv = hub.execs[0]
+    assert device_id == "dev1"
+    assert argv[0] == "sh"
+    rm = argv[-1]
+    assert "rm -rf" in rm
+    assert f"$HOME/.cheese/work/{pid}/{tid}" in rm
+
+
+@pytest.mark.anyio
+async def test_release_topic_never_touches_a_co_located_tree(monkeypatch):
+    """A CO-LOCATED device edited the backend's REAL worktree, so releasing the
+    topic closes its screen but must NEVER delete a work dir — deleting the shared
+    tree would destroy the topic's branch."""
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+    hub = ReleaseHub({tid: [_screen("dev1", "s1", pid, tid)]})
+    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(True))
+
+    await provider.release_topic(pid, tid)
+
+    assert hub.closed == [("dev1", "s1")]
+    assert hub.execs == []  # the backend's real worktree is never rm'd
+
+
+@pytest.mark.anyio
+async def test_release_topic_is_a_silent_noop_without_a_screen():
+    """The machine may be offline (its screen already gone) or the topic may never
+    have run on a device — either way release is a successful no-op, never raising
+    (a reap loop must not break on one topic)."""
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+    hub = ReleaseHub({})  # nothing registered for this topic
+    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+
+    await provider.release_topic(pid, tid)
+
+    assert hub.closed == [] and hub.execs == []
+
+
+@pytest.mark.anyio
+async def test_release_topic_forgets_an_offline_screen_without_a_remote_rm(monkeypatch):
+    """An offline device is unreachable — its work dir can't be removed now — but its
+    screen is still forgotten here, so an archived topic leaves no stale registry
+    entry to re-surface if the machine reconnects."""
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+    hub = ReleaseHub({tid: [_screen("devX", "s1", pid, tid)]})
+    hub.online = set()  # device offline
+    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+
+    await provider.release_topic(pid, tid)
+
+    assert hub.closed == [("devX", "s1")]  # forgotten from the registry
+    assert hub.execs == []  # unreachable → no rm attempted
+
+
+@pytest.mark.anyio
+async def test_release_topic_swallows_a_teardown_error(monkeypatch):
+    """A dropped device channel mid-teardown must not propagate — the idle reaper
+    walks many topics and one failure can't be allowed to abort the rest."""
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+
+    class Boom(ReleaseHub):
+        async def close_screen(self, device_id, sid):
+            raise RuntimeError("device channel dropped")
+
+    hub = Boom({tid: [_screen("dev1", "s1", pid, tid)]})
+    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+
+    await provider.release_topic(pid, tid)  # must not raise
+
+
+@pytest.mark.anyio
+async def test_release_topic_screen_wrapper_drives_the_given_hub(monkeypatch):
+    """The module-level wrapper (what the accept path and reaper call) frees the
+    topic through DeviceProvider against the hub it is handed."""
+    from app.core.config import settings
+    from app.domain.agent.device_provider import release_topic_screen
+
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+    hub = ReleaseHub({tid: [_screen("dev1", "s1", pid, tid)]})
+    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")  # remote
+
+    await release_topic_screen(pid, tid, hub=hub)  # type: ignore[arg-type]
+
+    assert hub.closed == [("dev1", "s1")]
+    assert len(hub.execs) == 1  # remote → its scratch dir removed
+
+
 def test_a_remote_device_is_warned_about_a_box_local_model_endpoint(
     monkeypatch, caplog
 ):

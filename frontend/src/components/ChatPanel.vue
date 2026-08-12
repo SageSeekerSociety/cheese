@@ -948,7 +948,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="chat d-flex flex-column fill-height">
+  <!-- The layout lives in `.chat` below, NOT in Vuetify's d-flex/flex-column/
+       fill-height utilities. Those carry `!important`, and 专注模式 hides this
+       whole panel with `v-show` — which sets inline `display: none`, which
+       `.d-flex { display: flex !important }` then overrides. The button
+       toggled, the icon flipped, and the chat column never moved. -->
+  <div class="chat">
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-forum-outline</v-icon>
@@ -1351,6 +1356,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .chat {
+  /* Was `d-flex flex-column fill-height` on the root. Spelled here instead so
+     the declarations carry normal specificity: v-show's inline `display: none`
+     has to be able to win. See the comment on the root element. */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   background: var(--surface);
 }
 /* Action cards (§3.1.1 控件) — 芝士's cheese actions as clickable affordances.

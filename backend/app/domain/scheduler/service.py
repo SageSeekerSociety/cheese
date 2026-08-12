@@ -133,6 +133,54 @@ class SchedulerService:
                 reaped += 1
         return reaped
 
+    async def reap_idle_device_screens(
+        self, idle_hours: float = IDLE_REAP_HOURS
+    ) -> int:
+        """Device counterpart to ``reap_idle_containers``: close a device screen whose
+        topic has had NO block activity for ``idle_hours``. Screens live in the device
+        hub's in-memory registry, not in Docker, so the container reaper never saw
+        them — a topic that ran on a device and then went quiet used to leak its screen
+        (and the ``claude`` process behind it) on the machine forever.
+
+        Only ONLINE devices are walked (an offline box is unreachable now). The same
+        safety holds as for containers: an active turn has just-persisted blocks, so
+        its topic can never look idle. Teardown is best-effort — a remote device's
+        per-topic work dir is removed too, a co-located device keeps its real tree.
+        Returns how many topics were released."""
+        from app.domain.agent.device_hub import device_hub
+        from app.domain.agent.device_provider import release_topic_screen
+
+        pairs = {
+            (s.project_id, s.topic_id)
+            for s in device_hub.all_online_screens()
+            if s.project_id is not None and s.topic_id is not None
+        }
+        if not pairs:
+            return 0
+        cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
+        idle: list[tuple[uuid.UUID, uuid.UUID]] = []
+        async with self._sessions() as session:
+            for project_id, topic_id in pairs:
+                last = (
+                    await session.execute(
+                        select(func.max(Block.created_at)).where(
+                            Block.topic_id == topic_id
+                        )
+                    )
+                ).scalar()
+                if last is not None and last.tzinfo is None:
+                    last = last.replace(tzinfo=UTC)
+                if last is not None and last >= cutoff:
+                    continue  # recently active — keep the screen alive
+                idle.append((project_id, topic_id))
+        # Release outside the query session so co-location's own DB read (a separate
+        # session) never nests inside this one.
+        for project_id, topic_id in idle:
+            await release_topic_screen(
+                project_id, topic_id, session_factory=self._sessions
+            )
+        return len(idle)
+
     async def sync_upstreams(self) -> dict:
         """Keep every linked project's base current with its upstream, unattended.
 
@@ -324,12 +372,20 @@ class SandboxReaperRunner:
     async def _loop(self) -> None:
         while True:
             await asyncio.sleep(self._interval)
+            # Containers and device screens are independent cleanups on the same
+            # cadence — one raising must not skip the other.
             try:
                 reaped = await self._scheduler.reap_idle_containers(self._idle_hours)
                 if reaped:
                     logger.info("idle reap: removed %d container(s)", reaped)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("idle container reap failed")
+            try:
+                freed = await self._scheduler.reap_idle_device_screens(self._idle_hours)
+                if freed:
+                    logger.info("idle reap: freed %d device screen(s)", freed)
+            except Exception:  # noqa: BLE001 -- maintenance loop must survive
+                logger.exception("idle device screen reap failed")
 
 
 class PrPollRunner:

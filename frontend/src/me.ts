@@ -41,6 +41,16 @@ export function myHandle(): string {
   return me.value?.handle ?? ''
 }
 
+// The numeric 知是 user id, for the routes keyed by it (`/users/{id}/oauth/...`).
+// Self-heals exactly like `myHandle()`, and for the same reason: sign-in is an
+// SPA `router.replace`, never a reload, so this module's boot-time snapshot is
+// still the logged-OUT one. Reading `me.value?.id` raw made the 连接 GitHub 账号
+// section render its 「未登录」 error branch to a user who had just logged in.
+export function myId(): string {
+  if (!me.value?.id) me.value = load()
+  return me.value?.id ?? ''
+}
+
 // The signed session token (P1 真鉴权). api.ts attaches it as a Bearer header;
 // empty when signed out or when an older (pre-token) identity is cached.
 export function authToken(): string {

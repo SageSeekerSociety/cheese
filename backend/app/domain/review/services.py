@@ -229,6 +229,10 @@ _BLOCKED_BY_CARD_MESSAGES = {
 }
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 
+#: Where an alembic revision lives. Two live cards each ADDING a file under
+#: here is the one overlap a machine can judge on its own (#314).
+_ALEMBIC_VERSIONS_DIR = "alembic/versions/"
+
 
 # ---- 人类授权动作前移 (2026-08-10) -----------------------------------------
 #
@@ -318,6 +322,28 @@ class AcceptService:
             raise NotFoundError("Accept card not found")
         return card
 
+    async def _release_topic_compute(self, topic: Topic) -> None:
+        """Free a done topic's long-lived compute on 采纳/归档 — the sandbox
+        container(s) AND, when the topic ran on an enrolled device, its screen (plus
+        a remote device's per-topic work dir). The container reaper only ever knew
+        about Docker boxes, so a device screen (and the ``claude`` process behind it)
+        used to leak on the machine forever.
+
+        Best-effort in both halves: a missing box or screen is a successful no-op
+        (it is recreated on demand if the archived topic is ever resumed), and a
+        failure here must never fail the accept itself."""
+        from app.domain.agent.device_provider import release_topic_screen
+        from app.domain.workspace import service as ws
+
+        try:
+            ws.stop_topic_container(topic.id)
+        except Exception:  # noqa: BLE001 — best effort, never fatal
+            pass
+        try:
+            await release_topic_screen(topic.project_id, topic.id)
+        except Exception:  # noqa: BLE001 — best effort, never fatal
+            pass
+
     async def create_card(
         self,
         *,
@@ -357,11 +383,69 @@ class AcceptService:
             if check_command_of(project)
             else AcceptStatus.pending
         )
-        return await self._repo.add(
+        card = await self._repo.add(
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
             status=status,
+        )
+        await self._warn_about_a_second_pending_migration(topic)
+        return card
+
+    async def _warn_about_a_second_pending_migration(self, topic: Topic) -> None:
+        """两张未决卡各带一个新迁移 → 在房间里说一声 (#314).
+
+        The narrow, clean half of "two rooms doing the same work". Two branches
+        editing the same existing file is ordinary — parent and child legitimately
+        touch one file each. Two branches each CREATING an alembic revision is
+        not: at best it forks the chain the moment both land (#312), at worst the
+        two are the same feature implemented twice, which is what happened on
+        2026-08-11 — `topics.progress` (a column) and `topic_progress` (a table),
+        two incompatible data models, each with a green card.
+
+        Deliberately a notice, not a block. The judgement "these two are the same
+        work" needs a human; what a machine can contribute is making sure the
+        human is looking at the moment there is something to look at. Both cards
+        being individually green is exactly the state that hides this.
+
+        Best-effort throughout: a git read that fails, or a room that won't take
+        the message, must never stop someone filing a card.
+        """
+        from app.domain.workspace import service as ws
+
+        def migrations(topic_id: uuid.UUID) -> list[str]:
+            try:
+                added = ws.topic_added_files(topic.project_id, topic_id)
+            except Exception:  # noqa: BLE001 — a diagnostic must not break 递卡
+                return []
+            return [p for p in added if _ALEMBIC_VERSIONS_DIR in p]
+
+        mine = migrations(topic.id)
+        if not mine:
+            return
+        others = await self._repo.list_live_in_project(
+            topic.project_id, statuses=_CARD_BLOCKS_NEW_CARD
+        )
+        collisions = [
+            other
+            for other in others
+            if other.topic_id != topic.id and migrations(other.topic_id)
+        ]
+        if not collisions:
+            return
+        rooms = []
+        for other in collisions:
+            sibling = await self._topics.get(other.topic_id)
+            rooms.append(f"「{sibling.title}」" if sibling else str(other.topic_id))
+        self._notify_merge_result(
+            topic,
+            "⚠️ **另一张未决的验收卡也新建了迁移**："
+            + "、".join(rooms)
+            + "。两张卡各带一个 alembic revision，合到一起会把迁移链分叉"
+            + "（#312），而且往往说明同一件事被做了两遍（#314 那次是 "
+            + "`topics.progress` 列和 `topic_progress` 表）。"
+            + "\n\n这里不拦，只是提醒验收的人**先比一下两张卡的改动**："
+            + "如果确实是两件事，照常采纳，先合的那张合完后另一张要 rebase。",
         )
 
     async def gate_plan(self, topic_id: uuid.UUID) -> tuple[uuid.UUID, str | None]:
@@ -754,12 +838,8 @@ class AcceptService:
             # and fell back, even though there's no push outcome to report.
             card.note = _with_pr_degrade_note("", pr_degrade_reason)
 
-        # Topic is done → free its long-lived sandbox container (it would be
-        # recreated on demand if the archived topic is ever resumed).
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
+        # Topic is done → free its long-lived compute (container + device screen).
+        await self._release_topic_compute(topic)
 
         # 采纳即归档 (spec §6.3).
         topic.status = TopicStatus.archived
@@ -1887,8 +1967,6 @@ class AcceptService:
         did not succeed, but a later successful one already carried this commit.
         Same archive either way; the wording must not claim the card's own
         deploy went green when it didn't."""
-        from app.domain.workspace import service as ws
-
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
         if landed_via is None:
@@ -1913,10 +1991,7 @@ class AcceptService:
                 "所以代码确实已经上线，闸门满足。\n"
                 f"{landed_via.url or ''}\n{card.pr_url}"
             )
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
+        await self._release_topic_compute(topic)
         topic.status = TopicStatus.archived
         topic.accepted_by = card.decided_by
         topic.accepted_at = now
@@ -2058,10 +2133,7 @@ class AcceptService:
         card.decided_at = now
         card.note = note[:2000]
 
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
+        await self._release_topic_compute(topic)
 
         # 采纳即归档 (spec §6.3).
         topic.status = TopicStatus.archived
