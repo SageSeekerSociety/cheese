@@ -9,12 +9,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from app.core.errors import ForbiddenError
-from app.domain.device.supply import Supply
-
 import pytest
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.device.supply import Supply
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import AiStatus, MachineStatus
 from app.domain.machine.services import MachineService, customer_ref, derive_hostname
