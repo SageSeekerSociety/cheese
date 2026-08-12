@@ -13,7 +13,7 @@ from sqlalchemy.sql.elements import (
 )
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.topic.models import Topic, TopicKind, TopicReadState
+from app.domain.topic.models import Topic, TopicKind, TopicProgress, TopicReadState
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
 SortOrder = Literal["asc", "desc"]
@@ -251,3 +251,37 @@ class TopicRepository:
         else:
             state.last_read_at = now
         await self._session.flush()
+
+
+class TopicProgressRepository:
+    """进度层 storage: the topic's checklist, one row per topic (#187)."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def get(self, topic_id: uuid.UUID) -> TopicProgress | None:
+        return await self._session.get(TopicProgress, topic_id)
+
+    async def save(
+        self,
+        topic_id: uuid.UUID,
+        items: list[dict],
+        *,
+        turn_id: uuid.UUID | None = None,
+    ) -> TopicProgress:
+        """Overwrite this topic's checklist (upsert).
+
+        Current state, not history — the conversation timeline is where history
+        lives. Callers hand over a fresh list each time; the row is rewritten so
+        a reader never sees a half-applied checklist.
+        """
+        row = await self._session.get(TopicProgress, topic_id)
+        if row is None:
+            row = TopicProgress(topic_id=topic_id, items=[], turn_id=turn_id)
+            self._session.add(row)
+        # Rebind rather than mutate: SQLAlchemy does not track in-place edits of
+        # a plain JSON column, so an appended item would silently not be saved.
+        row.items = [dict(item) for item in items]
+        row.turn_id = turn_id
+        await self._session.flush()
+        return row

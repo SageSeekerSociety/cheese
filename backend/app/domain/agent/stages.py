@@ -48,6 +48,7 @@ class TopicStage(enum.StrEnum):
 _CARD_STAGE = {
     AcceptStatus.conflict: TopicStage.conflict,
     AcceptStatus.gate_failed: TopicStage.gate,
+    AcceptStatus.gate_blocked: TopicStage.gate,
     AcceptStatus.pending_gate: TopicStage.gate,
     AcceptStatus.pr_open: TopicStage.pr_open,
     AcceptStatus.pending: TopicStage.awaiting,
@@ -59,6 +60,7 @@ _CARD_STAGE = {
 _CARD_PRECEDENCE = (
     AcceptStatus.conflict,
     AcceptStatus.gate_failed,
+    AcceptStatus.gate_blocked,
     AcceptStatus.pending_gate,
     AcceptStatus.pr_open,
     AcceptStatus.pending,

@@ -32,6 +32,7 @@ import type {
   Topic,
   TopicComputeProfile,
   TopicMemberRow,
+  TopicProgress,
   UpstreamInfo,
   UpstreamSyncResult,
   UsageStats,
@@ -322,10 +323,10 @@ export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
 
-// 芝士 (re)generates the project's 一页纸总结. Takes a few seconds.
-export function generateSummary(projectId: string): Promise<{ summary: string }> {
-  return request<{ summary: string }>(`/projects/${encodeURIComponent(projectId)}/summary`, { method: 'POST' })
-}
+// NOTE: there is deliberately no `generateSummary` wrapper here. The POST it
+// called is parked (see `backend/app/api/routes/activities.py`), so keeping the
+// wrapper would only leave a 404 waiting for its first caller. `summary` still
+// arrives on the project card above — it just has no trigger in the UI.
 
 // A 1:1 private chat as a normal Topic (open the chat WS on its id). Without
 // `peerHandle` it's the member's 1:1 with 芝士; with `peerHandle` it's a
@@ -731,6 +732,14 @@ export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
 }
 
+// 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
+// Read on topic open — between turns there is no WS stream to carry it, and
+// "做到哪了" has to be visible without summoning anyone. `items` is [] for a
+// topic that never had a checklist.
+export function getProgress(topicId: string): Promise<TopicProgress> {
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
+}
+
 // PUT upserts the living doc and appends a "📝 编辑了文档" event to the
 // conversation. Returns the doc Block.
 export function putDoc(topicId: string, content: string, author: string): Promise<Block> {
@@ -1052,3 +1061,15 @@ export function chatWsUrl(topicId: string): string {
   // 「连接断开，正在自动重连」 and read like a flaky network.
   return `${proto}://${window.location.host}${BASE}/topics/${encodeURIComponent(topicId)}/chat${q}`
 }
+
+// Dev-only observability hook, same purpose as `window.__blockCache`: the probe
+// scripts under scripts/ open real sockets and issue real fetches from inside
+// the page, and the prefix they need is the one BASE exists to spell ONCE. Four
+// of them had it hand-written instead, and every copy was a copy that could be
+// wrong — which is what a doubled prefix nobody remembers reliably produces.
+declare global {
+  interface Window {
+    __cxApi?: { base: string }
+  }
+}
+if (import.meta.env.DEV) window.__cxApi = { base: BASE }

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ForbiddenError
+from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.core.obs import get_logger
 from app.core.sandbox_auth import (
     looks_like_project_agent_credential,
@@ -182,6 +182,45 @@ class ActorResolver:
         if actor.via == "handle" and actor.handle != "anonymous":
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
+
+    async def resolve_recipient(
+        self,
+        *,
+        requested: str | None,
+        project_id: uuid.UUID | None = None,
+        allow_anonymous: bool = True,
+    ) -> str:
+        """Whose per-person mailbox (notifications, badges, read-state) this
+        request addresses. Shared by every per-recipient endpoint so the rule
+        lives at the trust boundary, not in a route-local helper.
+
+        A recipient is an identity, and identity never comes from a query
+        parameter or body field — the requested handle is only an assertion to
+        check against the verified credential:
+
+        - verified caller naming nobody, or naming themselves → their mailbox;
+        - verified caller naming someone else → 403, never a silent redirect;
+        - a presented credential that does not verify (malformed or expired
+          token) → 401 — downgrading a failed credential to ``anonymous`` is
+          the bug class that let stripped headers read anyone's mail;
+        - no credential at all + a named handle → 401: the Phase-0 handle
+          fallback exists for authorship convenience and must never grant a
+          mailbox, or naming ``?target_handle=bob`` would read (and clear)
+          bob's mail for free;
+        - no credential, nobody named → the ``anonymous`` broadcast-only slice
+          when the endpoint allows it (reads), else 401 (writes).
+        """
+        wanted = (requested or "").strip() or None
+        actor = await self.resolve(fallback_handle=None, project_id=project_id)
+        if actor.authenticated:
+            if wanted is not None and wanted != actor.handle:
+                raise ForbiddenError("不能查看或操作别人的通知")
+            return actor.handle
+        if self._bearer:
+            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+        if wanted is not None or not allow_anonymous:
+            raise AuthenticationRequiredError("访问个人通知需要先登录")
+        return "anonymous"
 
     def _reject_out_of_scope_token(
         self, *, topic_id: uuid.UUID | None, project_id: uuid.UUID | None

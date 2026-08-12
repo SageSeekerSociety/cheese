@@ -64,6 +64,59 @@
 15 个文件、全部新建（另加 `pyproject.toml` / `uv.lock` 各一行：pyyaml）。
 没有 alembic 迁移，没有触碰 `backend/app/domain/review/` 与 `topic/`。
 
+## 已落地
+
+2026-08-11 12:57 采纳进 main（`采纳 topic/b2bcbe11 → main`）。落地后复核过：
+`ops/` 与 `backend/app/domain/ops/` 全在 main，五个 workflow 无残留冲突标记，
+下面两处「标记之外」的修复也都跟着进去了（`catch (error)` 完好、并发键是
+`event_name` 形状而不是那个杂交体）。
+
+## 被合并吞掉的两个文件（已还原）
+
+<&docs/topics/CI提速-现状核对与监控修正.md> 在本卡的 diff 里显示为删除——**不是有意删的，
+也不是「一话题一笔记」守卫逼的**（把它放回去再跑 `check-repo-rules.sh` 照样 PASS，
+守卫认的是同一话题写成两个文件，这两份不是一回事）。是上一轮那次合并把它丢了：
+两个 parent（本卡分支 `lpptsxvl` 与当时的 main `rxntpynt`）**都有**这个文件，只有合并结果没有。
+
+同一次合并还丢了 <&uploads/img-2140f87540cb.png>（134956 字节的二进制），这个没人注意到。
+两个都已按 parent 还原，与 main 逐字节一致。
+
+**为什么上一轮的对拍没抓到**：那版脚本对「工作区里不存在的文件」是 `continue` 跳过的，
+只比对内容差异，所以**删除天然漏网**。已经改成三态检查——两 parent 一致时，
+工作区必须①存在②逐字节相同，缺一即报。重跑：1699 个文件，缺失 0、内容偏离 0。
+
+教训比上一条更具体：合并事故有两种形态，**改坏**和**丢掉**，只查前者会漏掉后者，
+而后者更隐蔽——被删的文件不会出现在任何冲突标记里，也不会让任何检查变红。
+
+## 第四轮冲突：还是 gh-token，外加 14 个文件被静默合旧（已解）
+
+标记里的那处好办：主分支这轮自己也把两半合了（长 `help=` + 带两段的 `description=`），
+只差一个 `\n\n`——它的第二段直接粘在第一段末尾，渲染成一坨。取主分支的长 `help=`
+和它的措辞，补回段落分隔，并保留本卡那句「stdout 只有 token，所以 `$(cheese gh-token)` 照常能用」。
+
+**真正危险的仍在标记之外。** 对拍发现 **14 个文件**在工作区被合成了比两个 parent 都旧的版本，
+其中包括 <&backend/app/domain/workspace/service.py>——`_sync_shared_checkout` 的 `--force`
+和「合并已落地就别把同步失败报成采纳失败」那两处修复**双双被抹掉**，而两个 parent 都带着它们。
+另外 13 个是 `test_workspace_git_timeout.py`、`docs/infrastructure.md`、tiptap 插件、
+几个 spaces 视图等。凡是两个 parent 内容一致的，正确内容没有歧义，已逐一按 parent 还原。
+
+这是第二次撞见同一类事故（上次是 `AuditTask.vue` 的 `catch (error)` 被合成 `catch {`）。
+**结论：解冲突时只看 `<<<<<<<` 是不够的**，必须再跑一遍「两 parent 一致 → 工作区必须逐字节相同」的对拍。
+
+## 第三轮冲突：<&backend/sandbox/cheese> 的 gh-token 帮助（已解）
+
+两边都在给 `gh-token` 子命令补说明，补的是**不同的两半**，所以取并集而不是二选一：
+
+- 主分支那半：加 `description=` + `RawDescriptionHelpFormatter`，讲清**为什么必须显式带
+  `-R owner/repo`**——本仓库是 jj，工作区没有 `.git`，`gh` 推断不出仓库会报
+  `not a git repository`。这半更要紧，是踩过才知道的坑。
+- 本卡那半：把「stderr 会带上仓库名和查 CI 的具体命令」写进帮助。这条描述的是**实际行为**——
+  handler 里确实把仓库名、过期时间、查 check-runs 和抓 job 日志的两条现成命令打到 stderr
+  （stdout 只留 token，`$(cheese gh-token)` 才不会坏）。
+
+合成一份：`help=` 保持主分支的短句（子命令列表里不该塞长文），两段说明都进 `description=`。
+`cheese gh-token --help` 实跑渲染正常，可执行位保留。
+
 ## 采纳时的合并冲突（两轮，已解）
 
 同一批 CI 改动在主分支上有另一条并行线，采纳时撞了两轮。

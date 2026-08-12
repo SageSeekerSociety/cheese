@@ -22,24 +22,46 @@ Scenarios:
      way the unread poll does) -> switch back: the new last message must be
      visible on the very first frame.
 
-Run:  uv run --with playwright python scripts/probe_flash.py
+Run:  cd backend && uv run --with playwright python ../scripts/probe_flash.py
+
+Run it from `backend/`: the session token below is signed with
+`settings.jwt_secret`, and pydantic-settings resolves `.env` against the CWD —
+from anywhere else the secret differs from the running server's and every socket
+is refused. `PROBE_API`/`PROBE_BASE` retarget it at an ephemeral stack (the
+default pair is the dogfood one) as long as that stack holds the two topics
+named below.
 """
 
 import asyncio
 import json
+import os
+import sys
 import urllib.request
 
 from playwright.async_api import async_playwright
 
-API = "http://127.0.0.1:8099"
-BASE = "http://localhost:5173"
+API = os.environ.get("PROBE_API", "http://127.0.0.1:8099")
+BASE = os.environ.get("PROBE_BASE", "http://localhost:5173")
 DELAY_MS = 2500
 SHOT_DIR = "tmp_review"
+# Whoever the page is logged in as. Must be able to reach both topics below —
+# a project member or on their roster — or the chat socket answers `forbidden`.
+HANDLE = "mentor-1"
 
 
 def _get(path: str):
     with urllib.request.urlopen(API + path) as r:
         return json.load(r)["data"]
+
+
+def _token(handle: str) -> str:
+    """A session token for `handle` — the chat WS refuses a socket it cannot
+    identify, and this probe never logs in, so localStorage starts out with no
+    `accessToken` for either the injected socket or the app's own to read."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+    from app.core.tokens import mint_session_token
+
+    return mint_session_token(handle=handle, user_id=None)
 
 
 # rAF logger: one entry per rendered frame. Counts every timeline row kind
@@ -125,21 +147,30 @@ DOM_STATE = """
 # Post a message into a topic over the chat WS (summon=false: persist only, no
 # AI turn) — a real "message landed while the user was in another topic".
 POST_MESSAGE = """
-async ({ topicId, content }) => {
+async ({ topicId, content, token }) => {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  // The chat socket requires the session token (the page is logged in, so it
-  // is in localStorage) — without it the server closes the connection.
-  const token = localStorage.getItem('accessToken') || '';
+  // The socket authenticates once, at connect, from ?token= — and `author` in
+  // the frame is ignored, so the message lands under the token's handle. The
+  // token is passed in rather than read from localStorage: an empty one is not
+  // an error here, it is a refusal that looks exactly like a 4s timeout.
+  // window.__cxApi.base, not '/api': the gateway strips exactly one prefix.
   const ws = new WebSocket(
-    `${proto}://${location.host}/api/topics/${topicId}/chat?token=${encodeURIComponent(token)}`);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-  ws.send(JSON.stringify({ type: 'message', content, author: 'user-1', summon: false }));
+    `${proto}://${location.host}${window.__cxApi.base}`
+    + `/topics/${topicId}/chat?token=${encodeURIComponent(token)}`);
+  await new Promise((res, rej) => {
+    ws.onopen = res;
+    // The raw Event a socket rejects with prints as "Event" and says nothing;
+    // name the URL that failed instead.
+    ws.onerror = () => rej(new Error(`chat WS failed to open: ${ws.url}`));
+  });
+  ws.send(JSON.stringify({ type: 'message', content, summon: false }));
   // Wait for the persisted user_block echo so we know it's in the DB.
   const echoed = await new Promise((res) => {
-    const timer = setTimeout(() => res(false), 4000);
+    const timer = setTimeout(() => res('timeout'), 4000);
     ws.onmessage = (ev) => {
       try {
         const f = JSON.parse(ev.data);
+        if (f.type === 'error') { clearTimeout(timer); res(f.code || f.message); }
         if (f.type === 'user_block' && f.block?.content === content) {
           clearTimeout(timer); res(true);
         }
@@ -155,7 +186,10 @@ async ({ topicId, content }) => {
 # (fetch fresh blocks, replace the cache array).
 REFRESH_CACHE = """
 async (topicId) => {
-  const r = await fetch(`/api/topics/${topicId}/blocks`);
+  // window.__cxApi.base, not '/api': the gateway strips exactly one prefix, so
+  // the app addresses itself doubled (frontend/src/api.ts spells this once) and
+  // a hand-written single prefix 404s.
+  const r = await fetch(`${window.__cxApi.base}/topics/${topicId}/blocks`);
   const payload = (await r.json()).data;
   window.__blockCache.set(topicId, payload.data);
   return payload.data.length;
@@ -164,6 +198,7 @@ async (topicId) => {
 
 
 async def main() -> None:
+    token = _token(HANDLE)
     projects = _get("/api/projects")["data"]
     proj = next(p for p in projects if p.get("name") == "AI 课程推荐系统")
     topics = _get(f"/api/topics?project_id={proj['id']}")["data"]
@@ -188,9 +223,16 @@ async def main() -> None:
         pg.on("pageerror", lambda e: print("[pageerror]", str(e)[:300]))
 
         await pg.goto(BASE)
+        # `accessToken` is what the app reads for its REST calls AND for
+        # ChatPanel's socket, so the page needs it too — not just the injected
+        # POST_MESSAGE below. Without it the panel reconnects forever and the
+        # switch-back scenarios measure a dead pane.
         await pg.evaluate(
-            "localStorage.setItem('cheesex.me',"
-            " JSON.stringify({id:'probe', handle:'mentor-1', name:'张衡'}))"
+            """([token, me]) => {
+              localStorage.setItem('accessToken', token);
+              localStorage.setItem('cheesex.me', JSON.stringify(me));
+            }""",
+            [token, {"id": "probe", "handle": HANDLE, "name": "张衡"}],
         )
         await pg.goto(f"{BASE}/project/{proj['id']}?topic={topic_a['id']}")
         await pg.wait_for_load_state("networkidle")
@@ -277,8 +319,15 @@ async def main() -> None:
         # now after scenario B). Post for real over WS, refresh the cache the
         # way the unread poll does, then switch back under delay. ---
         marker = f"探针消息 probe-flash {int(asyncio.get_event_loop().time() * 1000)}"
-        echoed = await pg.evaluate(POST_MESSAGE, {"topicId": topic_a["id"], "content": marker})
+        echoed = await pg.evaluate(
+            POST_MESSAGE,
+            {"topicId": topic_a["id"], "content": marker, "token": token},
+        )
         print(f"\n[C setup] posted new message to A over WS, echoed={echoed}")
+        if echoed is not True:
+            # Scenario C measures the switch-back to a topic that just gained a
+            # message; without the message it would silently re-run scenario A.
+            raise SystemExit(f"chat WS did not persist the probe message: {echoed}")
         n = await pg.evaluate(REFRESH_CACHE, topic_a["id"])
         print(f"[C setup] refreshed A's blockCache (unread-poll style), len={n}")
         delay_on = True

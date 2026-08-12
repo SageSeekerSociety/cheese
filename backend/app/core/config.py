@@ -548,6 +548,9 @@ class Settings(BaseSettings):
     notification_email_queue_key: str = Field(
         default="cheese:notifications:email", alias="NOTIFICATION_EMAIL_QUEUE_KEY"
     )
+    notification_email_max_retries: int = Field(
+        default=3, alias="NOTIFICATION_EMAIL_MAX_RETRIES"
+    )
 
     meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")
     meilisearch_api_key: str = Field(default="", alias="MEILISEARCH_API_KEY")

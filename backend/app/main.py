@@ -263,10 +263,14 @@ def _discover_routers(application: FastAPI) -> list[str]:
 # prefix visibly becomes the `/api/api/...` that callers have to send.
 #
 # Left unset, the schema advertised bare backend paths, and a caller who followed
-# them got no error worth the name: of the 128 routes under the 2.0 prefix, 122
-# answered 404 and 6 reached a DIFFERENT 1.0 route that answered 200 from the
-# wrong domain. Same convention as `settings.connector_public_base`, which already
-# has to end in `/api` for the same reason. See docs/api-conventions.md.
+# them got no error worth the name: measured 2026-08-12, of the 135 paths under
+# the 2.0 prefix, 128 answered 404 and 7 reached a DIFFERENT 1.0 route that
+# answered as if the call were its own — 10 endpoints at method+path granularity.
+# The exact collision set is recomputed and pinned by
+# tests/contract/test_api_addressing_contract.py, so read the failure there, not
+# these numbers, when the surface moves. Same convention as
+# `settings.connector_public_base`, which already has to end in `/api` for the
+# same reason. See docs/api-conventions.md.
 API_GATEWAY_MOUNT = "/api"
 
 app = FastAPI(
