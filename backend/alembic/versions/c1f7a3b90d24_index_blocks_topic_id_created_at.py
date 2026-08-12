@@ -14,7 +14,11 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c1f7a3b90d24"
-down_revision: str | Sequence[str] | None = "b8e1d4c70a92"
+# Re-chained twice post-merge: three concurrent PRs (#298, #289, #301, #304)
+# each passed CI green on an older base, and main ended up with THREE heads —
+# `upgrade head` refused, deploys stopped. Linearized in merge order; this
+# index migration is order-independent, so it goes last.
+down_revision: str | Sequence[str] | None = "a1c9e7b30d42"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
