@@ -1,4 +1,11 @@
-> 状态：开工中（2026-08-11）。基线 = `main@upstream` 2e72632e，无落后。alembic 单 head = `b8e1d4c70a92`（已核，用 ast 遍历 64 个迁移确认；注意 `alembic heads` 命令在沙箱里会挂住等 DB，别用它）。
+> 状态：待验收（2026-08-12）。基线 = `main@upstream` fe949e17（#284），已 rebase，无落后。
+> alembic 单 head = 本主题新增的 `c1d7e0a4b839`（已核，用 ast 遍历 65 个迁移确认；
+> 注意 `alembic heads` 命令在沙箱里会挂住等 DB，别用它）。
+>
+> rebase 记录：开工基线 2e72632e → 45b6169a(#279) → fe949e17(#284)。最后一次 rebase 在
+> `services.py` 的「note 前缀家族」处撞了一个两边纯加法的冲突（main 加
+> `_DEPLOY_STALLED_PREFIX` / `_MAX_SUPERSEDE_COMPARES`，本主题加 `GATE_ABANDONED_PREFIX`
+> / `VOIDED_PREFIX`），两边都保留即可。
 
 ## 目标
 
@@ -23,9 +30,24 @@
 
 ## 下一步
 
-- [ ] 迁移 + 模型：`accept_cards.gate_started_at`
-- [ ] `gate.py`：开跑打点；抽掉 `_settle` 里那段重试的重复
-- [ ] `gate_sweep.py`：扫底判死（启动 + 周期），note/gate_output 里把「没跑完」和「没通过」分开
-- [ ] `void`：service + 路由 + 授权
-- [ ] 测试：三件各自的功能测试 + 一条端到端（孤儿被判死 → 同话题重递成功）
-- [ ] `task check` 全绿 → 递卡给 <@wangchangxin>
+- [x] 迁移 + 模型：`accept_cards.gate_started_at`
+- [x] `gate.py`：开跑打点；抽掉 `_settle` 里那段重试的重复（提成 `_once_visible`）
+- [x] `gate_sweep.py`：扫底判死（启动 + 周期），note/gate_output 里把「没跑完」和「没通过」分开
+- [x] `void`：service + 路由 + 授权
+- [x] 测试：`tests/integration/test_accept_gate_orphan.py`，12 条，含端到端（孤儿被判死 → 同话题重递成功）
+- [x] 检查全绿 → 递卡给 <@wangchangxin>
+
+## 验证记录（2026-08-12，rebase 到 fe949e17 之后）
+
+- `check.sh --no-tests`：6/6 —— ruff、pyright 0 error、alembic 单 head、repo guards、action pin。
+- 全量 pytest：`4044 passed, 31 skipped, 23 failed`。23 条**全部**是沙箱的宿主环境缺口，
+  与本主题无关，逐条核过：
+  - 22 条 = 无 procps（`test_machine_service.py` 21 + `test_tmux_control.py` 1），
+    报 `FileNotFoundError: [Errno 2] ... 'kill'`，CLAUDE.md 已记在案。
+  - 1 条 = `test_cheese_cli.py::test_await_log_lives_outside_the_worktree`。**这条 CLAUDE.md
+    还没记**：`_await_log_path` 优先读 `CHEESE_AWAIT_LOGS`，而 agent 容器里设了它
+    （`/home/node/.claude/cheese-await`），于是该测试只 `setenv("HOME")` 就被架空。
+    同文件里两条更新的同类测试都显式 `monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)`
+    才躲过。属于 main 上的测试环境依赖，不是本主题的改动引起的，也没在这里顺手改
+    （不同主题的文件）。
+- 前端未跑：这个沙箱没有 `pnpm`。本主题 0 个前端文件，故不影响结论。
