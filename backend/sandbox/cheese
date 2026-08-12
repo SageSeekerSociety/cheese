@@ -638,6 +638,13 @@ def build_parser() -> argparse.ArgumentParser:
     pcc = sub.add_parser(
         "conclusion",
         help="结算子话题回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
+        description=(
+            "结算子话题回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
+            "自动采信，另有 30 分钟绝对超时兜底,所以「什么都不做」等于同意。\n"
+            "只有你要改变默认结果时才用它: need-evidence 让子话题补一条证据"
+            "(要付一整轮,且每张卡最多打回 1 次), escalate 是要人拍板。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pcc.add_argument(
         "action",
