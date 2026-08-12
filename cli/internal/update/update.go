@@ -45,7 +45,7 @@ func PlatformDir() (string, error) { return platformDir(runtime.GOOS, runtime.GO
 // binaryURL is the published location of the `cheese` binary for dir, at the
 // server's *origin* (scheme://host of base) — the connector artifacts live at
 // `<origin>/connector/latest/<os>-<arch>/cheese`, at the origin root, never under
-// the `/api` edge prefix (see CLAUDE.md §"Backend is always the frontend origin").
+// the `/api` edge prefix (see docs/api-conventions.md).
 func binaryURL(base, dir string) (string, error) {
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" {
