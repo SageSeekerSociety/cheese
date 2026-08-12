@@ -154,9 +154,7 @@ async def test_a_dead_token_actually_triggers_a_rebuild(monkeypatch):
     monkeypatch.setattr(
         TmuxHooksProvider, "_cli_mount_stale", staticmethod(lambda *a: _false())
     )
-    monkeypatch.setattr(
-        "app.domain.agent.tmux_provider.warn_image_switch_rebuild", _noop
-    )
+    monkeypatch.setattr("app.domain.agent.tmux_provider.warn_container_rebuilt", _noop)
 
     await provider._ensure_container(
         uuid.UUID(TOPIC),

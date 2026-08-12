@@ -27,7 +27,7 @@ from app.core.background import spawn
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks
-from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
+from app.domain.agent.sandbox_notices import warn_container_rebuilt
 from app.domain.agent.service import (
     AgentEvent,
     AgentService,
@@ -134,7 +134,7 @@ class LocalDockerProvider:
         # This one tells the topic its box (and everything running in it) was
         # rebuilt — a notice that silently doesn't arrive is worse than none.
         spawn(
-            warn_image_switch_rebuild(topic_id),
+            warn_container_rebuilt(topic_id, "image"),
             name=f"image switch notice topic={topic_id}",
         )
 
