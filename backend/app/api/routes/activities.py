@@ -1,52 +1,30 @@
-"""Activity ingestion route — 线下接入 (spec §6.2, evals E1/E3).
+"""线下接入 / 定期巡检 / 一页纸总结 — **parked, no route is mounted**.
 
-"记一笔" / 导聊天记录 / 会议纪要 → 芝士 digests raw input into a structured
-event topic via the activity-digestion skill + platform tools.
+The three turns this module used to expose (`ingest_activity`, `run_heartbeat`,
+`summarize_project`) were built to satisfy evals E1/E3/F2/G1. Each of them has
+the platform perform something 芝士 already does the moment you ask it to, so
+each grew its own turn, its own session and its own failure mode — see
+`docs/agent-principles.md` §12 ("不要把一段对话升格成机械"), where they are the
+worked examples.
+
+The most expensive one was concrete: activity ingestion ran in a *fresh* session
+and then wrote that session's id back onto the topic, so the topic's real
+conversation could never be resumed again. Cold-started sessions were 27% of the
+live ones.
+
+**The需求 behind them is real** — offline material has to reach the room, someone
+has to be nudged when work stalls, and a project's state should be legible at a
+glance. What is wrong is the shape, and the redesign has not happened yet. So
+the trigger paths are removed rather than the ideas: `ChatService` still carries
+the implementations (marked parked), git history carries the routes, and nothing
+can invoke them until there is a design that starts from the principles doc.
+
+Do not re-mount these without that design.
 """
 
-import uuid
-from typing import Annotated
+from fastapi import APIRouter
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
-
-from app.api.deps import get_chat_service
-from app.api.response import ok
-from app.domain.agent.chat import ChatService
-
+# Deliberately empty: discovered by app.main._discover_routers, mounts nothing.
+# Keeping the module (rather than deleting the file) is what makes the reason
+# above discoverable at the place someone would go to add the route back.
 router = APIRouter(prefix="/api/projects", tags=["activities"])
-
-ChatDep = Annotated[ChatService, Depends(get_chat_service)]
-
-
-class ActivityIn(BaseModel):
-    text: str = Field(min_length=1)
-    author: str = "user-1"
-    kind: str | None = None
-
-
-@router.post("/{project_id}/activities")
-async def ingest_activity(
-    project_id: uuid.UUID, body: ActivityIn, chat: ChatDep
-) -> dict:
-    result = await chat.ingest_activity(
-        project_id=project_id,
-        text=body.text,
-        author=body.author,
-        kind_hint=body.kind,
-    )
-    return ok(result)
-
-
-@router.post("/{project_id}/heartbeat")
-async def run_heartbeat(project_id: uuid.UUID, chat: ChatDep) -> dict:
-    """定期巡检 (eval G1): 芝士 inspects the project and sends graded alerts."""
-    result = await chat.run_heartbeat(project_id=project_id)
-    return ok(result)
-
-
-@router.post("/{project_id}/summary")
-async def summarize(project_id: uuid.UUID, chat: ChatDep) -> dict:
-    """一页纸总结 (eval F2): 芝士 (re)writes the project's one-pager."""
-    result = await chat.summarize_project(project_id=project_id)
-    return ok(result)

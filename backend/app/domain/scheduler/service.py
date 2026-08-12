@@ -36,22 +36,21 @@ class SchedulerService:
         self._sessions = chat_service.session_factory
 
     async def tick(self) -> dict:
-        """One inspection round: run 定期巡检 on every project with a root topic."""
-        async with self._sessions() as session:
-            projects = await ProjectRepository(session).list_all()
+        """Parked — see docs/agent-principles.md §12.
 
-        inspected = 0
-        errors: list[str] = []
-        for project in projects:
-            if project.root_topic_id is None:
-                continue
-            try:
-                await self._chat.run_heartbeat(project_id=project.id)
-                inspected += 1
-            except Exception as exc:  # one project's failure mustn't stop others
-                errors.append(f"{project.id}: {exc}")
+        This drove 定期巡检: a timer woke 芝士 to look over every project and nudge
+        whoever it judged to be behind. It pushes on a clock rather than on an
+        event, so it either has nothing to say (a turn burned for nothing) or
+        manufactures something (noise) — and everything it would notice (a topic
+        stalled, a card waiting, a milestone due) is state the platform already
+        knows the instant it changes. On dev it had produced zero notifications
+        of its own in the product's lifetime.
 
-        return {"projects_inspected": inspected, "errors": errors}
+        The need is real; a clock is the wrong trigger for it. Kept as a no-op
+        rather than deleted so the runner wiring stays intact for whatever
+        event-driven design replaces it.
+        """
+        return {"projects_inspected": 0, "errors": [], "parked": True}
 
     async def sweep_orphan_turns(self) -> int:
         """Periodic counterpart to the startup orphan sweep in `lifespan`.
