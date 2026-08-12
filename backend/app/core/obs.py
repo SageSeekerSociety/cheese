@@ -35,7 +35,10 @@ _SECRET_RE = re.compile(
 )
 
 
-def _scrub(value: Any) -> Any:
+def scrub_secrets(value: Any) -> Any:
+    """Public because the log stream is no longer the only place credentials can
+    surface: `domain.backend_log` pushes tracebacks into a room, where everyone
+    can read them. Same filter, so a shape only has to be recognized once."""
     if isinstance(value, str) and "=" in value:
         return _SECRET_RE.sub(r"\1=***", value)
     return value
@@ -50,12 +53,12 @@ class RedactSecrets(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = _scrub(record.msg)
+        record.msg = scrub_secrets(record.msg)
         if record.args:
             if isinstance(record.args, dict):
-                record.args = {k: _scrub(v) for k, v in record.args.items()}
+                record.args = {k: scrub_secrets(v) for k, v in record.args.items()}
             else:
-                record.args = tuple(_scrub(a) for a in record.args)
+                record.args = tuple(scrub_secrets(a) for a in record.args)
         return True
 
 

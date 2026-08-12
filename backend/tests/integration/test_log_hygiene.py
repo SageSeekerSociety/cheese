@@ -11,7 +11,7 @@ import logging
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from app.core.obs import RedactSecrets, _scrub, configure_logging
+from app.core.obs import RedactSecrets, configure_logging, scrub_secrets
 
 
 def test_the_filter_is_actually_installed_by_the_real_setup():
@@ -50,7 +50,7 @@ def test_a_session_token_never_reaches_the_log():
     in its query string — and the access log prints whole URLs."""
     url = "/topics/abc/chat?token=eyJhbGciOiJIUzI1NiJ9.body.signature"
 
-    scrubbed = _scrub(url)
+    scrubbed = scrub_secrets(url)
 
     assert "eyJhbGciOiJIUzI1NiJ9" not in scrubbed
     assert scrubbed == "/topics/abc/chat?token=***"
@@ -65,7 +65,7 @@ def test_a_session_token_never_reaches_the_log():
     ],
 )
 def test_other_credential_shapes_are_scrubbed(raw):
-    assert "***" in _scrub(raw)
+    assert "***" in scrub_secrets(raw)
 
 
 def test_the_filter_covers_records_from_other_libraries():

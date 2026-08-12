@@ -30,6 +30,7 @@ import { answerOptions, attachmentRawUrl, chatWsUrl, listBlocks, toggleReaction 
 import { usePendingAttachments } from '../lib/attachments'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
+import { backendErrorPresentation } from '../lib/backendErrorEvent'
 import { platformErrorPresentation } from '../lib/platformEvents'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -999,6 +1000,27 @@ onBeforeUnmount(() => {
                 {{ ACTION_META[actionResource(m)!].btn }}
               </button>
             </div>
+            <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
+               person needs to know it happened. So the line shows by default
+               and the stack is one click away — a room is a conversation, not
+               a monitoring dashboard. -->
+            <details v-else-if="backendErrorPresentation(m)" class="backend-error" data-testid="backend-error-event">
+              <summary class="backend-error__line">
+                <span>{{ backendErrorPresentation(m)!.line }}</span>
+                <span v-if="backendErrorPresentation(m)!.count" class="backend-error__count">
+                  ×{{ backendErrorPresentation(m)!.count }}
+                </span>
+              </summary>
+              <div class="backend-error__meta">
+                <span v-if="backendErrorPresentation(m)!.where">{{ backendErrorPresentation(m)!.where }}</span>
+                <span v-if="backendErrorPresentation(m)!.requestId">
+                  req {{ backendErrorPresentation(m)!.requestId }}
+                </span>
+              </div>
+              <pre v-if="backendErrorPresentation(m)!.stack" class="backend-error__stack">{{
+                backendErrorPresentation(m)!.stack
+              }}</pre>
+            </details>
             <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
                Content may carry a <@handle> actor token (归档/编辑…): render it
                through the SAME token→chip path as messages so the actor is a
@@ -1941,6 +1963,57 @@ onBeforeUnmount(() => {
 .im-event span {
   display: inline-block;
   padding: 0 10px;
+}
+
+/* 后端报错: collapsed by default — one quiet line among the system lines, with
+   the traceback behind a click. Louder than 编辑了文档, quieter than a platform
+   incident card. */
+.backend-error {
+  margin: 8px 16px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, #c65a1e 22%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #c65a1e 5%, transparent);
+  font-size: 12px;
+}
+.backend-error__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-muted, var(--faint));
+  list-style: none;
+}
+.backend-error__line > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.backend-error__count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #c65a1e 16%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.backend-error__meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.backend-error__stack {
+  margin: 6px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-sunken, rgb(0 0 0 / 4%));
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
 }
 
 .caret {
