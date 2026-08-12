@@ -326,10 +326,10 @@ class TopicService:
         # 私聊不是话题树的父节点 (spec §1): upgrading a block out of a private
         # chat lands a real topic under the project root, not under the chat
         # (which list_for_project hides → would be an invisible orphan).
+        project = await self._projects.get(block.project_id)
         parent_id = parent.id
         kind = _child_kind(parent)
         if parent.is_private:
-            project = await self._projects.get(block.project_id)
             root_id = project.root_topic_id if project else None
             if root_id is not None:
                 parent_id = root_id
@@ -343,7 +343,20 @@ class TopicService:
             created_by=created_by,
             upgraded_from_block_id=block.id,
         )
-        await self._members.seed(new_topic.id, owner_handle=created_by)
+        # Same fallback ladder as create()/split_to_subtopic — 升级 is usually the
+        # 分身's own suggestion, and this route does not resolve an actor at all
+        # (it trusts body.created_by, which the web UI leaves empty when its
+        # session token is missing). Passing that straight to seed() — which drops
+        # None and every agent handle — was the last path still minting ownerless
+        # rooms after create()/split were fixed.
+        await self._members.seed(
+            new_topic.id,
+            owner_handle=await self._resolve_owner(
+                created_by,
+                parent_id=parent_id,
+                project_owner=project.owner_handle if project else None,
+            ),
+        )
         await self._blocks.set_upgraded_to_topic(block, new_topic.id)
         # Parent doc snapshot only from a real topic — never copy a private
         # chat's doc into a public topic.

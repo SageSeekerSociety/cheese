@@ -21,8 +21,10 @@ import uuid
 
 from sqlalchemy import delete
 
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.models import TopicMembership, TopicRole
+from tests.conftest import wait_turns_idle as _wait_turns_idle
 from tests.integration.conftest import session_auth_headers
 
 
@@ -117,6 +119,61 @@ def test_subtopic_under_agent_created_room_is_not_ownerless(client):
     ).json()["data"]
 
     assert _roster(client, child["id"]).get("alice") == "owner"
+
+
+def _insert_block(client, project_id: str, topic_id: str, content: str) -> str:
+    """A message in the room, written straight to the DB — posting it through the
+    API would kick a turn off and race the upgrade we are actually testing."""
+    holder: dict[str, str] = {}
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:
+            block = Block(
+                project_id=uuid.UUID(project_id),
+                topic_id=uuid.UUID(topic_id),
+                kind=BlockKind.message,
+                author_type=AuthorType.human,
+                author="alice",
+                content=content,
+                refs=[],
+            )
+            session.add(block)
+            await session.flush()
+            holder["id"] = str(block.id)
+            await session.commit()
+
+    asyncio.run(_seed())
+    return holder["id"]
+
+
+def test_upgraded_block_falls_back_to_project_owner(client):
+    """讨论升级 is normally the 分身's own suggestion, so `created_by` is an agent
+    handle — which seed() drops. Without the ladder the upgraded room was born
+    ownerless, the last path still producing them after create()/split were fixed.
+    """
+    p = _project(client, owner="alice")
+    room = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
+    block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
+
+    upgraded = client.post(
+        f"/api/blocks/{block_id}/upgrade", json={"created_by": "cheese"}
+    ).json()["data"]
+    _wait_turns_idle()  # kickoff runs in the background; don't race its writes
+
+    assert _roster(client, upgraded["id"]).get("alice") == "owner"
+
+
+def test_upgraded_block_without_a_creator_is_not_ownerless(client):
+    """The web UI sends `created_by: ""` when its session token is missing, and
+    this route resolves no actor of its own — it trusts the body verbatim."""
+    p = _project(client, owner="alice")
+    room = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
+    block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
+
+    upgraded = client.post(f"/api/blocks/{block_id}/upgrade", json={}).json()["data"]
+    _wait_turns_idle()
+
+    assert _roster(client, upgraded["id"]).get("alice") == "owner"
 
 
 def test_owner_can_manage_roster_of_an_agent_created_topic(client):
