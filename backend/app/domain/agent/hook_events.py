@@ -30,6 +30,7 @@ from app.domain.agent.service import (
     AgentToolUse,
     AgentUsage,
 )
+from app.domain.usage.tokens import input_output_tokens
 
 
 def _hook_event_name(hook: dict) -> str:
@@ -45,10 +46,12 @@ def _usage_from_hook(hook: dict) -> AgentUsage:
     usage = hook.get("usage")
     if not isinstance(usage, dict):
         return AgentUsage()
+    # Anthropic-shaped payload: cache buckets fold into input (usage.tokens).
+    input_tokens, output_tokens = input_output_tokens(usage)
     return AgentUsage(
         model=str(usage.get("model") or ""),
-        input_tokens=int(usage.get("input_tokens") or 0),
-        output_tokens=int(usage.get("output_tokens") or 0),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         cost_usd=float(usage.get("cost_usd") or 0.0),
     )
 
@@ -147,6 +150,30 @@ class HookRouter:
         queue.put_nowait(hook)
         return True
 
+    def drain(self, topic_id: str) -> list[dict]:
+        """Empty the topic's active queue and return whatever was pending.
+
+        register() claims the topic's slot BEFORE the screen is ready / the
+        prompt is sent (so no hook is missed) — but that means a straggler
+        from a PREVIOUS, abandoned turn (e.g. its own late Stop, arriving
+        after we gave up on it but before its underlying `claude` process
+        actually finished) can land in the fresh queue during that gap, ahead
+        of any event the new turn will ever produce. Since nothing has been
+        sent to `claude` yet at drain time, anything already queued here
+        CANNOT belong to the turn about to start — the caller must treat it
+        like a hook that arrived outside any window (park it), never as this
+        turn's own events (a stale Stop must never end the wrong turn)."""
+        queue = self._queues.get(topic_id)
+        if queue is None:
+            return []
+        drained: list[dict] = []
+        while True:
+            try:
+                drained.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return drained
+
 
 # Shared singleton: the endpoint and the provider import this same instance.
 hook_router = HookRouter()
@@ -164,22 +191,14 @@ def usage_from_hook(hook: dict) -> AgentUsage | None:
     # a usage block per assistant message and the transcript dies with the
     # host. Carrying them back is what turns "300 RMB went somewhere" into a
     # per-project, per-turn figure.
-    total = sum(
-        int(hook.get(k) or 0) for k in ("input", "output", "cache_read", "cache_write")
-    )
-    if total <= 0:
+    # Cache reads are NOT free and they dominate; AgentUsage has no cache field,
+    # so they fold into the input count (app.domain.usage.tokens — the same
+    # arithmetic every supply uses).
+    input_tokens, output_tokens = input_output_tokens(hook, dialect="hook")
+    if input_tokens + output_tokens <= 0:
         return None
     return AgentUsage(
         model=str(hook.get("model") or "unknown"),
-        # Cache reads are NOT free and they dominate: one document-writing
-        # task read 2.9M cached tokens against 141k of fresh input — 20x, and
-        # half its cost. AgentUsage has no cache field, so they are folded
-        # into the input count; leaving them out would under-report a turn by
-        # more than it reports.
-        input_tokens=(
-            int(hook.get("input") or 0)
-            + int(hook.get("cache_read") or 0)
-            + int(hook.get("cache_write") or 0)
-        ),
-        output_tokens=int(hook.get("output") or 0),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )

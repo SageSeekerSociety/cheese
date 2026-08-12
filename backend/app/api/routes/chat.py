@@ -8,12 +8,24 @@ keeps running and persisting (invariant 2: the job doesn't depend on who watches
 and multiple connections to the same topic all see the live stream.
 
 Protocol (unchanged frontend contract):
-  client → {"type":"message","content": str, "author": str, "summon": bool,
+  connect → /api/topics/{id}/chat?token=<session token>   (required)
+  client → {"type":"message","content": str, "summon": bool,
             "attachments"?: [{"path": str, "mime": str}]}
   server → user_block / reaction / tool / todo / state / event_block /
            assistant_block / error / done
 (No token streaming: 芝士 speaks in discrete assistant_block messages — one per
 completed SDK AssistantMessage — Slack-style.)
+
+The `?token=` is not optional and a socket the connect check refuses is closed
+(1008) after one `error` frame carrying `code: auth_required` (no token),
+`auth_expired` (a token we could not verify) or `forbidden` (verified, but not a
+member of this topic). Those three are the WHOLE refusal set — a client that
+recognises only some of them treats the rest as a dropped connection and retries
+into a wall, which is the bug the codes exist to prevent.
+A legacy `author` field is accepted and IGNORED — the author is the connection's
+verified handle. Both halves are the same lesson: this socket used to admit
+anyone and take their word for who they were, so an expired token turned a
+user's messages into 匿名者 posts while their client kept reporting success.
 
 Attachments are uploaded FIRST via POST /api/topics/{id}/attachments (the file
 lands in the topic's worktree); the WS message then references them by path —
@@ -29,12 +41,16 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from app.api.auth import ActorResolver
 from app.api.deps import get_broker, get_chat_service, get_turn_runner
+from app.core.config import settings
 from app.core.errors import ForbiddenError
+from app.core.obs import get_logger
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.authz.policy import refuse_unauthenticated_chat
 from app.domain.identity.actor import Actor
 
 router = APIRouter(tags=["chat"])
+_log = get_logger("cheesex.chat_ws")
 
 
 @router.websocket("/api/topics/{topic_id}/chat")
@@ -58,21 +74,23 @@ async def chat(
 
     # Resolve the actor ONCE from the connection's ?token= (browsers can't set an
     # Authorization header on a WS). A verified token pins authorship for every
-    # message on this socket — the client can no longer forge `author`. No token →
-    # anonymous, and the per-message `author` fallback (Phase-0) applies.
+    # message on this socket — the client cannot forge `author`.
     # Resolve in a tightly-scoped session (released before the receive loop so it
     # never overlaps the background turn's own sessions on the same connection).
+    token = websocket.query_params.get("token") or ""
     conn_actor: Actor
-    denied_message = "无权访问"
+    refusal: tuple[str, str] | None = None
     async with chat_service.session_factory() as auth_session:
         resolver = ActorResolver(
-            session=auth_session,
-            bearer=websocket.query_params.get("token"),
-            cheese_token="",
+            session=auth_session, bearer=token or None, cheese_token=""
         )
         conn_actor = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
-        denied = False
-        if conn_actor.authenticated:
+        refusal = refuse_unauthenticated_chat(
+            conn_actor,
+            token_presented=bool(token),
+            allow_anonymous=settings.chat_ws_allow_anonymous,
+        )
+        if refusal is None and conn_actor.authenticated:
             project_id = await resolver.project_of_topic(topic_id)
             if project_id is not None:
                 try:
@@ -80,10 +98,11 @@ async def chat(
                         conn_actor, project_id=project_id, topic_id=topic_id
                     )
                 except ForbiddenError as exc:
-                    denied_message = exc.args[0]
-                    denied = True
-    if denied:
-        await send({"type": "error", "message": denied_message})
+                    refusal = ("forbidden", exc.args[0])
+    if refusal is not None:
+        code, message = refusal
+        _log.info("chat_ws_refused", code=code, topic=str(topic_id))
+        await send({"type": "error", "code": code, "message": message})
         await websocket.close(code=1008)
         return
 
@@ -109,12 +128,16 @@ async def chat(
                 await send({"type": "error", "message": "unsupported message type"})
                 continue
             content = (payload.get("content") or "").strip()
-            # Verified token → the actor's handle (forgery-proof); else Phase-0
-            # fallback to the body's author (deprecated, works pre-token).
+            # Authorship comes from the connection, never from the frame: an
+            # authenticated socket is pinned to its verified handle, and the only
+            # sockets that reach here without one are the local harnesses
+            # `chat_ws_allow_anonymous` deliberately admits (config.py). Trimmed
+            # and capped so that legacy path cannot stuff control chars or an
+            # unbounded string into a stored block — hygiene, not authenticity.
             author = (
                 conn_actor.handle
                 if conn_actor.authenticated
-                else (payload.get("author") or "anonymous")
+                else (payload.get("author") or "anonymous").strip()[:64] or "anonymous"
             )
             # @芝士 toggle: summon the AI, or just post (spec C3, default post).
             summon = bool(payload.get("summon", False))

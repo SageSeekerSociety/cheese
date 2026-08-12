@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { relTime } from '../lib/relTime'
+import type { TopicSortField, TopicSortOrder } from '../api'
 import type { Project, ProjectMemberRow, Topic } from '../cx_types'
-import CheeseAvatar from './CheeseAvatar.vue'
+
+import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+
+import { relTime } from '../lib/relTime'
+import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
+import { ancestorPathIds, loadCollapsedTopics, saveCollapsedTopics, visibleRows } from '../lib/topicTree'
 import { avatarColor } from '../utils/avatar'
+
+import CheeseAvatar from './CheeseAvatar.vue'
 
 const props = defineProps<{
   projects: Project[]
@@ -27,6 +33,11 @@ const props = defineProps<{
   width?: number
   // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
   unreadMap?: Record<string, number>
+  // 话题列表排序: the backend field/direction currently applied — the sort
+  // menu just reflects and changes this, the actual ordering comes back
+  // from the server in `topics` (so tree/sibling order stays consistent).
+  topicSort?: TopicSortField
+  topicOrder?: TopicSortOrder
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +49,8 @@ const emit = defineEmits<{
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
+  // Rename a topic's title from the row's ⋯ actions.
+  (e: 'rename-topic', payload: { id: string; title: string }): void
   // Open the 1:1 private chat with 芝士 in the main area (飞书私聊 conversation).
   (e: 'select-private'): void
   // Open a person-to-person DM with the given member handle (飞书私聊 conversation).
@@ -46,6 +59,8 @@ const emit = defineEmits<{
   (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
   // Live drawer width while dragging the right edge.
   (e: 'update:width', w: number): void
+  // Sort menu picked a new field/direction for the topic list.
+  (e: 'update:topic-sort', payload: { sort: TopicSortField; order: TopicSortOrder }): void
 }>()
 
 // Drag the rail's right edge — emit the cursor's x (= rail width from the left).
@@ -74,14 +89,11 @@ const narrowPages = computed(() => (props.width ?? 280) < 216)
 // gets its own dedicated row above, and you don't DM yourself.
 const peerDms = computed(() =>
   (props.members ?? [])
-    .filter(
-      (m) =>
-        m.user_handle !== props.meHandle && m.user_handle !== 'cheese',
-    )
+    .filter((m) => m.user_handle !== props.meHandle && !m.agent)
     .map((m) => ({
       handle: m.user_handle,
       name: m.name || m.user_handle,
-    })),
+    }))
 )
 
 const projectPages = [
@@ -109,6 +121,24 @@ function newTopic() {
   emit('create-topic', '')
 }
 
+// ----- 话题列表排序 -----
+// Four fixed combinations (field × direction) — a picker, not a builder, so a
+// v-menu list beats a two-axis control for this small a option set.
+const SORT_OPTIONS: Array<{ sort: TopicSortField; order: TopicSortOrder; label: string }> = [
+  { sort: 'last_activity_at', order: 'desc', label: '最后活动 · 新到旧' },
+  { sort: 'last_activity_at', order: 'asc', label: '最后活动 · 旧到新' },
+  { sort: 'title', order: 'asc', label: '标题 · A→Z' },
+  { sort: 'title', order: 'desc', label: '标题 · Z→A' },
+]
+const sortMenuOpen = ref(false)
+const currentSortLabel = computed(
+  () => SORT_OPTIONS.find((o) => o.sort === props.topicSort && o.order === props.topicOrder)?.label ?? '排序'
+)
+function pickSort(opt: { sort: TopicSortField; order: TopicSortOrder }) {
+  sortMenuOpen.value = false
+  emit('update:topic-sort', opt)
+}
+
 // ----- Topic tree -----
 // A flattened tree node: a topic plus its nesting depth, so the template can
 // indent without recursion. Built from the flat list via parent_id.
@@ -129,7 +159,12 @@ function inferKind(t: Topic): string {
 const KIND_BADGE: Record<string, string> = {
   root: '全局',
   topic: '话题',
-  subtopic: '分身',
+  // A task is one piece of work inside a room. It still shows in the rail for
+  // now — moving it into the room's timeline as a card is a UI change of its
+  // own, and dropping the row before that lands would make split-out work
+  // unreachable.
+  task: '任务',
+  subtopic: '分身', // legacy rows, created before work had its own kind
 }
 
 function kindLabel(t: Topic): string {
@@ -187,13 +222,11 @@ const tree = computed<TreeRow[]>(() => {
 // 「已归档」 group at the bottom (newest archived first) — like Feishu's
 // folded conversations. Non-archived children of an archived parent stay in
 // the active list (their work isn't done).
-const activeTree = computed<TreeRow[]>(() =>
-  tree.value.filter((r) => r.topic.status !== 'archived'),
-)
+const activeTree = computed<TreeRow[]>(() => tree.value.filter((r) => r.topic.status !== 'archived'))
 const archivedRows = computed<Topic[]>(() =>
   props.topics
     .filter((t) => t.status === 'archived' && inferKind(t) !== 'root')
-    .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? '')),
+    .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? ''))
 )
 const archivedOpen = ref(false)
 
@@ -202,25 +235,80 @@ function unreadOf(id: string): number {
   return props.unreadMap?.[id] ?? 0
 }
 // The badge shows at most 99+ (a runaway count shouldn't stretch the row).
-function unreadLabel(id: string): string {
-  const n = unreadOf(id)
+function countLabel(n: number): string {
   return n > 99 ? '99+' : String(n)
 }
+function unreadLabel(id: string): string {
+  return countLabel(unreadOf(id))
+}
 // Unread hiding inside the collapsed archived group still deserves a hint.
-const archivedUnread = computed<number>(() =>
-  archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0),
+const archivedUnread = computed<number>(() => archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0))
+
+// ---- 子话题折叠 ----
+// 范式跟底部的「已归档」分组一致（一个 chevron 收起一堆行），只是这里的开关
+// 长在每一个有子话题的行上。行的可见性/未读聚合是纯逻辑，住在 lib/topicTree.ts
+// 里（有单测），这里只管状态和落盘。
+//
+// 默认展开：升级前后所见完全一致，没有人会因为这次改动突然找不到自己的话题；
+// "这里还有内容" 这个提示再好也弱于直接看见那一行。100+ 话题带来的长列表由
+// 「收起来的状态会被记住」来解——每个人只需要把噪音大的父话题收一次。
+// 按项目存 localStorage（而不是只放内存）：这个 rail 是主导航，每次刷新都要
+// 重收一遍等于没有折叠。存的是**收起来的** id，所以新拆出来的话题天然可见。
+const collapsedIds = ref<ReadonlySet<string>>(new Set<string>())
+watch(
+  () => props.selectedProjectId,
+  (pid) => {
+    collapsedIds.value = loadCollapsedTopics(pid)
+  },
+  { immediate: true }
 )
+
+// 当前选中话题的祖先链：这条路径无论祖先收没收起来都照常渲染，所以"人正待在
+// 里面的那个话题"永远不会被折叠藏掉。用 reveal 而不是"自动展开"，是为了不把
+// 用户自己设的折叠状态在导航时偷偷改写——离开之后那一支照旧是收起来的。
+const selectedPath = computed(() => ancestorPathIds(props.topics, props.selectedTopicId))
+const visibleTree = computed(() =>
+  visibleRows(activeTree.value, {
+    collapsed: collapsedIds.value,
+    reveal: selectedPath.value,
+    unreadOf,
+  })
+)
+
+function toggleCollapse(id: string) {
+  const next = new Set(collapsedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  collapsedIds.value = next
+  saveCollapsedTopics(props.selectedProjectId, next)
+}
 
 // The root topic (本体) — represented by the rail header (a selector + a click
 // target), not a list row. And the current project's display name.
-const rootTopic = computed<Topic | null>(
-  () => props.topics.find((t) => inferKind(t) === 'root') ?? null,
-)
+const rootTopic = computed<Topic | null>(() => props.topics.find((t) => inferKind(t) === 'root') ?? null)
 const currentProjectName = computed<string>(
-  () =>
-    props.projects.find((p) => p.id === props.selectedProjectId)?.name ??
-    '选择项目',
+  () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? '选择项目'
 )
+
+// Inline rename (pattern mirrors MyDevicesView's rename-in-place): a click on
+// the pencil swaps the title span for a text field; enter/blur commits.
+const renamingTopicId = ref<string | null>(null)
+const draftTitle = ref('')
+
+function startRename(t: Topic) {
+  renamingTopicId.value = t.id
+  draftTitle.value = t.title
+}
+
+function cancelRename() {
+  renamingTopicId.value = null
+}
+
+function saveRename(t: Topic) {
+  const title = normalizeTopicTitle(draftTitle.value, t.title)
+  renamingTopicId.value = null
+  if (title) emit('rename-topic', { id: t.id, title })
+}
 
 function onSplit(t: Topic) {
   // Never ask the human for a title (spec §rule 4, mirrors newTopic()). The
@@ -245,10 +333,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
     <div class="d-flex flex-column fill-height">
       <!-- 本体 = 项目 = 根话题: one flush header that opens the 本体 (root topic)
            on click, and switches projects via the caret menu. -->
-      <div
-        class="bentai-bar"
-        :class="{ 'is-active': !!rootTopic && rootTopic.id === selectedTopicId }"
-      >
+      <div class="bentai-bar" :class="{ 'is-active': !!rootTopic && rootTopic.id === selectedTopicId }">
         <button
           ref="bentaiMain"
           type="button"
@@ -258,10 +343,9 @@ const onMemory = computed(() => props.activeDocs === 'memory')
           <v-icon size="18" class="bentai-bar__icon">mdi-hexagon-outline</v-icon>
           <span class="bentai-bar__name">{{ currentProjectName }}</span>
           <span class="chip-neutral">全局</span>
-          <span
-            v-if="rootTopic && unreadOf(rootTopic.id) > 0"
-            class="unread-badge"
-          >{{ unreadLabel(rootTopic.id) }}</span>
+          <span v-if="rootTopic && unreadOf(rootTopic.id) > 0" class="unread-badge">{{
+            unreadLabel(rootTopic.id)
+          }}</span>
         </button>
         <!-- 切换项目已回归左侧 rail（每个项目一个图标）——此处不再放切换器。 -->
       </div>
@@ -291,28 +375,46 @@ const onMemory = computed(() => props.activeDocs === 'memory')
         <template v-else>
           <div class="t-eyebrow side-subhead side-subhead--row">
             <span>话题</span>
-            <v-btn
-              icon="mdi-plus"
-              size="x-small"
-              variant="tonal"
-              color="primary"
-              title="新建话题"
-              @click="newTopic"
-            />
+            <div class="d-flex align-center ga-1">
+              <v-menu v-model="sortMenuOpen" location="bottom end">
+                <template #activator="{ props: menuProps }">
+                  <v-btn
+                    v-bind="menuProps"
+                    icon="mdi-sort"
+                    size="x-small"
+                    variant="text"
+                    :title="`排序：${currentSortLabel}`"
+                  />
+                </template>
+                <v-list density="compact" nav>
+                  <v-list-item
+                    v-for="opt in SORT_OPTIONS"
+                    :key="`${opt.sort}-${opt.order}`"
+                    :active="opt.sort === topicSort && opt.order === topicOrder"
+                    @click="pickSort(opt)"
+                  >
+                    <v-list-item-title class="t-body">{{ opt.label }}</v-list-item-title>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+              <v-btn
+                icon="mdi-plus"
+                size="x-small"
+                variant="tonal"
+                color="primary"
+                title="新建话题"
+                @click="newTopic"
+              />
+            </div>
           </div>
 
           <div v-if="loadingTopics" class="px-4 py-2">
-            <v-progress-circular
-              indeterminate
-              size="20"
-              width="2"
-              color="primary"
-            />
+            <v-progress-circular indeterminate size="20" width="2" color="primary" />
           </div>
 
           <v-list v-else density="compact" nav class="py-0">
             <v-list-item
-              v-for="row in activeTree"
+              v-for="row in visibleTree"
               :key="row.topic.id"
               :active="row.topic.id === selectedTopicId"
               rounded="lg"
@@ -330,45 +432,95 @@ const onMemory = computed(() => props.activeDocs === 'memory')
               <!-- 干净行 + 前置图标做身份锚（混合版）：图标未读变琥珀，
                    种类标签仍不要（缩进表达层级），操作 hover 才浮现。 -->
               <template #prepend>
-                <v-icon
-                  v-if="row.depth === 0"
-                  size="16"
-                  class="row-glyph"
-                  :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
-                  icon="mdi-message-text-outline"
-                />
-                <!-- 分身不用钩子箭头：树的结构交给缩进 + 竖向引导线，
-                     行内只留一个小圆点做锚（未读转琥珀）。 -->
-                <span
-                  v-else
-                  class="row-glyph row-glyph--dot"
-                  :class="{ 'row-glyph--unread': unreadOf(row.topic.id) > 0 }"
-                />
+                <!-- 折叠开关：只有真有子话题的行才画，没有的行留同宽占位，
+                     免得两种行的图标错开一列。 -->
+                <button
+                  v-if="row.hasChildren"
+                  type="button"
+                  class="subtree-toggle"
+                  :title="row.collapsed ? '展开子话题' : '收起子话题'"
+                  :aria-expanded="!row.collapsed"
+                  @click.stop="toggleCollapse(row.topic.id)"
+                >
+                  <v-icon size="15" class="c-faint">
+                    {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+                  </v-icon>
+                </button>
+                <span v-else class="subtree-toggle subtree-toggle--empty" />
+                <span class="row-glyph-wrap">
+                  <v-icon
+                    v-if="row.depth === 0"
+                    size="16"
+                    class="row-glyph"
+                    :class="{ 'row-glyph--unread': row.unreadTotal > 0 }"
+                    icon="mdi-message-text-outline"
+                  />
+                  <!-- 分身不用钩子箭头：树的结构交给缩进 + 竖向引导线，
+                       行内只留一个小圆点做锚（未读转琥珀）。 -->
+                  <span v-else class="row-glyph row-glyph--dot" :class="{ 'row-glyph--unread': row.unreadTotal > 0 }" />
+                  <!-- 芝士还在这个话题里跑这一轮：呼吸点，人凭它判断啥时候
+                       该派下一个任务——和归档/采纳状态无关，只是本轮有没有跑完。 -->
+                  <span v-if="row.topic.running" class="running-dot" title="芝士正在这个话题里工作" />
+                </span>
               </template>
               <v-list-item-title class="d-flex align-center topic-title">
-                <span
-                  class="text-truncate"
-                  :class="{ 'title-unread': unreadOf(row.topic.id) > 0 }"
-                >{{ row.topic.title }}</span>
-                <span
-                  v-if="statusBadge(row.topic.status)"
-                  class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
-                >
-                  <span class="status-dot status-dot--warn" />
-                  {{ statusBadge(row.topic.status) }}
-                </span>
+                <v-text-field
+                  v-if="renamingTopicId === row.topic.id"
+                  v-model="draftTitle"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  autofocus
+                  :maxlength="TOPIC_TITLE_MAX_LENGTH"
+                  class="rename-field"
+                  @click.stop
+                  @keyup.enter="saveRename(row.topic)"
+                  @keyup.esc="cancelRename()"
+                  @blur="saveRename(row.topic)"
+                />
+                <template v-else>
+                  <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
+                    row.topic.title
+                  }}</span>
+                  <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
+                  <span
+                    v-if="row.collapsed && row.hiddenCount > 0"
+                    class="subtree-count ms-2"
+                    :title="`收起了 ${row.hiddenCount} 个子话题`"
+                    >{{ countLabel(row.hiddenCount) }}</span
+                  >
+                  <span
+                    v-if="statusBadge(row.topic.status)"
+                    class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
+                  >
+                    <span class="status-dot status-dot--warn" />
+                    {{ statusBadge(row.topic.status) }}
+                  </span>
+                </template>
               </v-list-item-title>
               <template #append>
+                <!-- 折叠不能把"有新消息"吞掉：收起来的后代的未读加到本行上。 -->
                 <span
-                  v-if="unreadOf(row.topic.id) > 0"
+                  v-if="row.unreadTotal > 0"
                   class="unread-badge"
-                >{{ unreadLabel(row.topic.id) }}</span>
-                <!-- items 感的右锚：没未读时给最后活跃时间（真实信息，非装饰） -->
-                <span v-else class="row-time">{{
-                  relTime(row.topic.updated_at)
-                }}</span>
+                  :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
+                  >{{ countLabel(row.unreadTotal) }}</span
+                >
+                <!-- items 感的右锚：没未读时给最后活跃时间（真实信息，非装饰）。
+                     updated_at 是兜底：它只在话题行自己被改过时才动，回答不了
+                     "最后有动静是什么时候"，只用在 last_activity_at 缺席的接口
+                     返回上（新建/改名/归档的响应体）。 -->
+                <span v-else class="row-time">{{ relTime(row.topic.last_activity_at ?? row.topic.updated_at) }}</span>
                 <!-- hover 浮出的操作层：绝对定位覆盖行尾，不占布局宽度 -->
                 <div class="row-actions" @click.stop>
+                  <v-btn
+                    icon="mdi-pencil-outline"
+                    size="small"
+                    variant="text"
+                    density="comfortable"
+                    title="重命名"
+                    @click.stop="startRename(row.topic)"
+                  />
                   <v-btn
                     icon="mdi-archive-arrow-down-outline"
                     size="small"
@@ -389,20 +541,14 @@ const onMemory = computed(() => props.activeDocs === 'memory')
               </template>
             </v-list-item>
 
-            <v-list-item v-if="activeTree.length === 0" class="c-faint t-body">
-              暂无话题
-            </v-list-item>
+            <v-list-item v-if="activeTree.length === 0" class="c-faint t-body"> 暂无话题 </v-list-item>
           </v-list>
 
           <!-- 归档去向: collapsed 已归档 group at the bottom of the topic list.
                Archived topics leave the active tree and land here (newest
                first), so done work stops crowding the rail. -->
           <template v-if="archivedRows.length">
-            <button
-              type="button"
-              class="archived-toggle"
-              @click="archivedOpen = !archivedOpen"
-            >
+            <button type="button" class="archived-toggle" @click="archivedOpen = !archivedOpen">
               <v-icon size="15" class="c-faint">
                 {{ archivedOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
               </v-icon>
@@ -517,9 +663,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                   <CheeseAvatar :size="18" />
                 </span>
               </template>
-              <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)">
-                芝士
-              </v-list-item-title>
+              <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)"> 芝士 </v-list-item-title>
             </v-list-item>
 
             <!-- Person-to-person DMs: one row per OTHER project member. -->
@@ -614,7 +758,9 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   color: var(--muted);
   font-size: 12px;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 .proj-pages__item:hover {
   background: var(--fill-2);
@@ -675,6 +821,15 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 }
 .topic-title {
   color: var(--text);
+}
+.rename-field {
+  max-width: 220px;
+}
+.rename-field :deep(.v-field__input) {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  min-height: 28px;
+  font-size: 13.5px;
 }
 
 /* Active row: --fill bg + 2px --accent left bar + --ink text. NOT a tinted
@@ -843,6 +998,64 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 }
 .row-glyph--unread {
   color: var(--accent, #f57f17);
+}
+.row-glyph-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 子话题折叠开关：定宽槽，没有子话题的行放同宽占位，图标列才不会错开。 */
+.subtree-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 2px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.subtree-toggle:hover {
+  background: var(--fill);
+}
+.subtree-toggle--empty {
+  cursor: default;
+  pointer-events: none;
+}
+/* 收起来了收了几个——形态沿用「已归档」那颗计数丸。 */
+.subtree-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--faint);
+  background: var(--fill);
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
+/* 呼吸点：芝士还在这一轮里工作，跟归档/采纳状态无关。 */
+.running-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok, #1f9d55);
+  box-shadow: 0 0 0 1.5px var(--surface, #fff);
+  animation: running-dot-pulse 1.6s ease-in-out infinite;
+}
+@keyframes running-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.7);
+  }
 }
 /* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。 */
 .topic-row.is-sub::before {

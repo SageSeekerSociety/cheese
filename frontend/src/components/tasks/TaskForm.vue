@@ -339,12 +339,7 @@
       </v-card-item>
 
       <v-card-text class="pt-2">
-        <v-switch
-          v-model="accessControlEnabled"
-          color="primary"
-          hide-details
-          v-bind="accessControlEnabledProps"
-        >
+        <v-switch v-model="accessControlEnabled" color="primary" hide-details v-bind="accessControlEnabledProps">
           <template #label>
             <div class="d-flex align-center">
               <v-icon
@@ -355,7 +350,9 @@
               <span>{{ t('tasks.form.accessControl.enableAccessRestriction') }}</span>
               <v-tooltip location="top">
                 <template #activator="{ props: tooltipProps }">
-                  <v-icon size="small" color="primary" class="ml-2" v-bind="tooltipProps">mdi-information-outline</v-icon>
+                  <v-icon size="small" color="primary" class="ml-2" v-bind="tooltipProps"
+                    >mdi-information-outline</v-icon
+                  >
                 </template>
                 <span>{{ t('tasks.form.accessControl.enableAccessRestrictionHint') }}</span>
               </v-tooltip>
@@ -386,7 +383,7 @@
                   <template #prepend>
                     <v-icon icon="mdi-web" color="primary" class="mr-2"></v-icon>
                   </template>
-                  <template #subtitle v-if="item.raw">
+                  <template v-if="item.raw" #subtitle>
                     <span class="text-caption text-medium-emphasis">{{ item.raw.subtitle }}</span>
                   </template>
                 </v-list-item>
@@ -802,8 +799,8 @@ const [accessControlEnabled, accessControlEnabledProps] = defineField('accessCon
 const [accessDomainGroupIds, accessDomainGroupIdsProps] = defineField('accessDomainGroupIds', vuetifyConfig)
 const [videoUrl, videoUrlProps] = defineField('videoUrl', vuetifyConfig)
 
-const domainGroupItems = computed(() =>
-  props.domainGroups?.map((g) => ({ title: g.name, value: g.id, subtitle: g.domains.join(', ') })) ?? []
+const domainGroupItems = computed(
+  () => props.domainGroups?.map((g) => ({ title: g.name, value: g.id, subtitle: g.domains.join(', ') })) ?? []
 )
 
 const createEmptyDescription = () => ({

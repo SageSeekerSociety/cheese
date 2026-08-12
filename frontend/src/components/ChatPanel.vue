@@ -13,21 +13,6 @@ const BOTTOM_THRESHOLD = 80
 </script>
 
 <script setup lang="ts">
-import { myHandle } from '../me'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import {
-  answerOptions,
-  attachmentRawUrl,
-  chatWsUrl,
-  listBlocks,
-  toggleReaction as apiToggleReaction,
-} from '../api'
-import { blockCache } from '../lib/blockCache'
-import { usePendingAttachments } from '../lib/attachments'
-import {
-  renderMarkdown as renderMarkdownWith,
-  renderPlain as renderPlainWith,
-} from '../lib/renderMessage'
 import type {
   Block,
   ChatAttachment,
@@ -38,8 +23,31 @@ import type {
   WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
-import CheeseAvatar from './CheeseAvatar.vue'
+
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+
+import {
+  answerOptions,
+  attachmentRawUrl,
+  chatWsUrl,
+  getProgress,
+  listBlocks,
+  toggleReaction as apiToggleReaction,
+} from '../api'
+import { usePendingAttachments } from '../lib/attachments'
+import { backendErrorPresentation } from '../lib/backendErrorEvent'
+import { cachedWindow, setCachedWindow } from '../lib/blockCache'
+import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
+import { platformErrorPresentation } from '../lib/platformEvents'
+import {
+  coalesceSplitFencedCodeBlocks,
+  renderMarkdown as renderMarkdownWith,
+  renderPlain as renderPlainWith,
+} from '../lib/renderMessage'
+import { myHandle } from '../me'
 import { avatarColor } from '../utils/avatar'
+
+import CheeseAvatar from './CheeseAvatar.vue'
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
@@ -85,7 +93,7 @@ const props = withDefaults(
     members: () => [],
     topicList: () => [],
     titleOverride: null,
-  },
+  }
 )
 
 // Surface AI activity so the parent can refresh the living doc / topic list
@@ -124,7 +132,7 @@ watch(
     mentionNames.all = '所有人'
     mentionNames.here = '在线成员'
   },
-  { immediate: true, deep: true },
+  { immediate: true, deep: true }
 )
 watch(
   () => props.topicList,
@@ -132,7 +140,7 @@ watch(
     for (const k of Object.keys(topicTitles)) delete topicTitles[k]
     for (const t of ts) topicTitles[t.id] = t.title
   },
-  { immediate: true, deep: true },
+  { immediate: true, deep: true }
 )
 
 const messages = ref<Block[]>([])
@@ -146,8 +154,13 @@ const errorMsg = ref<string | null>(null)
 const awaitingReply = ref(false)
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
-// Live working-log todo (芝士's Task tools) for the in-progress turn (§3.1.1).
+// Working-log todo (芝士's Task tools). Live during a turn (§3.1.1); between
+// turns it holds the topic's stored 进度层 (#187) instead of being wiped, so
+// "做到哪了" is visible in the room without summoning anyone.
 const todoItems = ref<TodoItem[]>([])
+// The list on screen is a previous turn's leftovers, not this turn's live
+// progress — labelled differently so nobody reads a stale ◐ as "running now".
+const todoRestored = ref(false)
 // Action cards: 芝士's cheese actions (decision/doc/...) are persisted as system
 // event blocks tagged refs=["action:<resource>"] and rendered as clickable cards.
 const ACTION_META: Record<string, { verb: string; btn: string }> = {
@@ -171,9 +184,7 @@ function askOptions(m: Block): string[] | null {
 }
 function askAnswered(m: Block): { option: string; by: string } | null {
   const meta = m.meta as Record<string, unknown> | null
-  return meta?.answered
-    ? { option: String(meta.answered), by: String(meta.answered_by ?? '') }
-    : null
+  return meta?.answered ? { option: String(meta.answered), by: String(meta.answered_by ?? '') } : null
 }
 const askBusy = ref<string | null>(null)
 async function pickOption(m: Block, option: string) {
@@ -320,6 +331,65 @@ function rememberScroll() {
   if (!el || !props.topic) return
   atBottom.value = isAtBottom(el)
   scrollMemory.set(props.topic.id, { top: el.scrollTop, atBottom: atBottom.value })
+  // Scrolling near the top is the request for the previous page.
+  if (shouldLoadOlder(el.scrollTop, { hasMore: hasMore.value, loading: loadingOlder.value })) {
+    void loadOlder()
+  }
+}
+
+// --- paging back through history --------------------------------------------
+// The panel holds a WINDOW of the timeline (newest PAGE_SIZE blocks), not the
+// whole thing: a long topic was 2.1 MB / 2226 rows in one response, and the
+// browser choked on all three of transfer, JSON parse, and 2226 live DOM nodes.
+const hasMore = ref(false)
+const loadingOlder = ref(false)
+
+// A page of very short messages can be shorter than the pane. Then there is
+// nothing to scroll, no scroll event fires, and the remaining history would be
+// unreachable — so top up until the pane actually scrolls.
+async function fillViewportIfNeeded() {
+  await nextTick()
+  const el = scrollRef.value
+  if (!el || !hasMore.value || loadingOlder.value) return
+  if (el.scrollHeight > el.clientHeight) return
+  await loadOlder()
+}
+
+async function loadOlder() {
+  const el = scrollRef.value
+  const topic = props.topic
+  if (!el || !topic || loadingOlder.value || !hasMore.value) return
+  const oldest = messages.value[0]
+  if (!oldest) return
+  loadingOlder.value = true
+  // Measure BEFORE the rows go in: prepending grows the content above the
+  // viewport, so scrollTop has to be pushed down by exactly that much or the
+  // timeline jumps out from under the reader (and re-triggers this loader).
+  const before = { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight }
+  let failed = false
+  try {
+    const payload = await listBlocks(topic.id, { limit: PAGE_SIZE, before: oldest.id })
+    // The user may have switched topics while this was in flight.
+    if (props.topic?.id !== topic.id) return
+    const next = prependOlder({ blocks: messages.value, hasMore: hasMore.value }, payload.data, payload.has_more)
+    messages.value = next.blocks
+    hasMore.value = next.hasMore
+    setCachedWindow(topic.id, next)
+    await nextTick()
+    const sc = scrollRef.value
+    if (sc) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
+  } catch (e) {
+    failed = true
+    errorMsg.value = e instanceof Error ? e.message : '加载更早的消息失败'
+  } finally {
+    // Unconditional: a topic switch mid-flight must not leave the flag stuck,
+    // or the new topic could never page back.
+    loadingOlder.value = false
+  }
+  // Only now that the flag is clear can another page be pulled, if the pane
+  // still isn't tall enough to scroll. Not after a failure — that would retry
+  // a broken request in a tight loop.
+  if (!failed) await fillViewportIfNeeded()
 }
 
 // Restore a topic's saved scroll position. "At the bottom" (and no memory at
@@ -357,8 +427,24 @@ function cancelRetry() {
   }
 }
 
+// Every way the backend can refuse a socket AT CONNECT (app/api/routes/chat.py):
+// no token, a token it could not verify, and a verified token whose owner is not
+// on this topic's roster. The set is the point — `forbidden` was left out once
+// and behaved exactly like the bug this latch exists to fix, because a refusal
+// the client doesn't recognise falls through to the reconnect path below.
+const CONNECT_REFUSAL_CODES = new Set(['auth_required', 'auth_expired', 'forbidden'])
+
+// A connect refusal is not an outage: the backend closes the socket after one
+// error frame, so retrying just reopens and gets refused again. And it does not
+// even back off — the HANDSHAKE succeeds, the refusal arrives as a frame, so
+// onopen has already cleared the banner and reset retryDelayMs to 1s before the
+// reason lands. Measured with `forbidden` unlatched: 9 connections in 8 seconds,
+// the green dot flickering and the reason blinking with it, forever. So we latch
+// it: stop retrying and keep the reason on screen until they act.
+const connectRefused = ref(false)
+
 function scheduleReconnect(topicId: string) {
-  if (retryTimer) return
+  if (retryTimer || connectRefused.value) return
   const delay = retryDelayMs
   retryDelayMs = Math.min(retryDelayMs * 2, 15000)
   retryTimer = setTimeout(() => {
@@ -402,7 +488,7 @@ function openSocket(topicId: string) {
   }
   ws.onerror = () => {
     // The close handler owns retry; the banner just explains the grey dot.
-    errorMsg.value = '连接断开，正在自动重连…'
+    if (!connectRefused.value) errorMsg.value = '连接断开，正在自动重连…'
   }
   ws.onmessage = (ev: MessageEvent) => {
     // Guard against frames from a stale socket after topic switch.
@@ -444,8 +530,11 @@ function handleFrame(frame: WsServerFrame) {
       emit('tool-used', frame.name.replace(/^mcp__cheese__/, ''), frame.input)
       break
     case 'todo':
-      // Live working-log checklist (process), updated in place.
+      // Working-log checklist, updated in place. `restored` marks the replay of
+      // a previous turn's list at turn start (进度层) — the first live frame of
+      // this turn clears the flag.
       todoItems.value = frame.items
+      todoRestored.value = frame.restored === true
       autoScroll()
       break
     case 'state':
@@ -467,15 +556,27 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'error':
+      // The socket was refused at connect — the backend closes right after this
+      // frame, so latch the reason and stop the reconnect loop from burying it.
+      if (frame.code && CONNECT_REFUSAL_CODES.has(frame.code)) {
+        connectRefused.value = true
+        errorMsg.value = frame.message
+        awaitingReply.value = false
+        return
+      }
       // A persisted turn failure is already in the timeline as an event block
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
       awaitingReply.value = false
-      todoItems.value = []
+      // A failed turn is exactly when the checklist matters most — it is what
+      // whoever picks this up next (person or new machine) works from. Keep it.
+      todoRestored.value = true
       break
     case 'done':
       awaitingReply.value = false
-      todoItems.value = [] // working-log done; the messages are the record
+      // Kept, not cleared: the checklist is the topic's 进度层 now, not just
+      // this turn's working log, and it is what the next turn resumes from.
+      todoRestored.value = true
       emit('turn-done')
       autoScroll()
       break
@@ -492,32 +593,58 @@ function handleFrame(frame: WsServerFrame) {
 
 async function loadTopic(topic: Topic) {
   errorMsg.value = null
+  connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
   todoItems.value = []
+  todoRestored.value = false
+  // 进度层 (#187): the checklist the last turn left behind. Fire-and-forget and
+  // guarded on the topic still being active — it is context, never a reason to
+  // hold up (or fail) opening the conversation.
+  void getProgress(topic.id)
+    .then((p) => {
+      if (props.topic?.id !== topic.id || todoItems.value.length) return
+      todoItems.value = p.items
+      todoRestored.value = p.items.length > 0
+    })
+    .catch(() => {})
   reactionPickerFor.value = null
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
-  const cached = blockCache.get(topic.id)
+  loadingOlder.value = false
+  const cached = cachedWindow(topic.id)
   if (cached) {
-    messages.value = cached
+    messages.value = cached.blocks
+    hasMore.value = cached.hasMore
     restoreScroll(topic.id)
   } else {
     messages.value = []
+    hasMore.value = false
     loadingHistory.value = true
   }
   try {
-    const payload = await listBlocks(topic.id)
+    // One screenful, not the whole timeline — older blocks arrive when the
+    // user scrolls up to them (loadOlder).
+    const payload = await listBlocks(topic.id, { limit: PAGE_SIZE })
     // Only apply if still the active topic (avoid race on fast switching).
     if (props.topic?.id !== topic.id) return
     // Blocks that landed while we were away append at the tail; if the user
     // was parked at the bottom, follow them so the newest message is visible
-    // without a manual scroll.
-    const grew = cached !== undefined && payload.data.length > cached.length
-    messages.value = payload.data
-    blockCache.set(topic.id, payload.data)
+    // without a manual scroll. Compared on the LAST id, not on length: the
+    // cached window and this page can be different sizes (the user may have
+    // paged back), so a length comparison says nothing about the tail.
+    const grew = cached !== null && cached.blocks.at(-1)?.id !== payload.data.at(-1)?.id
+    // Merge rather than replace, so scrollback the user already loaded (and
+    // that restoreScroll's saved offset refers to) does not vanish under them.
+    const merged = cached
+      ? mergeRefreshedTail(cached, { blocks: payload.data, hasMore: payload.has_more })
+      : { blocks: payload.data, hasMore: payload.has_more }
+    messages.value = merged.blocks
+    hasMore.value = merged.hasMore
+    setCachedWindow(topic.id, merged)
     if (!cached) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
     openSocket(topic.id)
+    void fillViewportIfNeeded()
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
   } finally {
@@ -558,26 +685,18 @@ function imageUrl(m: Block): string {
   return props.topic ? attachmentRawUrl(props.topic.id, m.content) : ''
 }
 function scrollToMessage(id: string) {
-  document
-    .querySelector(`[data-mid="${id}"]`)
-    ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  document.querySelector(`[data-mid="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
-function send(
-  content: string,
-  summon: boolean,
-  attachments?: ChatAttachment[],
-): boolean {
+function send(content: string, summon: boolean, attachments?: ChatAttachment[]): boolean {
   const trimmed = content.trim()
   const atts = attachments?.length ? attachments : undefined
   // An image-only send (no text) is a valid message (图片输入).
-  if ((!trimmed && !atts) || !socket || socket.readyState !== WebSocket.OPEN)
-    return false
+  if ((!trimmed && !atts) || !socket || socket.readyState !== WebSocket.OPEN) return false
   errorMsg.value = null
   const msg: WsClientMessage = {
     type: 'message',
     content: trimmed,
-    author: AUTHOR,
     summon,
     reply_to: replyTarget.value?.id ?? undefined,
     attachments: atts,
@@ -587,7 +706,9 @@ function send(
   // Only show the "awaiting reply" indicator when 芝士 was summoned — an
   // instant local ack (正在看…) even before the backend's ✅ receipt lands.
   if (summon) awaitingReply.value = true
-  todoItems.value = []
+  // The stored checklist stays on screen until this turn's first live frame
+  // replaces it — blanking it here would hide 进度 during the cold start, which
+  // is precisely when someone is wondering where the work got to.
   scrollToBottom()
   return true
 }
@@ -599,19 +720,22 @@ defineExpose({ send, connected })
 // tool/巡检 events belong in 现场 — neither belongs in the group chat (spec §7.1).
 const visible = computed<Block[]>(() => {
   const out: Block[] = []
-  for (const m of messages.value) {
+  // Historical SDK turns can contain one fenced Markdown block split across
+  // consecutive message rows. Repair those rows before hiding event blocks,
+  // because an event is a hard boundary and must prevent an accidental merge.
+  for (const m of coalesceSplitFencedCodeBlocks(messages.value)) {
     if (m.kind === 'message' || m.kind === 'attachment') {
       out.push(m)
     } else if (m.kind === 'event' && m.author_type === 'system') {
+      // 前端报错 events belong to the 现场 drawer (debugging surface), not the
+      // group chat — same rule as tool events (frontend_log.py).
+      if ((m.meta as Record<string, unknown> | null)?.event_type === 'frontend_error') {
+        continue
+      }
       // Collapse a run of identical system lines (e.g. repeated 编辑了文档) so
       // a burst of edits shows as one line, not a wall.
       const prev = out[out.length - 1]
-      if (
-        prev &&
-        prev.kind === 'event' &&
-        prev.author_type === 'system' &&
-        prev.content === m.content
-      ) {
+      if (prev && prev.kind === 'event' && prev.author_type === 'system' && prev.content === m.content) {
         continue
       }
       out.push(m)
@@ -684,16 +808,14 @@ const mentionMatches = computed<MentionItem[]>(() => {
   const q = mentionQuery.value
   if (q === null) return []
   const ql = q.toLowerCase()
-  const broadcast = BROADCAST_ITEMS.filter(
-    (b) => b.insert.startsWith(ql) || b.label.includes(q),
-  )
+  const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
   const rest: MentionItem[] = [
     ...props.members.map((m) => ({
       label: m.name || m.user_handle,
       kind: 'member' as const,
       insert: m.name || m.user_handle,
       sub: `@${m.user_handle}`,
-      agent: m.user_handle === 'cheese',
+      agent: !!m.agent,
     })),
     ...props.topicList
       .filter((t) => t.kind !== 'root')
@@ -723,9 +845,7 @@ function expandMentions(text: string): string {
       { pat: `@${m.name || m.user_handle}`, token: `<@${m.user_handle}>` },
       { pat: `@${m.user_handle}`, token: `<@${m.user_handle}>` },
     ]),
-    ...props.topicList
-      .filter((t) => t.kind !== 'root')
-      .map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
+    ...props.topicList.filter((t) => t.kind !== 'root').map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
   ].sort((a, b) => b.pat.length - a.pat.length)
   let out = text
   for (const s of subs) out = out.split(s.pat).join(s.token)
@@ -746,7 +866,7 @@ const {
   () => props.topic?.id,
   (msg) => {
     errorMsg.value = msg
-  },
+  }
 )
 function pickFiles() {
   fileInput.value?.click()
@@ -777,12 +897,7 @@ function onCompositionEnd(e: CompositionEvent) {
   compositionEndedAt = e.timeStamp
 }
 function isImeKey(e: KeyboardEvent) {
-  return (
-    composing ||
-    e.isComposing ||
-    e.keyCode === 229 ||
-    e.timeStamp - compositionEndedAt < 100
-  )
+  return composing || e.isComposing || e.keyCode === 229 || e.timeStamp - compositionEndedAt < 100
 }
 
 function onComposerKey(e: KeyboardEvent) {
@@ -801,21 +916,27 @@ function onComposerKey(e: KeyboardEvent) {
   sendDraft()
 }
 
+// Keyed on the topic's id, NOT the object reference: the parent replaces
+// `topics.value` wholesale on every refreshTopics() (e.g. after each agent
+// turn), which mints a brand-new object for the SAME topic. Watching the
+// object itself made every turn look like a topic switch — full reconnect,
+// history reload, composer disabled mid-reconnect (which blurs it). Only a
+// real id change is a real switch.
 watch(
-  () => props.topic,
-  (t, oldT) => {
+  () => props.topic?.id,
+  (id, oldId) => {
     // Save where we were in the topic we're leaving, so coming back restores it.
-    if (oldT && scrollRef.value) {
+    if (oldId && scrollRef.value) {
       const el = scrollRef.value
-      scrollMemory.set(oldT.id, { top: el.scrollTop, atBottom: isAtBottom(el) })
+      scrollMemory.set(oldId, { top: el.scrollTop, atBottom: isAtBottom(el) })
     }
-    if (t) loadTopic(t)
+    if (props.topic) loadTopic(props.topic)
     else {
       messages.value = []
       closeSocket()
     }
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 onBeforeUnmount(() => {
@@ -828,10 +949,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="chat d-flex flex-column fill-height">
-    <div
-      v-if="!topic"
-      class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis"
-    >
+    <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-forum-outline</v-icon>
         <div>选择或新建一个话题，开始对话</div>
@@ -880,220 +998,235 @@ onBeforeUnmount(() => {
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
         <div ref="contentRef">
-        <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">
-          加载历史…
-        </div>
+          <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载历史…</div>
 
-        <template v-for="(m, i) in visible" :key="m.id">
-          <!-- action row: 芝士's cheese action this turn — a quiet system line
-               (amber dot = platform act) with an inline amber link, no box. -->
-          <div v-if="m.kind === 'event' && actionResource(m)" class="action-card">
-            <!-- actionText may carry a <@handle> actor token (编辑了文档): render
-                 through the shared token→chip path so the actor is clickable. -->
-            <span class="action-verb" v-html="renderPlain(actionText(m))" />
-            <button
-              v-if="ACTION_META[actionResource(m)!]?.btn"
-              type="button"
-              class="action-link"
-              @click="
-                emit('open-resource', actionResource(m)!, m.turn_id ?? undefined)
-              "
-            >
-              {{ ACTION_META[actionResource(m)!].btn }}
-            </button>
+          <!-- Paging back through history. The row is always rendered while
+               older blocks exist so the timeline's top edge does not change
+               height when a fetch starts — that height change would move the
+               reader mid-scroll, which is the very thing loadOlder compensates
+               for. -->
+          <div
+            v-else-if="hasMore"
+            class="text-medium-emphasis text-body-2 px-4 py-2 text-center"
+            data-testid="chat-older-loader"
+          >
+            {{ loadingOlder ? '加载更早的消息…' : '向上滚动查看更早的消息' }}
           </div>
-          <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
+
+          <template v-for="(m, i) in visible" :key="m.id">
+            <!-- Infrastructure incidents are facts in the conversation, but they
+               are neither 芝士 messages nor faint activity lines. Structured
+               metadata selects this persistent, accessible recovery card. -->
+            <div
+              v-if="platformErrorPresentation(m)"
+              class="platform-incident"
+              role="alert"
+              :data-error-code="platformErrorPresentation(m)!.code"
+              data-testid="platform-error-card"
+            >
+              <div class="platform-incident__icon" aria-hidden="true">
+                <v-icon :icon="platformErrorPresentation(m)!.icon" size="20" />
+              </div>
+              <div class="platform-incident__content">
+                <div class="platform-incident__eyebrow">平台资源</div>
+                <div class="platform-incident__title">
+                  {{ platformErrorPresentation(m)!.title }}
+                </div>
+                <div class="platform-incident__body">
+                  {{ platformErrorPresentation(m)!.body }}
+                </div>
+                <div class="platform-incident__status">
+                  <span class="platform-incident__pulse" aria-hidden="true" />
+                  {{ platformErrorPresentation(m)!.status }}
+                </div>
+              </div>
+            </div>
+            <!-- action row: 芝士's cheese action this turn — a quiet system line
+               (amber dot = platform act) with an inline amber link, no box. -->
+            <div v-else-if="m.kind === 'event' && actionResource(m)" class="action-card">
+              <!-- actionText may carry a <@handle> actor token (编辑了文档): render
+                 through the shared token→chip path so the actor is clickable. -->
+              <span class="action-verb" v-html="renderPlain(actionText(m))" />
+              <button
+                v-if="ACTION_META[actionResource(m)!]?.btn"
+                type="button"
+                class="action-link"
+                @click="emit('open-resource', actionResource(m)!, m.turn_id ?? undefined)"
+              >
+                {{ ACTION_META[actionResource(m)!].btn }}
+              </button>
+            </div>
+            <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
+               person needs to know it happened. So the line shows by default
+               and the stack is one click away — a room is a conversation, not
+               a monitoring dashboard. -->
+            <details v-else-if="backendErrorPresentation(m)" class="backend-error" data-testid="backend-error-event">
+              <summary class="backend-error__line">
+                <span>{{ backendErrorPresentation(m)!.line }}</span>
+                <span v-if="backendErrorPresentation(m)!.count" class="backend-error__count">
+                  ×{{ backendErrorPresentation(m)!.count }}
+                </span>
+              </summary>
+              <div class="backend-error__meta">
+                <span v-if="backendErrorPresentation(m)!.where">{{ backendErrorPresentation(m)!.where }}</span>
+                <span v-if="backendErrorPresentation(m)!.requestId">
+                  req {{ backendErrorPresentation(m)!.requestId }}
+                </span>
+              </div>
+              <pre v-if="backendErrorPresentation(m)!.stack" class="backend-error__stack">{{
+                backendErrorPresentation(m)!.stack
+              }}</pre>
+            </details>
+            <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
                Content may carry a <@handle> actor token (归档/编辑…): render it
                through the SAME token→chip path as messages so the actor is a
                clickable mention, not raw text. -->
-          <div v-else-if="m.kind === 'event'" class="im-event text-caption">
-            <span v-html="renderPlain(m.content)" />
-          </div>
-
-          <!-- message row -->
-          <div
-            v-else
-            class="im-row"
-            :class="{ 'im-row--cont': !isRunStart(i) }"
-            :data-mid="m.id"
-          >
-            <!-- avatar gutter: only on the first of a run -->
-            <div class="im-gutter">
-              <template v-if="isRunStart(i)">
-                <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" />
-                <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(m.author) }">
-                  {{ m.author.slice(0, 1).toUpperCase() }}
-                </div>
-              </template>
+            <div v-else-if="m.kind === 'event'" class="im-event text-caption">
+              <span v-html="renderPlain(m.content)" />
             </div>
 
-            <div class="im-main">
-              <div v-if="isRunStart(i)" class="im-meta">
-                <span class="im-name">{{ displayName(m) }}</span>
-                <span class="im-time">{{ fmtTime(m.created_at) }}</span>
-              </div>
-              <!-- B3: a reply shows the message it threads under -->
-              <button
-                v-if="showReplyCue(m)"
-                type="button"
-                class="im-replied"
-                @click="scrollToMessage(m.reply_to!)"
-              >
-                <v-icon size="12">mdi-reply</v-icon>
-                回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
-              </button>
-              <!-- 图片输入: an attachment block renders as the image itself
-                   (click opens the original in a new tab). -->
-              <a
-                v-if="isImageBlock(m)"
-                class="im-image-link"
-                :href="imageUrl(m)"
-                target="_blank"
-                rel="noopener"
-              >
-                <img class="im-image" :src="imageUrl(m)" :alt="m.content" loading="lazy" />
-              </a>
-              <div
-                v-else-if="m.author_type === 'ai'"
-                class="im-text md-content"
-                v-html="renderMarkdown(m.content)"
-              />
-              <!-- 现场尊重原文: human text renders verbatim — newlines and
-                   spacing preserved (pre-wrap), no markdown reflow. -->
-              <div
-                v-else
-                class="im-text im-text--verbatim"
-                v-html="renderPlain(m.content)"
-              />
-              <!-- 选项问题 (cheese ask): one-click answer buttons; answered
-                   state shows the pick + who made it (everyone sees it). -->
-              <div v-if="askOptions(m)" class="ask-row">
-                <template v-if="!askAnswered(m)">
-                  <button
-                    v-for="opt in askOptions(m)"
-                    :key="opt"
-                    type="button"
-                    class="ask-option"
-                    :disabled="askBusy === m.id"
-                    @click="pickOption(m, opt)"
-                  >
-                    {{ opt }}
-                  </button>
+            <!-- message row -->
+            <div v-else class="im-row" :class="{ 'im-row--cont': !isRunStart(i) }" :data-mid="m.id">
+              <!-- avatar gutter: only on the first of a run -->
+              <div class="im-gutter">
+                <template v-if="isRunStart(i)">
+                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" />
+                  <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(m.author) }">
+                    {{ m.author.slice(0, 1).toUpperCase() }}
+                  </div>
                 </template>
-                <div v-else class="ask-answered">
-                  <v-icon size="13" color="primary">mdi-check-circle</v-icon>
-                  {{ askAnswered(m)!.by }} 选了「{{ askAnswered(m)!.option }}」
+              </div>
+
+              <div class="im-main">
+                <div v-if="isRunStart(i)" class="im-meta">
+                  <span class="im-name">{{ displayName(m) }}</span>
+                  <span class="im-time">{{ fmtTime(m.created_at) }}</span>
+                </div>
+                <!-- B3: a reply shows the message it threads under -->
+                <button v-if="showReplyCue(m)" type="button" class="im-replied" @click="scrollToMessage(m.reply_to!)">
+                  <v-icon size="12">mdi-reply</v-icon>
+                  回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
+                </button>
+                <!-- 图片输入: an attachment block renders as the image itself
+                   (click opens the original in a new tab). -->
+                <a v-if="isImageBlock(m)" class="im-image-link" :href="imageUrl(m)" target="_blank" rel="noopener">
+                  <img class="im-image" :src="imageUrl(m)" :alt="m.content" loading="lazy" />
+                </a>
+                <div v-else-if="m.author_type === 'ai'" class="im-text md-content" v-html="renderMarkdown(m.content)" />
+                <!-- 现场尊重原文: human text renders verbatim — newlines and
+                   spacing preserved (pre-wrap), no markdown reflow. -->
+                <div v-else class="im-text im-text--verbatim" v-html="renderPlain(m.content)" />
+                <!-- 选项问题 (cheese ask): one-click answer buttons; answered
+                   state shows the pick + who made it (everyone sees it). -->
+                <div v-if="askOptions(m)" class="ask-row">
+                  <template v-if="!askAnswered(m)">
+                    <button
+                      v-for="opt in askOptions(m)"
+                      :key="opt"
+                      type="button"
+                      class="ask-option"
+                      :disabled="askBusy === m.id"
+                      @click="pickOption(m, opt)"
+                    >
+                      {{ opt }}
+                    </button>
+                  </template>
+                  <div v-else class="ask-answered">
+                    <v-icon size="13" color="primary">mdi-check-circle</v-icon>
+                    {{ askAnswered(m)!.by }} 选了「{{ askAnswered(m)!.option }}」
+                  </div>
+                </div>
+                <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
+                <button
+                  v-if="m.upgraded_to_topic_id"
+                  type="button"
+                  class="im-upgraded"
+                  @click="emit('open-topic', m.upgraded_to_topic_id)"
+                >
+                  <v-icon size="13">mdi-arrow-top-right</v-icon>
+                  已升级为话题，点击查看
+                </button>
+                <!-- Emoji reaction chips (Slack): count per emoji, own reactions
+                   highlighted; click toggles. 芝士's ✅ receipt lands here too. -->
+                <div v-if="m.reactions?.length" class="rx-row">
+                  <button
+                    v-for="r in m.reactions"
+                    :key="r.emoji"
+                    type="button"
+                    class="rx-chip"
+                    :class="{ 'rx-chip--mine': myReacted(r) }"
+                    :title="r.authors.join('、')"
+                    @click="onReact(m, r.emoji)"
+                  >
+                    <span class="rx-emoji">{{ r.emoji }}</span>
+                    <span class="rx-count">{{ r.count }}</span>
+                  </button>
                 </div>
               </div>
-              <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
-              <button
-                v-if="m.upgraded_to_topic_id"
-                type="button"
-                class="im-upgraded"
-                @click="emit('open-topic', m.upgraded_to_topic_id)"
-              >
-                <v-icon size="13">mdi-arrow-top-right</v-icon>
-                已升级为话题，点击查看
-              </button>
-              <!-- Emoji reaction chips (Slack): count per emoji, own reactions
-                   highlighted; click toggles. 芝士's ✅ receipt lands here too. -->
-              <div v-if="m.reactions?.length" class="rx-row">
-                <button
-                  v-for="r in m.reactions"
-                  :key="r.emoji"
-                  type="button"
-                  class="rx-chip"
-                  :class="{ 'rx-chip--mine': myReacted(r) }"
-                  :title="r.authors.join('、')"
-                  @click="onReact(m, r.emoji)"
-                >
-                  <span class="rx-emoji">{{ r.emoji }}</span>
-                  <span class="rx-count">{{ r.count }}</span>
-                </button>
-              </div>
-            </div>
 
-            <!-- hover action bar, top-right of the row (Feishu). Only actions
+              <!-- hover action bar, top-right of the row (Feishu). Only actions
                  we actually implement are shown (no dead buttons). -->
-            <div
-              class="im-actions"
-              :class="{ 'im-actions--open': reactionPickerFor === m.id }"
-            >
-              <button
-                type="button"
-                class="im-act rx-toggle"
-                :class="{ 'im-act--on': reactionPickerFor === m.id }"
-                title="加表情"
-                @click="
-                  reactionPickerFor = reactionPickerFor === m.id ? null : m.id
-                "
-              >
-                <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
-              </button>
-              <button type="button" class="im-act" title="回复" @click="setReply(m)">
-                <v-icon size="15">mdi-reply-outline</v-icon>
-              </button>
-              <button
-                type="button"
-                class="im-act"
-                title="升级为话题"
-                @click="emit('upgrade-message', m.id)"
-              >
-                <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
-              </button>
-              <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
-              <div v-if="reactionPickerFor === m.id" class="rx-picker">
+              <div class="im-actions" :class="{ 'im-actions--open': reactionPickerFor === m.id }">
                 <button
-                  v-for="e in QUICK_EMOJIS"
-                  :key="e"
                   type="button"
-                  class="rx-pick"
-                  @click="onReact(m, e)"
+                  class="im-act rx-toggle"
+                  :class="{ 'im-act--on': reactionPickerFor === m.id }"
+                  title="加表情"
+                  @click="reactionPickerFor = reactionPickerFor === m.id ? null : m.id"
                 >
-                  {{ e }}
+                  <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
                 </button>
+                <button type="button" class="im-act" title="回复" @click="setReply(m)">
+                  <v-icon size="15">mdi-reply-outline</v-icon>
+                </button>
+                <button type="button" class="im-act" title="升级为话题" @click="emit('upgrade-message', m.id)">
+                  <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
+                </button>
+                <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
+                <div v-if="reactionPickerFor === m.id" class="rx-picker">
+                  <button v-for="e in QUICK_EMOJIS" :key="e" type="button" class="rx-pick" @click="onReact(m, e)">
+                    {{ e }}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        </template>
+          </template>
 
-        <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
+          <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until the turn's FIRST message lands; the live
              working-log checklist stays visible for the whole turn. -->
-        <div v-if="awaitingReply || todoItems.length" class="im-row">
-          <div class="im-gutter">
-            <CheeseAvatar :size="28" />
-          </div>
-          <div class="im-main">
-            <div class="im-meta">
-              <span class="im-name">芝士</span>
+          <div v-if="awaitingReply || todoItems.length" class="im-row">
+            <div class="im-gutter">
+              <CheeseAvatar :size="28" />
             </div>
+            <div class="im-main">
+              <div class="im-meta">
+                <span class="im-name">芝士</span>
+              </div>
 
-            <!-- Live working-log checklist (芝士's tasks this turn, §3.1.1) -->
-            <ul v-if="todoItems.length" class="todo-list">
-              <li
-                v-for="t in todoItems"
-                :key="t.id"
-                class="todo-item"
-                :class="'todo-' + t.status"
-              >
-                <span class="todo-mark">{{ todoMark(t.status) }}</span>
-                <span class="todo-text">{{ t.subject }}</span>
-              </li>
-            </ul>
+              <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
+                 turn; between turns this is the topic's stored 进度层 (#187),
+                 labelled so a leftover ◐ is not read as "running right now". -->
+              <div v-if="todoItems.length && todoRestored" class="todo-label">进度（上次做到这里）</div>
+              <ul v-if="todoItems.length" class="todo-list">
+                <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
+                  <span class="todo-mark">{{ todoMark(t.status) }}</span>
+                  <span class="todo-text">{{ t.subject }}</span>
+                </li>
+              </ul>
 
-            <!-- Instant ack before the first message / during cold start -->
-            <div v-if="awaitingReply" class="im-text">
-              <span class="text-medium-emphasis">芝士 正在看…</span>
-              <span class="caret" />
+              <!-- Instant ack before the first message / during cold start -->
+              <div v-if="awaitingReply" class="im-text">
+                <span class="text-medium-emphasis">芝士 正在看…</span>
+                <span class="caret" />
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
-        <div class="px-4">
-          <slot name="timeline-end" />
-        </div>
+          <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
+          <div class="px-4">
+            <slot name="timeline-end" />
+          </div>
         </div>
       </div>
 
@@ -1111,16 +1244,8 @@ onBeforeUnmount(() => {
       <!-- B3: replying-to indicator — the next message threads under this one. -->
       <div v-if="replyTarget" class="reply-bar">
         <v-icon size="14" class="me-1">mdi-reply</v-icon>
-        <span class="reply-bar__text">
-          回复 {{ displayName(replyTarget) }}：{{ replySnippet(replyTarget) }}
-        </span>
-        <v-btn
-          icon="mdi-close"
-          size="x-small"
-          variant="text"
-          density="comfortable"
-          @click="clearReply"
-        />
+        <span class="reply-bar__text"> 回复 {{ displayName(replyTarget) }}：{{ replySnippet(replyTarget) }} </span>
+        <v-btn icon="mdi-close" size="x-small" variant="text" density="comfortable" @click="clearReply" />
       </div>
 
       <!-- Built-in composer (private chat / standalone use). -->
@@ -1150,17 +1275,15 @@ onBeforeUnmount(() => {
               class="mention-menu-item"
               @click="pickMention(mm)"
             >
-              <span
-                v-if="mm.kind === 'broadcast'"
-                class="mention-avatar mention-avatar--broadcast"
-              >
+              <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
                 <v-icon size="13">mdi-bullhorn-outline</v-icon>
               </span>
               <span
                 v-else-if="mm.kind === 'member'"
                 class="mention-avatar"
                 :class="{ 'mention-avatar--agent': mm.agent }"
-              >{{ mm.label.slice(0, 1).toUpperCase() }}</span>
+                >{{ mm.label.slice(0, 1).toUpperCase() }}</span
+              >
               <span v-else class="mention-avatar mention-avatar--topic">
                 <v-icon size="13">mdi-pound</v-icon>
               </span>
@@ -1174,21 +1297,9 @@ onBeforeUnmount(() => {
           <div v-if="pendingAtts.length || attsUploading" class="att-strip">
             <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
               <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
-              <button
-                type="button"
-                class="att-remove"
-                title="移除"
-                @click="removePendingAtt(i)"
-              >
-                ×
-              </button>
+              <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">×</button>
             </div>
-            <v-progress-circular
-              v-if="attsUploading"
-              indeterminate
-              size="18"
-              width="2"
-            />
+            <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
           </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
@@ -1292,7 +1403,13 @@ onBeforeUnmount(() => {
   background: var(--accent);
   flex: none;
 }
-/* Live working-log checklist (§3.1.1) — process, sits above the streaming text. */
+/* Working-log checklist (§3.1.1) — process, sits above the streaming text.
+   Between turns the same list shows the stored 进度层 (#187) under a label. */
+.todo-label {
+  font-size: 12px;
+  color: var(--muted, #666);
+  margin: 2px 0 0;
+}
 .todo-list {
   list-style: none;
   margin: 2px 0 6px;
@@ -1688,7 +1805,9 @@ onBeforeUnmount(() => {
   background: none;
   color: var(--muted);
   cursor: pointer;
-  transition: background 0.1s ease, color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
 }
 .im-act:hover {
   background: var(--fill);
@@ -1746,7 +1865,9 @@ onBeforeUnmount(() => {
   padding: 5px 14px;
   font-size: 0.85rem;
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
 }
 .ask-option:hover {
   border-color: rgb(var(--v-theme-primary));
@@ -1805,6 +1926,98 @@ onBeforeUnmount(() => {
 }
 
 /* system / event line: centered, faint, small */
+.platform-incident {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 12px 16px;
+  padding: 13px 15px 13px 14px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, #c65a1e 28%, var(--line));
+  border-radius: 10px;
+  background: linear-gradient(105deg, rgb(198 90 30 / 9%), transparent 38%), var(--surface);
+  box-shadow:
+    inset 3px 0 0 #c65a1e,
+    0 6px 20px rgb(73 35 16 / 6%);
+}
+.platform-incident::after {
+  position: absolute;
+  top: -18px;
+  right: -12px;
+  width: 76px;
+  height: 76px;
+  border: 1px solid rgb(198 90 30 / 10%);
+  border-radius: 50%;
+  content: '';
+}
+.platform-incident__icon {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgb(198 90 30 / 22%);
+  border-radius: 9px;
+  color: #b64717;
+  background: rgb(198 90 30 / 10%);
+}
+.platform-incident__content {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+.platform-incident__eyebrow {
+  margin-bottom: 2px;
+  color: #a84417;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+.platform-incident__title {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+.platform-incident__body {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.platform-incident__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: #9a4a1f;
+  font-size: 11px;
+  font-weight: 600;
+}
+.platform-incident__pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d97706;
+  box-shadow: 0 0 0 3px rgb(217 119 6 / 14%);
+  animation: incident-pulse 1.8s ease-out infinite;
+}
+@keyframes incident-pulse {
+  50% {
+    box-shadow: 0 0 0 6px rgb(217 119 6 / 0%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .platform-incident__pulse {
+    animation: none;
+  }
+}
+
 .im-event {
   text-align: center;
   color: var(--faint);
@@ -1815,6 +2028,57 @@ onBeforeUnmount(() => {
 .im-event span {
   display: inline-block;
   padding: 0 10px;
+}
+
+/* 后端报错: collapsed by default — one quiet line among the system lines, with
+   the traceback behind a click. Louder than 编辑了文档, quieter than a platform
+   incident card. */
+.backend-error {
+  margin: 8px 16px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, #c65a1e 22%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #c65a1e 5%, transparent);
+  font-size: 12px;
+}
+.backend-error__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-muted, var(--faint));
+  list-style: none;
+}
+.backend-error__line > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.backend-error__count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #c65a1e 16%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.backend-error__meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.backend-error__stack {
+  margin: 6px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-sunken, rgb(0 0 0 / 4%));
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
 }
 
 .caret {
@@ -1863,9 +2127,21 @@ onBeforeUnmount(() => {
 .md-content :deep(a) {
   color: var(--accent-ink);
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 .md-content :deep(a:hover) {
   text-decoration: underline;
+}
+.md-content :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.md-content :deep(table) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
 }
 .md-content :deep(code) {
   font-family: var(--font-mono);

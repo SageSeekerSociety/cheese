@@ -8,31 +8,168 @@ rather than failing somewhere inside a provider call.
 import uuid
 
 from anyio.from_thread import BlockingPortal
+from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.membership.repositories import MemberRepository
+from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.models import TeamMemberRole
+from app.domain.team.repositories import TeamRepository
+from tests.integration.conftest import UserCreator
 
 
-def _project(client) -> str:
-    return client.post("/api/projects", json={"name": "机器项目"}).json()["data"]["id"]
+def _project(client: TestClient, headers: dict[str, str] | None = None) -> str:
+    return client.post(
+        "/api/projects", json={"name": "机器项目"}, headers=headers or {}
+    ).json()["data"]["id"]
 
 
-def test_reads_report_an_unconfigured_deployment(client):
+def test_reads_report_an_unconfigured_deployment(api_client, auth_headers):
     # The test settings carry no MicroCloud credentials, so the feature must
-    # name that plainly instead of surfacing a provider stack trace.
-    pid = _project(client)
-    response = client.get(f"/api/projects/{pid}/machines")
+    # name that plainly to an authorized member instead of surfacing a provider
+    # stack trace or leaking deployment state to an anonymous caller.
+    pid = _project(api_client, auth_headers)
+    response = api_client.get(f"/api/projects/{pid}/machines", headers=auth_headers)
     assert response.status_code == 422
     assert "not configured" in response.json()["message"]
 
 
-def test_provisioning_requires_a_real_credential(client):
+def test_provisioning_requires_a_real_credential(api_client):
     # Provisioning spends money and leaves a machine running, so it must be
     # refused before anything else is considered — including configuration.
-    pid = _project(client)
-    assert client.post(f"/api/projects/{pid}/machines", json={}).status_code == 401
+    pid = _project(api_client)
+    assert api_client.post(f"/api/projects/{pid}/machines", json={}).status_code == 401
+
+
+def test_machine_inventory_requires_project_membership(
+    api_client: TestClient,
+    user_client: UserCreator,
+    db_session: AsyncSession,
+    _portal: BlockingPortal,
+):
+    owner = user_client.create_user()
+    owner.token = user_client.login(api_client, owner.username, owner.password)
+    member = user_client.create_user()
+    member.token = user_client.login(api_client, member.username, member.password)
+    outsider = user_client.create_user()
+    outsider.token = user_client.login(api_client, outsider.username, outsider.password)
+    member_headers = {"Authorization": f"Bearer {member.token}"}
+    outsider_headers = {"Authorization": f"Bearer {outsider.token}"}
+
+    async def _legacy_project_with_member() -> str:
+        # ProjectService intentionally places every current user's new project
+        # in their personal team. Seed a historical team-less row directly so
+        # this test exercises the compatibility authorization branch.
+        project = await ProjectRepository(db_session).add(
+            name="Legacy machine project",
+            owner_handle=owner.username,
+            team_id=None,
+        )
+        await MemberRepository(db_session).add(
+            project_id=project.id,
+            user_handle=member.username,
+            role=ProjectRole.member,
+        )
+        return str(project.id)
+
+    pid = _portal.call(_legacy_project_with_member)
+
+    # An authorized member reaches the deployment capability check. An outsider
+    # sees neither that capability nor the project's private machine inventory.
+    assert (
+        api_client.get(
+            f"/api/projects/{pid}/machines", headers=member_headers
+        ).status_code
+        == 422
+    )
+    assert (
+        api_client.get(
+            f"/api/projects/{pid}/machines", headers=outsider_headers
+        ).status_code
+        == 404
+    )
+    assert (
+        api_client.post(
+            f"/api/projects/{pid}/machines", json={}, headers=outsider_headers
+        ).status_code
+        == 404
+    )
+
+
+def test_team_compute_is_visible_to_members_but_only_admins_can_spend(
+    api_client: TestClient,
+    user_client: UserCreator,
+    db_session: AsyncSession,
+    _portal: BlockingPortal,
+):
+    owner = user_client.create_user()
+    owner.token = user_client.login(api_client, owner.username, owner.password)
+    admin = user_client.create_user()
+    admin.token = user_client.login(api_client, admin.username, admin.password)
+    member = user_client.create_user()
+    member.token = user_client.login(api_client, member.username, member.password)
+    outsider = user_client.create_user()
+    outsider.token = user_client.login(api_client, outsider.username, outsider.password)
+    owner_headers = {"Authorization": f"Bearer {owner.token}"}
+
+    team_response = api_client.post(
+        "/teams",
+        json={
+            "name": f"Cloud team {uuid.uuid4().hex[:8]}",
+            "intro": "",
+            "description": "",
+            "avatarId": 1,
+        },
+        headers=owner_headers,
+    )
+    team_id = int(team_response.json()["data"]["team"]["id"])
+
+    async def _add_roles() -> None:
+        repo = TeamRepository(db_session)
+        await repo.add_member(team_id, admin.user_id, TeamMemberRole.ADMIN)
+        await repo.add_member(team_id, member.user_id, TeamMemberRole.MEMBER)
+
+    _portal.call(_add_roles)
+    pid = api_client.post(
+        "/api/projects",
+        json={"name": "Team cloud", "team_id": team_id},
+        headers=owner_headers,
+    ).json()["data"]["id"]
+
+    def headers(user) -> dict[str, str]:
+        return {"Authorization": f"Bearer {user.token}"}
+
+    # Members can inspect the shared pool. With no MicroCloud credentials in
+    # tests, reaching the capability check is the observable 422.
+    assert (
+        api_client.get(
+            f"/api/projects/{pid}/machines", headers=headers(member)
+        ).status_code
+        == 422
+    )
+    # Provisioning/destroying paid infrastructure is team-admin only.
+    assert (
+        api_client.post(
+            f"/api/projects/{pid}/machines", json={}, headers=headers(member)
+        ).status_code
+        == 403
+    )
+    assert (
+        api_client.post(
+            f"/api/projects/{pid}/machines", json={}, headers=headers(admin)
+        ).status_code
+        == 422
+    )
+    # Outsiders learn neither the project nor its private machine inventory.
+    assert (
+        api_client.get(
+            f"/api/projects/{pid}/machines", headers=headers(outsider)
+        ).status_code
+        == 404
+    )
 
 
 def test_row_round_trips_through_the_migrated_table(

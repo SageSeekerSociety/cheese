@@ -5,6 +5,7 @@ topic's jj workspace; the platform snapshots them with ``snapshot_worktree``.
 These tests simulate that by writing into the workspace dir then snapshotting.
 """
 
+import subprocess
 import uuid
 
 import pytest
@@ -86,6 +87,54 @@ def test_parallel_topics_isolated(client):
     assert "b.txt" in n2 and "a.txt" not in n2
 
 
+def test_file_endpoints_survive_the_agent_using_jj(client):
+    """The file panel's 422 outage, at the level the user saw it.
+
+    芝士 running jj in its workspace writes into the project's SHARED main-repo
+    store (mounted into every sandbox container), and every backend file read
+    goes back through jj. While the backend ran as a different uid than the
+    sandbox, jj's 0600 store objects made that one command 422 the file list,
+    the file body, and the raw bytes — for every topic in the project, not just
+    this one. Same uid on both sides → the endpoints keep answering.
+    """
+    pid = _mkproject(client)
+    tid = uuid.uuid4()
+    _native_edit(pid, tid, "note.md", "hello\n")
+
+    wt = ws.topic_worktree(pid, tid)
+    subprocess.run(
+        ["jj", "--no-pager", "config", "set", "--repo", "user.name", "芝士"],
+        cwd=wt,
+        check=True,
+        capture_output=True,
+    )
+
+    listed = client.get(
+        f"/api/projects/{pid}/files", params={"topic": str(tid)}, headers=_owner(client)
+    )
+    assert listed.status_code == 200
+    assert any(f["path"] == "note.md" for f in listed.json()["data"]["data"])
+
+    body = client.get(
+        f"/api/projects/{pid}/file",
+        params={"topic": str(tid), "path": "note.md"},
+        headers=_owner(client),
+    )
+    assert body.status_code == 200
+
+    # A second topic in the same project — the blast radius that made this a P0.
+    other = uuid.uuid4()
+    _native_edit(pid, other, "other.md", "still fine\n")
+    assert (
+        client.get(
+            f"/api/projects/{pid}/files",
+            params={"topic": str(other)},
+            headers=_owner(client),
+        ).status_code
+        == 200
+    )
+
+
 def test_read_missing_file_raises(client):
     pid = _mkproject(client)
     tid = uuid.uuid4()
@@ -135,3 +184,85 @@ def test_merge_folds_unsnapshotted_human_edits(client):
     # NO snapshot_worktree here — merge itself must fold the pending change.
     assert ws.merge_topic(pid, tid)["merged"] is True
     assert "edited by hand" in ws.read_file(pid, "human.txt")
+
+
+def test_merge_leaves_no_worktree_debris(client):
+    """merge_topic runs the actual merge in a throwaway worktree (2026-08-09
+    incident fix) — it must be fully cleaned up on both success and conflict,
+    never left for a human to notice and clear by hand."""
+    pid = _mkproject(client)
+    ok_tid, conflict_tid = uuid.uuid4(), uuid.uuid4()
+    _native_edit(pid, ok_tid, "clean.txt", "clean merge\n")
+    assert ws.merge_topic(pid, ok_tid)["merged"] is True
+
+    # A guaranteed conflict: branch and base disagree on the same file.
+    wt = ws.topic_worktree(pid, conflict_tid)
+    (wt / "f.txt").write_text("branch version\n", encoding="utf-8")
+    ws.snapshot_worktree(pid, conflict_tid)
+    repo = ws.ensure_repo(pid)
+    (repo / "f.txt").write_text("base version\n", encoding="utf-8")
+    import subprocess
+
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "base change"], check=True
+    )
+    result = ws.merge_topic(pid, conflict_tid)
+    assert result["merged"] is False and result["conflicts"] == ["f.txt"]
+
+    merge_root = ws._merge_worktree_path(pid)
+    assert not merge_root.exists() or list(merge_root.iterdir()) == []
+    assert not (repo / ".git" / "MERGE_HEAD").exists()
+
+
+def test_concurrent_accepts_on_the_same_project_dont_block_each_other(
+    client, monkeypatch
+):
+    """2026-08-09 incident scenario: two different topics on the same project
+    accept at nearly the same time; one's git subprocess is stuck. Isolated
+    worktrees mean the other's merge must complete on its own — not wait for,
+    and not be corrupted by, the stuck one."""
+    import threading
+    import time
+
+    pid = _mkproject(client)
+    hang_tid, fast_tid = uuid.uuid4(), uuid.uuid4()
+    _native_edit(pid, hang_tid, "hang.txt", "hang work\n")
+    _native_edit(pid, fast_tid, "fast.txt", "fast work\n")
+
+    hang_branch = ws.branch_for_topic(hang_tid)
+    real_run = ws._run_subprocess
+    hang_entered = threading.Event()
+
+    def fake_run(argv, cwd, timeout, env=None):
+        if "merge" in argv and "--no-ff" in argv and hang_branch in argv:
+            hang_entered.set()
+            time.sleep(1.5)  # simulate the git process being stuck
+            raise ws.GitTimeoutError("simulated hang, already confirmed dead")
+        return real_run(argv, cwd, timeout, env)
+
+    monkeypatch.setattr(ws, "_run_subprocess", fake_run)
+
+    results: dict[str, dict] = {}
+
+    def run_hang() -> None:
+        results["hang"] = ws.merge_topic(pid, hang_tid)
+
+    t = threading.Thread(target=run_hang)
+    t.start()
+    assert hang_entered.wait(timeout=5), "the hung merge never started"
+
+    start = time.monotonic()
+    fast_result = ws.merge_topic(pid, fast_tid)
+    elapsed = time.monotonic() - start
+
+    t.join(timeout=5)
+    assert not t.is_alive()
+
+    assert fast_result["merged"] is True
+    assert elapsed < 1.0, "the fast merge waited on the hung one — isolation failed"
+    assert results["hang"]["merged"] is False
+
+    files = {f["path"] for f in ws.list_files(pid)}
+    assert "fast.txt" in files
+    assert "hang.txt" not in files  # the stuck merge never landed anything

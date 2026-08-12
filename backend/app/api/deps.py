@@ -14,7 +14,7 @@ from app.domain.agent.compute import build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.profiles import ProfileRegistry, build_registry
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import TurnRunner, get_broker
 from app.domain.agent.service import AgentService
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
@@ -28,6 +28,7 @@ __all__ = [
     "get_broker",
     "get_turn_runner",
     "project_device_online",
+    "team_device_online",
 ]
 
 
@@ -38,6 +39,13 @@ async def project_device_online(db: AsyncSession, project_id: uuid.UUID) -> bool
     compute-profile routes to scope the 自托管设备 pool to a project's own machines."""
     service = DeviceService(SqlDeviceRepository(db))
     return await service.project_has_online_device(project_id, device_hub.is_online)
+
+
+async def team_device_online(db: AsyncSession, team_id: int) -> bool:
+    """Whether one of the team's registered compute nodes is connected now."""
+    service = DeviceService(SqlDeviceRepository(db))
+    devices = await service.list_devices_for_team(team_id)
+    return any(device_hub.is_online(device.device_id) for device in devices)
 
 
 @lru_cache
@@ -71,11 +79,6 @@ def get_scheduler_service(
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> SchedulerService:
     return SchedulerService(chat_service=chat)
-
-
-@lru_cache
-def get_broker() -> InProcessBroker:
-    return InProcessBroker()
 
 
 @lru_cache

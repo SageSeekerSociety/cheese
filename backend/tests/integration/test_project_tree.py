@@ -6,6 +6,7 @@ import uuid
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import seed_space
 from tests.conftest import wait_turns_idle as _wait_turns_idle
+from tests.integration.conftest import session_auth_headers
 
 
 def _project(client, **kw) -> dict:
@@ -120,7 +121,7 @@ def test_upgrade_block_to_topic(client):
     _wait_turns_idle()  # kickoff runs in the background; don't race its writes
     new_topic = r.json()["data"]
     assert new_topic["parent_id"] == topic["id"]
-    assert new_topic["kind"] == "subtopic"  # child of a non-root topic
+    assert new_topic["kind"] == "task"  # work inside a room, not a nested room
 
     # The upgraded block IS the task: preset verbatim as the new topic's doc.
     doc = client.get(f"/api/topics/{new_topic['id']}/doc").json()["data"]
@@ -173,7 +174,7 @@ def test_upgrade_doc_node_to_subtopic(client):
     _wait_turns_idle()
     sub = r.json()["data"]
     assert sub["parent_id"] == topic["id"]
-    assert sub["kind"] == "subtopic"
+    assert sub["kind"] == "task"
 
     # The doc node is now a live-ref to the subtopic, in place.
     nodes2 = client.get(f"/api/topics/{topic['id']}/docs").json()["data"]["data"]
@@ -192,7 +193,11 @@ def test_archived_topic_is_frozen(client):
         f"/api/topics/{topic['id']}/accept-card",
         json={"reviewer_handle": "alice"},
     ).json()["data"]
-    client.post(f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    client.post(
+        f"/api/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
     got = client.get(f"/api/topics/{topic['id']}").json()["data"]
     assert got["status"] == "archived"
 
@@ -217,7 +222,11 @@ def test_upgrade_on_archived_topic_rejected(client):
     card = client.post(
         f"/api/topics/{topic['id']}/accept-card", json={"reviewer_handle": "alice"}
     ).json()["data"]
-    client.post(f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    client.post(
+        f"/api/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
     r = client.post(f"/api/blocks/{block_id}/upgrade", json={"created_by": "alice"})
     assert r.status_code == 422
 
@@ -313,7 +322,7 @@ def test_split_and_return_conclusion(client):
         f"/api/topics/{topic['id']}/split", json={"title": "实现数据清洗"}
     ).json()["data"]
     assert sub["parent_id"] == topic["id"]
-    assert sub["kind"] == "subtopic"
+    assert sub["kind"] == "task"
     # Let the 分身's auto-kickoff finish before writing more to the shared
     # in-memory DB (otherwise the two interleave on one SQLite connection).
     _wait_turns_idle()

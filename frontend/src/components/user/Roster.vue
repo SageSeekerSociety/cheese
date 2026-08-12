@@ -1,13 +1,7 @@
 <template>
   <v-list v-if="users.length" lines="two">
     <v-list-subheader>{{ t('users.showUsers', { count: users.length }) }}</v-list-subheader>
-    <v-list-item
-      v-for="user in users"
-      :key="user.id"
-      exact
-      link
-      :to="{ name: 'UserDetail', params: { id: user.id } }"
-    >
+    <v-list-item v-for="user in users" :key="user.id" exact link :to="{ name: 'UserDetail', params: { id: user.id } }">
       <v-row>
         <v-col cols="1">
           <user-avatar :avatar="getAvatarUrl(user.avatarId)" size="40" />

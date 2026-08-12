@@ -28,15 +28,15 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.domain.agent import provider_env
+from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import build_screen_launch
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
+from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.service import DeviceService
-from app.domain.device.sql_repository import SqlDeviceRepository
-from app.domain.identity.services import CHEESE_HANDLE
-from app.domain.user.repositories import UserRepository
+from app.domain.device.wiring import sql_device_service
+from app.domain.identity.services import IdentityService
 from app.domain.workspace import service as ws
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
@@ -61,8 +61,11 @@ async def resolve_pinned_device(
       * already pinned → return it **iff online**; if the pinned device is offline,
         raise (queue/retry) — NEVER fall back to another device, which would start
         from an empty tree and corrupt session resume (the original drift bug);
-      * not yet pinned (first turn) → pick an online device serving the project and
-        **pin it** (write-once), so every later turn returns to the same machine.
+      * not yet pinned (first turn) → pick an online, **non-quarantined** device
+        serving the project and **pin it** (write-once), so every later turn returns
+        to the same machine. Quarantined = judged unhealthy by ``device.health``
+        (#186); a topic that is already pinned is only ever moved by the explicit
+        ``agent.host_swap`` flow, never from here.
 
     Returns the device id, or ``None`` when no bound device is online at all (the
     caller turns that into a clean "no online device" turn error)."""
@@ -70,14 +73,18 @@ async def resolve_pinned_device(
     if pinned is not None:
         if is_online(pinned):
             return pinned
-        raise ScreenSetupError(
-            "话题绑定的算力设备已离线，请重新连接该设备再继续本轮"
-            "（不会漂到别的设备，以免工作树/会话错乱）"
-        )
-    for device in await service.list_devices_for_project(project_id):
-        if is_online(device.device_id):
-            await service.bind_topic_device(topic_id, device.device_id)
-            return device.device_id
+        raise ScreenSetupError(DEVICE_OFFLINE_MESSAGE)
+    # First turn: pick from the machines that are online AND not quarantined. A
+    # quarantined machine just failed two turns in a row for a reason that belongs
+    # to the box (#186), so pinning a fresh topic to it would hand the next person
+    # the failure we already diagnosed. Note this filter applies to the FIRST pin
+    # only — moving an ALREADY-pinned topic never happens here, it goes through the
+    # explicit, room-visible path in ``agent.host_swap``, because a pin that the
+    # resolver can quietly change is the original drift bug.
+    healthy = await service.healthy_devices_for_project(project_id, is_online)
+    for device in healthy:
+        await service.bind_topic_device(topic_id, device.device_id)
+        return device.device_id
     return None
 
 
@@ -122,7 +129,17 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         public_base: str | None = None,
         turn_timeout_s: float = 900.0,
     ) -> None:
-        super().__init__(router=router, turn_timeout_s=turn_timeout_s)
+        # TODO(turn 活跃度检测): the local tmux backend got a two-layer idle-suspect
+        # + hard-ceiling timeout (capture-pane polling + pane_dead probe); the
+        # remote device backend explicitly did NOT — the design doc flagged "what's
+        # an equivalent lightweight activity/liveness probe for a device screen"
+        # as still-open (device_hub's per-screen bytes aren't wired for this yet).
+        # Passing the same value for both layers reduces run_hooks_turn's two-layer
+        # check back to the old single static deadline, so behaviour here is
+        # UNCHANGED until that follow-up lands.
+        super().__init__(
+            router=router, idle_suspect_s=turn_timeout_s, hard_ceiling_s=turn_timeout_s
+        )
         self._hub = hub or device_hub
         self._session_factory = session_factory
         # A resolver may be injected (tests / future routing); otherwise the DB-backed
@@ -155,10 +172,10 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         The device is PURE COMPUTE (execution-architecture v3: AIPool ⊥ ComputePool) —
         it carries no agent identity. The agent a screen runs as is the *project's*
         agent, resolved independently of the host machine (fusion-design §5: agent =
-        screen, not machine). Today every project's agent is the platform 芝士 user —
-        the SAME identity the local tmux path authors as (``CHEESE_AUTHOR``) — so a
-        turn's author is identical whether it runs locally or on a self-hosted box.
-        When per-project agents land, only this resolution changes; the device stays
+        screen, not machine). The agent is THIS topic's 分身 — its own agent-user
+        (``cheese-<topic hex>``), the SAME identity the local path authors and mints
+        tokens as — so a turn's author is identical whether it runs locally or on a
+        self-hosted box, and is attributable to one 分身 either way. The device stays
         pure compute."""
         if self._device_resolver is not None:
             return await self._device_resolver(project_id, topic_id)
@@ -168,15 +185,16 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
             factory = async_session_factory
         async with factory() as session:
-            service = DeviceService(SqlDeviceRepository(session))
+            service = sql_device_service(session)
             device_id = await resolve_pinned_device(
                 service, self._hub.is_online, project_id, topic_id
             )
             if device_id is None:
                 return None
-            agent = await UserRepository(session).get_by_handle(CHEESE_HANDLE)
-            if agent is None:
-                return None
+            # The screen acts as THIS topic's 分身 (its own agent-user), so a turn
+            # run on a self-hosted box is attributable to the same identity as one
+            # run locally — the device stays pure compute either way.
+            agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
             # Persist the pin created above (first turn) before the turn proceeds, so a
             # concurrent/next turn sees the same device.
             await session.commit()
@@ -272,7 +290,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # project's virtual key, so the credential stays on the box and spend is
         # attributed without having to trust the machine to report it.
         provider = provider_env.api_key_provider(
-            gateway_base=f"{self._public_base}/api/llm",
+            gateway_base=f"{self._public_base}/llm",
             key=token,
             model=settings.agent_model,
         )
@@ -378,6 +396,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         """A CO-LOCATED device edited the backend's REAL worktree this turn, so
         snapshot it into version history exactly like the local path (else 采纳/diff
         wouldn't see the edits). A REMOTE device owns its own tree → still a no-op
-        (it pushes its own work back over git instead)."""
+        (it pushes its own work back over git instead). Held while a `cheese await`
+        command is still writing that tree, same as the local path."""
         if self._co_located_at.get((project_id, topic_id)):
-            ws.snapshot_worktree(project_id, topic_id)
+            awaited_tasks.checkpoint_worktree(project_id, topic_id)

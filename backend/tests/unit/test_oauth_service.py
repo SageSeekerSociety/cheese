@@ -1,9 +1,11 @@
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.crypto import decrypt_text, encrypt_text
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.oauth.services import (
     GitHubProvider,
@@ -55,6 +57,9 @@ def _connection(**overrides):
         "provider_id": "github",
         "provider_user_id": "gh-123",
         "created_at": NOW,
+        "raw_profile": None,
+        "token_expires": None,
+        "refresh_token": None,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -197,6 +202,40 @@ class TestGitHubProviderExchangeCode:
         mock_client.post.assert_awaited_once()
         call_kwargs = mock_client.post.call_args
         assert call_kwargs[1]["data"]["code"] == "my-code"
+        assert call_kwargs[1]["data"]["client_id"] == "gh-client-id"
+
+
+# ---------------------------------------------------------------------------
+# GitHubProvider.refresh_access_token
+# ---------------------------------------------------------------------------
+
+
+class TestGitHubProviderRefreshAccessToken:
+    @pytest.mark.anyio
+    async def test_refresh_access_token(self):
+        provider = GitHubProvider(_github_config())
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "access_token": "new-tok",
+            "expires_in": 28800,
+            "refresh_token": "new-refresh",
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
+        ):
+            result = await provider.refresh_access_token("old-refresh")
+
+        assert result["access_token"] == "new-tok"
+        call_kwargs = mock_client.post.call_args
+        assert call_kwargs[1]["data"]["grant_type"] == "refresh_token"
+        assert call_kwargs[1]["data"]["refresh_token"] == "old-refresh"
         assert call_kwargs[1]["data"]["client_id"] == "gh-client-id"
 
 
@@ -906,7 +945,7 @@ class TestGetConnectionByProvider:
 
 class TestCreateConnection:
     @pytest.mark.anyio
-    async def test_success(self):
+    async def test_success_encrypts_tokens_before_storing(self):
         svc, repo = _make_service()
         conn = _connection(
             id=99, user_id=5, provider_id="google", provider_user_id="goog-42"
@@ -918,18 +957,23 @@ class TestCreateConnection:
             provider_id="google",
             provider_user_id="goog-42",
             raw_profile={"name": "User"},
+            access_token="at-token",
             refresh_token="rt-token",
             token_expires=NOW,
         )
 
-        repo.create.assert_awaited_once_with(
-            user_id=5,
-            provider_id="google",
-            provider_user_id="goog-42",
-            raw_profile={"name": "User"},
-            refresh_token="rt-token",
-            token_expires=NOW,
-        )
+        repo.create.assert_awaited_once()
+        call_kwargs = repo.create.call_args.kwargs
+        assert call_kwargs["user_id"] == 5
+        assert call_kwargs["provider_id"] == "google"
+        assert call_kwargs["provider_user_id"] == "goog-42"
+        assert call_kwargs["raw_profile"] == {"name": "User"}
+        assert call_kwargs["token_expires"] == NOW
+        # stored ciphertext, never the plaintext token
+        assert call_kwargs["access_token"] != "at-token"
+        assert call_kwargs["refresh_token"] != "rt-token"
+        assert decrypt_text(call_kwargs["access_token"]) == "at-token"
+        assert decrypt_text(call_kwargs["refresh_token"]) == "rt-token"
         assert result["id"] == 99
         assert result["userId"] == 5
 
@@ -950,10 +994,228 @@ class TestCreateConnection:
             provider_id="github",
             provider_user_id="gh-123",
             raw_profile=None,
+            access_token=None,
             refresh_token=None,
             token_expires=None,
         )
         assert result["id"] == 1
+
+
+# ---------------------------------------------------------------------------
+# OAuthService.update_connection_tokens
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateConnectionTokens:
+    @pytest.mark.anyio
+    async def test_encrypts_before_storing(self):
+        svc, repo = _make_service()
+
+        await svc.update_connection_tokens(
+            connection_id=7,
+            access_token="new-at",
+            refresh_token="new-rt",
+            token_expires=NOW,
+        )
+
+        repo.update_tokens.assert_awaited_once()
+        call_args = repo.update_tokens.call_args.args
+        assert call_args[0] == 7
+        assert decrypt_text(call_args[1]) == "new-at"
+        assert decrypt_text(call_args[2]) == "new-rt"
+        assert call_args[3] == NOW
+
+    @pytest.mark.anyio
+    async def test_none_tokens_stay_none(self):
+        svc, repo = _make_service()
+
+        await svc.update_connection_tokens(
+            connection_id=7, access_token=None, refresh_token=None, token_expires=None
+        )
+
+        repo.update_tokens.assert_awaited_once_with(7, None, None, None)
+
+
+# ---------------------------------------------------------------------------
+# OAuthService.get_github_user_token
+# ---------------------------------------------------------------------------
+
+
+class TestGetGithubUserToken:
+    @pytest.mark.anyio
+    async def test_no_connection_returns_none(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = None
+
+        result = await svc.get_github_user_token(42)
+
+        repo.get_by_user_and_provider.assert_awaited_once_with(42, "github_app")
+        assert result is None
+
+    @pytest.mark.anyio
+    async def test_connection_without_access_token_returns_none(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(access_token=None)
+
+        assert await svc.get_github_user_token(42) is None
+
+    @pytest.mark.anyio
+    async def test_non_expiring_token_returned_decrypted(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            access_token=encrypt_text("live-token"),
+            token_expires=None,
+            refresh_token=None,
+        )
+
+        result = await svc.get_github_user_token(42)
+
+        assert result == "live-token"
+
+    @pytest.mark.anyio
+    async def test_unexpired_token_returned_decrypted(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            access_token=encrypt_text("live-token"),
+            token_expires=datetime.now(UTC) + timedelta(hours=1),
+            refresh_token=None,
+        )
+
+        result = await svc.get_github_user_token(42)
+
+        assert result == "live-token"
+
+    @pytest.mark.anyio
+    async def test_expired_without_refresh_token_returns_none(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            access_token=encrypt_text("stale-token"),
+            token_expires=datetime.now(UTC) - timedelta(hours=1),
+            refresh_token=None,
+        )
+
+        assert await svc.get_github_user_token(42) is None
+
+    # NOTE: "expired token actually gets refreshed and durably persisted",
+    # "a failed refresh leaves the stale token untouched", "near-expiry
+    # triggers an early refresh", and "an undecryptable stored refresh_token
+    # degrades cleanly" all now live in
+    # tests/integration/test_oauth_token_refresh.py against a real database.
+    # `_refresh_and_persist_token` (see its docstring) deliberately opens its
+    # OWN session/transaction rather than reusing the injected repo's — the
+    # very thing 决策 0556ac50 needed fixed — so a mocked repo can no longer
+    # observe what it actually persists; asserting on it here would just be
+    # the over-mocked test this card explicitly warns against. What's left
+    # unit-testable without a DB is the branch logic below: does an expired
+    # token actually attempt a refresh, and is a failure there forwarded as
+    # None instead of raising.
+
+    @pytest.mark.anyio
+    async def test_expired_token_delegates_to_refresh_and_persist(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            id=7,
+            access_token=encrypt_text("stale-token"),
+            token_expires=datetime.now(UTC) - timedelta(hours=1),
+            refresh_token=encrypt_text("stored-refresh"),
+        )
+
+        with patch.object(
+            svc, "_refresh_and_persist_token", new=AsyncMock(return_value="fresh-token")
+        ) as mock_refresh:
+            token, reason = await svc.get_github_user_token_with_reason(42)
+
+        mock_refresh.assert_awaited_once_with(7, "github_app")
+        assert token == "fresh-token"
+        assert reason is None
+
+    @pytest.mark.anyio
+    async def test_soon_to_expire_token_also_delegates_to_refresh(self):
+        """Inside the refresh margin counts as expired, not just past expiry."""
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            id=7,
+            access_token=encrypt_text("stale-token"),
+            token_expires=datetime.now(UTC) + timedelta(minutes=1),
+            refresh_token=encrypt_text("stored-refresh"),
+        )
+
+        with patch.object(
+            svc, "_refresh_and_persist_token", new=AsyncMock(return_value="fresh-token")
+        ) as mock_refresh:
+            result = await svc.get_github_user_token(42)
+
+        mock_refresh.assert_awaited_once_with(7, "github_app")
+        assert result == "fresh-token"
+
+    @pytest.mark.anyio
+    async def test_refresh_failure_is_forwarded_as_none_with_reason(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            id=7,
+            access_token=encrypt_text("stale-token"),
+            token_expires=datetime.now(UTC) - timedelta(hours=1),
+            refresh_token=encrypt_text("stored-refresh"),
+        )
+
+        with patch.object(
+            svc, "_refresh_and_persist_token", new=AsyncMock(return_value=None)
+        ):
+            token, reason = await svc.get_github_user_token_with_reason(42)
+
+        assert token is None
+        assert reason == "refresh_failed"
+
+    @pytest.mark.anyio
+    async def test_undecryptable_access_token_degrades_to_none_and_logs(self, caplog):
+        """A row whose ciphertext can't be read (key rotated, or a legacy
+        plaintext row) must degrade exactly like a missing token — callers
+        handle None, they do not handle an exception — but must not be silent.
+        """
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            access_token="ghu_legacy_plaintext_never_encrypted",
+            token_expires=None,
+            refresh_token=None,
+        )
+
+        with caplog.at_level(logging.ERROR, logger="app.domain.oauth.services"):
+            assert await svc.get_github_user_token(42) is None
+
+        assert "could not be" in caplog.text
+
+    # "an undecryptable stored refresh_token degrades cleanly, without
+    # writing" is covered against a real database in
+    # tests/integration/test_oauth_token_refresh.py — see the note above.
+
+    @pytest.mark.anyio
+    async def test_expiring_token_with_unconfigured_provider_returns_none(self):
+        """github_app not in oauth_enabled_providers → get_provider() raises
+        NotFoundError. That must not escape into the accept flow."""
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            id=7,
+            access_token=encrypt_text("stale-token"),
+            token_expires=datetime.now(UTC) - timedelta(hours=1),
+            refresh_token=encrypt_text("stored-refresh"),
+        )
+        svc._initialized = True
+        svc._providers = {}
+
+        assert await svc.get_github_user_token(42) is None
+        repo.update_tokens.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_provider_id_is_threaded_through(self):
+        svc, repo = _make_service()
+        repo.get_by_user_and_provider.return_value = _connection(
+            access_token=encrypt_text("live-token"), token_expires=None
+        )
+
+        result = await svc.get_github_user_token(42, provider_id="github")
+
+        repo.get_by_user_and_provider.assert_awaited_once_with(42, "github")
+        assert result == "live-token"
 
 
 # ---------------------------------------------------------------------------
@@ -1039,6 +1301,47 @@ class TestListUserConnections:
         result = await svc.list_user_connections(42)
 
         assert result[0]["connectedAt"] is None
+
+    @pytest.mark.anyio
+    async def test_token_health_fields_when_fully_populated(self):
+        """Token 健康度 (2026-08-09): GitHub 用户名 / 过期时间 / 是否能自动续期，
+        没有这三个字段就分不清"没连账号"和"连了但 token 不可用"。"""
+        svc, repo = _make_service()
+        conn = _connection(
+            id=1,
+            raw_profile={"login": "octocat", "id": 583231},
+            token_expires=NOW,
+            refresh_token="rt-secret",
+            access_token="at-secret",
+        )
+        repo.list_by_user.return_value = [conn]
+
+        result = await svc.list_user_connections(42)
+
+        assert result[0]["login"] == "octocat"
+        assert result[0]["tokenExpires"] == NOW.isoformat()
+        assert result[0]["hasRefreshToken"] is True
+        # 不能把 token/密文本身泄露到接口返回里.
+        assert "at-secret" not in result[0].values()
+        assert "accessToken" not in result[0]
+        assert "access_token" not in result[0]
+
+    @pytest.mark.anyio
+    async def test_token_health_fields_default_to_absent(self):
+        """A connection with no profile snapshot and a non-expiring token
+        (GitHub App's "expire user authorization tokens" left off, per
+        #188 diagnosis) must show up as absent, not crash or fake a value."""
+        svc, repo = _make_service()
+        conn = _connection(
+            id=1, raw_profile=None, token_expires=None, refresh_token=None
+        )
+        repo.list_by_user.return_value = [conn]
+
+        result = await svc.list_user_connections(42)
+
+        assert result[0]["login"] is None
+        assert result[0]["tokenExpires"] is None
+        assert result[0]["hasRefreshToken"] is False
 
 
 # ---------------------------------------------------------------------------

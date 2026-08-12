@@ -205,6 +205,138 @@ class _DupToolAgent(AgentService):
 
 
 @pytest.mark.anyio
+async def test_backfilled_events_are_broadcast_not_just_persisted(
+    client, tmp_path, monkeypatch
+):
+    """A spooled event/message the live hook path missed must reach the
+    frontend when the next turn backfills it — not just land silently in the
+    DB (bug: the WS frame stream never carried it, so a turn's own author saw
+    nothing while the DB quietly gained a row nobody's client displayed)."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        agent=QuietAgent(),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        pid, tid = project.id, topic.id
+        await session.commit()
+
+    _spool_event(ws.spool_dir(pid, tid), "evt-bcast")
+    _spool_event(
+        ws.spool_dir(pid, tid),
+        "msg-bcast",
+        {"hook_event_name": "MessageDisplay", "delta": "宕机期间说的话"},
+    )
+    frames = [
+        f
+        async for f in svc.converse(
+            topic_id=tid, author="u", content="继续", summon=True
+        )
+    ]
+
+    event_frames = [
+        f
+        for f in frames
+        if f["type"] == "event_block" and "echo hi" in f["block"]["content"]
+    ]
+    assert len(event_frames) == 1
+
+    message_frames = [
+        f
+        for f in frames
+        if f["type"] == "assistant_block" and f["block"]["content"] == "宕机期间说的话"
+    ]
+    assert len(message_frames) == 1
+
+
+class _LateSpoolAgent(AgentService):
+    """A hooks turn whose final message's OWN MessageDisplay hook lost the race
+    with its Stop hook: the hook lands in the spool WHILE this turn is still
+    running (mirrors the container's synchronous pre-curl spool write racing
+    the live POST), so assistant_count stays 0 and the turn's result text
+    exactly echoes what that dropped hook would have delivered."""
+
+    def __init__(self, spool: Path, text: str) -> None:
+        super().__init__(model="stub")
+        self._spool = spool
+        self._text = text
+
+    async def stream_reply(
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
+    ):
+        _spool_event(
+            self._spool,
+            "late-msg-1",
+            {"hook_event_name": "MessageDisplay", "delta": self._text},
+        )
+        yield AgentResult(text=self._text, session_id="s1", usage=None)
+
+
+@pytest.mark.anyio
+async def test_fallback_reply_does_not_duplicate_a_late_spooled_message(
+    client, tmp_path, monkeypatch
+):
+    """The fallback path (no discrete AgentMessage this turn) must not leave a
+    same-text duplicate once the spool catches up: an eid-less fallback block
+    plus a LATER eid+backfilled twin that reconcile couldn't recognize as the
+    same event (bug — traced from production: 46 messages, exactly one with
+    empty meta, with a duplicate eid+backfilled copy of the same text)."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        pid, tid = project.id, topic.id
+        await session.commit()
+
+    text = "这段话既是Stop的兜底文本也是迟到的MessageDisplay"
+    svc = ChatService(
+        session_factory=factory,
+        agent=_LateSpoolAgent(ws.spool_dir(pid, tid), text),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    frames = [
+        f
+        async for f in svc.converse(
+            topic_id=tid, author="u", content="做点事", summon=True
+        )
+    ]
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    matches = [b for b in rows if b.kind == BlockKind.message and b.content == text]
+    assert len(matches) == 1  # not duplicated
+    assert matches[0].meta.get("eid") == "late-msg-1"
+    assert matches[0].meta.get("backfilled") is True
+
+    # It still reached the frontend exactly once (fix #1), not zero or twice.
+    landed = [
+        f
+        for f in frames
+        if f["type"] == "assistant_block" and f["block"]["content"] == text
+    ]
+    assert len(landed) == 1
+
+
+@pytest.mark.anyio
 async def test_duplicate_tool_event_is_deduped_by_event_id(client, tmp_path):
     factory = client.test_factory
     svc = ChatService(

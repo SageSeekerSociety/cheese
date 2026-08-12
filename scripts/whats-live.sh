@@ -7,27 +7,32 @@
 # gap once hid a fix for two merges. This answers it in one command.
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOST="${CHEESE_DEV_HOST:-cheese-dev-mini}"
+PROJECT="${CHEESE_COMPOSE_PROJECT:-cheese}"
 
 # origin/main, not HEAD: run from a feature branch, HEAD is a commit that was
 # never meant to be deployed, and every check would report a false drift.
 git fetch -q origin main 2>/dev/null || true
-main_sha="$(git rev-parse --short origin/main 2>/dev/null || git rev-parse --short main)"
+main_sha="$(git rev-parse --short=7 origin/main 2>/dev/null || git rev-parse --short=7 main)"
 echo "origin/main     : ${main_sha}"
 
 live="$(ssh -o ConnectTimeout=20 -o BatchMode=yes "$HOST" \
-  "docker ps --format '{{.Names}} {{.Image}}' | grep -E 'backend|frontend'" 2>/dev/null || true)"
+  "docker ps -a --filter 'label=com.docker.compose.project=$PROJECT' \
+  --format '{{.Label \"com.docker.compose.service\"}}\t{{.Image}}\t{{.State}}\t{{.Status}}'" \
+  2>/dev/null || true)"
 
 if [ -z "$live" ]; then
   echo "live            : UNREACHABLE (${HOST}) — is the split-tunnel up?"
   exit 2
 fi
 
-echo "$live" | while read -r name image; do
-  printf '%-16s: %s\n' "${name}" "${image##*:}"
+echo "$live" | while IFS=$'\t' read -r service image state status; do
+  printf '%-16s: tag=%s state=%s status=%s\n' \
+    "$service" "${image##*:}" "$state" "$status"
 done
 
-if echo "$live" | grep -q ":${main_sha}\b"; then
+if printf '%s\n' "$live" | "$ROOT/deploy/check-app-tier.sh" "$main_sha"; then
   echo "verdict         : live matches main"
 else
   echo "verdict         : DRIFTED — main is not what is running"

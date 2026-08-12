@@ -11,6 +11,7 @@ import type {
   ExpertRole,
   FileContent,
   GitCommit,
+  GithubConnection,
   InboxItem,
   ListPayload,
   MarketNodes,
@@ -18,6 +19,8 @@ import type {
   MarketTask,
   MemberSummary,
   MilestoneFull,
+  OAuthConnectionInfo,
+  PrChecks,
   PreviewInfo,
   Project,
   ProjectCredits,
@@ -29,12 +32,17 @@ import type {
   Topic,
   TopicComputeProfile,
   TopicMemberRow,
+  TopicProgress,
   UpstreamInfo,
   UpstreamSyncResult,
   UsageStats,
   UserProfile,
   WorkspaceFile,
 } from './cx_types'
+
+import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
+
+export { TOPIC_TITLE_MAX_LENGTH }
 
 // The cheesex (2.0) API, as a BROWSER must address it — deliberately doubled.
 //
@@ -78,23 +86,65 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+const RETRYABLE_GET_STATUSES = new Set([502, 503, 504])
+const GET_RETRY_DELAYS_MS = [250, 750]
+
+export function isRetryableGetFailure(method: string, status?: number, error?: unknown): boolean {
+  if (method.toUpperCase() !== 'GET') return false
+  if (status != null) return RETRYABLE_GET_STATUSES.has(status)
+  return !(error instanceof DOMException && error.name === 'AbortError')
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+// A failed request still carries its HTTP status. Callers that must tell one
+// failure from another — a save rejected as a conflict (409) vs. anything else —
+// would otherwise be left substring-matching the message.
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-      ...(init?.headers ?? {}),
-    },
-  })
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} for ${path}`)
+  const method = (init?.method ?? 'GET').toUpperCase()
+  for (let attempt = 0; ; attempt += 1) {
+    let res: Response
+    try {
+      res = await fetch(`${BASE}${path}`, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+          ...(init?.headers ?? {}),
+        },
+      })
+    } catch (error) {
+      if (attempt >= GET_RETRY_DELAYS_MS.length || !isRetryableGetFailure(method, undefined, error)) {
+        throw error
+      }
+      await wait(GET_RETRY_DELAYS_MS[attempt])
+      continue
+    }
+    if (!res.ok) {
+      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
+        await wait(GET_RETRY_DELAYS_MS[attempt])
+        continue
+      }
+      throw new ApiError(res.status, `HTTP ${res.status} for ${path}`)
+    }
+    const envelope = (await res.json()) as ApiEnvelope<T>
+    if (envelope.code !== 200) {
+      throw new Error(envelope.message || `API error code ${envelope.code}`)
+    }
+    return envelope.data
   }
-  const envelope = (await res.json()) as ApiEnvelope<T>
-  if (envelope.code !== 200) {
-    throw new Error(envelope.message || `API error code ${envelope.code}`)
-  }
-  return envelope.data
 }
 
 // The connector lives at the origin root (`/connector/*`), not under `/api`, and its
@@ -120,6 +170,29 @@ async function connectorRequest<T>(path: string, init?: RequestInit): Promise<T>
     throw new Error(message)
   }
   return (await res.json()) as T
+}
+
+// 知是 1.0 routers are bare (`/users`, `/spaces`, …) and reach the backend
+// through exactly one `/api` prefix — see BASE's comment above for why that's
+// different from 2.0's doubled `/api/api`. Mirrors `request`'s envelope unwrap
+// and auth header, minus the 2.0-specific GET retry.
+async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
+  })
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} for ${path}`)
+  }
+  const envelope = (await res.json()) as ApiEnvelope<T>
+  if (envelope.code !== 200) {
+    throw new Error(envelope.message || `API error code ${envelope.code}`)
+  }
+  return envelope.data
 }
 
 // The name the cli proposed for a pending code (this machine's hostname), so the
@@ -224,7 +297,7 @@ export function createProject(
   name: string,
   ownerHandle?: string,
   teamId?: number,
-  externalTaskId?: number,
+  externalTaskId?: number
 ): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
@@ -250,10 +323,10 @@ export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
 
-// 芝士 (re)generates the project's 一页纸总结. Takes a few seconds.
-export function generateSummary(projectId: string): Promise<{ summary: string }> {
-  return request<{ summary: string }>(`/projects/${encodeURIComponent(projectId)}/summary`, { method: 'POST' })
-}
+// NOTE: there is deliberately no `generateSummary` wrapper here. The POST it
+// called is parked (see `backend/app/api/routes/activities.py`), so keeping the
+// wrapper would only leave a 404 waiting for its first caller. `summary` still
+// arrives on the project card above — it just has no trigger in the UI.
 
 // A 1:1 private chat as a normal Topic (open the chat WS on its id). Without
 // `peerHandle` it's the member's 1:1 with 芝士; with `peerHandle` it's a
@@ -278,8 +351,20 @@ export function getUserProfile(handle: string): Promise<UserProfile> {
   return request<UserProfile>(`/users/${encodeURIComponent(handle)}/profile`)
 }
 
-export function listTopics(projectId: string): Promise<ListPayload<Topic>> {
-  return request<ListPayload<Topic>>(`/topics?project_id=${encodeURIComponent(projectId)}`)
+// `last_activity_at` = 最后活动时间 (the topic's newest block). `updated_at` is
+// the row's own mtime and does NOT move when a block lands — it is kept only
+// because the API still accepts it.
+export type TopicSortField = 'last_activity_at' | 'updated_at' | 'title'
+export type TopicSortOrder = 'asc' | 'desc'
+
+export function listTopics(
+  projectId: string,
+  opts?: { sort?: TopicSortField; order?: TopicSortOrder }
+): Promise<ListPayload<Topic>> {
+  const q = new URLSearchParams({ project_id: projectId })
+  if (opts?.sort) q.set('sort', opts.sort)
+  if (opts?.order) q.set('order', opts.order)
+  return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
 export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
@@ -305,6 +390,13 @@ export function markTopicRead(topicId: string, handle: string): Promise<Record<s
   return request<Record<string, string>>(`/topics/${encodeURIComponent(topicId)}/read`, {
     method: 'POST',
     body: JSON.stringify({ handle }),
+  })
+}
+
+export function setTopicTitle(topicId: string, title: string): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/title`, {
+    method: 'POST',
+    body: JSON.stringify({ title }),
   })
 }
 
@@ -413,6 +505,43 @@ export function setComputeProfile(projectId: string, profile: string): Promise<{
   })
 }
 
+// MicroCloud machines are billed/audited through one project but enroll into that
+// project's team compute pool. The browser never receives provider credentials.
+export function listProjectMachines(projectId: string): Promise<ListPayload<import('./cx_types').ProjectMachine>> {
+  return request(`/projects/${encodeURIComponent(projectId)}/machines`)
+}
+
+export function createProjectMachine(
+  projectId: string,
+  spec: import('./cx_types').ProjectMachineCreate
+): Promise<import('./cx_types').ProjectMachine> {
+  return request(`/projects/${encodeURIComponent(projectId)}/machines`, {
+    method: 'POST',
+    body: JSON.stringify(spec),
+  })
+}
+
+export function deleteProjectMachine(
+  projectId: string,
+  machineId: string
+): Promise<import('./cx_types').ProjectMachine | null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/machines/${encodeURIComponent(machineId)}`, {
+    method: 'DELETE',
+  })
+}
+
+// 订阅模型: the project's current Claude model + the ones it may select. Same
+// shape as compute pools; a project picks Sonnet 5 (default) or Opus 5.
+export function getModelProfiles(projectId: string): Promise<ComputeProfiles> {
+  return request<ComputeProfiles>(`/projects/${encodeURIComponent(projectId)}/model-profiles`)
+}
+export function setModelProfile(projectId: string, profile: string): Promise<{ current: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/model-profile`, {
+    method: 'PUT',
+    body: JSON.stringify({ profile }),
+  })
+}
+
 // 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
@@ -479,6 +608,38 @@ export function syncUpstream(projectId: string): Promise<UpstreamSyncResult> {
   })
 }
 
+// GitHub App install flow (#192).
+export function getGithubConnection(projectId: string): Promise<GithubConnection> {
+  return request(`/projects/${encodeURIComponent(projectId)}/github/connection`)
+}
+export function getGithubInstallUrl(projectId: string): Promise<{ url: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/github/install-url`)
+}
+// Connect via an existing cheesex-app installation when one already covers the
+// upstream repo; {connected:false, install_url} means "go through GitHub".
+// (GitHub's install page never fires the callback when the App is already
+// installed, so the frontend must try this first.)
+export function connectGithubRepo(
+  projectId: string
+): Promise<{ connected: boolean; repo?: string; account?: string; install_url?: string }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/github/connect`, { method: 'POST' })
+}
+export function getGithubAccountAuthorizeUrl(projectId: string): Promise<{ url: string }> {
+  return request(`/users/me/github-account/authorize-url?return_project_id=${encodeURIComponent(projectId)}`)
+}
+
+// Personal OAuth/App connections (1.0 router, single `/api` prefix — see
+// legacyRequest). Includes every provider the user has linked, not just
+// github_app; callers filter by providerId.
+export function listOAuthConnections(userId: string): Promise<{ connections: OAuthConnectionInfo[] }> {
+  return legacyRequest(`/users/${encodeURIComponent(userId)}/oauth/connections`)
+}
+export function deleteOAuthConnection(userId: string, connectionId: number): Promise<void> {
+  return legacyRequest(`/users/${encodeURIComponent(userId)}/oauth/connections/${connectionId}`, {
+    method: 'DELETE',
+  })
+}
+
 // 项目总览 / 收件箱 (eval G2/G3).
 export function getOverview(projectId: string): Promise<ProjectOverview> {
   return request<ProjectOverview>(`/projects/${encodeURIComponent(projectId)}/overview`)
@@ -508,8 +669,23 @@ export function sendFeedback(notificationId: string, feedback: 'up' | 'down'): P
 }
 
 // 机构看板 / Space 看板 (eval F3).
-export function listBlocks(topicId: string): Promise<ListPayload<Block>> {
-  return request<ListPayload<Block>>(`/topics/${encodeURIComponent(topicId)}/blocks`)
+//
+// Paging is opt-in on the server: no `limit` returns the WHOLE timeline, which
+// is 2.1 MB / 2226 rows on a long topic. The chat panel always passes a limit;
+// `has_more` + `oldest_id` walk backwards from there (a cursor, not an offset —
+// the tail keeps growing while you read history).
+export interface BlockPage extends ListPayload<Block> {
+  has_more: boolean
+  oldest_id: string | null
+}
+
+export function listBlocks(topicId: string, opts?: { limit?: number; before?: string }): Promise<BlockPage> {
+  const q = new URLSearchParams()
+  if (opts?.limit !== undefined) q.set('limit', String(opts.limit))
+  if (opts?.before) q.set('before', opts.before)
+  const qs = q.toString()
+  const query = qs ? `?${qs}` : ''
+  return request<BlockPage>(`/topics/${encodeURIComponent(topicId)}/blocks${query}`)
 }
 
 // Emoji reactions (Slack semantics): toggles (emoji, author) on a block and
@@ -554,6 +730,14 @@ export function attachmentRawUrl(topicId: string, path: string): string {
 // GET returns the doc Block, or null when the topic has no doc yet.
 export function getDoc(topicId: string): Promise<Block | null> {
   return request<Block | null>(`/topics/${encodeURIComponent(topicId)}/doc`)
+}
+
+// 进度层 (#187): 芝士's checklist as of the last turn that touched this topic.
+// Read on topic open — between turns there is no WS stream to carry it, and
+// "做到哪了" has to be visible without summoning anyone. `items` is [] for a
+// topic that never had a checklist.
+export function getProgress(topicId: string): Promise<TopicProgress> {
+  return request<TopicProgress>(`/topics/${encodeURIComponent(topicId)}/progress`)
 }
 
 // PUT upserts the living doc and appends a "📝 编辑了文档" event to the
@@ -640,13 +824,38 @@ export function getTerminal(topicId: string): Promise<TerminalInfo> {
   return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)
 }
 
-// Git: commit log + working-tree diff for the project repo.
-export function getGitLog(projectId: string): Promise<ListPayload<GitCommit>> {
-  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log`)
+// The 现场 terminal and 运行环境预览 are backend reverse proxies loaded by an
+// <iframe>, and a browser can set no header on one — so the session token rides
+// as ?token=, exactly like the device-screen WebSocket above. Without it the
+// proxy 404s and the panel shows a white box; the backend's own status endpoint
+// applies the same check, so a signed-out viewer is told "unavailable" and falls
+// back to the timeline instead of embedding a frame that cannot load.
+// 运行环境预览 authenticates its iframe differently, and on purpose: the frame
+// renders whatever 芝士 chose to serve, and a ?token= in the URL is readable by
+// that page's own JS (location.search) even sandboxed — so instead this call,
+// which DOES carry the Authorization header, leaves an HttpOnly path-scoped
+// cookie that the iframe's same-origin requests present by themselves.
+export function primeAppPreview(topicId: string): Promise<{ ready: boolean }> {
+  return request<{ ready: boolean }>(`/topics/${encodeURIComponent(topicId)}/app-session`)
 }
 
-export function getGitDiff(projectId: string): Promise<{ diff: string }> {
-  return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff`)
+export function withSessionToken(url: string): string {
+  const token = authToken()
+  if (!token) return url
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+}
+
+// Git: commit log + diff. With `topicId` these are THIS topic's own commits and
+// the full diff its 采纳 would merge; without it, the project repo's. The 话题
+// panel must always pass it — the project-level answer is other topics' work.
+export function getGitLog(projectId: string, topicId?: string | null): Promise<ListPayload<GitCommit>> {
+  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)
+}
+
+export function getGitDiff(projectId: string, topicId?: string | null): Promise<{ diff: string }> {
+  const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
+  return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff${t}`)
 }
 
 // 文件: list workspace files; read one file's content.
@@ -669,16 +878,21 @@ export function readFile(projectId: string, path: string, topicId?: string | nul
 
 // Save an edited workspace file (人改文件即指令). The agent reads the latest on
 // its next turn, like 改文档即指令.
+//
+// `version` is the one readFile returned. Sending it makes the write
+// conditional: if 芝士 wrote the same file in between, the backend answers 409
+// instead of letting this save erase their edits without a trace.
 export function writeFile(
   projectId: string,
   path: string,
   content: string,
-  topicId?: string | null
-): Promise<{ path: string }> {
+  topicId?: string | null,
+  version?: string | null
+): Promise<{ path: string; version: string }> {
   const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
   return request(`/projects/${encodeURIComponent(projectId)}/file${t}`, {
     method: 'PUT',
-    body: JSON.stringify({ path, content }),
+    body: JSON.stringify({ path, content, version: version ?? null }),
   })
 }
 
@@ -697,11 +911,29 @@ export function getProjectUsage(projectId: string): Promise<UsageStats> {
   return request<UsageStats>(`/projects/${encodeURIComponent(projectId)}/usage`)
 }
 
+// 内测版本徽标: the running backend build. `badge` is the box's opt-in flag;
+// `short` is the 7-char sha to show. Public, unauthenticated.
+export interface AppVersion {
+  sha: string
+  short: string
+  badge: boolean
+}
+
+export function getAppVersion(): Promise<AppVersion> {
+  return request<AppVersion>('/version')
+}
+
 // ---- 采纳卡 / 验收 (eval C5/A3) ----
 
 // Accept cards for a topic, newest first.
 export function getAcceptCards(topicId: string): Promise<ListPayload<AcceptCard>> {
   return request<ListPayload<AcceptCard>>(`/topics/${encodeURIComponent(topicId)}/accept-card`)
+}
+
+// 采纳 PR 化 (#188 §5.1): live CI state of the newest card's PR. Safe to poll —
+// answers {available:false} when the topic has no PR-riding card.
+export function getPrChecks(topicId: string): Promise<PrChecks> {
+  return request<PrChecks>(`/topics/${encodeURIComponent(topicId)}/pr-checks`)
 }
 
 export function acceptCard(cardId: string, decidedBy: string): Promise<AcceptCard> {
@@ -829,3 +1061,15 @@ export function chatWsUrl(topicId: string): string {
   // 「连接断开，正在自动重连」 and read like a flaky network.
   return `${proto}://${window.location.host}${BASE}/topics/${encodeURIComponent(topicId)}/chat${q}`
 }
+
+// Dev-only observability hook, same purpose as `window.__blockCache`: the probe
+// scripts under scripts/ open real sockets and issue real fetches from inside
+// the page, and the prefix they need is the one BASE exists to spell ONCE. Four
+// of them had it hand-written instead, and every copy was a copy that could be
+// wrong — which is what a doubled prefix nobody remembers reliably produces.
+declare global {
+  interface Window {
+    __cxApi?: { base: string }
+  }
+}
+if (import.meta.env.DEV) window.__cxApi = { base: BASE }

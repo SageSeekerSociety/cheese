@@ -2,7 +2,6 @@ import type { AxiosError } from 'axios'
 import type { ResponseDataType } from '../types/index'
 
 import { BusinessError, ServerError, SudoRequiredError } from '../types/error'
-import { messageFailed } from '../utils/showMessage'
 
 import refreshToken from './hooks/refreshToken'
 
@@ -39,7 +38,7 @@ function createBusinessError(error: AxiosError<ResponseDataType>): Error {
 
   // 处理带有详细错误信息的响应
   if (response?.error?.name) {
-    return new BusinessError(response.message, 403, response.error)
+    return new BusinessError(response.error.message || response.message, 403, response.error)
   }
 
   // 返回通用业务错误
@@ -58,7 +57,7 @@ function createError(error: AxiosError<ResponseDataType>): Error {
 
   // 处理带有详细错误信息的响应
   if (response.error?.name) {
-    return new BusinessError(response.message, statusCode, response.error)
+    return new BusinessError(response.error.message || response.message, statusCode, response.error)
   }
 
   // 其他服务器错误

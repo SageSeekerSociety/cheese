@@ -5,6 +5,24 @@ import Prism from 'prismjs'
 
 import markedKatex from './katexExt'
 
+function escapeHtml(text: string): string {
+  return text.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[character]!
+  )
+}
+
+export function renderMarkdownError(text: string): string {
+  return `<p class="text-error">渲染错误: ${escapeHtml(text)}</p>`
+}
+
 /**
  * Markdown渲染服务 - 提供安全的Markdown渲染，支持代码高亮和LaTeX
  */
@@ -46,7 +64,7 @@ export class MarkdownRenderer {
       return sanitizedHtml
     } catch (error) {
       console.error('Markdown渲染错误:', error)
-      return `<p class="text-error">渲染错误: ${text}</p>`
+      return renderMarkdownError(text)
     }
   }
 }

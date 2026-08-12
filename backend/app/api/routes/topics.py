@@ -1,13 +1,16 @@
 """Topic routes."""
 
+import shutil
 import uuid
 from dataclasses import asdict
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api import proxy
 from app.api.auth import ActorResolverDep
 from app.api.deps import (
     get_broker,
@@ -19,16 +22,30 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
+from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import awaited_tasks
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
-from app.domain.agent.market import compute_default_name, compute_selectable
+from app.domain.agent.market import (
+    compute_default_name,
+    compute_listings,
+    compute_selectable,
+)
 from app.domain.agent.runtime import TurnRunner
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.idempotency import store as idem
+from app.domain.idempotency.keys import action_key
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import TopicStatus
+from app.domain.review.models import AcceptCard
+from app.domain.review.repositories import AcceptCardRepository
+from app.domain.team.repositories import TeamRepository
+from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
+    BackgroundTaskDoneIn,
+    BackgroundTaskIn,
     ConclusionIn,
     DocEditIn,
     SplitIn,
@@ -37,7 +54,9 @@ from app.domain.topic.schemas import (
     UpgradeBlockIn,
 )
 from app.domain.topic.services import TopicService
-from app.domain.usage.repositories import UsageRepository
+from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.webhook import service as webhook_service
 from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
@@ -65,26 +84,106 @@ async def create_topic(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
+def _topic_out(
+    topic: Topic,
+    running_ids: set[uuid.UUID],
+    last_activity: dict[uuid.UUID, datetime],
+) -> dict:
+    """TopicOut plus the two signals the ORM row cannot carry: the in-memory
+    turn-running flag (separate from `status`/归档 — see TopicOut.running: a
+    topic can be active-and-idle or active-and-mid-turn, and only this tells
+    them apart) and 最后活动时间, which is derived from the topic's blocks."""
+    out = TopicOut.model_validate(topic)
+    # Assign before dumping so the instant is serialized by the same schema as
+    # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
+    # where every other timestamp in the payload says "Z".
+    out.last_activity_at = last_activity.get(topic.id)
+    data = out.model_dump(mode="json")
+    data["running"] = topic.id in running_ids
+    return data
+
+
 @router.get("")
-async def list_topics(project_id: uuid.UUID, db: DbSession) -> dict:
-    topics, total = await TopicService(db).list_for_project(project_id)
-    items = [TopicOut.model_validate(t).model_dump(mode="json") for t in topics]
+async def list_topics(
+    project_id: uuid.UUID,
+    db: DbSession,
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    sort: TopicSortField | None = None,
+    order: SortOrder = "asc",
+    active_since: datetime | None = None,
+) -> dict:
+    """The project's topics.
+
+    `sort=last_activity_at` orders by when something last HAPPENED in each topic
+    (its newest block), and `active_since=<ISO instant>` keeps only the topics
+    active at or after it — "最近活跃的话题". Neither reads `updated_at`, which
+    only moves when the topic's own fields change.
+    """
+    service = TopicService(db)
+    topics, total = await service.list_for_project(
+        project_id, sort=sort, order=order, active_since=active_since
+    )
+    running_ids = runner.running_topic_ids()
+    last_activity = await service.last_activity_for_topics([t.id for t in topics])
+    items = [_topic_out(t, running_ids, last_activity) for t in topics]
     return ok(page(items, total))
 
 
 @router.get("/{topic_id}")
-async def get_topic(topic_id: uuid.UUID, db: DbSession) -> dict:
-    topic = await TopicService(db).get_or_404(topic_id)
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+async def get_topic(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+) -> dict:
+    service = TopicService(db)
+    topic = await service.get_or_404(topic_id)
+    last_activity = await service.last_activity_for_topics([topic.id])
+    return ok(_topic_out(topic, runner.running_topic_ids(), last_activity))
 
 
 @router.get("/{topic_id}/blocks")
-async def list_topic_blocks(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def list_topic_blocks(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
+    before: uuid.UUID | None = None,
+) -> dict:
+    """The topic's conversation timeline, oldest-first.
+
+    Paging is OPT-IN: with no `limit` this returns the whole timeline, exactly
+    as it always has. That default is deliberate — agents read this endpoint to
+    review history (`cheese api GET /topics/{id}/blocks`), and a default window
+    would silently truncate them with no way to notice. Callers that DO page get
+    `has_more` + `oldest_id` and can walk backwards.
+
+    - `?limit=N`                  → the newest N blocks (chat is bottom-anchored)
+    - `?limit=N&before=<block_id>` → the N blocks immediately older than that one
+    """
     await TopicService(db).get_or_404(topic_id)
     repo = BlockRepository(db)
-    blocks = await repo.list_for_topic(topic_id)
+    cursor: Block | None = None
+    if before is not None:
+        cursor = await repo.get(before)
+        # An unknown cursor must not silently degrade into "newest N" — that
+        # would hand the caller a duplicate page it can't distinguish.
+        if cursor is None or cursor.topic_id != topic_id:
+            raise NotFoundError("游标消息不存在")
+    if limit is None:
+        blocks = await repo.list_for_topic(topic_id)
+        if cursor is not None:
+            blocks = [
+                b
+                for b in blocks
+                if (b.created_at, b.id) < (cursor.created_at, cursor.id)
+            ]
+        has_more = False
+    else:
+        page_result = await repo.page_for_topic(topic_id, limit=limit, before=cursor)
+        blocks, has_more = page_result.items, page_result.has_more
     total = await repo.count_for_topic(topic_id)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
+    # Scoped to THIS page's ids, so paging saves the database work too, not just
+    # the bytes on the wire.
     reactions = await repo.reactions_for_blocks([b.id for b in blocks])
     items = []
     for b in blocks:
@@ -92,7 +191,14 @@ async def list_topic_blocks(topic_id: uuid.UUID, db: DbSession) -> dict:
         if b.id in reactions:
             item["reactions"] = reactions[b.id]
         items.append(item)
-    return ok(page(items, total))
+    return ok(
+        {
+            **page(items, total),
+            "has_more": has_more,
+            # Feed this back as `before` to fetch the next older page.
+            "oldest_id": str(blocks[0].id) if blocks else None,
+        }
+    )
 
 
 @router.get("/{topic_id}/transcript")
@@ -113,6 +219,104 @@ async def topic_usage(topic_id: uuid.UUID, db: DbSession) -> dict:
     """资源用量 (spec §9.1): token/cost for this topic."""
     await TopicService(db).get_or_404(topic_id)
     return ok(await UsageRepository(db).for_topic(topic_id))
+
+
+# The agent-facing gate-output slice: enough to read the failure, small enough
+# for a prompt. The full output is already capped at persist time (GATE_TAIL).
+_GATE_OUTPUT_TAIL = 2000
+
+
+def _card_snapshot(card: AcceptCard) -> dict:
+    return {
+        "id": str(card.id),
+        "status": str(card.status),
+        "reviewer": card.reviewer_handle,
+        "decided_by": card.decided_by,
+        "decided_at": card.decided_at.isoformat() if card.decided_at else None,
+        "note": card.note,
+        "gate_passed_at": (
+            card.gate_passed_at.isoformat() if card.gate_passed_at else None
+        ),
+        "gate_output_tail": card.gate_output[-_GATE_OUTPUT_TAIL:],
+        # PR-based accept (#188 §5.1): the agent checks its PR's CI itself
+        # (`cheese gh-token` + gh api) — the snapshot carries the pointer.
+        "pr_number": card.pr_number,
+        "pr_url": card.pr_url,
+        "created_at": card.created_at.isoformat(),
+    }
+
+
+def _disk_snapshot(root: str) -> dict | None:
+    try:
+        du = shutil.disk_usage(root)
+    except OSError:
+        return None
+    used_pct = round((du.total - du.free) * 100 / du.total) if du.total else None
+    return {
+        "free_gb": round(du.free / 2**30, 1),
+        "total_gb": round(du.total / 2**30, 1),
+        "used_pct": used_pct,
+    }
+
+
+@router.get("/{topic_id}/status")
+async def topic_status(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """盲飞防护: one snapshot of "what is going on" for this topic — accept
+    cards with their gate output, the current/last turn's state, and the
+    platform waterlines (disk/queue/credits) — so an agent (via `cheese
+    status`) or a debugging human doesn't have to poll several endpoints and
+    guess. Read path, open like the rest of the MVP read surface.
+
+    ``turn.activity`` (turn 活跃度检测, tmux backend only — None otherwise) is
+    the idle-suspect signal: ``suspect_since_s_ago`` set means the turn has been
+    idle past the threshold and is being actively re-confirmed alive, not yet
+    treated as dead.
+
+    ``stall`` answers the question nothing here could answer before: did a turn
+    die on this topic? ``turn`` cannot — it is a ring buffer of what turns did,
+    so it is empty after a restart and says `running` about a turn killed with
+    the process. See ``TopicService.stall_signal``."""
+    topics = TopicService(db)
+    topic = await topics.get_or_404(topic_id)
+    cards = await AcceptCardRepository(db).list_for_topic(topic_id)
+    credits = await ComputeGrantRepository(db).summary(topic.project_id)
+    turn = runner.topic_turn(topic_id)
+    if turn is not None and turn.get("status") == "running":
+        turn["activity"] = chat_service.tmux_activity_status(topic_id)
+    background = awaited_tasks.status_snapshot(topic_id)
+    stall = await topics.stall_signal(
+        topic_id,
+        live_turn=runner.live_turn_for_topic(topic_id),
+        background_tasks=len(background["tasks"]),
+    )
+    return ok(
+        {
+            "topic": {
+                "id": str(topic.id),
+                "title": topic.title,
+                "status": str(topic.status),
+                "branch": topic.branch_name,
+            },
+            "turn": turn,
+            "stall": stall,
+            "cards": [_card_snapshot(c) for c in cards],
+            "background": background,
+            "platform": {
+                "active_turns": runner.active_turns(),
+                "queued_turns": runner.project_queue_depth(topic.project_id),
+                "disk": _disk_snapshot(settings.workspace_root),
+                "credits": {
+                    "unlimited": credits["unlimited"],
+                    "remaining": credits["credits_remaining"],
+                },
+            },
+        }
+    )
 
 
 @router.get("/{topic_id}/children")
@@ -208,6 +412,20 @@ async def add_comment(
     return ok(payload)
 
 
+@router.get("/{topic_id}/progress")
+async def get_topic_progress(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """进度层 (#187): 芝士's checklist for this topic, as of the last turn to
+    touch it. Read on topic open — between turns there is no WS stream to carry
+    it, and "做到哪了" has to be visible without summoning anyone."""
+    items, updated_at = await TopicService(db).get_progress(topic_id)
+    return ok(
+        {
+            "items": items,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+        }
+    )
+
+
 @router.get("/{topic_id}/doc")
 async def get_topic_doc(topic_id: uuid.UUID, db: DbSession) -> dict:
     """The topic's single living doc (spec §2.2 docs-out)."""
@@ -251,23 +469,34 @@ async def edit_topic_doc(
 async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
     """The compute this topic runs on (execution-architecture v4 会话级选择).
 
-    `current` is the effective pool (topic选择 → project sticky → default).
+    `current` is the effective pool
+    (topic choice → project sticky → team default → platform default).
     `locked` is true once the topic has run (session_id set) — the picker freezes
-    then, matching the device-affinity boundary. `sticky` is the project default a
-    new topic would inherit; `profiles` are the pools actually selectable here."""
+    then, matching the device-affinity boundary. `sticky` is the effective starting
+    choice for a new topic (project memory, then team default); `profiles` include
+    unavailable targets so a locked offline device still has a readable label."""
     topic = await TopicService(db).get_or_404(topic_id)
     project = await ProjectRepository(db).get(topic.project_id)
     sticky = (project.settings or {}).get("compute_profile") if project else None
+    team_default = None
+    if project is not None and project.team_id is not None:
+        team = await TeamRepository(db).get_by_id(project.team_id)
+        team_default = team.compute_profile if team is not None else None
     device_online = await project_device_online(db, topic.project_id)
     return ok(
         {
-            "current": topic.compute_profile or sticky or compute_default_name(),
+            "current": (
+                topic.compute_profile
+                or sticky
+                or team_default
+                or compute_default_name()
+            ),
             "locked": topic.session_id is not None,
             "inherited": topic.compute_profile is None,
-            "sticky": sticky or compute_default_name(),
+            "sticky": sticky or team_default or compute_default_name(),
             "profiles": [
                 asdict(v)
-                for v in compute_selectable(settings, device_online=device_online)
+                for v in compute_listings(settings, device_online=device_online)
             ],
         }
     )
@@ -312,7 +541,7 @@ async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     blk = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author="cheese",
+        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
         author_type=AuthorType.ai,
         content=question,
         kind=BlockKind.message,
@@ -382,6 +611,82 @@ async def answer_options(
     return ok(updated)
 
 
+@router.post("/{topic_id}/webhook-token")
+async def mint_webhook_token(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """Mint (or rotate) this topic's webhook credential — used by the `cheese`
+    CLI to hand a caller a token for POST /webhooks/{topic_id}. Rotating
+    invalidates every previously-minted token for this topic; the raw value is
+    returned once and never recoverable afterwards."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    token = await webhook_service.mint(
+        db, topic_id=topic_id, project_id=topic.project_id
+    )
+    await db.commit()
+    return ok({"token": token})
+
+
+@router.post("/{topic_id}/background-task")
+async def register_background_task(
+    topic_id: uuid.UUID, body: BackgroundTaskIn, db: DbSession
+) -> dict:
+    """`cheese await` announces a command it is about to run in its own sandbox.
+
+    Returns the task id plus a wake token that outlives the container's own
+    CHEESE_TOKEN (1h) — these tasks routinely run longer than that, and a result
+    that 401s at the finish line is exactly the frozen topic this path exists to
+    prevent."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    if topic.status == TopicStatus.archived:
+        raise ValidationError("话题已归档，不再受理后台任务")
+    task = awaited_tasks.register(
+        project_id=topic.project_id,
+        topic_id=topic_id,
+        command=body.command,
+        label=body.label,
+        timeout_s=body.timeout_s,
+        log_path=body.log_path,
+    )
+    return ok(
+        {
+            "task_id": str(task.id),
+            "wake_token": mint_scoped_token(
+                project_id=str(topic.project_id),
+                topic_id=str(topic_id),
+                # Cover the whole run plus an hour of slack for a slow report.
+                ttl_s=task.timeout_s + 3600,
+            ),
+            "label": task.label,
+        }
+    )
+
+
+@router.post("/{topic_id}/background-task/{task_id}/done")
+async def finish_background_task(
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: BackgroundTaskDoneIn,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+) -> dict:
+    """The backgrounded command exited — land its result and (guards permitting)
+    wake the topic. Reached by the detached child `cheese await` forked, carrying
+    the wake token from registration."""
+    task = awaited_tasks.get(task_id)
+    if task is None or task.topic_id != topic_id:
+        raise NotFoundError("这个后台任务不存在或已经回报过了")
+    return ok(
+        await awaited_tasks.report(
+            chat.session_factory,
+            chat,
+            runner,
+            task=task,
+            exit_code=body.exit_code,
+            tail=body.tail,
+            duration_s=body.duration_s,
+        )
+    )
+
+
 @router.post("/{topic_id}/decision")
 async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     """记录关键决策到决策记录 (spec §7.1) — used by the `cheese decision` CLI."""
@@ -392,23 +697,45 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
     decision = await canonicalize_refs(
         db, topic.project_id, decision, exclude_topic_id=topic_id
     )
+    # 自动续跑幂等 (④): inside an automatic turn, the same decision text is the
+    # same decision — a resumed 芝士 re-recording it must not stack a second
+    # 决策记录 row. Outside a turn (a human in the UI) there is no continuation
+    # and no dedup: pressing the button twice means it twice.
+    continuation = get_turn_runner().continuation_for(topic_id)
+    key = action_key(continuation, "decision", decision) if continuation else None
+    if key is not None and not await idem.claim(
+        db, key, action="decision", scope_id=str(topic_id)
+    ):
+        prior = await idem.stored_result(db, key)
+        return ok(prior or {"skipped": True})
     block = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author="cheese",
+        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
         author_type=AuthorType.ai,
         content=decision,
         kind=BlockKind.decision,
         refs=[str(topic_id)],
     )
-    return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+    out = BlockOut.model_validate(block).model_dump(mode="json")
+    if key is not None:
+        await idem.record_result(db, key, out)
+    return ok(out)
 
 
 @router.post("/{topic_id}/title")
-async def set_title(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """给话题起/改标题 — used by `cheese title`. Titles are AI-generated (the agent
-    names an untitled topic from the task), never deterministically derived."""
+async def set_title(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """给话题起/改标题 — used by both `cheese title` (AI-generated, naming an
+    untitled topic) and the frontend sidebar rename UI (dual-use, like doc/split)."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=body.get("by"), topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError("title 不能为空")
@@ -450,23 +777,58 @@ async def split_topic(
     body: SplitIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
 ) -> dict:
     """从上往下拆解：split a todo into a sub-topic (eval A2).
 
     The child is seeded with a task-brief living doc, then its 分身 is kicked
     off automatically (spec §8.4 分身异步工作): without this, a freshly split
     sub-topic just sits idle until a human wanders in and posts a message."""
-    topic = await TopicService(db).split_to_subtopic(
+    service = TopicService(db)
+    parent = await service.get_or_404(topic_id)
+    # actor 在信任边界注入 (同 edit_topic_doc): prefer the verified token, fall
+    # back to body.created_by, and require the caller actually have access to
+    # the PARENT topic — a body-trusted `created_by` let anyone split anyone
+    # else's topic and mint an arbitrary roster owner.
+    actor = await resolver.resolve(
+        fallback_handle=body.created_by,
+        topic_id=topic_id,
+        project_id=parent.project_id,
+    )
+    await resolver.authorize_topic(
+        actor, project_id=parent.project_id, topic_id=topic_id
+    )
+    # 自动续跑幂等 (④) — the costliest of the five to repeat: a duplicate split
+    # does not just write a row, it spawns a second 分身 that starts working.
+    # `split 是唯一会生出另一个 agent 的动作` (cheese CLI help), so a resumed
+    # turn re-splitting doubles the agents on the same brief.
+    runner = get_turn_runner()
+    continuation = runner.continuation_for(topic_id)
+    key = (
+        action_key(continuation, "split", topic_id, body.title)
+        if continuation
+        else None
+    )
+    if key is not None and not await idem.claim(
+        db, key, action="split", scope_id=str(topic_id)
+    ):
+        prior = await idem.stored_result(db, key)
+        return ok(prior or {"skipped": True})
+    topic = await service.split_to_subtopic(
         parent_topic_id=topic_id,
         title=body.title,
-        created_by=body.created_by,
+        created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
         brief=body.brief,
     )
     out = TopicOut.model_validate(topic).model_dump(mode="json")
+    if key is not None:
+        await idem.record_result(db, key, out)
     # Commit BEFORE kicking off: the 分身's first turn runs in the background
-    # with its own session and must see the sub-topic + its brief doc.
+    # with its own session and must see the sub-topic + its brief doc. The
+    # idempotency key commits in this same transaction, so a crash between the
+    # commit and the kickoff cannot produce a SECOND child on resume.
     await db.commit()
-    get_turn_runner().submit_kickoff(chat, topic.id)
+    runner.submit_kickoff(chat, topic.id)
     return ok(out)
 
 
@@ -533,15 +895,29 @@ async def return_conclusion(
     conclusion = await canonicalize_refs(
         db, topic.project_id, body.conclusion, exclude_topic_id=topic_id
     )
-    block = await service.return_conclusion(subtopic_id=topic_id, conclusion=conclusion)
+    block, card = await service.return_conclusion(
+        subtopic_id=topic_id, conclusion=conclusion
+    )
     parent = await service.get_or_404(block.topic_id)
     out = BlockOut.model_validate(block).model_dump(mode="json")
     wake = parent.status != TopicStatus.archived
+    # 结论卡·阶段一: the card id has to reach the digest turn, otherwise the
+    # parent has a card it cannot address — read it BEFORE the commit expires
+    # the instance.
+    card_id = str(card.id) if card is not None else None
+    card_deadline = card.digest_deadline_at if card is not None else None
     # Commit BEFORE waking: the parent's turn runs on its own session.
     await db.commit()
+    await get_broker().publish(
+        str(parent.id), {"type": "assistant_block", "block": out}
+    )
     if wake:
         get_turn_runner().submit_kickoff(
-            chat, parent.id, prompt=conclusion_digest_prompt(block.content)
+            chat,
+            parent.id,
+            prompt=conclusion_digest_prompt(
+                block.content, card_id=card_id, deadline=card_deadline
+            ),
         )
     return ok(out)
 
@@ -590,7 +966,7 @@ async def set_artifact(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     block = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
-        author="cheese",
+        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
         author_type=AuthorType.ai,
         content=path,
         kind=BlockKind.artifact,
@@ -611,14 +987,22 @@ async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
         return ok(None)
     if art.mime_type == _ARTIFACT_MIME["app"]:
         # Resolve the container's published port LIVE — the mapping only exists
-        # while the topic's container is up.
-        url = ws.app_preview_url(topic_id)
+        # while the topic's container is up — and then ACTUALLY KNOCK on it. A
+        # published port with a dead server behind it renders as a white iframe,
+        # which is why the two states are reported separately: `container_up`
+        # without a `url` is "容器还在，应用没在跑", and the panel can say so
+        # instead of showing an empty frame.
+        endpoint = ws.app_endpoint(topic_id)
+        alive = endpoint is not None and await proxy.probe(endpoint)
         return ok(
             {
                 "kind": "app",
                 "path": art.content,
                 "mime": art.mime_type,
-                "url": url,
+                # Root-relative: the backend's reverse proxy, reachable from any
+                # browser. NOT the container's 127.0.0.1 host port (server-local).
+                "url": f"/api/topics/{topic_id}/app/" if alive else None,
+                "container_up": endpoint is not None,
             }
         )
     return ok({"kind": "file", "path": art.content, "mime": art.mime_type})
@@ -715,11 +1099,21 @@ project_router = APIRouter(prefix="/api/projects", tags=["topics"])
 
 @project_router.get("/{project_id}/topic-unread")
 async def project_topic_unread(
-    project_id: uuid.UUID, handle: str, db: DbSession
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    handle: str | None = None,
 ) -> dict:
-    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for one
-    user, one query. Topics with zero unread are omitted."""
-    counts = await TopicService(db).unread_counts(project_id, handle)
+    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for the
+    calling user, one query. Topics with zero unread are omitted.
+
+    Read-state is per-person, so the recipient comes from the verified
+    credential (``handle`` is only checked against it) — a caller without one
+    used to read anybody's badge map by naming them here."""
+    recipient = await resolver.resolve_recipient(
+        requested=handle, project_id=project_id, allow_anonymous=False
+    )
+    counts = await TopicService(db).unread_counts(project_id, recipient)
     return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 

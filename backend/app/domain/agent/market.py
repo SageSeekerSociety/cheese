@@ -152,3 +152,84 @@ def compute_selectable(
 
 def compute_default_name() -> str:
     return COMPUTE_LOCAL
+
+
+# --- Subscription model (parallel to compute pool): which Claude model a
+# project's subscription turns use. Only meaningful when the subscription path is
+# deployed; a project picks it the same way it picks a compute pool. ------------
+# (id, label, description, --model alias, is-default). The default carries no
+# alias ("") so it uses the subscription's own default (Sonnet 5) with no --model
+# — the proven path; Opus is the explicit opt-in.
+_SUB_MODELS: list[tuple[str, str, str, str, bool]] = [
+    (
+        "sonnet",
+        "Claude Sonnet 5",
+        "均衡：足够聪明，最省订阅额度，适合绝大多数项目。",
+        "",
+        True,
+    ),
+    # Full model ids from here down, not CLI aliases: Fable falls back to
+    # Opus 4.8 specifically (safety classifiers on cyber/bio topics reroute
+    # there, Anthropic-official, <5% of sessions — plus quota-style silent
+    # downgrades reported on Max), so 4.8-vs-5 is a distinction users must be
+    # able to SEE and pick; a bare "opus" alias hides which one you get.
+    (
+        "opus",  # id kept as-is: stored selections must not break
+        "Claude Opus 5",
+        "最强：复杂任务表现更好，但更快消耗订阅额度（Max 有上限）。",
+        "claude-opus-5",
+        False,
+    ),
+    (
+        "opus-4.8",
+        "Claude Opus 4.8",
+        "上一代 Opus（仍在售，1M 上下文）：Fable 被降级时实际落到的模型；"
+        "需要复现或对齐降级后行为时可显式选它。",
+        "claude-opus-4-8",
+        False,
+    ),
+    (
+        "fable",
+        "Claude Fable 5",
+        "前沿：新一代最强模型。注意：安全分类器命中（网络安全/生物类话题）或"
+        "配额受限时会被自动降级到 Opus 4.8，且降级可能持续到会话结束"
+        "（重开会话恢复）。",
+        "claude-fable-5",
+        False,
+    ),
+]
+
+
+def subscription_model_listings() -> list[PoolListing]:
+    """The Claude models a project may pick for its subscription turns."""
+    return [
+        PoolListing(
+            kind="model",
+            id=mid,
+            label=label,
+            tier="subscription",
+            price="包含（订阅）",
+            description=desc,
+            available=True,
+            default=default,
+        )
+        for (mid, label, desc, _alias, default) in _SUB_MODELS
+    ]
+
+
+def subscription_model_default() -> str:
+    return next(mid for (mid, _l, _d, _a, dflt) in _SUB_MODELS if dflt)
+
+
+def subscription_model_alias(mid: str | None) -> str:
+    """The Claude `--model` alias for a selection id ('' = no flag → subscription
+    default). An unknown id falls back to the default (no flag), never an error —
+    a stale stored selection must not break a turn."""
+    for m, _l, _d, alias, _dflt in _SUB_MODELS:
+        if m == mid:
+            return alias
+    return ""
+
+
+def subscription_model_ids() -> set[str]:
+    return {mid for (mid, _l, _d, _a, _dflt) in _SUB_MODELS}

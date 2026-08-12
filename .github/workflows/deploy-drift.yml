@@ -11,8 +11,14 @@
 # a watcher that never runs. This one also has to reach the box, which only the
 # self-hosted runner can.
 #
-# When it fails, GitHub emails the repo's watchers. That is the notification
-# channel — no webhook to configure, and one that works today.
+# Detection alone proved not enough (#188): the build/deploy chain is
+# edge-triggered — every push is a trigger, and a lost edge (a build cancelled
+# by the next accept landing minutes later, observed 2026-08-06 and 2026-08-09)
+# meant silence until a human noticed. So on drift this now CONVERGES instead of
+# only alerting: re-dispatch the missing build or deploy for main's HEAD. The
+# one case it deliberately does NOT retry is a FAILED build — that is real
+# breakage needing eyes, and auto-retrying it would just loop; the run stays
+# red and GitHub emails the repo's watchers, same as before.
 name: Deploy drift and gateway health
 
 on:
@@ -22,6 +28,8 @@ on:
 
 permissions:
   contents: read
+  # Convergence re-dispatches build.yml / deploy-dev.yml on drift.
+  actions: write
 
 concurrency:
   group: deploy-drift
@@ -32,27 +40,60 @@ jobs:
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Compare main with what is running
+      - name: Compare main with what is running, converge on drift
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          main_sha="$(git rev-parse --short origin/main 2>/dev/null || git rev-parse --short HEAD)"
+          main_sha="$(git rev-parse --short=7 origin/main 2>/dev/null || git rev-parse --short=7 HEAD)"
           # The runner IS the box, so ask docker directly rather than over ssh.
-          live="$(docker ps --format '{{.Names}} {{.Image}}' | grep -E 'cheese-(backend|frontend)-1' || true)"
+          live="$(docker ps -a \
+            --filter 'label=com.docker.compose.project=cheese' \
+            --format '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
+            || true)"
           echo "main: ${main_sha}"
           echo "${live}"
-          if [ -z "$live" ]; then
-            echo "::error::no cheese backend/frontend container is running on this box"
-            exit 1
-          fi
-          if echo "$live" | grep -q ":${main_sha}\b"; then
+          if printf '%s\n' "$live" | bash deploy/check-app-tier.sh "$main_sha"; then
             echo "live matches main"
             exit 0
           fi
-          echo "::error::main is ${main_sha} but the box is running something else — \
-          a build or deploy failed silently. Check: gh run list --workflow=build.yml"
-          exit 1
+
+          # Drifted. Decide from the state of main HEAD's build runs which edge
+          # was lost, and re-fire exactly that one. head_sha filtering needs the
+          # FULL sha — a short sha silently matches nothing. `gh api --jq` keeps
+          # us off system jq, which this box does not have.
+          full_sha="$(git rev-parse origin/main 2>/dev/null || git rev-parse HEAD)"
+          api="repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${full_sha}&per_page=30"
+          build_runs='.workflow_runs[] | select(.path==".github/workflows/build.yml")'
+          in_flight="$(gh api "$api" --jq "[${build_runs} | select(.status==\"queued\" or .status==\"in_progress\")] | length")"
+          built_ok="$(gh api "$api" --jq "[${build_runs} | select(.conclusion==\"success\")] | length")"
+          built_failed="$(gh api "$api" --jq "[${build_runs} | select(.conclusion==\"failure\")] | length")"
+          echo "build runs for ${main_sha}: in_flight=${in_flight} success=${built_ok} failure=${built_failed}"
+
+          if [ "${in_flight}" -gt 0 ]; then
+            echo "a build for ${main_sha} is already in flight — convergence is under way, nothing to do"
+            exit 0
+          fi
+          if [ "${built_ok}" -gt 0 ]; then
+            # Images exist; the deploy leg was the lost edge (cancelled, or the
+            # box was unreachable when it ran). Re-fire deploy only.
+            echo "images for ${main_sha} exist but the box runs something else — re-dispatching deploy-dev"
+            gh workflow run deploy-dev.yml --ref main
+            exit 0
+          fi
+          if [ "${built_failed}" -gt 0 ]; then
+            echo "::error::build for ${main_sha} FAILED — real breakage, not auto-retrying. \
+          Check: gh run list --workflow=build.yml"
+            exit 1
+          fi
+          # No build at all, or only cancelled ones: accepts landing minutes
+          # apart cancel each other's builds (2026-08-06: five accepts in an
+          # hour, dev froze on the third; 2026-08-09: same with two PR merges).
+          echo "no live build for ${main_sha} (none, or cancelled) — dispatching build; deploy follows via workflow_run"
+          gh workflow run build.yml --ref main
+          exit 0
 
       # The gateway became a hard dependency of every turn the moment traffic was
       # pointed at it, and it is a hand-started stack outside the deploy — so

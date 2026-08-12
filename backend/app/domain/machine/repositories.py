@@ -93,16 +93,29 @@ class ProjectMachineRepository:
         ip: str | None,
         ai_mode: str | None = None,
         ai_status: AiStatus | None = None,
+        seen_at: datetime | None = None,
     ) -> ProjectMachine:
         machine.status = status
         if ai_mode is not None:
             machine.ai_mode = ai_mode
         if ai_status is not None:
             machine.ai_status = ai_status
+        if seen_at is not None:
+            machine.last_seen_at = seen_at
         # Never blank an IP we already learned: a transient read that omits it
         # would otherwise erase the only way back into a running machine.
         if ip:
             machine.ip = ip
+        await self._session.flush()
+        return machine
+
+    async def touch_seen(
+        self, machine: ProjectMachine, *, when: datetime
+    ) -> ProjectMachine:
+        """Record that MicroCloud was asked, without claiming to have learned
+        anything. Used when the provider was unreachable and the machine's last
+        known state is still the best answer we have."""
+        machine.last_seen_at = when
         await self._session.flush()
         return machine
 
@@ -142,6 +155,26 @@ class ProjectMachineRepository:
                 ProjectMachine.bootstrap_key.is_not(None),
                 ProjectMachine.ip.is_not(None),
                 ProjectMachine.enroll_attempts < MAX_ENROLL_ATTEMPTS,
+            )
+            .order_by(ProjectMachine.created_at)
+            .limit(limit)
+        )
+        return list(result.scalars())
+
+    async def list_ai_mode_mismatch(
+        self, desired: str, limit: int
+    ) -> list[ProjectMachine]:
+        """Machines whose built-in AI channel settled on the wrong mode.
+
+        Only settled machines (running + ai ready) are candidates — a machine
+        still provisioning will be judged when it lands, and fighting a
+        transitional state would race MicroCloud's own wiring."""
+        result = await self._session.execute(
+            select(ProjectMachine)
+            .where(
+                ProjectMachine.status == MachineStatus.running,
+                ProjectMachine.ai_status == AiStatus.ready,
+                ProjectMachine.ai_mode != desired,
             )
             .order_by(ProjectMachine.created_at)
             .limit(limit)

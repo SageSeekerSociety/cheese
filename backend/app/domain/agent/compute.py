@@ -14,7 +14,9 @@ two methods by relocating execution to a cheesed node and relaying the event
 stream + git refs back.
 """
 
+import asyncio
 import json
+import subprocess
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -24,16 +26,18 @@ import httpx
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import awaited_tasks
+from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
 from app.domain.agent.service import (
     AgentEvent,
     AgentService,
     event_from_dict,
 )
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
 
 # Author handle for 芝士's cheese-CLI callbacks (kept here to avoid importing
 # chat.py, which imports this module).
-_CHEESE_AUTHOR = "cheese"
 
 # Native tools 芝士 may use inside the sandbox + the Task tools (live todo).
 _SANDBOX_TOOLS = [
@@ -106,6 +110,31 @@ class LocalDockerProvider:
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
 
+    def _warn_if_image_switch(
+        self, topic_id: uuid.UUID, container: str, resolved_image: str
+    ) -> None:
+        """Read-only mirror of the sandbox shim's own check (claude-sbx): if the
+        topic's container is already running a different image than what this
+        turn resolved to, the shim is about to `docker rm -f` it (no grace
+        period) and rebuild — taking any interactive session / background
+        process in the old box with it. Warn the topic before that happens.
+        Fire-and-forget (schedules the notice, doesn't await it) so a slow DB
+        write never delays turn start; skipped outside a running loop (e.g.
+        sync tests) and on a fresh/absent container (nothing to lose)."""
+        if not self.sandboxed():
+            return
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.Config.Image}}", container],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or result.stdout.strip() == resolved_image:
+            return
+        try:
+            asyncio.get_running_loop().create_task(warn_image_switch_rebuild(topic_id))
+        except RuntimeError:
+            pass  # no running loop — nothing to schedule onto
+
     def _sandbox_config(
         self,
         project_id: uuid.UUID,
@@ -122,15 +151,28 @@ class LocalDockerProvider:
         dogfooding on this repo — spec §9.1 environment); falls back to the pool's
         default base image."""
         worktree = ws.topic_worktree(project_id, topic_id)
+        resolved_image = sandbox_image or settings.sandbox_image
+        container_name = ws.container_name(topic_id)
+        self._warn_if_image_switch(topic_id, container_name, resolved_image)
         env = {
-            "SBX_IMAGE": sandbox_image or settings.sandbox_image,
-            "SBX_CONTAINER": ws.container_name(topic_id),
+            "SBX_IMAGE": resolved_image,
+            "SBX_CONTAINER": container_name,
             "SBX_WORKTREE": str(worktree),
+            # The worktree is a jj workspace whose .jj/repo pointer is only
+            # resolvable inside the sandbox if these are ALSO mounted (see
+            # ws.sandbox_vcs_mounts) — the shim (claude-sbx) appends them to
+            # `docker run` as extra `-v` args, space-joined since deterministic
+            # workspace_root/UUID paths never contain whitespace.
+            "SBX_VCS_MOUNTS": " ".join(
+                ws.sandbox_vcs_mounts(project_id, ws.branch_for_topic(topic_id))
+            ),
             "SBX_SESSION": str(ws.session_dir(project_id, topic_id)),
             "CHEESE_API": settings.sandbox_api_base,
             "CHEESE_PROJECT": str(project_id),
             "CHEESE_TOPIC": str(topic_id),
-            "CHEESE_AUTHOR": _CHEESE_AUTHOR,
+            # Which 分身 this sandbox is (分身独立身份) — the same identity its
+            # scoped CHEESE_TOKEN carries, never the shared account.
+            "CHEESE_AUTHOR": topic_agent_handle(topic_id),
             # Per-turn token scoped to THIS project+topic (review R5): a container
             # for one project/topic can't write another's cheese endpoints.
             "CHEESE_TOKEN": mint_scoped_token(
@@ -193,13 +235,14 @@ class LocalDockerProvider:
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the agent's native edits this turn into version history
-        (workspace lifecycle, R2/R9). Best-effort; never fail the turn on git."""
+        (workspace lifecycle, R2/R9). Best-effort; never fail the turn on git.
+
+        Held while a `cheese await` command is still writing the worktree — the
+        turn ends first BY DESIGN there, so this is the one moment the snapshot
+        is guaranteed to catch a half-finished tree."""
         if not self.sandboxed():
             return
-        try:
-            ws.snapshot_worktree(project_id, topic_id)
-        except Exception:  # noqa: BLE001 — git snapshot is best-effort
-            pass
+        awaited_tasks.checkpoint_worktree(project_id, topic_id)
 
 
 class RemoteCheesedProvider:
@@ -268,6 +311,21 @@ class RemoteCheesedProvider:
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         # Commit the turn's edits ON THE NODE so /git/log + /git/diff have history.
         # Best-effort; never fail the turn (runs after streaming, not in the path).
+        #
+        # The await hold is decided HERE rather than on the node: `cheese await`
+        # registers with the platform, so this process is the only one that knows
+        # a command is still writing that tree. There is no catch-up snapshot on
+        # this path either — `_catch_up_snapshot` commits the LOCAL worktree, and
+        # a remote node has none here — so the node catches up on the next turn's
+        # checkpoint, which the report's wake provides.
+        #
+        # Known gap, accepted: two of the guards in `awaited_tasks` take the result
+        # as a block WITHOUT waking (归档话题, 卡已结算). On those the node's tree
+        # stays uncommitted until some later turn happens to run. Accepted because
+        # both states mean nobody is reading that branch any more — but it is a
+        # gap, not an invariant: do not read this as "a wake always follows".
+        if awaited_tasks.snapshot_hold(topic_id) is not None:
+            return
         try:
             httpx.post(f"{self._url}/checkpoint/{project_id}/{topic_id}", timeout=15)
         except httpx.HTTPError:
@@ -306,12 +364,16 @@ class ComputePool:
         return cls([provider], provider.name)
 
     @classmethod
-    def tmux(cls, *, image: str, turn_timeout_s: float) -> "ComputePool":
+    def tmux(
+        cls, *, image: str, idle_suspect_s: float, hard_ceiling_s: float
+    ) -> "ComputePool":
         """Interactive/tmux backend (AGENT_BACKEND=tmux): drives `claude` in a
         tmux session and streams events from Claude Code HTTP hooks."""
         from app.domain.agent.tmux_provider import TmuxHooksProvider
 
-        provider = TmuxHooksProvider(image=image, turn_timeout_s=turn_timeout_s)
+        provider = TmuxHooksProvider(
+            image=image, idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
+        )
         return cls([provider], provider.name)
 
     @classmethod
@@ -323,6 +385,19 @@ class ComputePool:
 
         provider = DeviceProvider(turn_timeout_s=turn_timeout_s)
         return cls([provider], provider.name)
+
+    def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
+        """turn 活跃度检测: `cheese status`'s idle-suspect signal, read from
+        whichever tmux provider is in this pool (at most one — see
+        `build_compute_pool`). None when there's no tmux provider in the pool,
+        or no turn currently monitored for this topic (not running, or running
+        on a different backend)."""
+        from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+        for provider in self._providers.values():
+            if isinstance(provider, TmuxHooksProvider):
+                return provider.activity_status(topic_id)
+        return None
 
     def has(self, provider_id: str) -> bool:
         return provider_id in self._providers
@@ -367,7 +442,8 @@ def build_compute_pool(agent: AgentService) -> ComputePool:
 
         local = TmuxHooksProvider(
             image=settings.tmux_sandbox_image,
-            turn_timeout_s=settings.agent_turn_timeout_s,
+            idle_suspect_s=settings.agent_idle_suspect_s,
+            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
         )
     else:
         # The pre-convergence SDK stream-json path, retained as the orthogonal

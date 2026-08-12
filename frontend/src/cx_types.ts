@@ -36,12 +36,19 @@ export interface Topic {
   kind: string
   status: string
   created_at: string
-  // Any activity (a turn, a status flip) touches this — the sidebar's 右锚.
+  // 话题这一行自己被改过的时间（改标题、归档、拿到 session id）——落一块消息
+  // 不会动它。要"这个话题最后有动静是什么时候"，看 last_activity_at。
   updated_at?: string
+  // 最后活动时间 = 话题里最新一块的时间（没有块就是话题的创建时间）。侧栏的
+  // 右锚和"最后活动"排序都用它。只有 list/get 话题时才带。
+  last_activity_at?: string
   // Lifecycle markers (spec §6.3) — used by the 已归档 group ordering.
   accepted_by?: string | null
   accepted_at?: string | null
   archived_at?: string | null
+  // 本轮是否在跑（TurnRunner, 内存态）——和 status/归档完全分开：一个话题可以
+  // 是 active 且空闲，也可以是 active 且正在跑一轮。只有 list/get 话题时才带。
+  running?: boolean
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
@@ -52,6 +59,19 @@ export interface ReactionAgg {
   emoji: string
   count: number
   authors: string[]
+}
+
+export interface BlockMeta {
+  [key: string]: unknown
+  tool?: string
+  arg?: string
+  platform?: boolean
+  action?: string
+  event_type?: string
+  code?: string
+  severity?: string
+  title?: string
+  retryable?: boolean
 }
 
 export interface Block {
@@ -74,7 +94,7 @@ export interface Block {
   refs?: string[]
   // Structured event payload (kind=event): {tool, arg, platform} — the UI
   // translates/classifies from this; content is the baked-text fallback.
-  meta?: { tool?: string; arg?: string; platform?: boolean } | null
+  meta?: BlockMeta | null
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   upgraded_to_topic_id?: string | null
@@ -94,12 +114,21 @@ export interface ListPayload<T> {
   total: number
 }
 
-// A live working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a
-// real-time checklist in the in-progress message — process, not state).
+// A working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a checklist
+// in the in-progress message). Live during a turn; persisted between turns as
+// the topic's 进度层 (#187) so a new machine — and the room — can still see how
+// far the work got.
 export interface TodoItem {
   id: string
   subject: string
   status: 'pending' | 'in_progress' | 'completed'
+}
+
+// 进度层 (#187): the stored checklist for a topic. `updated_at` is null when the
+// topic has never had one (items is then []).
+export interface TopicProgress {
+  items: TodoItem[]
+  updated_at: string | null
 }
 
 // WebSocket server -> client frames. No token streaming: 芝士 speaks in
@@ -109,13 +138,15 @@ export type WsServerFrame =
   // A block's reactions changed (someone toggled / 芝士's ✅ receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
   | { type: 'tool'; name: string; input: Record<string, unknown> }
-  | { type: 'todo'; items: TodoItem[] }
+  // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
+  // turn start; without the flag the UI cannot tell it from live progress.
+  | { type: 'todo'; items: TodoItem[]; restored?: boolean }
   | { type: 'state'; resource: string }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
   // block; the client must not double-show it as a floating banner.
-  | { type: 'error'; message: string; persisted?: boolean }
+  | { type: 'error'; message: string; persisted?: boolean; code?: string }
   | { type: 'done' }
   // Sent once on WS connect when a turn is already mid-stream on this topic,
   // so a re-entering client rebuilds the 正在思考 indicator.
@@ -138,7 +169,9 @@ export interface ChatAttachment {
 export interface WsClientMessage {
   type: 'message'
   content: string
-  author: string
+  // No `author`: the backend takes it from the socket's ?token=. Sending one
+  // was never authoritative — it was the forgeable field that let an expired
+  // session post as 匿名者 — so the client no longer names itself at all.
   summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
@@ -168,6 +201,9 @@ export interface ProjectMemberRow {
   user_handle: string
   role: string
   name?: string
+  // `agent` marks 芝士 (any of its per-topic 分身), derived server-side from the
+  // execution binding — never from the handle string, which differs per topic.
+  agent?: boolean
   [key: string]: unknown
 }
 
@@ -312,7 +348,15 @@ export interface WorkspaceFile {
 // GET /projects/{id}/file?path=
 export interface FileContent {
   path: string
-  content: string
+  // null when the file must not be edited as text: `binary` (a text editor would
+  // corrupt it on save) or `too_large` (never sent — it would freeze the tab).
+  content: string | null
+  // Content id to echo back on save; a mismatch means someone wrote in between.
+  // Null only when the content was not read at all (`too_large`).
+  version: string | null
+  bytes: number
+  binary: boolean
+  too_large: boolean
 }
 
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
@@ -323,7 +367,11 @@ export interface PreviewInfo {
   kind?: 'file' | 'app'
   path: string
   mime: string | null
+  // kind=app: the backend's reverse-proxy path (root-relative), or null when the
+  // app isn't answering. `container_up` separates "容器不在了" from "容器还在但
+  // 应用没在跑" — without it both looked like an empty white frame.
   url?: string | null
+  container_up?: boolean
 }
 
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).
@@ -333,6 +381,10 @@ export interface UsageStats {
   total_tokens: number
   cost_usd: number
   turns: number
+  // Tokens that burned real capacity but carry NO USD price (subscription
+  // routing is billed by the month). Non-zero means the cost figure is
+  // incomplete — the panel says 未知 rather than printing $0.0000.
+  unpriced_tokens: number
 }
 
 // ---- 采纳卡 / 验收 (eval C5/A3) ----
@@ -346,6 +398,11 @@ export type AcceptStatus =
   // 机器闸门 (eval C2): the project's check_command is running / failed.
   | 'pending_gate'
   | 'gate_failed'
+  // 闸门没跑成：检查没能在门禁环境里跑起来，对代码没有结论（不是「未通过」）。
+  | 'gate_blocked'
+  // 两阶段采纳 (PR迭代式, 2026-08-09): the human already accepted; the PR is
+  // open and the machine stretch (CI → merge → deploy) is still running.
+  | 'pr_open'
   | string
 
 // GET /topics/{id}/accept-card (list, newest first).
@@ -365,6 +422,27 @@ export interface AcceptCard {
   // 主分支保护 (spec §4.4): votes so far / votes needed.
   approvals: string[]
   approvals_required: number
+  // 采纳 PR 化 (#188 §5.1): the real GitHub PR this card rides on, when the
+  // platform opened one (flag-gated, best-effort).
+  pr_number: number | null
+  pr_url: string | null
+  // 两阶段采纳 (PR迭代式) only: which repo the PR lives in, the commit CI is
+  // being queried against, and — see lib/deliveryStage.ts — the one value the
+  // backend uses to tell 「等 CI」 from 「等部署」 inside `pr_open`.
+  pr_repo: string | null
+  pr_head_sha: string | null
+  pr_merged_at: string | null
+}
+
+// GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).
+export interface PrChecks {
+  available: boolean
+  reason?: string
+  pr_number?: number
+  pr_url?: string
+  state?: string
+  mergeable?: boolean | null
+  checks?: { name: string; status: string; conclusion: string | null; url?: string }[]
 }
 
 // ---- 通知中心 (G2/G3) ----
@@ -520,11 +598,54 @@ export interface ComputeProfiles {
   profiles: PoolListing[]
 }
 
+export type ProjectMachineStatus =
+  | 'provisioning'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'stopped'
+  | 'deleting'
+  | 'deleted'
+  | 'error'
+  | 'unknown'
+
+export type ProjectMachineAiStatus = 'disabled' | 'provisioning' | 'ready' | 'error' | 'unknown'
+
+// A MicroCloud machine billed/audited through a project. Once enrolled, its device
+// belongs to the project's team pool and is available to every project on that team.
+export interface ProjectMachine {
+  id: string
+  project_id: string
+  machine_id: number
+  hostname: string
+  login_user: string
+  cores: number
+  memory_mb: number
+  disk_gb: number
+  status: ProjectMachineStatus
+  ip: string | null
+  ai_mode: string
+  ai_status: ProjectMachineAiStatus
+  device_id: string | null
+  enrolled_at: string | null
+  enroll_error: string | null
+  enroll_attempts: number
+  enroll_max_attempts: number
+  requested_by: string | null
+  created_at: string
+}
+
+export interface ProjectMachineCreate {
+  cores: number
+  memoryMb: number
+  diskGb: number
+}
+
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
-// `current` is the effective pool (topic选择 → project sticky → default);
+// `current` is effective (topic → project sticky → team default → platform);
 // `locked` freezes the picker once the topic has run (session started);
-// `inherited` = still following the project sticky (no own选择 yet);
-// `sticky` = the project default a new topic would inherit.
+// `inherited` = still following project/team/platform defaults (no own choice yet);
+// `sticky` = project sticky if present, otherwise the team/platform default.
 export interface TopicComputeProfile {
   current: string
   locked: boolean
@@ -566,6 +687,28 @@ export interface UpstreamSyncResult {
   synced: boolean
   commits?: number
   reason?: string
+}
+
+// GitHub App install flow (#192): a project connects to one repo via
+// cheesex-app, replacing the classic 上游仓库 URL entry for repos it manages.
+export interface GithubConnection {
+  connected: boolean
+  repo?: string
+  account?: string
+}
+
+// A user's OAuth/App connections — GET /users/{userId}/oauth/connections
+// (list_user_connections). login/tokenExpires/hasRefreshToken (2026-08-09) are
+// token-health metadata only; the raw access token is never sent to the client.
+export interface OAuthConnectionInfo {
+  id: number
+  providerId: string
+  providerName: string
+  providerUserId: string
+  connectedAt: string | null
+  login: string | null
+  tokenExpires: string | null
+  hasRefreshToken: boolean
 }
 
 // ---- self-hosted 设备连接器 (P3 Phase B) ----

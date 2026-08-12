@@ -16,6 +16,7 @@ from app.domain.agent.service import (
     AgentSessionInfo,
 )
 from app.domain.project.services import ProjectService
+from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 
 
@@ -42,6 +43,56 @@ class SlowAgent(AgentService):
         yield AgentDelta(text="thinking…")
         await self.release.wait()
         yield AgentResult(text="done", session_id="s1", usage=None)
+
+
+class InstantAgent(AgentService):
+    async def stream_reply(
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
+    ):
+        yield AgentSessionInfo(session_id="s-affinity")
+        yield AgentResult(text="done", session_id="s-affinity", usage=None)
+
+
+@pytest.mark.anyio
+async def test_first_turn_materializes_inherited_compute_before_running(
+    client, tmp_path
+):
+    """Changing a later default must never move an existing topic session."""
+    factory = client.test_factory  # type: ignore[attr-defined]
+    svc = ChatService(
+        session_factory=factory,
+        agent=InstantAgent(model="stub"),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project.settings = {"compute_profile": "local-docker"}
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="start", summon=True
+    ):
+        pass
+
+    async with factory() as session:
+        topic = await TopicRepository(session).get(topic_id)
+        assert topic is not None
+        assert topic.compute_profile == "local-docker"
+        assert topic.session_id == "s-affinity"
 
 
 @pytest.mark.anyio
@@ -180,6 +231,83 @@ async def test_error_result_never_becomes_cheeses_reply(client, tmp_path):
     authors = [(b.author, b.kind.value) for b in rows]
     assert ("cheese", "message") not in authors
     assert ("system", "event") in authors
+
+
+class StorageFullAgent(AgentService):
+    """The exact provider-result shape produced when tmux skill staging hits
+    ENOSPC. It must surface once as a platform event, not be retried as an AI
+    service blip."""
+
+    def __init__(self) -> None:
+        super().__init__(model="stub")
+        self.calls = 0
+
+    async def stream_reply(
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
+    ):
+        self.calls += 1
+        yield AgentResult(
+            text=(
+                "tmux 后端启动失败：[Errno 28] No space left on device: "
+                "'/home/nictheboy/cheese-workspaces/private/SKILL.md'"
+            ),
+            session_id=resume_session_id,
+            usage=None,
+            is_error=True,
+        )
+
+
+@pytest.mark.anyio
+async def test_storage_exhaustion_is_a_persistent_platform_event(client, tmp_path):
+    factory = client.test_factory  # type: ignore[attr-defined]
+    agent = StorageFullAgent()
+    svc = ChatService(
+        session_factory=factory,
+        agent=agent,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    frames = [
+        frame
+        async for frame in svc.converse(
+            topic_id=topic_id, author="u", content="做点事", summon=True
+        )
+    ]
+
+    assert agent.calls == 1
+    event = next(frame for frame in frames if frame["type"] == "event_block")
+    assert event["block"]["meta"] == {
+        "event_type": "platform_error",
+        "code": "storage_exhausted",
+        "severity": "error",
+        "title": "运行环境存储空间不足",
+        "retryable": True,
+    }
+    assert "项目文件和已完成的改动都还在" in event["block"]["content"]
+    assert "/home/nictheboy" not in event["block"]["content"]
+    error = next(frame for frame in frames if frame["type"] == "error")
+    assert error == {
+        "type": "error",
+        "code": "storage_exhausted",
+        "message": event["block"]["content"],
+        "persisted": True,
+    }
 
 
 class FlakyAgent(AgentService):

@@ -14,7 +14,7 @@ description: >
 Review changed code against cheese-backend-py project standards.
 
 项目基础规范：@CLAUDE.md
-(git pull 后的检查见 `post-pull` skill;CLAUDE.md ↔ .claude 同步规则见 CLAUDE.md 的 Workflow Preferences。)
+(git pull 后的检查见 `post-pull` skill;迁移/后端测试/e2e 的领域坑见 `.claude/rules/`。)
 
 ## Review Workflow
 
@@ -57,71 +57,71 @@ bash .claude/scripts/check.sh   # 或 task check —— 输出 3 行 PASS/FAIL �
 
 ## Review Checklist
 
-### 1. Architecture & Layering
+### 1. Conventions (canonical copies live in CLAUDE.md — already in context)
 
-```
-Route → Service → Repository → Model
-(backend/app/api/routes/) → (backend/app/domain/**/services.py) → (backend/app/domain/**/repositories.py) → (backend/app/domain/**/models.py)
-```
+Check the diff against every rule in CLAUDE.md's **Architecture / Python
+Conventions / API Design / Datetime / Security** sections. This skill does not
+restate them; CLAUDE.md is the single source of truth.
 
-- Routes: only parameter parsing, DI, call service, return response. No business logic.
-- Services: all business logic, cross-domain coordination, validation beyond schema.
-- Repositories: only data access. No business logic.
-- Models: SQLAlchemy 2.0 style (`mapped_column`, `Mapped[]`).
-
-### 2. Python Conventions
-
-- >=3.11: use `list[str]`, `dict[int, str]`, `X | None`. No `from __future__ import annotations`.
-- No method named `list`, `set`, `dict`, `type`.
-- Async/await consistently; `AsyncSession` for DB.
-- Dependency injection via FastAPI `Depends()`.
-
-### 3. Type Safety
-
-- All function signatures annotated. No `Any` unless external boundary.
-- Pydantic v2 for request/response schemas.
-
-### 4. Testing
+### 2. Testing
 
 - New code needs tests: `tests/unit/` for unit, `tests/integration/` for DB-backed. New API endpoints and services MUST have corresponding tests — untested code is not acceptable.
 - `pytest.mark.anyio` for async tests. `SimpleNamespace` + `AsyncMock` for fakes.
 - Test behavior, not source inspection.
+- Auth helpers / fake-sync / shared-DB rules: `.claude/rules/backend-tests.md`.
 
-### 5. API Design
-
-- RESTful: GET/POST/PUT/DELETE on `/resource`.
-- Pagination: `pageStart` + `pageSize`, return `{data: [...], total: int}`.
-- Errors: use `app.core.errors` classes, not raw `HTTPException`.
-- Auth: `Depends(require_auth_user)` for protected; `Depends(get_auth_user)` for public-aware.
-- Response format: `{"code": 200, "message": "...", "data": {...}}`.
-
-### 6. Security
-
-- Validate all input via Pydantic schemas.
-- SQLAlchemy ORM for queries (parameterized). Raw SQL must use `text()` with bind params.
-- JWT: `Authorization: Bearer <token>`, check `type` claim.
-- No hardcoded secrets; use `app.core.config.settings`.
-
-### 7. Common Pitfalls
+### 3. Common Pitfalls
 
 - **JWT timezone**: use `datetime.now(UTC)` aware — never `.replace(tzinfo=None)`.
 - `AsyncSession` lifecycle handled by FastAPI `Depends(get_db)`.
 - Meilisearch optional; fallback to PG FTS when `MEILISEARCH_URL` not set.
 
-### 8. Reference Code Alignment
+### 4. Reference Code Alignment
 
 When unsure about expected behavior, consult `reference/`:
 - `reference/cheese-backend-nt/` — Kotlin/Spring Boot (primary reference for teams, tasks, spaces).
 - `reference/cheese-backend/` — NestJS/TypeScript (comments, materials, questions).
 - `reference/cheese-frontend/` — Vue frontend (API contract expectations).
 
-### 9. Output Format
+### 5. Common Mistakes — check EVERY diff (each entry is a real incident)
+
+Semantic mistakes lint can't catch. Meta-patterns: **evidence before verdict**
+(don't destroy or swallow error output, don't call something "flaky" without
+the actual error), **existing ≠ wired** (an object/config/PR existing is not
+the mechanism working), **bypassing the standard path breaks things**
+(`--no-verify`, hand-run compose, partial checks).
+
+1. **Behavior/signature changed, test doubles not updated.** Changing a
+   function's signature, return value, or name → grep `backend/tests/` for
+   every fake/mock/monkeypatch of it AND every test calling the affected
+   route. (Three main-reddening incidents in one day.)
+2. **New migration** → exactly one `alembic heads`, chained onto the current
+   head (`.claude/rules/migrations.md`). Don't rely on the CI guard to catch
+   it after the fact.
+3. **Caches/artifacts in the diff.** Sanity-check the staged file COUNT; a
+   cache directory once added 43k files. `git add -A` is never acceptable.
+4. **"Wired up" claims need a consuming call site.** A setting, table, or
+   function that nothing reads is not a feature (a binding table written but
+   never read; a chooser with zero callers; a usage metric that was silently 0
+   for days).
+5. **Gate changes: verify the property, not the artifact.** If the goal is
+   "red CI blocks X", the test is that a red actually blocks — not that a PR/
+   check exists. A gate that skips a step must say so in its output ("green"
+   must state what ran).
+6. **Error evidence must survive.** `capture_output=True` without re-emitting
+   on failure, `>>/dev/null`, or reset/cleanup before failure is recorded —
+   Critical. You can't diagnose what you deleted.
+7. **CI-affecting tests/workflows: confirm the job actually EXECUTED once**
+   (not skipped by scope gates or paths filters). A suite once sat broken for
+   days behind "green" runs that were skips.
+8. **New comparison fields: define the missing-field case.** A staleness/drift
+   check that treats "legacy object lacks the new field" as "drifted" wipes
+   state on every old object (nearly shipped once: it would have silently
+   reset every existing topic's container).
+
+### 6. Output Format
 
 1. **Critical** (must fix): bugs, security, data corruption, API contract mismatch, broken tests.
 2. **Should fix**: missing tests/annotations, architecture violations.
 3. **Nice to have**: performance, clarity.
 4. **Ignore**: style nits (ruff covers), theoretical concerns without evidence.
-
-### 10. Keep in Sync with CLAUDE.md
-
-This skill and `CLAUDE.md` are peer project specifications. When updating conventions, testing rules, timezone settings, or workflow preferences, update BOTH files. They must stay consistent.

@@ -40,7 +40,7 @@ interface ListResponse {
 async function fetchDomainGroupsLogic(
   state: DomainGroupStoreState,
   apiFn: (spaceId: number) => Promise<ListResponse>,
-  explicitSpaceId?: number,
+  explicitSpaceId?: number
 ): Promise<void> {
   const id = explicitSpaceId ?? state.currentSpaceId
   if (!id) return
@@ -56,7 +56,7 @@ async function fetchDomainGroupsLogic(
 // delegates to store.fetchDomainGroups (which internally calls the above logic)
 async function viewFetchDomainGroups(
   state: DomainGroupStoreState,
-  apiFn: (spaceId: number) => Promise<ListResponse>,
+  apiFn: (spaceId: number) => Promise<ListResponse>
 ): Promise<void> {
   if (!state.currentSpaceId) return
   await fetchDomainGroupsLogic(state, apiFn)
@@ -151,7 +151,10 @@ describe('fetchDomainGroups core logic', () => {
 
     it('handles undefined groups → empty array', async () => {
       const state = makeState(10)
-      const apiFn = async () => ({ data: {} as ListResponse })
+      // `{} as ListResponse` here would double-wrap (ListResponse *is* the
+      // {data:...} envelope), and the assertion below only passed because the
+      // extra layer also made `.groups` undefined. Cast the inner payload.
+      const apiFn = async (): Promise<ListResponse> => ({ data: {} as ListResponse['data'] })
 
       await fetchDomainGroupsLogic(state, apiFn)
 
@@ -173,10 +176,7 @@ describe('fetchDomainGroups core logic', () => {
       // First fetch returns updated groups
       const apiFn = async () => ({
         data: {
-          groups: [
-            makeGroup({ id: 1, name: 'Updated' }),
-            makeGroup({ id: 2, name: 'New' }),
-          ],
+          groups: [makeGroup({ id: 1, name: 'Updated' }), makeGroup({ id: 2, name: 'New' })],
         },
       })
       await fetchDomainGroupsLogic(state, apiFn)

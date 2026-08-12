@@ -1,5 +1,7 @@
 """私聊 (spec §1) + 成员页 (spec §7.2)."""
 
+from tests.integration.conftest import chat_ws_url
+
 
 def _project(client) -> str:
     return client.post(
@@ -22,15 +24,8 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     assert all(t["id"] != private["id"] for t in tree)
 
     # It still works as a chat (stub agent replies when summoned).
-    with client.websocket_connect(f"/api/topics/{private['id']}/chat") as ws:
-        ws.send_json(
-            {
-                "type": "message",
-                "content": "设个偏好",
-                "author": "user-1",
-                "summon": True,
-            }
-        )
+    with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "设个偏好", "summon": True})
         frames = []
         while True:
             f = ws.receive_json()
@@ -40,9 +35,13 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     assert "assistant_block" in frames
 
 
-def test_member_summary(client):
+def test_member_summary(client, bearer):
     pid = _project(client)
-    client.post(f"/api/projects/{pid}/members", json={"user_handle": "user-1"})
+    client.post(
+        f"/api/projects/{pid}/members",
+        json={"user_handle": "user-1"},
+        headers=bearer("user-1"),  # the project owner
+    )
     client.post(
         "/api/topics",
         json={"project_id": pid, "title": "我开的话题", "created_by": "user-1"},

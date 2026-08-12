@@ -25,13 +25,25 @@ class TopicOut(BaseModel):
     kind: TopicKind
     status: TopicStatus
     created_at: datetime
+    # The topics ROW's mtime: it moves when the topic's own fields change
+    # (title, status, session id), NOT when a block lands in it. For "was there
+    # activity here", read `last_activity_at`.
     updated_at: datetime
+    # 最后活动时间: the newest block in the topic, falling back to its creation.
+    # Derived per query, so — like `running` — only the endpoints that ask for
+    # it (list_topics/get_topic) fill it in; elsewhere it stays None.
+    last_activity_at: datetime | None = None
     # Lifecycle markers (spec §6.3): who accepted, when archived, and — for an
     # upgraded topic — which block it grew from (for the 活引用 back-link).
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     archived_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
+    # 本轮是否在跑 (TurnRunner, in-memory — separate from `status`/归档: a topic
+    # can be "active" and idle, or "active" and mid-turn). False unless the
+    # caller explicitly fills it in (see list_topics/get_topic) — the ORM model
+    # has no such attribute, so from_attributes just leaves the default.
+    running: bool = False
 
 
 class UpgradeBlockIn(BaseModel):
@@ -53,3 +65,24 @@ class ConclusionIn(BaseModel):
 class DocEditIn(BaseModel):
     content: str
     author: str = "anonymous"
+
+
+class BackgroundTaskIn(BaseModel):
+    """`cheese await` registering a command it is about to run in its sandbox."""
+
+    command: str = Field(min_length=1, max_length=4000)
+    label: str = Field(default="", max_length=120)
+    # Wall-clock ceiling the sandbox-side child enforces; the wake token is
+    # minted to outlive it. Bounds are re-checked in awaited_tasks.register.
+    timeout_s: int = 3600
+    # Where the child is writing the command's full output, so the wake can point
+    # at it (the tail alone is bounded).
+    log_path: str = Field(default="", max_length=500)
+
+
+class BackgroundTaskDoneIn(BaseModel):
+    """The detached child reporting how the command ended."""
+
+    exit_code: int
+    tail: str = ""
+    duration_s: float = 0.0

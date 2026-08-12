@@ -8,16 +8,16 @@ import uuid
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from app.core.tokens import mint_session_token
 from app.domain.agent.device_hub import HubScreen, device_hub
 from tests.conftest import seed_user
+from tests.integration.conftest import session_token
 
 
 def _login(client, handle: str) -> str:
     # POST /api/users/login (cheesex Phase-0 handle login) was retired in the fusion
     # merge (unify P3). The 现场 viewer authz keys off the token's ``sub`` (= handle),
     # so mint a handle-scoped session token directly.
-    return mint_session_token(handle=handle, user_id=None)
+    return session_token(handle)
 
 
 def _login_real(client, handle: str) -> str:

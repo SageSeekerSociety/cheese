@@ -10,4 +10,6 @@ find /usr/share/nginx/html/assets -name '*.js' -exec sed -i \
   -e "s|__VITE_CONNECTOR_WS_BASE__|${VITE_CONNECTOR_WS_BASE:-}|g" \
   {} +
 
+/usr/local/bin/check-static-assets /usr/share/nginx/html
+
 exec "$@"

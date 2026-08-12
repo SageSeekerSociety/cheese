@@ -14,7 +14,10 @@ tmp_backend.log
 tmp_frontend.log
 
 # ---- Tooling / local agent config ----
-.claude/
+# .claude/ IS tracked (skills/rules/scripts are team-shared specs); only the
+# machine-local pieces are ignored. A blanket `.claude/` here silently blocked
+# new tracked files while modifications to already-tracked ones still staged.
+.claude/settings.local.json
 
 # ---- Python ----
 __pycache__/
@@ -27,6 +30,11 @@ __pycache__/
 
 # ---- Agent-backed project repos (runtime git workspaces) ----
 .workspaces/
+
+# Throwaway probe repos/dirs 芝士 builds to experiment against git/jj. One of
+# these (.probe-jj/) rode a 3-file change into main as 25 extra files; the glob
+# covers the whole family, not just that one name.
+.probe-*/
 
 # ---- Node ----
 node_modules/
@@ -44,3 +52,18 @@ e2e/node_modules/
 
 tmp/
 e2e/tmp/
+
+# Misc
+new.md
+.DS_Store
+# Cloned reference repos (like /reference/)
+/awesome-agent-skills/
+
+# Scratch / working dir (never commit; may hold sensitive material)
+tmp/
+
+# pnpm content-addressable store — a cache, never belongs in git
+.pnpm-store/
+
+# playwright-cli byproducts (snapshots, screenshots, console logs) — never commit
+.playwright-cli/

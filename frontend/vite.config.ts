@@ -1,7 +1,6 @@
 // Plugins
 import { fileURLToPath, URL } from 'node:url'
 
-import legacy from '@vitejs/plugin-legacy'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 import ViteFonts from 'unplugin-fonts/vite'
@@ -11,6 +10,7 @@ import viteCompression from 'vite-plugin-compression'
 import { prismjsPlugin } from 'vite-plugin-prismjs'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
+import { configDefaults } from 'vitest/config'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -42,9 +42,6 @@ export default defineConfig({
       theme: 'solarizedlight',
       css: true,
     }),
-    legacy({
-      targets: ['defaults', 'not IE 11'],
-    }),
     viteCompression(),
   ],
   define: { 'process.env': {} },
@@ -57,8 +54,31 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      // Mirror the production nginx gateway (frontend/nginx.conf): `location /api/
+      // { proxy_pass http://backend:8081/; }` strips exactly one `/api` from every
+      // request. The frontend leans on that — api.ts uses BASE='/api/api' for 2.0
+      // routes, and the 知是 1.0 layer rides VITE_API_BASE_URL=/api — so calls
+      // arrive here double- (`/api/api/*`) or single- (`/api/users/*`) prefixed and
+      // must lose exactly one `/api` to hit the real backend route.
+      '/api': {
+        target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799',
+        changeOrigin: true,
+        ws: true,
+        // Exception: the two iframe proxies — the ttyd terminal
+        // (/api/topics/<id>/terminal/live/) and the running-app preview
+        // (/api/topics/<id>/app/) — are loaded verbatim by an iframe that resolves
+        // its assets/WebSocket against that path, and the backend serves them at
+        // that exact /api-prefixed path, so they must pass through unrewritten
+        // (see routes/terminal.py, routes/app_preview.py — and nginx.conf, which
+        // carries the same exception). Everything else loses one /api like nginx.
+        rewrite: (path) =>
+          /^\/api\/topics\/[^/]+\/(terminal|app)(\/|$)/.test(path) ? path : path.replace(/^\/api/, ''),
+      },
+      // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer
+      // (e.g. SRP login GET /users/auth/methods/:username): reach the backend directly.
+      '/users': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
     },
   },
   build: {
@@ -139,6 +159,15 @@ export default defineConfig({
     // 使用 happy-dom 模拟 DOM
     // 这需要你安装 happy-dom 作为对等依赖（peer dependency）
     environment: 'happy-dom',
+    // Vuetify 的组件包自带 .css 副作用导入，被 externalize 掉就会以
+    // "Unknown file extension .css" 崩在收集阶段——挂真实组件的测试需要它走
+    // Vite 的 transform 管线。
+    server: { deps: { inline: ['vuetify'] } },
+    // `scripts/` is node:test territory (`pnpm run test:ratchet`), not vitest's.
+    // Its *.test.mjs files match vitest's default include glob, and vitest fails
+    // the whole run on them with "No test suite found" — node:test registers its
+    // cases through `node:test`, which vitest's collector never sees.
+    exclude: [...configDefaults.exclude, 'scripts/**'],
   },
   optimizeDeps: {
     include: ['editorjs-parser'],

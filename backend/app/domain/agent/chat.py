@@ -13,20 +13,25 @@ never hold a transaction open across the model round-trip.
 import asyncio
 import logging
 import re
+import shutil
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.core.errors import NotFoundError
+from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
 from app.domain.agent import event_spool
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
+from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
+from app.domain.agent.market import subscription_model_alias
+from app.domain.agent.platform_failures import classify_platform_failure
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
@@ -37,20 +42,27 @@ from app.domain.agent.service import (
     AgentToolUse,
     AgentUsage,
 )
-from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_skills
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
+from app.domain.agent.stages import resolve_stage, stage_scenario
+from app.domain.block.models import AuthorType, Block, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
-from app.domain.memory.models import MemoryScope
-from app.domain.memory.store import memory_store
+from app.domain.idempotency import store as idem
+from app.domain.idempotency.keys import action_key
+from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.memory.models import MemoryScope, agent_project_scope_id
+from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import TopicKind
-from app.domain.topic.repositories import TopicRepository
-from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.repositories import AcceptCardRepository
+from app.domain.team.repositories import TeamRepository
+from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.workspace import service as ws
@@ -243,18 +255,32 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 
 
 def _resolve_compute_id(
-    project_settings: dict | None, topic_compute_profile: str | None = None
+    project_settings: dict | None,
+    topic_compute_profile: str | None = None,
+    team_compute_profile: str | None = None,
 ) -> str | None:
     """The compute pool a turn runs on (execution-architecture v4 会话级选择): the
-    topic's own selection wins, else the project's sticky default, else None (the
-    ComputePool default). An id that isn't deployed here is ignored by
-    ``ComputePool.select`` and degrades to the default — never breaks a turn."""
+    topic's own selection wins, else the project's sticky memory, then the team's
+    default, else None (the ComputePool default). An id that isn't deployed here
+    is ignored by ``ComputePool.select`` and degrades to the default — never breaks
+    a turn."""
     if topic_compute_profile:
         return topic_compute_profile
-    return (project_settings or {}).get("compute_profile")
+    return (project_settings or {}).get("compute_profile") or team_compute_profile
+
+
+async def _team_compute_profile(session: AsyncSession, project) -> str | None:
+    """Load the owning team's default without making Project own the setting."""
+    if project is None or project.team_id is None:
+        return None
+    team = await TeamRepository(session).get_by_id(project.team_id)
+    return team.compute_profile if team is not None else None
 
 
 def _transient_provider_error(result: AgentResult) -> bool:
+    if classify_platform_failure(result.text) is not None:
+        # Retrying cannot create disk space and can make pressure worse.
+        return False
     rl = result.rate_limit or {}
     if rl.get("status") == "rejected":
         return False  # seat limit — resets hours later, retrying just burns turns
@@ -294,6 +320,138 @@ def _chipify_paths(fact: str) -> str:
     return _BARE_PATH_RE.sub(r"<&\1>", fact)
 
 
+# Open (non-final) accept-card statuses, worth telling the agent about at turn
+# start — a card in one of these states usually implies "there is follow-up
+# work or a wait the agent should know it's in".
+_OPEN_CARD_STATUSES = (
+    AcceptStatus.pending,
+    AcceptStatus.pending_gate,
+    AcceptStatus.gate_failed,
+    AcceptStatus.gate_blocked,
+    AcceptStatus.conflict,
+    # 两阶段采纳: `pr_open` 是 open 状态里最容易被漏掉的一个 —— 卡被采纳了但
+    # 话题没归档、容器没停、活还没干完。不在这里就等于芝士在 PR 迭代期间
+    # 完全收不到"你现在有一条通往 GitHub 的通道"这个事实。
+    AcceptStatus.pr_open,
+)
+
+_OPEN_CARD_HINTS = {
+    AcceptStatus.pending: "闸门已过，等 {reviewer} 采纳",
+    AcceptStatus.pending_gate: "闸门检查进行中",
+    AcceptStatus.gate_failed: (
+        "闸门检查未过——用 `cheese status` 看失败输出，修复后重新递卡"
+    ),
+    AcceptStatus.gate_blocked: (
+        "闸门检查没跑成（不是没通过，是没跑起来）——用 `cheese status` 看输出，"
+        "把检查环境弄起来再重新递卡"
+    ),
+    AcceptStatus.conflict: "采纳时发现合并冲突，待处理",
+    AcceptStatus.pr_open: (
+        "已被 {reviewer} 采纳并开出 PR，正在等 CI——继续在本分支提交即可，"
+        "平台会自动重推到 PR"
+    ),
+}
+
+
+def _workspace_disk(root: str) -> tuple[int, int] | None:
+    """(free, total) bytes of the workspace filesystem; None when the root
+    doesn't exist (fresh deploy, unit tests without a workspace)."""
+    try:
+        du = shutil.disk_usage(root)
+    except OSError:
+        return None
+    return du.free, du.total
+
+
+_PROGRESS_MARK = {"completed": "x", "in_progress": "~", "pending": " "}
+
+
+def _progress_lines(items: list[dict]) -> list[str]:
+    """进度层 (#187): the checklist this topic's work left behind, as prompt text.
+
+    This is the one thing a fresh machine cannot reconstruct from the repo. Code
+    survives in git, conclusions survive in the doc and the decision log, but
+    "which of the five things am I on" only ever lived in the dead turn's stream.
+    So it is stated here as a fact about the topic, not as memory — see
+    TopicProgress's docstring for why the two must not be merged.
+
+    The instruction to re-list finished items when building a new checklist is
+    load-bearing: the stored row is overwritten by the next turn's first
+    TaskCreate, so a plan that silently drops what is already done would erase it.
+    """
+    if not items:
+        return []
+    lines = ["- 上次的任务清单（跨轮、跨机器保留下来的进度，不是这一轮新建的）："]
+    for item in items:
+        mark = _PROGRESS_MARK.get(str(item.get("status", "")), " ")
+        subject = str(item.get("subject", "")).strip() or "（任务）"
+        lines.append(f"    - [{mark}] {subject}")
+    lines.append(
+        "  已完成的别重做，接着没做完的往下干。**重新建清单时把已完成的也列进去"
+        "并标成 completed**——清单会覆盖上面这份，只列剩下的等于把做过的抹掉。"
+    )
+    return lines
+
+
+def _turn_meta_lines(
+    *,
+    budget_s: float,
+    activity_aware: bool,
+    is_resume: bool,
+    disk: tuple[int, int] | None,
+    open_cards: list[AcceptCard] | None,
+    progress: list[dict] | None = None,
+) -> list[str]:
+    """盲飞防护: the run facts an agent has no other way to see — its own time
+    budget, whether it's a continuation, disk headroom, and where this topic's
+    accept cards stand. Plain bullet lines so the prompt stays small.
+
+    ``activity_aware`` (the tmux backend, turn 活跃度检测): that backend no
+    longer dies on a fixed minute count — only real idleness (checked, then
+    confirmed dead) or a many-hours hard ceiling ends it — so a countdown-style
+    "到点会被中断" line is both inaccurate and was observed making the agent
+    rush (dev, 2026-08-08: shortened verification to "save time" against a
+    deadline that was only ever meant as a wedged-turn safety net)."""
+    if activity_aware:
+        lines = [
+            "- 这轮跑在有活跃度检测的后端上：没有固定时长倒计时，只要还在"
+            "产生动静（工具调用、终端输出）就不会被打断，真的卡死了才会兜底"
+            "结束。长活照样要边做边落盘/提交，别把成果都压在最后一步。"
+        ]
+    else:
+        minutes = max(1, int(budget_s // 60))
+        lines = [
+            f"- 时间预算：本轮最多约 {minutes} 分钟，到点会被平台中断"
+            "（之后自动续跑一次）。长活边做边落盘/提交，别把成果都压在最后一步。"
+        ]
+    if is_resume:
+        lines.append(
+            "- 本轮是自动续跑：上一轮被中断后接着跑。"
+            "先确认上一轮做到哪了再继续，别重做。"
+        )
+    # 进度层: right after the resume line on purpose — that line tells the agent
+    # to work out where it got to, and until now the platform gave it nothing to
+    # work that out FROM. It is listed for every turn, not just resumes: a topic
+    # picked up days later on a different machine has the same problem.
+    lines.extend(_progress_lines(progress or []))
+    if disk is not None:
+        free_b, total_b = disk
+        if total_b > 0:
+            used_pct = round((total_b - free_b) * 100 / total_b)
+            line = f"- 工作区磁盘：可用 {free_b / 2**30:.1f}G（已用 {used_pct}%）。"
+            if used_pct >= 90:
+                line += "空间紧张——先清理自己产生的临时文件再写大文件。"
+            lines.append(line)
+    for card in open_cards or []:
+        hint = _OPEN_CARD_HINTS.get(card.status)
+        if hint:
+            lines.append(
+                "- 本话题验收卡：" + hint.format(reviewer=f"@{card.reviewer_handle}")
+            )
+    lines.append("- 要看完整平台状态（验收卡/闸门输出/额度），运行 `cheese status`。")
+    return lines
+
+
 def _build_system_prompt(
     base: str,
     skills: str,
@@ -303,6 +461,9 @@ def _build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
+    turn_meta: list[str] | None = None,
+    stage_guide: str | None = None,
+    memories_omitted: int = 0,
 ) -> str:
     parts = [base]
     if untitled:
@@ -321,11 +482,26 @@ def _build_system_prompt(
         parts.append(f"## 你的专家角色\n{role}")
     if skills:
         parts.append(skills)
+    if stage_guide:
+        # 按阶段渐进式披露: the flow knowledge for THIS point in the topic's
+        # lifecycle only. Statically injected (like every other skill) — the
+        # model never gets to decide whether to load it, which is the whole
+        # reason this isn't a lazily-read Agent Skill (see stages.py).
+        parts.append(
+            "## 当前阶段的操作说明（平台按本话题所处的流程阶段自动选出，"
+            "只给你这一段）\n" + stage_guide
+        )
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         parts.append(
             "## 项目话题（交叉引用某个话题/它的文档时，在标题前加 @，如 "
-            "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n" + lines
+            "`@搭建推荐算法原型`——会渲染成可点的「#标题」链接）\n"
+            "下面**只列当前活跃的话题**。项目里还有已归档的话题，它们照常存在、"
+            "内容也照常可读，只是不在这里列出来；**没列出来 ≠ 不存在**。需要找"
+            "它们时自己查（返回全部话题，含 archived 的标题和 id）：\n"
+            '`cheese api GET "/topics?project_id=$CHEESE_PROJECT"`\n'
+            "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
+            + lines
         )
     if roster:
         lines = "\n".join(
@@ -342,9 +518,25 @@ def _build_system_prompt(
             "## 当前话题的活文档（这是最新状态；用户可能编辑了它，"
             "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n" + doc
         )
-    if memories:
+    if memories or memories_omitted:
         facts = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
-        parts.append(f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}")
+        block = f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}"
+        if memories_omitted:
+            # 溢出必须可见: what does not fit is stated, never dropped in
+            # silence. A reader who cannot tell "nothing was stored" from
+            # "the oldest fell off the end" stops trusting memory entirely —
+            # and stops asking for the part it can still get.
+            block += (
+                f"\n\n> ⚠️ 上面只是最近的 {len(memories)} 条，另有 **{memories_omitted} "
+                "条更早的记忆没放进来**（放不下，不是不存在）。**没列出来 ≠ 不存在**——"
+                '要用到早期约定/踩过的坑时，用 `cheese recall "<关键词>"` 现查；'
+                "一次没查到也不等于没有，换个说法、用更短的词再试一次。"
+            )
+        parts.append(block)
+    if turn_meta:
+        parts.append(
+            "## 本轮运行环境（平台元信息，非用户输入）\n" + "\n".join(turn_meta)
+        )
     return "\n\n".join(parts)
 
 
@@ -369,6 +561,48 @@ _TOPIC_REF_RE = re.compile(r"<#([0-9a-fA-F-]{8,})>")
 # from human input or the agent's output — see CLAUDE.md).
 PLACEHOLDER_TITLE = "新话题"
 
+
+def _topic_ref_lists(
+    topics: list[Topic], *, exclude_id: uuid.UUID
+) -> tuple[list[dict], list[dict]]:
+    """一次推导出两份话题列表：`(全量解析表, 渲染进 prompt 的子集)`。
+
+    故意成对返回：这两份**必须**从同一批话题推导，且**必须**保持不同。全量那份
+    喂给 `expand_mention_names`（`@标题` → `<#id>` 的解析表，含已归档话题）；子集
+    那份只喂给 `_build_system_prompt`。合成一份就会把"少注入"变成"少了引用能力"
+    ——用户自己打 `@某个已归档话题` 会不再变成链接。
+    """
+    visible = [t for t in topics if t.id != exclude_id and t.kind != TopicKind.root]
+    return [{"id": str(t.id), "title": t.title} for t in visible], _prompt_topic_refs(
+        visible
+    )
+
+
+def _prompt_topic_refs(topics: list[Topic]) -> list[dict]:
+    """渐进式披露：从全量话题里挑出**值得渲染进 system prompt** 的那一小撮。
+
+    只影响 prompt 里列出来的那一段；`expand_mention_names` 拿到的仍是全量列表，
+    所以过滤掉的话题（含已归档的）用 `@标题` 照样解析得出 <#id> 链接——少注入是
+    纯赚的，不损失任何引用能力。
+
+    剔除三类：
+    - 已归档：本项目实测占注入量的 74%，而引用一个几周前归档的话题几乎没有价值；
+      需要时 agent 自己查（prompt 那段里给了查法）。
+    - 未命名（标题就是占位符）：按标题根本引用不了。
+    - 同名：`expand_mention_names` 对同名标题只解析第一个（mentions.py 的 `seen`
+      去重），其余会**静默指向错的那一个**。所以同名的**全部剔除**而不是留一个
+      ——留一个等于在 prompt 里推荐一个会指错的引用；全部不列，它们仍可通过查询
+      拿到 id 后用 <#id> 精确引用。
+    """
+    live = [
+        t
+        for t in topics
+        if t.status != TopicStatus.archived and t.title != PLACEHOLDER_TITLE
+    ]
+    titles = Counter(t.title for t in live)
+    return [{"id": str(t.id), "title": t.title} for t in live if titles[t.title] == 1]
+
+
 # 分身开工首轮的内部指令 (split auto-kickoff)。Prompt-only: it never appears as a
 # message; what the humans see is the 分身's own opening, generated from the task
 # brief preset as the topic's living doc (语义内容由 AI 生成 — see CLAUDE.md).
@@ -383,11 +617,35 @@ KICKOFF_PROMPT = (
 )
 
 
-def conclusion_digest_prompt(conclusion_message: str) -> str:
+def conclusion_digest_prompt(
+    conclusion_message: str,
+    *,
+    card_id: str | None = None,
+    deadline: datetime | None = None,
+) -> str:
     """The parent's wake-up instruction when a sub-topic returns its conclusion
     (结论回流唤醒父话题 — the return leg of the subagent loop: in Claude Code
     the parent resumes when the Task tool result arrives). Prompt-only; the
-    conclusion text is copied verbatim, nothing is derived from it."""
+    conclusion text is copied verbatim, nothing is derived from it.
+
+    结论卡·阶段一: when a card was filed, the parent is told how to settle it —
+    and, more importantly, that doing NOTHING is 采信. The prompt is only half
+    the mechanism; the platform accepts the card when this turn ends whatever
+    the model does (see conclusion.services.settle_turn_cards)."""
+    card_note = ""
+    if card_id is not None:
+        by = f"（{deadline:%H:%M} UTC 前）" if deadline is not None else ""
+        card_note = (
+            "\n\n---\n"
+            f"这条结论挂着一张结论卡 `{card_id}`。**默认采信**：你这一轮结束时"
+            f"它就自动采信、子话题随之归档{by}，你不需要做任何事。\n"
+            "只有两种情况才动它：\n"
+            "- 缺一条关键证据、而子话题的上下文还热着 → "
+            f'`cheese conclusion need-evidence {card_id} "要补什么"`'
+            "（每张卡只能打回一次）；\n"
+            "- 这个结论要以某个人的名义做出去 → "
+            f'`cheese conclusion escalate {card_id} "要谁拍什么板"`。'
+        )
     return (
         "一个子话题刚回流了结论（原文如下，也已织进本话题活文档末尾）。"
         "请消化它：\n"
@@ -396,7 +654,7 @@ def conclusion_digest_prompt(conclusion_message: str) -> str:
         "2. 判断下一步：这个结论解锁了什么？需要继续拆活就拆（split 带 --brief），"
         "需要人拍板/验收就发通知或验收卡，整件事收尾了就说明结论。\n"
         "3. 在对话里用一两句话向大家报信（结论已在文档里，别复述全文）。\n\n"
-        f"---\n{conclusion_message}"
+        f"---\n{conclusion_message}{card_note}"
     )
 
 
@@ -414,7 +672,17 @@ _expand_mention_names = expand_mention_names
 def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[str]]:
     """Resolve <@handle> mention tokens against the roster. Returns
     (resolved_handles, unresolved_handles); unresolved = a token whose handle is
-    not a member (a hallucinated handle → the platform flags it)."""
+    not a member (a hallucinated handle → the platform flags it).
+
+    An EMPTY roster means "this topic exposes no member list" (私聊, or a project
+    carrying no explicit member rows), not "nobody is a member": with no list to
+    check against a concrete handle can be neither confirmed nor refuted, so it
+    is left out of BOTH lists — no notification, and no false 「项目里没有这个
+    成员」 accusation against a real teammate.
+
+    ``@all``/``@here`` are unaffected by any of that: they are expanded from the
+    TOPIC's roster by :meth:`_notify_mentions` (a DB read), never from this list,
+    so an empty list must not silence a broadcast."""
     resolved: list[str] = []
     unresolved: list[str] = []
     if not text:
@@ -423,12 +691,36 @@ def _resolve_mentions(text: str, roster: list[dict]) -> tuple[list[str], list[st
     for h in dict.fromkeys(_MENTION_RE.findall(text)):
         # @all/@here are reserved broadcast tokens — always "resolved" (expanded
         # to the roster by _notify_mentions), never flagged as a bad handle.
-        (resolved if h in _SPECIAL_MENTIONS or h in handles else unresolved).append(h)
+        if h in _SPECIAL_MENTIONS or h in handles:
+            resolved.append(h)
+        elif roster:
+            unresolved.append(h)
     return resolved, unresolved
 
 
 def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
+
+
+# How a platform-initiated turn announces itself. A resume nudge, a 分身's
+# kickoff and a returned conclusion are NOT anyone speaking, and until now they
+# reached 芝士 as bare text indistinguishable from a person's message. Claude
+# Code frames its own non-user input the same way ("The user sent a new message
+# while you were working:" for a human, a peer marker for another session); this
+# is the platform's equivalent for the one channel it owns.
+PLATFORM_NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话："
+
+
+def platform_prompt(content: str) -> str:
+    return f"{PLATFORM_NOTICE}\n{content}"
+
+
+def _strip_platform_notice(text: str) -> str:
+    """Neutralize the platform marker inside HUMAN text, so a person cannot type
+    a message that reads as a platform instruction. The marker is the one thing
+    in the prompt that claims institutional authority, so it has to be
+    unforgeable from the content side."""
+    return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
 
 
 def _prompt_line(b) -> str:
@@ -441,7 +733,39 @@ def _prompt_line(b) -> str:
             f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
             f"它同时存在你工作目录的 {b.content}）"
         )
-    return f"[{b.author}]: {b.content}"
+    return f"[{b.author}]: {_strip_platform_notice(b.content)}"
+
+
+def _pending_human_blocks(history: list[Block]) -> list[Block]:
+    """The human messages/attachments no agent turn has read into a prompt yet.
+
+    轮次边界按**归属**划，不按位置划：一条在轮次运行中到达的人类消息，created_at
+    排在那轮 AI 回复之前，所以"最后一条 AI 消息之后"这个窗口会把它切掉 —— 而且
+    切掉就再也捡不回来了（那个下标只会往前走）。这里改成挑「没被任何一轮盖过
+    consumed 戳」的块，戳由跑完的轮次自己盖上（BlockRepository.mark_consumed）。
+
+    `history` 已按 created_at 升序。
+    """
+    watermark = -1  # 最后一个已被消费的人类块的位置
+    for i, b in enumerate(history):
+        if _is_human_input(b) and consumed_turn(b) is not None:
+            watermark = i
+    if watermark < 0:
+        # 兼容老数据：戳是这次改动才有的，改动之前的块一个都没有。一个戳都没有
+        # 的话题退回旧语义（最后一条 AI 消息之前的算已读），否则上线后每个老话题
+        # 的第一轮都会把整段历史重放一遍。盖过一次戳之后就永远走上面那条线。
+        for i, b in enumerate(history):
+            if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
+                watermark = i
+    return [b for b in history[watermark + 1 :] if _is_human_input(b)]
+
+
+def _is_human_input(b: Block) -> bool:
+    """A block that carries something a person said to 芝士 this turn."""
+    return b.author_type == AuthorType.human and b.kind in (
+        BlockKind.message,
+        BlockKind.attachment,
+    )
 
 
 # What an exhausted relay balance looks like coming back from newapi. It arrives
@@ -479,6 +803,9 @@ class ChatService:
     ):
         self._sessions = session_factory
         self._base_prompt = base_system_prompt
+        # For the turn-meta disk line only; sandbox mounting still goes through
+        # the compute pool below.
+        self._workspace_root = workspace_root
         # Compute side of the two-pool model: a provider owns sandbox creation +
         # turn execution + workspace checkpointing (design §3/v3, review R2). The
         # turn path talks to the pool, never to a sandbox dict. Defaults to a local
@@ -509,6 +836,11 @@ class ChatService:
     def session_factory(self) -> async_sessionmaker:
         return self._sessions
 
+    def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
+        """`cheese status`'s idle-suspect signal (turn 活跃度检测) — see
+        `ComputePool.tmux_activity_status`."""
+        return self._compute.tmux_activity_status(topic_id)
+
     def _lock_for(self, topic_id: uuid.UUID) -> asyncio.Lock:
         lock = self._topic_locks.get(topic_id)
         if lock is None:
@@ -529,14 +861,20 @@ class ChatService:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
         block persists + broadcasts BEFORE the lock, so a post never queues
         behind a running agent turn. turn_id groups this turn's blocks (R4);
         reply_to threads this message under another (B3); attachments are
-        uploaded worktree images this message carries (图片输入)."""
+        uploaded worktree images this message carries (图片输入).
+
+        ``continuation_id`` is the logical unit of work this turn belongs to — a
+        turn and every auto-resume of it share one, so a message the interrupted
+        attempt already posted is not posted again (④)."""
         turn_id = turn_id or uuid.uuid4()
+        continuation_id = continuation_id or turn_id
         if is_resume or nudge_event:
             # System-initiated turn (自动续跑 / 评论叫醒 / 冲突调度…): no human
             # spoke — the opener is a SYSTEM event in the 现场, and the
@@ -570,7 +908,7 @@ class ChatService:
             # on the summoning message the moment its turn is underway — a
             # deterministic ack. Only a real human summon gets it: a resume /
             # nudge / kickoff turn has no user block and skips this branch.
-            ack = await self._ack_summon(user_block_id)
+            ack = await self._ack_summon(user_block_id, topic_id)
             if ack is not None:
                 yield {"type": "reaction", **ack}
 
@@ -581,6 +919,7 @@ class ChatService:
                 turn_id=turn_id,
                 user_block_id=user_block_id,
                 is_resume=is_resume,
+                continuation_id=continuation_id,
             ):
                 yield frame
 
@@ -607,7 +946,12 @@ class ChatService:
                 yield frame
 
     async def post_system_event(
-        self, topic_id: uuid.UUID, content: str, turn_id: uuid.UUID | None = None
+        self,
+        topic_id: uuid.UUID,
+        content: str,
+        turn_id: uuid.UUID | None = None,
+        *,
+        meta: dict | None = None,
     ) -> dict | None:
         """Persist a system event into the 现场 timeline (e.g. a turn failure):
         visible in the flow, scrolls with it, and survives a reload — unlike a
@@ -626,6 +970,7 @@ class ChatService:
                 content=content,
                 kind=BlockKind.event,
                 turn_id=turn_id,
+                meta=meta,
             )
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
@@ -755,20 +1100,68 @@ class ChatService:
             await session.commit()
         return payloads, anchor_id
 
-    async def _ack_summon(self, user_block_id: uuid.UUID) -> dict | None:
+    async def _ack_summon(
+        self, user_block_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> dict | None:
         """Add 芝士's ✅ receipt to the summoning user message (idempotent) and
         return the WS reaction payload. Best-effort: a failed receipt must
         never kill the turn."""
         try:
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
-                await blocks.add_reaction_if_absent(user_block_id, "✅", CHEESE_AUTHOR)
+                await blocks.add_reaction_if_absent(
+                    user_block_id, "✅", await self._agent_handle(session, topic_id)
+                )
                 reactions = await blocks.reactions_for_block(user_block_id)
                 await session.commit()
             return {"block_id": str(user_block_id), "reactions": reactions}
         except Exception:  # noqa: BLE001 — the turn matters more than the ack
             logger.exception("failed to ✅-ack block %s", user_block_id)
             return None
+
+    async def _recall_agent_memories(
+        self,
+        memory,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        agent_handle: str,
+    ) -> RecallResult:
+        """What this 芝士 remembers inside this project.
+
+        Reads its own per-agent scope first, then the legacy shared ``project``
+        pool. Writes only ever go to the per-agent scope, so the pool is a
+        read-only tail of what was learned before memory was split per agent —
+        rooms that accumulated it keep it, and nothing new lands there.
+
+        Returns what did *not* fit alongside what did: both pools are capped,
+        and a cap nobody is told about is how memory quietly stops existing.
+        """
+        return await recall_pools(
+            memory,
+            [
+                (
+                    MemoryScope.agent_project,
+                    agent_project_scope_id(project_id, agent_handle),
+                ),
+                (MemoryScope.project, str(project_id)),
+            ],
+        )
+
+    async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
+        """The handle 芝士 authors under in this topic.
+
+        Resolved from the roster's execution bindings rather than the fixed
+        ``cheese`` string, so a room hosting more than one agent attributes each
+        message to the one that wrote it — normally this topic's own 分身.
+
+        A turn is also where a room seeded before 分身独立身份 swaps its shared
+        ``cheese`` seat for that 分身: doing it here means every live room migrates
+        without a data migration, and one that never runs a turn never needed it.
+        """
+        members = TopicMemberService(session)
+        await members.migrate_shared_agent_seat(topic_id)
+        return await members.resolve_agent_handle(topic_id)
 
     async def _persist_assistant_message(
         self,
@@ -778,29 +1171,57 @@ class ChatService:
         text: str,
         turn_id: uuid.UUID | None,
         reply_to: uuid.UUID | None,
-        roster: list[dict],
+        roster: list[dict] | None,
         topic_refs: list[dict],
         eid: str | None = None,
         backfilled: bool = False,
-    ) -> dict:
+        continuation_id: uuid.UUID | None = None,
+    ) -> dict | None:
         """Persist ONE discrete 芝士 message (Slack-style): committed the moment
         the SDK reports the AssistantMessage complete, so a turn lands as
         several complete messages instead of one growing streamed bubble.
         Handles the same mention canonicalization / notify / refs as before.
         ``eid`` (hooks path) is stamped into meta so the spool reconcile can
-        dedup a backfilled copy against this live one."""
-        text = _expand_mention_names(text, roster, topic_refs)
+        dedup a backfilled copy against this live one.
+
+        Returns None when ``continuation_id`` says this exact message already
+        landed in an earlier attempt at the same work (④ 自动续跑): the resumed
+        turn re-narrating "我先看一下 X" must not post a second copy of it. The
+        caller treats None as "nothing to broadcast"."""
         meta: dict | None = None
         if eid:
             meta = {"eid": eid}
         if backfilled:
             meta = {**(meta or {}), "backfilled": True}
         async with self._sessions() as session:
+            # Claim BEFORE writing, in the SAME session: the key and the block
+            # commit together, so "key present" and "message posted" cannot
+            # disagree no matter where the process dies.
+            if continuation_id is not None and not await idem.claim(
+                session,
+                action_key(continuation_id, "message", text),
+                action="message",
+                scope_id=str(topic_id),
+            ):
+                return None
             blocks = BlockRepository(session)
+            topic = await TopicRepository(session).get(topic_id)
+            if roster is None:
+                # The reconcile/backfill caller holds no roster. Load it here
+                # instead of passing []: [] means 私聊 (no member list at all),
+                # and conflating the two flagged every @ in a recovered message
+                # as a non-member while silently dropping its notification.
+                roster = (
+                    []
+                    if topic is None or topic.is_private
+                    else await ProjectRepository(session).list_members(project_id)
+                )
+            text = _expand_mention_names(text, roster, topic_refs)
+            author = await self._agent_handle(session, topic_id)
             block = await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
-                author=CHEESE_AUTHOR,
+                author=author,
                 author_type=AuthorType.ai,
                 content=text,
                 kind=BlockKind.message,
@@ -808,30 +1229,51 @@ class ChatService:
                 turn_id=turn_id,
                 meta=meta,
             )
-            topic = await TopicRepository(session).get(topic_id)
             # <@handle> mentions in 芝士's message → strong notify (the token is
             # the single source of truth: what's shown = who's notified).
             # Hallucinated handles get flagged in 现场, never silently no-op.
             if topic is not None:
                 resolved, unresolved = await self._notify_mentions(
-                    session, topic, CHEESE_AUTHOR, text, roster
+                    session, topic, author, text, roster
                 )
                 refs = [f"user:{h}" for h in resolved] + _topic_refs(text)
                 if refs:
                     block.refs = refs
                 for bad in unresolved:
+                    warn = f"⚠️ @了 <@{bad}>，项目成员里没有这个 handle，没能通知到"
                     await blocks.add(
                         project_id=project_id,
                         topic_id=topic_id,
-                        author=CHEESE_AUTHOR,
+                        author=author,
                         author_type=AuthorType.ai,
-                        content=f"⚠️ @了 <@{bad}>，但项目里没有这个成员，没能通知到",
+                        content=warn,
                         kind=BlockKind.event,
                         turn_id=turn_id,
                     )
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
         return payload
+
+    async def _persist_progress(
+        self,
+        topic_id: uuid.UUID,
+        items: list[dict],
+        turn_id: uuid.UUID | None,
+    ) -> None:
+        """Write the topic's checklist through to storage (进度层, #187).
+
+        Best-effort on purpose: progress is a convenience for the NEXT turn, so a
+        storage hiccup must never take down the turn that is currently producing
+        real work. Same commit-now contract as _persist_tool_event — batching to
+        turn end would lose exactly the case this exists for (the turn dies)."""
+        try:
+            async with self._sessions() as session:
+                await TopicProgressRepository(session).save(
+                    topic_id, items, turn_id=turn_id
+                )
+                await session.commit()
+        except Exception:  # noqa: BLE001 — never fail a turn over its checklist
+            logger.warning("progress persist failed for topic %s", topic_id)
 
     async def _persist_tool_event(
         self,
@@ -844,33 +1286,37 @@ class ChatService:
         turn_id: uuid.UUID | None,
         eid: str | None = None,
         backfilled: bool = False,
-    ) -> None:
+    ) -> dict:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
         a mid-turn restart/crash never loses the 现场 timeline already produced.
         ``eid`` (the hook forwarder's event id) is stamped into meta so the durable
-        spool reconcile can dedup a backfilled copy against this live one."""
+        spool reconcile can dedup a backfilled copy against this live one. Returns
+        the persisted block payload so a caller (live path or spool reconcile) can
+        broadcast it as a WS frame."""
         meta = _tool_event_meta(name, tool_input, platform=platform)
         if eid:
             meta = {**meta, "eid": eid}
         if backfilled:
             meta = {**meta, "backfilled": True}
         async with self._sessions() as session:
-            await BlockRepository(session).add(
+            block = await BlockRepository(session).add(
                 project_id=project_id,
                 topic_id=topic_id,
-                author=CHEESE_AUTHOR,
+                author=await self._agent_handle(session, topic_id),
                 author_type=AuthorType.ai,
                 content=_format_tool_event(name, tool_input),
                 kind=BlockKind.event,
                 turn_id=turn_id,
                 meta=meta,
             )
+            payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
+        return payload
 
     async def _reconcile_spool(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
-    ) -> None:
+    ) -> AsyncIterator[dict]:
         """Backfill 现场 events the live hook path missed (backend down / no listener
         during a prior turn) from the durable spool WAL — idempotent by event-id.
         No-op for the sdk backend (no spool dir) and an empty spool. Best-effort: a
@@ -878,7 +1324,10 @@ class ChatService:
 
         Scope: 现场 tool events AND 芝士 chat messages (MessageDisplay) — both are
         idempotent by event-id, so a copy the live path already persisted is
-        skipped. Backfilled messages skip mention-notify (the moment passed)."""
+        skipped. Backfilled messages skip mention-notify (the moment passed), but
+        they DO yield a WS frame like the live path — a hook that missed its turn's
+        listening window must still reach the frontend, just without threading or
+        an @-notify (bug: it was landing as a silent DB row nobody saw)."""
         try:
             entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
             if not entries:
@@ -900,20 +1349,24 @@ class ChatService:
                 event = translate_hook(payload)
                 if isinstance(event, AgentMessage):
                     # A chat message whose live delivery was lost — land it as
-                    # history (no reply threading, no notify: the moment passed).
-                    await self._persist_assistant_message(
+                    # history (no reply threading, no notify: the moment passed)
+                    # but still broadcast it, exactly like the live path does.
+                    block_payload = await self._persist_assistant_message(
                         project_id=project_id,
                         topic_id=topic_id,
                         text=event.text,
                         turn_id=turn_id,
                         reply_to=None,
-                        roster=[],
+                        roster=None,
                         topic_refs=[],
                         eid=eid,
                         backfilled=True,
                     )
                     seen.add(eid)
+                    if block_payload is None:
+                        continue  # unreachable today (no continuation → no dedup)
                     recovered += 1
+                    yield {"type": "assistant_block", "block": block_payload}
                     continue
                 if not isinstance(event, AgentToolUse):
                     continue  # SessionStart/Stop have no historical counterpart
@@ -921,7 +1374,7 @@ class ChatService:
                 if name in _TASK_TOOLS:
                     continue  # task todos are process state, not persisted 现场
                 args = event.input or {}
-                await self._persist_tool_event(
+                block_payload = await self._persist_tool_event(
                     project_id=project_id,
                     topic_id=topic_id,
                     name=name,
@@ -933,6 +1386,7 @@ class ChatService:
                 )
                 seen.add(eid)
                 recovered += 1
+                yield {"type": "event_block", "block": block_payload}
             event_spool.remove(path for path, _eid, _payload in entries)
             if recovered:
                 logger.info(
@@ -943,22 +1397,57 @@ class ChatService:
         except Exception:  # noqa: BLE001 — reconcile is best-effort, never fail a turn
             logger.exception("spool reconcile failed for topic %s", topic_id)
 
-    async def _model_kwargs(self, project_id: uuid.UUID) -> tuple[dict, bool]:
+    async def _model_kwargs(
+        self, project_id: uuid.UUID, provider_name: str
+    ) -> tuple[dict, str]:
         """Per-turn overrides for the agent call, resolved from project.settings:
         the ExecutionProfile → model+env (design §2), and the sandbox image (spec
         §9.1 environment — a project can run on cheesex-dev for dogfooding). model
         is skipped when no registry is configured (the agent uses its default); the
         image is resolved regardless (it's independent of the AI profile).
 
-        Also returns whether the turn is GATEWAY-ROUTED (pool profile through the
-        LiteLLM gateway): those turns are metered by the gateway spend log — the
-        caller must NOT also bill provider-reported usage (double count)."""
+        Also returns the turn's supply ROUTE — where its model traffic actually
+        goes, which names the ONE authoritative meter (issue #218):
+
+          "gateway"      LiteLLM, directly or via /llm from a machine; metered by
+                         the gateway spend log, never by provider-reported
+                         numbers (double count).
+          "subscription" the metering proxy; metered by its usage log.
+          "native"       profile-pinned credentials; the SDK's own usage report
+                         is all there is.
+
+        The route is a fact about the PROVIDER executing the turn, not about the
+        deployment. `subscription_enabled` used to force every turn onto the
+        subscription branch, which mis-labeled device turns — their traffic goes
+        through /llm → gateway regardless — so their spend sat in the gateway
+        log and was never drained into the books."""
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
         kwargs: dict = {}
         image = (project.settings or {}).get("sandbox_image") if project else None
         if image:
             kwargs["sandbox_image"] = image
+        if provider_name == "device":
+            # A machine's credentials are the device provider's own affair: it
+            # gets the backend's /llm route + its scoped token, and the backend
+            # swaps in the project's virtual key per request (routes/llm_proxy).
+            # Handing it this box's profile env would put a box-local URL and a
+            # raw provider key on hardware the platform does not control.
+            return kwargs, "gateway"
+        if settings.subscription_enabled and provider_name == "tmux-hooks":
+            # The subscription path doesn't route through the gateway or a
+            # profile: the tmux provider points Claude Code at the metering proxy
+            # and the model is the project's own pick (Sonnet 5 by default, Opus 5
+            # opt-in). Pass the --model alias ("" = default, no flag); the sandbox
+            # env is set by the provider, not a profile. Only tmux implements
+            # that env — the sdk provider under this flag used to fall through
+            # with no env at all and run on whatever the backend process itself
+            # inherited.
+            choice = (
+                (project.settings or {}).get("subscription_model") if project else None
+            )
+            kwargs["model"] = subscription_model_alias(choice)
+            return kwargs, "subscription"
         pool_route = True
         if self._profiles is not None:
             profile = self._profiles.resolve(
@@ -975,19 +1464,31 @@ class ChatService:
             # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
             # the master key (containment), attributable + budget-capped.
             override = await self._gateway_project_env(project_id)
-            if override:
-                kwargs["env"] = {**kwargs.get("env", {}), **override}
-        return kwargs, routed
+            if not override:
+                raise GatewayUnavailableError(
+                    "AI gateway could not provision a project-scoped key; "
+                    "no model call was made"
+                )
+            kwargs["env"] = {**kwargs.get("env", {}), **override}
+        return kwargs, "gateway" if routed else "native"
 
     _GW_KEY = "llm_gateway_key"
     _GW_CKPT = "llm_gateway_usage_ckpt"
     _GW_BUDGET = "llm_gateway_budget_usd"
 
+    async def project_gateway_key(self, project_id: uuid.UUID) -> str | None:
+        """The project's virtual gateway key, minted on first use — the same one
+        a local sandbox turn runs on. Public because the remote-machine LLM proxy
+        (routes/llm_proxy.py) has to swap it in per request: a machine off the box
+        never receives a provider credential, only its own scoped cheese token."""
+        env = await self._gateway_project_env(project_id)
+        return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
+
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn: mint (once) and return the
         project's virtual key, and keep its L2 max_budget in step with the
-        project's grants. Best-effort — returns None (turn runs on the default
-        pool credentials) on any gateway/admin failure."""
+        project's grants. Returns None on any gateway/admin failure; the caller
+        must refuse the turn rather than expose default pool credentials."""
         try:
             async with self._gateway_lock:
                 async with self._sessions() as session:
@@ -1045,6 +1546,10 @@ class ChatService:
                     input_tokens=usage.input_tokens,
                     output_tokens=usage.output_tokens,
                     cost_usd=usage.cost_usd,
+                    route="gateway",
+                    # Same turn as the row tx2 already wrote — this is the late
+                    # half of ONE turn's spend, not a second turn.
+                    turn_id=turn_id,
                 )
                 await ComputeGrantRepository(session).consume(
                     project_id, usage_to_credits(usage, spend_priced=True)
@@ -1081,19 +1586,18 @@ class ChatService:
                         return None  # nothing ever routed → nothing to meter
                     ckpt = s.get(self._GW_CKPT)
                     ckpt = ckpt if isinstance(ckpt, dict) else None
-                    prompt, completion, usd, next_ckpt = await drain_new_usage(
-                        self._gateway, key, ckpt
-                    )
-                    if prompt + completion <= 0:
+                    drained = await drain_new_usage(self._gateway, key, ckpt)
+                    if drained is None or drained[0] + drained[1] <= 0:
                         # LiteLLM writes spend logs asynchronously — at turn end
                         # the rows often lag by a few seconds (verified live).
                         # One bounded settle-retry keeps per-turn attribution;
                         # anything still missing lands in the NEXT drain
                         # (cumulative deltas are exactly-once either way).
                         await asyncio.sleep(3.0)
-                        prompt, completion, usd, next_ckpt = await drain_new_usage(
-                            self._gateway, key, ckpt
-                        )
+                        drained = await drain_new_usage(self._gateway, key, ckpt)
+                    if drained is None:
+                        return None
+                    prompt, completion, usd, next_ckpt = drained
                     s[self._GW_CKPT] = next_ckpt
                     project.settings = s
                     await session.commit()
@@ -1159,15 +1663,24 @@ class ChatService:
             # Expand @all/@here to the topic's members. @here should be the
             # ACTIVE members, but there's no presence signal yet, so it equals
             # @all for now (TODO: intersect with presence once it lands).
-            members = await TopicMembershipRepository(session).list_for_topic(topic.id)
-            concrete += [m.member_handle for m in members]
-        targets = [
-            h for h in dict.fromkeys(concrete) if h not in (author, CHEESE_AUTHOR)
-        ]
+            #
+            # A broadcast reaches the room's humans only: every 芝士 in the room
+            # already reads the timeline, so notifying them adds nothing. An
+            # explicit <@handle> is different and is NOT filtered here — that is
+            # how one agent addresses another, which a room hosting several 芝士
+            # depends on.
+            member_service = TopicMemberService(session)
+            members, _ = await member_service.list_for_topic(topic.id)
+            agents = set(await member_service.agent_handles(topic.id))
+            concrete += [
+                m.member_handle for m in members if m.member_handle not in agents
+            ]
+        # Nobody needs a notification for their own message.
+        targets = [h for h in dict.fromkeys(concrete) if h != author]
         if targets:
             notifs = NotificationService(session)
             preview = markdown_preview(text, 200)
-            who = "芝士" if author == CHEESE_AUTHOR else author
+            who = "芝士" if looks_like_agent_handle(author) else author
             for h in targets:
                 await notifs.create(
                     project_id=topic.project_id,
@@ -1188,6 +1701,7 @@ class ChatService:
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID | None,
         is_resume: bool = False,
+        continuation_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Run the AGENT part of a turn (the human block was already posted by
         _post_user_message), yielding WS frames as JSON-ready dicts. Runs under
@@ -1208,22 +1722,26 @@ class ChatService:
             if topic is None:
                 raise NotFoundError("Topic not found")
 
-            # Speaker-labelled prompt covering every human message since 芝士's
-            # last reply — so messages posted without @芝士 are still seen on the
-            # next summon (spec §7.1 所有消息 AI 都会收到), each tagged with who
-            # said it so 芝士 can tell people apart in a group topic (§8.4).
+            # Speaker-labelled prompt covering every human message 芝士 hasn't
+            # been handed yet — so messages posted without @芝士 are still seen on
+            # the next summon (spec §7.1 所有消息 AI 都会收到), each tagged with
+            # who said it so 芝士 can tell people apart in a group topic (§8.4).
             history = await blocks.list_for_topic(topic_id)
-            last_ai = -1
-            for i, b in enumerate(history):
-                if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
-                    last_ai = i
-            pending = [
-                b
-                for b in history[last_ai + 1 :]
-                if b.kind in (BlockKind.message, BlockKind.attachment)
-                and b.author_type == AuthorType.human
-            ]
-            prompt_text = "\n".join(_prompt_line(b) for b in pending) or content
+            pending = _pending_human_blocks(history)
+            pending_ids = [b.id for b in pending]
+            if not pending and user_block_id is not None:
+                # 有人召唤，但他那条消息已经被前一轮读进 prompt 了（两个人几乎同时
+                # @，第一轮在锁上把两条合并答掉）。再跑一轮就是白烧一轮算力，还会
+                # 走下面的 platform_prompt 兜底、把已经答过的话当成平台指令重投一
+                # 遍。这里直接收工 —— 只是不跑这一轮，不碰任何排队/锁的逻辑。
+                yield {"type": "done"}
+                return
+            # No pending human block ⇒ nobody spoke: this is a resume nudge,
+            # a kickoff or a returned conclusion. Say so, rather than handing
+            # 芝士 bare text that looks like a person's message.
+            prompt_text = "\n".join(
+                _prompt_line(b) for b in pending
+            ) or platform_prompt(content)
             # 图片输入: every pending image rides this turn's user message as a
             # NATIVE base64 image block (Claude Code native image input) — the
             # provider side that has the file does the embedding.
@@ -1235,13 +1753,19 @@ class ChatService:
 
             is_private = topic.is_private
             private_owner = topic.private_owner
+            acting_agent = await self._agent_handle(session, topic.id)
             if is_private and private_owner:
                 # Private chat: the owner's cross-project personal memory.
-                memories = await memory.recall(MemoryScope.user, private_owner)
+                memories = await recall_pools(
+                    memory, [(MemoryScope.user, private_owner)]
+                )
                 doc_text = None
             else:
-                memories = await memory.recall(
-                    MemoryScope.project, str(topic.project_id)
+                memories = await self._recall_agent_memories(
+                    memory,
+                    session,
+                    project_id=topic.project_id,
+                    agent_handle=acting_agent,
                 )
                 doc_root = await blocks.doc_root(topic.id)
                 doc_text = doc_root.content if doc_root else None
@@ -1255,32 +1779,103 @@ class ChatService:
                 [] if is_private else await projects_repo.list_members(topic.project_id)
             )
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
+            # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
+            # ——用户自己打 @某个归档话题也必须还能变成链接）；
+            # `topic_refs_for_prompt` 只是**渲染**进 system prompt 的子集。
             topic_refs = []
+            topic_refs_for_prompt = []
             if not is_private:
-                topic_refs = [
-                    {"id": str(t.id), "title": t.title}
-                    for t in await topics.list_for_project(topic.project_id)
-                    if t.id != topic.id and t.kind != TopicKind.root
-                ]
+                topic_refs, topic_refs_for_prompt = _topic_ref_lists(
+                    await topics.list_for_project(topic.project_id),
+                    exclude_id=topic.id,
+                )
             project_id = topic.project_id
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
-            # Which compute this topic runs on (v4): topic选择 → project sticky.
-            compute_id = _resolve_compute_id(
-                project.settings if project else None, topic.compute_profile
+            # 进度层 (#187): the checklist the last turn left behind. Read inside
+            # tx1 with everything else the prompt is built from, so no extra
+            # round trip; empty list when this topic has never had one.
+            progress_row = await TopicProgressRepository(session).get(topic_id)
+            prior_progress = [
+                dict(item) for item in (progress_row.items if progress_row else [])
+            ]
+            # 盲飞防护: this topic's open accept cards, surfaced in the prompt's
+            # turn-meta header so the agent knows a gate/adoption is pending
+            # without polling.
+            open_cards = []
+            if not is_private:
+                open_cards = [
+                    c
+                    for c in await AcceptCardRepository(session).list_for_topic(
+                        topic_id
+                    )
+                    if c.status in _OPEN_CARD_STATUSES
+                ]
+            # 按阶段渐进式披露: which段 of the flow this topic is in. Derived
+            # entirely from facts already in hand (kind/status + the open cards
+            # just queried above for 盲飞防护) — no extra query.
+            topic_stage = (
+                None
+                if is_private
+                else resolve_stage(
+                    kind=topic.kind,
+                    status=topic.status,
+                    card_statuses=[c.status for c in open_cards],
+                )
             )
+            # Which compute this topic runs on (v4): topic → project sticky → team.
+            compute_id = _resolve_compute_id(
+                project.settings if project else None,
+                topic.compute_profile,
+                await _team_compute_profile(session, project),
+            )
+            provider = self._compute.select(provider_id=compute_id)
+            # turn 活跃度检测: only the tmux backend has a real activity signal
+            # (hooks_substrate's idle-suspect + hard-ceiling loop) — SDK/device
+            # emit nothing here and TurnRunner's outer wall-clock wrap (runtime.py)
+            # keeps its unchanged `agent_turn_timeout_s` default for them.
+            from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+            is_activity_aware_backend = isinstance(provider, TmuxHooksProvider)
+            if topic.compute_profile is None:
+                # v4 affinity red line: materialize the effective target BEFORE
+                # the first provider call. A later team-default/sticky change must
+                # never move an existing work tree or resumable Claude session.
+                topic.compute_profile = provider.name
+                await session.commit()
 
         # --- streaming: no DB transaction held open ---
+        if is_activity_aware_backend:
+            # Tells TurnRunner's outer wall-clock wrap (runtime.py) to reschedule
+            # to this backend's real ceiling instead of the generic
+            # `agent_turn_timeout_s` — the ONLY frame kind that does so, and only
+            # emitted here, so every other backend's outer-wrap behaviour is
+            # untouched (turn 活跃度检测).
+            yield {"type": "turn_ceiling", "seconds": provider.hard_ceiling_s}
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
         system_prompt = _build_system_prompt(
             self._base_prompt,
             skills,
             doc_text,
-            memories,
+            memories.facts,
             role,
             roster,
-            topic_refs,
+            topic_refs_for_prompt,
             untitled,
+            memories_omitted=memories.omitted,
+            turn_meta=_turn_meta_lines(
+                budget_s=settings.agent_turn_timeout_s,
+                activity_aware=is_activity_aware_backend,
+                is_resume=is_resume,
+                disk=_workspace_disk(self._workspace_root),
+                open_cards=open_cards,
+                progress=prior_progress,
+            ),
+            stage_guide=(
+                load_scenario(stage_scenario(topic_stage))
+                if topic_stage is not None
+                else None
+            ),
         )
         final_text = ""
         new_session_id = resume_session_id
@@ -1293,15 +1888,23 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        provider = self._compute.select(provider_id=compute_id)
-        model_kwargs, gateway_routed = await self._model_kwargs(project_id)
+        model_kwargs, route = await self._model_kwargs(project_id, provider.name)
 
         # Backfill any 现场 events the live hook path missed (backend down / no
         # listener during a prior turn) from the durable spool WAL — idempotent by
         # event-id. No-op for the sdk backend and an empty spool.
-        await self._reconcile_spool(project_id, topic_id, turn_id)
+        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+            yield frame
 
+        # Starts EMPTY even when prior_progress is non-empty: _apply_task_event
+        # numbers items by position, and the agent's own Task tool numbering
+        # restarts from 1 on a fresh session — seeding the list would make the
+        # turn's first TaskUpdate("1") land on a leftover item from last time.
+        # The old checklist reaches the agent through the prompt instead, and
+        # reaches the UI through the restored frame just below.
         todo: list[dict] = []
+        if prior_progress:
+            yield {"type": "todo", "items": prior_progress, "restored": True}
         seen_eids: set[str] = set()  # dedup device-drainer re-deliveries this turn
         actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None
@@ -1321,14 +1924,33 @@ class ChatService:
                 **model_kwargs,
             ):
                 if isinstance(event, AgentSessionInfo):
-                    # Announced early so even a failed turn persists it below.
                     new_session_id = event.session_id
+                    # Commit the pointer NOW, not at turn end and not from the
+                    # failure handlers below (④ 超时重跑, 2026-08-11).
+                    #
+                    # Those handlers only run if the process lives long enough
+                    # to run them. `asyncio.shield` survives cancellation; it
+                    # does not survive SIGKILL or the machine losing power. A
+                    # turn killed that way left `topic.session_id` NULL, so the
+                    # auto-resume found nothing to `--resume`, started a FRESH
+                    # claude, and 芝士 came back with no memory of what it had
+                    # already done — measured on this very topic: a 7-minute,
+                    # 132-message turn whose entire transcript was orphaned on
+                    # disk while `locked` still read false.
+                    #
+                    # SessionStart is the first hook of the turn, so writing it
+                    # here shrinks the "effect happened, record didn't" window
+                    # from a whole turn to the few ms before 芝士 can act at
+                    # all. It cannot close the window — that is what the
+                    # idempotency keys are for — but a window nothing can
+                    # happen inside is as narrow as this half gets.
+                    await self._save_session_pointer(topic_id, new_session_id)
                 elif isinstance(event, AgentMessage):
-                    # Slack-style discrete message: one completed SDK
-                    # AssistantMessage = one chat block, persisted + broadcast
-                    # NOW (mid-turn), not at turn end. A turn with tool calls
-                    # lands several of these. Token deltas are no longer
-                    # forwarded to the chat — the message IS the unit.
+                    # Slack-style discrete message: one completed provider
+                    # message = one chat block, persisted + broadcast NOW
+                    # (mid-turn), not at turn end. The Claude SDK adapter
+                    # coalesces its partial AssistantMessages before they reach
+                    # this provider-neutral boundary.
                     last_assistant_text = event.text
                     payload = await self._persist_assistant_message(
                         project_id=project_id,
@@ -1341,7 +1963,15 @@ class ChatService:
                         roster=roster,
                         topic_refs=topic_refs,
                         eid=event.eid,
+                        continuation_id=continuation_id,
                     )
+                    if payload is None:
+                        # An earlier attempt at this same work already said this
+                        # — 已说过的话不再说第二遍 (④). `last_assistant_text` is
+                        # deliberately still updated above: the turn's final
+                        # text is about what 芝士 said, not about who wrote the
+                        # row.
+                        continue
                     last_assistant_block_id = (
                         payload.get("block", {}).get("id")
                         if isinstance(payload, dict)
@@ -1361,6 +1991,11 @@ class ChatService:
                     # Task tools → live working-log todo (process, not 现场).
                     if name in _TASK_TOOLS:
                         if _apply_task_event(todo, name, args):
+                            # 进度层: commit the moment it changes, exactly like
+                            # 现场 events below — a turn killed mid-flight (the
+                            # machine died, the wall clock ran out) must leave
+                            # the checklist behind, which is the entire point.
+                            await self._persist_progress(topic_id, todo, turn_id)
                             yield {
                                 "type": "todo",
                                 "items": [dict(t) for t in todo],
@@ -1408,12 +2043,22 @@ class ChatService:
                 )
             raise
 
+        # An all-zero usage report is "unknown", not "free": interactive Claude
+        # Code (the hooks backends) reports no usage, and its Stop hook payload
+        # decodes to zeros. Recording that as a metered zero-token turn is a lie
+        # the table then repeats — normalize to None so the row says unmetered.
+        if usage is not None and not (
+            usage.input_tokens or usage.output_tokens or usage.cost_usd
+        ):
+            usage = None
+
         # L1 (docs/llm-gateway.md): for gateway-routed turns the gateway spend
         # log is the SOLE metering source — hooks backends report no usage at
         # all, and provider-reported numbers for the same tokens would double-
         # bill on the next drain (daily cumulative deltas are exactly-once).
-        # Non-routed turns (native-Claude testing profiles) keep SDK usage.
-        if self._gateway is not None and gateway_routed:
+        # Subscription turns are metered by the proxy's own log (ingested
+        # separately); native turns keep the SDK's report.
+        if self._gateway is not None and route == "gateway":
             usage = await self._drain_gateway_usage(project_id)
             if usage is None:
                 # LiteLLM batch-writes spend logs (~10s); the settle retry can
@@ -1436,6 +2081,7 @@ class ChatService:
                 api_error_status,
             )
             detail = final_text.strip()
+            platform_failure = classify_platform_failure(detail)
             quoted = f"（服务原话：{detail}）" if detail else ""
             # The CLI sometimes emits the SAME error string as a final
             # AssistantMessage before the error result — the discrete-message
@@ -1458,7 +2104,30 @@ class ChatService:
                 except Exception:  # noqa: BLE001 — retraction is best-effort
                     logger.exception("error-echo retraction failed")
             resume_after_s: float | None = None
-            if (
+            resume_hint_reason = "座位额度已恢复，继续之前的任务"
+            swap = NO_SWAP
+            fail_meta: dict | None = None
+            fail_code: str | None = None
+            if platform_failure is not None:
+                fail_text = platform_failure.content
+                fail_meta = platform_failure.meta
+                fail_code = platform_failure.code
+                if platform_failure.host_scoped:
+                    # Blame the machine, not the turn (#186): count this against
+                    # the box and, once it has failed once too often, move the
+                    # topic to a healthy one and schedule the continuation. The
+                    # platform_failure branch otherwise leaves resume_after_s
+                    # unset — correct only while there was nowhere else to go.
+                    swap = await handle_host_failure(
+                        topic_id=topic_id,
+                        project_id=project_id,
+                        failure=platform_failure,
+                        session_factory=self._sessions,
+                    )
+                    if swap.resume_after_s is not None and not is_resume:
+                        resume_after_s = swap.resume_after_s
+                        resume_hint_reason = swap.resume_reason or resume_hint_reason
+            elif (
                 rate_limit
                 and rate_limit.get("status") == "rejected"
                 and rate_limit.get("resets_at")
@@ -1511,6 +2180,8 @@ class ChatService:
                         output_tokens=0,
                         cost_usd=0.0,
                         metered=False,
+                        route=route,
+                        turn_id=turn_id,
                     )
                 if usage is not None:
                     await UsageRepository(session).add(
@@ -1520,12 +2191,14 @@ class ChatService:
                         input_tokens=usage.input_tokens,
                         output_tokens=usage.output_tokens,
                         cost_usd=usage.cost_usd,
+                        route=route,
+                        turn_id=turn_id,
                     )
                     # Even a failed turn burned tokens: fold them into credits
                     # and deduct from the project's grants (spec §9.1).
                     await ComputeGrantRepository(session).consume(
                         project_id,
-                        usage_to_credits(usage, spend_priced=gateway_routed),
+                        usage_to_credits(usage, spend_priced=route == "gateway"),
                     )
                 fail_block = await blocks.add(
                     project_id=project_id,
@@ -1535,20 +2208,50 @@ class ChatService:
                     content=fail_text,
                     kind=BlockKind.event,
                     turn_id=turn_id,
+                    meta=fail_meta,
                 )
                 fail_payload = _block_payload(BlockOut.model_validate(fail_block))
+                swap_payload = None
+                if swap.message:
+                    # The move gets its OWN event, right after the failure card:
+                    # a topic that changes machines must say so in the room, or
+                    # it is the silent drift the pin exists to prevent.
+                    swap_block = await blocks.add(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        author="system",
+                        author_type=AuthorType.system,
+                        content=swap.message,
+                        kind=BlockKind.event,
+                        turn_id=turn_id,
+                        meta={
+                            "event_type": "host_swap",
+                            "from_device": swap.old_device,
+                            "to_device": swap.new_device,
+                        },
+                    )
+                    swap_payload = _block_payload(BlockOut.model_validate(swap_block))
                 await session.commit()
             if new_session_id and new_session_id != resume_session_id:
                 await self._save_session_pointer(topic_id, new_session_id)
             provider.checkpoint(project_id, topic_id)
             yield {"type": "event_block", "block": fail_payload}
-            yield {"type": "error", "message": fail_text, "persisted": True}
+            if swap_payload is not None:
+                yield {"type": "event_block", "block": swap_payload}
+            error_frame = {
+                "type": "error",
+                "message": fail_text,
+                "persisted": True,
+            }
+            if fail_code is not None:
+                error_frame["code"] = fail_code
+            yield error_frame
             if resume_after_s is not None:
                 # Internal frame: the runner schedules the auto-resume.
                 yield {
                     "type": "resume_hint",
                     "after_s": resume_after_s,
-                    "reason": "座位额度已恢复，继续之前的任务",
+                    "reason": resume_hint_reason,
                 }
             yield {"type": "done"}
             return
@@ -1572,6 +2275,8 @@ class ChatService:
                     output_tokens=0,
                     cost_usd=0.0,
                     metered=False,
+                    route=route,
+                    turn_id=turn_id,
                 )
             if usage is not None:
                 await UsageRepository(session).add(
@@ -1581,13 +2286,15 @@ class ChatService:
                     input_tokens=usage.input_tokens,
                     output_tokens=usage.output_tokens,
                     cost_usd=usage.cost_usd,
+                    route=route,
+                    turn_id=turn_id,
                 )
                 # 用量扣减 (spec §9.1): fold this turn's tokens into credits and
                 # deduct from the project's grants, oldest first. A project with
                 # no grants (自治项目) deducts nothing — unlimited.
                 await ComputeGrantRepository(session).consume(
                     project_id,
-                    usage_to_credits(usage, spend_priced=gateway_routed),
+                    usage_to_credits(usage, spend_priced=route == "gateway"),
                 )
 
             topic = await topics.get(topic_id)
@@ -1595,11 +2302,12 @@ class ChatService:
             # Persistent, clickable action cards for the cheese actions this turn
             # (system events show in the conversation; refs tag the resource).
             action_payloads = []
+            acting_agent = await self._agent_handle(session, topic_id)
             for resource in actions:
                 blk = await blocks.add(
                     project_id=project_id,
                     topic_id=topic_id,
-                    author=CHEESE_AUTHOR,
+                    author=acting_agent,
                     author_type=AuthorType.system,
                     content=f"芝士 {_ACTION_LABEL[resource]}",
                     kind=BlockKind.event,
@@ -1613,14 +2321,43 @@ class ChatService:
 
             if topic is not None and new_session_id:
                 await topics.set_session_id(topic, new_session_id)
+
+            # 这一轮真的把这些消息交给 agent 跑完了 —— 现在才盖 consumed 戳，下一轮
+            # 的窗口从这里往后开。**故意放在这里而不是建 prompt 的 tx1**：轮次崩了 /
+            # 超时 / provider 报错的路径都在上面 return 或 raise 掉了，戳没盖上，消息
+            # 就留在 pending 里由续跑轮重发。宁可重复，不可丢失 —— 重复看得见，丢失
+            # 看不见，而后者正是这次要修的 bug。
+            await blocks.mark_consumed(pending_ids, turn_id)
             await session.commit()
+
+        # A hooks backend can reach here with assistant_count == 0 not because
+        # no message was ever shown, but because its MessageDisplay hook lost
+        # the race with the turn-ending Stop hook over the network and is only
+        # NOW landing in the spool (the container writes it to disk before the
+        # live POST even goes out — same root cause as the turn-boundary gap
+        # this whole reconcile mechanism exists for). Sweep the spool once more
+        # right now — with a real eid, broadcast like any other backfilled
+        # block — so the fallback below never re-persists that same text
+        # eid-less (which is exactly what left a duplicate: an eid-less block
+        # from here, and its eid+backfilled twin from a LATER turn's reconcile
+        # that couldn't recognize the two as the same event).
+        reconciled_texts: set[str] = set()
+        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+            if frame["type"] == "assistant_block":
+                reconciled_texts.add(frame["block"]["content"])
+            yield frame
 
         # Fallback single message: 芝士's messages normally landed one-by-one at
         # each AgentMessage boundary above. A provider that never announced a
         # boundary (plain non-SDK stub turn, an older remote cheesed node) still
-        # lands its reply from the final result text.
+        # lands its reply from the final result text — unless the sweep above
+        # just landed that exact text from the spool (with a proper eid).
         assistant_payload: dict | None = None
-        if assistant_count == 0 and final_text.strip():
+        if (
+            assistant_count == 0
+            and final_text.strip()
+            and final_text.strip() not in reconciled_texts
+        ):
             assistant_payload = await self._persist_assistant_message(
                 project_id=project_id,
                 topic_id=topic_id,
@@ -1629,6 +2366,7 @@ class ChatService:
                 reply_to=user_block_id,
                 roster=roster,
                 topic_refs=topic_refs,
+                continuation_id=continuation_id,
             )
 
         # Snapshot whatever the agent changed in its worktree this turn (native
@@ -1645,6 +2383,7 @@ class ChatService:
                 project_id=project_id,
                 is_private=is_private,
                 private_owner=private_owner,
+                agent_handle=acting_agent,
                 user_text=prompt_text,
                 assistant_text=final_text,
             )
@@ -1662,6 +2401,7 @@ class ChatService:
         project_id: uuid.UUID,
         is_private: bool,
         private_owner: str | None,
+        agent_handle: str,
         user_text: str,
         assistant_text: str,
     ) -> None:
@@ -1679,7 +2419,13 @@ class ChatService:
         if is_private and private_owner:
             scope, scope_id = MemoryScope.user, private_owner
         else:
-            scope, scope_id = MemoryScope.project, str(project_id)
+            # What 芝士 learns in a project is its own, the way a teammate's is.
+            # Never the shared pool: two agents in one project would dilute each
+            # other's memory, which is the case this split exists for.
+            scope, scope_id = (
+                MemoryScope.agent_project,
+                agent_project_scope_id(project_id, agent_handle),
+            )
 
         async def _run() -> None:
             from app.domain.memory.openviking_store import OpenVikingMemoryStore
@@ -1744,14 +2490,26 @@ class ChatService:
                 content=text,
                 kind=BlockKind.event,
             )
-            memories = await memory.recall(MemoryScope.project, str(project_id))
+            memories = await self._recall_agent_memories(
+                memory,
+                session,
+                project_id=project_id,
+                agent_handle=await self._agent_handle(session, topic.id),
+            )
             topic_id = topic.id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
             await session.commit()
 
         # --- run 芝士 with the activity-digestion skill + tools ---
         system_prompt = _build_system_prompt(
-            self._base_prompt, load_skills(ACTIVITY_SKILLS), None, memories
+            self._base_prompt,
+            load_skills(ACTIVITY_SKILLS),
+            None,
+            memories.facts,
+            memories_omitted=memories.omitted,
         )
         prompt = (
             "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
@@ -1769,7 +2527,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id))[0],
+            **(await self._model_kwargs(project_id, provider.name))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -1784,7 +2542,7 @@ class ChatService:
             await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
-                author=CHEESE_AUTHOR,
+                author=await self._agent_handle(session, topic_id),
                 author_type=AuthorType.ai,
                 content=final_text,
                 kind=BlockKind.message,
@@ -1830,7 +2588,10 @@ class ChatService:
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
             root_topic_id = project.root_topic_id
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}] ({t.kind.value})"
@@ -1877,7 +2638,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id))[0],
+            **(await self._model_kwargs(project_id, provider.name))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -1889,7 +2650,7 @@ class ChatService:
             await BlockRepository(session).add(
                 project_id=project_id,
                 topic_id=root_topic_id,
-                author=CHEESE_AUTHOR,
+                author=await self._agent_handle(session, root_topic_id),
                 author_type=AuthorType.ai,
                 content=f"【巡检决策日志】\n{final_text}",
                 kind=BlockKind.event,
@@ -1913,9 +2674,17 @@ class ChatService:
                 raise NotFoundError("Project not found")
             all_topics = await topics.list_for_project(project_id)
             upcoming = await milestones.list_calendar(project_id)
-            memories = await memory.recall(MemoryScope.project, str(project_id))
+            # Deliberately the shared pool, not any one agent's memory: a project
+            # summary describes the project, and what a 芝士 learned for itself is
+            # not project knowledge.
+            memories = await recall_pools(
+                memory, [(MemoryScope.project, str(project_id))]
+            )
             role = await resolve_role_description(session, project.expert_role)
-            compute_id = _resolve_compute_id(project.settings)
+            compute_id = _resolve_compute_id(
+                project.settings,
+                team_compute_profile=await _team_compute_profile(session, project),
+            )
 
         topic_lines = "\n".join(
             f"- {t.title} [{t.status.value}]"
@@ -1926,7 +2695,9 @@ class ChatService:
             f"- {m.title} 截止 {m.due_date.isoformat() if m.due_date else '未定'}"
             for m in upcoming
         )
-        mem_lines = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
+        mem_lines = "\n".join(f"- {_chipify_paths(m)}" for m in memories.facts)
+        if memories.omitted:
+            mem_lines += f"\n- （另有 {memories.omitted} 条更早的记忆未列出）"
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"
@@ -1955,7 +2726,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id))[0],
+            **(await self._model_kwargs(project_id, provider.name))[0],
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text

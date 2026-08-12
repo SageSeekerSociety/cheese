@@ -29,10 +29,10 @@ const taskFormSchema = z
     accessControlEnabled: z.boolean().optional().default(false),
     accessDomainGroupIds: z.array(z.number()).optional(),
   })
-  .refine(
-    (arg) => !arg.maxTeamSize || !arg.minTeamSize || arg.maxTeamSize >= arg.minTeamSize,
-    { message: '最大人数不能小于最小人数', path: ['maxTeamSize'] },
-  )
+  .refine((arg) => !arg.maxTeamSize || !arg.minTeamSize || arg.maxTeamSize >= arg.minTeamSize, {
+    message: '最大人数不能小于最小人数',
+    path: ['maxTeamSize'],
+  })
 
 // ---------------------------------------------------------------------------
 // Form data → TaskFormSubmitData transformation
@@ -64,17 +64,13 @@ function buildSubmitData(values: Record<string, unknown>, descriptionText: strin
   deadlineDate.setHours(23, 59, 59, 999)
 
   const accessControlEnabled = (values.accessControlEnabled as boolean) || false
-  const accessDomainGroupIds = accessControlEnabled
-    ? (values.accessDomainGroupIds as number[] | undefined)
-    : undefined
+  const accessDomainGroupIds = accessControlEnabled ? (values.accessDomainGroupIds as number[] | undefined) : undefined
 
   return {
     name: values.name as string,
     submitterType: values.submitterType as 'USER' | 'TEAM',
     rank: values.rank as number,
-    registrationStartAt: values.registrationStartAt
-      ? new Date(values.registrationStartAt as string).getTime()
-      : null,
+    registrationStartAt: values.registrationStartAt ? new Date(values.registrationStartAt as string).getTime() : null,
     deadline: deadlineDate.getTime(),
     defaultDeadline: values.defaultDeadline as number,
     resubmittable: true,
@@ -86,8 +82,7 @@ function buildSubmitData(values: Record<string, unknown>, descriptionText: strin
     minTeamSize: values.submitterType === 'TEAM' ? (values.minTeamSize as number) : undefined,
     maxTeamSize: values.submitterType === 'TEAM' ? (values.maxTeamSize as number) : undefined,
     participantLimit: (values.participantLimit as number) || undefined,
-    teamLockingPolicy:
-      values.submitterType === 'TEAM' ? (values.teamLockingPolicy as string) : undefined,
+    teamLockingPolicy: values.submitterType === 'TEAM' ? (values.teamLockingPolicy as string) : undefined,
     accessControlEnabled,
     accessDomainGroupIds,
   }
@@ -97,7 +92,12 @@ function buildSubmitData(values: Record<string, unknown>, descriptionText: strin
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeValidFormValues(overrides: Record<string, unknown> = {}) {
+// Return type is widened deliberately: the two "field is absent" tests below
+// `delete` a key, which TS rejects on an inferred literal type where every
+// property is required. Both consumers (taskFormSchema.safeParse and
+// buildSubmitData) already take unknown / Record<string, unknown>, so nothing
+// is lost — this mirrors vee-validate handing over untyped form values.
+function makeValidFormValues(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     name: 'Test Task',
     submitterType: 'USER',
@@ -135,15 +135,13 @@ describe('TaskForm access control schema validation', () => {
   })
 
   it('rejects accessControlEnabled as string', () => {
-    const result = taskFormSchema.safeParse(
-      makeValidFormValues({ accessControlEnabled: 'yes' }),
-    )
+    const result = taskFormSchema.safeParse(makeValidFormValues({ accessControlEnabled: 'yes' }))
     expect(result.success).toBe(false)
   })
 
   it('accepts accessDomainGroupIds as number array', () => {
     const result = taskFormSchema.safeParse(
-      makeValidFormValues({ accessControlEnabled: true, accessDomainGroupIds: [1, 2, 3] }),
+      makeValidFormValues({ accessControlEnabled: true, accessDomainGroupIds: [1, 2, 3] })
     )
     expect(result.success).toBe(true)
     if (result.success) {
@@ -153,7 +151,7 @@ describe('TaskForm access control schema validation', () => {
 
   it('accepts empty accessDomainGroupIds array', () => {
     const result = taskFormSchema.safeParse(
-      makeValidFormValues({ accessControlEnabled: true, accessDomainGroupIds: [] }),
+      makeValidFormValues({ accessControlEnabled: true, accessDomainGroupIds: [] })
     )
     expect(result.success).toBe(true)
   })
@@ -166,9 +164,7 @@ describe('TaskForm access control schema validation', () => {
   })
 
   it('rejects accessDomainGroupIds with non-number elements', () => {
-    const result = taskFormSchema.safeParse(
-      makeValidFormValues({ accessDomainGroupIds: ['abc'] }),
-    )
+    const result = taskFormSchema.safeParse(makeValidFormValues({ accessDomainGroupIds: ['abc'] }))
     expect(result.success).toBe(false)
   })
 })
@@ -277,9 +273,7 @@ function buildInitialValues(initialData?: TaskFormInitialData): Record<string, u
     registrationStartAt: initialData?.registrationStartAt
       ? new Date(initialData.registrationStartAt).toISOString()
       : null,
-    deadline: initialData?.deadline
-      ? new Date(initialData.deadline).toISOString().slice(0, 10)
-      : '',
+    deadline: initialData?.deadline ? new Date(initialData.deadline).toISOString().slice(0, 10) : '',
     defaultDeadline: initialData?.defaultDeadline ?? 30,
     topics: [] as number[],
     categoryId: initialData?.categoryId ?? null,

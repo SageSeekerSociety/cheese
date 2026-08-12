@@ -279,11 +279,7 @@ export namespace SpacesApi {
       data,
     })
 
-  export const updateDomainGroup = (
-    spaceId: number,
-    groupId: number,
-    data: PatchSpaceDomainGroupRequestData
-  ) =>
+  export const updateDomainGroup = (spaceId: number, groupId: number, data: PatchSpaceDomainGroupRequestData) =>
     NewApiInstance.request<{ group: DomainGroup }>({
       url: `/spaces/${spaceId}/domain-groups/${groupId}`,
       method: 'PATCH',

@@ -1,11 +1,17 @@
 """cheese ask: option questions in the chat, one-click structured answers."""
 
+import uuid
+
+from app.domain.identity.handles import topic_agent_handle
+from tests.integration.conftest import chat_ws_url
+
 
 def _topic(client) -> str:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    t = client.post("/api/topics", json={"project_id": p["id"], "title": "T"}).json()[
-        "data"
-    ]
+    t = client.post(
+        "/api/topics",
+        json={"project_id": p["id"], "title": "T", "created_by": "user-1"},
+    ).json()["data"]
     return t["id"]
 
 
@@ -21,7 +27,8 @@ def _ask(client, tid: str) -> dict:
 def test_ask_creates_option_message(client):
     tid = _topic(client)
     blk = _ask(client, tid)
-    assert blk["author"] == "cheese"
+    # Authored by THIS topic's 分身, not the shared platform ``cheese`` account.
+    assert blk["author"] == topic_agent_handle(uuid.UUID(tid))
     assert blk["kind"] == "message"
     assert blk["meta"]["options"] == ["cursor", "pageStart"]
     # It shows in the timeline like any message.
@@ -58,7 +65,7 @@ def test_answer_records_choice_and_posts_reply(client):
     # The choice lands as the answerer's own message and summons 芝士. Drive
     # the submitted turn to completion the repo way: hold the WS open (replay
     # catches frames already published) until done/error.
-    with client.websocket_connect(f"/api/topics/{tid}/chat") as ws:
+    with client.websocket_connect(chat_ws_url(tid, "user-1")) as ws:
         while True:
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):

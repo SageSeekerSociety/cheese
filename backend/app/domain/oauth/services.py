@@ -1,15 +1,35 @@
+import logging
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.crypto import decrypt_text, encrypt_text
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.oauth.repositories import OAuthConnectionRepository
+
+logger = logging.getLogger(__name__)
+
+# Refresh an expiring GitHub user-to-server token this long before it
+# actually expires, so a token handed to a caller has headroom to be used.
+_GITHUB_TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
+
+# Machine-readable reasons `get_github_user_token_with_reason` /
+# `get_github_user_token_for_handle_with_reason` report alongside a None
+# token — for callers (两阶段采纳) that need to explain a degrade to a human
+# rather than silently falling back. Never derived from the token/ciphertext
+# itself, so surfacing one can't leak either.
+TOKEN_UNAVAILABLE_NOT_CONNECTED = "not_connected"
+TOKEN_UNAVAILABLE_UNDECRYPTABLE = "undecryptable"
+TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH = "expired_no_refresh"
+TOKEN_UNAVAILABLE_REFRESH_FAILED = "refresh_failed"
+TOKEN_UNAVAILABLE_PROVIDER_NOT_CONFIGURED = "provider_not_configured"
 
 
 @dataclass
@@ -68,6 +88,27 @@ class GitHubProvider(OAuthProvider):
                     "client_secret": self.config.client_secret,
                     "code": code,
                     "redirect_uri": self.config.redirect_url,
+                },
+                headers={"Accept": "application/json"},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
+        """Exchange a refresh_token for a new access_token.
+
+        Only meaningful for GitHub Apps that opted into "Expire user
+        authorization tokens" — same response shape as ``exchange_code``
+        (access_token, expires_in, refresh_token, refresh_token_expires_in).
+        """
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                self.config.token_url,
+                data={
+                    "client_id": self.config.client_id,
+                    "client_secret": self.config.client_secret,
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
                 },
                 headers={"Accept": "application/json"},
             )
@@ -213,6 +254,7 @@ PROVIDER_CLASSES = {
     "github": GitHubProvider,
     "google": GoogleProvider,
     "ruc": RUCProvider,
+    "github_app": GitHubProvider,
 }
 
 
@@ -284,6 +326,22 @@ class OAuthService:
                 redirect_url=redirect_url,
                 scope=["profile", "userinfo"],
             )
+        elif provider_id == "github_app":
+            # #192: the cheesex-app GitHub App's OWN user-to-server
+            # authorization — a separate credential from the "github" login
+            # provider above, even though it's the identical OAuth 2.0 dance
+            # (GitHub Apps reuse the classic authorize/token endpoints, just
+            # keyed to the App's client_id/secret instead of an OAuth App's).
+            return OAuthProviderConfig(
+                id=provider_id,
+                name="GitHub (cheesex-app)",
+                client_id=client_id,
+                client_secret=client_secret,
+                authorization_url="https://github.com/login/oauth/authorize",
+                token_url="https://github.com/login/oauth/access_token",
+                redirect_url=redirect_url,
+                scope=["read:user", "user:email"],
+            )
 
         return None
 
@@ -341,6 +399,7 @@ class OAuthService:
         provider_id: str,
         provider_user_id: str,
         raw_profile: dict | None = None,
+        access_token: str | None = None,
         refresh_token: str | None = None,
         token_expires: datetime | None = None,
     ) -> dict:
@@ -349,10 +408,199 @@ class OAuthService:
             provider_id=provider_id,
             provider_user_id=provider_user_id,
             raw_profile=raw_profile,
-            refresh_token=refresh_token,
+            access_token=encrypt_text(access_token) if access_token else None,
+            refresh_token=encrypt_text(refresh_token) if refresh_token else None,
             token_expires=token_expires,
         )
         return self._connection_to_dict(conn)
+
+    async def update_connection_tokens(
+        self,
+        *,
+        connection_id: int,
+        access_token: str | None,
+        refresh_token: str | None,
+        token_expires: datetime | None,
+    ) -> None:
+        await self._repo.update_tokens(
+            connection_id,
+            encrypt_text(access_token) if access_token else None,
+            encrypt_text(refresh_token) if refresh_token else None,
+            token_expires,
+        )
+
+    def _decrypt_stored_token(self, stored: str, *, user_id: int) -> str | None:
+        """A token column decrypted, or None when the ciphertext can't be read.
+
+        Tokens are Fernet-encrypted at rest, so a rotated ``CHEESE_SECRET`` or a
+        legacy plaintext row makes ``decrypt_text`` raise. That must not blow up
+        the caller (the accept flow degrades on None, it does not handle
+        exceptions from here) — but it must never be silent either: an
+        unnoticed token problem is exactly how the "returns raw ciphertext" bug
+        survived, so this always logs.
+        """
+        try:
+            return decrypt_text(stored)
+        except Exception:
+            logger.exception(
+                "github account link: stored token for user %s could not be "
+                "decrypted (key rotated, or a legacy plaintext row?) — "
+                "treating the account link as unavailable",
+                user_id,
+            )
+            return None
+
+    async def get_github_user_token(
+        self, user_id: int, *, provider_id: str = "github_app"
+    ) -> str | None:
+        """The decrypted, usable GitHub user-to-server access token (#192
+        account link) for ``user_id``, or None if there's no connected
+        account, no stored token, the stored token can't be decrypted, or the
+        token is expired with nothing to refresh it with. Callers must treat
+        None as "fall back", not raise.
+        """
+        token, _reason = await self.get_github_user_token_with_reason(
+            user_id, provider_id=provider_id
+        )
+        return token
+
+    async def get_github_user_token_with_reason(
+        self, user_id: int, *, provider_id: str = "github_app"
+    ) -> tuple[str | None, str | None]:
+        """Same contract as ``get_github_user_token``, plus a
+        ``TOKEN_UNAVAILABLE_*`` reason whenever the token comes back None —
+        for callers (两阶段采纳's accept()) that need to explain a degrade to
+        a human instead of just falling back silently. ``reason`` is always
+        None when ``token`` is not.
+        """
+        conn = await self._repo.get_by_user_and_provider(user_id, provider_id)
+        if conn is None or not conn.access_token:
+            return None, TOKEN_UNAVAILABLE_NOT_CONNECTED
+
+        if (
+            conn.token_expires is None
+            or conn.token_expires - datetime.now(UTC) > _GITHUB_TOKEN_REFRESH_MARGIN
+        ):
+            token = self._decrypt_stored_token(conn.access_token, user_id=user_id)
+            return token, (None if token else TOKEN_UNAVAILABLE_UNDECRYPTABLE)
+
+        if not conn.refresh_token:
+            return None, TOKEN_UNAVAILABLE_EXPIRED_NO_REFRESH
+
+        # The refresh itself commits in its OWN, independent transaction —
+        # see _refresh_and_persist_token — so this connection's outer
+        # session (whatever the caller is mid-way through) never determines
+        # whether a successful GitHub refresh actually survives.
+        token = await self._refresh_and_persist_token(conn.id, provider_id)
+        return token, (None if token else TOKEN_UNAVAILABLE_REFRESH_FAILED)
+
+    async def _refresh_and_persist_token(
+        self, connection_id: int, provider_id: str
+    ) -> str | None:
+        """Refresh an expiring GitHub token and commit the result in its OWN
+        transaction, on a fresh session — deliberately NOT reusing whatever
+        session/transaction the caller (e.g. AcceptService.accept()) happens
+        to be mid-way through. Closes a risk 决策 0556ac50 explicitly accepted
+        without fixing:
+
+        - Rollback loses the token: refresh succeeds and GitHub invalidates
+          the OLD refresh_token, then a LATER, unrelated step in the caller's
+          transaction raises and the whole session rolls back — without an
+          independent commit here, the DB keeps the now-dead old value until
+          the user manually reconnects.
+        - Concurrent accepts: two callers racing to refresh the same
+          about-to-expire token would both read the same refresh_token, one
+          GitHub call wins, and the loser's write either clobbers the
+          winner's or wastes a refresh_token GitHub already invalidated.
+          ``SELECT ... FOR UPDATE`` on the connection row serializes
+          refreshers instead: the loser blocks on the lock, then (double-
+          checked below) sees the winner's fresh, not-actually-expiring
+          token and reuses it rather than calling GitHub a second time.
+
+        The new session is opened on the SAME engine as this service's own
+        (``self._repo.session``), not a hardcoded module-level factory: the
+        caller's session is the source of truth for which database is live
+        (the test harness in particular binds the app's default session
+        factory and a given request's session to different databases; an
+        independent-but-same-engine session stays correct in both).
+
+        A single-row, short transaction — the only unavoidably slow part is
+        the GitHub HTTP call itself, held under the row lock so a second
+        racer can't sneak a read in between "check expiry" and "write the
+        refreshed token"; that's an accepted trade; it blocks at most one
+        other refresher of this SAME connection (never a wider table lock)
+        and is bounded by the HTTP client's own timeout.
+
+        The provider lookup is deliberately done FIRST, before opening the
+        row-locked session: it depends only on ``provider_id`` (static,
+        known up front), so failing fast here avoids taking a DB lock for a
+        refresh that can never succeed on this deployment.
+        """
+        try:
+            provider = self.get_provider(provider_id)
+        except NotFoundError:
+            # Provider not configured on this deployment
+            # (oauth_enabled_providers / client id + secret unset).
+            # Degrade like any other missing prerequisite — raising here
+            # would escape into the accept flow.
+            logger.warning(
+                "github account link: provider %r is not configured, "
+                "cannot refresh an expiring token",
+                provider_id,
+            )
+            return None
+        if not isinstance(provider, GitHubProvider):
+            return None
+
+        bind = self._repo.session.bind
+        async with AsyncSession(bind=bind, expire_on_commit=False) as session:
+            repo = OAuthConnectionRepository(session)
+            conn = await repo.get_for_update(connection_id)
+            if conn is None:
+                return None
+
+            if (
+                conn.token_expires is not None
+                and conn.token_expires - datetime.now(UTC)
+                > _GITHUB_TOKEN_REFRESH_MARGIN
+            ):
+                # Someone else refreshed it while we waited for the lock.
+                return (
+                    self._decrypt_stored_token(conn.access_token, user_id=conn.user_id)
+                    if conn.access_token
+                    else None
+                )
+
+            stored_refresh = (
+                self._decrypt_stored_token(conn.refresh_token, user_id=conn.user_id)
+                if conn.refresh_token
+                else None
+            )
+            if not stored_refresh:
+                return None
+
+            try:
+                token_data = await provider.refresh_access_token(stored_refresh)
+                new_access_token = token_data["access_token"]
+            except Exception:
+                logger.exception("github account link: token refresh failed")
+                return None
+
+            expires_in = token_data.get("expires_in")
+            new_expires = (
+                datetime.now(UTC) + timedelta(seconds=expires_in)
+                if expires_in
+                else None
+            )
+            new_refresh_token = token_data.get("refresh_token")
+            await repo.update_tokens(
+                conn.id,
+                encrypt_text(new_access_token),
+                encrypt_text(new_refresh_token or stored_refresh),
+                new_expires,
+            )
+            await session.commit()
+            return new_access_token
 
     async def list_user_connections(self, user_id: int) -> list[dict]:
         conns = await self._repo.list_by_user(user_id)
@@ -360,6 +608,7 @@ class OAuthService:
             "github": "GitHub",
             "google": "Google",
             "ruc": "微人大",
+            "github_app": "GitHub (cheesex-app)",
         }
         return [
             {
@@ -368,6 +617,12 @@ class OAuthService:
                 "providerName": provider_names.get(c.provider_id, c.provider_id),
                 "providerUserId": c.provider_user_id,
                 "connectedAt": c.created_at.isoformat() if c.created_at else None,
+                # Token 健康度 (2026-08-09): 只暴露元数据，绝不返回 token/密文本身.
+                "login": (c.raw_profile or {}).get("login"),
+                "tokenExpires": (
+                    c.token_expires.isoformat() if c.token_expires else None
+                ),
+                "hasRefreshToken": c.refresh_token is not None,
             }
             for c in conns
         ]
@@ -403,3 +658,54 @@ class OAuthService:
             return None
         await self._redis.delete(key)
         return json.loads(raw)
+
+
+async def get_github_user_token_for_handle(
+    session: Any, handle: str, *, provider_id: str = "github_app"
+) -> str | None:
+    """批准人已连接的 GitHub 账号 token (两阶段采纳 PR迭代式, 2026-08-09).
+
+    Defaults to the "github_app" connection (#192's user-to-server flow for
+    cheesex-app, distinct from the plain "github" login provider) since PR
+    open/merge needs to act as the App on the user's behalf.
+
+    A thin handle → user_id adapter over ``OAuthService.get_github_user_token``,
+    deliberately NOT its own token lookup: tokens are Fernet-encrypted at rest
+    (``create_connection`` / ``update_connection_tokens`` both call
+    ``encrypt_text``), and expiry/refresh handling lives on that method. Reading
+    ``conn.access_token`` straight off the row — as this function used to — hands
+    the caller raw ciphertext, which is non-empty and so passes every
+    ``if not token`` guard before failing against GitHub with a 401 that looks
+    exactly like "no connected account".
+
+    Returns None, never raises, whenever the mechanism is unavailable: unknown
+    handle, no connected account, no or undecryptable token, or an expired token
+    with no usable refresh. Callers treat None as "degrade to the direct-merge
+    accept path".
+    """
+    token, _reason = await get_github_user_token_for_handle_with_reason(
+        session, handle, provider_id=provider_id
+    )
+    return token
+
+
+async def get_github_user_token_for_handle_with_reason(
+    session: Any, handle: str, *, provider_id: str = "github_app"
+) -> tuple[str | None, str | None]:
+    """Same contract as ``get_github_user_token_for_handle``, plus a
+    ``TOKEN_UNAVAILABLE_*`` reason whenever the token comes back None — see
+    ``OAuthService.get_github_user_token_with_reason``. An unknown handle
+    (no such platform user, as distinct from "user exists but never
+    connected GitHub") is bucketed under ``TOKEN_UNAVAILABLE_NOT_CONNECTED``
+    too: from an accept-flow caller's point of view both mean "this approver
+    has no usable GitHub identity".
+    """
+    from app.domain.user.repositories import UserRepository
+
+    user = await UserRepository(session).get_by_handle(handle)
+    if user is None:
+        return None, TOKEN_UNAVAILABLE_NOT_CONNECTED
+    service = OAuthService(OAuthConnectionRepository(session))
+    return await service.get_github_user_token_with_reason(
+        user.id, provider_id=provider_id
+    )

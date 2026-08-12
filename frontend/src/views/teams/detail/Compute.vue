@@ -1,183 +1,601 @@
 <script setup lang="ts">
-// 团队算力 (execution-architecture v4): the machines registered for this team
-// (为团队注册设备). Every project of the team may run turns on these — a topic picks
-// 自托管设备 in its composer to use one. This page owns the 归属 layer: 「加机器」
-// registers one of MY enrolled machines to THIS team (the personal team included —
-// 个人 = 单人真团队). Enrollment itself (认证 layer) lives in 「我的设备」.
-import type { MyDevice } from '@/cx_types'
+// Team compute is the ownership surface from execution-architecture v4:
+// platform cloud machines and self-hosted nodes live in one team pool; projects
+// only provide billing/audit attribution, while a topic chooses the actual target.
+import type { ComputeProfiles, MyDevice, Project, ProjectMachine } from '@/cx_types'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { listMyDevices, listTeamDevices, registerDeviceForTeam, unregisterDeviceFromTeam } from '@/api'
+import {
+  createProjectMachine,
+  deleteProjectMachine,
+  listMyDevices,
+  listProjectMachines,
+  listProjects,
+  listTeamDevices,
+  registerDeviceForTeam,
+  unregisterDeviceFromTeam,
+} from '@/api'
+import { teamDataInjectionKey } from '@/keys'
+import { TeamsApi } from '@/network/api/teams'
+
+type CloudMachine = ProjectMachine & { projectName: string }
 
 const route = useRoute()
+const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => Number(route.params.teamId))
+const canManage = computed(() => ['OWNER', 'ADMIN'].includes(teamData.value?.role ?? ''))
 
-const devices = ref<MyDevice[]>([]) // the team's roster (all members' machines)
-const myDevices = ref<MyDevice[]>([]) // my enrolled machines (认证 layer)
+const devices = ref<MyDevice[]>([])
+const myDevices = ref<MyDevice[]>([])
+const projects = ref<Project[]>([])
+const cloudMachines = ref<CloudMachine[]>([])
+const teamCompute = ref<ComputeProfiles | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
-const busy = ref<string | null>(null) // device_id with a register/remove in flight
+const busy = ref<string | null>(null)
+const savingDefault = ref<string | null>(null)
+const cloudConfigured = ref(true)
 
-const onlineCount = computed(() => devices.value.filter((d) => d.online).length)
-const myDeviceIds = computed(() => new Set(myDevices.value.map((d) => d.device_id)))
-// My machines not yet registered to this team — the 「加机器」 menu.
-const addable = computed(() => myDevices.value.filter((d) => !d.team_ids.includes(teamId.value)))
+const createDialog = ref(false)
+const creating = ref(false)
+const selectedProject = ref<string | null>(null)
+const cores = ref(4)
+const memoryMb = ref(8192)
+const diskGb = ref(64)
+
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+
+const myDeviceIds = computed(() => new Set(myDevices.value.map((device) => device.device_id)))
+const addable = computed(() => myDevices.value.filter((device) => !device.team_ids.includes(teamId.value)))
+const cloudDeviceIds = computed(
+  () => new Set(cloudMachines.value.map((machine) => machine.device_id).filter((id): id is string => Boolean(id)))
+)
+const selfHostedDevices = computed(() => devices.value.filter((device) => !cloudDeviceIds.value.has(device.device_id)))
+const onlineCount = computed(() => selfHostedDevices.value.filter((device) => device.online).length)
+const projectOptions = computed(() => projects.value.map((project) => ({ title: project.name, value: project.id })))
+const cloudMoving = computed(() =>
+  cloudMachines.value.some(
+    (machine) =>
+      ['provisioning', 'starting', 'stopping', 'deleting', 'unknown'].includes(machine.status) ||
+      ['provisioning', 'unknown'].includes(machine.ai_status) ||
+      (machine.status === 'running' &&
+        machine.ai_status === 'ready' &&
+        !machine.device_id &&
+        machine.enroll_attempts < machine.enroll_max_attempts)
+  )
+)
+
+const statusLabel: Record<ProjectMachine['status'], string> = {
+  provisioning: '正在创建',
+  starting: '正在启动',
+  running: '运行中',
+  stopping: '正在停止',
+  stopped: '已停止',
+  deleting: '正在释放',
+  deleted: '已释放',
+  error: '创建失败',
+  unknown: '状态未知',
+}
+
+function errorMessage(value: unknown, fallback: string): string {
+  return value instanceof Error ? value.message : fallback
+}
+
+async function loadCloud() {
+  let configured = true
+  const batches = await Promise.all(
+    projects.value.map(async (project) => {
+      try {
+        const result = await listProjectMachines(project.id)
+        return result.data.map((machine) => ({ ...machine, projectName: project.name }))
+      } catch (cause) {
+        const message = errorMessage(cause, '加载云算力失败')
+        if (message.includes('not configured')) {
+          configured = false
+          return []
+        }
+        throw cause
+      }
+    })
+  )
+  cloudConfigured.value = configured
+  cloudMachines.value = batches.flat()
+}
 
 async function load() {
   loading.value = true
   error.value = null
   try {
-    devices.value = (await listTeamDevices(teamId.value)).devices
-    // Best-effort: without enrolled machines the connector may 401 — the roster
-    // still renders, only the 「加机器」 menu falls back to its empty hint.
-    myDevices.value = await listMyDevices()
-      .then((r) => r.devices)
-      .catch(() => [])
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载团队算力失败'
+    const [teamDevices, mine, profile, projectList] = await Promise.all([
+      listTeamDevices(teamId.value),
+      listMyDevices().catch(() => ({ devices: [] })),
+      TeamsApi.getComputeProfile(teamId.value),
+      listProjects(teamId.value),
+    ])
+    devices.value = teamDevices.devices
+    myDevices.value = mine.devices
+    teamCompute.value = profile.data
+    projects.value = projectList.data
+    selectedProject.value = selectedProject.value ?? projects.value[0]?.id ?? null
+    await loadCloud()
+  } catch (cause) {
+    error.value = errorMessage(cause, '加载团队算力失败')
   } finally {
     loading.value = false
+    schedulePoll()
   }
 }
 
-async function addMachine(d: MyDevice) {
-  busy.value = d.device_id
+async function refreshCloud() {
   try {
-    await registerDeviceForTeam(d.device_id, teamId.value)
+    await loadCloud()
+    const profile = await TeamsApi.getComputeProfile(teamId.value)
+    teamCompute.value = profile.data
+  } catch (cause) {
+    error.value = errorMessage(cause, '刷新云算力状态失败')
+  } finally {
+    schedulePoll()
+  }
+}
+
+function schedulePoll() {
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = null
+  if (cloudMoving.value) pollTimer = setTimeout(refreshCloud, 5000)
+}
+
+async function pickDefault(profileId: string) {
+  if (!canManage.value || savingDefault.value || teamCompute.value?.current === profileId) return
+  savingDefault.value = profileId
+  error.value = null
+  try {
+    const response = await TeamsApi.setComputeProfile(teamId.value, profileId)
+    if (teamCompute.value) teamCompute.value = { ...teamCompute.value, current: response.data.current }
+  } catch (cause) {
+    error.value = errorMessage(cause, '修改团队默认算力失败')
+  } finally {
+    savingDefault.value = null
+  }
+}
+
+async function addMachine(device: MyDevice) {
+  busy.value = device.device_id
+  error.value = null
+  try {
+    await registerDeviceForTeam(device.device_id, teamId.value)
     await load()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加机器失败'
+  } catch (cause) {
+    error.value = errorMessage(cause, '添加机器失败')
   } finally {
     busy.value = null
   }
 }
 
-async function removeMachine(d: MyDevice) {
-  busy.value = d.device_id
+async function removeMachine(device: MyDevice) {
+  if (!window.confirm(`确定把「${device.name}」移出这个团队的算力池吗？`)) return
+  busy.value = device.device_id
+  error.value = null
   try {
-    await unregisterDeviceFromTeam(d.device_id, teamId.value)
+    await unregisterDeviceFromTeam(device.device_id, teamId.value)
     await load()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '移出失败'
+  } catch (cause) {
+    error.value = errorMessage(cause, '移出机器失败')
   } finally {
     busy.value = null
+  }
+}
+
+async function provisionCloud() {
+  if (!selectedProject.value || creating.value) return
+  creating.value = true
+  error.value = null
+  try {
+    await createProjectMachine(selectedProject.value, {
+      cores: Number(cores.value),
+      memoryMb: Number(memoryMb.value),
+      diskGb: Number(diskGb.value),
+    })
+    createDialog.value = false
+    await loadCloud()
+  } catch (cause) {
+    error.value = errorMessage(cause, '开通云算力失败')
+  } finally {
+    creating.value = false
+    schedulePoll()
+  }
+}
+
+async function destroyCloud(machine: CloudMachine) {
+  if (!window.confirm(`确定释放云机器「${machine.hostname}」吗？释放后数据不可恢复。`)) return
+  busy.value = machine.id
+  error.value = null
+  try {
+    await deleteProjectMachine(machine.project_id, machine.id)
+    await loadCloud()
+  } catch (cause) {
+    error.value = errorMessage(cause, '释放云算力失败')
+  } finally {
+    busy.value = null
+    schedulePoll()
   }
 }
 
 onMounted(load)
 watch(teamId, load)
+watch(cloudMoving, schedulePoll)
+onBeforeUnmount(() => {
+  if (pollTimer) clearTimeout(pollTimer)
+})
 </script>
 
 <template>
-  <v-container class="px-6 py-4" fluid>
-    <div class="mb-4 d-flex align-start">
+  <v-container class="px-6 py-5" fluid>
+    <div class="mb-5 d-flex align-start flex-wrap ga-3">
       <div>
         <h2 class="text-h6 font-weight-medium mb-1">算力</h2>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          注册给这个小队的机器。小队里任何项目的话题都可以选「自托管设备」跑在这些机器上， 工作树与数据留在本地。
+          团队统一管理云机器和自有设备。新话题沿用上次选择，第一条消息发出后锁定到该算力。
         </p>
       </div>
       <v-spacer />
-      <v-menu location="bottom end">
-        <template #activator="{ props: menuProps }">
-          <v-btn v-bind="menuProps" color="primary" variant="flat" prepend-icon="mdi-plus"> 加机器 </v-btn>
-        </template>
-        <v-list density="compact" min-width="260">
-          <v-list-item
-            v-for="d in addable"
-            :key="d.device_id"
-            :title="d.name"
-            :disabled="busy === d.device_id"
-            @click="addMachine(d)"
-          >
-            <template #prepend>
-              <v-icon :color="d.online ? 'success' : 'grey'" size="12" class="mr-1">mdi-circle</v-icon>
-            </template>
-          </v-list-item>
-          <v-list-item v-if="!addable.length && myDevices.length" disabled>
-            <span class="text-caption text-medium-emphasis">你的机器都已注册给这个小队</span>
-          </v-list-item>
-          <v-list-item v-if="!myDevices.length" :to="{ name: 'my-devices' }" title="先去「我的设备」接入机器">
-            <template #prepend>
-              <v-icon size="16" class="mr-1">mdi-laptop-account</v-icon>
-            </template>
-          </v-list-item>
-        </v-list>
-      </v-menu>
+      <v-btn
+        v-if="canManage"
+        color="primary"
+        variant="flat"
+        prepend-icon="mdi-cloud-plus-outline"
+        :disabled="!cloudConfigured || !projects.length"
+        @click="createDialog = true"
+      >
+        开通云算力
+      </v-btn>
     </div>
 
-    <div v-if="loading" class="py-10 text-center">
-      <v-progress-circular indeterminate color="primary" />
-    </div>
-
-    <v-alert v-else-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
+    <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
       {{ error }}
     </v-alert>
 
-    <div v-else-if="devices.length === 0" class="empty-state text-center py-12">
-      <v-icon icon="mdi-server-network-off" size="56" color="grey-lighten-2" class="mb-3" />
-      <h3 class="text-subtitle-1 font-weight-medium mb-1">这个小队还没有算力</h3>
-      <p class="text-body-2 text-medium-emphasis mb-0">点右上角「加机器」，把你已接入的机器注册给这个小队。</p>
+    <div v-if="loading" class="py-12 text-center">
+      <v-progress-circular indeterminate color="primary" />
     </div>
 
     <template v-else>
-      <div class="text-caption text-medium-emphasis mb-3">{{ devices.length }} 台机器 · {{ onlineCount }} 台在线</div>
-      <v-row>
-        <v-col v-for="d in devices" :key="d.device_id" cols="12" sm="6" lg="4">
-          <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
-            <div class="d-flex align-center mb-2">
-              <v-icon :color="d.online ? 'success' : 'grey'" size="20" class="mr-2"> mdi-laptop </v-icon>
-              <span class="text-subtitle-2 font-weight-medium text-truncate">
-                {{ d.name }}
-              </span>
-              <v-spacer />
-              <span class="text-caption" :class="d.online ? 'text-success font-weight-medium' : 'text-medium-emphasis'">
-                <span class="status-dot" :class="d.online ? 'status-dot--on' : ''" />
-                {{ d.online ? '在线' : '离线' }}
-              </span>
+      <section class="compute-section mb-7">
+        <div class="section-heading mb-3">
+          <div>
+            <h3 class="text-subtitle-1 font-weight-medium">团队默认</h3>
+            <p class="text-caption text-medium-emphasis mb-0">项目第一次开话题时从这里开始；之后自动记住上次选择。</p>
+          </div>
+          <v-chip v-if="!canManage" size="small" variant="tonal">仅管理员可修改</v-chip>
+        </div>
+        <div class="profile-grid">
+          <button
+            v-for="profile in teamCompute?.profiles ?? []"
+            :key="profile.id"
+            type="button"
+            class="profile-card"
+            :class="{
+              'profile-card--active': teamCompute?.current === profile.id,
+              'profile-card--off': !profile.available,
+            }"
+            :disabled="!canManage || !profile.available || savingDefault !== null"
+            @click="pickDefault(profile.id)"
+          >
+            <v-icon size="20">{{
+              profile.id === 'device' ? 'mdi-laptop' : profile.id === 'gpu' ? 'mdi-expansion-card' : 'mdi-server'
+            }}</v-icon>
+            <span class="profile-copy">
+              <span class="profile-title">{{ profile.label }}</span>
+              <span class="profile-description">{{ profile.description }}</span>
+            </span>
+            <v-progress-circular v-if="savingDefault === profile.id" indeterminate size="16" width="2" />
+            <v-icon v-else-if="teamCompute?.current === profile.id" size="18" color="primary">mdi-check-circle</v-icon>
+            <span v-else-if="!profile.available" class="text-caption text-medium-emphasis">暂不可用</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="compute-section mb-7">
+        <div class="section-heading mb-3">
+          <div>
+            <h3 class="text-subtitle-1 font-weight-medium">云算力</h3>
+            <p class="text-caption text-medium-emphasis mb-0">由平台创建并自动接入团队算力池，费用归属所选项目。</p>
+          </div>
+        </div>
+
+        <v-alert v-if="!cloudConfigured" type="info" variant="tonal" density="comfortable">
+          当前部署尚未接入云算力供应方；自有设备仍可正常使用。
+        </v-alert>
+        <v-alert v-else-if="!projects.length" type="info" variant="tonal" density="comfortable">
+          先在团队里创建一个项目，云机器会以该项目作为费用与审计归属。
+        </v-alert>
+        <div v-else-if="!cloudMachines.length" class="empty-panel">
+          <v-icon size="38" color="grey-lighten-1">mdi-cloud-outline</v-icon>
+          <div>
+            <div class="text-body-2 font-weight-medium">还没有云机器</div>
+            <div class="text-caption text-medium-emphasis">
+              管理员可按需开通，创建完成后会自动出现在话题算力选择器里。
             </div>
-            <div class="text-caption text-medium-emphasis" style="font-family: monospace">
-              {{ d.device_id }}
-            </div>
-            <div v-if="d.screens.length" class="mt-3 d-flex flex-wrap ga-2">
-              <v-chip v-for="s in d.screens" :key="s.sid" size="x-small" variant="tonal" color="primary">
-                <v-icon start size="12">mdi-monitor-eye</v-icon>
-                运行中 · @{{ s.agent_handle }}
-              </v-chip>
-            </div>
-            <!-- Only the machine's owner may pull it out of the team. -->
-            <div v-if="myDeviceIds.has(d.device_id)" class="mt-2 d-flex justify-end">
-              <v-btn
-                size="x-small"
-                variant="text"
-                color="error"
-                :loading="busy === d.device_id"
-                @click="removeMachine(d)"
+          </div>
+        </div>
+        <v-row v-else>
+          <v-col v-for="machine in cloudMachines" :key="machine.id" cols="12" md="6" xl="4">
+            <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
+              <div class="d-flex align-center mb-3">
+                <v-icon size="20" color="primary" class="mr-2">mdi-cloud</v-icon>
+                <span class="text-subtitle-2 font-weight-medium text-truncate">{{ machine.hostname }}</span>
+                <v-spacer />
+                <v-progress-circular
+                  v-if="['provisioning', 'starting', 'stopping', 'deleting', 'unknown'].includes(machine.status)"
+                  indeterminate
+                  size="15"
+                  width="2"
+                  class="mr-2"
+                />
+                <v-chip
+                  size="x-small"
+                  :color="machine.status === 'running' ? 'success' : machine.status === 'error' ? 'error' : undefined"
+                  variant="tonal"
+                >
+                  {{ statusLabel[machine.status] }}
+                </v-chip>
+              </div>
+              <div class="machine-meta">
+                <span>{{ machine.cores }} 核</span>
+                <span>{{ Math.round(machine.memory_mb / 1024) }} GB 内存</span>
+                <span>{{ machine.disk_gb }} GB 磁盘</span>
+              </div>
+              <div class="text-caption text-medium-emphasis mt-2">费用归属：{{ machine.projectName }}</div>
+              <div v-if="machine.ip" class="text-caption text-medium-emphasis mt-1">地址：{{ machine.ip }}</div>
+              <div class="text-caption mt-1" :class="machine.device_id ? 'text-success' : 'text-medium-emphasis'">
+                {{
+                  machine.device_id
+                    ? '已接入团队算力池'
+                    : machine.enroll_error
+                      ? `接入失败（${machine.enroll_attempts}/${machine.enroll_max_attempts}）`
+                      : '等待自动接入'
+                }}
+              </div>
+              <v-alert v-if="machine.enroll_error" type="error" variant="tonal" density="compact" class="mt-3">
+                {{ machine.enroll_error }}
+              </v-alert>
+              <div v-if="canManage" class="mt-3 d-flex justify-end">
+                <v-btn
+                  size="small"
+                  variant="text"
+                  color="error"
+                  :loading="busy === machine.id"
+                  @click="destroyCloud(machine)"
+                >
+                  释放
+                </v-btn>
+              </div>
+            </v-card>
+          </v-col>
+        </v-row>
+      </section>
+
+      <section class="compute-section">
+        <div class="section-heading mb-3">
+          <div>
+            <h3 class="text-subtitle-1 font-weight-medium">自有设备</h3>
+            <p class="text-caption text-medium-emphasis mb-0">把成员已接入的机器注册给团队，工作树与数据留在机器上。</p>
+          </div>
+          <v-menu location="bottom end">
+            <template #activator="{ props: menuProps }">
+              <v-btn v-bind="menuProps" variant="outlined" prepend-icon="mdi-plus">添加自有设备</v-btn>
+            </template>
+            <v-list density="compact" min-width="280">
+              <v-list-item
+                v-for="device in addable"
+                :key="device.device_id"
+                :title="device.name"
+                :disabled="busy === device.device_id"
+                @click="addMachine(device)"
               >
-                移出小队
-              </v-btn>
-            </div>
-          </v-card>
-        </v-col>
-      </v-row>
+                <template #prepend>
+                  <v-icon :color="device.online ? 'success' : 'grey'" size="12" class="mr-2">mdi-circle</v-icon>
+                </template>
+              </v-list-item>
+              <v-list-item v-if="!addable.length && myDevices.length" disabled title="你的设备都已在这个团队中" />
+              <v-list-item v-if="!myDevices.length" :to="{ name: 'my-devices' }" title="先去「我的设备」接入机器">
+                <template #prepend><v-icon size="18" class="mr-2">mdi-laptop-account</v-icon></template>
+              </v-list-item>
+            </v-list>
+          </v-menu>
+        </div>
+
+        <div v-if="!selfHostedDevices.length" class="empty-panel">
+          <v-icon size="38" color="grey-lighten-1">mdi-laptop-off</v-icon>
+          <div>
+            <div class="text-body-2 font-weight-medium">还没有自有设备</div>
+            <div class="text-caption text-medium-emphasis">接入后，团队内所有项目都可以使用。</div>
+          </div>
+        </div>
+        <template v-else>
+          <div class="text-caption text-medium-emphasis mb-3">
+            {{ selfHostedDevices.length }} 台机器 · {{ onlineCount }} 台在线
+          </div>
+          <v-row>
+            <v-col v-for="device in selfHostedDevices" :key="device.device_id" cols="12" sm="6" lg="4">
+              <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
+                <div class="d-flex align-center mb-2">
+                  <v-icon :color="device.online ? 'success' : 'grey'" size="20" class="mr-2">mdi-laptop</v-icon>
+                  <span class="text-subtitle-2 font-weight-medium text-truncate">{{ device.name }}</span>
+                  <v-spacer />
+                  <span
+                    class="text-caption"
+                    :class="device.online ? 'text-success font-weight-medium' : 'text-medium-emphasis'"
+                  >
+                    <span class="status-dot" :class="device.online ? 'status-dot--on' : ''" />
+                    {{ device.online ? '在线' : '离线' }}
+                  </span>
+                </div>
+                <div class="text-caption text-medium-emphasis machine-id">{{ device.device_id }}</div>
+                <div v-if="device.screens.length" class="mt-3 d-flex flex-wrap ga-2">
+                  <v-chip
+                    v-for="screen in device.screens"
+                    :key="screen.sid"
+                    size="x-small"
+                    variant="tonal"
+                    color="primary"
+                  >
+                    <v-icon start size="12">mdi-monitor-eye</v-icon>
+                    运行中 · @{{ screen.agent_handle }}
+                  </v-chip>
+                </div>
+                <div v-if="myDeviceIds.has(device.device_id)" class="mt-2 d-flex justify-end">
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    color="error"
+                    :loading="busy === device.device_id"
+                    @click="removeMachine(device)"
+                  >
+                    移出团队
+                  </v-btn>
+                </div>
+              </v-card>
+            </v-col>
+          </v-row>
+        </template>
+      </section>
     </template>
+
+    <v-dialog v-model="createDialog" max-width="520">
+      <v-card rounded="lg">
+        <v-card-title class="pt-5 px-5">开通云算力</v-card-title>
+        <v-card-text class="px-5">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+            创建后会持续占用云资源；释放机器会删除其本地数据。
+          </v-alert>
+          <v-select
+            v-model="selectedProject"
+            :items="projectOptions"
+            label="费用与审计归属项目"
+            variant="outlined"
+            density="comfortable"
+          />
+          <v-row dense>
+            <v-col cols="4"
+              ><v-text-field v-model.number="cores" type="number" min="1" label="CPU 核" variant="outlined"
+            /></v-col>
+            <v-col cols="4"
+              ><v-text-field
+                v-model.number="memoryMb"
+                type="number"
+                min="512"
+                step="512"
+                label="内存 MB"
+                variant="outlined"
+            /></v-col>
+            <v-col cols="4"
+              ><v-text-field v-model.number="diskGb" type="number" min="10" label="磁盘 GB" variant="outlined"
+            /></v-col>
+          </v-row>
+        </v-card-text>
+        <v-card-actions class="px-5 pb-5">
+          <v-spacer />
+          <v-btn variant="text" :disabled="creating" @click="createDialog = false">取消</v-btn>
+          <v-btn color="primary" variant="flat" :loading="creating" :disabled="!selectedProject" @click="provisionCloud"
+            >确认开通</v-btn
+          >
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
 <style scoped>
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 12px 14px;
+  border: 1px solid rgba(var(--v-border-color), 0.18);
+  border-radius: 10px;
+  background: rgb(var(--v-theme-surface));
+  text-align: left;
+}
+.profile-card:not(:disabled) {
+  cursor: pointer;
+}
+.profile-card--active {
+  border-color: rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.04);
+}
+.profile-card--off {
+  opacity: 0.58;
+}
+.profile-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.profile-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.profile-description {
+  margin-top: 2px;
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.empty-panel {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 94px;
+  padding: 18px;
+  border: 1px dashed rgba(var(--v-border-color), 0.24);
+  border-radius: 10px;
+}
+.machine-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.machine-meta span {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(var(--v-theme-on-surface), 0.05);
+  font-size: 0.72rem;
+}
+.machine-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .status-dot {
   display: inline-block;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
   margin-right: 4px;
+  border-radius: 50%;
   background: rgb(var(--v-theme-on-surface));
   opacity: 0.35;
 }
 .status-dot--on {
   background: rgb(var(--v-theme-success));
   opacity: 1;
+}
+@media (max-width: 600px) {
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 </style>

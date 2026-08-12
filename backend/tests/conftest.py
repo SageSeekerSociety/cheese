@@ -17,7 +17,7 @@ A stub agent keeps tests off the live model.
 import asyncio
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,6 +32,11 @@ from sqlalchemy.pool import NullPool
 # always get a clean, cwd-driven git context.
 for _k in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_k]
+
+# Client construction validates credentials before the mocked transport is used.
+# Keep the suite hermetic instead of depending on a developer or CI secret.
+os.environ.setdefault("OPENAI_API_KEY", "test-openai-key")
+os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", "test-anthropic-token")
 
 # Bind the app engine (app.core.db — the single pool; app.db.session re-exports
 # it) to THIS worker's integration DB — must happen before any app import (the
@@ -133,6 +138,27 @@ def stub_agent() -> StubAgent:
 
 
 @pytest.fixture
+def bearer() -> Callable[[str], dict[str, str]]:
+    """``Authorization`` headers proving the caller is ``handle``.
+
+    Most 2.0 routes still accept a handle named in the body (Phase-0), but the
+    ones that decide who may reach the project — writing the project roster —
+    read the actor from the verified token only. Those tests need a real token.
+    """
+
+    def _headers(handle: str) -> dict[str, str]:
+        # Deferred import: the shared helper lives in the integration conftest,
+        # and only integration tests request this fixture. Minting here instead
+        # would be a second source of truth for the same token —
+        # tests/unit/test_no_adhoc_auth_helpers.py exists to stop exactly that.
+        from tests.integration.conftest import session_auth_headers
+
+        return session_auth_headers(handle)
+
+    return _headers
+
+
+@pytest.fixture
 def client(_pg_schema, stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
@@ -222,7 +248,96 @@ async def _admin_recreate_db(db_name: str) -> None:
         await conn.close()
 
 
-def _create_and_migrate(db_name: str, db_url: str) -> None:
+def _migration_fingerprint() -> str:
+    """Identity of the migration history, so a template built from an older one
+    is never reused."""
+    import hashlib
+    from pathlib import Path
+
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    digest = hashlib.sha256()
+    for path in sorted(versions.glob("*.py")):
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+_TEMPLATE_DB = f"cheesex_tpl_{_migration_fingerprint()}"
+
+
+async def _db_exists(db_name: str) -> bool:
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        return bool(
+            await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", db_name)
+        )
+    finally:
+        await conn.close()
+
+
+async def _clone_db(db_name: str, template: str) -> None:
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)')
+        await conn.execute(f'CREATE DATABASE "{db_name}" TEMPLATE "{template}"')
+    finally:
+        await conn.close()
+
+
+async def _rename_db(old: str, new: str) -> None:
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(f'DROP DATABASE IF EXISTS "{new}" WITH (FORCE)')
+        await conn.execute(f'ALTER DATABASE "{old}" RENAME TO "{new}"')
+    finally:
+        await conn.close()
+
+
+def _ensure_template() -> bool:
+    """Build (once per machine, per migration history) a migrated template other
+    databases are copied from. Returns False if anything went wrong, so the
+    caller can fall back to migrating directly.
+
+    Every xdist worker used to replay the entire history into its own database:
+    a dozen concurrent transactions each creating ~90 tables with their indexes
+    exhausts Postgres's preallocated lock table, and the server refuses with
+    "out of shared memory" — which killed every worker's migration and errored
+    the whole session before a single test ran. A service container cannot be
+    given a larger lock table (no way to pass server arguments), so the fix is
+    to stop asking for that many locks: migrate once, then clone.
+
+    The template is built under a temporary name and renamed on success, so its
+    existence means "complete" — a run killed mid-migration leaves the failed
+    build behind, not a half-migrated template that later runs would trust.
+    """
+    import fcntl
+    import tempfile
+    from pathlib import Path
+
+    lock_path = Path(tempfile.gettempdir()) / f"{_TEMPLATE_DB}.lock"
+    try:
+        with open(lock_path, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if asyncio.run(_db_exists(_TEMPLATE_DB)):
+                return True
+            building = f"{_TEMPLATE_DB}_building"
+            _migrate_fresh_db(building, f"{_PG_BASE}/{building}")
+            asyncio.run(_rename_db(building, _TEMPLATE_DB))
+            return True
+    except Exception:  # noqa: BLE001 — fall back to the slow path, never block
+        return False
+
+
+def _migrate_fresh_db(db_name: str, db_url: str) -> None:
     """Drop + recreate a database and migrate it to head (alembic)."""
     import subprocess
     import sys
@@ -233,24 +348,89 @@ def _create_and_migrate(db_name: str, db_url: str) -> None:
     # DATABASE_URL maps to settings.database_url, which alembic/env.py reads.
     # `python -m alembic` works from any host (local venv or CI) without assuming
     # a `.venv/bin/alembic` path.
-    subprocess.run(
+    result = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=backend_dir,
         env={**os.environ, "DATABASE_URL": db_url},
-        check=True,
         capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        # check=True raises with only the argv, so a migration failure reached
+        # the log as "returned non-zero exit status 1" and nothing else — every
+        # test in the session then errors with no way to tell a wedged Postgres
+        # from a genuinely broken migration. Surface alembic's own words.
+        raise RuntimeError(
+            f"alembic upgrade head failed for {db_name} (rc={result.returncode})\n"
+            f"--- stdout ---\n{result.stdout.strip()}\n"
+            f"--- stderr ---\n{result.stderr.strip()}"
+        )
+
+
+def _create_and_migrate(db_name: str, db_url: str) -> None:
+    """This worker's database, at head — cloned from the shared template when
+    one could be built, migrated directly otherwise."""
+    if _TEMPLATE_READY:
+        asyncio.run(_clone_db(db_name, _TEMPLATE_DB))
+        return
+    _migrate_fresh_db(db_name, db_url)
+
+
+# Built lazily by the first worker to reach the fixture; the rest clone it.
+_TEMPLATE_READY = False
+
+
+# tests/unit/ is the only tree allowed to run without a Postgres; everything
+# else is DB-backed by construction. Trailing sep so a sibling like
+# "tests/unittools/" can't match by prefix.
+_UNIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "unit") + os.sep
+
+
+def _needs_db(request: pytest.FixtureRequest) -> bool:
+    """Whether this test requires the Postgres schema to be provisioned.
+
+    Two independent reasons, because fixture names alone aren't enough: the
+    integration harness binds ``settings.database_url`` directly (module import
+    time), so a test there can touch the DB without naming a DB fixture. Hence
+    anything outside ``tests/unit/`` is assumed DB-backed. Inside ``tests/unit/``
+    we go by the fixture closure — ``request.fixturenames`` is transitive, and
+    every DB-bound fixture (``client``, ``python_client``, integration's
+    ``db_connection``/``db_session``…) chains to ``_pg_schema``, so requesting any
+    of them shows up here.
+    """
+    return (
+        not str(request.path).startswith(_UNIT_DIR)
+        or "_pg_schema" in request.fixturenames
     )
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
+def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
+    """Provision the DB schema for the tests that need it — and only those.
+
+    ``_pg_schema`` used to be ``autouse=True`` at session scope, which meant a
+    host with no Postgres could not run *any* test, including the ~132 unit files
+    that never touch a database: the session fixture errored during setup and took
+    the whole run down with it. Gating it per-test keeps behaviour identical for
+    DB-backed tests (still built once per session — ``_pg_schema`` is still
+    session-scoped) while letting ``tests/unit/`` run with no server at all.
+    """
+    if _needs_db(request):
+        request.getfixturevalue("_pg_schema")
+
+
+@pytest.fixture(scope="session")
 def _pg_schema():
     """Create + migrate THIS worker's two dedicated databases once per session:
     the integration DB (settings.database_url, bound by the app engines) and the
-    client/python_client DB (TEST_DATABASE_URL). autouse so the integration harness
-    — which binds to settings.database_url — always finds a ready schema too. Both
-    are per-worker, so nothing races across xdist workers. Talks to the Postgres
-    server at TEST_PG_BASE (local docker pg :5433 by default; CI overrides it).
+    client/python_client DB (TEST_DATABASE_URL). Reached via the ``_pg_schema_gate``
+    autouse fixture above so the integration harness — which binds to
+    settings.database_url — always finds a ready schema too. Both are per-worker,
+    so nothing races across xdist workers. Talks to the Postgres server at
+    TEST_PG_BASE (local docker pg :5433 by default; CI overrides it).
     """
+    global _TEMPLATE_READY
+    _TEMPLATE_READY = _ensure_template()
     _create_and_migrate(_INTG_DB_NAME, settings.database_url)
     _create_and_migrate(_CLIENT_DB_NAME, TEST_DATABASE_URL)
     yield

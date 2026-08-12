@@ -8,7 +8,9 @@
           </v-avatar>
         </template>
         <v-card-title class="text-h6 ps-0">PDF 快速发布</v-card-title>
-        <v-card-subtitle class="ps-0">上传赛题 PDF 后，系统会解析赛题内容；发布参数请在下方表单统一填写</v-card-subtitle>
+        <v-card-subtitle class="ps-0"
+          >上传赛题 PDF 后，系统会解析赛题内容；发布参数请在下方表单统一填写</v-card-subtitle
+        >
       </v-card-item>
 
       <v-card-text class="pt-2">
@@ -110,6 +112,7 @@
 </template>
 
 <script setup lang="ts">
+import type { PdfTaskDraftData } from '@/network/api/tasks/types'
 import type { TaskSubmissionSchemaEntry } from '@/types'
 import type { TaskFormSubmitData } from '@/types'
 
@@ -134,7 +137,7 @@ const { currentSpaceId, templates, classificationTopics, categories, domainGroup
 const pdfFile = ref<File | File[] | null>(null)
 const pdfPreviewLoading = ref(false)
 const pdfConfirmLoading = ref(false)
-const pdfDrafts = ref<Record<string, any>[]>([])
+const pdfDrafts = ref<PdfTaskDraftData[]>([])
 const pdfTokenUsed = ref<number | null>(null)
 
 /** 当前选中的 PDF 文件（兼容 v-file-input 的单文件或数组返回值） */

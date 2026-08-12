@@ -17,8 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.device.service import DeviceService
-from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.device.wiring import sql_device_service
 from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -61,7 +60,7 @@ class MachineService:
         self._repo = ProjectMachineRepository(session)
         self._projects = ProjectRepository(session)
         self._client = client or MicroCloudClient()
-        self._devices = DeviceService(SqlDeviceRepository(session))
+        self._devices = sql_device_service(session)
 
     @property
     def available(self) -> bool:
@@ -182,6 +181,7 @@ class MachineService:
             body["sshPubkey"] = authorized
 
         created = await self._client.create_machine(body)
+        created = await self._apply_desired_ai_mode(created)
         return await self._repo.add(
             project_id=project_id,
             machine_id=int(created["id"]),
@@ -202,21 +202,93 @@ class MachineService:
             bootstrap_key=bootstrap_private,
         )
 
+    async def _apply_desired_ai_mode(self, created: dict) -> dict:
+        """Switch a fresh machine's built-in AI channel to the configured mode.
+
+        MicroCloud provisions on newapi, whose default routes to a cheap
+        non-Claude model — the operator guidance is ccproxy (the console's
+        →ccproxy button). Best-effort: a failure here must not fail the
+        provision, and the enrollment sweep reconciles stragglers."""
+        desired = (settings.microcloud_ai_mode or "").strip().lower()
+        current = str(created.get("aiMode") or "").lower()
+        if not desired or current == desired:
+            return created
+        try:
+            switched = await self._client.switch_ai(int(created["id"]), desired)
+        except Exception:  # noqa: BLE001 — the sweep retries; provision must land
+            logger.warning(
+                "switching machine %s AI channel to %s failed — the enrollment "
+                "sweep will retry",
+                created.get("id"),
+                desired,
+            )
+            return created
+        return {
+            **created,
+            "aiMode": str(switched.get("aiMode") or desired).lower(),
+            "aiStatus": str(switched.get("aiStatus") or "provisioning").lower(),
+        }
+
+    async def reconcile_ai_mode(self, limit: int = 5) -> int:
+        """Level-triggered half of the →ccproxy story: any settled machine on
+        the wrong built-in AI channel gets switched. Catches machines whose
+        provision-time switch failed or raced MicroCloud's own wiring, and
+        machines that predate the setting."""
+        desired = (settings.microcloud_ai_mode or "").strip().lower()
+        if not desired:
+            return 0
+        machines = await self._repo.list_ai_mode_mismatch(desired, limit)
+        switched = 0
+        for machine in machines:
+            try:
+                result = await self._client.switch_ai(machine.machine_id, desired)
+            except MicroCloudError:
+                logger.warning(
+                    "switching machine %s to %s failed", machine.hostname, desired
+                )
+                continue
+            await self._repo.set_state(
+                machine,
+                status=machine.status,
+                ip=machine.ip,
+                ai_mode=str(result.get("aiMode") or desired).lower(),
+                ai_status=_as_ai_status(str(result.get("aiStatus") or "").lower()),
+            )
+            switched += 1
+        if switched:
+            logger.info("AI channel reconcile: %s machine(s) → %s", switched, desired)
+        return switched
+
     async def refresh(self, machine: ProjectMachine) -> ProjectMachine:
         """Bring one row in line with MicroCloud. Never raises for a provider
         problem: a machine we can't reach is reported `unknown`, not lost."""
+        settled_before = not _still_moving(machine)
         try:
             remote = await self._client.get_machine(machine.machine_id)
         except MicroCloudError:
+            # An unreachable provider is not news about the machine. For one
+            # still moving, `unknown` is the honest answer — we were waiting on
+            # a state that may since have changed. For a settled one it is a
+            # downgrade on a blip: it would report a healthy machine as broken.
+            # Keep what we last knew; `last_seen_at` says how old that is, and
+            # recording the attempt is also what stops a provider outage from
+            # putting a 30s timeout on every read.
+            now = datetime.now(UTC)
+            if settled_before:
+                return await self._repo.touch_seen(machine, when=now)
             return await self._repo.set_state(
                 machine,
                 status=MachineStatus.unknown,
                 ip=None,
                 ai_status=AiStatus.unknown,
+                seen_at=now,
             )
         if remote is None:
             return await self._repo.set_state(
-                machine, status=MachineStatus.deleted, ip=None
+                machine,
+                status=MachineStatus.deleted,
+                ip=None,
+                seen_at=datetime.now(UTC),
             )
         return await self._repo.set_state(
             machine,
@@ -224,19 +296,21 @@ class MachineService:
             ip=remote.get("ip"),
             ai_mode=str(remote.get("aiMode") or machine.ai_mode),
             ai_status=_as_ai_status(remote.get("aiStatus")),
+            seen_at=datetime.now(UTC),
         )
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         machines = await self._repo.list_for_project(project_id)
         alive: list[ProjectMachine] = []
         for machine in machines:
-            if _still_moving(machine):
+            if _still_moving(machine) or _stale(machine):
                 await self.refresh(machine)
             if machine.status in GONE:
                 # MicroCloud has forgotten it, so there is nothing left to
-                # report or to bill — drop the row rather than keep a tombstone
-                # that still occupies a slot.
-                await self._repo.delete(machine)
+                # report or to bill. Forgetting also removes the connector
+                # device created for this machine, including its team binding;
+                # otherwise the team pool would retain a dead "ghost" node.
+                await self.forget(machine)
                 continue
             alive.append(machine)
         return alive
@@ -284,9 +358,24 @@ class MachineService:
         device = await self._devices.approve(
             code, owner_user_id=machine.owner_user_id, name=machine.hostname
         )
-        await self._devices.assign_to_project(
-            device.device_id, machine.project_id, actor_user_id=machine.owner_user_id
-        )
+        project = await self._projects.get(machine.project_id)
+        if project is None:
+            raise NotFoundError("project not found")
+        if project.team_id is not None:
+            # v4 ownership: enroll once into the team's compute pool. Every
+            # project of that team can then select it without per-project rows.
+            await self._devices.assign_to_team(
+                device.device_id,
+                project.team_id,
+                actor_user_id=machine.owner_user_id,
+            )
+        else:
+            # Compatibility for pre-personal-team project rows.
+            await self._devices.assign_to_project(
+                device.device_id,
+                machine.project_id,
+                actor_user_id=machine.owner_user_id,
+            )
 
         script = enrollment.bootstrap_script(
             origin=origin, token=device.token, device_id=device.device_id
@@ -337,8 +426,47 @@ class MachineService:
         return {"enrolled": enrolled, "failed": failed}
 
     async def forget(self, machine: ProjectMachine) -> None:
-        """Drop the row once MicroCloud no longer has the machine."""
+        """Drop a vanished machine and the connector device enrolled for it."""
+        if machine.device_id is not None and machine.owner_user_id is not None:
+            device = await self._devices.get_device(machine.device_id)
+            if device is not None and device.owner_user_id == machine.owner_user_id:
+                # Device deletion also removes project/team/topic bindings. Do
+                # this before the machine row so a failure remains retryable.
+                await self._devices.delete_owned(
+                    machine.device_id, actor_user_id=machine.owner_user_id
+                )
+            elif device is not None:
+                # Never delete a device now owned by somebody else. This should
+                # be impossible for platform-enrolled machines, so retain an
+                # operator-visible signal if historical data disagrees.
+                logger.error(
+                    "not deleting device %s for machine %s: owner mismatch",
+                    machine.device_id,
+                    machine.hostname,
+                )
         await self._repo.delete(machine)
+
+
+def _stale(machine: ProjectMachine) -> bool:
+    """Whether a SETTLED machine is due to be re-checked against MicroCloud.
+
+    Settled used to mean "never asked again", which made this table unable to
+    notice a machine the provider had destroyed. Observed live on 2026-08-02:
+    three machines reported `running` and enrolled here while MicroCloud 404'd
+    every one of them. That is not only a wrong reading — `provision()` counts
+    those rows against the per-project limit, so a project whose machines are
+    gone upstream can never get another one.
+
+    Bounded rather than every-read: this sits on a request path, and a provider
+    round-trip per machine per page load is its own outage waiting to happen.
+    """
+    seen = machine.last_seen_at
+    if seen is None:
+        return True
+    if seen.tzinfo is None:  # rows written before the column existed
+        seen = seen.replace(tzinfo=UTC)
+    age = (datetime.now(UTC) - seen).total_seconds()
+    return age >= settings.microcloud_reconcile_interval_s
 
 
 def _still_moving(machine: ProjectMachine) -> bool:

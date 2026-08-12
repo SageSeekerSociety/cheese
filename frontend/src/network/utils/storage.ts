@@ -24,4 +24,3 @@ export const Local = {
     window.localStorage.clear()
   },
 }
-

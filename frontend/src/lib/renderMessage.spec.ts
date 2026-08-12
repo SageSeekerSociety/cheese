@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 // renderMessage: chat/notification rendering — reference-token chips stay
 // clickable, human newlines survive, HTML stays escaped.
+import type { Block } from '../cx_types'
+
 import { describe, expect, it } from 'vitest'
-import { renderMarkdown, renderPlain } from './renderMessage'
+
+import { coalesceSplitFencedCodeBlocks, renderMarkdown, renderPlain } from './renderMessage'
 
 const MAPS = {
   // `all`/`here` are the reserved 群播 tokens seeded by ChatPanel.
@@ -24,10 +27,7 @@ describe('renderMarkdown (芝士 replies)', () => {
   })
 
   it('renders a <#topicId> token as a topic chip with its title', () => {
-    const html = renderMarkdown(
-      '进展见 <#abc12345-0000-0000-0000-000000000000>',
-      MAPS,
-    )
+    const html = renderMarkdown('进展见 <#abc12345-0000-0000-0000-000000000000>', MAPS)
     expect(html).toContain('data-topic="abc12345-0000-0000-0000-000000000000"')
     expect(html).toContain('#搭建推荐算法原型')
   })
@@ -78,5 +78,57 @@ describe('renderPlain (human messages)', () => {
     const html = renderPlain('<b>bold?</b>', MAPS)
     expect(html).not.toContain('<b>')
     expect(html).toContain('&lt;b&gt;')
+  })
+})
+
+describe('historical fragmented Markdown compatibility', () => {
+  function aiBlock(id: string, content: string, turnId = 'e56c632e-9ec3-4ed5-a670-e116299044dd'): Block {
+    return {
+      id,
+      topic_id: 'topic-1',
+      kind: 'message',
+      author_type: 'ai',
+      author: 'cheese',
+      content,
+      turn_id: turnId,
+      created_at: '2026-07-18T17:58:24Z',
+    }
+  }
+
+  it('coalesces a split fence so its code is visible in one Markdown parse', () => {
+    const fragments = [
+      aiBlock('open', '  ```python\n'),
+      aiBlock('line-1', '  # dogfood loop: accepted on cheesex\n'),
+      aiBlock('line-2', '  # self-update on dev: written via the platform\n'),
+      aiBlock('close', '  ```\n'),
+    ]
+
+    const repaired = coalesceSplitFencedCodeBlocks(fragments)
+    expect(repaired).toHaveLength(1)
+    expect(repaired[0].id).toBe('open')
+
+    const html = renderMarkdown(repaired[0].content, MAPS)
+    expect(html).toContain('<pre><code class="language-python">')
+    expect(html).toContain('# dogfood loop: accepted on cheesex')
+    expect(html).toContain('# self-update on dev: written via the platform')
+  })
+
+  it('leaves ordinary consecutive AI messages independent', () => {
+    const blocks = [aiBlock('one', '先确认一下。'), aiBlock('two', '已经完成。')]
+    expect(coalesceSplitFencedCodeBlocks(blocks)).toEqual(blocks)
+  })
+
+  it('does not join a fence across a human or event boundary', () => {
+    const event: Block = {
+      ...aiBlock('event', '执行命令'),
+      kind: 'event',
+    }
+    const blocks = [aiBlock('open', '```python\n'), event, aiBlock('close', 'print("late")\n```\n')]
+    expect(coalesceSplitFencedCodeBlocks(blocks)).toEqual(blocks)
+  })
+
+  it('does not join a fence across turn boundaries', () => {
+    const blocks = [aiBlock('open', '```python\n'), aiBlock('close', 'print("other turn")\n```\n', 'another-turn')]
+    expect(coalesceSplitFencedCodeBlocks(blocks)).toEqual(blocks)
   })
 })

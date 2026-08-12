@@ -60,6 +60,10 @@ class MachineEnrollmentRunner:
                 # so there is nothing to enroll. Not an error.
                 return {"enrolled": 0, "failed": 0}
             result = await service.enroll_pending()
+            # Same sweep also converges the machines' built-in AI channel
+            # (→ccproxy): platform plumbing with no judgment in it, and it must
+            # keep happening for machines whose provision-time switch failed.
+            await service.reconcile_ai_mode()
             await session.commit()
         if result["enrolled"] or result["failed"]:
             logger.info(

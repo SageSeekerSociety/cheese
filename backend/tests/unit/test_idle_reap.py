@@ -1,6 +1,7 @@
 """Idle-container reaper: containers of topics with no recent block activity
 (or no topic at all) are removed; active topics keep their box."""
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -12,7 +13,7 @@ from app.domain.agent.service import AgentService
 from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
-from app.domain.scheduler.service import SchedulerService
+from app.domain.scheduler.service import SandboxReaperRunner, SchedulerService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
 
@@ -60,7 +61,24 @@ async def test_reap_removes_idle_and_orphan_keeps_active(client, tmp_path, monke
     monkeypatch.setattr(ws, "list_sandbox_containers", lambda: list(containers))
     monkeypatch.setattr(ws, "remove_container", removed.append)
 
-    reaped = await svc.reap_idle_containers(idle_days=3)
+    reaped = await svc.reap_idle_containers(idle_hours=3)
     assert reaped == 2
     assert containers[0] not in removed
     assert containers[1] in removed and containers[2] in removed
+
+
+@pytest.mark.anyio
+async def test_reaper_runs_without_heartbeat_scheduler():
+    scheduler = type("Scheduler", (), {})()
+    called = asyncio.Event()
+
+    async def reap_idle_containers(idle_hours):
+        assert idle_hours == 7
+        called.set()
+        return 0
+
+    scheduler.reap_idle_containers = reap_idle_containers
+    runner = SandboxReaperRunner(scheduler, interval_seconds=0.01, idle_hours=7)
+    runner.start()
+    await asyncio.wait_for(called.wait(), timeout=1)
+    await runner.stop()

@@ -6,6 +6,17 @@ their approval — so unconfigured projects keep the old behavior exactly.
 AI cannot vote (collaborative mode, same rule as "AI 不能验收自己").
 """
 
+import pytest
+
+from tests.integration.conftest import session_auth_headers
+
+
+@pytest.fixture(autouse=True)
+def _authenticated_project_owner(client):
+    client.headers.update(session_auth_headers("alice"))
+    yield
+    client.headers.pop("Authorization", None)
+
 
 def _make_project(client) -> str:
     r = client.post("/api/projects", json={"name": "P"})
@@ -39,7 +50,9 @@ def _require(client, project_id: str, n: int) -> None:
 
 def _approve(client, card_id: str, handle: str):
     return client.post(
-        f"/api/accept-cards/{card_id}/approve", json={"approver_handle": handle}
+        f"/api/accept-cards/{card_id}/approve",
+        json={"approver_handle": handle},
+        headers=session_auth_headers(handle),
     )
 
 

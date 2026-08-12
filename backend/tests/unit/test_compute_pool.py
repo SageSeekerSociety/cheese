@@ -122,21 +122,27 @@ def test_build_pool_registers_device_alongside_local():
     assert pool.select(provider_id="device").name == "device"
 
 
-def test_resolve_compute_id_topic_wins_then_project_sticky():
+def test_resolve_compute_id_topic_then_project_then_team_default():
     from app.domain.agent.chat import _resolve_compute_id
 
     # Topic's own选择 wins over the project sticky.
     assert (
-        _resolve_compute_id({"compute_profile": "local-docker"}, "remote-cheesed")
+        _resolve_compute_id(
+            {"compute_profile": "local-docker"}, "remote-cheesed", "device"
+        )
         == "remote-cheesed"
     )
-    # No topic选择 → project sticky.
-    assert _resolve_compute_id({"compute_profile": "remote-cheesed"}, None) == (
-        "remote-cheesed"
+    # No topic选择 → project sticky, before the team's default.
+    assert (
+        _resolve_compute_id({"compute_profile": "remote-cheesed"}, None, "device")
+        == "remote-cheesed"
     )
-    # Neither → None (pool default).
-    assert _resolve_compute_id({}, None) is None
-    assert _resolve_compute_id(None, None) is None
+    # A fresh project starts from the team's default.
+    assert _resolve_compute_id({}, None, "device") == "device"
+    assert _resolve_compute_id(None, None, "device") == "device"
+    # No choice at any layer → None (pool default).
+    assert _resolve_compute_id({}, None, None) is None
+    assert _resolve_compute_id(None, None, None) is None
 
 
 def test_tmux_keeps_the_remote_transport_in_the_pool(monkeypatch):

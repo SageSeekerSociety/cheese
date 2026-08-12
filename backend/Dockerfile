@@ -121,6 +121,14 @@ COPY alembic.ini ./
 COPY sandbox ./sandbox
 # Served at /connector/latest/<os>-<arch>/cheesehost (see the connector stage).
 COPY --from=connector /out ./connector-dist
+# Verify at the source layer rather than pulling/running the multi-GB image after
+# it was pushed. A missing COPY still fails the gated build, but without the
+# former three-minute registry round trip.
+RUN set -eu; for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do \
+      f="/app/connector-dist/$target/cheesehost"; \
+      test -s "$f"; \
+      echo "verified $target ($(wc -c < "$f") bytes)"; \
+    done
 
 # Agent workspace toolchain: worktrees are managed with jj (colocated git) by
 # the backend process itself, and sandboxed turns spawn SIBLING containers
@@ -135,9 +143,27 @@ RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/dock
       | tar xz --strip-components=1 -C /usr/local/bin docker/docker \
     && docker --version
 
-# Create non-root user
-RUN addgroup --system --gid 1001 python \
-    && adduser --system --uid 1001 --gid 1001 cheese \
+# Create non-root user.
+#
+# The uid/gid are NOT free to pick: this process and the agent sandbox share one
+# jj store on disk (ws.sandbox_vcs_mounts bind-mounts the project's main-repo
+# .jj/.git into every sandbox container, read-write). jj writes its store objects
+# — and `.jj/repo/config-id` in particular — with a hardcoded 0600, so whichever
+# uid touches the store first locks the other one out of EVERY jj command
+# ("Failed to determine the secure config for a repo … Permission denied").
+# Backend-side that surfaced as a project-wide 422 on the file panel; sandbox-side
+# as jj being unusable in every container. umask/group/ACL cannot fix a mode the
+# writer sets explicitly, so the two identities have to BE the same identity.
+#
+# 1000 rather than some other number because the sandbox side is the one we do
+# not fully control: it is `node:22` + `USER node` (= 1000), the tmux provider
+# starts it with `--user node`, and a project may point `sandbox_image` at any
+# other node-based image. See backend/sandbox/Dockerfile and
+# app.domain.workspace.service.AGENT_UID (which tests pin against this line).
+RUN addgroup --system --gid 1000 python \
+    && adduser --system --uid 1000 --gid 1000 cheese \
+    && test "$(id -u cheese)" = 1000 \
+    && test "$(id -g cheese)" = 1000 \
     && mkdir -p /app/uploads \
     && chown -R cheese:python /app
 
@@ -146,6 +172,12 @@ USER cheese
 # Set PATH to use virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
+
+# The commit this image was built from, so the running app can report its own
+# version (settings.app_version → /api/version). Passed by build.yml; "dev" for
+# a plain local build.
+ARG GIT_SHA=dev
+ENV APP_VERSION=$GIT_SHA
 
 EXPOSE 8081
 

@@ -1,14 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import {
-  applyMarketTask,
-  decideTaskApplication,
-  getMarketTasks,
-  listProjects,
-  listTaskApplications,
-} from '../api'
-import { myHandle } from '../me'
 import type { MarketTask, Project, TaskApplication } from '../cx_types'
+
+import { computed, onMounted, reactive, ref } from 'vue'
+
+import { applyMarketTask, decideTaskApplication, getMarketTasks, listProjects, listTaskApplications } from '../api'
+import { myHandle } from '../me'
 
 // 题目匹配 (spec §13 阶段 6): Spaces publish 题目 (Task Templates) here; a team
 // applies with one of its projects (应征); the Space accepts → the project is
@@ -64,7 +60,7 @@ function conditionEntries(t: MarketTask): string[] {
   return t.conditions.map((c) =>
     Object.entries(c)
       .map(([k, v]) => `${k}: ${String(v)}`)
-      .join(' · '),
+      .join(' · ')
   )
 }
 
@@ -101,11 +97,7 @@ async function submitApply() {
   applying.value = true
   applyError.value = null
   try {
-    await applyMarketTask(
-      applyTarget.value.id,
-      applyProjectId.value,
-      applyPitch.value.trim(),
-    )
+    await applyMarketTask(applyTarget.value.id, applyProjectId.value, applyPitch.value.trim())
     const id = applyTarget.value.id
     applyDialog.value = false
     // Refresh the applicant list if the card is open.
@@ -171,20 +163,13 @@ onMounted(() => {
       <v-progress-circular indeterminate color="primary" />
     </div>
     <v-alert v-else-if="error" type="error" density="comfortable">{{ error }}</v-alert>
-    <v-alert
-      v-else-if="tasks.length === 0"
-      type="info"
-      variant="tonal"
-      density="comfortable"
-    >
+    <v-alert v-else-if="tasks.length === 0" type="info" variant="tonal" density="comfortable">
       市场上还没有发布中的题目。机构在 Space 里把 Task Template 发布后会出现在这里。
     </v-alert>
 
     <div v-else class="task-grid">
       <article v-for="t in tasks" :key="t.id" class="task-card">
-        <div class="task-card__space">
-          <v-icon size="14" class="me-1">mdi-domain</v-icon>{{ t.space_name }}
-        </div>
+        <div class="task-card__space"><v-icon size="14" class="me-1">mdi-domain</v-icon>{{ t.space_name }}</div>
         <h3 class="task-card__title">{{ t.name }}</h3>
         <p v-if="t.description" class="task-card__desc c-muted">{{ t.description }}</p>
 
@@ -197,12 +182,7 @@ onMounted(() => {
         <div v-if="conditionEntries(t).length" class="task-card__section">
           <div class="task-card__label">条件</div>
           <div class="task-card__chips">
-            <span
-              v-for="e in conditionEntries(t)"
-              :key="e"
-              class="task-chip task-chip--cond"
-              >{{ e }}</span
-            >
+            <span v-for="e in conditionEntries(t)" :key="e" class="task-chip task-chip--cond">{{ e }}</span>
           </div>
         </div>
         <div v-if="t.default_role" class="task-card__section">
@@ -211,9 +191,7 @@ onMounted(() => {
         </div>
 
         <div class="task-card__actions">
-          <v-btn size="small" color="primary" variant="flat" @click="openApply(t)">
-            应征
-          </v-btn>
+          <v-btn size="small" color="primary" variant="flat" @click="openApply(t)"> 应征 </v-btn>
           <v-btn
             size="small"
             variant="text"
@@ -228,18 +206,8 @@ onMounted(() => {
           <div v-if="appsLoading[t.id]" class="py-2 d-flex justify-center">
             <v-progress-circular indeterminate size="18" width="2" />
           </div>
-          <div
-            v-else-if="!(applications[t.id]?.length)"
-            class="c-faint task-card__apps-empty"
-          >
-            还没有团队应征。
-          </div>
-          <div
-            v-for="a in applications[t.id] ?? []"
-            v-else
-            :key="a.id"
-            class="app-row"
-          >
+          <div v-else-if="!applications[t.id]?.length" class="c-faint task-card__apps-empty">还没有团队应征。</div>
+          <div v-for="a in applications[t.id] ?? []" v-else :key="a.id" class="app-row">
             <div class="app-row__main">
               <div class="app-row__head">
                 <span class="app-row__project">{{ a.project_name }}</span>
@@ -248,9 +216,7 @@ onMounted(() => {
                 </v-chip>
               </div>
               <div v-if="a.pitch" class="app-row__pitch c-muted">{{ a.pitch }}</div>
-              <div v-if="a.decided_by" class="app-row__decided c-faint">
-                由 {{ a.decided_by }} 决定
-              </div>
+              <div v-if="a.decided_by" class="app-row__decided c-faint">由 {{ a.decided_by }} 决定</div>
             </div>
             <div v-if="a.status === 'pending'" class="app-row__actions">
               <v-btn
@@ -262,12 +228,7 @@ onMounted(() => {
               >
                 接受
               </v-btn>
-              <v-btn
-                size="x-small"
-                variant="text"
-                :loading="deciding[a.id]"
-                @click="decide(a, 'decline')"
-              >
+              <v-btn size="x-small" variant="text" :loading="deciding[a.id]" @click="decide(a, 'decline')">
                 婉拒
               </v-btn>
             </div>
@@ -278,9 +239,7 @@ onMounted(() => {
 
     <v-dialog v-model="applyDialog" max-width="480">
       <v-card v-if="applyTarget">
-        <v-card-title class="text-subtitle-1">
-          应征「{{ applyTarget.name }}」
-        </v-card-title>
+        <v-card-title class="text-subtitle-1"> 应征「{{ applyTarget.name }}」 </v-card-title>
         <v-card-text>
           <v-select
             v-model="applyProjectId"
@@ -297,26 +256,14 @@ onMounted(() => {
             variant="outlined"
             hide-details
           />
-          <v-alert
-            v-if="applyError"
-            type="error"
-            density="compact"
-            variant="tonal"
-            class="mt-3"
-          >
+          <v-alert v-if="applyError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ applyError }}
           </v-alert>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" @click="applyDialog = false">取消</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :disabled="!applyProjectId"
-            :loading="applying"
-            @click="submitApply"
-          >
+          <v-btn color="primary" variant="flat" :disabled="!applyProjectId" :loading="applying" @click="submitApply">
             提交应征
           </v-btn>
         </v-card-actions>
@@ -338,7 +285,9 @@ onMounted(() => {
   background: var(--surface);
   display: flex;
   flex-direction: column;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition:
+    box-shadow 0.15s,
+    border-color 0.15s;
 }
 .task-card:hover {
   border-color: rgba(var(--v-theme-primary), 0.5);

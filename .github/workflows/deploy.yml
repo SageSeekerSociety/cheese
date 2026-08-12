@@ -47,9 +47,11 @@ jobs:
   wait-for-ci:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    # Deliberately unbounded: this blocks until the release commit's CI
+    # finishes, which is however long the box's queue is that day.
     steps:
       - name: Wait for Docker image build
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
         with:
           ref: ${{ github.event.release.tag_name }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -57,11 +59,22 @@ jobs:
           wait-interval: 15
 
       - name: Wait for backend tests
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
         with:
           ref: ${{ github.event.release.tag_name }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           check-name: 'test'
+          wait-interval: 15
+
+      # Previously missing: this job only waited on build + pytest, so a
+      # release could ship with a red (or never-run) e2e suite — "prod deploy
+      # only checks build success" was accurate. e2e.yml's job id is `e2e`.
+      - name: Wait for e2e tests
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'e2e'
           wait-interval: 15
 
   deploy:
@@ -70,6 +83,9 @@ jobs:
     # job too — allow dispatch through, and require CI success on release.
     if: always() && (github.event_name == 'workflow_dispatch' || needs.wait-for-ci.result == 'success')
     runs-on: ubuntu-latest
+    # Deliberately unbounded (GitHub's 360m default): this job blocks on a
+    # human approving via manual-approval. A tight timeout here would not
+    # catch a hang, it would cancel a deploy waiting on its approver.
     environment: production
 
     steps:
@@ -79,7 +95,7 @@ jobs:
       # nothing). Approver comments "approve"/"yes"/"lgtm" to proceed.
       - name: Require manual approval
         if: ${{ !inputs.dry_run }}
-        uses: trstringer/manual-approval@v1.13.1
+        uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
         with:
           secret: ${{ github.token }}
           approvers: andylizf
@@ -87,7 +103,7 @@ jobs:
           issue-title: "Approve production deploy${{ github.event.release.tag_name && format(' of {0}', github.event.release.tag_name) || '' }}"
           issue-body: "Deploying to the etrip production box. Comment `approve` to proceed or `deny` to cancel."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.release.tag_name || inputs.ref }}
 
@@ -96,14 +112,14 @@ jobs:
         run: echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Connect to Tailscale
-        uses: tailscale/github-action@v3
+        uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
         env:
           IMAGE_SHA: ${{ steps.img.outputs.sha }}
           DRY_RUN: ${{ inputs.dry_run }}

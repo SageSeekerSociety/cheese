@@ -1,7 +1,7 @@
 import secrets
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.invite.models import InviteCode
@@ -28,13 +28,26 @@ class InviteCodeService:
         return invite
 
     async def consume_code(self, code: str) -> None:
-        """Increment usage count after successful registration."""
+        """Atomically consume one use or report why the code is no longer valid."""
+        now = datetime.now(UTC)
         result = await self._session.execute(
-            select(InviteCode).where(InviteCode.code == code)
+            update(InviteCode)
+            .where(
+                InviteCode.code == code,
+                InviteCode.is_active.is_(True),
+                or_(InviteCode.expires_at.is_(None), InviteCode.expires_at >= now),
+                InviteCode.use_count < InviteCode.max_uses,
+            )
+            .values(use_count=InviteCode.use_count + 1)
+            .returning(InviteCode.id)
         )
-        invite = result.scalar_one_or_none()
-        if invite:
-            invite.use_count += 1
+        if result.scalar_one_or_none() is not None:
+            return
+
+        # A validation performed earlier in registration is intentionally not
+        # trusted here: another transaction may have consumed the final use.
+        await self.validate_code(code)
+        raise ValueError("INVALID_CODE")
 
     async def create_code(
         self,

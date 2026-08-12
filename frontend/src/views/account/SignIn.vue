@@ -159,7 +159,7 @@ import { z } from 'zod'
 import { vuetifyConfig } from '@/utils/form'
 
 import { UserApi } from '@/network/api/users'
-import { ServerError } from '@/network/types/error'
+import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'
 
 const router = useRouter()
@@ -171,9 +171,7 @@ const route = useRoute()
 function postLoginTarget(): string {
   const r = route.query.redirect
   const path = Array.isArray(r) ? r[0] : r
-  return typeof path === 'string' && path.startsWith('/') && !path.startsWith('//')
-    ? path
-    : '/'
+  return typeof path === 'string' && path.startsWith('/') && !path.startsWith('//') ? path : '/'
 }
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
@@ -270,12 +268,8 @@ const login = handleSubmit(async (value) => {
       router.replace(postLoginTarget())
     }
   } catch (e) {
-    if (e instanceof ServerError) {
-      toast.error(e.message)
-    } else {
-      console.error('登录失败:', e)
-      toast.error('登录失败，请重试')
-    }
+    console.error('登录失败:', e)
+    toast.error(requestErrorMessage(e, '登录失败，请重试'))
   }
 })
 

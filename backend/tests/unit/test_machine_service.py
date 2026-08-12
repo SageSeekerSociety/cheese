@@ -6,6 +6,7 @@ answering, a machine that vanished, and the cross-project addressing guard.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -42,6 +43,7 @@ class FakeMicroCloud:
         self._offerings = OFFERING if offerings is None else offerings
         self.created: list[dict] = []
         self.deleted: list[int] = []
+        self.ai_switches: list[tuple[int, str]] = []
         self.topups: list[tuple[int, float]] = []
         self.machines: dict[int, dict] = {}
         self._next_id = 100
@@ -96,6 +98,19 @@ class FakeMicroCloud:
         self.deleted.append(machine_id)
         self.machines.pop(machine_id, None)
 
+    async def switch_ai(self, machine_id, mode):
+        self.ai_switches.append((machine_id, mode))
+        machine = self.machines.get(machine_id)
+        if machine is not None:
+            machine["aiMode"] = mode
+            machine["aiStatus"] = "provisioning"
+        # The real control plane answers a switch in UPPERCASE.
+        return {
+            "machineId": machine_id,
+            "aiMode": mode.upper(),
+            "aiStatus": "PROVISIONING",
+        }
+
 
 class FakeRepo:
     """In-memory stand-in for ProjectMachineRepository."""
@@ -104,7 +119,8 @@ class FakeRepo:
         self.rows: list[SimpleNamespace] = []
 
     async def add(self, **kwargs):
-        row = SimpleNamespace(id=uuid.uuid4(), **kwargs)
+        kwargs.setdefault("last_seen_at", None)
+        row = SimpleNamespace(id=uuid.uuid4(), device_id=None, **kwargs)
         self.rows.append(row)
         return row
 
@@ -114,7 +130,18 @@ class FakeRepo:
     async def list_for_project(self, project_id):
         return [r for r in self.rows if r.project_id == project_id]
 
-    async def set_state(self, machine, *, status, ip, ai_mode=None, ai_status=None):
+    async def list_ai_mode_mismatch(self, desired, limit):
+        return [
+            r
+            for r in self.rows
+            if r.status == MachineStatus.running
+            and r.ai_status == AiStatus.ready
+            and r.ai_mode != desired
+        ][:limit]
+
+    async def set_state(
+        self, machine, *, status, ip, ai_mode=None, ai_status=None, seen_at=None
+    ):
         machine.status = status
         if ip:
             machine.ip = ip
@@ -122,10 +149,31 @@ class FakeRepo:
             machine.ai_mode = ai_mode
         if ai_status is not None:
             machine.ai_status = ai_status
+        if seen_at is not None:
+            machine.last_seen_at = seen_at
+        return machine
+
+    async def touch_seen(self, machine, *, when):
+        machine.last_seen_at = when
         return machine
 
     async def delete(self, machine):
         self.rows.remove(machine)
+
+
+class FakeDevices:
+    def __init__(self):
+        self.devices: dict[str, SimpleNamespace] = {}
+        self.deleted: list[str] = []
+
+    async def get_device(self, device_id):
+        return self.devices.get(device_id)
+
+    async def delete_owned(self, device_id, *, actor_user_id):
+        device = self.devices[device_id]
+        assert device.owner_user_id == actor_user_id
+        self.deleted.append(device_id)
+        del self.devices[device_id]
 
 
 _UNSET = object()
@@ -136,6 +184,7 @@ def build_service(client=None, project=_UNSET, repo=None):
     service._session = None
     service._client = client or FakeMicroCloud()
     service._repo = repo or FakeRepo()
+    service._devices = FakeDevices()
     if project is _UNSET:
         project = SimpleNamespace(id=uuid.uuid4(), name="Cheese 自建")
     service._projects = SimpleNamespace(get=_returning(project))
@@ -362,6 +411,15 @@ async def test_polling_stops_once_both_lifecycles_settle():
     await service.list_for_project(project_id)
     assert client.reads == settled
 
+    # …but "settled" is not "never asked again". It used to be, and that is how
+    # three machines destroyed upstream stayed `running` in this table while
+    # MicroCloud 404'd every one of them — and kept occupying the project's
+    # slots. Once the last answer is old enough, it is re-checked.
+    for row in service._repo.rows:  # type: ignore[attr-defined]
+        row.last_seen_at = datetime.now(UTC) - timedelta(hours=1)
+    await service.list_for_project(project_id)
+    assert client.reads > settled
+
 
 async def test_ai_accounts_are_named_rather_than_left_to_the_default():
     client = FakeMicroCloud()
@@ -439,3 +497,120 @@ async def test_a_forgotten_machine_disappears_from_the_listing():
 
     assert remaining == [], "a tombstone is not a machine anyone can use"
     assert machine not in await service._repo.list_for_project(project_id)
+
+
+async def test_forgetting_an_enrolled_machine_removes_its_device():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(
+        project_id=project_id, requested_by="andy", owner_user_id=42
+    )
+    machine.device_id = "cloud-device"
+    service._devices.devices[machine.device_id] = SimpleNamespace(owner_user_id=42)
+
+    client.machines.clear()
+    await service.list_for_project(project_id)
+
+    assert service._devices.deleted == ["cloud-device"]
+    assert machine not in await service._repo.list_for_project(project_id)
+
+
+async def test_forgetting_never_deletes_a_device_owned_by_somebody_else():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(
+        project_id=project_id, requested_by="andy", owner_user_id=42
+    )
+    machine.device_id = "reassigned-device"
+    service._devices.devices[machine.device_id] = SimpleNamespace(owner_user_id=99)
+
+    client.machines.clear()
+    await service.list_for_project(project_id)
+
+    assert service._devices.deleted == []
+    assert "reassigned-device" in service._devices.devices
+
+
+# ---- built-in AI channel (→ccproxy, operator guidance) -----------------------
+
+
+async def test_provision_switches_the_ai_channel_to_ccproxy():
+    client = FakeMicroCloud()
+    service = build_service(client)
+
+    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+
+    # newapi's default routes to a cheap non-Claude model; provision must not
+    # leave a machine there.
+    assert client.ai_switches == [(machine.machine_id, "ccproxy")]
+    assert machine.ai_mode == "ccproxy"  # UPPERCASE reply normalized
+    assert machine.ai_status == AiStatus.provisioning
+
+
+async def test_provision_lands_even_when_the_switch_fails():
+    client = FakeMicroCloud()
+
+    async def boom(machine_id, mode):
+        raise MicroCloudError("switch endpoint down")
+
+    client.switch_ai = boom
+    service = build_service(client)
+
+    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+
+    # Best-effort: the machine still provisions; the sweep reconciles later.
+    assert machine.ai_mode == "newapi"
+
+
+async def test_sweep_reconciles_a_machine_left_on_newapi():
+    client = FakeMicroCloud()
+    repo = FakeRepo()
+    service = build_service(client, repo=repo)
+    repo.rows.append(
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            machine_id=463,
+            hostname="m-1",
+            project_id=uuid.uuid4(),
+            status=MachineStatus.running,
+            ai_status=AiStatus.ready,
+            ai_mode="newapi",
+            ip="10.0.0.5",
+            device_id=None,
+        )
+    )
+
+    switched = await service.reconcile_ai_mode()
+
+    assert switched == 1
+    assert client.ai_switches == [(463, "ccproxy")]
+    row = repo.rows[0]
+    assert row.ai_mode == "ccproxy"
+    assert row.ai_status == AiStatus.provisioning
+
+
+async def test_reconcile_is_off_without_a_desired_mode(monkeypatch):
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "microcloud_ai_mode", "")
+    client = FakeMicroCloud()
+    repo = FakeRepo()
+    service = build_service(client, repo=repo)
+    repo.rows.append(
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            machine_id=1,
+            hostname="m-2",
+            project_id=uuid.uuid4(),
+            status=MachineStatus.running,
+            ai_status=AiStatus.ready,
+            ai_mode="newapi",
+            ip=None,
+            device_id=None,
+        )
+    )
+
+    assert await service.reconcile_ai_mode() == 0
+    assert client.ai_switches == []

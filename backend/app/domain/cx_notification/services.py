@@ -6,8 +6,10 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
 from app.domain.cx_notification.models import Notification, NotifKind, NotifLevel
 from app.domain.cx_notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
@@ -89,7 +91,7 @@ class NotificationService:
         return await self._repo.save(notification)
 
     async def resolve(
-        self, notification_id: uuid.UUID, *, chosen: str, decided_by: str = "user-1"
+        self, notification_id: uuid.UUID, *, chosen: str, decided_by: str
     ) -> Notification:
         """拍板 (spec G2): record the chosen option on a decision request and drop
         the decision into the topic so 芝士 picks it up on its next turn."""
@@ -109,8 +111,9 @@ class NotificationService:
         n.read_at = n.read_at or now
         payload["resolved_choice"] = chosen
         n.payload = payload
+        block = None
         if n.topic_id is not None:
-            await BlockRepository(self._session).add(
+            block = await BlockRepository(self._session).add(
                 project_id=n.project_id,
                 topic_id=n.topic_id,
                 author=decided_by,
@@ -118,7 +121,14 @@ class NotificationService:
                 content=f"【决策】关于「{n.title}」：选择「{chosen}」。",
                 kind=BlockKind.message,
             )
-        return await self._repo.save(n)
+        saved = await self._repo.save(n)
+        if block is not None:
+            block_payload = BlockOut.model_validate(block).model_dump(mode="json")
+            await self._session.commit()
+            await get_broker().publish(
+                str(block.topic_id), {"type": "event_block", "block": block_payload}
+            )
+        return saved
 
     async def set_feedback(
         self, notification_id: uuid.UUID, feedback: str

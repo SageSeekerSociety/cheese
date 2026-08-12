@@ -8,6 +8,7 @@ authenticated writes, ``authorize_topic(...)``.
 """
 
 import uuid
+from dataclasses import replace
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -15,9 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ForbiddenError
+from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.core.obs import get_logger
-from app.core.sandbox_auth import verify_scoped_token
+from app.core.sandbox_auth import (
+    scoped_token_claims,
+    token_agent_handle,
+    verify_scoped_token,
+)
 from app.core.tokens import verify_session_token
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
@@ -29,6 +34,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.user.repositories import UserRepository
 
 _log = get_logger("cheesex.auth")
 
@@ -89,6 +95,15 @@ class ActorResolver:
         nothing — an anonymous fallback resolves to a plain ``anonymous`` actor so
         existing callers that omitted an author keep working."""
 
+        # A scoped token that is genuinely valid but minted for ANOTHER topic /
+        # project is a scope violation, not "no credential". It used to fall
+        # through to the Phase-0 handle fallback and resolve to ``anonymous`` —
+        # which policy.py treats as UNauthenticated and therefore lets through,
+        # so presenting the wrong token beat presenting none and the write landed
+        # with its author erased. Observed live: a parent topic posting a comment
+        # into a child topic, recorded as ``anonymous``.
+        self._reject_out_of_scope_token(topic_id=topic_id, project_id=project_id)
+
         async def cheese_valid() -> bool:
             # Only a SCOPED per-turn token identifies "the agent is acting" and
             # binds it to this project/topic. The bare global SANDBOX_TOKEN is a
@@ -103,18 +118,26 @@ class ActorResolver:
                 topic_id=str(topic_id) if topic_id else None,
             )
 
+        # WHO the scoped token acts as: the topic's own 分身 (claim ``a``), not the
+        # one collapsed platform account. A token minted before this claim existed —
+        # or a project-wide one with no topic — carries none and falls back to
+        # ``cheese``, which is exactly the previous behaviour.
+        agent_handle = (
+            token_agent_handle(self._cheese_token) if self._cheese_token else None
+        )
         actor = await resolve_actor(
             bearer_token=self._bearer,
             verify_token=_token_verifier,
             cheese_valid=cheese_valid,
             is_agent=self._identity.is_agent,
-            cheese_handle=CHEESE_HANDLE,
+            cheese_handle=agent_handle or CHEESE_HANDLE,
             fallback_handle=fallback_handle,
         )
         if actor is None:
             actor = Actor(
                 handle="anonymous", user_id=None, is_agent=False, via="handle"
             )
+        actor = await self._recover_numeric_handle(actor)
         # Device-screen attribution (P3): a cheese call from inside an enrolled device's
         # screen carries that screen's token. It is a per-screen capability that proves
         # the call runs as that screen's agent — so it acts as the device agent-user
@@ -132,6 +155,103 @@ class ActorResolver:
         if actor.via == "handle" and actor.handle != "anonymous":
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
+
+    async def resolve_recipient(
+        self,
+        *,
+        requested: str | None,
+        project_id: uuid.UUID | None = None,
+        allow_anonymous: bool = True,
+    ) -> str:
+        """Whose per-person mailbox (notifications, badges, read-state) this
+        request addresses. Shared by every per-recipient endpoint so the rule
+        lives at the trust boundary, not in a route-local helper.
+
+        A recipient is an identity, and identity never comes from a query
+        parameter or body field — the requested handle is only an assertion to
+        check against the verified credential:
+
+        - verified caller naming nobody, or naming themselves → their mailbox;
+        - verified caller naming someone else → 403, never a silent redirect;
+        - a presented credential that does not verify (malformed or expired
+          token) → 401 — downgrading a failed credential to ``anonymous`` is
+          the bug class that let stripped headers read anyone's mail;
+        - no credential at all + a named handle → 401: the Phase-0 handle
+          fallback exists for authorship convenience and must never grant a
+          mailbox, or naming ``?target_handle=bob`` would read (and clear)
+          bob's mail for free;
+        - no credential, nobody named → the ``anonymous`` broadcast-only slice
+          when the endpoint allows it (reads), else 401 (writes).
+        """
+        wanted = (requested or "").strip() or None
+        actor = await self.resolve(fallback_handle=None, project_id=project_id)
+        if actor.authenticated:
+            if wanted is not None and wanted != actor.handle:
+                raise ForbiddenError("不能查看或操作别人的通知")
+            return actor.handle
+        if self._bearer:
+            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+        if wanted is not None or not allow_anonymous:
+            raise AuthenticationRequiredError("访问个人通知需要先登录")
+        return "anonymous"
+
+    def _reject_out_of_scope_token(
+        self, *, topic_id: uuid.UUID | None, project_id: uuid.UUID | None
+    ) -> None:
+        """403 when the presented scoped token names a different resource.
+
+        Deliberately narrow — it fires ONLY for a well-formed, correctly-signed,
+        unexpired scoped token. An absent header, a malformed or expired token,
+        and the global ``SANDBOX_TOKEN`` dev override all keep their existing
+        behaviour (``scoped_token_claims`` returns None for each), so this closes
+        the identity-collapse path without touching the dev/legacy surface.
+
+        A token with no ``t`` claim (project-wide capability: git-http, LLM proxy)
+        is not out of scope for a topic route — it simply does not authenticate
+        there, which ``cheese_valid`` already handles.
+        """
+        if not self._cheese_token:
+            return
+        claims = scoped_token_claims(self._cheese_token)
+        if claims is None:
+            return
+        if project_id is not None and claims.get("p") != str(project_id):
+            _log.info("token_scope_violation", kind="project", got=claims.get("p"))
+            raise ForbiddenError("这个 token 属于别的项目，不能在这里操作")
+        claimed_topic = claims.get("t")
+        if (
+            topic_id is not None
+            and claimed_topic is not None
+            and claimed_topic != str(topic_id)
+        ):
+            _log.info("token_scope_violation", kind="topic", got=claimed_topic)
+            raise ForbiddenError("这个 token 属于别的话题，不能在这里操作")
+
+    async def _recover_numeric_handle(self, actor: Actor) -> Actor:
+        """Repair a token actor whose handle degraded into the int User PK.
+
+        ``_token_verifier`` falls back to the ``sub`` claim when a main-minted
+        token carries no ``handle``; ``sub`` is the int PK, so the actor ends up
+        named e.g. ``"470"``. Every authorization key in the platform is the
+        handle STRING (``topic_memberships.member_handle``, ``member.user_handle``,
+        ``project.owner_handle``) — a numeric handle therefore matches no roster
+        and no project membership, and the caller silently loses every permission
+        they actually hold. Resolve the real username from the id instead.
+
+        A user we cannot resolve keeps the numeric handle (authorization still
+        denies, as it must) but is logged loudly — the previous behaviour failed
+        silently, which is what made this class of bug so hard to trace.
+        """
+        if actor.via != "token" or actor.user_id is None:
+            return actor
+        if not actor.handle.isdigit():
+            return actor
+        user = await UserRepository(self._session).get_by_id(actor.user_id)
+        if user is None:
+            _log.warning("token_handle_unresolved", user_id=actor.user_id)
+            return actor
+        _log.info("token_handle_recovered", user_id=actor.user_id, handle=user.username)
+        return replace(actor, handle=user.username)
 
     async def authorize_topic(
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID

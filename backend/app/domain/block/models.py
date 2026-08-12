@@ -20,6 +20,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -58,8 +59,31 @@ class AuthorType(enum.StrEnum):
     system = "system"
 
 
+# `meta` key stamped on a human block once an agent turn has actually read it
+# into its prompt (BlockRepository.mark_consumed). Value = that turn's id.
+#
+# 为什么是运行时事实而不是位置：一轮的 prompt 窗口是在**拿到锁的那一刻**按当时
+# 的 history 算的，而消息是无锁落库的 —— 于是"这条被哪一轮读进去了"根本不可能
+# 从 created_at 的先后反推出来（两人同时 @ 时，第一轮把两条都合并进了 prompt，
+# 但库里没有任何痕迹能让第二轮知道）。只能在读的时候记下来。
+#
+# 存在 meta 里而不是单开一列：这是 turn 记账的内部细节，不进 API 语义、不需要被
+# 查询/索引，而本仓多个 agent 并发改动，一次 alembic 分叉的代价高于一列的收益。
+CONSUMED_TURN_META_KEY = "consumed_turn"
+
+
+def consumed_turn(block: "Block") -> str | None:
+    """Which turn already read this block into a prompt (None = still pending)."""
+    return (block.meta or {}).get(CONSUMED_TURN_META_KEY)
+
+
 class Block(UuidPk, Timestamps, Base):
     __tablename__ = "blocks"
+    # (topic_id, created_at) serves every "this topic's blocks, newest first"
+    # question: the timeline pages, and the MAX(created_at) behind a topic's
+    # 最后活动时间 — which the sidebar sorts on, so it runs once per listed topic
+    # and must not degrade into reading the whole topic's history.
+    __table_args__ = (Index("ix_blocks_topic_id_created_at", "topic_id", "created_at"),)
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True

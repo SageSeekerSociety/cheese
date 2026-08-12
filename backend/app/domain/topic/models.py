@@ -13,7 +13,15 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -27,9 +35,23 @@ class TopicStatus(enum.StrEnum):
 
 
 class TopicKind(enum.StrEnum):
+    """What a node in the tree IS — a place you talk in, or a piece of work.
+
+    ``root``/``topic`` are rooms: they hold a roster, they outlive the work done
+    in them, and they are what the sidebar lists. ``task`` is one piece of work
+    inside a room — it carries the branch, the accept card and the progress, it
+    ends when accepted, and the room it lives in does not end with it. The UI
+    renders a task as a card in the room's timeline rather than a tree node.
+
+    ``subtopic`` is what tasks were called when a room and a piece of work were
+    the same object. Kept so existing rows keep working; nothing new is created
+    with it.
+    """
+
     root = "root"  # 根话题 = 项目本身, 芝士本体
-    topic = "topic"  # 二级话题
-    subtopic = "subtopic"  # 三级+, 芝士分身工作处
+    topic = "topic"  # 二级话题 = 房间
+    task = "task"  # 一件事: 带分支/验收卡, 完成即结束, 房间照常活着
+    subtopic = "subtopic"  # 历史值: task 的前身
 
 
 class TopicRole(enum.StrEnum):
@@ -65,7 +87,8 @@ class Topic(UuidPk, Timestamps, Base):
     # Claude Agent SDK session id, captured after the first turn; used to resume.
     session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Compute pool this topic's turns run on (execution-architecture v4 会话级选择).
-    # NULL = inherit the project's sticky default (project.settings.compute_profile).
+    # NULL = project sticky, then the owning team's default. Once session_id is
+    # captured, this target is frozen and may no longer be changed.
     # Switchable only while session_id IS NULL (before the first turn) — once the
     # topic has run it is frozen, matching the device-affinity boundary.
     compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -122,6 +145,38 @@ class TopicReadState(UuidPk, Timestamps, Base):
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TopicProgress(Timestamps, Base):
+    """进度层: what this topic's work has gotten through, so far (#187).
+
+    芝士's checklist (the Task tools' working log) used to live only in the
+    turn's WS stream — it died with the turn, and with the machine. That made
+    "换了机器不知道自己做到哪" structurally unavoidable: the room could show the
+    code, the decisions and the doc, but never the半成品 in between.
+
+    This row is that missing layer, and it is deliberately NOT memory: memory is
+    stable facts injected into every prompt, and a running checklist would both
+    bloat it and go stale. One row per topic, overwritten in place — the current
+    state of the work, not its history (the timeline already keeps history).
+
+    ``items`` is the checklist as the UI renders it: ``[{"id", "subject",
+    "status"}]``, status ∈ pending/in_progress/completed. Written the moment a
+    Task tool call streams in, exactly like 现场 events (chat.py) — a turn that
+    dies mid-flight must not take the progress with it, which is the whole point.
+    """
+
+    __tablename__ = "topic_progress"
+
+    # PK, not a UuidPk surrogate: exactly one progress row per topic, and the
+    # upsert path wants the topic id to BE the conflict target.
+    topic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE"), primary_key=True
+    )
+    items: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    # The turn that last wrote this, for telling "left over from a turn that
+    # died" apart from "this turn is still going" without joining the timeline.
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
 
 class TopicMembership(UuidPk, Timestamps, Base):

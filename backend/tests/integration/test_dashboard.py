@@ -5,6 +5,7 @@ import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import seed_space
+from tests.integration.conftest import session_auth_headers
 
 
 def _seed_block(client, project_id, topic_id, author, author_type, kind):
@@ -40,12 +41,16 @@ def test_contributions_exclude_system_blocks(client):
     assert c["by_author_type"]["system"] >= 1
 
 
-def test_member_summary_has_active_and_weekly(client):
+def test_member_summary_has_active_and_weekly(client, bearer):
     p = client.post(
         "/api/projects", json={"name": "P", "owner_handle": "user-1"}
     ).json()["data"]
     pid, root = p["id"], p["root_topic_id"]
-    client.post(f"/api/projects/{pid}/members", json={"user_handle": "user-1"})
+    client.post(
+        f"/api/projects/{pid}/members",
+        json={"user_handle": "user-1"},
+        headers=bearer("user-1"),  # the project owner
+    )
     _seed_block(client, pid, root, "user-1", AuthorType.human, BlockKind.message)
 
     s = client.get(f"/api/projects/{pid}/members/user-1/summary").json()["data"]
@@ -55,12 +60,16 @@ def test_member_summary_has_active_and_weekly(client):
     assert any(t["id"] == root for t in s["topics_active"])
 
 
-def test_project_overview(client):
+def test_project_overview(client, bearer):
     p = client.post(
         "/api/projects", json={"name": "P", "owner_handle": "user-1"}
     ).json()["data"]
     pid = p["id"]
-    client.post(f"/api/projects/{pid}/members", json={"user_handle": "user-1"})
+    client.post(
+        f"/api/projects/{pid}/members",
+        json={"user_handle": "user-1"},
+        headers=bearer("user-1"),  # the project owner
+    )
     client.post(
         f"/api/projects/{pid}/milestones",
         json={"title": "中期", "due_date": "2030-01-01T00:00:00Z"},
@@ -76,7 +85,9 @@ def test_project_overview(client):
         },
     )
 
-    ov = client.get(f"/api/projects/{pid}/overview").json()["data"]
+    ov = client.get(
+        f"/api/projects/{pid}/overview", headers=session_auth_headers("user-1")
+    ).json()["data"]
     assert ov["name"] == "P"
     assert ov["topic_count"] >= 1  # root topic auto-created
     assert ov["next_milestone"]["title"] == "中期"
@@ -108,5 +119,8 @@ def test_space_board_empty_for_space_without_links(client):
 
 
 def test_overview_404_for_missing_project(client):
-    r = client.get("/api/projects/00000000-0000-0000-0000-000000000000/overview")
+    r = client.get(
+        "/api/projects/00000000-0000-0000-0000-000000000000/overview",
+        headers=session_auth_headers("user-1"),
+    )
     assert r.status_code == 404

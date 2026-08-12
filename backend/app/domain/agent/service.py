@@ -29,6 +29,7 @@ from claude_agent_sdk import (
 )
 
 from app.domain.agent.skills import load_cheese_cli_rules
+from app.domain.usage.tokens import input_output_tokens
 
 # The cheese CLI rules, injected into every sandbox turn's system prompt (the
 # cheese Agent Skill is lazy-loaded and weak models don't self-load it). Read
@@ -180,12 +181,6 @@ def _extract_text_delta(event: dict) -> str | None:
     return None
 
 
-def _assistant_text(message: AssistantMessage) -> str:
-    return "".join(
-        block.text for block in message.content if isinstance(block, TextBlock)
-    )
-
-
 # Per-image ceiling for NATIVE image input (图片输入): the Anthropic API rejects
 # images over ~5MB base64, and base64 inflates raw bytes by 4/3 — so cap raw
 # size at 3.75MB. Bigger files fall back to a text note pointing at the
@@ -266,6 +261,26 @@ _BUILTIN_TOOLS = [
 ]
 
 
+# Native tools that have NO way out of this platform, denied on every backend.
+#
+# AskUserQuestion ("向用户提问") is the one that bites: on the hooks backends the
+# interactive `claude` draws its option picker INSIDE the tmux pane, where no
+# user can ever reach it — the model then waits for a keypress that will never
+# come and the turn hangs until the wedged-turn safety net kills it. `cheese ask`
+# is the platform's equivalent (real buttons in the conversation, the answer
+# arrives on the next turn), so the native tool is denied outright rather than
+# left as a trap.
+DISALLOWED_TOOLS = ["AskUserQuestion"]
+
+# The interactive `claude` both hooks backends (tmux, device) launch. Kept here
+# so the two launchers can't drift, and so the deny travels WITH the command:
+# --dangerously-skip-permissions waves through permission prompts, and an
+# explicit --disallowedTools is what keeps this tool out regardless.
+CLAUDE_BASE_CMD = "claude --dangerously-skip-permissions --disallowedTools " + " ".join(
+    DISALLOWED_TOOLS
+)
+
+
 class AgentService:
     """Runs one streaming turn against the Claude Agent SDK."""
 
@@ -323,6 +338,10 @@ class AgentService:
                 include_partial_messages=True,
                 permission_mode="bypassPermissions",
                 allowed_tools=[*sandbox["allowed_tools"], "Skill"],
+                # bypassPermissions means the allowlist above does NOT restrict
+                # anything — a tool left out of it is still callable. Keeping
+                # AskUserQuestion out of the model's reach takes an explicit deny.
+                disallowed_tools=list(DISALLOWED_TOOLS),
                 cli_path=sandbox["cli_path"],
                 # The cheese skill lives in the mounted ~/.claude/skills (=user
                 # source). "user" reads only the isolated per-topic session dir
@@ -343,7 +362,7 @@ class AgentService:
                 include_partial_messages=True,
                 permission_mode="bypassPermissions",
                 allowed_tools=[],
-                disallowed_tools=_BUILTIN_TOOLS,
+                disallowed_tools=[*_BUILTIN_TOOLS, *DISALLOWED_TOOLS],
                 setting_sources=[],  # isolate from the host's ~/.claude settings
                 env=eff_env,
             )
@@ -372,59 +391,86 @@ class AgentService:
 
             request = _one_message()
 
+        # With include_partial_messages=True the SDK can emit several top-level
+        # AssistantMessages for one logical prose segment. They are transport
+        # fragments: persisting each one independently breaks Markdown that spans
+        # them (``` / body / ``` became two empty code boxes in production).
+        # A tool call or the final ResultMessage is the real semantic boundary.
+        pending_text = ""
+
         async with ClaudeSDKClient(options=options) as client:
             await client.query(request)
-            async for message in client.receive_response():
-                if isinstance(message, StreamEvent):
-                    text = _extract_text_delta(message.event)
-                    if text:
-                        yield AgentDelta(text=text)
-                elif isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, ToolUseBlock):
-                            yield AgentToolUse(
-                                name=block.name,
-                                input=block.input
-                                if isinstance(block.input, dict)
-                                else {},
+            try:
+                async for message in client.receive_response():
+                    if isinstance(message, StreamEvent):
+                        text = _extract_text_delta(message.event)
+                        if text:
+                            yield AgentDelta(text=text)
+                    elif isinstance(message, AssistantMessage):
+                        # Preserve block order: prose before a tool belongs to
+                        # the completed chat message immediately preceding it.
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                if message.parent_tool_use_id is None:
+                                    pending_text += block.text
+                            elif isinstance(block, ToolUseBlock):
+                                if pending_text.strip():
+                                    yield AgentMessage(text=pending_text)
+                                    final_text = pending_text
+                                    pending_text = ""
+                                yield AgentToolUse(
+                                    name=block.name,
+                                    input=(
+                                        block.input
+                                        if isinstance(block.input, dict)
+                                        else {}
+                                    ),
+                                )
+                        # Only TOP-LEVEL messages are 芝士 speaking to the user;
+                        # subagent prose is intentionally ignored above. Tool
+                        # calls still surface for the work log.
+                        if message.session_id:
+                            if message.session_id != session_id:
+                                yield AgentSessionInfo(session_id=message.session_id)
+                            session_id = message.session_id
+                    elif isinstance(message, RateLimitEvent):
+                        # Emitted on status transitions; `rejected` + resets_at is
+                        # the structured form of "You've hit your session limit".
+                        info = message.rate_limit_info
+                        rate_limit = {
+                            "status": info.status,
+                            "resets_at": info.resets_at,
+                            "type": info.rate_limit_type,
+                            "utilization": info.utilization,
+                        }
+                    elif isinstance(message, ResultMessage):
+                        if pending_text.strip():
+                            yield AgentMessage(text=pending_text)
+                            final_text = pending_text
+                            pending_text = ""
+                        session_id = message.session_id or session_id
+                        result_error = bool(message.is_error)
+                        api_error_status = message.api_error_status
+                        cli_errors = message.errors
+                        if not final_text and message.result:
+                            final_text = message.result
+                        if message.total_cost_usd:
+                            usage.cost_usd = message.total_cost_usd
+                        u = message.usage or {}
+                        if isinstance(u, dict):
+                            # Cache buckets fold into input like every other
+                            # supply (app.domain.usage.tokens) — omitting them
+                            # here under-reported sdk turns by ~10x.
+                            usage.input_tokens, usage.output_tokens = (
+                                input_output_tokens(u)
                             )
-                    # Only TOP-LEVEL messages are 芝士 speaking to the user; a
-                    # subagent's messages (parent_tool_use_id set) are internal
-                    # work — their tool calls surface above, their prose doesn't.
-                    if message.parent_tool_use_id is None:
-                        text = _assistant_text(message)
-                        if text.strip():
-                            # Structured message boundary (Slack-style): one
-                            # completed AssistantMessage = one chat message.
-                            yield AgentMessage(text=text)
-                        final_text = text or final_text
-                    if message.session_id:
-                        if message.session_id != session_id:
-                            yield AgentSessionInfo(session_id=message.session_id)
-                        session_id = message.session_id
-                elif isinstance(message, RateLimitEvent):
-                    # Emitted on status transitions; `rejected` + resets_at is
-                    # the structured form of "You've hit your session limit".
-                    info = message.rate_limit_info
-                    rate_limit = {
-                        "status": info.status,
-                        "resets_at": info.resets_at,
-                        "type": info.rate_limit_type,
-                        "utilization": info.utilization,
-                    }
-                elif isinstance(message, ResultMessage):
-                    session_id = message.session_id or session_id
-                    result_error = bool(message.is_error)
-                    api_error_status = message.api_error_status
-                    cli_errors = message.errors
-                    if not final_text and message.result:
-                        final_text = message.result
-                    if message.total_cost_usd:
-                        usage.cost_usd = message.total_cost_usd
-                    u = message.usage or {}
-                    if isinstance(u, dict):
-                        usage.input_tokens = int(u.get("input_tokens", 0) or 0)
-                        usage.output_tokens = int(u.get("output_tokens", 0) or 0)
+            except Exception:
+                # A provider failure before result/tool must not erase prose the
+                # user already saw streaming. Yield it once so the orchestration
+                # layer persists it, then preserve the original failure.
+                if pending_text.strip():
+                    yield AgentMessage(text=pending_text)
+                raise
 
         yield AgentResult(
             text=final_text,
