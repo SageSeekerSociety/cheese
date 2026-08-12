@@ -22,7 +22,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse
 
 import app.api.routes as routes_pkg
 from app.core.config import settings
@@ -258,10 +259,12 @@ def _discover_routers(application: FastAPI) -> list[str]:
 # prefix visibly becomes the `/api/api/...` that callers have to send.
 #
 # Left unset, the schema advertised bare backend paths, and a caller who followed
-# them got no error worth the name: of the 128 routes under the 2.0 prefix, 122
-# answered 404 and 6 reached a DIFFERENT 1.0 route that answered 200 from the
-# wrong domain. Same convention as `settings.connector_public_base`, which already
-# has to end in `/api` for the same reason. See docs/api-conventions.md.
+# them got no error worth the name: most of the 2.0 surface 404'd and a handful of
+# endpoints reached a DIFFERENT 1.0 route that answered 200 from the wrong domain.
+# The exact split is measured, not asserted here — see the pinned collision set in
+# backend/tests/contract/test_api_addressing_contract.py, which fails if it moves.
+# Same convention as `settings.connector_public_base`, which already has to end in
+# `/api` for the same reason. See docs/api-conventions.md.
 API_GATEWAY_MOUNT = "/api"
 
 app = FastAPI(
@@ -278,6 +281,15 @@ app = FastAPI(
             "description": "Straight at the backend port, with no gateway in front",
         },
     ],
+    # FastAPI's stock docs pages name the spec with an origin-absolute
+    # `/openapi.json`, which is not where the spec lives from outside: through the
+    # gateway that resolves to `<origin>/openapi.json`, falls through to nginx's
+    # `location /` and returns the SPA's index.html, so the page loads and renders
+    # nothing. Serving them ourselves (below) with a RELATIVE spec URL is what
+    # makes them work from both sides, since the browser resolves it against
+    # whichever path it opened the page at.
+    docs_url=None,
+    redoc_url=None,
 )
 
 app.add_middleware(LogRefusedWebSockets)
@@ -291,6 +303,32 @@ app.add_middleware(
 )
 
 register_exception_handlers(app)
+
+
+def _relative_spec_url() -> str:
+    """Where the docs pages should look for the spec, relative to themselves.
+
+    `openapi.json` with no leading slash resolves against whatever path the page
+    was opened at, so one page serves both topologies: opened at
+    `<origin>/api/docs` the browser fetches `<origin>/api/openapi.json` (the
+    gateway strips the segment and the backend answers), and opened straight at
+    the backend port it fetches `<host>/openapi.json`. The stock pages hard-code
+    `/openapi.json`, which only ever works in the second case.
+    """
+    return (app.openapi_url or "/openapi.json").lstrip("/")
+
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_ui() -> HTMLResponse:
+    return get_swagger_ui_html(
+        openapi_url=_relative_spec_url(), title=f"{app.title} — API"
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_ui() -> HTMLResponse:
+    return get_redoc_html(openapi_url=_relative_spec_url(), title=f"{app.title} — API")
+
 
 # Wire the domain permission configs + role providers into the shared checker.
 # Without this every require_permission()-gated endpoint 403s (the providers

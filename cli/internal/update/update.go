@@ -42,17 +42,22 @@ func platformDir(goos, goarch string) (string, error) {
 // PlatformDir returns the artifact directory for the running platform.
 func PlatformDir() (string, error) { return platformDir(runtime.GOOS, runtime.GOARCH) }
 
-// binaryURL is the published location of the `cheese` binary for dir, at the
-// server's *origin* (scheme://host of base) — the connector artifacts live at
-// `<origin>/connector/latest/<os>-<arch>/cheese`, at the origin root, never under
-// the `/api` edge prefix (see docs/api-conventions.md).
+// binaryURL is the published location of this platform's binary, at the server's
+// *origin* (scheme://host of base) — the connector artifacts live at
+// `<origin>/connector/latest/<os>-<arch>/cheesehost`, at the origin root, never
+// under the `/api` edge prefix (see docs/api-conventions.md).
+//
+// The trailing segment is `cheesehost`, the name the server actually publishes
+// (backend/app/api/routes/installer.py serves `/latest/{target}/cheesehost`, and
+// install.sh downloads that same name). Asking for `cheese` there is a 404 with
+// nothing to hint at why, which is what `cheese update` used to do.
 func binaryURL(base, dir string) (string, error) {
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" {
 		return "", fmt.Errorf("update: bad base %q: %v", base, err)
 	}
 	origin := u.Scheme + "://" + u.Host
-	return origin + "/connector/latest/" + dir + "/cheese", nil
+	return origin + "/connector/latest/" + dir + "/cheesehost", nil
 }
 
 // Fetch downloads the current platform's `cheese` binary from base's origin into a

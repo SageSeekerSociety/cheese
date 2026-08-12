@@ -35,17 +35,20 @@ func TestBinaryURL(t *testing.T) {
 	cases := []struct {
 		base, dir, want string
 	}{
+		// The last segment is `cheesehost`, not `cheese`: that is the name the
+		// server publishes at /connector/latest/{target}/cheesehost, and the one
+		// install.sh downloads. Asking for `cheese` is a plain 404.
 		{
-			"https://cheese.ruc.edu.cn/api", "linux-x86_64",
-			"https://cheese.ruc.edu.cn/connector/latest/linux-x86_64/cheese",
+			"https://cheese.ruc.edu.cn/api", "linux-amd64",
+			"https://cheese.ruc.edu.cn/connector/latest/linux-amd64/cheesehost",
 		},
 		{
 			"http://127.0.0.1:8080", "darwin-arm64",
-			"http://127.0.0.1:8080/connector/latest/darwin-arm64/cheese",
+			"http://127.0.0.1:8080/connector/latest/darwin-arm64/cheesehost",
 		},
 		{
-			"https://example.com/", "linux-aarch64",
-			"https://example.com/connector/latest/linux-aarch64/cheese",
+			"https://example.com/", "linux-arm64",
+			"https://example.com/connector/latest/linux-arm64/cheesehost",
 		},
 	}
 	for _, c := range cases {

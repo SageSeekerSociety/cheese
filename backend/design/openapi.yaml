@@ -26,11 +26,17 @@ info:
     name: Cheese Team
     url: https://github.com/SageSeekerSociety/cheese
 
+# Same convention as the running app publishes (backend/app/main.py): the paths
+# below are the ones the routers declare, and the app origin's nginx forwards the
+# API under `/api`, stripping that one segment. So the gateway mount has to be
+# part of the published server or `server + path` is not a URL anybody can send.
+# Listing a bare backend port first would hand every generated client a base that
+# only works with no gateway in front — see docs/api-conventions.md.
 servers:
-  - url: http://127.0.0.1:8799
-    description: Merged backend (scripts/dev flow)
-  - url: http://localhost:8081
-    description: Merged backend (docker dev flow)
+  - url: /api
+    description: Through the app origin — browsers, generated clients, external callers
+  - url: /
+    description: Straight at the backend port (dev, no gateway in front)
 
 tags:
   - name: Users
