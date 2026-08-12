@@ -51,7 +51,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.chat", "app.domain.usage.repositories"),
         ("app.domain.agent.device_provider", "app.domain.machine.repositories"),
-        ("app.domain.agent.device_provider", "app.domain.user.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
         ("app.domain.agent.sandbox_notices", "app.domain.block.repositories"),
         ("app.domain.agent.sandbox_notices", "app.domain.topic.repositories"),
@@ -91,7 +90,13 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.questions.services", "app.domain.user.repositories"),
         ("app.domain.questions.services", "app.domain.answers.repositories"),
         # --- review / scheduler ---
+        # review.archive / review.gate_sweep 是本分支挂起期间从 main 进来的
+        # （#286 闸门孤儿清扫等），不是本轮新欠的债，按存量入账。
+        ("app.domain.review.archive", "app.domain.block.repositories"),
+        ("app.domain.review.gate_sweep", "app.domain.block.repositories"),
+        ("app.domain.review.gate_sweep", "app.domain.topic.repositories"),
         ("app.domain.review.pr_publish", "app.domain.topic.repositories"),
+        ("app.domain.review.services", "app.domain.block.repositories"),
         ("app.domain.review.services", "app.domain.cx_task.repositories"),
         ("app.domain.review.services", "app.domain.membership.repositories"),
         ("app.domain.review.services", "app.domain.project.repositories"),
@@ -120,6 +125,8 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.topic.services", "app.domain.block.repositories"),
         ("app.domain.topic.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.identity.repositories"),
+        ("app.domain.topic_membership.services", "app.domain.membership.repositories"),
+        ("app.domain.topic_membership.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.topic.repositories"),
         ("app.domain.topic_membership.services", "app.domain.user.repositories"),
         # --- webhook / workspace ---

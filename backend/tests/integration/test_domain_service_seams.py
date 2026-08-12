@@ -26,6 +26,7 @@ from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
 from app.domain.space.models import Space
+from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 
@@ -205,6 +206,32 @@ async def test_open_pr_card_ids_lists_only_cards_with_an_open_pr(client):
     async with client.test_factory() as session:
         ids = await AcceptService(session).open_pr_card_ids()
         assert ids == [open_id]
+
+
+async def test_open_pr_card_ids_skips_cards_on_archived_topics(client):
+    """孤儿卡修复 (#291) 的判据也在这个接缝里：已归档话题上的卡不算「开着」。
+
+    这里直接改话题状态，而不是走 ``TopicService.archive``——归档路径自己就会把卡关掉，
+    要造的恰恰是它防的那种历史遗留行：卡还挂着 ``pr_open``，话题已经归档。轮询器要是
+    还去推它，就是拿当初批准人的 GitHub token 去动没人跟的活儿。
+    """
+    async with client.test_factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topics = TopicService(session)
+        t_live = await topics.create(
+            project_id=project.id, title="活着", created_by="u"
+        )
+        t_gone = await topics.create(
+            project_id=project.id, title="归档了", created_by="u"
+        )
+        live_card = await _card(session, t_live.id, status=AcceptStatus.pr_open)
+        await _card(session, t_gone.id, status=AcceptStatus.pr_open)
+        t_gone.status = TopicStatus.archived
+        await session.commit()
+        live_id = live_card.id
+
+    async with client.test_factory() as session:
+        assert await AcceptService(session).open_pr_card_ids() == [live_id]
 
 
 async def test_open_pr_card_ids_is_empty_when_nothing_is_pending(client):
