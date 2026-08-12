@@ -1,7 +1,7 @@
 """device_health: failure streak + quarantine per compute machine (#186)
 
 Revision ID: b7e3c19d4f80
-Revises: c1d7e0a4b839
+Revises: c8b1f4a70d29
 Create Date: 2026-08-12
 
 One row per device, written only when a HOST-SCOPED turn failure happens and
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "b7e3c19d4f80"
-down_revision = "c1d7e0a4b839"
+down_revision = "c8b1f4a70d29"
 branch_labels = None
 depends_on = None
 

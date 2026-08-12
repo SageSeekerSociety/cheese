@@ -124,7 +124,7 @@ if not is_resume and platform_failure is None:
 | `agent/device_provider.py` | 首次 pin 时过滤被隔离的机器；离线错误改用 `DEVICE_OFFLINE_MESSAGE` |
 | `agent/runtime.py` | crash 分支：`host_scoped` → 记账/换绑/发 event/**恢复 `resume_after`**；成功收流 → 清零健康记录 |
 | `agent/chat.py` | AgentResult 错误分支同构；换成功 → 多发一个 `host_swap` event block + `resume_hint` 帧 |
-| `alembic/versions/b7e3c19d4f80_*.py` | `device_health` 迁移，挂在 `c1d7e0a4b839` 之后（单头；main 期间顶掉过两次，重挂了两次） |
+| `alembic/versions/b7e3c19d4f80_*.py` | `device_health` 迁移，挂在 **`c8b1f4a70d29`** 之后（见 §6：期间被 main 顶掉三次，重挂了三次） |
 | `tests/unit/test_device_health.py`（新） | 判定标准的功能测试 |
 | `tests/unit/test_host_swap.py`（新） | 换身体全流程的功能测试 |
 
@@ -157,3 +157,25 @@ if not is_resume and platform_failure is None:
 第一次跑全量拿到 `28 failed / 767 errors`，看着像灾难，其实**结果作废**：我在套件跑的过程中做了 rebase 和改迁移，树被换了。767 个 error 全是 DB 连接失败。稳住树重跑就是 `24 failed / 0 errors`。
 
 **跑长套件期间不要动工作树**——包括看起来无害的改动。代价是一次 9 分钟的空跑加一轮误判。
+
+---
+
+## 6. 迁移链被顶掉三次，第三次修完本地是"故意不自洽"的
+
+`down_revision` 改过三轮：`d4a1b6f27c90` → `b8e1d4c70a92` → `c1d7e0a4b839` → **`c8b1f4a70d29`**。前两次是本地就能看到的 main 前进；第三次不是。
+
+**第三次的特殊之处：`c8b1f4a70d29` 这个文件在沙箱工作区里根本不存在。** 本地 main 停在 `b4a8a9bfed4f`，还没同步到那条迁移，而 `jj git fetch` 不可用、`gh` 的 contents API 是 403（实测），所以我无法把它取下来，也无法读它的内容。
+
+能修，是因为**修法不需要看到它**：规则要求把自己的迁移重挂到 origin/main 的当前链尾，而 CI 的报错行已经把链尾名字给出来了。它自己的父节点是什么无关紧要——只要它是 origin/main 唯一的头，挂在它上面就必然收成一个头。
+
+**代价要写清楚，别让下一个人以为是回归：**
+
+```
+uv run alembic heads   →  KeyError: 'c8b1f4a70d29'
+```
+
+`tests/conftest.py` 的测试库 schema 是 `alembic upgrade head` 建的，所以**在平台把 main 同步过来之前，本地所有 DB 相关测试都跑不了**。这不是坏掉，是链尾指向了一个只存在于 origin/main 的节点。CI 那边跑的是 PR 的 merge ref，两个文件都在，所以链是连续的。
+
+不碰库的测试不受影响：本卡的 `test_device_health.py` + `test_host_swap.py` + `test_platform_failures.py` 共 **21 passed**。
+
+**没做也不该做的事**：本地伪造一个 `c8b1f4a70d29` 占位文件让 alembic 闭环。那会把一条假迁移落进链里，比 CI 红严重得多。
