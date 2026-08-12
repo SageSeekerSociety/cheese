@@ -255,7 +255,39 @@
 | 10 | 速率限制 / 并发上限 | 100 人 DDL 前同时跑（见 §9 坑 1） |
 | 11 | 计费粒度、账单可对账 | credit 折算与对账 |
 
-候选（待填）：GLM（智谱）/ DeepSeek / Qwen（通义）/ Kimi（月之暗面）/ MiniMax / 豆包（字节）。
+#### 阶段一进展（2026-08，文档核查轮）
+
+以下为**厂商文档可确认的部分**。标「待实测」的项目文档给不出答案——必须打真实请求，工具见下节。
+
+| 候选 | Anthropic 端点 | tool_use | `cache_control` | embedding | 关键约束 |
+|---|---|---|---|---|---|
+| **GLM（智谱）** | `open.bigmodel.cn/api/anthropic` | 文档称支持 Tool Use / Computer Use / MCP | **待实测**（文档只说「某些场景下仍存在差异」） | ✅ `embedding-3` | 唯一同时提供 OpenAI / Anthropic / 原生三套协议；官方默认映射 opus·sonnet→GLM-4.7、haiku→GLM-4.5-Air |
+| **DeepSeek** | `api.deepseek.com/anthropic` | ✅ `tools`/`tool_choice`、`stream`、`system` 全支持 | ❌ **明确标为 Ignored** | ❌ **官方无 embeddings 端点** | claude-opus→v4-pro、claude-haiku·sonnet→v4-flash；另不支持 image / document / mcp_servers / top_k / anthropic-beta |
+| **Qwen（阿里百炼）** | `dashscope.aliyuncs.com/apps/anthropic`；Coding Plan 另有 `coding.dashscope.aliyuncs.com/apps/anthropic` | 待实测 | 待实测 | ✅ text-embedding 系列 | Coding Plan 的 key 与标准计费 key **不通用**，不能混用 |
+| **Kimi（月之暗面）** | `api.kimi.com/coding/`（旧 `api.moonshot.cn/anthropic` 已废弃） | ✅ 支持 tool_use / tool_result / thinking / image / web_search；不支持 document | 待实测 | 待查 | **模型 ID 固定 `kimi-for-coding`，只有单一模型**，与我们要填的两档结构冲突；key 前缀 `sk-kimi-`，与开放平台 key 不通用 |
+
+**两条已可下的判断：**
+
+1. **DeepSeek 有两处硬伤。** `cache_control` 被忽略 → §7.3 那个「跨学生前缀缓存」的教育场景红利直接拿不到，而这正是本场景成本压缩的最大结构性杠杆；且官方无 embedding 模型 → OpenViking 必须另配一家厂商。（注意：网上有「deepseek-embedding-v2」的说法，官方文档中不存在，GitHub issue 显示用户仍在提该需求，属 SEO 内容农场的编造。）
+2. **Kimi 的 coding 端点是单一模型**，无法同时承担主模型与轻量档，若要用需与其他厂商混搭。
+
+**GLM 目前仍是唯一「三套协议齐全 + 自带 embedding」的候选**，也是现状，切换成本为零。但它恰恰是文档最含糊的一家——`cache_control` 和 `usage` 四类 token 是否分列，全部悬空，而这两项直接决定 §1 的按真实 spend 折算能不能准。**这是实测第一优先。**
+
+#### 阶段一工具：`backend/scripts/probe_provider.py`
+
+checklist 里第 4、5、7 项（cache_control 是否真生效、`usage` 是否分列四类 token、claude-* 模型名会被映射还是 400）**没有一家厂商的文档能回答**，只能实打。已写好探针脚本，仅用标准库，不依赖 backend venv：
+
+```bash
+python backend/scripts/probe_provider.py \
+    --base-url https://open.bigmodel.cn/api/anthropic \
+    --key "$KEY" --model glm-5.2 --haiku-model glm-4.5-air \
+    --openai-base-url https://open.bigmodel.cn/api/paas/v4 \
+    --embedding-model embedding-3
+```
+
+它做真实往返，而非读文档：tool_use 发起后**把 tool_result 喂回去看第二轮是否活着**（松散实现通常断在这一腿）、带 `cache_control` 连打两次看第二次是否真报 `cache_read_input_tokens`、故意用 `claude-sonnet-4-5` 探模型名劫持行为。BLOCKER 项（1/2/3/6/7）失败即退出码 1。
+
+**当前阻塞：本地只有 `.env.example`，无任何厂商凭据。** 拿到各家 key 即可逐个跑完填表。
 
 #### 阶段二：能力与真实成本实测
 
