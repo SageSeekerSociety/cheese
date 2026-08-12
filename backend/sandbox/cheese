@@ -905,7 +905,7 @@ def main() -> None:
         # recipe when `issues` was not granted just buys a 403 and a wasted turn.
         if "issues" in perms:
             lines.append(
-                f"[cheese] 读 issue 正文/评论(不用找人贴): "
+                "[cheese] 读 issue 正文/评论(不用找人贴): "
                 f"gh api repos/{repo}/issues/<n>  和  .../issues/<n>/comments"
             )
         if "pull_requests" in perms:
@@ -915,7 +915,7 @@ def main() -> None:
             )
         if "contents" in perms:
             lines.append(
-                f"[cheese] 读工作区以外的仓库文件: "
+                "[cheese] 读工作区以外的仓库文件: "
                 f"gh api repos/{repo}/contents/<path>?ref=<branch>"
             )
         print("\n".join(lines), file=sys.stderr)
