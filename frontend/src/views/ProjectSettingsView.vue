@@ -32,9 +32,14 @@ import {
   setUpstream,
   syncUpstream,
 } from '../api'
-import { findGithubAccountConnection, isGithubAccountTokenExpired } from '../lib/githubAccount'
+import {
+  explainAccountLinkFailure,
+  explainRepoInstallFailure,
+  findGithubAccountConnection,
+  isGithubAccountTokenExpired,
+} from '../lib/githubAccount'
 import { relTime } from '../lib/relTime'
-import { me, myHandle } from '../me'
+import { myHandle, myId } from '../me'
 
 // Project settings. Compute is intentionally absent: execution-architecture v4
 // places the pool/default on the team and the per-run choice on the topic.
@@ -66,7 +71,13 @@ const connectingGithubRepo = ref(false)
 const connectingGithubAccount = ref(false)
 // Set from ?github_install=/&github_account= on the redirect back from our
 // own callback routes (app/api/routes/github_install.py, github_account_link.py).
-const githubCallbackNotice = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
+// TWO refs, not one: the 仓库 flow and the 账号 flow are separate sections with
+// separate buttons, and a single shared notice rendered inside the 仓库 section
+// put 「已连接 GitHub 账号。」 under the 「连接 GitHub 仓库」 heading — the result
+// of one action announced above a different one.
+type CallbackNotice = { type: 'success' | 'error' | 'info'; text: string }
+const githubRepoNotice = ref<CallbackNotice | null>(null)
+const githubAccountNotice = ref<CallbackNotice | null>(null)
 
 // 连接 GitHub 账号 status: loaded independently from `load()` (its own
 // loading/error state) so a failure here can't be mistaken for "not
@@ -78,7 +89,7 @@ const githubAccountConn = ref<OAuthConnectionInfo | null>(null)
 const disconnectingGithubAccount = ref(false)
 
 async function loadGithubAccountConnection() {
-  const userId = me.value?.id
+  const userId = myId()
   if (!userId) {
     githubAccountLoadState.value = 'error'
     githubAccountLoadError.value = '未登录'
@@ -97,7 +108,7 @@ async function loadGithubAccountConnection() {
 }
 
 async function disconnectGithubAccount() {
-  const userId = me.value?.id
+  const userId = myId()
   const conn = githubAccountConn.value
   if (!userId || !conn) return
   disconnectingGithubAccount.value = true
@@ -291,7 +302,7 @@ async function connectGithubRepo() {
     const res = await apiConnectGithubRepo(props.projectId)
     if (res.connected) {
       githubConnection.value = { connected: true, repo: res.repo, account: res.account }
-      githubCallbackNotice.value = { type: 'success', text: `已连接 ${res.repo}` }
+      githubRepoNotice.value = { type: 'success', text: `已连接 ${res.repo}` }
       connectingGithubRepo.value = false
       return
     }
@@ -328,24 +339,25 @@ function consumeGithubCallbackNotice() {
   const account = route.query.github_account as string | undefined
   if (!install && !account) return
 
+  const reason = route.query.reason as string | undefined
   if (install === 'success') {
     const repo = route.query.repo as string | undefined
-    githubCallbackNotice.value = { type: 'success', text: `已连接仓库 ${repo ?? ''}`.trim() }
+    githubRepoNotice.value = { type: 'success', text: `已连接仓库 ${repo ?? ''}`.trim() }
   } else if (install === 'pending') {
-    githubCallbackNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准。' }
+    githubRepoNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准。' }
   } else if (install === 'error') {
-    githubCallbackNotice.value = { type: 'error', text: `连接仓库失败：${route.query.reason ?? '未知原因'}` }
+    githubRepoNotice.value = { type: 'error', text: explainRepoInstallFailure(reason) }
   } else if (account === 'success') {
-    githubCallbackNotice.value = { type: 'success', text: '已连接 GitHub 账号。' }
+    githubAccountNotice.value = { type: 'success', text: '已连接 GitHub 账号。' }
   } else if (account === 'error') {
-    githubCallbackNotice.value = { type: 'error', text: `连接账号失败：${route.query.reason ?? '未知原因'}` }
+    githubAccountNotice.value = { type: 'error', text: explainAccountLinkFailure(reason) }
   }
 
-  const { github_install, github_account, repo, reason, ...rest } = route.query
+  const { github_install, github_account, repo: _repo, reason: _reason, ...rest } = route.query
   void github_install
   void github_account
-  void repo
-  void reason
+  void _repo
+  void _reason
   router.replace({ query: rest })
 }
 
@@ -604,14 +616,14 @@ watch(() => props.projectId, load)
           </div>
           <div class="ln-body">
             <v-alert
-              v-if="githubCallbackNotice"
-              :type="githubCallbackNotice.type"
+              v-if="githubRepoNotice"
+              :type="githubRepoNotice.type"
               density="comfortable"
               closable
               class="mb-3"
-              @click:close="githubCallbackNotice = null"
+              @click:close="githubRepoNotice = null"
             >
-              {{ githubCallbackNotice.text }}
+              {{ githubRepoNotice.text }}
             </v-alert>
             <div v-if="githubConnection?.connected" class="d-flex align-center" style="gap: 8px">
               <v-icon size="18" color="success">mdi-check-circle</v-icon>
@@ -652,6 +664,18 @@ watch(() => props.projectId, load)
             <span class="ln-section-title">连接 GitHub 账号</span>
           </div>
           <div class="ln-body">
+            <!-- The 账号 flow's own outcome, in the 账号 section. -->
+            <v-alert
+              v-if="githubAccountNotice"
+              :type="githubAccountNotice.type"
+              density="comfortable"
+              closable
+              class="mb-3"
+              @click:close="githubAccountNotice = null"
+            >
+              {{ githubAccountNotice.text }}
+            </v-alert>
+
             <!-- 加载中 -->
             <div v-if="githubAccountLoadState === 'loading'" class="d-flex align-center" style="gap: 8px">
               <v-progress-circular indeterminate size="16" width="2" color="primary" />
