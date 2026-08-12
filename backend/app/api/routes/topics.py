@@ -134,9 +134,23 @@ async def get_topic(
     topic_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    resolver: ActorResolverDep,
 ) -> dict:
+    """One topic's header.
+
+    Authorized like the routes beside it (`/comments`, `/doc`). It was not, and
+    the sibling routes' having been is what made that a gap rather than a
+    policy: a logged-in caller from another project could read any topic's title
+    just by holding its id. Measured, not inferred.
+    """
     service = TopicService(db)
     topic = await service.get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     last_activity = await service.last_activity_for_topics([topic.id])
     return ok(_topic_out(topic, runner.running_topic_ids(), last_activity))
 
@@ -145,10 +159,16 @@ async def get_topic(
 async def list_topic_blocks(
     topic_id: uuid.UUID,
     db: DbSession,
+    resolver: ActorResolverDep,
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
     before: uuid.UUID | None = None,
 ) -> dict:
     """The topic's conversation timeline, oldest-first.
+
+    Authorized, like `/comments` and `/doc` beside it. This one carries the
+    conversation ITSELF, and it was the only unguarded route of the three that
+    did: measured on a test server, a logged-in caller belonging to no part of
+    the project read another team's messages verbatim by holding a topic id.
 
     Paging is OPT-IN: with no `limit` this returns the whole timeline, exactly
     as it always has. That default is deliberate — agents read this endpoint to
@@ -159,6 +179,13 @@ async def list_topic_blocks(
     - `?limit=N`                  → the newest N blocks (chat is bottom-anchored)
     - `?limit=N&before=<block_id>` → the N blocks immediately older than that one
     """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     await TopicService(db).get_or_404(topic_id)
     repo = BlockRepository(db)
     cursor: Block | None = None
