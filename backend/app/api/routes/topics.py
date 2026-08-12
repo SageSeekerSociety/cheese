@@ -412,6 +412,20 @@ async def add_comment(
     return ok(payload)
 
 
+@router.get("/{topic_id}/progress")
+async def get_topic_progress(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """进度层 (#187): 芝士's checklist for this topic, as of the last turn to
+    touch it. Read on topic open — between turns there is no WS stream to carry
+    it, and "做到哪了" has to be visible without summoning anyone."""
+    items, updated_at = await TopicService(db).get_progress(topic_id)
+    return ok(
+        {
+            "items": items,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+        }
+    )
+
+
 @router.get("/{topic_id}/doc")
 async def get_topic_doc(topic_id: uuid.UUID, db: DbSession) -> dict:
     """The topic's single living doc (spec §2.2 docs-out)."""

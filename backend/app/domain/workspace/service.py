@@ -483,6 +483,69 @@ def sandbox_vcs_mounts(
     ]
 
 
+# Container mount point of a project's whole `.worktrees/<project>` tree in the
+# long-lived tmux sandbox. One mount covering every topic's worktree AND the
+# shared dependency stores below, because hardlinks cannot cross bind mounts
+# (link(2) → EXDEV even on the same filesystem): pnpm/uv only dedup against a
+# store that lives on the SAME mount as the tree they install into. Verified
+# live on the dev box — a cross-mount ln inside a sandbox fails with "Invalid
+# cross-device link", and pnpm/uv then silently fall back to full copies, which
+# is how one project's 220 worktrees came to hold 236GB.
+SANDBOX_TOPICS_ROOT = "/topics"
+
+# Shared per-project dependency stores, as (host dirname, container env var).
+# Dot-named so they can never collide with a topic worktree dir (`topic_<hex>`)
+# or the merge-worktree root (`_merge`). pnpm reads npm_config_store_dir (its
+# documented env form of store-dir); uv reads UV_CACHE_DIR. Both install by
+# hardlinking out of their store when it is on the same filesystem/mount, so
+# every topic's node_modules/.venv shares one physical copy per file.
+_SANDBOX_STORES = (
+    (".pnpm-store", "npm_config_store_dir"),
+    (".uv-cache", "UV_CACHE_DIR"),
+)
+
+
+def sandbox_topic_workdir(branch: str) -> str:
+    """A topic's worktree path inside the tmux sandbox — its REAL path under the
+    project-tree mount (not a per-topic remap), so hardlinks to the shared
+    stores on the same mount work."""
+    return f"{SANDBOX_TOPICS_ROOT}/{branch.replace('/', '_')}"
+
+
+def sandbox_project_mounts(project_id: uuid.UUID, branch: str) -> list[str]:
+    """`docker run` args mounting the project's `.worktrees` tree (topics +
+    shared stores, one mount — see SANDBOX_TOPICS_ROOT) plus the jj/git store
+    mounts anchored to the topic's in-container workdir, plus the store env.
+
+    Ensures the store dirs exist host-side, writable by the sandbox's non-root
+    `node` user (the backend may run as a different uid; the stores are filled
+    from inside containers).
+
+    Isolation note: every topic sandbox of a project sees (and can write) its
+    sibling topics' worktrees. That is not a new trust boundary — the same
+    containers already share the project's writable `.jj`/`.git` stores, so
+    same-project topics were never isolated from each other; cross-project
+    isolation is unchanged."""
+    root = _worktree_path(project_id, branch).parent
+    root.mkdir(parents=True, exist_ok=True)
+    env_args: list[str] = []
+    for dirname, env_var in _SANDBOX_STORES:
+        store = root / dirname
+        store.mkdir(exist_ok=True)
+        try:  # the sandbox's non-root `node` user fills the store
+            os.chmod(store, 0o777)
+        except OSError:
+            pass
+        env_args += ["-e", f"{env_var}={SANDBOX_TOPICS_ROOT}/{dirname}"]
+    workdir = sandbox_topic_workdir(branch)
+    return [
+        "-v",
+        f"{root}:{SANDBOX_TOPICS_ROOT}",
+        *env_args,
+        *sandbox_vcs_mounts(project_id, branch, container_workdir=workdir),
+    ]
+
+
 def audit_workspace_ownership() -> list[str]:
     """Boot-time check that this process can actually use the workspace it was
     handed — one problem string per finding, empty when healthy.
@@ -1942,6 +2005,10 @@ def exec_in_sandbox(
                 "1",
                 "--pids-limit",
                 "256",
+                # A crashing process must not dump its whole address space into
+                # the bind-mounted worktree (frontend cores were 1-2GB each).
+                "--ulimit",
+                "core=0",
                 "-v",
                 f"{tree}:/work",
                 *vcs_mounts,
@@ -2134,6 +2201,9 @@ def run_check_command(
         "no-new-privileges",
         "--pids-limit",
         str(settings.quality_gate_pids_limit),
+        # No GB-scale core files into the bind-mounted workspace on a crash.
+        "--ulimit",
+        "core=0",
         "--memory",
         f"{settings.quality_gate_memory_mb}m",
         "--cpus",
