@@ -65,6 +65,15 @@ class AcceptCard(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     note: Mapped[str] = mapped_column(Text, default="")
+    # 机器闸门 (eval C2): when the project's check_command STARTED running for
+    # this card. Deliberately not "when the card was filed" (that is
+    # `created_at`) — the gap between the two is queueing + worktree
+    # preparation, and a `pending_gate` card with this still NULL never got as
+    # far as running the check at all. See review/gate_sweep.py, which uses
+    # COALESCE(gate_started_at, created_at) as its clock.
+    gate_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # 机器闸门 (eval C2): when the project's check_command passed for this card.
     gate_passed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

@@ -223,6 +223,23 @@ class SchedulerService:
                     logger.exception("poll_open_prs failed for card %s", card_id)
         return {"cards_checked": checked, "errors": errors}
 
+    async def sweep_abandoned_gates(self) -> dict:
+        """闸门孤儿卡扫底 (2026-08-11): condemn `pending_gate` cards whose gate
+        runner is gone, so their topic stops being unable to file a new card.
+        The actual rules (and why a periodic sweep is needed on top of the
+        startup one) live in review/gate_sweep.py."""
+        from app.api.deps import get_turn_runner
+        from app.domain.review import gate_sweep
+
+        runner = get_turn_runner()
+
+        def nudge(topic_id: uuid.UUID, content: str) -> None:
+            runner.submit(
+                self._chat, topic_id, author="system", content=content, summon=True
+            )
+
+        return await gate_sweep.sweep(self._sessions, nudge=nudge)
+
 
 class SchedulerRunner:
     """Background loop driving SchedulerService.tick() on an interval."""
@@ -392,3 +409,41 @@ class UpstreamSyncRunner:
                     logger.info("upstream sync: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("upstream sync failed")
+
+
+class GateSweepRunner:
+    """闸门孤儿卡扫底 (2026-08-11): drives SchedulerService.sweep_abandoned_gates()
+    on an interval — same shape as PrPollRunner.
+
+    The startup sweep in `app.main.lifespan` covers cards orphaned by a
+    restart; this loop covers the other half — the gate task dying while the
+    process keeps running (see review/gate_sweep.py). Without it the ceiling on
+    "how long a topic stays unable to file a card" is "until the next redeploy".
+    """
+
+    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
+        self._scheduler = scheduler
+        self._interval = interval_seconds
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._loop())
+            logger.info("gate sweep runner started (every %ss)", self._interval)
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                result = await self._scheduler.sweep_abandoned_gates()
+                if result["condemned"] or result["errors"]:
+                    logger.info("gate sweep: %s", result)
+            except Exception:  # noqa: BLE001 -- maintenance loop must survive
+                logger.exception("gate sweep failed")
