@@ -35,6 +35,7 @@ from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.service import DeviceService
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.workspace import service as ws
@@ -211,25 +212,31 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
         ``device_shared_workspace_host_root`` is deployment-wide, but a deployment
         can host BOTH kinds of device at once: the box cheese itself runs on, and
-        machines it provisioned from MicroCloud. A provisioned machine is on its
-        own host and shares nothing — and getting this wrong fails SILENTLY: the
-        launcher `mkdir -p`s whatever path it is given, so the agent would open a
-        turn in an empty directory instead of the topic's worktree.
+        machines it provisioned from MicroCloud. A platform-provisioned machine is
+        on its own host and shares nothing — and getting this wrong fails SILENTLY:
+        the launcher `mkdir -p`s whatever path it is given, so the agent would open
+        a turn in an empty directory instead of the topic's worktree.
+
+        Reads ``device.supply`` (#282 决定 2). This used to ask the machine table
+        「有没有一行指向这个 device」 — the reverse lookup #282 is about. Same
+        answer, but now the fact is stored where it is used, so a `cloud` device
+        that never got a ``project_machines`` row (a future provisioning path)
+        cannot silently read as co-located and open a turn in an empty directory.
+
+        An unknown device keeps the previous reading (co-located when the shared
+        root is set): the same behaviour this had for any device with no machine
+        row, and the deployments that set that root are single-box ones.
         """
         if not settings.device_shared_workspace_host_root.strip():
             return False
-        from app.domain.machine.repositories import ProjectMachineRepository
-
         factory = self._session_factory
         if factory is None:
             from app.core.db import async_session_factory
 
             factory = async_session_factory
         async with factory() as session:
-            provisioned = await ProjectMachineRepository(session).is_provisioned_device(
-                device_id
-            )
-        return not provisioned
+            device = await sql_device_service(session).get_device(device_id)
+        return device is None or device.supply is not Supply.cloud
 
     def _work_dir(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, *, co_located: bool

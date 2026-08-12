@@ -13,6 +13,7 @@ import pytest
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService, DeviceStatus
+from app.domain.device.supply import Supply
 
 
 def _service(
@@ -34,7 +35,7 @@ async def test_start_then_poll_pending_then_approved():
 
     assert (await service.poll(code))["status"] == DeviceStatus.PENDING
 
-    device = await service.approve(code, owner_user_id=owner)
+    device = await service.approve(code, owner_user_id=owner, supply=Supply.self_hosted)
     poll = await service.poll(code)
     assert poll["status"] == DeviceStatus.APPROVED
     assert poll["token"] == device.token
@@ -48,12 +49,17 @@ async def test_approve_name_override_else_keeps_cli_name():
     service, _ = _service()
     # Blank/omitted name keeps the name the cli proposed at start (its hostname)...
     code1 = await service.start("Andys-MacBook-Pro-510")
-    d1 = await service.approve(code1, owner_user_id=uuid.uuid4())
+    d1 = await service.approve(
+        code1, owner_user_id=uuid.uuid4(), supply=Supply.self_hosted
+    )
     assert d1.name == "Andys-MacBook-Pro-510"
     # ...a name from the approval page overrides it.
     code2 = await service.start("Andys-MacBook-Pro-510")
     d2 = await service.approve(
-        code2, owner_user_id=uuid.uuid4(), name="  andy-studio  "
+        code2,
+        owner_user_id=uuid.uuid4(),
+        supply=Supply.self_hosted,
+        name="  andy-studio  ",
     )
     assert d2.name == "andy-studio"
 
@@ -64,14 +70,18 @@ async def test_start_generates_a_real_name_never_unnamed():
     # literal "unnamed" (which is what the user saw before).
     for empty in (None, "", "   "):
         code = await service.start(empty)
-        device = await service.approve(code, owner_user_id=uuid.uuid4())
+        device = await service.approve(
+            code, owner_user_id=uuid.uuid4(), supply=Supply.self_hosted
+        )
         assert device.name and device.name != "unnamed"
 
 
 async def test_verify_token_identifies_device_only_when_valid():
     service, _ = _service()
     code = await service.start("m")
-    device = await service.approve(code, owner_user_id=uuid.uuid4())
+    device = await service.approve(
+        code, owner_user_id=uuid.uuid4(), supply=Supply.self_hosted
+    )
     assert (await service.verify_token(device.token)).device_id == device.device_id
     assert await service.verify_token("nope") is None
     assert await service.verify_token("") is None
@@ -81,8 +91,8 @@ async def test_approve_is_idempotent_same_token():
     service, _ = _service()
     owner = uuid.uuid4()
     code = await service.start("m")
-    d1 = await service.approve(code, owner_user_id=owner)
-    d2 = await service.approve(code, owner_user_id=owner)
+    d1 = await service.approve(code, owner_user_id=owner, supply=Supply.self_hosted)
+    d2 = await service.approve(code, owner_user_id=owner, supply=Supply.self_hosted)
     assert d1.device_id == d2.device_id
     assert d1.token == d2.token  # never mints a second credential
 
@@ -94,7 +104,9 @@ async def test_expired_code_is_rejected():
     with pytest.raises(NotFoundError):
         await service.poll(code)
     with pytest.raises(NotFoundError):
-        await service.approve(code, owner_user_id=uuid.uuid4())
+        await service.approve(
+            code, owner_user_id=uuid.uuid4(), supply=Supply.self_hosted
+        )
 
 
 async def test_project_binding_and_ownership_guard():
@@ -102,7 +114,7 @@ async def test_project_binding_and_ownership_guard():
     owner, other = uuid.uuid4(), uuid.uuid4()
     project = uuid.uuid4()
     code = await service.start("m")
-    device = await service.approve(code, owner_user_id=owner)
+    device = await service.approve(code, owner_user_id=owner, supply=Supply.self_hosted)
 
     assert not await service.serves_project(device.device_id, project)
     await service.assign_to_project(device.device_id, project, actor_user_id=owner)

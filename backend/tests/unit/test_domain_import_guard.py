@@ -50,7 +50,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.chat", "app.domain.team.repositories"),
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.chat", "app.domain.usage.repositories"),
-        ("app.domain.agent.device_provider", "app.domain.machine.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
         ("app.domain.agent.sandbox_notices", "app.domain.block.repositories"),
         ("app.domain.agent.sandbox_notices", "app.domain.topic.repositories"),
