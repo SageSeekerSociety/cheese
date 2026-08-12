@@ -539,7 +539,7 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
     monkeypatch.setattr(
         runner,
         "_schedule_resume",
-        lambda _chat, tid, after, why: scheduled.append((tid, after, why)),
+        lambda _chat, tid, after, why, **_kw: scheduled.append((tid, after, why)),
     )
 
     class _Chat:
@@ -603,7 +603,7 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
     monkeypatch.setattr(
         runner,
         "_schedule_resume",
-        lambda _chat, tid, after, why: scheduled.append(tid),
+        lambda _chat, tid, after, why, **_kw: scheduled.append(tid),
     )
 
     class _Chat:
@@ -881,7 +881,7 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeyp
     monkeypatch.setattr(
         runner,
         "_schedule_resume",
-        lambda _chat, tid, after, why: scheduled.append((tid, after)),
+        lambda _chat, tid, after, why, **_kw: scheduled.append((tid, after)),
     )
 
     async def _last_block(topic_ids):

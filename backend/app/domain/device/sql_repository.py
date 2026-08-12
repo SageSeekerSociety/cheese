@@ -2,6 +2,7 @@
 service stays storage-agnostic. Same contract as ``InMemoryDeviceRepository``."""
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
@@ -9,12 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import (
     DeviceAuthCodeRow,
+    DeviceHealthRow,
     DeviceProjectRow,
     DeviceRow,
     DeviceTeamRow,
     DeviceTopicRow,
 )
-from app.domain.device.repository import AuthCode, Device
+from app.domain.device.repository import AuthCode, Device, HostHealth
 from app.domain.project.models import Project
 from app.domain.team.models import Team
 from app.domain.user.models import User
@@ -271,3 +273,60 @@ class SqlDeviceRepository:
             return
         self._session.add(DeviceTopicRow(topic_id=topic_id, device_id=device_id))
         await self._session.flush()
+
+    async def release_topic_device(self, topic_id: uuid.UUID) -> None:
+        await self._session.execute(
+            delete(DeviceTopicRow).where(DeviceTopicRow.topic_id == topic_id)
+        )
+        await self._session.flush()
+
+    # -- machine health (#186) ---------------------------------------------
+
+    @staticmethod
+    def _health(row: DeviceHealthRow) -> HostHealth:
+        return HostHealth(
+            device_id=row.device_id,
+            consecutive_failures=row.consecutive_failures,
+            last_failure_code=row.last_failure_code,
+            last_failure_at=(
+                _aware(row.last_failure_at) if row.last_failure_at else None
+            ),
+            quarantined_until=(
+                _aware(row.quarantined_until) if row.quarantined_until else None
+            ),
+        )
+
+    async def get_host_health(self, device_id: str) -> HostHealth | None:
+        row = await self._session.get(DeviceHealthRow, device_id)
+        return self._health(row) if row is not None else None
+
+    async def save_host_health(self, health: HostHealth) -> None:
+        row = await self._session.get(DeviceHealthRow, health.device_id)
+        if row is None:
+            row = DeviceHealthRow(device_id=health.device_id)
+            self._session.add(row)
+        row.consecutive_failures = health.consecutive_failures
+        row.last_failure_code = health.last_failure_code
+        row.last_failure_at = health.last_failure_at
+        row.quarantined_until = health.quarantined_until
+        await self._session.flush()
+
+    async def clear_host_health(self, device_id: str) -> None:
+        await self._session.execute(
+            delete(DeviceHealthRow).where(DeviceHealthRow.device_id == device_id)
+        )
+        await self._session.flush()
+
+    async def list_host_health(
+        self, device_ids: Sequence[str]
+    ) -> dict[str, HostHealth]:
+        if not device_ids:
+            return {}
+        rows = (
+            await self._session.scalars(
+                select(DeviceHealthRow).where(
+                    DeviceHealthRow.device_id.in_(list(device_ids))
+                )
+            )
+        ).all()
+        return {row.device_id: self._health(row) for row in rows}

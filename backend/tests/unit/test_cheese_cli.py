@@ -263,6 +263,11 @@ def test_await_registers_then_forks_and_returns_immediately(monkeypatch, tmp_pat
 def test_await_log_lives_outside_the_worktree(monkeypatch, tmp_path):
     """These logs must never be committed with the topic's work."""
     cli = _load()
+    # An agent sandbox EXPORTS this (the platform points it at the session
+    # mount), and it outranks the HOME-derived path this test is about — so
+    # without clearing it the test passes in CI and fails in every sandbox,
+    # which is exactly where the suite is run from most.
+    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     path = cli._await_log_path("run-1")
     assert path.startswith(str(tmp_path))
