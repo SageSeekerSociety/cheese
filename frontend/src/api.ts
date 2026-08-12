@@ -323,10 +323,10 @@ export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
 }
 
-// 芝士 (re)generates the project's 一页纸总结. Takes a few seconds.
-export function generateSummary(projectId: string): Promise<{ summary: string }> {
-  return request<{ summary: string }>(`/projects/${encodeURIComponent(projectId)}/summary`, { method: 'POST' })
-}
+// NOTE: there is deliberately no `generateSummary` wrapper here. The POST it
+// called is parked (see `backend/app/api/routes/activities.py`), so keeping the
+// wrapper would only leave a 404 waiting for its first caller. `summary` still
+// arrives on the project card above — it just has no trigger in the UI.
 
 // A 1:1 private chat as a normal Topic (open the chat WS on its id). Without
 // `peerHandle` it's the member's 1:1 with 芝士; with `peerHandle` it's a
