@@ -112,9 +112,20 @@ main 的 #264 往 check.sh 里加了三个仓库守卫（repo rules / action pin
 
 门禁命令是 `bash .claude/scripts/check.sh --no-tests`（strict 由 `run_check_command` 注入 `CHECK_STRICT=1`）。若门禁容器里 `backend/.venv` 起不来，**新逻辑下这张卡自己就会 exit 2 → `gate_blocked` → 递不出去**。这不是缺陷、正是设计意图，但意味着递卡前得确认门禁容器的 venv 可用。本轮在沙箱里已真实撞到一次：`.venv/bin/python` 指向的 uv 托管解释器被清掉，symlink 悬空，`uv sync` 重建后才恢复。
 
+## 采纳之后：这张卡自己踩中了它写的那个缺口
+
+卡采纳后开出 PR #313，**CI 红了**：`✖ 289 problems (2 errors, 287 warnings)`，两条 error 都在本卡改的 <&frontend/src/views/WorkspaceView.vue> 里，都是 `prettier/prettier` 排版（长三元的换行、`gate_blocked` 那张 `v-card` 的属性该拆行）。
+
+这是对下一节那个缺口最直接的一次实证：**门禁判绿了，CI 才拦下来**——因为 `check.sh` 从头 `cd backend`，前端一行都不看。修法就是 `pnpm run lint:fix`（只动了这一个文件，287 条存量 warning 不拦），修完 `pnpm run lint` → `0 errors`、`pnpm run typecheck` → `total: 0 error(s), baseline allows 31`（rc=0）。
+
+两条沙箱经验，都是这次现挖的：
+
+- 芝士容器里**没有 `node_modules`、也没有 `pnpm`**。`corepack pnpm install --frozen-lockfile` 可以装（要出网，本轮通），`corepack pnpm ...` 直接调，不用先 `corepack enable`（那条会失败）。
+- **`vue-tsc` 会 OOM**，默认堆不够：`FatalProcessOutOfMemory`，而且**在工作区里吐了一个 1.1 GiB 的 `frontend/core.1016`**。`NODE_OPTIONS=--max-old-space-size=8192` 之后正常。core dump 是 jj 拦下来的（`Refused to snapshot some files`，超过 1 MiB 新文件上限）——这条护栏这次真派上用场了，已手工删除。
+
 ## 不在本话题范围内的门禁缺口
 
-- `check.sh` 里**没有前端**（新增的三个守卫都是后端与仓库规则）。@wangchangxin 确认准确说法是「**PR 路径上堵住了，门禁这一层还没有**」：#264 的 <&.github/workflows/frontend.yml>（ESLint 零错误 + vue-tsc 走 `tsc-baseline.json` 棘轮，冻结 9 个文件里的 31 个存量错误，只降不升）在 PR 上直接拦，而平台采纳流程会过 PR，所以主路径的洞已经关了。`check.sh` 从头 `cd backend`，等它长出按路径分派再补；缺口已写进 <&.claude/scripts/pre-commit> 的注释，标成缺口而不是权衡。
+- `check.sh` 里**没有前端**（新增的三个守卫都是后端与仓库规则）。**本卡的 PR #313 就是被这个缺口漏过去的**，见上一节。@wangchangxin 确认准确说法是「**PR 路径上堵住了，门禁这一层还没有**」：#264 的 <&.github/workflows/frontend.yml>（ESLint 零错误 + vue-tsc 走 `tsc-baseline.json` 棘轮，冻结 9 个文件里的 31 个存量错误，只降不升）在 PR 上直接拦，而平台采纳流程会过 PR，所以主路径的洞已经关了。`check.sh` 从头 `cd backend`，等它长出按路径分派再补；缺口已写进 <&.claude/scripts/pre-commit> 的注释，标成缺口而不是权衡。
 - **「门禁至今没跑过测试」不必是永久状态**——之前写的"门禁主机无 Postgres 所以没救"是错的，仓库里就有解法只是没接上：<&.claude/scripts/dev-db.sh> 用 uv 拉预编译 wheel（`pgserver` + `redislite`）起 PG/Redis，完全不需要 docker。@wangchangxin 今天在沙箱实测跑通整套：**3924 passed / 30 skipped / 0 failed，138 秒**。
   唯一前提是门禁容器**能出网**拉那两个 wheel（它们故意不是 backend 依赖：`pgserver` 没有 cp313 wheel，声明了会破坏 `requires-python >=3.13` 的解析，脚本把它们钉在一次性的 3.12 解释器上，测试仍跑在 3.13）。
   **但上面那两张线上卡恰恰死于门禁容器 DNS 解析失败**——同一个网络故障也会让 dev-db.sh 拉不到 wheel。所以诚实的结论是：门禁跑测试可行，但只在盒子有网时可行，而今天的证据是它有时没网。这正好反过来说明 BLOCKED 不能判绿——不是"永远只能 `--no-tests`"，也不是"接上就一劳永逸"，是**得先试一次再决定**，且无论哪种结果都需要三态诚实地报出来。
