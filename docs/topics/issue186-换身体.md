@@ -8,7 +8,9 @@
 |---|---|
 | ruff check + format（全 backend，含 `alembic/`） | All checks passed / 758 files formatted |
 | pyright `app/` | 0 errors |
-| alembic heads | 在 CI 的 merge ref 上是单头 `b7e3c19d4f80`；**本地报 `KeyError` 是预期的，见 §6** |
+| alembic heads | 单头 `b7e3c19d4f80`（合入 main 后本地也自洽了；§6 记的 `KeyError` 阶段已过去） |
+| 跨领域 import 守卫 | PASS（§7.1 修完） |
+| `test_runtime.py` | 31 passed（§7.2 修完，因果已用临时回滚验证） |
 | repo guards（仓库规则 + actions SHA 钉版） | PASS |
 | migration fork vs main | PASS（合并不会劈叉 alembic 链） |
 | **全量后端套件** | **4066 passed, 31 skipped, 24 failed** —— 24 个全部是沙箱环境问题，逐条见 §5 |
