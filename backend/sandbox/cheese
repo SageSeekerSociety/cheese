@@ -681,9 +681,11 @@ def build_parser() -> argparse.ArgumentParser:
             "铸一个只读 token 查 CI/CD:`GH_TOKEN=$(cheese gh-token) gh run list -R <owner/repo>`\n"
             "\n"
             "本仓库的版本控制是 jj 不是 git,工作区里没有 .git,所以 `gh` 自己推断不出仓库,"
-            "会报 `not a git repository`——**必须显式带 -R owner/repo**。"
-            "仓库名不用自己猜:token 铸好后 stderr 会打出仓库名,以及查 check-runs "
-            "和拉 Actions job 完整日志的具体命令。"
+            "会报 `not a git repository`——**必须显式带 -R owner/repo**。\n"
+            "\n"
+            "仓库名不用自己猜:铸的时候 stderr 会一并打印仓库名、过期时间,以及查 check-runs "
+            "和拉 Actions job 完整日志的具体命令。stdout 只有 token 本身,所以 "
+            "`GH_TOKEN=$(cheese gh-token)` 照常能用。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
