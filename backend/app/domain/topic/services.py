@@ -8,6 +8,7 @@ sub-topic's conclusion flows back to its parent (结论回流).
 import difflib
 import uuid
 from datetime import UTC, datetime
+from typing import overload
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,12 +41,29 @@ from app.domain.workspace import service as ws
 PLACEHOLDER_TITLE = "新话题"
 
 
+@overload
+def _as_utc(when: datetime) -> datetime: ...
+
+
+@overload
+def _as_utc(when: None) -> None: ...
+
+
 def _as_utc(when: datetime | None) -> datetime | None:
-    """Read a caller-supplied instant as UTC when it carries no offset.
+    """Read an instant as UTC when it carries no offset.
 
     Query strings routinely arrive as `2026-08-12T00:00:00` with no zone; the
-    columns it is compared against are TIMESTAMPTZ, so a naive value has to be
-    given one before it reaches the driver.
+    columns they are compared against are TIMESTAMPTZ, so a naive value has to
+    be given one before it reaches the driver. The same applies to a value read
+    back out: some drivers hand back a naive datetime, and a naive one raises
+    rather than merely reading wrong when subtracted.
+
+    NOTE: there were briefly TWO functions by this name in this file — this
+    None-tolerant one and a None-rejecting twin further down, landed by parallel
+    changes. Python keeps the LAST definition, so the tolerant one was dead code
+    and every optional caller (`active_since` unset, i.e. any unfiltered topic
+    list) died on `'NoneType' object has no attribute 'tzinfo'`. Hence the
+    overloads: one function, and both call shapes stay exactly typed.
     """
     if when is None or when.tzinfo is not None:
         return when
@@ -103,12 +121,6 @@ def _brief_doc(
         else "（父话题当时还没有活文档）",
     ]
     return "\n\n".join(parts)
-
-
-def _as_utc(moment: datetime) -> datetime:
-    """The column is TIMESTAMPTZ, but some drivers hand back a naive value and a
-    naive one raises rather than merely reading wrong when subtracted."""
-    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
 def _is_mid_turn_block(block: Block) -> bool:
