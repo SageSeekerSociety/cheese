@@ -59,17 +59,31 @@ def test_nobody_identifiable_claims_nothing(
     _portal.call(_run)
 
 
-def test_the_unauthenticated_surface_is_deliberately_unchanged(client):
-    """Scoping applies to people, and an anonymous caller is not one.
+def test_an_unidentifiable_caller_gets_none_not_all(client):
+    """认不出人 ≠ 认识所有人。
 
-    Every 2.0 route on this deployment is reachable without a credential
-    (handle-fallback, Phase 0), so making the sidebar the one exception would
-    protect nothing — a caller could simply not authenticate. Asserted so the
-    choice is visible rather than accidental, and so it fails loudly on the day
-    that surface is tightened as a whole.
+    This asserted the opposite until 2026-08-12, on the argument that every 2.0
+    route is reachable without a credential anyway, so tightening one protects
+    nothing — and it said, in as many words, that it should fail loudly on the
+    day that surface was tightened. It was tightened for a reason it did not
+    anticipate.
+
+    The caller that lands here is not an anonymous stranger browsing. It is a
+    LOGGED-IN user whose token just lapsed: the 2.0 access token lives about
+    three minutes, and the fetch layer that carries it has no refresh (raw
+    `fetch`, so the axios 401 interceptor never sees it). Measured on dev, one
+    browser, one second: a valid token returned 1 project, `Bearer not.a.jwt`
+    returned 12 — four other people's among them. The route answers 200 either
+    way, so the client cannot tell "mine" from "everyone's" and cached the leak
+    under the user's own handle.
+
+    Whatever else is open, this route's meaning without `team_id` is "the
+    caller's OWN projects". With no caller, the honest answer is none.
     """
     client.post("/api/projects", json={"name": "任何人的项目"})
-    assert client.get("/api/projects").json()["data"]["total"] >= 1
+    body = client.get("/api/projects").json()["data"]
+    assert body["total"] == 0
+    assert body["data"] == []
 
 
 def test_a_team_id_filter_still_answers_for_that_team(client):

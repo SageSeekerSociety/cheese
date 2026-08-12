@@ -101,14 +101,25 @@ async def list_projects(
             )
             total = len(projects)
         else:
-            # The unauthenticated surface is left exactly as it was. Every 2.0
-            # route on this deployment is reachable without a credential
-            # (handle-fallback, Phase 0), so making THIS one the exception would
-            # not protect anything — a caller could simply not authenticate.
-            # Tightening that surface is a decision about all of them, not a
-            # side effect of scoping a sidebar. Real users are logged in, and
-            # they are who this scoping is for.
-            projects, total = await service.list_all()
+            # 认不出人 ≠ 认识所有人。This used to return `service.list_all()`,
+            # on the argument that every 2.0 route is reachable without a
+            # credential anyway, so tightening one of them protects nothing.
+            # That argument is wrong here, and measurably so: the failure mode
+            # is not "an anonymous stranger browses", it is "a LOGGED-IN user's
+            # token lapsed". Measured on dev 2026-08-12 — same browser, same
+            # second: a valid token returns 1 project, `Bearer not.a.jwt`
+            # returns 12, including four other people's. The 2.0 access token
+            # lives about three minutes and this fetch layer has no refresh
+            # (it is raw `fetch`, so the axios 401 interceptor never sees it),
+            # so every user crosses that boundary constantly — which is exactly
+            # what「有时候左边栏冒出一堆不是我的项目」was.
+            #
+            # And nothing here can 401: the route answers 200 either way, so
+            # the client cannot tell "yours" from "everyone's" and caches the
+            # leak under the user's own handle. Whatever else is open, THIS
+            # route's meaning without `team_id` is "the caller's OWN projects" —
+            # with no caller, the honest answer is none, not all.
+            projects, total = [], 0
     items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
     return ok(page(items, total))
 
