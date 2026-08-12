@@ -1,0 +1,168 @@
+> 对应 [#282](https://github.com/SageSeekerSociety/cheese/issues/282)。本轮只交**模型 + 三个决定的方案**，不改代码。
+
+## 一句话结论
+
+`compute_profile` 不该拆成四个给用户点的选择器，而该**在后端展开成四根轴**、在前端仍然收敛成几个具名档。轴与轴之间只有一处真依赖：**供给形式约束生命周期的取值域**——但不推导它。issue 里「每一行都是第一行的推论」这句，推过了一格，下面第二节说明为什么，以及为什么按 issue 原样推会让 MicroCloud 重新变成特例。
+
+---
+
+## 一、模型：一个 id → 四根轴
+
+| 轴 | 取值 | 决定什么 | 今天在哪 |
+|---|---|---|---|
+| **规格** size | cores / mem / disk / GPU | 算力大小 | 池子 id + MicroCloud `offering_id` |
+| **供给形式** supply | `cloud` \| `self_hosted` | 平台能不能销毁它 → 可弃性 → **坏了能不能换** | **没有名字**，靠 `ProjectMachine.device_id` 反查 |
+| **可见性** visibility | `isolated` \| `host` | agent 能看见什么、能碰到谁 | **没有名字**，隐含在 provider 实现里 |
+| **计费归属** billing | credit 池 id | 谁付钱 | **没有表达** |
+| （派生）生命周期 lifecycle | idle→停机→销毁 的两个时限 | 活多久 | **硬编码**：容器 8h（<&backend/app/core/config.py> `sandbox_idle_hours`），device 不回收 |
+
+**档 = 轴的具名组合。** `compute_profile` 这个字段本身不删、不改类型，降级成「preset 的名字」，后端 resolve 成一个四元组。这样前端、`topic.compute_profile` / `project.settings` / `team.compute_profile` 三级继承（<&backend/app/domain/agent/chat.py>）、已有数据全部不用动，语义在后端展开。
+
+> 这一点是我和 issue 的隐含分歧里最实际的一条：把四根轴直接暴露成四个下拉框，等于把设计难题转嫁给用户。**用户仍然只在几个档里选一个**，只是这几个档终于有了各自说得清的定义。
+
+### 现有三档落在坐标系里
+
+| 档 | supply | visibility | 今天的生命周期 | 坏了能换 |
+|---|---|---|---|---|
+| 知是本地算力 `local` | cloud | isolated | 8h idle → `docker rm` | 能（重建容器） |
+| 自托管设备 `device` | self_hosted | host | 永不回收 | **不能**（`resolve_pinned_device` write-once 钉死） |
+| 远程节点 `cheesed` | self_hosted | host | 永不回收 | 不能 |
+
+**空着两格，而且正是大家反复想要的那两格：**
+
+- **`(cloud, host)`** —— 平台开一台 VM 给这个项目，芝士直接在宿主上跑、看得见整台机器（能看见同机器的服务、能 exec 进容器），**但因为是平台开的，坏了平台能换、闲了平台能回收、钱平台算得清**。这就是 MicroCloud 的正确位置：**它不需要特例，它需要的是这一格存在**。今天它不得不 enroll 成 device，于是被迫连「常驻不回收 + 不可换」一起继承——正是 issue 说的那个「想要能看见宿主，就必须连不回收一起要」。
+- **`(self_hosted, isolated)`** —— 用你自己的机器，但房间仍然关在容器里。**一台机器给多个房间用时，这才应该是默认**；今天 self-hosted 只有一档，选了就是全员裸奔在同一个宿主上。
+
+一个字段拆成两根轴，立刻多出两档今天表达不了、但明显有人要的配置——这是我认为这个模型对的最强证据，比任何「更清晰」的说辞都硬。
+
+### 今天 self-hosted 档的实况比 issue 描述的更重
+
+<&backend/app/domain/agent/device_launch.py> 里，设备屏幕跑的是 `bash -lc` 写一份 `~/.claude` 然后 `exec claude --dangerously-skip-permissions`——**裸在宿主上，以设备属主的身份，且预先接受了权限门**。所以这一档不是「能看见宿主」，是**以属主身份对这台机器有完全读写权**。UI 上那句实话必须按这个事实写，不是按「能看见」写。
+
+---
+
+## 二、我不同意 issue 的三处
+
+### 2.1 「每一行都是第一行的推论」——推过了一格
+
+可弃性、可替换性确实是供给形式的推论。**回收时限不是。**
+
+- 一台包月的 cloud VM，8 小时没人说话就销毁是错的；一个按秒计费的 cloud 容器，常驻不回收也是错的。**同为 `cloud`，两个相反的生命周期都合法。**
+- 按 issue 原样推（供给形式 → 活多久），MicroCloud 那台常驻 VM 立刻又要开特例——**而「要开特例说明模型没对」是 issue 自己立的检验标准**。
+
+所以：**生命周期是一根显式的、可配置的策略，供给形式只约束它的取值域**：
+
+| supply | 合法的生命周期动作 |
+|---|---|
+| `cloud` | 停机 / 销毁 / 重建，都合法；具体时限按档配 |
+| `self_hosted` | **停机、销毁一律非法**；平台唯一合法动作是「不再用它」（解绑） |
+
+约束（哪些动作合法）是推论；策略（多久）不是。这一格分开，MicroCloud 就不需要特例了。
+
+### 2.2 第三个决定不是独立的第三件事
+
+issue 把「共享机器的资源配额」列为要定的第三件。我认为它是**可见性轴的必要配套**，不是一个平行的独立议题——理由是它的触发条件是 `visibility=host`，与 supply 无关：平台自己开的 `(cloud, host)` VM 上跑五个房间，缺配额的后果和别人的机器上一模一样。挂错轴，以后就会漏掉 cloud+host 那一格。
+
+更要紧的是：**配额挡不住 host 档真正的威胁。** `--memory 2g --cpus 2 --pids-limit 512`（<&backend/app/domain/agent/tmux_provider.py>）管的是资源，而 host 档下芝士能 `docker exec` 进同机器上别人的容器、能读写别人的工作树——**这是权限问题，任何配额都不解决**。所以这一条必须拆成两层：资源面（配额）+ 权限面（准入）。issue 只写了资源面。
+
+### 2.3 「都是自己人」这个前提只在团队内成立
+
+issue 说共用机器上的隔离理由是防串扰不是防偷看，「都是自己人」。但 <&backend/app/domain/device/models.py> 里 `DeviceTeamRow` 是**多对多**——一台设备可以同时绑给多个团队，绑给团队后该团队所有项目都能用。所以现有数据模型允许「两个不同团队的房间落在同一台 host 上」，那里就不是自己人了。
+
+**这一条 issue 没覆盖，我认为必须补进准入规则**（见决定 3）。
+
+---
+
+## 三、三个决定
+
+### 决定 1 · cloud 档的销毁时机
+
+**核心：把一个动作拆成两个，销毁走预告。**
+
+今天容器只有 `destroy` 一档（`docker rm -f`），这是它必须 8h 就动手的原因——留着不花钱但占盘。VM 不一样：**停机就不烧钱，盘还在**。所以：
+
+| 阶段 | 触发 | 动作 | 房间里留什么 |
+|---|---|---|---|
+| 停机 | 空闲 **N=8h**（沿用 `sandbox_idle_hours`，已知不出事） | stop，保留磁盘 | 轻提示：已停机省钱，下次说话自动开回来，工作树还在 |
+| 预告 | 停机后 **M=7d** 无人唤醒，**销毁前 24h** | 不动机器 | `change_alert` 强提醒：24 小时后销毁，未推回的改动会丢 |
+| 销毁 | 预告到期 | destroy | 终态说明：这台机器已回收，及为什么 |
+| self_hosted | 任何时候 | **一律不停机、不销毁**，只解绑 | 解绑说明 |
+
+三条理由：
+
+1. **#185 那句「丢得无声」，无声的不是丢，是没有预告。** 所以关键的一条不是「销毁后留说明」，是**销毁前 24h 那条强提醒**——只有它是人还来得及做点什么的时刻。销毁后的说明是补记账，防不住任何事。
+2. **误杀比漏机器贵得多。** issue 说「漏的是钱」，但为了不漏而把 timeout 收紧，代价是把人正在用的工作树销毁掉——那损失的是信任，不是钱。所以时限取宽，成本靠「停机」这个便宜动作兜，「销毁」这个贵动作永远走预告。
+3. **硬前置：工作树推回平台之前不许销毁。** 推不回去就继续付钱。这条不是策略，是不变量。
+
+> 这就是我不同意 issue 定性的地方：这个决定的第一目标是**不误杀**，省钱是第二目标，而且第二目标用「停机」就能拿到大部分收益。
+
+### 决定 2 · 供给形式落到数据模型
+
+**加在 `device` 表上，不是 `ProjectMachine` 上。**
+
+```
+ALTER TABLE device ADD COLUMN supply     VARCHAR(16) NOT NULL DEFAULT 'self_hosted';
+ALTER TABLE device ADD COLUMN visibility VARCHAR(16) NOT NULL DEFAULT 'host';
+-- 一次性回填
+UPDATE device SET supply='cloud'
+ WHERE device_id IN (SELECT device_id FROM project_machines WHERE device_id IS NOT NULL);
+```
+
+为什么是 `device` 而不是 `ProjectMachine`：
+
+- **消费侧读的是 device。** `resolve_pinned_device`、`DeviceProvider`、ComputePool 都拿 device_id 做判断；语义长在 `ProjectMachine` 上，每次判断都要 join 回去——**那还是反查，只是换了个写法**。
+- `ProjectMachine` 是 **cloud 供给的实现细节**（MicroCloud 那侧的记账：`machine_id` / `customer_id` / `offering_id`）。self-hosted 设备根本没有这一行。用「另一张表有没有这条记录」表达语义，正是这次要消除的东西。
+- `ProjectMachine.device_id` 保留，但**只作为链接**（这台 MicroCloud 机器 enroll 成了哪个 device），不再承担语义。
+
+**写入点只有两个，各写死一个常量，任何地方都不许推断：**
+
+| enroll 入口 | supply |
+|---|---|
+| connector 设备流（人自己装 cheesehost） | `self_hosted` |
+| machine 的 enroll sweep（平台 SSH 进去装） | `cloud` |
+
+**「入口决定待遇，不是硬件决定待遇」落到代码就是这两行。** 我建议把它直接写成验收标准：审查时看这两处是不是常量赋值，而不是看有没有一个 `is_platform_provisioned()` 函数——只要出现这种函数，语义就又靠推断存在了。
+
+**配一条不变量**：`supply='self_hosted'` 的 device，走到任何 stop/destroy 路径要**直接抛错**，不是 `if` 静默跳过。以后有人加第二条回收路径忘了判断时，抛错会当场炸，跳过则会安静地把别人的机器关掉。
+
+### 决定 3 · 共享机器的资源配额（+ 准入）
+
+配额挂在 **`visibility=host`** 这根轴上，不是挂在 supply 上（见 2.2）。
+
+**A. 资源面**
+
+- **磁盘优先，因为它不可抢占。** CPU / 内存挤一挤只是慢，盘满了是同机器所有房间一起挂——就是 #186 第一节 `storage_exhausted` 放大 N 倍。每房间给工作树一个配额，软线告警、硬线把该房间的写路径关掉并判这一轮失败。首选文件系统级配额（XFS project quota / loop-mount），机器不支持就退化成周期性 `du` + 两条线。**不建议为此引入 cgroup v2 之外的新组件。**
+- **CPU / 内存 / 进程数**：host 档下 `claude` 直接跑在宿主上，用 systemd transient scope 把每个房间的屏幕关进一个 cgroup（`systemd-run --scope -p MemoryMax=… -p CPUQuota=… -p TasksMax=…`）。零依赖，且**不改变可见性**——正好符合「host 档要的是可见性，不是无限资源」。
+- 数值上先对齐容器档（2g / 2 cpu / 512 pids）作为**每房间**基线，盘按「机器盘容量 ÷ 房间数上限」给，下界 10G。
+
+**B. 权限面（issue 没写，我认为必须有）**
+
+- host 档**不是随手能点的默认项**：选它要一次明确确认。
+- **跨团队禁止混用 host 档**：一台 device 已被 A 团队的房间以 host 档占用时，B 团队不能在同一台机器上再选 host 档（`isolated` 可以）。理由见 2.3——「都是自己人」只在团队内成立，而 `DeviceTeamRow` 允许跨团队绑定。
+
+---
+
+## 四、界面上那句实话
+
+按第一节查到的事实（`--dangerously-skip-permissions`，属主身份，裸在宿主上）写，不加软化词：
+
+> **这一档不在容器里跑。芝士会以这台机器属主的身份，直接读写整台机器——包括同机器上其他房间的工作树，以及进入它们的容器。选它意味着你信任这台机器上的所有协作者，也意味着他们的活可能被你的房间影响。**
+
+配一次明确确认，不做默认项。**这条不在实现里弱化**：如果实现时发现这句话太吓人所以想改软，那要改的是权限模型，不是这句话。
+
+---
+
+## 五、边界与相邻
+
+- **#186**：本 issue 给它第五节补上前置——「判废之后能不能换」取决于房间的 supply/visibility。好消息是 **#186 的方案已经把判定做成 quarantine（隔离 + 冷却）而不是 destroy，天然兼容**：对 `self_hosted` 或 `visibility=host` 的房间，**隔离照做**（不再往这台机器派新房间），**但已绑定的房间不迁移，只报人**。理由用 issue 的：芝士被搬到看不见那个服务的机器上、然后不知道自己为什么找不到东西，比不换更难诊断。落到代码就是给迁移动作加一个判据，判据正是决定 2 加的那两个字段。
+- **#188**：平台不代管别人的运维 → `self_hosted` 的健康问题只报人，不代修、不代清。
+- **`credits设计`**：billing 轴本轮**不定**，只定接口——每个档必须能回答「这一档的消耗记到哪个 credit 池」。**但有一个缺口要抛过去**：那个话题整篇是 LLM token → credit 的折算，**没有机器小时这一类消耗**。`(cloud, host)` 那一格一旦落地，一台常驻 VM 的钱不走 credit 体系就没人管——这不是本 issue 能定的，但必须让那边知道有这么一类新消耗。
+- **隔离技术选型（Docker vs Firecracker）**：同意 issue 判成可推迟，本轮不扩。
+
+---
+
+## 六、对齐之后要谈的
+
+1. 四轴的档位表最终定几档、各档的具体取值（尤其 `(cloud, host)` 这一格要不要这轮就开）。
+2. 决定 2 那两个字段动数据模型 → 走验收卡。
+3. 决定 1、3 的落地切分（停机/销毁两阶段、配额两层），以及和 #186 那张卡的先后顺序。
