@@ -382,6 +382,11 @@ class Settings(BaseSettings):
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
     accept_pr_poll_interval_s: int = 60
+    # 自动同步上游: how often to pull the upstream's default branch into each
+    # linked project's base. Falling behind is what makes accepts unable to push
+    # (see SchedulerService.sync_upstreams), so this only has to run often
+    # enough that the gap stays small — not on every commit. 0 disables it.
+    upstream_sync_interval_s: int = 1800
     # Workflow file (under .github/workflows/) that deploys after a merge to
     # the base branch — must reach completed+success before a pr_open card's
     # topic is finally archived (2026-08-09 拍板: merge alone is not enough).

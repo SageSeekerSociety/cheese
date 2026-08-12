@@ -64,3 +64,6 @@ tmp/
 
 # pnpm content-addressable store — a cache, never belongs in git
 .pnpm-store/
+
+# playwright-cli byproducts (snapshots, screenshots, console logs) — never commit
+.playwright-cli/

@@ -59,7 +59,7 @@ jobs:
           retry_wait_seconds: 15
           command: >-
             echo "${{ secrets.GITHUB_TOKEN }}" |
-            docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
 
       - name: Extract metadata
         id: meta

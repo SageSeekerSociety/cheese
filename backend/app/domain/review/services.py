@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
@@ -438,11 +439,15 @@ class AcceptService:
 
     def _forbid_ai(self, project: Project | None, handle: str, action: str) -> None:
         """Hard rule (spec §4.4): in collaborative mode AI cannot accept (or
-        vote for) its own work — a human must. Autonomous mode allows it."""
+        vote for) its own work — a human must. Autonomous mode allows it.
+
+        Matches the whole 芝士 handle namespace, not the bare ``cheese`` string:
+        每个话题的分身 acts under its own ``cheese-<topic hex>`` handle, and an
+        exact-string rule would have let any 分身 walk straight through this."""
         if (
             project is not None
             and project.ai_mode == AiMode.collaborative
-            and handle == "cheese"
+            and looks_like_agent_handle(handle)
         ):
             raise ValidationError(f"AI 不能{action}自己做的东西，必须有人来")
 

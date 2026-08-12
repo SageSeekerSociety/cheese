@@ -28,15 +28,14 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.domain.agent import provider_env
+from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import build_screen_launch
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
-from app.domain.identity.services import CHEESE_HANDLE
-from app.domain.user.repositories import UserRepository
+from app.domain.identity.services import IdentityService
 from app.domain.workspace import service as ws
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
@@ -165,10 +164,10 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         The device is PURE COMPUTE (execution-architecture v3: AIPool ⊥ ComputePool) —
         it carries no agent identity. The agent a screen runs as is the *project's*
         agent, resolved independently of the host machine (fusion-design §5: agent =
-        screen, not machine). Today every project's agent is the platform 芝士 user —
-        the SAME identity the local tmux path authors as (``CHEESE_AUTHOR``) — so a
-        turn's author is identical whether it runs locally or on a self-hosted box.
-        When per-project agents land, only this resolution changes; the device stays
+        screen, not machine). The agent is THIS topic's 分身 — its own agent-user
+        (``cheese-<topic hex>``), the SAME identity the local path authors and mints
+        tokens as — so a turn's author is identical whether it runs locally or on a
+        self-hosted box, and is attributable to one 分身 either way. The device stays
         pure compute."""
         if self._device_resolver is not None:
             return await self._device_resolver(project_id, topic_id)
@@ -184,9 +183,10 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             )
             if device_id is None:
                 return None
-            agent = await UserRepository(session).get_by_handle(CHEESE_HANDLE)
-            if agent is None:
-                return None
+            # The screen acts as THIS topic's 分身 (its own agent-user), so a turn
+            # run on a self-hosted box is attributable to the same identity as one
+            # run locally — the device stays pure compute either way.
+            agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
             # Persist the pin created above (first turn) before the turn proceeds, so a
             # concurrent/next turn sees the same device.
             await session.commit()
@@ -388,6 +388,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         """A CO-LOCATED device edited the backend's REAL worktree this turn, so
         snapshot it into version history exactly like the local path (else 采纳/diff
         wouldn't see the edits). A REMOTE device owns its own tree → still a no-op
-        (it pushes its own work back over git instead)."""
+        (it pushes its own work back over git instead). Held while a `cheese await`
+        command is still writing that tree, same as the local path."""
         if self._co_located_at.get((project_id, topic_id)):
-            ws.snapshot_worktree(project_id, topic_id)
+            awaited_tasks.checkpoint_worktree(project_id, topic_id)

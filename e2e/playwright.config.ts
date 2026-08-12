@@ -28,6 +28,10 @@ export default defineConfig({
     baseURL: process.env.BASE_URL || `http://localhost:${FRONTEND_PORT}`,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
+    // The CI runner IS the dev box, so a failed run cannot be reproduced by
+    // re-running it later — the deployment underneath has already moved on.
+    // A video of the failing run is the only artifact that survives that.
+    video: 'retain-on-failure',
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },

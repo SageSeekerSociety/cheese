@@ -73,10 +73,50 @@ print("REDIS_BIN=" + str(pathlib.Path(redislite.__file__).parent / "bin"))
 pg_running() { [ -d "$PGDATA" ] && "$PG_BIN/pg_ctl" -D "$PGDATA" status >/dev/null 2>&1; }
 redis_running() { "$REDIS_BIN/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1; }
 
+# --- identity guards -------------------------------------------------------
+# A port that answers is NOT proof the server behind it is ours. Silently reusing
+# a stranger's Postgres or Redis does not crash anything — it yields a pile of
+# semantically unrelated test failures, and the reader burns real time auditing
+# their own code before suspecting the database. So: prove identity before
+# reusing, and refuse loudly when it cannot be proven.
+
+# bash's own TCP redirection — no `nc`/`ss`/procps in the sandbox. If the shell
+# was built without it the probe just fails, degrading to the old behaviour.
+port_in_use() { (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1; }
+
+# postmaster.pid: line 1 = pid, line 2 = data dir, line 4 = port.
+pg_pidfile_port() { [ -s "$PGDATA/postmaster.pid" ] && awk 'NR==4' "$PGDATA/postmaster.pid"; }
+
+# `dir` is the redis server's own working directory; ours is always $REDIS_DIR.
+# A server that refuses CONFIG GET (renamed or disabled) reports nothing and so
+# fails this check — which is the right answer, because ours never refuses.
+redis_reported_dir() {
+    "$REDIS_BIN/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" config get dir 2>/dev/null | tail -1
+}
+redis_is_ours() {
+    local want got
+    want="$( (cd "$REDIS_DIR" 2>/dev/null && pwd -P) || printf '%s' "$REDIS_DIR" )"
+    got="$(redis_reported_dir)"
+    [ -n "$got" ] && [ "$got" = "$want" ]
+}
+
 start_pg() {
     if pg_running; then
-        log "postgres already running on port $PG_PORT"
+        local running_port
+        running_port="$(pg_pidfile_port)" || running_port=""
+        if [ "$running_port" != "$PG_PORT" ]; then
+            die "the cluster in $PGDATA is up on port ${running_port:-unknown}, not the $PG_PORT this call asks for.
+       Exporting TEST_PG_BASE for $PG_PORT would point the suite at a server that
+       is not this one. Re-run with CHEESEX_DEV_PG_PORT=${running_port:-<its port>}, or stop it first."
+        fi
+        log "postgres already running on port $PG_PORT ($PGDATA)"
         return
+    fi
+    if port_in_use "$PG_PORT"; then
+        die "port $PG_PORT is already taken by a server this script did not start.
+       Reusing it would run the suite against someone else's database — the
+       failures would read as application bugs, not as a port collision.
+       Free the port, or re-run with CHEESEX_DEV_PG_PORT=<free port>."
     fi
     if [ ! -s "$PGDATA/PG_VERSION" ]; then
         log "initdb → $PGDATA (superuser: $PG_USER)"
@@ -100,8 +140,20 @@ start_pg() {
 
 start_redis() {
     if redis_running; then
-        log "redis already running on port $REDIS_PORT"
-        return
+        if redis_is_ours; then
+            log "redis already running on port $REDIS_PORT ($REDIS_DIR)"
+            return
+        fi
+        local foreign_dir
+        foreign_dir="$(redis_reported_dir)" || foreign_dir=""
+        die "port $REDIS_PORT already answers to a Redis this script did not start (its dir: ${foreign_dir:-unreported}).
+       Sharing it would mix this suite's keys with that server's — login
+       rate-limiter lockouts and sessions would leak in both directions.
+       Re-run with CHEESEX_DEV_REDIS_PORT=<free port>, or stop that server."
+    fi
+    if port_in_use "$REDIS_PORT"; then
+        die "port $REDIS_PORT is taken by something that does not answer PING.
+       Re-run with CHEESEX_DEV_REDIS_PORT=<free port>."
     fi
     mkdir -p "$REDIS_DIR"
     log "starting redis on 127.0.0.1:$REDIS_PORT"
@@ -117,6 +169,10 @@ start_redis() {
         sleep 0.2
         [ "$i" = 30 ] && { log "--- redis log ---"; tail -20 "$REDIS_LOG" >&2; die "redis never became ready"; }
     done
+    # --daemonize yes makes redis-server exit 0 before it binds, so a bind failure
+    # leaves us pinging whoever DID win the port. Confirm the answer is ours.
+    redis_is_ours || { log "--- redis log ---"; tail -20 "$REDIS_LOG" >&2
+        die "port $REDIS_PORT answers, but not from the server we just started — it lost the bind to another Redis."; }
 }
 
 print_env() {
@@ -147,8 +203,14 @@ cmd_stop() {
         log "postgres not running"
     fi
     if redis_running; then
-        log "stopping redis"
-        "$REDIS_BIN/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
+        # Same guard as start, for a bigger reason: an unconditional SHUTDOWN here
+        # would kill a Redis that belongs to someone else entirely.
+        if redis_is_ours; then
+            log "stopping redis"
+            "$REDIS_BIN/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" shutdown nosave >/dev/null 2>&1 || true
+        else
+            log "redis on port $REDIS_PORT is not ours — leaving it alone"
+        fi
     else
         log "redis not running"
     fi
@@ -162,8 +224,27 @@ cmd_stop() {
 
 cmd_status() {
     resolve_bins
-    if pg_running; then log "postgres: RUNNING on 127.0.0.1:$PG_PORT ($PGDATA)"; else log "postgres: stopped"; fi
-    if redis_running; then log "redis:    RUNNING on 127.0.0.1:$REDIS_PORT"; else log "redis:    stopped"; fi
+    if pg_running; then
+        local running_port
+        running_port="$(pg_pidfile_port)" || running_port=""
+        log "postgres: RUNNING on 127.0.0.1:${running_port:-?} ($PGDATA)"
+        [ "$running_port" = "$PG_PORT" ] || log "          NOTE: that is not the \$CHEESEX_DEV_PG_PORT ($PG_PORT) this call assumes"
+    elif port_in_use "$PG_PORT"; then
+        log "postgres: stopped — but port $PG_PORT is occupied by someone else"
+    else
+        log "postgres: stopped"
+    fi
+    if redis_running; then
+        if redis_is_ours; then
+            log "redis:    RUNNING on 127.0.0.1:$REDIS_PORT ($REDIS_DIR)"
+        else
+            local foreign_dir
+            foreign_dir="$(redis_reported_dir)" || foreign_dir=""
+            log "redis:    port $REDIS_PORT answers, but it is NOT ours (dir: ${foreign_dir:-unreported})"
+        fi
+    else
+        log "redis:    stopped"
+    fi
 }
 
 case "${1:-start}" in
