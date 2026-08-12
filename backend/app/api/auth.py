@@ -19,6 +19,7 @@ from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.core.obs import get_logger
 from app.core.sandbox_auth import (
+    is_global_sandbox_token,
     scoped_token_claims,
     token_agent_handle,
     verify_scoped_token,
@@ -194,6 +195,30 @@ class ActorResolver:
         if wanted is not None or not allow_anonymous:
             raise AuthenticationRequiredError("访问个人通知需要先登录")
         return "anonymous"
+
+    async def require_verified_caller(
+        self, *, project_id: uuid.UUID | None = None
+    ) -> Actor:
+        """Some verified credential must open a gated write — a session token,
+        the agent's scoped token, or the global sandbox override — else 401.
+
+        For write endpoints that take no per-person target but must not be an
+        anonymous drive-by surface. The cheese-token middleware gate
+        (``app.main.cheese_token_gate``) used to be the only thing standing in
+        front of notification creation — a gate in another layer is a gate a
+        refactor (or a path the regex does not cover) can silently drop, so the
+        route enforces it itself. The global ``SANDBOX_TOKEN`` stays gate-only
+        (dev / trusted-single-host override): it opens the surface but never
+        becomes an identity — same rule as ``resolve()``.
+        """
+        actor = await self.resolve(fallback_handle=None, project_id=project_id)
+        if actor.authenticated:
+            return actor
+        if self._bearer:
+            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+        if is_global_sandbox_token(self._cheese_token):
+            return actor
+        raise AuthenticationRequiredError("需要登录或有效的沙箱 token")
 
     def _reject_out_of_scope_token(
         self, *, topic_id: uuid.UUID | None, project_id: uuid.UUID | None

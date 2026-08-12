@@ -53,7 +53,11 @@ def test_member_summary_has_active_and_weekly(client, bearer):
     )
     _seed_block(client, pid, root, "user-1", AuthorType.human, BlockKind.message)
 
-    s = client.get(f"/api/projects/{pid}/members/user-1/summary").json()["data"]
+    # The member page resolves the viewer like /overview does — read as user-1.
+    s = client.get(
+        f"/api/projects/{pid}/members/user-1/summary",
+        headers=session_auth_headers("user-1"),
+    ).json()["data"]
     assert "topics_active" in s and "weekly_contributions" in s
     assert s["weekly_contributions"] == 1
     # root topic is active and user-1 contributed → it shows under 在忙的话题.
