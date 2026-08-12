@@ -49,6 +49,8 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
+from app.domain.idempotency import store as idem
+from app.domain.idempotency.keys import action_key
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
@@ -818,14 +820,20 @@ class ChatService:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
         block persists + broadcasts BEFORE the lock, so a post never queues
         behind a running agent turn. turn_id groups this turn's blocks (R4);
         reply_to threads this message under another (B3); attachments are
-        uploaded worktree images this message carries (图片输入)."""
+        uploaded worktree images this message carries (图片输入).
+
+        ``continuation_id`` is the logical unit of work this turn belongs to — a
+        turn and every auto-resume of it share one, so a message the interrupted
+        attempt already posted is not posted again (④)."""
         turn_id = turn_id or uuid.uuid4()
+        continuation_id = continuation_id or turn_id
         if is_resume or nudge_event:
             # System-initiated turn (自动续跑 / 评论叫醒 / 冲突调度…): no human
             # spoke — the opener is a SYSTEM event in the 现场, and the
@@ -870,6 +878,7 @@ class ChatService:
                 turn_id=turn_id,
                 user_block_id=user_block_id,
                 is_resume=is_resume,
+                continuation_id=continuation_id,
             ):
                 yield frame
 
@@ -1125,19 +1134,35 @@ class ChatService:
         topic_refs: list[dict],
         eid: str | None = None,
         backfilled: bool = False,
-    ) -> dict:
+        continuation_id: uuid.UUID | None = None,
+    ) -> dict | None:
         """Persist ONE discrete 芝士 message (Slack-style): committed the moment
         the SDK reports the AssistantMessage complete, so a turn lands as
         several complete messages instead of one growing streamed bubble.
         Handles the same mention canonicalization / notify / refs as before.
         ``eid`` (hooks path) is stamped into meta so the spool reconcile can
-        dedup a backfilled copy against this live one."""
+        dedup a backfilled copy against this live one.
+
+        Returns None when ``continuation_id`` says this exact message already
+        landed in an earlier attempt at the same work (④ 自动续跑): the resumed
+        turn re-narrating "我先看一下 X" must not post a second copy of it. The
+        caller treats None as "nothing to broadcast"."""
         meta: dict | None = None
         if eid:
             meta = {"eid": eid}
         if backfilled:
             meta = {**(meta or {}), "backfilled": True}
         async with self._sessions() as session:
+            # Claim BEFORE writing, in the SAME session: the key and the block
+            # commit together, so "key present" and "message posted" cannot
+            # disagree no matter where the process dies.
+            if continuation_id is not None and not await idem.claim(
+                session,
+                action_key(continuation_id, "message", text),
+                action="message",
+                scope_id=str(topic_id),
+            ):
+                return None
             blocks = BlockRepository(session)
             topic = await TopicRepository(session).get(topic_id)
             if roster is None:
@@ -1276,6 +1301,8 @@ class ChatService:
                         backfilled=True,
                     )
                     seen.add(eid)
+                    if block_payload is None:
+                        continue  # unreachable today (no continuation → no dedup)
                     recovered += 1
                     yield {"type": "assistant_block", "block": block_payload}
                     continue
@@ -1612,6 +1639,7 @@ class ChatService:
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID | None,
         is_resume: bool = False,
+        continuation_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Run the AGENT part of a turn (the human block was already posted by
         _post_user_message), yielding WS frames as JSON-ready dicts. Runs under
@@ -1818,8 +1846,27 @@ class ChatService:
                 **model_kwargs,
             ):
                 if isinstance(event, AgentSessionInfo):
-                    # Announced early so even a failed turn persists it below.
                     new_session_id = event.session_id
+                    # Commit the pointer NOW, not at turn end and not from the
+                    # failure handlers below (④ 超时重跑, 2026-08-11).
+                    #
+                    # Those handlers only run if the process lives long enough
+                    # to run them. `asyncio.shield` survives cancellation; it
+                    # does not survive SIGKILL or the machine losing power. A
+                    # turn killed that way left `topic.session_id` NULL, so the
+                    # auto-resume found nothing to `--resume`, started a FRESH
+                    # claude, and 芝士 came back with no memory of what it had
+                    # already done — measured on this very topic: a 7-minute,
+                    # 132-message turn whose entire transcript was orphaned on
+                    # disk while `locked` still read false.
+                    #
+                    # SessionStart is the first hook of the turn, so writing it
+                    # here shrinks the "effect happened, record didn't" window
+                    # from a whole turn to the few ms before 芝士 can act at
+                    # all. It cannot close the window — that is what the
+                    # idempotency keys are for — but a window nothing can
+                    # happen inside is as narrow as this half gets.
+                    await self._save_session_pointer(topic_id, new_session_id)
                 elif isinstance(event, AgentMessage):
                     # Slack-style discrete message: one completed provider
                     # message = one chat block, persisted + broadcast NOW
@@ -1838,7 +1885,15 @@ class ChatService:
                         roster=roster,
                         topic_refs=topic_refs,
                         eid=event.eid,
+                        continuation_id=continuation_id,
                     )
+                    if payload is None:
+                        # An earlier attempt at this same work already said this
+                        # — 已说过的话不再说第二遍 (④). `last_assistant_text` is
+                        # deliberately still updated above: the turn's final
+                        # text is about what 芝士 said, not about who wrote the
+                        # row.
+                        continue
                     last_assistant_block_id = (
                         payload.get("block", {}).get("id")
                         if isinstance(payload, dict)
@@ -2228,6 +2283,7 @@ class ChatService:
                 reply_to=user_block_id,
                 roster=roster,
                 topic_refs=topic_refs,
+                continuation_id=continuation_id,
             )
 
         # Snapshot whatever the agent changed in its worktree this turn (native
